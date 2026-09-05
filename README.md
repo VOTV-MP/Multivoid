@@ -41,9 +41,8 @@
   reflection, hooks, transport and UI are the mod's own); an official master server for the lobby
   list, signaling and an informational update check.
 
-The per-system answer to "how far along is it", with the evidence for each claim, is
-[docs/STATUS.md](docs/STATUS.md). There is deliberately no single "N% done"
-figure: a co-op mod is finished system by system.
+The per-system answer to "how far along is it" is [docs/STATUS.md](docs/STATUS.md). There is
+deliberately no single "N% done" figure: a co-op mod is finished system by system.
 
 ## How it works
 
@@ -104,7 +103,7 @@ cmake --build build/votv-coop --config Release
 |--|--|
 | [`docs/`](docs/README.md) | **Start here** — the documentation index |
 | [`src/votv-coop/`](src/votv-coop/) | The mod: `ue_wrap` / `coop` / `ui` / `harness` / `loader` |
-| [`tools/`](tools/) | Build, deploy, the autonomous test rig, release, and the master server (`coop-server-rs/`) |
+| [`tools/`](tools/) | Build, deploy, the test rig, release, and the master server (`coop-server-rs/`) |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA) |
 | `Game_0.9.0n_HOST*/` | Local game installs. **Gitignored** — never committed |
 
@@ -117,8 +116,8 @@ The long-term arc, in order; each phase gates the next ([docs/ROADMAP.md](docs/R
 | 1 | **Functional co-op** — deep sync of VOTV's systems on the mod's own substrate | **in progress (current)** |
 | 2 | **The arbiter** — per-element authority moves into a separate, engine-free server process; the host's game becomes an ordinary client of it | planned |
 | 3 | **Sandbox mode** — VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
-| 4 | **LuaJIT embedding** — the scripting substrate over the engine and co-op APIs | planned |
-| 5 | **Lua API** — mode rules move to Lua; the C++ core stays native | planned |
+| 4 | **Scripting substrate** — a sandboxed runtime over the engine and co-op APIs | planned |
+| 5 | **Mode rules in script** — the co-op and sandbox rule sets as the first two resources; the C++ core stays native | planned |
 | 6 | **Resource system** — custom modes and plugins as one mechanism | planned |
 | 7 | **Dedicated server** — 24/7 hosting with no live player required | planned |
 | 8 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
@@ -134,10 +133,10 @@ a row; the full ledger is [docs/CREDITS.md](docs/CREDITS.md).
 
 | Who | Kind | Contribution | Landed |
 |--|--|--|--|
-| **Pelmentor** | code | Architecture, direction, releases — the whole mod | 474 commits |
-| **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,368 commits |
-| **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 10 commits |
-| **hediiiqq** | code | Dish mirror interpolation | 4 commits |
+| **Pelmentor** | code | Architecture, direction, releases — the whole mod | 831 commits |
+| **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,367 commits |
+| **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 5 commits |
+| **hediiiqq** | code | Dish mirror interpolation | 1 commit |
 | [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
 | [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
