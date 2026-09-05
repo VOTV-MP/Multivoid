@@ -7,8 +7,8 @@
 // replay (the key diff, the snapshot bracket, the state broadcasts) as a thin true-up for
 // whatever moved since the save was written. The zcoop_ prefix is one the game's save menu
 // never lists, per instance so same-machine peers cannot collide. The slot lives for the
-// session (the game re-reads it after the first load), is deleted at disconnect, and a boot
-// sweep removes stale zcoop_* older than an hour, never a concurrent sibling's. Clients are
+// session (the game re-reads it after the first load); a boot sweep removes stale zcoop_*
+// older than an hour, never a concurrent sibling's. Clients are
 // blocked from saving during coop, so the game never refreshes it; only the slot file is
 // transferred, never the global progression file; a copy of the bytes mid-session is not
 // prevented. The host side runs on the game thread; the client side spans the net thread (the
@@ -144,8 +144,7 @@ uint8_t ReceivedGameMode();
 // fresh one (a concurrent same-machine sibling may be mid-join).
 void CleanupStaleSlotsAtBoot();
 
-// Full client-side reset and delete this instance's zcoop_<pid>.sav (the aggregate
-// disconnect, the end of the slot's life).
+// Full client-side reset and delete this instance's zcoop_<pid>.sav.
 void OnDisconnect();
 
 }  // namespace coop::save_transfer
