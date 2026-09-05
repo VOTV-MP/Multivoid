@@ -162,18 +162,17 @@ consumer. The verb name is the identity. A consumer reading the bracket handed t
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 
-## Two traps a smoke can fall into
+## Two traps
 
-A render-blind smoke proves dispatch and no crash; it cannot prove an effect landed on the GPU. A
-static-mobility component silently ignores a mesh swap and a move while the call still returns
-true, so the trash proxies were invisible through a whole smoke that passed. Confirm anything
-visual by hand. `[V]`
+A call that returns true has not necessarily done anything visible: a static-mobility component
+silently ignores a mesh swap and a move while the call still returns true, which is how the trash
+proxies were once invisible for a whole session. A dispatch verdict says nothing about the GPU.
+`[V]`
 
-A smoke that drives an entity through a non-representative slot can pass falsely: grabbing a pile
-by calling the grab function puts the clump in the physics-handle slot, where the native re-pile
-gate aborts, while a real press carries it in the hand slot, where the gate never fires and the
-held clump re-piles on contact. An interaction smoke drives the entity through the seam the player
-uses. `[V]`
+Driving an entity through a non-representative slot gives a false result: grabbing a pile by
+calling the grab function puts the clump in the physics-handle slot, where the native re-pile gate
+aborts, while a real press carries it in the hand slot, where the gate never fires and the held
+clump re-piles on contact. Drive the entity through the seam the player uses. `[V]`
 
 ## Needs a probe
 
