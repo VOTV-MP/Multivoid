@@ -1,4 +1,7 @@
-// coop/dev/atv_probe.cpp -- see header.
+// coop/dev/atv_probe.cpp -- the ATV probe: a per-ATV sample line every half second (the game's
+// matched four-body read, velocities, the suspension gate, vitals) and, when armed, a drive arm
+// that seats the local player through the game's own verb, releases the handbrake and pulses
+// the throttle until enough driven time is banked. See the header.
 
 #include "coop/dev/atv_probe.h"
 #include "coop/dev/atv_tire_probe.h"
@@ -36,58 +39,36 @@ bool g_checked   = false;
 bool g_installed = false;
 std::chrono::steady_clock::time_point g_firstValid{};
 
-// The arm waits this long after the FIRST sample whose body is placed, not after
-// boot: the ATV is in GUObjectArray with body=(0,0,0) for ~15 samples before its
-// components exist, and seating into a rig that is not there yet proves nothing.
+// The arm waits this long after the first sample whose body is placed, not after boot: the ATV
+// sits in GUObjectArray at the origin for many samples before its components exist.
 constexpr int kSitDelayMs = 25000;
-// How much CUMULATIVE driven time the arm wants. The 2026-08-29 baseline
-// (docs/vehicles/ATV.md 13) measured the two peers agreeing to 0.3 cm AT REST, so a
-// seated-but-stationary ATV re-measures the case that already passes; the corrector is
-// only under load while the rig is actually moving.
-//
-// CUMULATIVE, not contiguous, and that is measured: on the first run that ever drove one
-// (2026-08-30, 00:06:47) the ATV covered 9.6 m in 2.5 s at full throttle, hit something,
-// and the game RAGDOLLED the driver out at 600 cm/s -- `net: RagdollPose emit #1
-// |linVel|=600 cm/s` in the same second the seat emptied. A base full of geometry is not a
-// test track, so an arm that demands one contiguous window measures ~2 s and stops. It
-// re-seats instead, and counts only the time the rig was actually driven.
+// How much cumulative driven time the arm wants. Two peers agree to a fraction of a centimetre
+// at rest, so a seated-but-stationary ATV re-measures a case that passes; the corrector is
+// under load only while the rig moves. Cumulative, not contiguous: a base full of geometry is
+// not a test track, and a full-throttle run hits something within seconds and ragdolls the
+// driver out, so the arm re-seats and counts only the driven time.
 constexpr int kDriveMs = 20000;
-// Full throttle saturates torqAlpha (1500) in about a second and the rig is then travelling
-// fast enough that the next thing it meets ends the run. Pulsing keeps it moving -- which is
-// all the corrector needs -- without winding up to crash speed.
+// Full throttle saturates torqAlpha in about a second, and the rig then travels fast enough that
+// the next thing it meets ends the run; pulsing keeps it moving, which is all the corrector
+// needs.
 constexpr int kPulseOnMs  = 250;
 constexpr int kPulseOffMs = 750;
-// A crash costs a re-seat; cap them so a rig wedged against a wall cannot loop forever.
+// A crash costs a re-seat; capped so a rig wedged against a wall cannot loop for good.
 constexpr int kMaxReseats = 6;
-// The seat verb is refused, not queued, when the player is mid-fall (@46420) -- so a
-// refusal is worth retrying a couple of times before the arm gives up and says so.
+// The seat verb is refused, not queued, while the player is mid-fall, so a refusal is worth a
+// couple of retries.
 constexpr int kSitRetries    = 3;
 constexpr int kSitRetryMs    = 2000;
 
-// ---- the drive arm ----------------------------------------------------------------
-// ATV_C::playerSit IS A DEAD STUB on this build and four runs' worth of "SIT fired ...
-// (driven now=0)" is what that looks like from outside: it writes
-// UBER[K2Node_Event_player_18] -- a variable with ZERO readers anywhere in the ubergraph
-// -- and jumps to ExecuteUbergraph_ATV(9122), which is a bare EX_PopExecutionFlow
-// [V, disasm ATV.playerSit + ATV.ExecuteUbergraph_ATV @9122].
-//
-// The REAL seat verb is actionName(player, hit, name) with name == "sit" -> uber @46046,
-// and it is gated three deep before it reaches the seat body at @5616 [V, disasm]:
-//     @46420   |player.fallVeloc.Z| < 800        else -> punched off (@46870)
-//     @46522   player.checkEquip() reports EMPTY  else -> addHint  (@46753)
-//     @46645   playerHit overlaps NOTHING at [0]  else -> addHint  (@46659)
-// The seat body attaches + teleports the player onto playerHit, possesses the ATV, and
-// sets isDriven := true (@6227) -- so it needs no proximity of its own, which is why the
-// arm may call it from wherever the player happens to have spawned.
-//
-// Torque then needs BOTH isDriven (@29949 gates applyWheelTorque) and a non-zero
-// torqAlpha, and torqAlpha's producer BAILS WHOLE at @34866 on
-//     empty || brake || brokenn || underwater || battery <= 0
-// A parked ATV sits on its handbrake, so the arm releases it through the game's own
-// setBrake() (the exact pair the BP itself runs at @7215-7226) rather than poking the
-// physics. Everything the arm writes -- brake, input_forward -- is written by the game's
-// own key handlers to the same field (@23105, @24061), so this is the input path, not a
-// side door into it.
+// The drive arm. ATV_C::playerSit is not the seat path; the seat verb is actionName(player,
+// hit, name) with name "sit", gated three deep: the player's fall velocity, empty hands
+// (checkEquip) and an unoccupied seat overlap. The seat body attaches and teleports the player
+// onto the seat, possesses the ATV and sets isDriven, so it needs no proximity, which is why
+// the arm may call it from wherever the player spawned. Torque then needs isDriven and a
+// non-zero torqAlpha, whose producer bails whole on empty, brake, brokenn, underwater or a dead
+// battery. A parked ATV sits on its handbrake, so the arm releases it through the game's own
+// setBrake; brake and input_forward are the fields the game's own key handlers write, so this
+// is the input path.
 enum class Arm { Wait, Sit, Drive, Done };
 Arm g_arm = Arm::Wait;
 int  g_sitTries = 0;
@@ -98,11 +79,8 @@ long long g_drivenMs = 0;     // cumulative time the rig was ACTUALLY driven
 int  g_reseats   = 0;
 bool g_pulseOn   = false;
 std::chrono::steady_clock::time_point g_pulseEdge{};
-// USER 2026-08-30: a run must END when its evidence is collected -- the fixed --duration
-// left the driver parked near water for minutes after the arm finished ("игрок всё равно
-// умирает когда... заезжаешь в реку"), and the windows sat until the timer. The probe now
-// ANNOUNCES completion: Arm::Done + a settle window (A2 reads the settled tail, ATV.md 17.1)
-// -> ONE `[ATV-PROBE] DONE` line that mp.py's --done-marker kills the run on.
+// A run ends when its evidence is collected: once the arm is done and a settle window has
+// passed, one DONE line is printed, which mp.py's --done-marker ends the run on.
 constexpr int kDoneSettleMs = 30000;
 std::chrono::steady_clock::time_point g_armDoneAt{};
 bool g_doneAnnounced = false;
@@ -129,39 +107,23 @@ bool WriteBool(void* obj, const BoolField& f, bool v) {
     return true;
 }
 
-// Field offsets the ue_wrap ATV surface does not expose (it has fuel/health/brake).
-// Resolved by NAME -- an offset literal here would be a second copy of the version
-// surface that docs/VERSION_MIGRATION.md exists to keep to two files.
+// Field offsets the ue_wrap ATV surface does not expose, resolved by name.
 int32_t g_batteryOff = -1;
 int32_t g_dirtOff    = -1;
 int32_t g_dirtVelOff = -1;
-// THE VALUE THE TICK GATES ITS SUSPENSION ON -- and the one nothing had ever read.
-// ExecuteUbergraph_ATV expr 1228-1229 is `Array_Contains(wheelsOnSurface, ..)` -> EX_JumpIfNot
-// guarding expr 1230-1237, which ends in `mesh.AddForce(GetUpVector * ..)`; the same test at
-// 1198-1202 picks the SelectFloat that becomes SetMassScale on backWheelRoot/frontWheel_L/R.
-// The array is written from inside the WHEEL ComponentHit segments (exprs 366-379 and 577-586,
-// beside processTire and checkAirtime) -- i.e. by the very delegates atv_hit_guard cancels on
-// every non-owner. If a mirror's count is 0 while its author's is not, the mirror is a rig
-// whose suspension WE switched off, and every pose correction this lane makes is being applied
-// to a vehicle that is already sitting wrong.
+// The value the tick gates its suspension on: Array_Contains(wheelsOnSurface, ...) guards the
+// up-force and picks the mass scale on the wheel roots, and the array is written from inside
+// the wheel hit delegates, the ones atv_hit_guard cancels on every non-owner. A mirror whose
+// count is zero while its author's is not is a rig whose suspension we switched off.
 int32_t g_wheelsOnSurfaceOff = -1;   // TArray: Num is the int32 at +8
 int32_t g_airtimeOff         = -1;
 int32_t g_tirescountOff      = -1;
 bool    g_offsResolved = false;
 
-// THE VALUES, NOT THE LENGTH -- and the first version of this read got that wrong.
-// `wheelsOnSurface` is a TArray<bool> whose CDO default ALREADY has four elements
-// [false,false,false,false] (ATV.json Exports[246]/Data[8]), so its Num is 4 BY CONSTRUCTION and
-// answers nothing. The tick's gate is `Array_Contains(wheelsOnSurface, <a wheel>)`, which tests
-// the four VALUES. Reading Num printed `wos=4` on both peers in every run -- including on an
-// actor whose transform did not exist yet -- and that non-answer was then written into
-// docs/vehicles/ATV.md 17.3 as evidence that the array "is not the live contact set". It was
-// evidence of nothing. Caught by the post-ship audit of the very commit whose thesis was "the
-// instrument was blind to the axis that failed".
-//
-// Layout: FScriptArray = {void* Data; int32 Num; int32 Max} (the dump's ElementSize 16 confirms
-// it). A TArray<bool> stores one BYTE per element -- it is not TBitArray. Returns a 4-bit mask,
-// or -1 for unreadable, which must stay distinguishable from 0 ("no wheel is on a surface").
+// The values, not the length: wheelsOnSurface is a TArray<bool> whose default already has four
+// elements, so its Num is 4 by construction, and the tick's gate tests the four values. A
+// TArray<bool> stores one byte per element. Returns a 4-bit mask, or -1 for unreadable, which
+// must stay distinguishable from 0.
 int32_t WheelsOnSurfaceMask(void* obj, int32_t off) {
     if (!obj || off < 0) return -1;
     uint8_t* arr = reinterpret_cast<uint8_t*>(obj) + off;
@@ -175,10 +137,8 @@ int32_t WheelsOnSurfaceMask(void* obj, int32_t off) {
     return mask;
 }
 
-// tirescount is an IntProperty (ATV.json: SerializedType=IntProperty, ElementSize 4). Reading it
-// with ReadFloat type-punned 4 into 5.6e-45, which "%.1f" prints as a perfectly plausible 0.0 --
-// on both peers, in every run. The -1 sentinel could not fire because the offset RESOLVES; the
-// failure mode is a third one the sentinel was never designed for: read, wrong type, plausible.
+// tirescount is an IntProperty; read as a float it type-puns 4 into a value that prints as a
+// plausible 0.0.
 int32_t ReadInt(void* obj, int32_t off) {
     if (!obj || off < 0) return -1;
     return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(obj) + off);
@@ -186,7 +146,7 @@ int32_t ReadInt(void* obj, int32_t off) {
 
 void* g_partsFn = nullptr;   // ATV_C::vehicleGetParts (8 out-params, no in-params)
 
-// The hub hands us matches into `g_pending`; `g_atvs` is the completed swap.
+// The hub hands matches into `g_pending`; `g_atvs` is the completed swap.
 std::vector<void*> g_pending;
 std::vector<void*> g_atvs;
 
@@ -194,14 +154,9 @@ std::chrono::steady_clock::time_point g_lastSample{};
 uint32_t g_sample = 0;
 
 constexpr int kSampleMs = 500;
-// THE COUNTERS HAVE TO REACH A LOG THE ARCHIVE HAS. atv_sync prints the hit-guard and corrector
-// tallies exactly once, from OnDisconnect -- and every autonomous scenario KILLS both peers
-// rather than disconnecting, so that line is absent from all 18 archived runs. The acceptance
-// arm that reads them (A3's "armed but NEVER FIRED" check) has therefore never been able to fire
-// on real evidence, and the 2026-08-30 mask change -- five delegates per non-owner that now
-// dispatch instead of being cancelled -- was invisible to every counter in the tree. Emitting
-// them from the probe costs three relaxed atomic loads every 10 s and puts them where the
-// evidence store already looks.
+// The counters have to reach a log the archive has: atv_sync prints the hit-guard and corrector
+// tallies once, from OnDisconnect, and every autonomous scenario kills both peers rather than
+// disconnecting. Three relaxed loads every 10 s.
 constexpr int kCounterLogMs = 10000;
 std::chrono::steady_clock::time_point g_lastCounterLog{};
 
@@ -219,9 +174,8 @@ bool ResolveOffsets() {
     g_torqOff    = R::FindPropertyOffset(cls, L"torqAlpha");
     g_speedOff   = R::FindPropertyOffset(cls, L"speed");
 
-    // The drive arm's own surface. Resolved unconditionally (not behind the arm flag) so
-    // a run whose arm never fires still records WHICH of these was missing -- an arm that
-    // silently cannot fire is the failure this whole rewrite exists to end.
+    // The arm's own surface, resolved whether or not the arm is armed, so a run whose arm never
+    // fires still records which of these was missing.
     g_actionNameFn = R::FindFunction(cls, L"actionName");
     g_dismountFn   = R::FindFunction(cls, L"dismount");
     g_setBrakeFn   = R::FindFunction(cls, L"setBrake");
@@ -244,24 +198,13 @@ bool ResolveOffsets() {
     return true;
 }
 
-// CAN WE WRITE THE WHOLE RIG, OR ONLY ITS ROOT?
-//
-// The lane's live question (docs/vehicles/ATV.md 0.4 / 9.4): every write we make to a mirrored
-// ATV addresses ONE of its five bodies. `TeleportRig` escapes that because the game's own
-// `teleportVehicle` re-places the wheels; our velocity write does not, because
-// SetActorRootPhysicsVelocity resolves to UPrimitiveComponent::SetPhysicsLinearVelocity on the
-// ROOT component only (engine_attach.cpp:182-196), and the four wheels are separate COMPONENTS,
-// not extra bodies inside the root -- so `SetAllPhysicsLinearVelocity` would not reach them
-// either. A rig-wide write therefore needs the component pointers, and nothing has ever checked
-// that they are reachable. This census answers exactly that, once, from a live ATV: which of the
-// rig's component properties exist on ATV_C, which are non-null on an instance, and what class
-// each is. If they resolve, the class fix is buildable; if they do not, the invariant "never
-// author a five-body rig from one body" needs a different instrument and we learn that BEFORE
-// designing around it rather than after.
-//
-// Names are the components the seven ComponentHit delegates are bound to (atv.cpp
-// kHitDelegateNames), plus `car1_frontWheel_L`, which appears in no delegate name and may
-// therefore not exist -- a NOT-FOUND on it is data, not a failure.
+// Can the whole rig be written, or only its root? Every write to a mirrored ATV addresses one
+// of its five bodies: the game's own teleportVehicle re-places the wheels, but the velocity
+// write reaches the root component only, and the four wheels are separate components. A
+// rig-wide write needs the component pointers, and this census answers, once, from a live ATV,
+// which of the rig's component properties exist, which are non-null on an instance and what
+// class each is. The names are the components the hit delegates are bound to, plus
+// car1_frontWheel_L, which appears in no delegate name and may not exist; a miss on it is data.
 const wchar_t* const kRigComponentNames[] = {
     L"mesh",
     L"car1_Capsule",
@@ -306,9 +249,8 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// The five terms @34866 ORs together to skip the torque block whole, plus what the
-// throttle actually produced. Logged every sample while driving, so a run in which the
-// ATV never moves names its own reason instead of leaving the corrector to be blamed.
+// The five terms that skip the torque block whole, plus what the throttle produced. Logged every
+// sample while driving, so a run in which the ATV never moves names its own reason.
 void LogGates(void* atv, const char* phase) {
     UE_LOGI("[ATVP] ARM %s: driven=%d empty=%d brake=%d broken=%d underwater=%d batt=%.2f "
             "fwd=%d torq=%.3f speed=%.2f",
@@ -319,7 +261,7 @@ void LogGates(void* atv, const char* phase) {
             ReadFloat(atv, g_torqOff), ReadFloat(atv, g_speedOff));
 }
 
-// ---- scan-hub consumer ------------------------------------------------------------
+// The scan-hub consumer.
 bool HubEnsure()            { return ue_wrap::atv::EnsureResolved(); }
 bool HubIsInstance(void* o) { return ue_wrap::atv::IsAtv(o); }
 void HubPassBegin(void*, bool)  { g_pending.clear(); }
@@ -330,13 +272,12 @@ size_t HubPassComplete(void*, bool, uint32_t) {
     return g_atvs.size();
 }
 
-// One ATV, one line. Everything here is a READ.
+// One ATV, one line. Everything here is a read.
 void SampleOne(void* atv, size_t idx) {
     const std::wstring key = ue_wrap::atv::GetKeyString(atv);
 
-    // The game's own matched 4-body read. If it is unavailable we still log the
-    // vitals half rather than dropping the sample -- a partial line is evidence,
-    // a missing line is ambiguous between "not resolved" and "no ATV".
+    // The game's own matched four-body read. Unavailable, the vitals half is still logged: a
+    // partial line is evidence, a missing line is ambiguous.
     ue_wrap::FVector bodyL{}, frL{}, flL{}, bkL{};
     ue_wrap::FRotator bodyR{};
     bool haveParts = false;
@@ -352,26 +293,19 @@ void SampleOne(void* atv, size_t idx) {
         }
     }
 
-    // THE QUANTITY THE CORRECTOR WRITES, and the one nothing has ever measured. Three driven
-    // runs showed a mirror sinking 23-40 cm the instant it stopped authoring, and the archive
-    // could not say whether the lane wrote a downward velocity onto it or ratcheted it down over
-    // many packets, because no sample carried a velocity at all. A verdict about a value the
-    // instrument never records is a guess with a citation. Root body only -- the same body
-    // SetActorRootPhysicsVelocity writes, so the two are comparable by construction.
-    // BOTH components. velA was filled and discarded until 2026-08-30, and it is the one
-    // quantity that explains why a parked author still routed packets onto the write path --
-    // measured and thrown away is the same blindness as not measured at all.
+    // The quantity the corrector writes: the root body only, the same body the velocity write
+    // addresses, so the two are comparable. Both components; the angular one explains why a parked
+    // author still routed packets onto the write path.
     ue_wrap::FVector velL{}, velA{};
     ue_wrap::engine::GetActorRootPhysicsVelocity(atv, velL, velA);
 
     CensusRigComponents(atv);
 
-    // wos: how many wheels the rig believes are touching a surface (the suspension gate).
-    // mass: the root body's, so a "the mirror is configured differently" reading is available
-    // in the same line rather than needing a second run.
+    // wos: the wheels the rig believes are on a surface (the suspension gate); mass: the root
+    // body's, so a configuration difference is readable in the same line.
     const int32_t wos      = WheelsOnSurfaceMask(atv, g_wheelsOnSurfaceOff);
-    const float   airtime  = ReadFloat(atv, g_airtimeOff);      // FloatProperty [V]
-    const int32_t tirescnt = ReadInt(atv, g_tirescountOff);     // IntProperty  [V]
+    const float   airtime  = ReadFloat(atv, g_airtimeOff);      // a float
+    const int32_t tirescnt = ReadInt(atv, g_tirescountOff);     // an int
     const float   mass     = ue_wrap::engine::GetActorRootMass(atv);
 
     const float fuel    = ue_wrap::atv::GetFuel(atv);
@@ -381,23 +315,19 @@ void SampleOne(void* atv, size_t idx) {
     const float dirtVel = ReadFloat(atv, g_dirtVelOff);
     const bool  driven  = ue_wrap::atv::IsDriven(atv);
     const void* occ     = ue_wrap::atv::GetOccupantPlayer(atv);
-    // WHICH SIDE OF THE MIRROR is this sample from? The 2026-08-29 run could not say, so
-    // docs/vehicles/ATV.md 11.1 stayed open even though the probe ran perfectly: an idle ATV is
-    // never mirrored, and nothing asserted the receiver was actually mirroring during the driven
-    // window. Read through atv_sync's own published set rather than recomputing the predicate --
-    // an instrument that reimplements the code under test agrees with itself, not with it.
+    // Which side of the mirror this sample is from, read through atv_sync's own published set
+    // rather than a re-derived predicate: an instrument that reimplements the code under test
+    // agrees with itself, not with it.
     const bool  ownsTick = coop::atv_sync::OwnsTick(atv);
 
-    // The TIRE state rides its own line and its own TU (coop/dev/atv_tire_probe): the four
-    // arrays are the only OBSERVABLE of a defect whose verb (`processTire`) is dispatched
-    // EX_LocalVirtualFunction and therefore cannot be hooked at all. Emitted before the
-    // parts branch so an [ATVT] line exists even on a sample that has no rig read.
+    // The tire state rides its own line and its own TU: the four arrays are the only observable of
+    // a defect whose verb (processTire) dispatches EX_LocalVirtualFunction and cannot be hooked.
+    // Emitted before the parts branch, so a tire line exists even without a rig read.
     coop::atv_tire_probe::Sample(atv, idx, key.c_str(), ownsTick, g_sample);
 
     if (haveParts) {
-        // |wheel - body| is ROTATION-INVARIANT, so it isolates suspension travel from
-        // the body tipping/turning. A rigid frozen rig holds these three constant to
-        // the bit; a live one breathes. THIS is the frozen-corpse measurement.
+        // The wheel-to-body distances are rotation-invariant, so they isolate suspension travel
+        // from the body tipping; a frozen rig holds them to the bit, a live one breathes.
         const float dFR = Dist(frL, bodyL), dFL = Dist(flL, bodyL), dBK = Dist(bkL, bodyL);
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
@@ -410,12 +340,10 @@ void SampleOne(void* atv, size_t idx) {
                 bodyL.X, bodyL.Y, bodyL.Z, bodyR.Pitch, bodyR.Yaw, bodyR.Roll,
                 velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
                 frL.Z, flL.Z, bkL.Z,
-                // RIDE HEIGHT: the body's Z above the mean of its own three rig bodies. This is
-                // the term susFR/FL/BK cannot express -- they are 3-D distances over a ~92 cm
-                // mostly-HORIZONTAL arm, so a 40 cm VERTICAL deformation moves them by ~1.1 cm,
-                // inside the "2-4 cm of normal travel" band the acceptance arm is built on. The
-                // lane graded itself green on a quantity ~36x blind to the only axis that ever
-                // failed. Computed here, in the sample, so no consumer can forget it.
+                // The ride height, the body's Z above the mean of its three rig bodies: the wheel
+                // distances are 3-D lengths over a mostly horizontal arm, so a 40 cm vertical
+                // deformation moves them about a centimetre, inside the normal-travel band, blind
+                // to the one axis that ever failed.
                 bodyL.Z - (frL.Z + flL.Z + bkL.Z) / 3.f,
                 wos, airtime, tirescnt, mass,
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
@@ -435,15 +363,10 @@ void SampleOne(void* atv, size_t idx) {
     }
 }
 
-// Is there ANOTHER peer whose world is loaded -- i.e. somebody who can mirror this rig?
-//
-// The scan starts at slot 0 and skips OUR OWN slot, which is the whole subtlety and cost a
-// run to find. `slotWorldReady_` means different things on the two roles [V,
-// subsystems.cpp:356 + event_feed.cpp:236]: a HOST marks a CLIENT slot when that client
-// announces ClientWorldReady, while a CLIENT marks SLOT 0 at its connect edge because "the
-// host always has a world". A loop over slots 1..N is therefore correct on a host and
-// vacuously false on a client -- which is exactly what the drive arm reported for a whole
-// 150 s run once the arm moved to the client ("no peer is world-ready yet", forever).
+// Is there another peer whose world is loaded, somebody who can mirror this rig? The scan
+// starts at slot 0 and skips our own: the world-ready flag means different things per role (a
+// host marks a client slot on its ClientWorldReady; a client marks slot 0 at its connect edge),
+// so a loop over slots 1..N is correct on a host and vacuously false on a client.
 bool AnyPeerWorldReady(coop::net::Session& s) {
     const int mine = static_cast<int>(coop::players::Registry::Get().LocalPeerId());
     for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
@@ -479,13 +402,10 @@ void Install() {
     UE_LOGI("atv_probe: scan-hub consumer registered");
 }
 
-// WHICH of the seat verb's three gates refused. Two of them are cheap and side-effect
-// free, so the arm measures them instead of leaving the next reader to guess:
-//   @46420  |player.fallVeloc.Z| < 800   -- a plain struct field read
-//   @46522  player.checkEquip() -> empty -- [V, disasm] a PURE read: it casts holding_actor,
-//           reads its data and sets `empty = !IsValidClass(data.class)`. Nothing is mutated.
-// The third (@46645, playerHit overlapping nothing) is left to elimination, and the ATV's own
-// occupant pointer is printed beside it as the nearest cheap proxy.
+// Which of the seat verb's three gates refused. Two are cheap and side-effect free (the fall
+// velocity is a field read; checkEquip is a pure read of the held item), so the arm measures
+// them; the third (the seat overlap) is left to elimination, with the occupant pointer as the
+// nearest proxy.
 void DiagnoseSeatRefusal(void* local, void* atv) {
     void* pcls = R::ClassOf(local);
     float fallZ = 0.f;
@@ -522,8 +442,8 @@ void DiagnoseSeatRefusal(void* local, void* atv) {
             holdingClass.c_str(), ue_wrap::atv::GetOccupantPlayer(atv));
 }
 
-// Seat the local player through the game's own interaction verb. Returns true once the
-// arm is finished with the seat attempt (seated, or out of retries).
+// Seat the local player through the game's own verb. True once the arm is finished with the
+// attempt (seated, or out of retries).
 bool TrySit(void* atv) {
     if (!g_actionNameFn) {
         UE_LOGW("[ATVP] ARM sit: actionName unresolved -- arm cannot fire");
@@ -532,10 +452,8 @@ bool TrySit(void* atv) {
     void* local = coop::players::Registry::Get().Local();
     if (!local) return false;   // not in gameplay yet; retry next tick
 
-    // The verb dispatches on a STRING compare (@46046 NotEqual_StriStri(name, 'sit')), so
-    // the frame carries a real FString. It aliases this local for the duration of the
-    // synchronous ProcessEvent and the callee only compares it -- the same convention
-    // asset_load's LoadObject path uses.
+    // The verb dispatches on a string compare, so the frame carries a real FString aliasing this
+    // local for the synchronous call; the callee only compares it.
     std::wstring verb = L"sit";
     R::FString fs{ verb.data(),
                    static_cast<int32_t>(verb.size()) + 1,
@@ -554,9 +472,8 @@ bool TrySit(void* atv) {
     if (driven) return true;
     DiagnoseSeatRefusal(local, atv);
     if (g_sitTries >= kSitRetries) {
-        // Name the three gates so the next reader does not re-disassemble them. We cannot
-        // read checkEquip or the seat overlap from here without calling into the player,
-        // which would be a second write; the log says what to check instead.
+        // The three gates are named in the log; the seat overlap cannot be read without a second
+        // write into the player.
         UE_LOGW("[ATVP] ARM sit: REFUSED %d times -- the seat verb is gated on "
                 "|fallVeloc.Z|<800, empty hands (checkEquip), and an unoccupied playerHit "
                 "[disasm @46420/@46522/@46645]; the run cannot exercise the corrector",
@@ -566,8 +483,8 @@ bool TrySit(void* atv) {
     return false;
 }
 
-// Release the handbrake and hold the throttle. Both fields are the ones the game's own
-// key handlers write (@7215-7226, @23105) -- setBrake() is what makes `brake` physical.
+// Release the handbrake and hold the throttle: the fields the game's own key handlers write;
+// setBrake is what makes `brake` physical.
 void StartDrive(void* atv) {
     LogGates(atv, "pre-drive");
     if (ReadBool(atv, g_bBrake)) {
@@ -633,8 +550,7 @@ void Tick(coop::net::Session& session, bool isHost) {
                 static_cast<unsigned long long>(cc.warps),
                 static_cast<unsigned long long>(cc.stallWarps),
                 static_cast<unsigned long long>(cc.restPlaces));
-        // v147 condition lane -- the acceptance arms' counters ((b)/(b2)/(d) read exactly
-        // these; they are OUR apply-site counts, blind to the game's own reducer callers).
+        // The condition lane's counters: our apply-site counts, blind to the game's own callers.
         const auto cd = coop::atv_condition_sync::ReadCounters();
         UE_LOGI("[ATVP] condition applied=%llu verbs tires=%llu dirt=%llu spare=%llu health=%llu "
                 "presence-skipped-differing=%llu deferred=%llu invalid-blocks=%llu",
@@ -648,9 +564,7 @@ void Tick(coop::net::Session& session, bool isHost) {
                 static_cast<unsigned long long>(cd.invalidBlocks));
     }
 
-    // Evidence-complete announce (see the constants block): once the drive arm is Done and
-    // the settle window has passed, say so ONCE -- mp.py --done-marker ends the run on this
-    // line instead of idling out --duration next to a river.
+    // The evidence-complete announce: once the arm is done and the settle window has passed, once.
     if (g_sitArmed && g_arm == Arm::Done && !g_doneAnnounced) {
         if (g_armDoneAt.time_since_epoch().count() == 0) {
             g_armDoneAt = now;
@@ -662,34 +576,22 @@ void Tick(coop::net::Session& session, bool isHost) {
         }
     }
 
-    // WHICH PEER DRIVES IS THE INI'S CALL, not this file's. The arm used to be host-only,
-    // and on 2026-08-29 that made it unrunnable: the seat verb refuses a player whose hands
-    // are full (@46522), and the host's save has him holding a prop_coingun_C -- MEASURED,
-    // gates 1 and 3 passed. The alternatives were to make the arm put the item away (a
-    // world mutation inside a measurement run) or to let the peer with empty hands drive.
-    // The second costs nothing and tests the HARDER direction: a client-authored ATV, with
-    // the host as the mirror, which is the authority path `authorSlot` exists for. So the
-    // arm runs wherever [dev] atv_probe_sit=1 is set -- set it on exactly ONE peer, or two
+    // Which peer drives is the ini's call: the seat verb refuses a player whose hands are full, and
+    // a host's save may have him holding something, while the client-authored direction is the
+    // harder one (the host as the mirror). Set [dev] atv_probe_sit=1 on exactly one peer, or two
     // authors race for the same rig.
     (void)isHost;
     if (!g_sitArmed || g_arm == Arm::Done || g_atvs.empty()) return;
 
-    // TARGET LATCH, and WHERE it happens is the whole point. g_atvs is rebuilt every scan
-    // pass and index 0 is not a stable identity, so the arm must hold ONE actor across the
-    // drive -- otherwise it could throttle one ATV and dismount another. But latching on
-    // the first tick is worse: measured 2026-08-29, index 0 is a PLACED actor on pass 1 and
-    // an UNPLACED one on passes 2-3 (the same key, the same index), so an early latch
-    // pinned a rig that never left the origin and the arm waited out the entire run
-    // reporting "not placed" while the sampler happily logged a placed body 2x/s. So the
-    // latch happens at the SIT edge -- after the rig is proven placed -- and only then.
+    // The target latch. g_atvs is rebuilt every pass and index 0 is not a stable identity, so the
+    // arm holds one actor across the drive; but index 0 can be a placed actor on one pass and an
+    // unplaced one on the next, so the latch happens at the sit edge, after the rig is proven
+    // placed.
     void* atv = g_armAtv ? g_armAtv : g_atvs[0];
 
     if (g_arm == Arm::Wait) {
-        // SAY WHY WE ARE STILL WAITING. The first build of this gate had four silent
-        // early-returns and a run came back with 282 samples and not one ARM line -- the
-        // arm can fail to fire for four different reasons and none of them left a trace
-        // (docs/LESSONS.md, "a counter you never print is not an instrument"). Every ~5 s
-        // while waiting, name the blocking condition.
+        // Say why we are still waiting: the gate can fail to fire for four reasons, and every few
+        // seconds the blocking one is named.
         static uint64_t s_lastWhyMs = 0;
         const uint64_t nowMs =
             static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -697,15 +599,15 @@ void Tick(coop::net::Session& session, bool isHost) {
         const bool why = (nowMs - s_lastWhyMs) >= 5000;
         if (why) s_lastWhyMs = nowMs;
 
-        // Clock the delay from the first sample that is BOTH placed and mirrored-by-somebody.
-        // Anchoring on the ATV alone would open the drive window while the client is still
-        // downloading the save, and the run would grade a mirror that did not exist yet.
+        // The delay is clocked from the first sample that is both placed and mirrored by somebody;
+        // anchored on the ATV alone, the drive window would open while the client still downloads
+        // the save.
         if (!AnyPeerWorldReady(session)) {
             if (why) UE_LOGI("[ATVP] ARM wait: no peer is world-ready yet");
             g_firstValid = {};
             return;
         }
-        // Clock the delay from the first PLACED sample, not from boot.
+        // Clocked from the first placed sample, not from boot.
         ue_wrap::FVector loc{}; ue_wrap::FRotator rot{};
         if (!ue_wrap::atv::GetRootTransform(atv, loc, rot)) {
             if (why) UE_LOGW("[ATVP] ARM wait: GetRootTransform(%p) failed", atv);
@@ -754,9 +656,8 @@ void Tick(coop::net::Session& session, bool isHost) {
     if (g_arm == Arm::Drive) {
         LogGates(atv, "driving");
 
-        // Bank only the time the rig was genuinely driven. A crash empties the seat and the
-        // clock must not keep running through the recovery, or the arm would "finish" having
-        // measured two seconds.
+        // Only genuinely driven time is banked: a crash empties the seat, and the clock must not
+        // run through the recovery.
         const long long dt = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - g_lastDriveSample).count();
         g_lastDriveSample = now;
@@ -764,8 +665,8 @@ void Tick(coop::net::Session& session, bool isHost) {
         if (driven) g_drivenMs += dt;
 
         if (!driven) {
-            // Ejected. Re-seat through the same verb; the seat body teleports the player in,
-            // so it works from wherever the ragdoll came to rest.
+            // Ejected. Re-seat through the same verb; the seat body teleports the player in, so it
+            // works from wherever the ragdoll came to rest.
             if (g_reseats >= kMaxReseats) {
                 UE_LOGW("[ATVP] ARM: ejected %d times and out of re-seats -- banked %lld ms "
                         "of driven time (wanted %d)", g_reseats, g_drivenMs, kDriveMs);
@@ -783,7 +684,7 @@ void Tick(coop::net::Session& session, bool isHost) {
             return;
         }
 
-        // Pulse the throttle rather than holding it: see kPulseOnMs.
+        // Pulse the throttle rather than holding it (kPulseOnMs).
         const long long sinceEdge = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - g_pulseEdge).count();
         if (sinceEdge >= (g_pulseOn ? kPulseOnMs : kPulseOffMs)) {
