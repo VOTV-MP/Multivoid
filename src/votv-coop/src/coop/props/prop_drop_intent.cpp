@@ -8,7 +8,7 @@
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
-#include "coop/props/container_contents_sync.h"  // v126 (#4): TakeObjInFlight -- mark a container-extraction birth
+#include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
@@ -16,15 +16,14 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/actors/prop.h"                   // IsDescendantOfProp, GetInteractableKeyString,
-                                            // GetPropNameString, WriteSpParityIdentity
+#include "ue_wrap/actors/prop.h"                   // the prop lineage, key, name and parity-identity accessors
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
-#include "ue_wrap/desk/tape_caddy.h"            // v114 (L7): IsReelClass whitelist + the Progress birth scalar
-#include "ue_wrap/desk/phys_mods.h"             // v118 (L8): IsModuleClass whitelist
-#include "coop/interactables/physmods_sync.h"   // v118 (L8): the denied-birth reap
-#include "coop/interactables/drive_sync.h"      // v119 (L5): the denied rack-take reap
-#include "ue_wrap/desk/drive_chain.h"           // v119 (L5): IsDriveClass whitelist
+#include "ue_wrap/desk/tape_caddy.h"            // IsReelClass whitelist + the Progress birth scalar
+#include "ue_wrap/desk/phys_mods.h"             // IsModuleClass whitelist
+#include "coop/interactables/physmods_sync.h"   // the denied-birth reap
+#include "coop/interactables/drive_sync.h"      // the denied rack-take reap
+#include "ue_wrap/desk/drive_chain.h"           // IsDriveClass whitelist
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
 
@@ -47,7 +46,7 @@ namespace PT = coop::prop_element_tracker;
 std::atomic<coop::net::Session*> g_session{nullptr};
 inline coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
 
-// ---- CLIENT place-detection state (game-thread only) ----------------------
+// The client place-detection state, game thread only.
 void* g_finishSpawnFn = nullptr;  // GameplayStatics.FinishSpawningActor (resolved once)
 bool  g_installed     = false;    // InstallPostHook done (chain once, not per tick)
 
@@ -55,29 +54,30 @@ struct PendingPlace {
     void*   actor = nullptr;
     int32_t idx   = -1;
     int     tries = 0;   // net-pump ticks waited for the loadData Key restore
-    // v126 (container profile #4): true when this entry is the actor a CONTAINER takeObj just
-    // materialized (the takeObj-in-flight latch was live at enqueue). Admitted at drain as a
-    // host-authoritative drop intent -- the client-extracted item's world actor is invisible to
-    // the host otherwise (the freshBirth whitelist only covers reel/module/drive births).
+    // True when this entry is the actor a container extraction just materialised (the
+    // extraction-in-flight latch was live at enqueue). Admitted at drain as a host-authoritative
+    // drop intent, since the client-extracted item's world actor is invisible to the host
+    // otherwise (the fresh-birth whitelist covers only reel, module and drive births).
     bool    containerExtract = false;
 };
 std::vector<PendingPlace> g_pending;         // GT-only
 constexpr size_t kMaxPending  = 32;          // runaway backstop (a settled client rarely has >1 in flight)
 constexpr int    kMaxKeyTries = 8;           // ~8 net-pump ticks (~64 ms) for the Key to restore, then give up
 
-// ---- park set: keys the CLIENT locally destroyed (pickup) and may re-place --
-// A bounded FIFO SET. NoteClientKeyedDestroy inserts; a matching place consumes; overflow evicts the
-// oldest. The invariant it guards: only author a drop intent for a key whose pickup-DESTROY already
-// crossed to the host (host destroyed its copy) => the host re-spawn creates exactly ONE prop.
-// INVARIANT: g_parkedKeys and g_parkFifo hold EXACTLY the same keys -- every insert/consume/evict
-// touches BOTH (a consume that dropped only the set desynced them: a re-parked same-key prop then had
-// TWO FIFO copies, and after kMaxParked cycles the evict popped a stale copy and erased the LIVE
-// entry -> the place stopped syncing; audit 2026-07-09 MEDIUM).
+// The park set: keys the client locally destroyed (a pickup) and may re-place. A bounded FIFO
+// set: the keyed-destroy note inserts, a matching place consumes, overflow evicts the oldest.
+// The invariant it guards: only author a drop intent for a key whose pickup destroy already
+// crossed to the host (the host destroyed its copy), so the host re-spawn creates exactly one
+// prop. The set and the FIFO hold exactly the same keys, and every insert, consume and evict
+// touches both: a consume that dropped only the set desynced them, a re-parked same-key prop
+// then had two FIFO copies, and after enough cycles the evict popped a stale copy and erased
+// the live entry, so the place stopped syncing.
 std::unordered_set<std::wstring> g_parkedKeys;   // GT-only
 std::deque<std::wstring>         g_parkFifo;      // GT-only (eviction order); mirrors g_parkedKeys 1:1
 constexpr size_t kMaxParked = 64;
 
-// Remove a key from BOTH containers (consume / any targeted un-park), preserving the mirror invariant.
+// Remove a key from both containers (a consume, or any targeted un-park), preserving the
+// mirror invariant.
 void UnparkKey(const std::wstring& key) {
     if (g_parkedKeys.erase(key) == 0) return;   // not parked -> FIFO can't hold it either (invariant)
     for (auto it = g_parkFifo.begin(); it != g_parkFifo.end(); ++it) {
@@ -85,7 +85,7 @@ void UnparkKey(const std::wstring& key) {
     }
 }
 
-// Fill a fixed-size wire short-string (WireKey/WireClassName share the {len,data[]} shape).
+// Fill a fixed-size wire short string (the key and class-name fields share the shape).
 template <size_t N>
 void FillWireStr(uint8_t& len, char (&data)[N], const std::wstring& s) {
     len = 0;
@@ -100,22 +100,21 @@ std::wstring WireToWide(const uint8_t len, const char* data, size_t cap) {
     return w;
 }
 
-// The CLIENT FinishSpawn post-hook: enqueue a fresh, untracked, non-echo keyed Aprop_C spawn in a
-// SETTLED session for place-detection. Chains after host_spawn_watcher's callback on the same
-// UFunction; role-disjoint (host_spawn_watcher's is host-only, this is client-only). Runs on the
-// dispatching thread -- FinishSpawningActor is game-thread only in UE4 (actor construction).
+// The client finish-spawn post-hook: enqueue a fresh, untracked, non-echo keyed prop spawn in
+// a settled session for place detection. Chains after the host spawn watcher's callback on
+// the same UFunction, role-disjoint (that one is host-only, this client-only). Runs on the
+// dispatching thread; the finish spawn is game-thread only in UE4 (actor construction).
 void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     if (!GT::IsGameThread()) return;
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
     if (s->role() != coop::net::Role::Client) return;      // host places broadcast via host_spawn_watcher
-    // R-4a end-condition: quiet during the load episode AND the reconcile window's kind==load
-    // segments (the join/reload bracket -- the [PROP-DROP] x242 field flood was class-B spawn
-    // churn inside the bracket; PeekIncomingSpawn below already cause-scopes OUR applies out).
-    // kind==midSessionBracket does NOT suppress: a client's genuine place has NO other delivery
-    // channel (the census express is host-only) and the re-bracket sweep would doom it --
-    // intent -> host spawn -> express -> claim must flow. Design doc
-    // votv-r4a-end-condition-DESIGN-2026-08-23.md; WARN latch mirrors the destroy seam's.
+    // The end condition: quiet during the load episode and the reconcile window's load-kind
+    // segments (the join and reload bracket, whose spawn churn flooded this path; the echo peek
+    // below already scopes our own applies out). A mid-session bracket does not suppress: a
+    // client's genuine place has no other delivery channel (the census express is host-only)
+    // and the re-bracket sweep would doom it, so intent, host spawn, express, claim must flow.
+    // The warning latch mirrors the destroy seam's.
     if (coop::world_load_episode::InEpisode()) return;     // quiet during the join loadObjects churn
     if (coop::world_load_episode::InReconcileWindow() &&
         coop::world_load_episode::ReconcileWindowIsLoadKind()) {
@@ -133,28 +132,29 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;  // a host-authored mirror we adopt, not a place
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;          // keyed Aprop_C lineage only
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked = not a fresh place
-    // Hand-axis exclusion, ENQUEUE half (fast path only -- NOT load-bearing here: at FinishSpawn-return
-    // updateHold has NOT yet written holding_actor, so the freshly-spawned hand view actor can pass this
-    // check; the DRAIN-time re-check in Tick() is the authoritative one, the proven host_spawn_watcher
-    // shape. Audit 2026-07-10 CRITICAL.). IsHandAxisActor also covers remote display mirrors.
+    // The hand-axis exclusion, the enqueue half (a fast path only, not load-bearing here: at
+    // finish-spawn return the hold update has not yet written the holding actor, so the freshly
+    // spawned hand view actor can pass this check; the drain-time re-check in Tick is the
+    // authoritative one, the host spawn watcher's proven shape). The hand-axis test also covers
+    // remote display mirrors.
     if (coop::hand_item::IsHandAxisActor(actor)) return;
     if (g_pending.size() >= kMaxPending) {
         UE_LOGW("[PROP-DROP] client pending-place cap %zu hit -- dropping %p", kMaxPending, actor);
         return;
     }
-    // v126 (container profile #4): was a container takeObj in flight when this actor spawned? The
-    // extracted item's actor materializes INSIDE the takeObj/getObject call, so the latch is live
-    // exactly here. Marks the entry as a container-extraction birth (admitted at drain).
+    // Was a container extraction in flight when this actor spawned? The extracted item's actor
+    // materialises inside the take call, so the latch is live exactly here. Marks the entry as a
+    // container-extraction birth, admitted at drain.
     const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
     if (fromContainerExtract)
         UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (v126 -- admitted at drain)", actor);
 }
 
-// HOST: spawn the authoritative Aprop by Key at the transform. Mirrors remote_prop_spawn's
-// spawn-by-key (BeginDeferred -> setKey -> WriteSpParityIdentity -> FinishSpawningActor) but does NOT
-// MarkIncomingSpawn -- so the host's own FinishSpawn watcher (host_spawn_watcher) catches it and
-// broadcasts the authoritative PropSpawn to every peer. Returns the spawned actor (or null).
+// Host: spawn the authoritative prop by key at the transform. Mirrors the spawn receiver's
+// spawn-by-key (deferred begin, set the key, write the parity identity, finish) but does not
+// mark an incoming spawn, so the host's own finish-spawn watcher catches it and broadcasts
+// the authoritative spawn to every peer. Returns the spawned actor, or null.
 void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::wstring& cls,
                           const std::wstring& key) {
     void* clsObj = R::FindClass(cls.c_str());
@@ -170,15 +170,14 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
         UE_LOGW("[PROP-DROP] HOST BeginDeferredSpawn('%ls') failed", cls.c_str());
         return nullptr;
     }
-    // setKey BEFORE Finish -- Init() (inside FinishSpawningActor's UCS) mints a NewGuid Key unless one
-    // is already set; writing our wire Key first keeps the cross-peer identity. Resolve setKey on the
-    // Aprop_C BASE (its declaring class), cached -- exactly like remote_prop_spawn::ResolveSpawnFns:
-    // FindFunction is EXACT-OWNER, no SuperStruct climb ([[lesson-findfunction-exact-owner-no-
-    // superstruct-climb]]), so the previous leaf-class resolve missed every subclass that does not
-    // redeclare setKey (live 2026-07-11: prop_crowbar_C -> "setKey UFunction not found" -> the host
-    // spawn auto-minted a key != the client's local copy -> identity split -> host-side crowbar dupe).
-    // Every wire class reaching here is Aprop_C lineage (the intent author gates IsDescendantOfProp),
-    // so the base's setKey is a valid member call on the spawned actor.
+    // Set the key before finishing: the init inside the finish spawn's construction script mints
+    // a fresh key unless one is already set, and writing our wire key first keeps the cross-peer
+    // identity. The setter is resolved on the prop base class (its declaring class) and cached,
+    // as the spawn receiver does: the function lookup is exact-owner with no superclass climb,
+    // so a leaf-class resolve missed every subclass that does not redeclare the setter, and the
+    // host spawn then auto-minted a key unequal to the client's, an identity split and a
+    // host-side duplicate. Every wire class reaching here is prop lineage (the intent author
+    // gates on it), so the base's setter is a valid member call on the spawned actor.
     static void* s_setKeyFn = nullptr;
     if (!s_setKeyFn) {
         if (void* propBase = R::FindClass(P::name::PropClass))
@@ -196,8 +195,9 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     } else {
         UE_LOGW("[PROP-DROP] HOST setKey UFunction not found on '%ls' -- prop will auto-mint a Key", cls.c_str());
     }
-    // SP-parity identity (list_props Name + Static/removeWOrespawn/frozen/sleep) BEFORE Finish -- init()
-    // resolves the true mesh/mass/collision from Name (empty -> CDO 'cube' white-box, the v54 root).
+    // The single-player parity identity (the props-table name and the static,
+    // remove-without-respawn, frozen and sleep flags) before finishing: the init resolves the
+    // true mesh, mass and collision from the name (empty gives the default white cube).
     if (ue_wrap::prop::IsDescendantOfProp(actor)) {
         const std::wstring nameW = WireToWide(p.propName.len, p.propName.data, sizeof(p.propName.data));
         R::FName nameRow{0, 0};
@@ -210,19 +210,19 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
             (p.physFlags & pf::kFrozen) != 0,
             (p.physFlags & pf::kSleep) != 0);
     }
-    // NO MarkIncomingSpawn -- the host FinishSpawn watcher MUST see this and broadcast it.
+    // No incoming-spawn mark: the host finish-spawn watcher must see this and broadcast it.
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
         UE_LOGW("[PROP-DROP] HOST FinishDeferredSpawn('%ls') failed", cls.c_str());
         return nullptr;
     }
-    // Scale is a runtime transform (BeginDeferredSpawn takes loc+rot only); apply after Finish, BEFORE
-    // the next-tick DrainPendingSpawns re-reads GetActorScale3D for the broadcast.
+    // Scale is a runtime transform (the deferred begin takes location and rotation only); apply
+    // it after finishing and before the next-tick drain re-reads the scale for the broadcast.
     if (p.scaleX > 0.001f || p.scaleY > 0.001f || p.scaleZ > 0.001f) {
         E::SetActorScale3D(actor, ue_wrap::FVector{p.scaleX, p.scaleY, p.scaleZ});
     }
-    // v114 (L7): the save-scalar birth channel -- write it NOW so the next-tick express drain
-    // re-reads the live actor and the broadcast PropSpawn carries it (reel Progress; post-Finish
-    // is measured safe -- the reel's consumers are lookAt + loadData only).
+    // The save-scalar birth channel: write it now, so the next-tick express drain re-reads the
+    // live actor and the broadcast spawn carries it (the reel progress; post-finish is safe,
+    // since the reel's consumers are the look-at and the load only).
     if (p.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
         if (!ue_wrap::prop::ApplySavedScalarForClass(actor, p.savedScalar)) {
             UE_LOGW("[PROP-DROP] HOST savedScalar=%.2f apply failed on '%ls'", p.savedScalar, cls.c_str());
@@ -237,7 +237,8 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed) return;
 
-    // Throttle the GUObjectArray walks while the UFunction is unresolved (loads on gameplay entry).
+    // Throttle the object-array walks while the UFunction is unresolved (it loads on gameplay
+    // entry).
     static int s_retry = 0;
     if (s_retry > 0) { --s_retry; return; }
 
@@ -271,33 +272,29 @@ void Tick(coop::net::Session* session) {
         if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;                 // died before drain
         if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) continue; // got tracked/bound
         if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) continue;          // a late echo mark -> not a place
-        // DRAIN-time hand-axis re-check (audit 2026-07-10 CRITICAL): the enqueue-time check runs before
-        // updateHold writes holding_actor (host_spawn_watcher.cpp documents this exact window and excludes
-        // at drain for the same reason). Without this, a hold-R pickup's hand view husk -- carrying the
-        // item's PARKED key -- authors a FALSE drop intent: the host spawns a duplicate world prop while
-        // the item is still in the player's hand, and the park is consumed. Drop the entry permanently.
+        // The drain-time hand-axis re-check: the enqueue-time check runs before the hold update
+        // writes the holding actor (the host spawn watcher documents this window and excludes at
+        // drain for the same reason). Without it a hold-to-pick-up's hand view husk, carrying the
+        // item's parked key, authors a false drop intent: the host spawns a duplicate world prop
+        // while the item is still in the player's hand, and the park is consumed. Drop the entry
+        // permanently.
         if (coop::hand_item::IsHandAxisActor(e.actor)) continue;
         std::wstring key = ue_wrap::prop::GetInteractableKeyString(e.actor);
         if (key.empty() || key == L"None") {
-            // Key not restored yet (loadData runs AFTER Finish). Re-defer a few ticks.
+            // The key is not restored yet (the load runs after the finish). Re-defer a few ticks.
             if (++e.tries <= kMaxKeyTries) keep.push_back(e);
             continue;
         }
         const bool parked = (g_parkedKeys.find(key) != g_parkedKeys.end());
-        // v114 (L7): the reel EJECT birth. A client's fresh Aprop_C spawn never broadcasts
-        // (prop_lifecycle client-skip), so a caddy/reelbox eject on a CLIENT is a local-only
-        // ghost. An UNPARKED reel-class pending entry here IS that birth (mirrors are excluded
-        // by PeekIncomingSpawn above; tracked actors by the EidForActor check; the actor already
-        // carries the NewGuid key Init minted inside FinishSpawn). Author it host-side via
-        // ReelEjectIntent -- the same HostSpawnPlacedProp author, class-whitelisted at the host.
-        // v118 (L8): the fresh-birth class whitelist widens to desk modules --
-        // the playerHitWith UNPLUG births a module INTO THE HAND (a client
-        // Aprop_C spawn never broadcasts), so its later drop is the same
-        // local-only-ghost class as the v114 reel eject.
-        // v119 (L5): drives join the whitelist -- a rack getDrive on a CLIENT
-        // births a payload-bearing drive into the hand (the same local-only-
-        // ghost class); the payload rides DrivePayload broadcast-at-adoption,
-        // no birth scalar needed.
+        // The fresh births. A client's fresh prop spawn never broadcasts (the lifecycle's client
+        // skip), so a caddy or reel-box eject on a client is a local-only ghost; an unparked
+        // reel-class pending entry here is that birth (mirrors are excluded by the echo peek above,
+        // tracked actors by the eid check, and the actor already carries the key the init minted
+        // inside the finish spawn). Author it host-side via the eject intent, the same spawn
+        // author, class-whitelisted at the host. The whitelist widens to desk modules (the unplug
+        // births a module into the hand, the same local-only-ghost class) and to drives (a rack
+        // take on a client births a payload-bearing drive into the hand; the payload rides the
+        // drive payload broadcast at adoption, so no birth scalar is needed).
         const bool freshBirth = !parked &&
             ((ue_wrap::tape_caddy::EnsureResolved() &&
               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor))) ||
@@ -305,12 +302,12 @@ void Tick(coop::net::Session* session) {
               ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
              (ue_wrap::drive_chain::EnsureResolved() &&
               ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))));
-        // v126 (container profile #4): a CONTAINER-EXTRACT birth is admitted too. The client's
-        // takeObj materializes the extracted item as a world actor; without this the freshBirth
-        // whitelist (reel/module/drive only) drops it at drain and the item never reaches the
-        // host's world. The host's dup-guard (ResolveLiveActorByKey) keeps the intent safe.
+        // A container-extraction birth is admitted too: the client's take materialises the
+        // extracted item as a world actor, and without this the fresh-birth whitelist (reel, module
+        // and drive only) drops it at drain and the item never reaches the host's world. The host's
+        // duplicate guard keeps the intent safe.
         if (!parked && !freshBirth && !e.containerExtract) continue;  // not a place / not a whitelisted birth / not a container extract
-        // Author the host-authoritative spawn intent (place OR reel-eject birth).
+        // Author the host-authoritative spawn intent (a place, or a fresh birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
         FillWireStr(p.className.len, p.className.data, cls);
@@ -324,11 +321,10 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::prop::IsFrozen(e.actor))           p.physFlags |= pf::kFrozen;
             if (ue_wrap::prop::IsSleeping(e.actor))         p.physFlags |= pf::kSleep;
             if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
-            // The save-scalar birth channel rides BOTH intent kinds (correctness-audit
-            // CRITICAL 1): the parked place (pocket->place of a reel) must carry Progress
-            // exactly like the eject birth, or the host respawn resets it to the CDO
-            // default (a blank tape) and broadcasts that as truth. No-op for classes
-            // without a save scalar.
+            // The save-scalar birth channel rides both intent kinds: the parked place (pocket to
+            // place of a reel) must carry the progress exactly like the eject birth, or the host
+            // respawn resets it to the default (a blank tape) and broadcasts that as truth. A no-op
+            // for classes without a save scalar.
             float sc = 0.f;
             if (ue_wrap::prop::ReadSavedScalarForClass(e.actor, sc)) {
                 p.savedScalar = sc;
@@ -336,11 +332,11 @@ void Tick(coop::net::Session* session) {
             }
         }
         if (freshBirth) {
-            // Born ASLEEP on the host (no free-fall; the held-prop pose stream takes over).
+            // Born asleep on the host (no free fall; the held-prop pose stream takes over).
             p.physFlags |= pf::kSleep;
-            // v119 (L5): a locally-born DRIVE carries its payload in data_0 --
-            // note the authorship so drive_sync broadcasts it at adoption
-            // (first eid sight); un-noted first sights stay prime-only.
+            // A locally born drive carries its payload in its data slot: note the authorship, so
+            // the drive sync broadcasts it at adoption (the first eid sight); un-noted first sights
+            // stay prime-only.
             if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
                 coop::drive_sync::NoteLocalDriveBirth(e.actor);
         }
@@ -388,8 +384,9 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
         UE_LOGW("[PROP-DROP] HOST drop intent from slot=%u missing key/class -- dropping", senderSlot);
         return;
     }
-    // Dup guard: if the host somehow still has this Key live (the grab-destroy didn't cross), do NOT
-    // spawn a second one. The park-set invariant normally guarantees the host has no copy here.
+    // The duplicate guard: if the host somehow still has this key live (the grab destroy did not
+    // cross), do not spawn a second one. The park-set invariant normally guarantees the host has
+    // no copy here.
     if (coop::prop_element_tracker::ResolveLiveActorByKey(key, nullptr)) {
         UE_LOGW("[PROP-DROP] HOST already has key='%ls' live -- skip drop-intent re-spawn (no dup)", key.c_str());
         return;
@@ -406,9 +403,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                        uint8_t senderSlot) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnReelEjectIntent");
     if (session.role() != coop::net::Role::Host) return;
-    // v114 (L7): the client fresh-BIRTH author. CLASS-WHITELISTED -- reels (the caddy eject)
-    // and, since v118 (L8), desk modules (the socket unplug). NOT a general client-spawn door
-    // (the design's explicit gate; any other class here is a protocol violation, dropped).
+    // The client fresh-birth author, class-whitelisted: reels (the caddy eject), desk modules
+    // (the socket unplug) and drives. Not a general client-spawn door; any other class here is a
+    // protocol violation, dropped.
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
     void* clsObj = R::FindClass(cls.c_str());
     const bool isReel = clsObj && ue_wrap::tape_caddy::EnsureResolved() &&
@@ -422,11 +419,11 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                 senderSlot, cls.c_str());
         return;
     }
-    // v118 (L8): a module birth matching a fresh unplug-DENY for this sender is the raced
-    // ghost that got dropped before the deny landed -- reap it (physmods_sync logs).
+    // A module birth matching a fresh unplug deny for this sender is the raced ghost that got
+    // dropped before the deny landed; reap it (the physics-mods sync logs).
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
-    // v119 (L5): drive births are authored normally -- a denied rack-take ghost is
-    // reaped LATER by its adoption payload's content hash (drive_sync, audit MAJOR-1).
+    // Drive births are authored normally; a denied rack-take ghost is reaped later by its
+    // adoption payload's content hash (the drive sync).
     OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 
