@@ -49,7 +49,7 @@ Decision table — pick the FIRST row that fits:
 
 | The state is… | Owner | Shape |
 |---|---|---|
-| Shared-world progression (weather, power, events, world props that rot/dry/grow, NPC brains, RNG) | HOST | Host simulates/rolls; clients mirror. `COOP_RNG_AUTHORITY.md`. |
+| Shared-world progression (weather, power, events, world props that rot/dry/grow, NPC brains, RNG) | HOST | Host simulates/rolls; clients mirror. `events-and-weather.md`. |
 | A discrete, persistent, shared-world CHANGE a client initiates (buy, sell, destroy, place, equip from a container…) | HOST via **act-as-host intent** | Client suppresses its own producer, sends an intent naming WHAT (never what it costs), the arbiter validates and performs; results flow back as ordinary state. Reference lane: `order_sync` (proto 136). `ARCHITECTURE.md`, the authority model. |
 | A continuously-simulated element one peer is INTERACTING with (held prop, driven vehicle, pressed device panel) | The interacting peer, by ASSIGNMENT (syncer/lease), never by assertion | Presser/holder authors the stream; the host arbiter validates inbound writes and may re-assign. On interaction end the authority RETURNS. Adopt lease hygiene: idle-expiry back to the declared owner, epoch-stamped grants, grant-names-final-revision fencing (MTA `CUnoccupiedVehicleSync`). |
 | A peer's OWN body/pose/camera/voice | That peer | Sender-authored stream; receive side never gated (a discontinuity costs TRUST, never display). Bounds are CLIENT-scoped only — **the host may cheat and we relay it** (USER 2026-08-24). |

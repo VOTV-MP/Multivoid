@@ -5,7 +5,7 @@ owns it, the wire lane, and the honest status. STATUS legend (docs-piles discipl
 (hands-on or matching live log — say which) · **AS-BUILT** (shipped, not yet hands-on) · **DESIGN**
 (designed, not built) · **OPEN** (gap, no design) · **N/A** (deliberately per-player).
 
-The RNG-authority PROGRESS of the download machine lives in `COOP_RNG_AUTHORITY.md` T2-5b — this
+The RNG-authority PROGRESS of the download machine lives in `events-and-weather.md` — this
 tracker points there. Wire-lane discoverability lives in `CODE_MAP.md`. Neither is restated here.
 
 ---
@@ -115,7 +115,7 @@ MIRROR STATE + SUPPRESS the local sim, never verb-hook
 (`[[lesson-votv-world-system-sync-mirror-state-not-verb]]`,
 `[[lesson-rng-in-rate-path-is-mechanic-desync]]`).
 - RE + field-ownership table: `research/findings/computers-devices/votv-desk-download-machine-RE-2026-07-15.md`.
-- RNG-authority row: `COOP_RNG_AUTHORITY.md` **T2-5b** (AS-BUILT v111; hands-on 2026-07-16 FAILED → BUGS-v111).
+- RNG-authority row: `events-and-weather.md` **T2-5b** (AS-BUILT v111; hands-on 2026-07-16 FAILED → BUGS-v111).
 - **TAKE (verify line):** host + client show the same `decoded %` and the same detector-needle
   position with identical freq/pol knobs, and the download HALTS on both when either knob is zeroed.
 
@@ -420,7 +420,7 @@ pile): image bytes, wire-delete playback-stop.
   host-auth sim-migration to a small fix; audit READY (0 CRITICAL). NOT hands-on. Surfaced OPEN-3
   (upgrade-sync, its own workstream). coordLog (OPEN-2) kept separate.
 - **2026-07-15** — folder created; the signal-processing saga given a home (was scattered across
-  `research/findings/computers-devices/` + `COOP_RNG_AUTHORITY` T2-5b + `CODE_MAP`). Status
+  `research/findings/computers-devices/` + `events-and-weather.md` + `CODE_MAP`). Status
   reconciled to code: transport elements AS-BUILT/VERIFIED (cursor v109 SMOOTH, clock v110); the
   freq/pol + download SIM is the open gap (RE'd, divergence MEASURED, fix UNBUILT). Next: the
   download-machine host-authoritative `/qf`.

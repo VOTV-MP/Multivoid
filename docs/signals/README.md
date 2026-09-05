@@ -13,7 +13,7 @@ This folder answers **"what exactly happens in the signal pipeline, and how does
 peer's screens + download progress identical."** The cross-cutting contracts stay where they are —
 these docs LINK to them, never restate them (RULE 2):
 
-- **`docs/COOP_RNG_AUTHORITY.md`** — the RNG host-authority tracker. The download-rate divergence is
+- **`docs/events-and-weather.md`** — the RNG host-authority tracker. The download-rate divergence is
   its row **T2-5b** (AS-BUILT **v112** `desk_sim_sync` + `desk_input_sync` — the BUGS-v111 fix,
   same day; smoke PASS, awaiting hands-on; + the T2-5c signal-chain RNG census). Signal
   RNG-authority PROGRESS is tracked THERE; this folder tracks subsystem COMPLETENESS.

@@ -52,8 +52,7 @@ Before writing any entity-sync, hook or spawn-catch code, read these three:
 **Models, how authority and state are meant to work**
 
 The authority model, the server model behind the roadmap, the transport, identity and the join are
-all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md)
-(who rolls shared-world randomness)
+all in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Subsystems**, one page each on the same skeleton
 
@@ -64,7 +63,9 @@ the puppet, the pose stream, names, skins, damage, death, sleep, inventory, mode
 the props that change on their own, the deployables) · [piles.md](piles.md) (trash piles: the
 host's id across pile and clump, the client's grab as an intent, the dispenser piles) ·
 [npcs-and-kerfur.md](npcs-and-kerfur.md) (host-owned characters, the creatures each peer owns, the
-killer wisp, the roaches, and the kerfur robot across its two forms)
+killer wisp, the roaches, and the kerfur robot across its two forms) ·
+[events-and-weather.md](events-and-weather.md) (the clock, the weather, who rolls, the story events
+and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -73,7 +74,7 @@ killer wisp, the roaches, and the kerfur robot across its two forms)
 
 **Per-domain trees**, one folder per game system, each with its own README
 
-[events/](events/) · [signals/](signals/) (the signal-processing pipeline) ·
+[signals/](signals/) (the signal-processing pipeline) ·
 [upgrades/](upgrades/) · [notifications/](notifications/) ·
 [vehicles/](vehicles/) (the ATV)
 

@@ -3,7 +3,7 @@
 *[↑ docs index](../README.md)*
 
 One doc per VOTV **vehicle** — a driveable, occupant-carrying, multi-body physics actor.
-Same discipline as `docs/events/`: each vehicle's native behaviour
+The same discipline as the other per-system trees: each vehicle's native behaviour
 (bytecode ground truth, evidence-tagged), its sync-axis table, its coop design, and its
 honest as-built status live in that vehicle's own file.
 

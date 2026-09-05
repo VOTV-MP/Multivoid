@@ -532,7 +532,7 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   (v140, audit I-7) -- the header had warned about it for the eid and the first fix applied the warning
   only to the eid, not to the predicate the eid hangs off. **[V: read 2026-08-25]**
 - `piramid2_C` additionally gets a choreography lane (`coop/creatures/piramid_sync`: client brain
-  suppression + PyramidGather replay) — docs/events/piramid.md. **[AS-BUILT; walk at true scale V live
+  suppression + PyramidGather replay) — the pyramid section of docs/events-and-weather.md. **[AS-BUILT; walk at true scale V live
   2026-07-05; facing v100 pending 0s-FACING2]**
 - **2026-07-05 (the frozen/small/wrong-facing pyramid arc — three wire truths, all classes):**
   (1) **v99 Scale3D in EntitySpawnPayload** (`419e3894`): the deferred-spawn FTransform CARRIES scale
