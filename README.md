@@ -9,7 +9,7 @@
 | | |
 |--|--|
 | **Install** | [**Multivoid on Thunderstore**](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/) — through r2modman or the Thunderstore Mod Manager, which set the loader up for you ([other routes](docs/INSTALL.md)) |
-| **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
+| **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name and the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
 | **Players** | up to **4** (host + 3) |
@@ -20,295 +20,117 @@
 
 ---
 
-## Current phase
-
-The project follows an 8-phase long-term arc (the MTA / gmod trajectory — see
-[Roadmap](#roadmap) below). We are in **Phase 1: functional co-op** — the deep-sync
-phase where VOTV's single-player systems are taken apart one by one and made
-multiplayer-correct on the mod's own engine-extension substrate. The multiplayer
-foundation (transport, sessions, master server, join/save pipeline) is built and
-live; the remaining Phase-1 work is hands-on verification breadth and the tail of
-game systems still to sync.
-
-### How far along is that
-
-The honest, granular answer — **what we sync and what we don't, system by
-system** — is the main coverage document:
-**[`docs/COOP_SYNC_PROFILES.md`](docs/COOP_SYNC_PROFILES.md)**. It opens with a
-master table of ~67 co-op systems (~215 facets), each carrying a verdict
-(works / broken / unknown / not-built), an evidence tier, and who owns the
-write, followed by a per-system catalog with a "what we do NOT sync" line for
-each. Start there. Every wire lane in the game is accounted for in it (122
-reliable message kinds + 14 pose/state streams, all cross-checked); facet-level
-completeness is deliberately never claimed — the honest output is a count with a
-named residual, not a checkmark.
-
-We also deliberately don't publish a single "N% done" figure — a co-op mod is
-finished system by system, not on one bar, and any summed percentage would hide
-which systems are solid and which are untouched. The one honest headline count,
-generated from the game's own class dump by
-[`tools/coverage.py`](tools/coverage.py): of **2291** game classes, **1453** can
-actually diverge between peers, and our code names **175** of them. The
-measurement error on each rung, and why a finer verb-level percentage isn't yet
-honest, are recorded in the project's research corpus, which is kept privately.
-
----
-
 ## What works today
 
-### Multiplayer foundation
-- **LAN and Internet sessions** — one host, up to three clients; direct IP or the
-  built-in **server browser** backed by the official master server
-  (NAT traversal via signaling + TURN)
-- **Version identity + join gate** — lobbies advertise `game + build`
-  (e.g. `0.9.0n b<N>`); mismatched peers are refused pre-flight with a clear popup
-  instead of desyncing mid-game. Old cohorts keep playing together forever —
-  updates are never forced
-- **Visible remote players** — full body, legs, IK feet, per-player skins,
-  animated locomotion, ragdoll mirroring
-- **Floating nameplates** with nickname + live ping, **chat**, and a system event
-  feed (joins, leaves, activity lines)
-- **Voice chat** — 3D positional, in-world
-- **Join at any time** — connecting clients receive the host's full world state
-  (a save-transfer snapshot), and **mid-activity join is a supported case by
-  design**: joining mid-event, mid-download, mid-drive, mid-anything is handled
-  per-system, never "don't join during X"
+- **LAN and Internet sessions** — one host, up to three clients; direct IP or the built-in
+  **server browser** backed by the official master server (NAT traversal via signaling + TURN).
+  Lobbies advertise `game + build`; a mismatched peer is refused before joining, and old cohorts
+  keep playing together — updates are never forced.
+- **Visible remote players** — full body, IK feet, per-player skins, animated locomotion, ragdolls,
+  floating nameplates with nickname and ping, text chat, 3D positional **voice chat**.
+- **Join at any time** — a connecting client receives the host's full world state, and joining
+  mid-event, mid-download or mid-drive is handled per system, never "don't join during X".
+- **Synced world** — physics props (pickup, carry, throw, per-grab authority, identity that survives
+  saves and rejoins), piles and trash collection, NPCs and creatures (host-simulated, including the
+  kerfur prop-to-NPC cycle), world events, weather, doors, lights, switches, keypads, terminals,
+  sleep, damage, the ATV, and world props that change over time (the host owns the clock).
+- **The signal-processing pipeline** — dish control, ping, signal catch, downloads, decoding, the
+  playback deck, drives and racks, the laptop, and the meadow signal database: one authority per
+  axis, with the desk's audio feedback mirrored to observers.
+- **Infrastructure** — ships as a standard UE4SS mod folder with **zero imports from UE4SS** (the
+  reflection, hooks, transport and UI are the mod's own); an official master server for the lobby
+  list, signaling and an informational update check.
 
-### Synced world
-- **Physics props** — pickup, drag, drop, throw across the ~540 `Aprop_C` classes,
-  including client-born props, per-grab authority transfer, and stable cross-peer
-  identity that survives saves and rejoins
-- **Piles and trash collection** — the full pickup/carry/deposit economy loop
-- **NPCs and creatures** — host-simulated, pose-streamed to clients; kerfurs
-  including the prop⇄NPC conversion cycle and per-kerfur skins
-- **World events** — the scheduled/story event system replays host-observed events
-  on clients with per-event dupe policies
-- **Weather** — rain, snow, fog, wind, lightning; host-authoritative (clients
-  never roll their own RNG — shared-world randomness is host-owned as a rule)
-- **Doors, lights, switches, keypads, terminals**, sleep, damage/hazards,
-  world-prop progression (drying, curing, growing — host owns the clock)
-
-### The signal-processing pipeline (the heart of VOTV)
-End-to-end sync of the workstation: dish control and calibration → ping →
-signal catch → downloads → decoding → playback deck → drives and racks →
-the in-game laptop (shared editable buffer, floppies, discs) → the meadow
-signal database. Presser-authored state, one authority per axis, with the
-desk's audio feedback mirrored to observers at the native audio seam.
-
-### Infrastructure
-- **UE4SS-ecosystem mod folder** — ships as `Mods\Multivoid\dlls\main.dll`,
-  loaded by UE4SS (manual installs) or unreal-shimloader (r2modman /
-  Thunderstore), with **zero imports from UE4SS** — the whole substrate
-  (reflection, hooks, transport, UI) is the mod's own
-- **Official master server** — a static Rust binary on our VPS (lobby list,
-  update check, signaling); the update check is informational only, never a gate
-- **Menu kill switch** in the ini (`multiplayer_menu_off`) — hides the
-  Multiplayer button so a build ships without an entry point. It removes the
-  door, not the mod: the DLL stays loaded and its hooks stay installed
-
----
+The per-system answer to "how far along is it", with the evidence for each claim, is
+[docs/COOP_SYNC_PROFILES.md](docs/COOP_SYNC_PROFILES.md). There is deliberately no single "N% done"
+figure: a co-op mod is finished system by system.
 
 ## How it works
 
-VOTV runs on Unreal Engine 4.27. The mod is one DLL living in a standard
-UE4SS mod folder:
+VOTV runs on Unreal Engine 4.27. The mod is one DLL in a standard UE4SS mod folder
+(`Mods\Multivoid\dlls\main.dll` + `enabled.txt`). UE4SS, or r2modman's unreal-shimloader, only
+*loads* it: the DLL imports nothing from it. The mod resolves the engine's reflection primitives
+with its own signatures, drives the game's own classes and functions through reflection, and hooks
+where reflection cannot see. No asset edits, no repacked paks.
 
-```
-Mods\Multivoid\dlls\main.dll   -- the whole mod (UE4SS starts it via the C-ABI start_mod() contract)
-Mods\Multivoid\enabled.txt
-```
+Transport is GameNetworkingSockets carrying an unreliable pose stream and a reliable ordered
+channel for events and state. Each machine's engine re-derives animation, physics and rendering
+from the streamed state. The host is authoritative for world state, randomness and NPC simulation;
+a client acts by naming an intent that the host performs.
 
-UE4SS (or r2modman's unreal-shimloader) is the *loader* only: the DLL imports
-nothing from it. The mod resolves engine primitives (`GUObjectArray` /
-`GNames` / `ProcessEvent`) via its own AOB signatures, then drives VOTV's own
-`UClass` / `UFunction` machinery through reflection — no asset edits,
-no `.pak` repacks. Where ProcessEvent can't see (Blueprint-internal dispatch),
-a bytecode-level VM interception substrate catches the invisible verbs.
-
-Transport is **GameNetworkingSockets** (Valve's UDP library) carrying an
-unreliable pose stream plus a reliable ordered channel for events and state.
-Each machine's local UE engine re-derives animation, physics, and rendering
-from the streamed state. The host is authoritative for world state, RNG, and
-NPC simulation; per-grab authority transfers for held props.
-
-The codebase splits along a strict two-layer principle:
-- [`src/votv-coop/src/ue_wrap/`](src/votv-coop/src/ue_wrap/) — engine wrapper (reflection, offsets, hooks; no gameplay)
-- [`src/votv-coop/src/coop/`](src/votv-coop/src/coop/) — gameplay/network layer (element identity, sync lanes, sessions)
-- [`src/votv-coop/src/harness/`](src/votv-coop/src/harness/) — boot glue + autonomous test scenarios
-
----
+The code splits along one principle: `src/votv-coop/src/ue_wrap/` wraps the engine and holds no
+gameplay; `src/votv-coop/src/coop/` holds gameplay and network and reaches the engine only through
+the wrapper. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the one-read overview and
+[docs/CODE_MAP.md](docs/CODE_MAP.md) says where every concept lives.
 
 ## Versioning
 
-The version identity is the pair **(game version, build number)** — there is
-no separate mod semver.
-
-```
-Multivoid 0.9.0n b<N>   ->   the in-game banner, main.dll's own VERSIONINFO
-                             and the release tag (v0.9.0n-b<N>[-dev])
-                             carry the pair verbatim
-```
-
-- **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
-  (reflection offsets and BP layouts shift between game versions).
-- **Build number** (`b<N>`) is the wire-protocol revision — it bumps with every
-  release and every wire-format change.
-- **The zip's `x.y.z` is the same pair, encoded — not a third version axis.**
-  Mod managers require a strictly numeric `major.minor.patch`, so the zip is
-  named `Pelmentor-Multivoid-<game major>.<game minor>.<N>.zip` — for the
-  `0.9.0n` target that is `Pelmentor-Multivoid-0.9.<N>.zip`. The game target's
-  third field and letter don't fit that grammar and are deliberately dropped;
-  the build number alone already identifies a release exactly.
-- **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
-  0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
-  themselves on their old builds — updates are never forced. The server browser
-  shows each lobby's pair and marks mismatches before you click.
-
-Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
-(`VOTVCOOP_GAME_TARGET` + the build number parsed from `protocol.h`).
-
----
+The version identity is the pair **(game version, build number)**: `Multivoid 0.9.0n b<N>` in the
+in-game banner, in the DLL's own version resource, and in the release tag. The game target bumps
+when the mod adapts to a new VOTV build; the build number is the wire-protocol revision and bumps
+with every release and every wire change. The zip is named `Pelmentor-Multivoid-0.9.<N>.zip` because
+mod managers require a numeric `major.minor.patch`; it is the same pair, not a third axis. Join
+compatibility is byte-equality on the pair, per lobby. Source of truth:
+[`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt).
 
 ## Quick start
 
 ### For players
 
-> **There is no stable release yet — every build on the
-> [Releases page](https://github.com/VOTV-MP/Multivoid/releases) is a dev build,
-> and everyone playing one is a tester.** Expect bugs, and please report them on
-> [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited in
-> [Credits](#credits). Full
-> disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
+> **There is no stable release yet.** Every build on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases)
+> is a dev build, and everyone playing one is a tester. Expect bugs, and please report them on
+> [Discord](https://discord.gg/bA6tGBvGMN); good reports get credited. What to attach:
+> [docs/INSTALL.md](docs/INSTALL.md).
 
-One zip, two ways to install it: through **r2modman** (recommended — it sets up
-the loader itself) or manually into the game's UE4SS `Mods\` folder. Launch —
-a **Multiplayer** button appears in the main menu. No port forwarding needed.
-Full steps, updating, and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
-
-To uninstall, remove the mod in the manager (or delete the `Mods\Multivoid`
-folder). The mod never touches the game's own files.
+One zip, two ways to install it: through **r2modman** (recommended; it sets up the loader itself)
+or manually into the game's UE4SS `Mods\` folder. Launch, and a **Multiplayer** button appears in
+the main menu. No port forwarding needed. Full steps, updating, troubleshooting and uninstalling:
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ### For developers
 
-Full guide: [BUILDING.md](BUILDING.md) — local toolchain setup, troubleshooting,
-and **building via GitHub Actions** (no local toolchain needed: fork, dispatch
-the `build` workflow, download the DLL artifact).
-
-Requirements: Windows 10+, Visual Studio 2019/2022 **Build Tools** (C++ workload),
-CMake 3.20+, and a legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/`
-next to the repo.
+[BUILDING.md](BUILDING.md) covers the local toolchain and building via GitHub Actions from a fork
+(no local toolchain needed). [CONTRIBUTING.md](CONTRIBUTING.md) is the rulebook: the rules a change
+must respect, how it is tested, and the shape a commit and a doc must have.
 
 ```powershell
-# Configure once:
 cmake -B build/votv-coop -S src/votv-coop -G "Visual Studio 16 2019" -A x64
-
-# Build:
 cmake --build build/votv-coop --config Release
 ```
 
-Dev-only launchers (deploy the fresh build + start the game with a pinned
-role/port — never how players run the mod):
-
-```powershell
-./mp_host_game.bat                 # host, default port 47621
-./mp_client_connect.bat <host-ip>  # client
-```
-
-Same-PC testing? Use the sibling `Game_0.9.0n_CLIENT_1/` install — the launchers
-detect it automatically. The autonomous two-peer test harness lives in `tools/`.
-
----
-
-## Community
-
-**Chat about the project, ask questions, or get in touch:
-[discord.gg/bA6tGBvGMN](https://discord.gg/bA6tGBvGMN)** — the *Pelmentor's server* Discord.
-
-It's the fastest way to reach the author, follow development as it happens, and find
-people to test co-op with. Bug reports and feedback are welcome there or in
-[GitHub issues](https://github.com/VOTV-MP/Multivoid/issues).
-
-## Ecosystem
-
-| Repo / place | What |
-|--|--|
-| [`VOTV-MP/Multivoid`](https://github.com/VOTV-MP/Multivoid) | **This repo** — the mod itself |
-| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The dedicated server (see roadmap phases 6 and 8) |
-| [multivoid.dev](https://multivoid.dev) | Project website |
-| [Discord](https://discord.gg/bA6tGBvGMN) | Community + project chat |
-
-Repository layout:
+## Repository layout
 
 | Path | What |
 |--|--|
-| [`docs/`](docs/README.md) | **Start here** — the documentation index: architecture, roadmap, scope, per-system sync docs, lessons ledger |
-| [`docs/VERSION_MIGRATION.md`](docs/VERSION_MIGRATION.md) | **What happens when VOTV updates** — the measured version surface, the port runbook, the gates |
-| [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, MinHook, GNS) |
-| [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader` / `ui`) |
-| [`tools/`](tools/) | Build / deploy / launch / autonomous-test helpers + the master server source |
-| `Game_0.9.0n_HOST*/` | Local game install(s). **Gitignored** — never committed |
-
----
+| [`docs/`](docs/README.md) | **Start here** — the documentation index |
+| [`src/votv-coop/`](src/votv-coop/) | The mod: `ue_wrap` / `coop` / `ui` / `harness` / `loader` |
+| [`tools/`](tools/) | Build, deploy, the autonomous test rig, release, and the master server (`coop-server-rs/`) |
+| [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA) |
+| `Game_0.9.0n_HOST*/` | Local game installs. **Gitignored** — never committed |
 
 ## Roadmap
 
-The long-term arc, in order (each phase gates the next — detail in
-[`docs/ROADMAP.md`](docs/ROADMAP.md)):
+The long-term arc, in order; each phase gates the next ([docs/ROADMAP.md](docs/ROADMAP.md)):
 
 | # | Phase | Status |
 |--|--|--|
 | 1 | **Functional co-op** — deep sync of VOTV's systems on the mod's own substrate | **in progress (current)** |
 | 2 | **The arbiter** — per-element authority moves into a separate, engine-free server process; the host's game becomes an ordinary client of it | planned |
-| 3 | **Sandbox mode** — support VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
-| 4 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
-| 5 | **Lua API** — mode rules move to Lua; the C++ core (transport, sync, identity) stays native | planned |
-| 6 | **Resource system** — custom modes and plugins as one mechanism (the MTA shape) | planned |
-| 7 | **Dedicated server** — 24/7 hosting with no live player required; the same server binary phase 2 already ships, launched by hand instead of spawned by the game | planned |
+| 3 | **Sandbox mode** — VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
+| 4 | **LuaJIT embedding** — the scripting substrate over the engine and co-op APIs | planned |
+| 5 | **Lua API** — mode rules move to Lua; the C++ core stays native | planned |
+| 6 | **Resource system** — custom modes and plugins as one mechanism | planned |
+| 7 | **Dedicated server** — 24/7 hosting with no live player required | planned |
 | 8 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
-
-The old phase 8 ("native standalone server") was **retired as a phase** on 2026-07-20: the server is a
-separate process from phase 2 onward, and its authority grows with every sync lane, so the MTA endgame
-arrives by accumulation rather than as a milestone. See
-[`docs/COOP_SERVER_MODEL.md`](docs/COOP_SERVER_MODEL.md).
-
----
-
-## Architecture
-
-Built on **eight architectural principles** documented in
-[`docs/COOP_METHODOLOGY.md`](docs/COOP_METHODOLOGY.md):
-
-1. **No modification of original game files**
-2. **Engine-extension paradigm** — the mod is a new engine layer, not a patch
-3. **Parallel class hierarchy** — our `RemotePlayer` owns network state; UE owns rendering
-4. **Targeted crash fixes, not broad suppression**
-5. **Minimum viable subset** — scope is a living document
-6. **Augment SP, never replace it** — co-op is layered ON single-player
-7. **Engine-wrapper layer vs gameplay/network layer** — strict subtree split
-8. **Mid-activity join is always handled** — every sync lane defines its late-join answer
-
-Three "no-compromise" rules govern day-to-day work:
-- **RULE 1** — No crutches, no quick fixes. Root cause every time.
-- **RULE 2** — No migration baggage. Old code goes when replaced.
-- **RULE 3** — Own substrate. The mod ships as a normal UE4SS mod folder
-  (decision 2026-08-21; the standalone xinput-proxy loader retired whole), but
-  UE4SS is the *loader*, never the engine layer: the DLL imports nothing from
-  it, and all reflection/hooking/transport stays the mod's own. The dated
-  decision ledger is in
-  [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).
-
----
 
 ## Credits
 
-Multivoid is written and directed by one person (Pelmentor) with heavy use of
-AI coding tools — direction, architecture, testing and every release decision
-are mine; much of the code was written with Claude. The full commit history is
-public, so you can judge the process as well as the result.
+Multivoid is written and directed by one person (Pelmentor) with heavy use of AI coding tools:
+direction, architecture, testing and every release decision are mine; much of the code was written
+with Claude. The full commit history is public, so you can judge the process as well as the result.
 
-**Everything else in it came from outside, in one of three forms — code,
-reports, and review.** The rule is the same for all three: if it changed the mod,
-it gets a row.
+Everything else in it came from outside, as code, reports or review. If it changed the mod, it gets
+a row; the full ledger is [docs/CREDITS.md](docs/CREDITS.md).
 
 | Who | Kind | Contribution | Landed |
 |--|--|--|--|
@@ -319,41 +141,32 @@ it gets a row.
 | [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
 | [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** (Discord) | review | The architecture and documentation review that became the UE4SS move | b122 · b143 |
+| **Moddy** (Discord) | review | The architecture and documentation reviews that became the UE4SS move and the repository cleanup | b122 · b143 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** (Discord) | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** ([#5](https://github.com/VOTV-MP/Multivoid/issues/5)) | report | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
 | **gediao** (Discord) | report | The b125 host-log pack, with huoyan1231 | b134 |
 | **SirWilliam** (Discord) | report | Rejoining a session requires fully relaunching the game | fixed, unreleased |
 
-**What each one turned out to be and what shipped:
-[docs/CREDITS.md](docs/CREDITS.md).** Pull requests and reports are both welcome
-— [how to contribute](CONTRIBUTING.md).
-
 Prior art this project learned from, with thanks:
 
 | Project | What it gave Multivoid |
 |--|--|
-| [MTA:SA](https://github.com/multitheftauto/mtasa-blue) (GPLv3, vendored read-only) | The architectural precedent: the parallel class hierarchy, per-element syncers, keysync shape, host-authoritative AI. Multivoid follows MTA's shapes deliberately — no MTA code is copied. |
-| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported (with attribution in the source), it is the everyday development tool (SDK header dumps, Blueprint dumps, live inspection) — and since the mod-folder migration it is also the *loader* the shipping mod runs under. The mod still imports nothing from it (the D-3 slim contract): UE4SS starts `main.dll` and everything after that is Multivoid's own code. |
+| [MTA:SA](https://github.com/multitheftauto/mtasa-blue) (GPLv3, vendored read-only) | The architectural precedent: the parallel class hierarchy, per-element syncers, the keysync shape, host-authoritative AI. Multivoid follows MTA's shapes deliberately; no MTA code is copied. |
+| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported with attribution in the source, it is the everyday development tool, and it is the loader the shipping mod runs under. The mod imports nothing from it. |
 | [MinHook](https://github.com/TsudaKageyu/minhook) (MIT) | The x64 trampoline hooking engine (vendored). |
-| **VoidTogether** | The first multiplayer attempt for VOTV, and useful to read while designing this one. No VoidTogether code is in Multivoid (it is a JS server; this is a C++ in-process mod), but two things came from studying it and are cited in the source where they are used: the nickname-sanitizer approach ([`player_handshake.cpp`](src/votv-coop/src/coop/session/player_handshake.cpp)) and widget-styling comparisons that shaped the nameplate look ([`engine_widget.cpp`](src/votv-coop/src/ue_wrap/engine/engine_widget.cpp)). |
-| [Dear ImGui](https://github.com/ocornut/imgui) (MIT), [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (BSD), [Opus](https://opus-codec.org/) (BSD), [FreeType](https://freetype.org/) (FTL), [miniaudio](https://miniaud.io/) (MIT/public domain) | Vendored libraries — UI, transport, voice, text rendering, audio. |
+| **VoidTogether** | The first multiplayer attempt for VOTV, useful to read while designing this one. No VoidTogether code is in Multivoid; two ideas came from studying it and are cited in the source where they are used (the nickname sanitizer, the nameplate styling comparison). |
+| [Dear ImGui](https://github.com/ocornut/imgui) (MIT), [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (BSD), [Opus](https://opus-codec.org/) (BSD), [FreeType](https://freetype.org/) (FTL), [miniaudio](https://miniaud.io/) (MIT/public domain) | Vendored libraries: UI, transport, voice, text rendering, audio. |
 
 ## Legal
 
-This is a **hook-only mod**: the mod's code contains **no Voices of the Void
-code or assets**. You must own a legitimate copy of the game to use it.
-
-The repository is licensed under the **MIT License** (see `LICENSE`) — the
-same family as the projects it builds on (Dear ImGui and the UE4SS-derived
-reflection algorithms, MIT; MinHook, BSD-2; GameNetworkingSockets and Opus,
-BSD-3). The full verbatim license texts of every statically linked or
-embedded component ship in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md), inside the release zip
-as well. The optional starter-skin pak bundled with releases
-(`scientists.pak`) is a community conversion of third-party game assets and
-is **not** covered by the MIT license. Unaffiliated with the VOTV authors.
+This is a **hook-only mod**: its code contains **no Voices of the Void code or assets**. You must
+own a legitimate copy of the game to use it. The repository is licensed under the
+**MIT License** (see `LICENSE`); the full license texts of every statically linked or embedded
+component ship in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md), inside the release zip as
+well. The optional starter-skin pak bundled with releases (`scientists.pak`) is a community
+conversion of third-party game assets and is **not** covered by the MIT license. Unaffiliated with
+the VOTV authors.
 
 ---
 
