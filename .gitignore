@@ -364,7 +364,7 @@ docs/THUNDERSTORE.md
 # plans, dated findings, session logs, archives, the review-prompt templates -- stays on disk and
 # out of the repository. Files were untracked with `git rm --cached`; history is not rewritten.
 docs/**/*_ARC.md
-docs/kerfur/ARC.md
+docs/kerfur/
 docs/READING_ORDER.md
 docs/COOP_SYNC_MAP.md
 docs/COOP_SCOPE.md
@@ -390,7 +390,6 @@ docs/OVERLAY_CAPTURE_COEXIST.md
 docs/signals/HISTORY.md
 docs/piles/
 docs/_archive/
-docs/kerfur/0[1-8]-*.md
 reference/agency-agents/
 
 # ---- OUR WORKFLOW'S TOOLING IS LOCAL (2026-09-05, the same test as the docs above) ------------

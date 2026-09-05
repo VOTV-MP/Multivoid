@@ -62,7 +62,9 @@ window, and the late-join rule every lane answers) · [players.md](players.md) (
 the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation) ·
 [props.md](props.md) (props: identity, the birth and death seams, holding and throwing, containers,
 the props that change on their own, the deployables) · [piles.md](piles.md) (trash piles: the
-host's id across pile and clump, the client's grab as an intent, the dispenser piles)
+host's id across pile and clump, the client's grab as an intent, the dispenser piles) ·
+[npcs-and-kerfur.md](npcs-and-kerfur.md) (host-owned characters, the creatures each peer owns, the
+killer wisp, the roaches, and the kerfur robot across its two forms)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -72,7 +74,7 @@ host's id across pile and clump, the client's grab as an intent, the dispenser p
 **Per-domain trees**, one folder per game system, each with its own README
 
 [events/](events/) · [signals/](signals/) (the signal-processing pipeline) ·
-[upgrades/](upgrades/) · [notifications/](notifications/) · [kerfur/](kerfur/) ·
+[upgrades/](upgrades/) · [notifications/](notifications/) ·
 [vehicles/](vehicles/) (the ATV)
 
 ## How to read a claim in these docs
