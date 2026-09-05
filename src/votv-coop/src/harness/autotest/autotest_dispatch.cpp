@@ -1,9 +1,10 @@
-// harness/autotest_dispatch.cpp -- see harness/autotest_dispatch.h.
+// harness/autotest_dispatch.cpp -- see harness/autotest_dispatch.h. Each routine is described
+// at its declaration in harness/autotest.h.
 
 #include "harness/autotest_dispatch.h"
 
 #include "harness/autotest.h"
-#include "coop/session/join_seed.h"  // seeds arc selftest
+#include "coop/session/join_seed.h"  // the inline seed selftest
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "ue_wrap/core/log.h"
@@ -19,8 +20,7 @@ const char* RoleStr(coop::net::Role role) {
     return role == coop::net::Role::Host ? "host" : "client";
 }
 
-// Spawn `thread` (detached) iff env `envKey`=="1". Mirrors the old inline
-// blocks one-for-one (same log wording), minus the copy-paste.
+// Spawn `thread` detached when env `envKey` is "1".
 void SpawnIf(const char* envKey, const char* label,
              LPTHREAD_START_ROUTINE thread, coop::net::Role role) {
     if (cfg::ReadEnv(envKey) != "1") return;
@@ -33,201 +33,159 @@ void SpawnIf(const char* envKey, const char* label,
 }  // namespace
 
 bool IsClientRole() {
-    // Latched (one file scan per process): the routines call this from their
-    // worker threads after boot; the role cannot change within a launch. Magic
-    // statics make the first concurrent call safe.
+    // Latched, one resolve per process: the routines call this from their worker threads after
+    // boot, and the role cannot change within a launch.
     static const bool isClient =
         cfg::ResolveEnum(coop::config_registry::rows::net_role) == "client";
     return isClient;
 }
 
 void SpawnEnvGatedTests(coop::net::Role role) {
-    // Autonomous grab test: both peers (host drives grab/move/release via native
-    // PhysicsHandle UFunctions; client scan-only for cross-peer FName stability).
+    // The grab test: the host drives grab, move and release through the PhysicsHandle UFunctions;
+    // the client only scans.
     SpawnIf("VOTVCOOP_RUN_GRAB_TEST", "grab test", &GrabTestThread, role);
-    // Held-clump e2e (v26 mannequin model): HOST spawns + "grabs" a prop_garbageClump_C;
-    // the held-edge broadcasts a PropSpawn + streams PropPose keyed by our EID; the
-    // CLIENT spawns the visible clump mirror + drives it kinematically by eid, physics
-    // on release. Validates the non-keyable clump on the prop pipeline + no crash.
+    // The held-clump test: the host spawns and holds a trash clump; the client mirrors it by eid,
+    // kinematic while held and physical on release.
     SpawnIf("VOTVCOOP_RUN_CLUMP_TEST", "held-clump mannequin e2e test", &ClumpTestThread, role);
-    // Clump VISIBILITY probe: solo. Spawns a bare prop_garbageClump_C + logs its
-    // StaticMesh asset (null vs named) -- gates the mannequin-model clump rework.
+    // The clump visibility probe, solo: spawns a bare clump and logs its StaticMesh asset.
     SpawnIf("VOTVCOOP_RUN_CLUMPVIS_PROBE", "clump visibility probe", &ClumpVisProbeThread, role);
-    // World-rules probe: BOTH peers. Runs the F1>World>Rules read path + logs every
-    // rule -- exercises the UI-only panel code AND measures G1 (diff host vs client).
+    // The world-rules probe, both peers: runs the rules panel's read path and logs every rule.
     SpawnIf("VOTVCOOP_RUN_WORLDRULES_PROBE", "world-rules probe", &WorldRulesProbeThread, role);
-    // chipPile GRAB test (v81 morph verify): HOST teleports to a tracked chipPile, aims +
-    // confirms lookAtActor==pile via the game's own trace, fires InpActEvt_use (the real
-    // E-press edge), then measures whether the morphed clump lands in holding_actor and the
-    // peer's mirror converts. CLIENT scan-only. Closes the one link an audit/smoke can't.
+    // The chipPile grab test: the host fires a real use press at a tracked pile and measures
+    // whether the morphed clump lands in its hand and the client's mirror converts.
     SpawnIf("VOTVCOOP_RUN_CHIPPILE_TEST", "chipPile grab test", &ChipPileTestThread, role);
-    // Puppet-grab probe (docs/piles/08 Increment-2 gate): HOST executes playerGrabbed on the slot-1
-    // PUPPET + measures whether the puppet HOLDS the clump and the per-tick PHC maintenance tracks it
-    // to the puppet's hand (tick alive) vs floats at the spawn spot. Settles the one [?] the bytecode
-    // could not -- whether an unpossessed puppet's ReceiveTick dispatches. Client just stands.
+    // The puppet-grab probe: the host runs playerGrabbed on the slot-1 puppet and measures whether
+    // the puppet holds the clump and its tick keeps it at the hand.
     SpawnIf("VOTVCOOP_RUN_PUPPET_GRAB_PROBE", "puppet-grab probe", &PuppetGrabProbeThread, role);
-    // Synthetic GrabIntent test (docs/piles/08 Increment-2 host-side): the CLIENT sends a GrabIntent for a
-    // mirrored pile eid; the HOST executes playerGrabbed on the puppet + broadcasts the convert + drives the
-    // held clump. Exercises the full client->host wire/router/handler/hand-drive (no client suppress/collision).
+    // The synthetic GrabIntent test: the client sends a GrabIntent for a mirrored pile; the host
+    // runs the grab on the puppet, broadcasts the convert and drives the held clump.
     SpawnIf("VOTVCOOP_RUN_GRAB_INTENT_TEST", "synthetic GrabIntent test", &GrabIntentTestThread, role);
-    // HOST-DRIFT scenario (L1 orphan census driver, docs/piles/08): the HOST destroys + moves some of its
-    // own native chipPiles in the pre-connect window so its join snapshot diverges from the save the client
-    // loaded -> the client's join-sweep [PILE-CENSUS] populates with real orphans. Read-only census this build.
+    // The host-drift scenario: the host destroys and moves some of its own piles before connect,
+    // so the client's join sweep sees real orphans.
     SpawnIf("VOTVCOOP_RUN_PILE_DRIFT", "host-drift pile scenario", &PileDriftScenarioThread, role);
-    // Phase 5F flashlight: both peers toggle their own flashlight; the OTHER
-    // peer's puppet should reflect it via the ItemActivate wire path.
+    // The flashlight test, both peers: each toggles its own flashlight, and the other's puppet
+    // must reflect it through the item-activate path.
     SpawnIf("VOTVCOOP_RUN_FLASHLIGHT_TEST", "flashlight test", &FlashlightTestThread, role);
-    // Config-corpus selftest (ini rework arc 1): solo, role-agnostic; runs the real
-    // ini lexer over a corpus dir + the tri-state fault-injection controls.
+    // The config-corpus selftest, solo: the real ini lexer over a corpus directory plus the
+    // fault-injection controls.
     SpawnIf("VOTVCOOP_RUN_CONFIG_SELFTEST", "config-corpus selftest", &ConfigSelftestThread, role);
-    // Seeds arc (2026-08-23): join_seed delta-math selftest -- pure, engine-free,
-    // runs inline (no thread; ~microseconds). PASS/FAIL lines grep-asserted by the
-    // smoke driver.
+    // The join-seed delta-math selftest is pure and engine-free, so it runs inline; the smoke
+    // driver greps its PASS/FAIL lines.
     if (cfg::ReadEnv("VOTVCOOP_RUN_SEED_SELFTEST") == "1") coop::join_seed::RunSelfTest();
-    // Seeds arc: the RED/GREEN join-window email drill (host authors at the solo +
-    // in-window instants; pair with VOTVCOOP_SEED_DISABLE=1 for the mutate RED).
+    // The join-window email drill: the host authors at the solo and in-window instants; pair with
+    // VOTVCOOP_SEED_DISABLE=1 for the red run.
     SpawnIf("VOTVCOOP_RUN_SEED_DRILL", "seed drill", &SeedDrillThread, role);
     SpawnIf("VOTVCOOP_RUN_SCANPARITY", "scan-hub parity drill", &ScanParityThread, role);
-    // Phase 5W weather: host-only; forces rain ON/OFF cycles, client applies via wire.
+    // The weather test, host only: forces rain on and off; the client applies it over the wire.
     SpawnIf("VOTVCOOP_RUN_WEATHER_TEST", "weather test", &WeatherTestThread, role);
-    // Phase 5W Inc-fix-2 red sky: host-only; visually unambiguous variant.
+    // The red-sky test, host only: the visually unambiguous variant.
     SpawnIf("VOTVCOOP_RUN_REDSKY_TEST", "red sky test", &RedSkyTestThread, role);
-    // PR-FOUNDATION-2 (B) save-block: client-only; drives saveSlot.saveToSlot so
-    // the SaveGameToSlot hook's BLOCK is observable in a short smoke.
+    // The save-block test, client only: drives saveToSlot so the save hook's block is observable.
     SpawnIf("VOTVCOOP_RUN_SAVEBLOCK_TEST", "save-block test", &SaveBlockTestThread, role);
-    // PR-FOUNDATION-2 (B part 2) save-button grey-out: client-only; drives
-    // InpActEvt_Escape so the pause-menu Save button disable is observable.
+    // The save-button test, client only: drives the escape press so the pause menu's disabled
+    // Save button is observable.
     SpawnIf("VOTVCOOP_RUN_SAVEBTN_TEST", "save-button test", &SaveBtnDisableTestThread, role);
-    // bug2 world-context staleness guard self-test: both peers; forces a stale
-    // world context and verifies EnsureWorldContext recovers.
+    // The world-context test, both peers: forces a stale world context and verifies the recovery.
     SpawnIf("VOTVCOOP_RUN_WORLDCTX_TEST", "world-context test", &WorldCtxTestThread, role);
-    // Dead-Prop-Element reaper self-test: both peers; forces a synthetic dead
-    // local Prop Element and verifies ReapDeadLocalPropElements evicts it.
+    // The prop-reap test, both peers: forces a synthetic dead local prop Element and verifies the
+    // reaper evicts it.
     SpawnIf("VOTVCOOP_RUN_PROPREAP_TEST", "prop-reap test", &PropReapTestThread, role);
-    // Re-seed snapshot-completeness probe: both peers; after settle, re-seeds and
-    // logs how many NEW live keyed props the boot seed missed (verify step).
+    // The re-seed probe, both peers: after settle, re-seeds and logs how many live keyed props the
+    // boot seed missed.
     SpawnIf("VOTVCOOP_RUN_RESEED_TEST", "re-seed probe", &ReSeedTestThread, role);
-    // Vitals Inc2b ragdoll e2e wire test: BOTH peers. Client DRIVES its local
-    // ragdollMode/forceGetUp; host OBSERVES its slot-1 puppet flip isRagdoll
-    // 0->1->0 purely via the pose stream's kStateBitRagdoll + receiver reconcile.
-    // (Supersedes the Inc2a #8 standalone probe -- the e2e path covers it.)
+    // The ragdoll test, both peers: the client drives its own ragdollMode; the host watches its
+    // slot-1 puppet flip through the pose stream's ragdoll bit.
     SpawnIf("VOTVCOOP_RUN_RAGDOLL_TEST", "ragdoll e2e test", &RagdollTestThread, role);
-    // Puppet-frame nameplate shot (PROPER, NO ragdoll): host frames the STANDING slot-1
-    // puppet (positions back + aims at its head) + holds it for mp.py puppetshot to grab
-    // the ImGui "Client" nameplate over it. Client just stands.
+    // The puppet-frame shot: the host frames the standing slot-1 puppet and holds it for the
+    // nameplate screenshot.
     SpawnIf("VOTVCOOP_RUN_PUPPET_FRAME", "puppet-frame nameplate shot", &PuppetFrameThread, role);
-    // Vitals Inc3 damage hurt-flash e2e: BOTH peers. Client lowers its own health;
-    // host confirms its slot-1 puppet's nameplate flashes red via the streamed
-    // health drop (no new wire).
+    // The damage-flash test, both peers: the client lowers its own health, and the host's slot-1
+    // nameplate must flash red from the streamed health.
     SpawnIf("VOTVCOOP_RUN_DAMAGE_TEST", "damage flash e2e test", &DamageTestThread, role);
-    // Vitals #6 puppet-damage HAZARD probe (gates Inc3-WIRE): host invokes Add Player
-    // Damage on the slot-1 puppet + diffs its OWN saveSlot.health to confirm (at
-    // runtime) that player health is the shared per-machine saveSlot. Client just
-    // connects so the puppet exists.
+    // The puppet-damage hazard probe: the host applies Add Player Damage to the slot-1 puppet and
+    // diffs its own health, confirming player health is the shared per-machine save slot.
     SpawnIf("VOTVCOOP_RUN_DMGHAZARD_TEST", "damage-hazard #6 probe", &DmgHazardTestThread, role);
-    // Vitals Inc3-WIRE relay e2e: host sends synthetic PlayerDamage to slot 1; client
-    // applies it to its own player; the streamed health drop flashes the host's slot-1
-    // puppet -- proving the full reliable host->owner damage relay (no real enemy).
+    // The PlayerDamage relay test: the host sends a synthetic PlayerDamage to slot 1, the client
+    // applies it, and the streamed health drop flashes the host's puppet.
     SpawnIf("VOTVCOOP_RUN_PLAYERDMG_TEST", "PlayerDamage relay e2e", &PlayerDamageTestThread, role);
-    // Native death chain: SOLO + SESSIONLESS. Delivers a lethal Add Player Damage, lets
-    // the whole native death run, and measures it (timeline + the dead-window memory
-    // differential). Its ACCEPTANCE arms are docs/DEATH_ARC.md's contract and stay RED
-    // until that arc lands -- an instrument that cannot fail on the unfixed build cannot
-    // certify the fix.
+    // The native death chain, solo and sessionless: a lethal Add Player Damage, the whole native
+    // death, its timeline and the dead-window memory differential.
     SpawnIf("VOTVCOOP_RUN_DEATH_TEST", "native death chain", &DeathTestThread, role);
-    // Xray-ragdoll feasibility probe: SINGLE instance (plain SP, role-agnostic).
-    // Spawns playerRagdoll_C MANUALLY (no ragdollMode) + dumps it vs a real
-    // ragdollMode body -- decides whether the manual spawn is visible/simulating
-    // AND death-free (the whole xray-ragdoll direction hinges on it).
+    // The ragdoll spawn probe, single instance: spawns playerRagdoll_C by hand and dumps it against
+    // a real ragdollMode body.
     SpawnIf("VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE", "xray-ragdoll spawn probe", &RagdollSpawnProbeThread, role);
 
-    // Menu-travel command probe: solo, finds which command travels gameplay->menu
-    // (for the client-death flee-to-menu fix). No connection needed.
+    // The menu-travel probe, solo: finds which command travels gameplay to menu.
     SpawnIf("VOTVCOOP_RUN_MENUTRAVEL_PROBE", "menu-travel probe", &MenuTravelProbeThread, role);
 
-    // Re-load churn probe: solo, sessionless. gameplay -> menu -> re-load, N times,
-    // censusing every live UWorld's PersistentLevel/WorldSettings chain at each step.
-    // The NEGATIVE CONTROL for the 2026-08-31 rejoin crash (a null AWorldSettings in
-    // UEngine::LoadMap): it answers whether the second in-process map load faults with
-    // no coop layer in the picture at all.
+    // The re-load churn probe, solo: gameplay to menu to re-load N times, censusing every live
+    // world's PersistentLevel and WorldSettings chain; the negative control for a rejoin crash
+    // with no coop layer present.
     SpawnIf("VOTVCOOP_RUN_RELOAD_CHURN", "re-load churn probe", &ReloadChurnProbeThread, role);
 
-    // CachedObjRef zero-AV drill: solo, engine-independent (fake decommitted-page
-    // object). Proves legacy IsLive faults exactly once (absorbed) while
-    // CachedObjRef::Alive() answers with zero AVs. DEV smoke lane only.
+    // The zero-AV drill, solo: a fake decommitted-page object; the bare liveness check faults
+    // exactly once and CachedObjRef::Alive answers with no AV.
     SpawnIf("VOTVCOOP_RUN_ISLIVE_DRILL", "islive zero-AV drill", &IsLiveDrillThread, role);
 
-    // Fog ON/OFF model + clear-path probe: solo. Forces fog on, samples
-    // finalFogDensity/thickFog/actors, then runs the RE'd clear sequence -- gates
-    // the host-authoritative weather fix (client mist while host clear). No connection.
+    // The fog probe, solo: forces fog on, samples the density and actors, then runs the clear
+    // sequence.
     SpawnIf("VOTVCOOP_RUN_FOG_PROBE", "fog probe", &FogProbeThread, role);
 
-    // HUD red-tint discriminator: solo. Collapses the damage indicator (then dmg_tunnel,
-    // then dmg_full) one arm at a time and marks a screenshot per arm, to settle whether
-    // the user's red wash is the always-on dmg_tunnel, the death-latched dmg_full, or
-    // neither -- a question no viewport-widget census could reach. No connection.
+    // The HUD red-tint discriminator, solo: collapses the damage indicator's arms one at a time,
+    // with a screenshot marker per arm.
     SpawnIf("VOTVCOOP_RUN_HUD_TINT_PROBE", "HUD red-tint discriminator", &HudTintProbeThread, role);
 
-    // v95 EventFire replay-channel smoke: host fires solar/arirGraff_0/enasus through
-    // event_fire_sync::HostFire; the client log proves the replay policy + suppression.
+    // The EventFire replay smoke: the host fires three events through HostFire, and the client log
+    // proves the replay policy.
     SpawnIf("VOTVCOOP_RUN_EVENTFIRE_TEST", "EventFire replay smoke", &EventFireTestThread, role);
 
-    // Event force-NOW smoke: host resolves the obelisk box badge, ForceNow()s it, and
-    // asserts shots 1 -> 0 through the native overlap dispatch (coop/dev/event_force).
+    // The event force-now smoke: the host resolves the obelisk box badge, forces it, and asserts
+    // shots go from 1 to 0 through the native overlap dispatch.
     SpawnIf("VOTVCOOP_RUN_EVENTFORCE_TEST", "event force-NOW smoke", &EventForceTestThread, role);
 
-    // starRain cue-force driver: host fires 'starRain' PRE-client so the orchestration can
-    // join a client mid-shower and prove the event_cue join re-send (exactly one replay).
+    // The starRain cue driver: the host fires it before any client, so the orchestration can join
+    // a client mid-shower and prove exactly one replay.
     SpawnIf("VOTVCOOP_RUN_CUEFORCE_TEST", "starRain cue-force driver", &CueForceTestThread, role);
 
-    // Base radar alarm lane e2e (v101): host DevForces runTrigger(1) -> wait -> (0); the
-    // alarm_sync poll must broadcast both edges and the client must log its own native
-    // replay applies (docs/events/alarm.md section 5).
+    // The base radar alarm test: the host forces the trigger on, then off; the poll must broadcast
+    // both edges and the client must log its replay applies.
     SpawnIf("VOTVCOOP_RUN_ALARMFORCE_TEST", "alarm lane e2e driver", &AlarmForceTestThread, role);
 
-    // Piramid mirror-lane e2e: host ForceNow()s the piramid event (native spawner chain -> WA
-    // mirror + npc wisps), asserts the v97 lane arms, then baits a REAL gather by re-pinning
-    // the wisps around the walking pyramid; VERDICT = the PyramidGather relay firing.
+    // The piramid mirror-lane test: the host forces the piramid event, asserts the lane arms, then
+    // baits a real gather by re-pinning the wisps around the pyramid; the verdict is the gather
+    // relay firing.
     SpawnIf("VOTVCOOP_RUN_PIRAMIDFORCE_TEST", "piramid mirror-lane e2e", &PiramidForceTestThread, role);
 
-    // Wisp mirror-lane e2e: host ForceNow()s the wisps swarm (EX_CallMath spawns -> Func-thunk
-    // enroll -> client mirrors), then forces midday so the PE-invisible self-despawns exercise
-    // the pose-walk dead-retire broadcast. Assert via log diff.
+    // The wisp mirror-lane test: the host forces the swarm, then midday, so the self-despawns
+    // invisible to ProcessEvent exercise the dead-retire broadcast.
     SpawnIf("VOTVCOOP_RUN_WISPLANE_TEST", "wisp mirror-lane e2e", &WispLaneTestThread, role);
 
-    // Killerwisp-vs-peers probe: read-only FSM sampling around SpawnKillerWispOnClient with the
-    // host teleported away -- localizes where the "ignores peers" chain breaks.
+    // The killerwisp acquisition probe: read-only FSM sampling with the host teleported away, to
+    // localise where the chain breaks.
     SpawnIf("VOTVCOOP_RUN_KWISP_PROBE", "killerwisp acquisition probe", &KwispProbeThread, role);
 
-    // Pause-guard e2e: the CLIENT pauses its world via the game's own SetGamePaused verb (the
-    // ESC state); the coop no-pause invariant must clear it within ~a tick. VERDICT in the log.
+    // The pause-guard test: the client pauses its world through the game's own verb, and the
+    // no-pause invariant must clear it within about a tick.
     SpawnIf("VOTVCOOP_RUN_PAUSE_TEST", "pause-guard e2e", &PauseGuardTestThread, role);
 
-    // TEST-ONLY local-player movement oscillator: circles the local player so the OTHER
-    // peer's interp has a MOVING source. Verification rig for the interp-starvation fix
-    // (static-source smokes show trail~=0 and hide the bug). Enable on ONE peer; read the
-    // other peer's `pose-diag[slot N] ... trail=`. Role-agnostic. Never ships.
+    // The movement oscillator: circles the local player so the other peer's interpolation has a
+    // moving source; enable on one peer and read the other's pose diagnostic.
     SpawnIf("VOTVCOOP_RUN_MOVE_OSC", "move oscillator (interp verify)", &MoveOscThread, role);
 
-    // Phase-0 HALT probe for the autonomous bot-director (2026-07-23): SOLO, role-agnostic. Measures
-    // Gate A (FindPathToLocationSynchronously returns a traversable path over the baked NavMesh) + Gate B
-    // (reflected AddMovementInput -- resolved on the Pawn declaring class -- moves the possessed body).
-    // The verdict picks the director's fallback rung; nothing of the director is built until this runs.
+    // The bot-director halt probe, solo: measures the path query over the baked NavMesh and a
+    // reflected AddMovementInput moving the possessed body.
     SpawnIf("VOTVCOOP_RUN_NAV_PROBE", "nav HALT probe (director Phase-0)", &NavHaltProbeThread, role);
 
-    // The autonomous bot-director's walked-grab scenario (2026-07-23): the BRAIN (PlayerContext read-model
-    // + priority-arbitrated processes ClearHand>Goto>Grab + tick loop) drives the possessed player to pick
-    // an open chipPile over the NavMesh and grab it -- state-aware (clears a full hand first). SOLO-runnable.
+    // The director's walked-grab scenario, solo-runnable: the brain walks the possessed player to
+    // an open chipPile over the NavMesh and grabs it, clearing a full hand first.
     SpawnIf("VOTVCOOP_RUN_DIRECTOR_WALKGRAB", "bot-director walked grab", &coop::director::WalkGrabDirectorThread, role);
 
-    // Director Phase-2 HALT gate (2026-07-23): the CONTAINER-TAKE input probe. SOLO. Walks to a placed
-    // non-empty world container, drives the faithful human take chain (openContainer -> pressButton ->
-    // em_take), and MEASURES whether the take executed (GObjStack item-count decrement). Its verdict
-    // decides whether the container concurrent-take race is buildable on the reflected-verb model.
+    // The container-take probe, solo: walks to a placed non-empty container, drives the human take
+    // chain, and measures whether the take executed.
     SpawnIf("VOTVCOOP_RUN_CTAKE_PROBE", "container-take input probe (director Phase-2)", &coop::director::ContainerTakeProbeThread, role);
 
-    // Director Phase-2 the RACE: two peers walk to the SAME container + take the SAME item at a GO barrier.
-    // Both peers run this; each counts X locally after; mp.py sums cross-peer (1=correct/2=dup/0=vanished).
+    // The container race: two peers walk to the same container and take the same item at a
+    // barrier; each counts locally afterwards, and the driver sums across peers.
     SpawnIf("VOTVCOOP_RUN_CTAKE_RACE", "container concurrent-take race (director Phase-2)", &coop::director::ContainerRaceThread, role);
 }
 
