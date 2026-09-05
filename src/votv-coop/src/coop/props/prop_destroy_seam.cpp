@@ -1,18 +1,13 @@
-// coop/props/prop_destroy_seam.cpp -- the actor-destroy half of the prop
-// lifecycle: the K2_DestroyActor Func-patch seam (DestroySeamBody /
-// OnK2DestroyFunc), the explicit v67 converge destroy
-// (SyncDestroyedTrackedProp), and the echo-suppressed local destroy helper
-// (DestroyLocalProp).
-//
-// EXTRACTED from prop_lifecycle.cpp 2026-07-10 (966 LOC, past the 800 soft
-// cap; this was the flagged extraction). Behavior preserved byte-for-byte;
-// the shared session cache rides prop_lifecycle_detail.h.
+// coop/props/prop_destroy_seam.cpp -- the actor-destroy half of the prop lifecycle: the
+// K2_DestroyActor patch seam, the explicit converge destroy for a destroy the seam cannot see,
+// and the echo-suppressed local destroy. The shared session cache rides
+// prop_lifecycle_detail.h.
 
 #include "coop/props/prop_lifecycle.h"
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy (destroy-edge first refusal, take-9)
+#include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the destroy-edge first refusal
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
@@ -22,7 +17,7 @@
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
-#include "ue_wrap/engine/engine.h"  // IsChildActor (child-actor exclusion, take-7 floating-CCTV RCA)
+#include "ue_wrap/engine/engine.h"  // IsChildActor
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
@@ -43,21 +38,12 @@ namespace PT = coop::prop_element_tracker;
 void DestroySeamBody(void* self) {
     auto* s = LoadSession();
     if (!self || !s) return;
-    // The destroy seam fires for EVERY actor destroy in the world.
-    // We CANNOT promote IsKeyedInteractable to a fast-path gate here:
-    // ue_wrap::prop::IsKeyedInteractable internally calls ResolveExtraBases
-    // which does R::FindClass walks for trashBitsPile_C / prop_garbageClump_C /
-    // actorChipPile_C until all three resolve. During the pre-resolution
-    // window (early boot, widget/UI teardown phase), every non-prop_C
-    // actor destroy would burn multiple GUObjectArray walks with wstring
-    // allocations -- the documented install-loop bomb pattern (see
-    // [[feedback-install-idempotent-o1-steady-state]]). The session-null
-    // and not-connected gates here are what historically prevented the
-    // bomb from firing during the unresolved-classes window. Keep them
-    // first. (Audited + smoke-FAILED + reverted 2026-05-28.)
-    // Capture the Prop Element id BEFORE UnmarkKnownKeyedProp drains the
-    // shadow (audit fix 2026-05-28 -- the prior order returned kInvalidId
-    // on every destroy broadcast).
+    // The destroy seam fires for every actor destroy in the world, so the keyed-interactable test
+    // cannot be promoted to a fast-path gate: it resolves the extra pile classes with object-array
+    // walks until all three resolve, and during that window (early boot, UI teardown) every
+    // non-prop destroy would burn walks with string allocations. The session-null and
+    // not-connected gates stay first. The Element id is captured before the keyed-prop unmark
+    // drains the shadow, or every destroy broadcast would carry an invalid id.
     const coop::element::ElementId destroyEid = PT::GetPropElementIdForActor(self);
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
@@ -68,56 +54,36 @@ void DestroySeamBody(void* self) {
         return;
     }
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return;
-    // CHILD-ACTOR EXCLUSION (2026-07-12, take-7 floating-CCTV RCA; predicate + full rationale:
-    // ue_wrap::engine::IsChildActor + prop_element_tracker::MarkPropElement). A dying parent-owned
-    // sub-actor (kerfur eye cam on every toggle) is destroyed by its parent's engine cascade on
-    // every peer -- broadcasting its keyed destroy is at best wire noise (per-peer random keys
-    // never match) and at worst a same-key hazard. Cheap 8-byte read, only keyed actors reach it.
+    // A dying parent-owned sub-actor (a kerfur's eye camera on every toggle) is destroyed by its
+    // parent's engine cascade on every peer, so broadcasting its keyed destroy is at best wire
+    // noise (per-peer random keys never match) and at worst a same-key hazard. A cheap read; only
+    // keyed actors reach it.
     if (ue_wrap::engine::IsChildActor(self)) return;
     const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(self);
-    // FName(NAME_None) stringifies to "None" -- a KEYED prop broadcasts by Key (the
-    // common path). The NON-KEYABLE trash clump (prop_garbageClump_C: setKey doesn't
-    // stick, key always reads None) instead rides OUR eid: broadcast key=None + eid so
-    // the receiver's eid-routable OnDestroy despawns its mirror (v26 spawn-by-eid
-    // symmetry). WITHOUT this the clump's morph-destroy (toClump/turnToPile call
-    // K2_DestroyActor -- IDA-confirmed, votv-chippile-clump-morph-RE-2026-05-27.md) was
-    // dropped here -> the mirror leaked -> the infinite grab/throw dupe. Only drop when
-    // there is NEITHER a Key NOR an eid (a genuinely unsyncable actor).
-    // [[project-bug-trash-chippile-uaf-crash]]
+    // An empty name stringifies to None. A keyed prop broadcasts by key; the non-keyable trash
+    // clump (its key never sticks and always reads None) rides our eid instead, key None plus eid,
+    // so the receiver's eid-routable destroy despawns its mirror, the spawn-by-eid symmetry.
+    // Without it the clump's morph destroy (the pile-to-clump and clump-to-pile calls destroy the
+    // actor) was dropped here, the mirror leaked, and the grab-and-throw duplicated forever. Only
+    // an actor with neither a key nor an eid is dropped.
     const bool keyless = (keyStr.empty() || keyStr == L"None");
     const bool hasEid  = (destroyEid != coop::element::kInvalidId);
     if (keyless && !hasEid) return;
-    // v107 (2026-07-08) HOST-WIPE ROOT FIX -- world-load episode gate. While a joining CLIENT is
-    // inside its own world-load (the game's mainGamemode.loadObjects pre-delete + respawn), the
-    // game destroys+recreates every keyed prop as LOCAL, net-zero world-rebuild churn (the client
-    // re-binds each key via join_membership_sweep). Pre-v106 those destroys dispatched via EX_*
-    // (ProcessEvent-invisible) and never crossed the wire; the v106 K2_DestroyActor Func-patch
-    // catches them and would broadcast the destroy half -> the HOST destroys its AUTHORITATIVE
-    // copies by key (measured 2026-07-08 bare join: host 3345->1255 keyed props, never recovered).
-    // Suppress the OUTBOUND broadcast of the client's destroys for the duration of the episode; the
-    // local K2_DestroyActor already ran, so this peer's world is unaffected. Client-scoped (the host
-    // never arms the episode); the role guard is defense-in-depth on the shared bidirectional seam.
-    // See coop/session/world_load_episode.h + research/findings/props-lifecycle/votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md
-    //
-    // THE `!keyless` SCOPING IS GONE (2026-08-23, field-measured). It was justified as "the wipe is
-    // 100%% keyed props ... piles are already fixed and the host DEFERS them anyway" -- and that last
-    // clause is the crutch admitting itself: the traffic was known to be garbage and was tolerated
-    // because the receiver swallowed it. Measured cost, reproduced locally 1:1 with the Linux triage
-    // logs: a joining client broadcasts ONE eid-only trash-clump destroy per level pile (871 here,
-    // 940 in the field), every one carrying a CLIENT-BAND eid the host has never seen, so the host
-    // parks all 871 as destroy-before-load and expires them. In the field that burst lands in the
-    // same minute as 485 PropSpawn sends being refused at enqueue for a full send buffer.
-    //
-    // The invariant is about the WINDOW, not the key: inside its own world-load a client is not
-    // generating events, it is being torn down and rebuilt. loadObjects deletes keyed props and
-    // keyless piles with equal enthusiasm, and neither deletion is something a peer needs to hear.
-    // R-4a end-condition (2026-08-23, design doc votv-r4a-end-condition-DESIGN-2026-08-23.md):
-    // the suppression window is InEpisode() OR the reconcile window (ANY kind -- a junk
-    // broadcast costs more than a suppressed destroy, which the bracket re-expresses). The
-    // field's class-B churn (~660 KEYED eid=0 broadcasts) ran INSIDE the bracket, 23 s after
-    // the episode had closed by construction. New-segment suppressions (reconcile window
-    // without the load episode) WARN with an R-1e-shape rate latch.
-    const bool inLoadEpisode = coop::world_load_episode::InEpisode();  // read ONCE (audit MINOR-5)
+    // The world-load episode gate. While a joining client is inside its own world load, the game
+    // destroys and recreates every keyed prop as local net-zero rebuild churn, which the client
+    // re-binds by key. The destroy patch catches those destroys and would broadcast them, and the
+    // host would then destroy its authoritative copies by key: most of its keyed props on a bare
+    // join, never recovered. So a client's outbound destroy broadcast is suppressed for the
+    // episode; the local destroy already ran, so this peer's world is unaffected. Client-scoped;
+    // the role guard is defence in depth on a shared seam. The suppression covers keyless
+    // destroys too: inside its own load a client generates no events, it is being torn down and
+    // rebuilt, and a joining client otherwise broadcasts one eid-only clump destroy per level
+    // pile, each with a client-band eid the host never saw, which the host parks and expires in
+    // the same minute its send buffer is full. The window is the load episode or the reconcile
+    // window, of any kind: a junk broadcast costs more than a suppressed destroy, which the
+    // bracket re-expresses. A keyed suppression in the reconcile window alone warns with a rate
+    // latch, since it is the trace if a player's genuine destroy vanished.
+    const bool inLoadEpisode = coop::world_load_episode::InEpisode();  // read once
     if (s->role() == coop::net::Role::Client &&
         (inLoadEpisode || coop::world_load_episode::InReconcileWindow())) {
         const bool newSegment = !inLoadEpisode;
@@ -141,14 +107,13 @@ void DestroySeamBody(void* self) {
                 newSegment ? "the reconcile window" : "world-load episode");
         return;
     }
-    // KERFUR FIRST-REFUSAL at the DESTROY chokepoint (take-9 2026-07-13, the destroy-edge twin of
-    // prop_lifecycle's express-side TryAdoptFreshKerfurProp). The turn-on verb spawnKerfuro destroys
-    // its prop AFTER spawning the NPC, so this seam fires mid-conversion: the kerfur layer must get
-    // first refusal before the generic relay (CLIENT: the relay killed the host's authoritative prop
-    // before the turn-on request landed -> the kerfur deleted on every peer; HOST: the generic
-    // broadcast + the element drain above left the host's own turn-on with NO converge at all).
-    // Consults AFTER the echo/episode gates (wire teardowns + load churn are not conversions); the
-    // capture converges/owns the wire itself when it returns true. Cheap class-pointer gate inside.
+    // The kerfur first refusal at the destroy chokepoint, the destroy-edge twin of the express-side
+    // adoption: the turn-on verb destroys its prop after spawning the NPC, so this seam fires
+    // mid-conversion, and the kerfur layer must get first refusal before the generic relay (on a
+    // client the relay killed the host's authoritative prop before the request landed; on the
+    // host the generic broadcast and drain left its own turn-on with no converge). Consulted after
+    // the echo and episode gates, since wire teardowns and load churn are not conversions; the
+    // capture owns the wire when it returns true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
     coop::net::WireKey wk{};
     wk.len = 0;
@@ -159,75 +124,52 @@ void DestroySeamBody(void* self) {
     }
     const char* roleStr =
         s->role() == coop::net::Role::Host ? "HOST" : "CLIENT";
-    // v12 (2026-05-28): construct PropDestroyPayload with both wire key
-    // (existing receiver lookup path) and elementId (forward-compat for
-    // event_feed routing-by-elementId). Lookup is best-effort: actor may
-    // have been Unmark'd already by the time we get here (parallel-anim
-    // race), in which case elementId is kInvalidId (0xFFFFFFFF on the
-    // wire -- distinct from 0 = no Element ever assigned).
+    // The payload carries both the wire key (the receiver's lookup) and the element id (the
+    // routing by id). The id lookup is best-effort: the actor may already be unmarked by the time
+    // we get here (a parallel-anim race), in which case it is invalid.
     coop::net::PropDestroyPayload dp{};
     dp.key = wk;
-    // Translate kInvalidId (C++ sentinel) → 0 (wire sentinel) per the
-    // protocol.h contract that "elementId == 0 → sender had no Element".
+    // The invalid id becomes 0 on the wire, the protocol's sender-had-no-Element sentinel.
     dp.elementId = (destroyEid == coop::element::kInvalidId) ? 0u : destroyEid;
-    // (v15 stamped a senderContext byte here; v16 PR-FOUNDATION-1b
-    // moved stale-gen defense to the header senderEpoch.)
     UE_LOGI("grab_hook[destroy-seam]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
             roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
             keyless ? " (eid-only: trash clump)" : "");
-    // v137 (A37/A38): if this prop is dying inside the coin gun's verb bracket, author the SALE
-    // FIRST, on this same lane. FIFO then delivers it while the host's copy is still alive -- which
-    // the mint REQUIRES, because `[V]` `sell` positions its coins from the SOLD PROP's component.
-    // This sits AFTER every gate above, so the world-load episode and the R-4a reconcile window are
-    // inherited and a joining client's loadObjects churn can never author a sale (principle 8).
-    //
-    // WHAT THIS COMMENT USED TO CLAIM, AND WHY IT WAS WRONG (v138 B1; the header at
-    // coop/items/coingun_sync.h was corrected for this on 2026-08-24 and its CALL SITE -- here --
-    // was not, which is the whole reason it is worth writing out). It said: "a sale the host refuses
-    // degrades to exactly today's behaviour, so nothing new is lost". FALSE BY CONSTRUCTION: the
-    // capture of the client's own coins is UNCONDITIONAL (it keys on the verb bracket alone) while
-    // the authorization is CONDITIONAL and decided LATER and ELSEWHERE, so a refusal takes the local
-    // coins too. The missing invariant is named in the header: a local artifact must not be
-    // suppressed until the authoritative one is CONFIRMED, and this lane does not yet hold it.
-    // What IS true, stated without the overreach: the destroy below is deliberately unchanged, so a
-    // refusal costs the ITEM -- and pre-A37 lost that same item while the client's phantom credit
-    // was erased by the host's next balance broadcast anyway, so the ECONOMIC outcome matches. No
-    // heal lane exists to get wrong. Since v138 the refusal is no longer SILENT: the host answers
-    // with CoinGunResult and the seller is told, because a prop that vanishes with no coins and no
-    // explanation is letter-for-letter the bug the field reported.
-    //
-    // v138 (B1): the sale carries the SAME identity pair this destroy does -- key first, eid as the
-    // keyless fallback. v137 passed the eid alone and `[V]` a v122 client mints no Element row for
-    // its own save-loaded keyed prop, so it was 0 for exactly the props a player shoots and the
-    // lane could never author at all. `keyStr` is what the destroy itself is about to name.
+    // If this prop is dying inside the coin gun's verb bracket, the sale is authored first, on
+    // this same lane, so FIFO delivers it while the host's copy is still alive, which the mint
+    // requires: the sale positions its coins from the sold prop's component. After every gate
+    // above, so the load episode and the reconcile window are inherited and a joining client's
+    // churn can never author a sale. The capture of the client's own coins is unconditional (it
+    // keys on the bracket) while the authorization is decided later and elsewhere, so a refusal
+    // takes the local coins too; the destroy below is unchanged, so a refusal costs the item, the
+    // same economic outcome as before the sale lane, and the host answers the refusal with a
+    // result, so the seller is told. The sale carries the same identity pair as this destroy, the
+    // key first and the eid as the keyless fallback: a client mints no Element row for its own
+    // save-loaded keyed prop, so the eid alone was 0 for exactly the props a player shoots.
     if (coop::coingun_sync::IsInCoinGunVerb())
         coop::coingun_sync::SendSaleForDyingProp(keyless ? std::wstring() : keyStr, dp.elementId);
 
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
-    // F2 Inc-1 (2026-07-09): a CLIENT that just broadcast a KEYED destroy may be about to RE-PLACE the
-    // same prop (hold-R pickup -> hold-R place). Park the key so the place authors a host-authoritative
-    // PropDropIntent -- and ONLY for a key whose destroy we just propagated (the host destroyed its
-    // copy via THIS broadcast) -> the host re-spawn makes exactly one prop, no dup. Never reached inside
-    // the world-load episode (that path returns above), so join churn never parks. See
-    // coop/props/prop_drop_intent.h + [[lesson-client-keyed-prop-move-two-wire-halves]].
+    // A client that just broadcast a keyed destroy may be about to re-place the same prop (a
+    // pickup, then a place). The key is parked so the place authors a host-authoritative drop
+    // intent, and only for a key whose destroy we just propagated, so the host re-spawn makes
+    // exactly one prop. Never reached inside the world-load episode, so join churn never parks.
     if (!keyless && s->role() == coop::net::Role::Client) {
         coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr);
     }
 }
 
-// Func-patch callback for Actor.K2_DestroyActor: the dying actor is the dispatch CONTEXT
-// (a member call runs ON the actor); FFrame::Object is merely the caller. K2_DestroyActor
-// is game-thread-only in UE4 (actor destruction), same thread contract the PE observer had.
+// The patch callback for the actor's destroy: the dying actor is the dispatch context (a member
+// call runs on the actor), and the frame's object is merely the caller. Game thread only, the
+// same contract the observer had.
 void OnK2DestroyFunc(void* context, void* /*srcObj*/, void* /*result*/) {
     DestroySeamBody(context);
 }
 
 
 void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
-    // See prop_lifecycle.h. Contract: NEVER dereference `actorKey` (the caller
-    // may hold a PendingKill or GC-purged pointer; v67 kerfur_convert calls
-    // this a tick after the BP-internal destroy). The wire key comes from the
-    // ELEMENT; the pointer is only the tracker maps' key.
+    // See prop_lifecycle.h. `actorKey` is never dereferenced: the caller may hold a pending-kill
+    // or purged pointer (the kerfur convert calls this a tick after the blueprint-internal
+    // destroy). The wire key comes from the Element; the pointer is only the tracker maps' key.
     if (!actorKey || eid == coop::element::kInvalidId) return;
     std::string key8;
     {
@@ -248,9 +190,9 @@ void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
                 key8.c_str(), static_cast<uint32_t>(eid));
         s->SendPropDestroy(dp);
     }
-    // Same teardown the organic destroy seam runs: processed-Init latch
-    // out, then UnmarkKnownKeyedProp (key index + reverse map + Element drain
-    // via ElementDeleter). Both are pointer-as-map-key only.
+    // The same teardown the organic seam runs: the processed-Init latch out, then the keyed-prop
+    // unmark (the key index, the reverse map and the Element drain). Both use the pointer as a
+    // map key only.
     PT::UnmarkProcessedInit(actorKey);
     PT::UnmarkKnownKeyedProp(actorKey);
 }
@@ -258,10 +200,9 @@ void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
 
 void DestroyLocalProp(void* actor, bool deferred) {
     if (!actor) return;
-    // Capture the slot ref NOW (actor is live at every call site -- each caller just
-    // resolved it): the deferred task probes it a TICK LATER, which made the old
-    // lambda-captured raw pointer + bare IsLive the census's cross-task violator
-    // (prop_destroy_seam:213). Alive() reads array slots only.
+    // The slot reference is captured now, while the actor is live (every caller just resolved
+    // it): the deferred task probes it a tick later, and a raw pointer with a bare liveness check
+    // was the cross-task violator. Alive reads array slots only.
     ue_wrap::CachedObjRef ref;
     ref.Set(actor);
     auto doDestroy = [ref]() {
@@ -284,7 +225,7 @@ void DestroyLocalProp(void* actor, bool deferred) {
                     ref.Raw());
             return;
         }
-        // Mark BEFORE calling destroy so OUR PRE-observer skips broadcast.
+        // Marked before the destroy, so our own observer skips the broadcast.
         coop::prop_echo_suppress::MarkIncomingDestroy(target);
         R::CallFunction(target, sDestroyFn, nullptr);
     };
