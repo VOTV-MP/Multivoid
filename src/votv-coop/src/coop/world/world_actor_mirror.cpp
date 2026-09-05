@@ -1,19 +1,15 @@
-// coop/world/world_actor_mirror.cpp -- the CLIENT half of the world_actor
-// lane (the npc_mirror shape): wire materialize (OnWorldActorSpawn), wire
-// destroy (OnWorldActorDestroy) and the per-frame pose apply + drive
-// (TickClientWorldActors). The HOST half + Install/lifecycle owner is
-// world_actor_sync.cpp; shared internals come through world_actor_detail.h.
-// Extracted 2026-07-05 (modular file-size rule; audit-endorsed split at 834
-// LOC). Public API unchanged (include/coop/world/world_actor_sync.h; same
-// namespace, two TUs).
+// coop/world/world_actor_mirror.cpp -- the client half of the world-actor lane (the NPC mirror
+// shape): wire materialise, wire destroy and the per-frame pose apply and drive. The host
+// half and the install and lifecycle owner is world_actor_sync.cpp; shared internals come
+// through world_actor_detail.h. One public header, one namespace, two translation units.
 
 #include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/creatures/piramid_sync.h"  // v100 auxYaw + v102 auxVec consumers
+#include "coop/creatures/piramid_sync.h"  // the heading, look and wisp-target consumers
 
-#include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel (Inc A)
+#include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel
 #include "coop/items/coingun_sync.h"
 #include "coop/element/mirror_managers.h"  // WaMirrors
 #include "coop/element/registry.h"
@@ -55,8 +51,8 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         UE_LOGI("world-actor[client OnSpawn]: received on host -- dropping (loopback bounce)");
         return;
     }
-    // Host-authoritative: the eid must be in the host range (the event_feed senderPeerSlot==0 gate
-    // already rejected non-host senders).
+    // Host-authoritative: the eid must be in the host range (the entity dispatch already rejected
+    // non-host senders).
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("world-actor[client OnSpawn]: eid=%u out of host range [1, %u) -- dropping",
                 payload.elementId, coop::element::kHostRangeSize);
@@ -66,9 +62,9 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         UE_LOGW("world-actor[client OnSpawn]: bad className.len=%u -- dropping", payload.className.len);
         return;
     }
-    // v143 (B3): re-validate the birth blob's length at the consumer too. The dispatch already checked
-    // it; so did it for className.len, and this function re-checks THAT four lines above -- a receiver
-    // that trusts its caller's range check is one refactor away from not having one.
+    // Re-validate the birth blob's length at the consumer too. The dispatch already checked it,
+    // as it did the class-name length this function re-checks above; a receiver that trusts its
+    // caller's range check is one refactor away from not having one.
     if (payload.birthLen > sizeof(payload.birth)) {
         UE_LOGW("world-actor[client OnSpawn]: bad birthLen=%u -- dropping", payload.birthLen);
         return;
@@ -77,7 +73,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     classW.reserve(payload.className.len);
     for (uint8_t i = 0; i < payload.className.len; ++i)
         classW.push_back(static_cast<wchar_t>(static_cast<unsigned char>(payload.className.data[i])));
-    // Trust-boundary: finite + bounded floats (a NaN must not reach BeginDeferred's SpawnTransform).
+    // Trust boundary: finite and bounded floats (a NaN must not reach the spawn transform).
     const float vals[6] = {payload.locX, payload.locY, payload.locZ,
                            payload.rotPitch, payload.rotYaw, payload.rotRoll};
     for (float v : vals) {
@@ -92,24 +88,23 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         UE_LOGW("world-actor[client OnSpawn]: loc out of bounds -- dropping (eid=%u)", payload.elementId);
         return;
     }
-    // Trust-boundary allowlist gate: only materialize allowlisted WA class names (a peer could send an
-    // arbitrary className; this forces R::FindClass GUObjectArray walks otherwise).
+    // Trust-boundary allowlist gate: only allowlisted class names materialise (a peer could send
+    // an arbitrary class name, which would otherwise force class-lookup walks of the object
+    // array).
     if (!D::IsAllowlistedClassNameW(classW)) {
         UE_LOGW("world-actor[client OnSpawn]: class '%ls' not on WA allowlist -- rejecting (eid=%u)",
                 classW.c_str(), payload.elementId);
         return;
     }
-    // Duplicate-eid guard. A ROW WHOSE ACTOR IS DEAD IS NOT A DUPLICATE, IT IS A STALE ROW
-    // (2026-08-25, the v137 field pass' R28 finding). This used to test row PRESENCE alone, and a
-    // mirror row outlives its actor by design -- the death-watch retires the row on a LATER tick, and
-    // an actor can die under us at any point in between. So a legitimate RE-ANNOUNCE of a live host
-    // actor was answered "already mirrored", dropped, and that actor stayed permanently invisible on
-    // that peer with the only trace being this WARN. The guard tests the ACTOR now: a live one is a
-    // real duplicate and still drops; a dead one is drained here and the spawn below re-materialises
-    // it. The drain must go through the SAME two steps OnDestroy uses -- Take() the row AND
-    // NoteMirrorActor(add=false) -- because dropping the row alone leaks the stale pointer into
-    // g_mirrorActors forever, where a recycled allocation makes an unrelated actor read as a mirror
-    // and its pickup gets cancelled (audit I-3's "permanently uncollectable AND ghosted" end).
+    // Duplicate-eid guard. A row whose actor is dead is not a duplicate, it is a stale row: a
+    // mirror row outlives its actor by design (the death watch retires the row on a later tick),
+    // so testing row presence alone answered a legitimate re-announce of a live host actor with
+    // "already mirrored", and that actor stayed invisible on the peer with this warning as the
+    // only trace. The guard tests the actor: a live one is a real duplicate and still drops; a
+    // dead one is drained here and the spawn below re-materialises it. The drain goes through
+    // the same two steps the destroy path uses, take the row and un-note the actor, because
+    // dropping the row alone leaks the stale pointer into the mirror-actor set, where a recycled
+    // allocation makes an unrelated actor read as a mirror and its pickup gets cancelled.
     if (coop::element::WorldActor* existing = WaMirrors().Get(payload.elementId)) {
         void* prevActor = existing->GetActor();
         if (prevActor && R::IsLiveByIndex(prevActor, existing->GetInternalIdx())) {
@@ -123,8 +118,8 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
                 payload.elementId, prevActor);
         std::unique_ptr<coop::element::WorldActor> stale = WaMirrors().Take(payload.elementId);
         coop::world_actor_sync::NoteMirrorActor(prevActor, /*add=*/false);
-        // stale's dtor fires here -> Registry::UnregisterMirror(eid), which is what frees the eid for
-        // the RegisterMirror the materialisation below performs.
+        // The stale row's destructor unregisters the mirror eid here, which frees it for the
+        // register the materialisation below performs.
     }
     const D::SpawnPath sp = D::GetSpawnPath();
     if (!sp.spawnFn || !sp.finishSpawnFn || !sp.gsCdo || sp.returnParamOff < 0) {
@@ -147,23 +142,24 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     E::RotatorToQuat(payload.rotPitch, payload.rotYaw, payload.rotRoll,
                      xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = payload.locX; xform.TY = payload.locY; xform.TZ = payload.locZ;
-    // v99: spawn-transform scale from the wire (sanitized -- scale-0 = invisible actor). The piramid
-    // spawner passes 2.0; a unit-scale mirror renders half-size + floats at the host's scale-2 hover Z.
+    // Spawn-transform scale from the wire (sanitised: a zero scale is an invisible actor). The
+    // pyramid spawns at a non-unit scale; a unit-scale mirror renders the wrong size and floats
+    // at the host's hover height.
     xform.SX = coop::net::SanitizeWireScaleAxis(payload.scaleX);
     xform.SY = coop::net::SanitizeWireScaleAxis(payload.scaleY);
     xform.SZ = coop::net::SanitizeWireScaleAxis(payload.scaleZ);
 
-    // v137 MATERIALIZATION WINDOW. A mirror's component-bound delegates bind during BeginPlay, i.e.
-    // INSIDE FinishSpawning, BEFORE the mirror row below exists -- so for any consumer that needs to
-    // know "is this actor a mirror?", the row can never be the sole discriminator. A coin seeded onto
-    // a joiner standing where it lies would otherwise fire its collect overlap in this window, be
-    // judged a non-mirror, and credit that client locally. Publish the window; coop/items/coingun_sync
-    // tests `mirror OR materializing`. v140: the window also carries the EID we are installing, so a
-    // consumer that must NAME the actor being born (the collect lane's forward) has one identity
-    // source instead of hunting for a row that does not exist yet.
+    // The materialisation window. A mirror's component-bound delegates bind during BeginPlay,
+    // inside FinishSpawning, before the mirror row below exists, so the row can never be the
+    // sole is-this-a-mirror discriminator: a coin seeded onto a joiner standing where it lies
+    // would fire its collect overlap in this window, be judged a non-mirror, and credit that
+    // client locally. The window is published (the coin lane tests mirror-or-materialising) and
+    // carries the eid being installed, so a consumer that must name the actor being born has one
+    // identity source instead of hunting for a row that does not exist yet.
     coop::world_actor_sync::MaterializeScope materializeScope(payload.elementId);
 
-    // Bypass our own client interceptor for THIS spawn, then BeginDeferred + FinishSpawning the mirror.
+    // Bypass our own client interceptor for this spawn, then deferred-begin and finish-spawn the
+    // mirror.
     D::SetIncomingClass(actorClass);
     constexpr uint8_t kAlwaysSpawn = 1;
     void* spawned = nullptr;
@@ -195,21 +191,18 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         return;
     }
     // The actor exists and its mirror row does not: publish it into the open window so a consumer
-    // firing inside FinishSpawning's BeginPlay can identify THIS actor rather than merely observe
-    // that some materialization is in progress (audit I-7).
+    // firing inside FinishSpawning's BeginPlay can identify this actor rather than merely observe
+    // that some materialisation is in progress.
     coop::world_actor_sync::NoteMaterializingActor(spawned);
-    // ---- v143 (B3): seed the birth value BEFORE FinishSpawning runs BeginPlay --------------------
-    // `[V]` `baocoin_C::ReceiveBeginPlay` -> `ExecuteUbergraph_baocoin(1441)` reads `points` and calls
-    // `baocoin.SetMaterial(0, ...)` -- bronze/silver/gold from one int, once, at BeginPlay. `[V]`
-    // `prop_coingun_C::sell` writes that int in exactly this window (BeginDeferred @932 -> SetInt @974
-    // -> Finish @1128). This mirror had nothing here, so every mirrored coin was born at the CDO
-    // default of 5 and painted bronze -- and 5 is also the commonest real denomination, which is why
-    // the field report was "was different" and not "always wrong".
-    //
-    // We set the INPUT and let the game paint. Nothing here touches a material.
-    // CLASS-SCOPED, matching the PrepareCoinMirror idiom below: the coin lane owns the coin specifics.
-    // birthLen == 0 means LEAVE THE CDO ALONE -- writing 0 would be a fail-open that is INVISIBLE
-    // (0 <= 10 paints bronze, exactly like the bug).
+    // Seed the birth value before FinishSpawning runs BeginPlay. The coin's BeginPlay reads its
+    // points once and sets its material from them (bronze, silver or gold), and the coin gun's
+    // sell writes that integer between its own deferred begin and finish. This mirror had nothing
+    // here, so every mirrored coin was born at the class default and painted bronze, and the
+    // default is also the commonest real denomination, which is why the field report said
+    // "different" and not "always wrong". We set the input and let the game paint; nothing here
+    // touches a material. Class-scoped, matching the prepare call below: the coin lane owns the
+    // coin specifics. A zero length means leave the default alone: writing zero would be an
+    // invisible fail-open, painting bronze exactly like the bug.
     if (classW == L"baocoin_C" && payload.birthLen != 0) {
         if (payload.birthLen != sizeof(int32_t)) {
             UE_LOGW("world-actor[client OnSpawn]: baocoin_C eid=%u birthLen=%u, expected %zu -- "
@@ -246,27 +239,24 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         if (sp.k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, sp.k2DestroyFn, nullptr);
         return;
     }
-    // Park the mirror so the streamed pose drive is authoritative: GENERIC actor-tick OFF (no CMC read --
-    // a WorldActor is a plain AActor). Any residual component tick is overwritten each frame by the
-    // pose drive's SetActorLocation/SetActorRotation (the MTA dead-reckoning model).
+    // Park the mirror so the streamed pose drive is authoritative: the generic actor tick off (no
+    // movement-component read; a world actor is a plain actor). Any residual component tick is
+    // overwritten each frame by the pose drive's location and rotation writes (the MTA
+    // dead-reckoning model).
     E::SetActorTickEnabled(spawned, false);
-    // v137: a pose-driven mirror must not ALSO simulate -- the two fight and the mirror drifts off the
-    // host's authoritative transform. `[V]` baocoin_C's `Sphere` ships bSimulatePhysics=True, making it
-    // the FIRST simulating member of this allowlist; the 18 already-shipped classes are event actors
-    // that do not simulate. CLASS-SCOPED on purpose (OPUS section 8: do not widen a seam in the same
-    // commit that introduces its first consumer) -- the general invariant is named here, not applied.
+    // A pose-driven mirror must not also simulate: the two fight and the mirror drifts off the
+    // host's transform. The coin's sphere simulates physics, the first simulating member of this
+    // allowlist; the other classes are event actors that do not. Class-scoped on purpose: the
+    // general invariant is named here, not applied.
     if (classW == L"baocoin_C") coop::coingun_sync::PrepareCoinMirror(spawned);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
-    // THE INSTRUMENT (v143, B3). This line already fires once per mirror, keyed by eid, for every coin
-    // -- 38 of 38 in the last field run, against 19 at the collect seam and 5 on the host's side of it.
-    // So the birth seam is where host and client can be PAIRED. The host logs its own points+material
-    // at HostEnrollExSpawn; both halves read the material because producer and instrument read `points`
-    // through the same offset at the same site, so a wrong read would print AGREEMENT while the coins
-    // still drew differently. The material is independent evidence: the game painted it from the real
-    // value, not from our read.
-    // `R::IsLive` guarded (audit M-5): this runs AFTER FinishSpawning executed the coin's own
-    // ReceiveBeginPlay, and DescribeCoin derefs the actor and dispatches on its component. The same
-    // function already guards its failure branches this way two dozen lines above.
+    // The instrument. This line fires once per mirror, keyed by eid, so the birth seam is where
+    // host and client can be paired; the host logs its own points and material at its enrol.
+    // Both halves read the material because producer and instrument read the points through the
+    // same offset at the same site, so a wrong read would print agreement while the coins still
+    // drew differently; the material is independent evidence, painted by the game from the real
+    // value. Liveness-guarded: this runs after FinishSpawning executed the coin's own BeginPlay,
+    // and the describe call dereferences the actor and dispatches on its component.
     if (classW == L"baocoin_C" && R::IsLive(spawned)) {
         int32_t pts = -1;
         std::wstring mat;
@@ -303,10 +293,9 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
     void* actor = drained->GetActor();
     coop::world_actor_sync::NoteMirrorActor(actor, /*add=*/false);
     const D::SpawnPath sp = D::GetSpawnPath();
-    // IsLiveByIndex, NOT plain IsLive (2026-07-15 IsLive-enumeration sweep): a CACHED mirror
-    // actor drained from the table + a K2_DestroyActor CALL -- if its slot was recycled (this
-    // can race a world teardown), plain IsLive passes the foreign occupant and the call runs on
-    // the wrong object. [[lesson-islive-recycled-slot-blind-use-by-index]]
+    // Index-validated liveness, not the plain check: a cached mirror actor drained from the table
+    // plus a destroy call. If its slot was recycled (this can race a world teardown), the plain
+    // check passes the foreign occupant and the call runs on the wrong object.
     if (actor && sp.k2DestroyFn && R::IsLiveByIndex(actor, drained->GetInternalIdx())) {
         R::CallFunction(actor, sp.k2DestroyFn, nullptr);
         UE_LOGI("world-actor[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
@@ -315,20 +304,21 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
         UE_LOGI("world-actor[client OnDestroy]: mirror eid=%u actor already not-live -- skipping K2",
                 payload.elementId);
     }
-    // drained's dtor fires here -> Registry::UnregisterMirror(eid).
+    // The drained row's destructor unregisters the mirror eid here.
 }
 
 void TickClientWorldActors() {
     auto* s = D::Session();
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only (host streams, doesn't drive)
 
-    // 1) Apply the latest received batch -> open an interp window per WA. Per-entry float validation is
-    //    the trust boundary (a NaN must not reach SetActorLocation/SetActorRotation).
+    // First, apply the latest received batch: open an interpolation window per actor. The
+    // per-entry float validation is the trust boundary (a NaN must not reach the location and
+    // rotation writes).
     std::vector<coop::net::WorldActorPoseSnapshot> batch;
     if (s->TakeRemoteWorldActorBatch(batch)) {
-        // [WA-TRACE client-apply] 1 Hz per-entry OUTCOME trace (2026-07-05 0s-frozen-pyramid hunt).
-        // Every skip branch below was SILENT -- a wrong eid / not-a-mirror / range-clamped entry
-        // freezes the mirror with zero evidence. The old "first batch" INFO only proved ARRIVAL.
+        // A once-a-second per-entry outcome trace: every skip branch below was silent, and a wrong
+        // eid, a not-a-mirror or a range-clamped entry freezes the mirror with zero evidence; a
+        // first-batch line only proves arrival.
         static long long s_lastApplyTraceMs = 0;
         const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -360,16 +350,16 @@ void TickClientWorldActors() {
             UE_LOGI("world-actor-pose: client applying %zu WorldActor pose(s) (first batch)", batch.size()); }
     }
 
-    // 2) Advance the interp + drive EVERY live mirror, every frame (smooth between packets). Reused
-    //    scratch (no per-tick heap alloc); client game thread only.
+    // Second, advance the interpolation and drive every live mirror, every frame (smooth between
+    // packets). Reused scratch, no per-tick heap allocation; client game thread only.
     static std::vector<coop::element::WorldActor*> elems;
     WaMirrors().Snapshot(elems);
     for (coop::element::WorldActor* el : elems) {
         if (!el || !el->IsMirror()) continue;
         el->Tick();
-        // v100 auxYaw + v102 auxVec consumers: the piramid's visible heading lives in its
-        // ArrowComponents and its head look target in relLook -- neither is the actor
-        // transform the generic drive writes; hand the interp'd/latest values to the lane.
+        // The pyramid's visible heading lives in its arrow components and its head look target in
+        // its relative look; neither is the actor transform the generic drive writes, so hand the
+        // interpolated or latest values to the lane.
         if (el->HasPose() && el->GetTypeName() == "piramid2_C") {
             void* actor = el->GetActor();
             if (actor && R::IsLiveByIndex(actor, el->GetInternalIdx())) {
@@ -377,9 +367,8 @@ void TickClientWorldActors() {
                 float ax = 0.f, ay = 0.f, az = 0.f;
                 el->CurrentAuxVec(ax, ay, az);
                 coop::piramid_sync::ApplyMirrorRelLook(actor, ax, ay, az);
-                // v104: mirror the wispTarget identity -> the native tick's CHASE look-at
-                // branch runs both ends during the walk (gathering-owned windows skipped
-                // inside).
+                // Mirror the wisp-target identity: the native tick's chase look-at branch runs on
+                // both ends during the walk (gathering-owned windows skipped inside).
                 coop::piramid_sync::ApplyMirrorWispTarget(actor, el->CurrentAuxTargetEid());
             }
         }
