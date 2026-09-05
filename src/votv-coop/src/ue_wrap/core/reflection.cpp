@@ -19,7 +19,7 @@
 namespace ue_wrap::reflection {
 namespace {
 
-// All version-specific knowledge lives in the profile (the porting surface).
+// All version-specific knowledge lives in the profile, the porting surface.
 namespace P = profile;
 namespace O = profile::off;
 
@@ -29,19 +29,18 @@ using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* param
 uintptr_t g_objArray = 0;
 FNameToStringFn g_fnameToString = nullptr;
 
-// Throttled count of IsLive() calls that faulted reading a freed pointer (see
-// IsLive). File-scope atomic so the SEH-guarded IsLive stays free of any local
-// object that would need stack unwinding (C2712). Surfacing these matters: a
-// fault means a cached UObject* was GC-freed -- expected for a stale cache that
-// then re-resolves, but a high rate flags a deeper lifetime issue to chase.
+// The throttled count of IsLive calls that faulted reading a freed pointer. File-scope, so
+// the SEH-guarded IsLive holds no local object needing unwinding. A fault means a cached
+// UObject* was freed by GC, expected for a stale cache that then re-resolves; a high rate
+// flags a lifetime issue.
 std::atomic<uint64_t> g_isLiveFaultCount{0};
 ProcessEventFn g_processEvent = nullptr;
 
 }  // namespace
 
-// The engine-heap allocator (EngineAlloc / EngineFree + the &GMalloc slot) lives in
-// ue_wrap/engine_heap.cpp (modular split, 2026-06-14). ResolveEngineHeap() resolves the GMalloc
-// slot once; Resolve() calls it eagerly below, alongside the other primitives.
+// The engine-heap allocator (EngineAlloc, EngineFree and the GMalloc slot) lives in
+// ue_wrap/core/engine_heap.cpp; ResolveEngineHeap resolves the slot once, and Resolve calls it
+// alongside the other primitives.
 void ResolveEngineHeap();
 
 uintptr_t GUObjectArrayAddr() { return g_objArray; }
@@ -69,12 +68,11 @@ bool Resolve() {
     return IsResolved();
 }
 
-// COOP-ORIGIN dispatch latch (rng_roll_census, 2026-07-10). Every dispatch OUR code issues goes
-// through this one choke point, so a thread-local depth counter cleanly discriminates "the mod
-// called this native" from "the game's own BP called it" inside a UFunction interceptor -- the
-// context object alone cannot (our re-arms set timers ON game objects, e.g. spaceRenderer).
-// Depth (not bool): a nested dispatch fired from within a coop dispatch stays tagged. RAII so an
-// unwind can't leave the flag stuck.
+// The coop-origin dispatch latch: every dispatch our code issues goes through this one choke
+// point, so a thread-local depth tells "the mod called this native" from "the game's own
+// blueprint called it" inside an interceptor; the context object alone cannot, since our
+// re-arms set timers on game objects. A depth, not a bool, so a nested dispatch stays tagged;
+// RAII, so an unwind cannot leave it stuck.
 namespace {
 thread_local int t_coopDispatchDepth = 0;
 struct CoopDispatchScope {
@@ -85,17 +83,13 @@ struct CoopDispatchScope {
 
 bool InCoopDispatch() { return t_coopDispatchDepth > 0; }
 
-// ---- coop-call attribution (2026-08-29) -------------------------------------
-// WHICH reflected calls make up the ~135 blueprint dispatches per frame that our code
-// authors (measured: 14-16% of the game thread's script load, and the frame is CPU-bound
-// on that thread). Keyed on the TARGET UFunction, because that is what names the polling
-// -- 'GetActorLocation 50x/frame' identifies a per-tick pose poll without needing a
-// stack walk. Only counts when armed, so shipping pays one relaxed bool load.
-//
-// Deliberately here and NOT in the ProcessEvent detour: this choke point runs ~9k/s
-// against the detour's ~171k/s, and it is our own code rather than the engine's hottest
-// path. An instrument placed in the detour's unprotected outer frame crashed the game
-// on 2026-08-29.
+// Coop-call attribution: which reflected calls make up the blueprint dispatches per frame our
+// code authors, keyed on the target UFunction, since that is what names the polling (a
+// per-tick location poll shows as one function at dozens per frame) with no stack walk.
+// Counts only when armed, so shipping pays one relaxed load. Here and not in the ProcessEvent
+// detour: this choke point runs at a small fraction of the detour's rate and is our own code
+// rather than the engine's hottest path, where an instrument in the unprotected outer frame
+// once crashed the game.
 namespace {
 constexpr int kCallSites = 128;
 std::atomic<bool> g_callCensusOn{false};
@@ -115,8 +109,8 @@ void NoteCoopCall(void* fn) {
                     std::memory_order_relaxed, std::memory_order_relaxed)) {
                 g_callSites[i].n.fetch_add(1, std::memory_order_relaxed);
             }
-            // Whether we won or lost the slot, the next loop pass re-reads it; losing a
-            // race must not drop the sample silently.
+            // Whether the slot was won or lost, the next pass re-reads it; losing a race must not
+            // drop the sample.
             --i;
         }
     }
@@ -146,8 +140,8 @@ int32_t NumObjects() {
 }
 
 namespace {
-// Address of the FUObjectItem (Object*, Flags, Cluster, Serial) for a slot, or
-// null if the index is out of range / the chunk is unallocated.
+// The address of the FUObjectItem (Object, Flags, Cluster, Serial) for a slot, or null when
+// the index is out of range or the chunk unallocated.
 uint8_t* ItemAt(int32_t index) {
     if (!g_objArray || index < 0) return nullptr;
     const uintptr_t objObjects = g_objArray + O::FUObjectArray_ObjObjects;
@@ -166,17 +160,15 @@ void* ObjectAt(int32_t index) {
 }
 
 namespace {
-// The slot whose RootSet bit belongs to `obj` -- or null if the slot is empty or has
-// been recycled to a different object. The identity re-check matters on the CLEAR path:
-// without it, un-rooting a pointer whose slot has since been handed to someone else
-// clears the RootSet bit of an innocent object, which is a GC bug authored by a cleanup.
+// The slot whose RootSet bit belongs to `obj`, or null if the slot is empty or recycled to
+// another object. The identity check matters on the clear path: un-rooting a pointer whose
+// slot has been handed to someone else would clear an innocent object's bit.
 uint8_t* RootFlagSlotFor(void* obj) {
     if (!obj) return nullptr;
-    // SEH around the deref, the same shape IsLive uses and for the same reason: this reads
-    // the OBJECT's own memory, and the one caller that can arrive with a freed pointer is a
-    // GcPin destructor running at process teardown. A fault there means the object is
-    // already gone, which makes the un-root moot -- answer "no slot" rather than die in a
-    // CRT terminator under the loader lock.
+    // SEH around the deref, the shape IsLive uses and for the same reason: this reads the
+    // object's own memory, and the one caller that can arrive with a freed pointer is a GcPin
+    // destructor at process teardown. A fault there means the object is gone and the un-root is
+    // moot: answer no slot rather than die in a CRT terminator under the loader lock.
     int32_t idx;
     __try {
         idx = *reinterpret_cast<int32_t*>(
@@ -208,14 +200,14 @@ bool RemoveFromRoot(void* obj) {
 
 int32_t InternalIndexOf(void* obj) {
     if (!obj) return -1;
-    // Dereferences obj -- caller guarantees obj is live/mapped (see header).
+    // Dereferences obj; the caller guarantees it is mapped (see the header).
     return *reinterpret_cast<int32_t*>(
         reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
 }
 
 int32_t InternalFlagsOf(void* obj) {
     if (!obj) return 0;
-    // Dereferences obj for its InternalIndex -- caller guarantees obj is mapped.
+    // Dereferences obj for its index; the caller guarantees it is mapped.
     uint8_t* item = ItemAt(*reinterpret_cast<int32_t*>(
         reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex));
     if (!item || *reinterpret_cast<void**>(item) != obj) return 0;  // slot empty/recycled
@@ -224,18 +216,14 @@ int32_t InternalFlagsOf(void* obj) {
 
 bool IsLiveByIndex(void* obj, int32_t internalIdx) {
     if (!obj || internalIdx < 0) return false;
-    // Reads ONLY the GUObjectArray slot at the cached index -- never obj's own
-    // (possibly GC-freed) memory. A purged/recycled slot no longer points back
-    // to obj, so the compare fails cleanly instead of dereferencing freed mem.
+    // Reads only the array slot at the cached index, never the object's possibly freed memory; a
+    // purged or recycled slot no longer points back at obj, so the compare fails cleanly.
     uint8_t* item = ItemAt(internalIdx);
     if (!item || *reinterpret_cast<void**>(item) != obj) return false;  // slot empty/recycled
-    // The slot check alone is NOT enough across a level transition: an actor the
-    // engine is tearing down is flagged PendingKill (then Unreachable by GC) yet
-    // still occupies its array slot until the purge completes. Calling UFunctions
-    // on it -- GetActorLocation/SetViewTargetWithBlend/etc. -- is a use-after-free
-    // (the tutorial-map load crashed here: read 0xffff...). Reject those flags so a
-    // dying object reports not-live. (FUObjectItem.Flags @ +0x08; bit values per
-    // UE4.27 EInternalObjectFlags -- matches UE4SS's own PendingKill guard.)
+    // The slot check alone is not enough across a level transition: an actor being torn down is
+    // flagged PendingKill, then Unreachable, yet occupies its slot until the purge completes, and
+    // calling a UFunction on it is a use-after-free. Those flags read as not live (the UE4.27
+    // internal flag values, the same guard UE4SS uses).
     const int32_t flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
     constexpr int32_t kKillFlags = 0x10000000 /*Unreachable*/ | 0x20000000 /*PendingKill*/;
     return (flags & kKillFlags) == 0;
@@ -261,13 +249,10 @@ int32_t SlotSerial(int32_t internalIdx) {
 }
 
 namespace {
-// Cold path: log one IsLive fault with the CALLER attributed module-relative.
-// Born from the WP-2 IsLive/VEH finding (2026-08-22): a co-resident VEH crash
-// reporter (CrashContext) surfaces our absorbed probe fault as a "crash", and
-// its report names only IsLive itself -- the call site holding the dangling
-// cache was unidentifiable. Now every fault names its caller, so each occurrence
-// is directly actionable (principle 4: fix THAT site). First 16 faults log
-// unconditionally (a burst names every distinct site), then 1 per 1000.
+// The cold path: log one IsLive fault with the caller attributed module-relative, so a fault
+// names its call site rather than IsLive itself (a co-resident crash reporter surfaces the
+// absorbed fault as a crash naming only IsLive). The first 16 faults log unconditionally, so a
+// burst names every site, then one per thousand.
 void ReportIsLiveFault(void* obj, void* caller) {
     const uint64_t n = g_isLiveFaultCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n > 16 && (n % 1000) != 0) return;
@@ -293,27 +278,15 @@ void ReportIsLiveFault(void* obj, void* caller) {
 bool IsLive(void* obj) {
     if (!obj) return false;
     void* const caller = _ReturnAddress();  // captured at entry: _ReturnAddress is unreliable inside an __except funclet
-    // SEH-guard the ONE read of obj's OWN memory. IsLive is THE primitive for
-    // checking a cached UObject* that may have been GC-purged (g_netLocal, the
-    // local-player cache in players::Registry::Local, held props, cached
-    // singletons). When the purge has freed+unmapped obj, reading
-    // obj->InternalIndex faults -- catch it and report not-live so the caller's
-    // clear-and-rescan path runs instead of crashing. This makes the header's
-    // documented crash-safe contract real, and (with the /EHa firewall) BREAKS
-    // the per-tick re-fault loop: the bare read used to abort the whole tick
-    // task BEFORE the caller could clear its stale cache, so the same dead
-    // pointer re-faulted every tick (2026-05-30 4-peer smoke: 3779 absorbed AVs
-    // + an 11 GB RSS balloon on one client). Now IsLive returns false, the
-    // cache is cleared + re-resolved, and the loop ends.
-    //
-    // NOT a crutch: IsLive's job IS to answer "is this pointer live?" -- for a
-    // freed pointer the answer is "no", and the SEH makes it return that
-    // instead of crashing. Faults are surfaced (throttled WARN), not hidden.
-    // Recycling caveat: if obj's address was reused by a NEW UObject the read
-    // won't fault, but IsLiveByIndex's slot compare (*item == obj) still
-    // rejects the impostor. For the 2000-prop snapshot, where recycling at
-    // scale matters, callers capture the index up-front and use IsLiveByIndex
-    // directly (see prop_snapshot.cpp).
+    // SEH guards the one read of the object's own memory. IsLive is the primitive for checking a
+    // cached UObject* that may have been purged (the local player cache, held props, cached
+    // singletons): when the purge has freed and unmapped it, the index read faults, and the fault
+    // is caught and reported as not live, so the caller's clear-and-rescan path runs instead of
+    // crashing and the per-tick re-fault loop ends (a bare read aborted the whole tick task before
+    // the caller could clear its cache, and the same dead pointer re-faulted every tick). Faults
+    // are surfaced, throttled, never hidden. If the address was reused by a new object the read
+    // does not fault, but the slot compare in IsLiveByIndex still rejects the impostor; callers
+    // holding many pointers capture the index up front and use IsLiveByIndex directly.
     int32_t idx;
     __try {
         idx = *reinterpret_cast<int32_t*>(
@@ -338,24 +311,20 @@ void* OuterOf(void* uobject) {
 }
 
 namespace {
-// Render `name` into the per-thread scratch FString and return a pointer to the
-// characters (+ length via lenOut), or nullptr on failure. The buffer is REUSED
-// across calls (engine grows it rarely; we never free UE-allocated memory) --
-// this is the zero-allocation primitive under ToString/NameEquals/NameStartsWith.
-// The returned pointer is valid only until the next render on this thread.
+// Render `name` into the per-thread scratch FString and return its characters and length, or
+// null on failure. The buffer is reused across calls: the zero-allocation primitive under
+// ToString, NameEquals and NameStartsWith. The pointer is valid until the next render on this
+// thread.
 const wchar_t* RenderNameToScratch(const FName& name, int& lenOut) {
     lenOut = 0;
     if (!g_fnameToString) return nullptr;
-    // thread_local (not static): per-thread scratch, so two threads rendering names
-    // never race the same FString.
+    // Thread-local, so two threads rendering names never race one FString.
     thread_local FString scratch{nullptr, 0, 0};
-    // CRITICAL (2026-06-13, the RAM balloon): FName::ToString(Out) does NOT reuse the
-    // caller's buffer -- IDA-verified it does `Out.Data = 0` (no free) then allocates
-    // a FRESH engine buffer every call. So the PREVIOUS render's buffer is orphaned
-    // and leaks unless WE free it. This is the hot name primitive (every NameEquals /
-    // ToString / FindFunction goes through here, ~10^5/s), so the unfreed orphan was
-    // the multi-MB/s engine-heap leak. Free the prior buffer before the engine drops
-    // the pointer; the engine reallocates below. (No-op until GMalloc is resolved.)
+    // FName::ToString does not reuse the caller's buffer: it drops the data pointer without
+    // freeing and allocates a fresh engine buffer every call, so the previous render's buffer is
+    // orphaned unless freed here. This is the hot name primitive (every NameEquals, ToString and
+    // FindFunction goes through it), and the unfreed orphan was a multi-megabyte-per-second
+    // engine-heap leak. A no-op until GMalloc is resolved.
     if (scratch.Data) {
         EngineFree(scratch.Data);
         scratch.Data = nullptr;
@@ -379,15 +348,12 @@ std::wstring ToString(const FName& name) {
     return std::wstring(s, s + len);
 }
 
-// Name comparisons are case-INSENSITIVE: engine FNames compare by
-// ComparisonIndex (case-insensitive), and the rendered string carries
-// whatever casing was registered FIRST in this process -- a case-sensitive
-// compare makes by-name lookups depend on package load order. Found
-// 2026-06-12: FindFunction(kerfurOmega_C, L"actionName") returned null all
-// session because some earlier-loaded class registered the name as
-// "ActionName" (kerfur_convert never installed -> the conversion dupe).
-// Two engine names can never differ only by case, so insensitive matching
-// is strictly more correct, never less.
+// Name comparisons are case-insensitive: engine FNames compare by ComparisonIndex, and the
+// rendered string carries whatever casing was registered first in the process, so a
+// case-sensitive compare would make by-name lookups depend on package load order (a
+// FindFunction once returned null all session because an earlier class had registered the
+// name in another case). Two engine names never differ only by case, so insensitive matching
+// is strictly more correct.
 bool NameEquals(const FName& name, const wchar_t* expected) {
     if (!expected) return false;
     int len = 0;
@@ -413,9 +379,8 @@ bool NameContains(const FName& name, const wchar_t* needle) {
     int len = 0;
     const wchar_t* s = RenderNameToScratch(name, len);
     if (!s || static_cast<size_t>(len) < nlen) return false;
-    // Bounded scan (the scratch is not guaranteed null-terminated after the
-    // trim, so no wcsstr) -- needles here are a few chars, rendered names ~16.
-    // Case-insensitive like NameEquals (FName casing = first registration).
+    // A bounded scan: the scratch is not guaranteed null-terminated after the trim, so no wcsstr;
+    // needles are a few characters. Case-insensitive, like NameEquals.
     for (size_t i = 0; i + nlen <= static_cast<size_t>(len); ++i) {
         if (::_wcsnicmp(s + i, needle, nlen) == 0) return true;
     }
@@ -429,22 +394,18 @@ std::wstring ClassNameOf(void* uobject) {
 }
 
 namespace {
-// className -> resolved UClass* cache for the by-class walk helpers. Primed on
-// the first textual match DURING a normal walk (no separate resolve pass);
-// thereafter the walk compares ClassOf(obj) against ONE pointer -- no name
-// render at all (~250k engine renders/walk -> ~250k pointer compares). Entries
-// are revalidated once per walk: a BP UClass dies on world unload and its
-// address can be recycled, so a cached class must still be live AND still carry
-// the expected name before a walk trusts it. Keyed by FNV-1a of the text with
-// the full string stored for exact verification (hash collisions fall back to
-// the uncached slow path -- correct, just slow). Mutex-guarded: walks run on
-// the game thread but nothing forbids net-thread lookups.
+// The class-name to UClass cache for the by-class walkers. Primed on the first textual match
+// during a normal walk; thereafter a walk compares ClassOf against one pointer, with no name
+// render. Entries are revalidated once per walk: a blueprint class dies on world unload and
+// its address can be recycled, so a cached class must still be live and still carry the
+// expected name before a walk trusts it. Keyed by FNV-1a of the text with the full string
+// stored for verification; a collision falls back to the slow path. Mutex-guarded, since
+// nothing forbids net-thread lookups.
 struct CachedClass {
     std::wstring name;
-    // Slot-validated ref (islive-zeroav row :380): this cache is read on ANY
-    // thread; Alive() reads only GUObjectArray slots, so the NameOf deref in
-    // BeginClassWalk is reached only behind slot validation -- no SEH probe of
-    // a possibly-freed class, no first-chance AV for a co-resident VEH to pop.
+    // A slot-validated reference: the cache is read on any thread, Alive reads only array slots,
+    // and the name deref in BeginClassWalk is reached only behind slot validation, so no SEH probe
+    // of a possibly freed class and no first-chance fault for a co-resident handler.
     ue_wrap::CachedObjRef cls;
 };
 std::mutex g_classCacheMu;
@@ -459,8 +420,8 @@ uint64_t Fnv1a(const wchar_t* s) {
     return h;
 }
 
-// The (revalidated) cached UClass* for className, or nullptr if unresolved /
-// stale / a hash collision. Call once per walk, NOT per object.
+// The revalidated cached UClass for the name, or null when unresolved, stale or a hash
+// collision. Once per walk, not per object.
 void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
     hashOut = Fnv1a(className);
     void* cls = nullptr;
@@ -471,11 +432,9 @@ void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
         if (::wcscmp(it->second.name.c_str(), className) != 0) return nullptr;  // collision
         cls = it->second.cls.Raw();
     }
-    // Revalidate OUTSIDE the lock. Ordering is load-bearing: Alive() true means
-    // the GUObjectArray slot at the captured index still points back at cls (an
-    // array-slot read -- valid on any thread, zero AV by construction) -- ONLY
-    // then is the unguarded NameOf(cls) deref in NameEquals safe (the &&
-    // short-circuit is the use-after-free guard here).
+    // Revalidated outside the lock, and the order is load-bearing: Alive true means the array slot
+    // at the captured index still points at the class (a slot read, valid on any thread), and only
+    // then is the unguarded name deref in NameEquals safe; the short-circuit is the guard.
     {
         ue_wrap::CachedObjRef ref;
         {
@@ -500,10 +459,9 @@ void PrimeClassWalk(const wchar_t* className, uint64_t hash, void* cls) {
     e.cls.Set(cls);  // fresh from the caller's walk
 }
 
-// Per-object match for the by-class walkers. Fast path: pointer compare against
-// the walk-cached class. Slow path (cache unresolved): render-compare, and
-// prime the cache on the first hit so the REST of this walk and every later
-// walk take the fast path.
+// The per-object match for the walkers. Fast path: a pointer compare against the walk-cached
+// class. Slow path: render-compare, and prime the cache on the first hit so the rest of this
+// walk and every later walk take the fast path.
 inline bool ObjClassMatches(void* obj, const wchar_t* className, uint64_t hash, void*& want) {
     void* cls = ClassOf(obj);
     if (!cls) return false;
@@ -533,20 +491,12 @@ void* FindObject(const wchar_t* name, const wchar_t* className) {
 
 void* FindClass(const wchar_t* className) {
     if (!className) return nullptr;
-    // THE CACHE ITS THREE SIBLINGS ALREADY HAD (2026-08-25, found by a post-ship perf audit).
-    // `FindObjectByClass` (:486), `FindObjectsByClass` (:558) and `FindActorsByClass` (:574) all open
-    // with `BeginClassWalk`; this one did not, so EVERY call walked all ~237k objects doing
-    // `NameEquals(NameOf(obj), ...)` per entry -- and `NameEquals` renders the name into a fresh
-    // engine FString per object compared. 428 call sites in 155 files paid that.
-    //
-    // The load case that surfaced it: `world_actor_mirror.cpp` resolves the class per inbound
-    // WorldActorSpawn, one coin-gun sale mints ~47 coins, and `game_thread::Pump()` drains its queue to
-    // EMPTY in one go -- so 47 full walks landed back to back, in one frame, for the same class name.
-    //
-    // `BeginClassWalk` is not merely a map lookup: it revalidates the cached pointer's GUObjectArray
-    // slot and re-compares the name before returning it, and drops the entry if either fails. So this
-    // is the siblings' semantics exactly, not a weaker fast path. A MISS is deliberately not cached --
-    // a class can load later, and every sibling behaves the same way.
+    // The cache the three sibling walkers have. Without it every call walked the whole object
+    // array rendering a name per entry, and hundreds of call sites paid that; the load case was a
+    // class resolved per inbound world-actor spawn while the game-thread pump drained dozens of
+    // spawns in one frame. BeginClassWalk revalidates the slot and re-compares the name, so this
+    // is the siblings' semantics exactly. A miss is deliberately not cached: a class can load
+    // later.
     uint64_t hash = 0;
     if (void* cached = BeginClassWalk(className, hash)) return cached;
     const int32_t n = NumObjects();
@@ -554,13 +504,11 @@ void* FindClass(const wchar_t* className) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
         if (!NameEquals(NameOf(obj), className)) continue;
-        // Its meta-class identifies it as a class object. Every UClass-derived
-        // meta-type ends in "Class" (Class, BlueprintGeneratedClass,
-        // WidgetBlueprintGeneratedClass, AnimBlueprintGeneratedClass, DynamicClass,
-        // LinkerPlaceholderClass, ...). Match the suffix so BP-generated classes
-        // (UMG widgets, anim BPs) resolve too -- the exact-name match above already
-        // excludes instances (which carry numeric suffixes). Only runs for the
-        // handful of name matches, so the wstring here is off the hot path.
+        // Its meta-class identifies it as a class object: every UClass-derived meta-type ends in
+        // "Class" (BlueprintGeneratedClass, WidgetBlueprintGeneratedClass, DynamicClass and the
+        // rest), so the suffix match resolves blueprint-generated classes too, and the exact name
+        // match above already excludes instances, which carry numeric suffixes. Only the handful of
+        // name matches pay for the string.
         const std::wstring meta = ClassNameOf(obj);
         if (meta.size() >= 5 && meta.compare(meta.size() - 5, 5, L"Class") == 0) {
             PrimeClassWalk(className, hash, obj);
@@ -594,8 +542,7 @@ void* FindObjectByClass(const wchar_t* className) {
         void* obj = ObjectAt(i);
         if (!obj) continue;
         if (!ObjClassMatches(obj, className, hash, want)) continue;
-        // Skip the CDO (the archetype, named "Default__<Class>"); we want a
-        // real instance.
+        // Skip the class default object, named Default__<Class>.
         if (NameStartsWith(NameOf(obj), L"Default__")) continue;
         return obj;
     }
@@ -688,13 +635,12 @@ std::vector<void*> FindObjectsByClass(const wchar_t* className) {
     return out;
 }
 
-// ---- FProperty / FField walkers: EXTRACTED to reflection_props.cpp
-// (2026-07-10 soft-cap extraction; same namespace, no shared private state).
+// The FProperty and FField walkers live in reflection_props.cpp.
 
 namespace {
 
-// Log the running exe's version + size and warn if it differs from the build
-// the profile was derived against -- the first thing to check on a new release.
+// Log the running exe's version and size, and warn if it differs from the build the profile
+// was derived against; the first thing to check on a new release.
 void LogGameVersion() {
     wchar_t exe[MAX_PATH] = {};
     ::GetModuleFileNameW(::GetModuleHandleW(nullptr), exe, MAX_PATH);
@@ -705,7 +651,7 @@ void LogGameVersion() {
         sizeBytes = (static_cast<unsigned long long>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
     }
 
-    // Exe file version (catches engine-version changes that shift offsets).
+    // The exe file version, which catches engine-version changes that shift offsets.
     unsigned ms = 0, ls = 0;
     DWORD dummy = 0;
     const DWORD vsz = ::GetFileVersionInfoSizeW(exe, &dummy);
@@ -750,7 +696,7 @@ int RunHealthCheck() {
     UE_LOGI("---- SDK health check ----");
     LogGameVersion();
 
-    // 1) AOB resolution. Log each address + RVA, so a bad sig is obvious.
+    // AOB resolution; each address and RVA is logged, so a bad signature is obvious.
     Resolve();
     uintptr_t base = 0;
     size_t imgSize = 0;
@@ -765,7 +711,7 @@ int RunHealthCheck() {
     check(g_fnameToString != nullptr, "FName::ToString signature");
     check(g_processEvent != nullptr, "ProcessEvent signature");
 
-    // The proxy loads before the engine; wait for the object array to populate.
+    // The mod loads before the engine populates the object array; wait for it.
     int32_t n = 0;
     for (int i = 0; i < 120; ++i) {
         n = NumObjects();
@@ -775,10 +721,10 @@ int RunHealthCheck() {
     UE_LOGI("NumObjects()=%d", n);
     check(n >= 10000, "object array populated (offsets sane)");
 
-    // 2) Functional validation -- proves the sigs/offsets actually WORK, not
-    //    just that an AOB matched something (catches matching the wrong site).
+    // Functional validation: proves the signatures and offsets work, not only that an AOB matched
+    // something.
     if (g_objArray && g_fnameToString) {
-        // Round-trip a known engine name. Index 1 is the UObject class "Object".
+        // Round-trip a known engine name; index 1 is the UObject class Object.
         const std::wstring objName = ToString(NameOf(ObjectAt(1)));
         UE_LOGI("name round-trip: object[1] = '%ls' (expect 'Object')", objName.c_str());
         check(objName == L"Object", "FName::ToString round-trip");
@@ -796,7 +742,7 @@ int RunHealthCheck() {
         }
     }
 
-    // 3) Gameplay-content signals (informational; absent at the menu).
+    // Gameplay-content signals, informational; absent at the menu.
     void* clsMainPlayer = FindClass(P::name::MainPlayerClass);
     UE_LOGI("content: %ls = %s (loads with the gameplay map; absent at menu)",
             P::name::MainPlayerClass, clsMainPlayer ? "present" : "not loaded");
