@@ -34,7 +34,6 @@ Then, if you are going to touch code:
 | [AUTONOMOUS_TESTING.md](AUTONOMOUS_TESTING.md) | The two-instance LAN harness: how a change is smoke-tested without a human in the loop |
 | [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
 | [VERSION_MIGRATION.md](VERSION_MIGRATION.md) | What happens when VOTV updates: the measured version surface and the port runbook |
-| [MULTIPLAYER_UI.md](MULTIPLAYER_UI.md) | The menus, the server browser, the master and signaling servers behind them |
 | [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md) | The game's own widget style, measured; binding for anything drawn inside VOTV's UI |
 
 Before writing any entity-sync, hook or spawn-catch code, read these three:
@@ -71,16 +70,14 @@ catch and the dishes, the deck, drives and racks, the laptop, the database, and 
 [devices.md](devices.md) (doors, keypads, lights, the power panel, the turbine, windows and grime,
 the drone, and the economy: the balance, shop orders, the coin gun) · [vehicles.md](vehicles.md)
 (the ATV: a mirror that runs the rig natively and is corrected, the two authority predicates,
-the condition that travels)
+the condition that travels) · [ui.md](ui.md) (the native screens, the F1 overlay, the HUD, and
+the game's notifications)
 
 **Maps, where a thing lives and what state it is in**
 
 [CODE_MAP.md](CODE_MAP.md) (where every concept lives: one folder each, and the files in it) ·
 [STATUS.md](STATUS.md) (what is synced, system by system, who owns it, and how well each claim is established)
 
-**Per-domain trees**, one folder per game system, each with its own README
-
-[notifications/](notifications/)
 
 ## How to read a claim in these docs
 

@@ -101,7 +101,7 @@ The porting workflow:
 - UE4SS's C++ mod API (`CppUserModBase`) — the ABI-fragility the D-3 slim
   contract exists to avoid; we export the two C-ABI functions its scan calls
   and import nothing back.
-- UE4SS's BPModLoader pak-mounting — the public-server phase revisit only (see `docs/MULTIPLAYER_UI.md` + the 3 architecture findings docs from 2026-05-25).
+- UE4SS's BPModLoader pak-mounting — the public-server phase revisit only (see `docs/ui.md`).
 - UE4SS's Lua VM — production scripting is its own roadmap phase (LuaJIT over
   our own APIs, docs/ROADMAP.md phases 4-5), never UE4SS's VM.
 - UE4SS's UI framework (Dear ImGui via UE4SS) — our overlay links OUR vendored ImGui, never UE4SS's integration.
