@@ -1,51 +1,18 @@
-// coop/element/quiescence_drain.h -- the join-window ORDER owner.
-//
-// ONE concept, ONE owner: the drain-edge reconcile SEQUENCE that, at load-tail quiescence,
-// reconciles divergent local-vs-authoritative element identity in a FIXED order. It holds
-// every deferred queue armed during the join window and drains them in sequence; nothing
-// else sequences this axis. [[feedback-one-owner-order-axis]]
-//
-// THE SEQUENCE (RunReconcile):
-//   1. SweepReconcileSaveTimeTwins()                 -- retire a stale native chipPile@old (pile twin)
-//   2. save_identity_bind::BindUnboundReCreates()    -- re-bind GC-churned unbound natives (identity layer; a
-//                                                       distinct module the sequence CALLS, not absorbed)
-//   3. kerfur_reconcile::SweepReconcileSaveTimeKerfurs() -- retire a stale kerfur off-prop (kerfur retire
-//                                                       MECHANISM; another distinct module the sequence CALLS)
-//   4. ApplyPendingDestroys()                        -- apply a destroy that raced ahead of the bind
-//                                                       (destroy-before-load), AFTER the rebind so it resolves
-//   5. ApplyPendingPosCorrections()                  -- snap a window-moved save-pile to the host pos (b3)
-//   (The one-shot L1 orphan census -- the retired step / joinSweep param, RULE 2 -- lives at the doom-sweep
-//   tail in join_membership_sweep.cpp: it must reflect the doom removals, which happen AFTER this sequence.)
-//   (The SPAWN REVALIDATION step + queue -- the takes-1/2 in-episode capture and the take-4 wire-order
-//   netting -- were RETIRED 2026-07-12 by the join barrier: ClientWorldReady now announces at load-tail
-//   quiescence (world_load_episode probe latch), so no wire prop expression can arrive mid-churn and
-//   nothing is ever provisional. votv-join-barrier-DESIGN-2026-07-12.md.)
-//
-// TWO TRIGGERS, both at/after quiescence:
-//   - the join-window quiescence FIRE EDGE (join_membership_sweep::TickClientReconcile), which since the
-//     take-3 order fix (2026-07-11) runs this sequence BEFORE RunDivergenceSweep_'s membership doom, while
-//     claim tracking is still armed -- a reconcile that converge-binds a re-create CLAIMS it and the sweep
-//     spares it. Doom judges LAST.
-//   - a steady-state throttled tick (OnTick) -- fires whenever there is armed-but-unconsumed work past
-//     load-tail quiescence (the D1 structural fix: a save-pile grabbed/moved AFTER the join one-shot, or a
-//     kerfur turned on when no pile bracket armed, would otherwise leave a pending queue nothing drains).
-//
-// CAPTURE vs SEQUENCE: event handlers (remote_prop::OnDestroy, the PropSnapPos handler, pile_spawn_bind's
-// twin miss, npc_mirror's kerfur EntitySpawn) only ARM the queues here -- they NEVER apply. This module is
-// the SOLE place that applies, in order. A mutation that can't resolve now (target not loaded) stays queued
-// and re-applies next drain -- NEVER dropped (that is the destroy-before-load / D1 bug class).
-//
-// What it does NOT own: the MEMBERSHIP doom sweep (destroy locals the host's snapshot didn't claim + the
-// >50% valve) stays a join-window one-shot in remote_prop_spawn -- running it in steady state would wipe a
-// legitimately-diverged world. Only the per-eid identity reconcile (bounded to armed work) is safe to run
-// steadily, and that is what lives here.
-//
-// CONSOLIDATED 2026-06-30 (anti-smear refactor) from: coop/element/identity_reconcile.cpp (the SEQUENCE +
-// trigger) + coop/props/pile_reconcile.cpp groups B+C (the deferred QUEUES it drained) -- two halves of one
-// concept across two folders + the generic kerfur destroy queue in a "pile"-named file. The kerfur retire's
-// SEQUENCING also moved here (it was a 3rd parallel order owner in kerfur_convert::PollKerfurConversions).
-//
-// Game-thread ONLY (both triggers run on the game thread). No mutex of its own.
+// coop/element/quiescence_drain.h -- the join-window order owner: the drain-edge reconcile
+// sequence that, at load-tail quiescence, reconciles divergent local-versus-authoritative
+// element identity in a fixed order; it holds every deferred queue armed during the join
+// window and drains them in sequence, and nothing else sequences this axis. The sequence:
+// retire a stale native chip pile at its old position; re-bind purge-churned unbound
+// natives; retire a stale kerfur off-prop (both distinct modules this calls); apply a
+// destroy that raced ahead of the bind, after the rebind; snap a window-moved save pile to
+// the host position. Two triggers, both at or after quiescence: the join-window fire edge
+// (the membership sweep's reconcile tick), which runs this before the membership doom while
+// claim tracking is armed, so a reconcile that converge-binds a re-create claims it and the
+// sweep spares it; and a steady-state throttled tick, firing whenever armed work is left
+// past quiescence. Event handlers only arm the queues here and never apply; this module
+// alone applies, in order, and a mutation that cannot resolve now stays queued, never
+// dropped. Not owned here: the membership doom sweep, a join-window one-shot, since in
+// steady state it would wipe a legitimately diverged world. Game thread only, no mutex.
 
 #pragma once
 
@@ -56,84 +23,87 @@
 
 namespace coop::element::quiescence_drain {
 
-// The ordered reconcile sequence (see the file header for the 6 steps). Called at the join-window quiescence
-// fire edge (BEFORE the doom sweep -- the take-3 order fix) and by the steady-state OnTick. Game-thread only.
+// The ordered reconcile sequence (the header's steps). Called at the join-window quiescence
+// fire edge, before the doom sweep, and by the steady-state tick. Game thread only.
 void RunReconcile();
 
-// Steady-state trigger. Call every client reconcile tick. Past load-tail quiescence, when there is pending
-// reconcile work (HasPendingWork) and the debounce interval has elapsed, runs RunReconcile(). Cheap when
-// idle: a pending-work bool poll + a time compare, NO GUObjectArray walk unless there is actually work (the
-// perf rule). Game-thread only.
+// The steady-state trigger; call every client reconcile tick. Past load-tail quiescence,
+// when there is pending work and the debounce interval has elapsed, runs the sequence.
+// Cheap when idle: a pending-work poll and a time compare, no object-array walk unless
+// there is work. Game thread only.
 void OnTick();
 
-// ---- Queue ARM entry points (event handlers CAPTURE here; they never apply) ----
+// The queue arm entry points: event handlers capture here and never apply.
 
-// docs/piles/09: a kToPile LAND carried a save-time key (the host self-seeded the eid at an in-window grab +
-// stamped the pre-grab pos), OR pile_spawn_bind's twin missed at world-ready. Arm a pending save-time twin so
-// SweepReconcileSaveTimeTwins retires the stale native@old at quiescence. Idempotent per eid (latest wins).
+// A land carried a save-time key (the host self-seeded the eid at an in-window grab and
+// stamped the pre-grab position), or the pile spawn bind's twin missed at world-ready. Arm a
+// pending save-time twin so the sweep retires the stale native at the old position at
+// quiescence. Idempotent per eid; the latest wins.
 void ArmPendingSaveTimeTwin(coop::element::ElementId eid, const ue_wrap::FVector& savePos, uint8_t chipType);
 
-// b3 OWNER (docs/piles/12): armed from a host PropSnapPos -- the host AUTHORITATIVELY moved E off `oldPos`, so
-// that save-pos is vacated. The sweep retires whatever save-loaded native@old lingers there on the host's word
-// (no client-side position-confirm guess, no >50% cap -- the guess is what GC pointer-reuse corrupted). This is
-// the missing "host mutated eid in-window -> retire the old" authority the client heuristics only inferred.
+// Armed from a host position correction: the host authoritatively moved E off `oldPos`, so
+// that save position is vacated, and the sweep retires whatever save-loaded native lingers
+// there on the host's word (no client-side position guess and no majority cap; the guess is
+// what pointer reuse corrupted). The host-mutated-in-window authority the client heuristics
+// only inferred.
 void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& oldPos);
 
-// b3 (v90, PropSnapPos): a join-window position correction for a save-authoritative chipPile the host MOVED
-// while the joiner's reliable channel wasn't ready. Arm it on receipt; the latest wins. Applied at quiescence
-// (or immediately by the caller via ApplyPendingPosCorrections if already quiesced).
+// A join-window position correction for a save-authoritative chip pile the host moved while
+// the joiner's reliable channel was not ready. Armed on receipt; the latest wins. Applied at
+// quiescence, or immediately by the caller via ApplyPendingPosCorrections if already
+// quiesced.
 void ArmPendingPosCorrection(coop::element::ElementId eid,
                              const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
 
-// Drain the armed b3 corrections (applied ones erased). Called from the sequence AND, for a late arrival
-// after the sweep already fired + bound, immediately from the receive handler (event_dispatch_entity).
-// The immediate-apply is NOT an order violation: it only runs post-quiescence, when the order no longer gates.
-// BOUNDED (2026-07-03): a correction whose eid never binds is dropped LOUD after kMaxPosCorrectionPasses --
-// twins and deferred destroys were pass-capped, pos-corrections were not, and one unbindable eid pinned
-// HasPendingWork -> the 4 Hz full-array drain forever (docs/piles/12 eid=4435).
+// Drain the armed corrections (applied ones erased). Called from the sequence and, for a
+// late arrival after the sweep already fired and bound, immediately from the receive
+// handler; the immediate apply is not an order violation, since it runs only
+// post-quiescence, when the order no longer gates. Bounded: a correction whose eid never
+// binds is dropped loudly after the pass cap, since one unbindable eid otherwise pinned the
+// pending-work flag and the full-array drain forever.
 void ApplyPendingPosCorrections();
 
-// Arm-if-absent variant (2026-07-03, the savePos re-bind assist): save_identity_bind re-bound a purge
-// re-create at its save position for an eid the host says is elsewhere -- ensure a correction exists so the
-// drain snaps it to the host pos. An already-armed correction (fresher host-sent rotation) is kept as-is.
+// The arm-if-absent variant, the save-position re-bind assist: the identity bind re-bound a
+// purge re-create at its save position for an eid the host says is elsewhere, so ensure a
+// correction exists and the drain snaps it to the host position. An already-armed
+// correction (a fresher host-sent rotation) is kept.
 void EnsurePosCorrection(coop::element::ElementId eid,
                          const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
 
-// The savePos re-bind claimed the native at the twin's key AS E's own re-create -- there is no stale copy, so
-// the pending twin's premise is dead. Cancel it (idempotent) instead of letting it burn kMaxTwinPasses of
-// 4 Hz walk+log noise against a now-bound (never-matchable) candidate.
+// The save-position re-bind claimed the native at the twin's key as E's own re-create: there
+// is no stale copy, so the pending twin's premise is dead. Cancel it (idempotent) instead of
+// letting it burn its pass cap of walk and log noise against a now-bound, never-matchable
+// candidate.
 void CancelPendingSaveTimeTwin(coop::element::ElementId eid);
 
-// DESTROY-BEFORE-LOAD (2026-06-30): a PropDestroy can arrive BEFORE this peer has loaded its copy of the
-// doomed save-loaded prop. remote_prop::OnDestroy finds "no local actor" and ARMS it here instead of dropping
-// it (-> the prop later loads unopposed = a dup, the 5-vs-7 race). The sequence re-applies it AFTER the bind
-// via remote_prop::TryApplyDestroy, so destroy delivery becomes order-independent. Since the 2026-07-12 join
-// barrier this is unreachable in the JOIN window (no destroy arrives pre-quiescence); it remains live for the
-// TRAVEL window (host sends flow while a cave/level reload churns -- no travel-start gate exists yet) and the
-// probe-deadline DEGRADED mode.
+// Destroy before load: a destroy can arrive before this peer has loaded its copy of the
+// doomed save-loaded prop. The destroy receiver finds no local actor and arms it here
+// instead of dropping it (the prop would later load unopposed, a duplicate); the sequence
+// re-applies it after the bind through the destroy re-apply, so destroy delivery becomes
+// order-independent. Since the join barrier this is unreachable in the join window (no
+// destroy arrives pre-quiescence); it remains live for the travel window (host sends flow
+// while a cave or level reload churns, with no travel-start gate) and the probe-deadline
+// degraded mode.
 void ArmPendingDestroy(const coop::net::PropDestroyPayload& payload);
 
-// (ArmPendingSpawn + CancelPendingSpawnsForWireDestroy -- the takes-1/2 spawn-revalidation capture and
-// the take-4 wire-order netting -- RETIRED 2026-07-12 by the join barrier; see the header note above.)
-
-// True iff there is armed-but-unconsumed reconcile work (a pending save-time twin OR a pending b3 position
-// correction OR a pending destroy OR a pending kerfur retire). OnTick polls this so it only walks when there
-// is something to reconcile. Game-thread only.
+// True iff there is armed but unconsumed reconcile work (a pending save-time twin, position
+// correction, destroy or kerfur retire). The tick polls this so it only walks when there is
+// something to reconcile. Game thread only.
 bool HasPendingWork();
 
-// v106b GHOST-SWEEP arm (2026-07-07): an event stranded (or may have stranded) an identity-less native
-// chipPile on this client -- a rebind displaced a live native (identity_create HOST RE-ASSERT), or an
-// E-press landed on an unbound native post-quiescence. Arming makes the next reconcile pass run, whose
-// step 2 (BindUnboundReCreates GHOST-RETIRE tail) adjudicates EVERY such ghost at once: re-bind what a
-// map key claims, retire the provably identity-less rest. Event handlers CAPTURE here; the sequence
-// applies -- the same contract as every other queue in this module. Game-thread only.
+// The ghost-sweep arm: an event stranded (or may have stranded) an identity-less native chip
+// pile on this client (a rebind displaced a live native, or a use press landed on an unbound
+// native post-quiescence). Arming makes the next reconcile pass run, whose re-bind step's
+// ghost-retire tail adjudicates every such ghost at once: re-bind what a map key claims,
+// retire the provably identity-less rest. Event handlers capture here; the sequence applies.
+// Game thread only.
 void ArmGhostSweep();
 
-// Drop the deferred queues (save-time twins + pos-corrections + destroys). Called ONLY at session teardown
-// (join_membership_sweep::ResetClaimTracking, the disconnect/world-drop edge). The queues deliberately SURVIVE
-// bracket close -- they drain at
-// quiescence / steady-state, never dropped per-bracket (that was the latent "Reset DROPPING undrained
-// pos-correction" data loss the anti-smear split removed). Game-thread only.
+// Drop the deferred queues (save-time twins, position corrections, destroys). Called only at
+// session teardown (the membership sweep's claim-tracking reset, the disconnect and
+// world-drop edge). The queues deliberately survive bracket close: they drain at quiescence
+// or in steady state, never per bracket (a per-bracket reset once lost an undrained
+// correction). Game thread only.
 void Reset();
 
 }  // namespace coop::element::quiescence_drain
