@@ -1,38 +1,12 @@
-// coop/net/session_status.cpp -- GNS status callback + peer-slot bookkeeping.
-//
-// Extracted from coop/net/session.cpp at M-1 2026-05-29 to bring that file
-// under the 800-LOC soft cap (was 814 LOC). The split point is the
-// "connection state-machine" subsystem: everything driven by GNS's status
-// callback (None->Connecting->Connected->ClosedByPeer/ProblemDetectedLocally)
-// and the per-slot helpers that exclusively serve it.
-//
-// Stays in session.cpp:
-//   - g_session (anon-ns) -- accessed only by OnConnStatusChanged
-//   - OnConnStatusChanged + ConnStatusTrampoline -- the GNS bridge
-//   - EnsureGnsInit + g_initMutex/g_inited -- called only from Start
-//   - Lane enum + LaneForKind -- used by the SendReliable path
-//   - Start / Stop / send paths / Try*Get / NetThread / HandleMessage
-//
-// Moves here:
-//   - ConfigureLanesForPeer (anon-ns helper, only called from
-//     HandleConnStatusChanged)
-//   - Session::FindFreePeerSlotForClient
-//   - Session::FindPeerSlotForConn
-//   - Session::ResetPeerRemoteState
-//   - Session::connectedPeerCount
-//   - Session::HandleConnStatusChanged (the 190-LOC state-machine)
-//
-// All five member functions remain ordinary class members declared in
-// session.h; splitting their definitions across translation units is
-// the standard C++ idiom and requires no header / public-API changes.
-// The single anon-ns helper that moves is exclusively called from the
-// member fn that moves with it, so no cross-TU linkage is added.
+// coop/net/session_status.cpp -- the connection state machine: the GNS status callback
+// (Connecting, Connected, closed), the pending band an unproved socket waits in, admission into a
+// seat, the per-slot teardown shared by every close path, kick and ban, and the link classifier.
 
 #include "coop/net/session.h"
 
 #include <chrono>
 
-#include "coop/config/config.h"           // R-4b commit-0: ResolveInt for the wire knobs
+#include "coop/config/config.h"           // ResolveInt, the wire knobs
 #include "coop/config/config_registry.h"  // rows::net_sendbuf_kb / rows::net_sendrate_kbs
 #include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
 #include "coop/player/players_registry.h"
@@ -41,21 +15,19 @@
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
 #include <steam/steamnetworkingsockets.h>
-#include <steam/isteamnetworkingutils.h>  // SteamNetworkingUtils() for the R-4b wire knobs
+#include <steam/isteamnetworkingutils.h>  // SteamNetworkingUtils(), the per-connection wire knobs
 #pragma warning(pop)
 
 namespace coop::net {
 
-// R-4b D4: the per-connection send buffer the mod configures when the
-// net.sendbuf_kb knob is 0 (see ConfigureLanesForPeer). Shared with the
-// sendBufBytes_ mirror below -- ONE constant, no drift.
+// The per-connection send buffer configured when the net.sendbuf_kb knob is 0; one constant,
+// shared with the sendBufBytes_ mirror.
 constexpr int kDefaultSendBufBytes = 4 * 1024 * 1024;
 
 namespace {
 
-// PR-3 lane plumbing applied to a freshly-connected peer (called from the
-// Connected status callback). On failure, reliable sends collapse to lane 0
-// (still functional, just no priority routing).
+// The lanes for a newly seated peer; on failure reliable sends collapse to lane 0 (functional, no
+// priority routing).
 void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     constexpr int kLaneCount = 3;  // matches Lane::Count in session.cpp
     const int priorities[kLaneCount] = { 0, 1, 2 };
@@ -66,17 +38,11 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
         UE_LOGW("net: ConfigureConnectionLanes(h=0x%08x) rc=%d",
                 static_cast<unsigned>(hConn), static_cast<int>(rc));
     }
-    // R-4b commit-0: per-connection wire knobs (the delivery-guarantee drill +
-    // slow-link simulation; research/findings/network/
-    // votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md D7). 0 = leave the
-    // mod's defaults. SendRateMin/Max are set to the SAME value per the GNS
-    // header's own instruction ("should always be set to the same value, to
-    // manually configure a specific send rate"). GNS STOCK defaults both to
-    // 256 KB/s, but OUR binary overrides globally at init (session_start.cpp:
-    // Min 1 MB/s / Max 25 MB/s) -- and there is no bandwidth estimation in
-    // this build, so the effective rate is clamp(ping-at-init estimate, Min,
-    // Max): Min forever on any internet link, Max on LAN. This per-connection
-    // pin overrides that global in BOTH directions.
+    // Per-connection wire knobs for the delivery drill and slow-link simulation; 0 leaves the
+    // defaults. SendRateMin and Max are set to the same value, as the GNS header instructs for a
+    // fixed rate; this build has no bandwidth estimation, so the effective rate is the ping-at-init
+    // estimate clamped to the global Min/Max set at init, and this pin overrides that in both
+    // directions.
     auto* utils = SteamNetworkingUtils();
     const long bufKb = coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
     if (bufKb > 0) {
@@ -85,11 +51,9 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
         UE_LOGW("net: send buffer PINNED to %ld KB for h=0x%08x (drill knob net.sendbuf_kb)",
                 bufKb, static_cast<unsigned>(hConn));
     } else {
-        // R-4b D4: the GNS default (512 KB) is STRUCTURALLY smaller than a join
-        // burst (~740 KB of PropSpawns + the connect replay), so the backlog
-        // engaged on every join. 4 MB makes the backlog the exception (a real
-        // slow link), not the common path. The backlog remains the correctness
-        // net either way.
+        // GNS's 512 KB default is smaller than a join burst (~740 KB of PropSpawns plus the connect
+        // replay), so the backlog engaged on every join; 4 MB makes it the exception, a real slow
+        // link. The backlog stays the correctness net either way.
         utils->SetConnectionConfigValueInt32(hConn, k_ESteamNetworkingConfig_SendBufferSize,
                                              kDefaultSendBufBytes);
     }
@@ -104,15 +68,10 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     }
 }
 
-// Phase 2 ban filter, shared by BOTH host accept paths (the normal
-// None->Connecting edge AND the late-register path in the Connected branch when
-// GNS skips Connecting). Returns true to ACCEPT the incoming connection.
-//
-// FAIL-CLOSED: when a filter is installed but the remote IP can't be resolved
-// (GetConnectionInfo fails or yields an empty address), we REJECT -- an
-// unverifiable peer must not slip past an active banlist. For direct-UDP
-// connections m_addrRemote is populated by the Connecting edge (the GNS server
-// example reads it there), so this only rejects genuinely-unresolvable peers.
+// The ban filter, shared by both host accept paths (the Connecting edge, and the Connected branch
+// when GNS skips Connecting); true accepts. Fail-closed: with a filter installed and no resolvable
+// remote IP the connection is rejected. Direct UDP populates m_addrRemote by the Connecting edge,
+// so only a genuinely unresolvable peer is refused.
 bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
                    Session::AcceptFilterFn filter) {
     if (!filter) return true;  // no banlist installed -> accept all
@@ -131,15 +90,13 @@ bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
 
 }  // namespace
 
-// --- PENDING (UNADMITTED) CONNECTIONS -- security A2/A57, 2026-08-26 --------
-// See session.h for WHY this is a separate band rather than a per-slot
-// `admitted_` flag: with kMaxPeers == 4 there are three client seats, so an
-// unadmitted peer holding one would let three silent sockets lock the lobby.
+// --- the pending (unadmitted) band ---
+// session.h says why it is a band and not a per-slot flag: three seats, and an unadmitted socket
+// holding one would let three silent sockets lock the lobby.
 
 namespace {
-// steady_clock, not GetTickCount64: this file does not pull in <windows.h>, and
-// a monotonic stamp is the right primitive for a net-thread age anyway (a
-// wall-clock jump must not free a seat, nor hold one).
+// steady_clock, not GetTickCount64: no <windows.h> here, and a monotonic stamp is right for an
+// age (a wall-clock jump must neither free nor hold a seat).
 uint64_t NowMs() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -155,29 +112,12 @@ int Session::ParkPending(uint32_t hConn) {
             return i;
         }
     }
-    // BAND FULL -- EVICT THE OLDEST UN-PROVED ENTRY RATHER THAN REFUSE THE
-    // ARRIVAL. Until 2026-08-29 this returned -1 and the caller closed the
-    // NEWCOMER, which is a policy that refuses the honest party: an un-proved
-    // socket has no standing over an arriving one, and with a multi-message
-    // exchange the band's occupancy is attacker-timed by construction (open eight
-    // sockets, say nothing, and every real friend is turned away until the sweep
-    // deadline). Evicting the oldest makes the band a rolling window instead of a
-    // lockout, and the honest joiner -- who sends its Hello immediately -- is
-    // never the oldest for long.
-    //
-    // A per-remote-address cap was considered instead and rejected on two
-    // measurements: `[V]` `session_runtime.cpp:432-436` installs the IP ban filter
-    // for LanDirect ONLY because the P2P Connecting edge has an empty remote
-    // address, so our main lane has nothing to key on; and one household NAT (or
-    // this project's own 4-peer single-box rig) would be refused by it.
-    // PROGRESS FIRST, AGE SECOND. Plain "oldest" is a policy the attacker times:
-    // an honest joiner's entry becomes the oldest as soon as enough silent sockets
-    // arrive after it, so a flood evicts the one party that was about to prove
-    // itself. Preferring an entry with NO open exchange makes a socket that has
-    // answered the challenge un-evictable by a socket that has said nothing --
-    // which is the honest/dishonest discrimination age alone cannot express. It
-    // does not stop a flood; it makes the attacker complete a real exchange per
-    // socket to hold an entry. Post-ship audit, 2026-08-29.
+    // Band full: evict rather than refuse the arrival. An unproved socket has no standing over an
+    // arriving one, and the band's occupancy is attacker-timed (open eight sockets, say nothing),
+    // so a refusal turns every real friend away until the sweep. Progress first, age second: an
+    // entry with an open exchange is never evicted for one that has said nothing, so a flood must
+    // complete a real exchange per socket. A per-address cap fails the P2P edge (no remote address)
+    // and one household NAT.
     int oldest = -1;
     uint64_t oldestMs = 0;
     for (int pass = 0; pass < 2 && oldest < 0; ++pass) {
@@ -206,8 +146,7 @@ int Session::ParkPending(uint32_t hConn) {
 }
 
 void Session::SweepPending() {
-    // The deadline the band's own comment has claimed since 2026-08-26 and never
-    // enforced: pendingSinceMs_ was written at three sites and read at none.
+    // The band's deadline: an entry older than kPendingDeadlineMs is closed.
     const uint64_t now = NowMs();
     for (int i = 0; i < kMaxPending; ++i) {
         const uint32_t hConn = pendingConns_[i].load(std::memory_order_acquire);
@@ -229,9 +168,7 @@ void Session::SweepPending() {
 
 void Session::RetirePending(int pendIdx, uint32_t hConn, const char* reason) {
     if (pendIdx >= 0 && pendIdx < kMaxPending) {
-        // Clear by HANDLE, not blindly: between the refusal and this call the band
-        // could in principle have handed the index on. A CAS that fails means the
-        // entry is already someone else's and must not be disturbed.
+        // Clear by handle, not blindly: a failed CAS means the entry is already someone else's.
         uint32_t expected = hConn;
         if (pendingConns_[pendIdx].compare_exchange_strong(expected, 0)) {
             pendingSinceMs_[pendIdx].store(0, std::memory_order_release);
@@ -250,9 +187,8 @@ void Session::ReleasePending(uint32_t hConn) {
         uint32_t cur = hConn;
         if (pendingConns_[i].compare_exchange_strong(cur, 0)) {
             pendingSinceMs_[i].store(0, std::memory_order_release);
-            // The exchange state dies WITH the entry. The band recycles indices,
-            // so a row left open would let the next socket at this index answer
-            // the previous socket's challenge.
+            // The exchange state dies with the entry: the band recycles indices, and a row left
+            // open would let the next socket at this index answer the previous socket's challenge.
             coop::net::peer_admission::HostForgetPending(i);
         }
     }
@@ -271,29 +207,25 @@ std::string Session::ProvedGuidForSlot(int slot) const {
 }
 
 int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
-    // The band index must still BELONG to this connection. Not reachable today
-    // (ParkPending runs only under RunCallbacks at the top of a pump pass, never
-    // between two messages of one drain batch), so this is hardening: without it a
-    // reassigned index would lose the NEW occupant's band entry -- and with it the
-    // sweep that is the only thing that would ever close it.
+    // The band index must still belong to this connection; not reachable today (ParkPending runs
+    // only under RunCallbacks, never between two messages of a batch), but a reassigned index would
+    // lose the new occupant's entry and the sweep that closes it.
     if (pendingIdx >= 0 && pendingIdx < kMaxPending &&
         pendingConns_[pendingIdx].load(std::memory_order_acquire) != hConn) {
         return -1;
     }
-    // THE SEAT IS SPENT HERE AND NOWHERE ELSE. Everything below is what the
-    // accept edge used to do eagerly, in the same order (the generation is
-    // minted BEFORE the peerConns_ store so any observer that can see the
-    // connection can also see who owns it -- session.h documents that order).
+    // The seat is spent here and nowhere else, in the accept edge's old order: the generation is
+    // minted before the peerConns_ store, so any observer that can see the connection can see who
+    // owns it.
     const int slot = FindFreePeerSlotForClient();
     if (slot < 0) return -1;  // lobby genuinely full of ADMITTED players
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
     peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
-    // GEN: mint -- the admitted peer takes the slot (the generation store is the line above)
+    // The admitted peer takes the slot.
     peerConns_[slot].store(hConn);
-    // The peer is now entitled to everything a connected peer gets. This is the
-    // moment the Connected callback used to be, for a host's clients.
+    // The peer is now entitled to everything a connected peer gets.
     FinishPeerConnected(slot, hConn);
     if (pendingIdx >= 0 && pendingIdx < kMaxPending) {
         pendingConns_[pendingIdx].store(0, std::memory_order_release);
@@ -306,8 +238,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
 }
 
 int Session::FindFreePeerSlotForClient() {
-    // Host: scan client slots [1..kMaxPeers-1] for the lowest unoccupied one.
-    // Slot 0 reserved for "host self" -- never holds a remote connection here.
+    // Host: the lowest unoccupied client slot; slot 0 is the host itself.
     for (int i = 1; i < kMaxPeers; ++i) {
         if (peerConns_[i].load() == 0) return i;
     }
@@ -322,7 +253,7 @@ int Session::FindPeerSlotForConn(uint32_t hConn) {
 }
 
 void Session::ResetPeerRemoteState(int peerSlot) {
-    // remoteMutex_ held by caller.
+    // remoteMutex_ held by the caller.
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
     hasRemote_[peerSlot] = false;
     lastRemoteSeq_[peerSlot] = 0;
@@ -332,30 +263,25 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     lastRemotePropSeq_[peerSlot] = 0;
     remotePropStamp_[peerSlot] = 0;
     lastReadPropStamp_[peerSlot] = 0;
-    // v22: clear the ragdoll pelvis-physics slot too, so a reconnecting peer
-    // doesn't inherit the dead generation's stale ragdoll stream.
+    // The ragdoll slot too, so a reconnecting peer inherits no stale stream.
     hasRemoteRagdoll_[peerSlot] = false;
     lastRemoteRagdollSeq_[peerSlot] = 0;
     remoteRagdollStamp_[peerSlot] = 0;
     lastReadRagdollStamp_[peerSlot] = 0;
-    // v109: clear the hand-item transform slot -- same stale-generation reasoning.
+    // The hand-item slot, the same reason.
     hasRemoteHand_[peerSlot] = false;
     lastRemoteHandSeq_[peerSlot] = 0;
     remoteHandStamp_[peerSlot] = 0;
     lastReadHandStamp_[peerSlot] = 0;
-    // PR-FOUNDATION-1b v16: clear the latched senderEpoch so the next
-    // connection on this slot re-latches via HandleMessage's first-packet
-    // path. Without this, a reconnecting peer's fresh epoch would fail
-    // the compare against the dead generation's stored value.
+    // Clear the latched senderEpoch so the next connection on this slot re-latches on its first
+    // packet; a reconnecting peer's fresh epoch would otherwise fail the compare.
     expectedEpoch_[peerSlot] = 0;
 }
 
 int Session::connectedPeerCount() const {
-    // Count only peers whose lanes are configured (= Connected state). Counting
-    // Connecting-state slots (peerConns_ set in the Connecting callback but
-    // peerLanesConfigured_ not yet set in the Connected callback) delays the
-    // aggregate Disconnected transition and triggers snapshot fan-out toward a
-    // half-open connection.
+    // Only peers whose lanes are configured: counting a slot set at Connecting but not yet ready
+    // delays the aggregate Disconnected transition and fans a snapshot out to a half-open
+    // connection.
     int n = 0;
     for (int i = 0; i < kMaxPeers; ++i) {
         if (peerConns_[i].load() != 0 && peerLanesConfigured_[i].load()) ++n;
@@ -364,9 +290,8 @@ int Session::connectedPeerCount() const {
 }
 
 int Session::pendingPeerCount() const {
-    // The unadmitted band. A socket sits here for the whole AuthHello/Challenge/
-    // Proof round trip, during which connectedPeerCount() reads zero -- so "nobody
-    // is here" is the SUM, never the seat count alone.
+    // The unadmitted band: a socket sits here for the whole challenge round trip, during which
+    // connectedPeerCount() reads zero, so "nobody is here" is the sum.
     int n = 0;
     for (int i = 0; i < kMaxPending; ++i) {
         if (pendingConns_[i].load(std::memory_order_acquire) != 0) ++n;
@@ -374,38 +299,22 @@ int Session::pendingPeerCount() const {
     return n;
 }
 
-// EVERYTHING A PEER GETS THE MOMENT IT IS ENTITLED TO BE A PEER -- lanes, the
-// send-buffer mirror, the lanes-configured flag that IsSlotReady() reads, and
-// the host's AssignPeerSlot. Extracted 2026-08-26 (security A2/A57) because the
-// admission gate created a SECOND caller: on a host the seat is now spent in
-// AdmitPending(), long after the Connected callback has come and gone, so this
-// work no longer coincides with that callback.
-//
-// It is a shared FUNCTION and not a copy on purpose. The first cut of the
-// admission gate left this block in the Connected branch and returned early for
-// a pending peer -- so the peer was admitted, got a slot and lanes, and the host
-// never sent AssignPeerSlot. `[V]` The smoke read exactly that: "ADMITTED
-// pending conn -> slot 1" on the host, and no "host assigned us peer slot" on
-// the client, which the harness reports as "client never reached connected".
-// Duplicating the block would have been the same site-list mistake one level
-// down (TRACKER A57b).
+// Everything a peer gets the moment it is entitled to be one: the lanes, the send-buffer mirror,
+// the flag IsSlotReady() reads, and the host's AssignPeerSlot. A shared function, not a copy: on
+// a host the seat is spent in AdmitPending, long after the Connected callback, and a copy left in
+// that callback once admitted a peer without ever sending AssignPeerSlot.
 void Session::FinishPeerConnected(int slot, uint32_t hConn) {
     ConfigureLanesForPeer(hConn);
-    // R-4b: mirror the buffer size the connection actually runs with --
-    // the backlog drain's D8 reserve gate is computed against it. Same
-    // resolve as ConfigureLanesForPeer's pin (knob or the default).
+    // Mirror the buffer size the connection runs with (the knob or the default); the backlog
+    // drain's reserve gate is computed against it.
     {
         const long bufKb =
             coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
         sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024
                                     : kDefaultSendBufBytes;
     }
-    // Order matters: lanes-configured flag flips ONLY after the
-    // ConfigureConnectionLanes call returns, so IsSlotReady() readers
-    // see the slot as ready only when the per-kind lane mapping is
-    // live on the connection. Acquire/release pair below pairs with
-    // the IsSlotReady() relaxed load (any subsequent send through
-    // SendReliable etc. happens-before consumer dispatch).
+    // The ready flag flips only after ConfigureConnectionLanes returns, so a reader sees the slot
+    // ready only once the per-kind lane mapping is live; the release pairs with IsSlotReady's load.
     peerLanesConfigured_[slot].store(true, std::memory_order_release);
     if (state_.load() != ConnState::Connected) {
         state_.store(ConnState::Connected);
@@ -413,29 +322,16 @@ void Session::FinishPeerConnected(int slot, uint32_t hConn) {
     UE_LOGI("net: peer slot %d CONNECTED (%s, h=0x%08x)",
             slot, cfg_.role == Role::Host ? "host" : "client",
             static_cast<unsigned>(hConn));
-    // Host tells the freshly-connected client which peer slot it was
-    // assigned (clients no longer self-stamp peerSessionId=1; the
-    // host is the only authority on slot assignment so two clients
-    // can't silently collide). Status callback runs on the net
-    // thread; SendReliableToSlot is thread-safe via GNS's queue.
+    // The host tells the client which slot it holds: the host is the only authority on slot
+    // assignment, so two clients cannot collide. Net thread; SendReliableToSlot is thread-safe.
     if (cfg_.role == Role::Host) {
         AssignPeerSlotPayload p{};
         p.slot = static_cast<uint8_t>(slot);
-        // v13 (A4 2026-05-29): stamp the host's local Player Element id
-        // so the client can RegisterMirror it in slot 0. Read is from
-        // the net thread (this callback fires off ReceiveMessagesOnPoll
-        // / SteamNetworkingSockets thread), not the game thread; the
-        // host's slot-0 Element is allocated by net_pump.cpp every tick
-        // (idempotent) and stays for the session lifetime, so this read
-        // is well-defined unless the client connects in the
-        // ~tens-of-ms boot window before the first net pump tick --
-        // in which case the read returns kInvalidId, and the client
-        // receiver falls back to non-mirror routing (the field's
-        // contract documents 0/kInvalidId as "sender had no Element").
-        // v16 PR-FOUNDATION-1b: the hostContext byte that v14 added
-        // here is gone; per-peer stale-generation defense moved to the
-        // packet header's senderEpoch, stamped by WriteHeader for this
-        // SendReliableToSlot like every other outbound packet.
+        // The host's local Player Element id rides along so the client registers the host's mirror
+        // in slot 0. Read on the net thread: net_pump allocates the host's Element every tick and
+        // it lives for the session, so the read is well-defined unless the client connects in the
+        // boot window before the first pump tick, when it reads kInvalidId and the client falls
+        // back to non-mirror routing.
         p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
         if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
             UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
@@ -453,14 +349,12 @@ void Session::HandleConnStatusChanged(void* info) {
     const auto newState = cb->m_info.m_eState;
     auto* sockets = SteamNetworkingSockets();
 
-    // --- Host: accept incoming clients up to kMaxPeers-1 of them.
+    // --- host: an incoming connection ---
     if (cfg_.role == Role::Host &&
         oldState == k_ESteamNetworkingConnectionState_None &&
         newState == k_ESteamNetworkingConnectionState_Connecting) {
-        // Ban filter (Phase 2): reject a banned (or unverifiable) remote IP
-        // before we accept it. MTA does the equivalent at join time
-        // (CGame.cpp:1973); doing it at the Connecting edge is earlier + cheaper
-        // (no slot consumed, no handshake). Fail-closed (see AcceptAllowed).
+        // The ban filter, before the accept (MTA checks at join time; the Connecting edge is
+        // earlier and cheaper: no slot, no handshake). Fail-closed.
         if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
             UE_LOGW("net: rejecting incoming connection (banned remote IP)");
             sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
@@ -473,20 +367,13 @@ void Session::HandleConnStatusChanged(void* info) {
             sockets->CloseConnection(hConn, 0, "accept failed", false);
             return;
         }
-        // SECURITY A2/A57 (2026-08-26): NO PLAYER SEAT IS SPENT HERE ANY MORE.
-        // This edge used to call FindFreePeerSlotForClient() before a single
-        // byte had been parsed, which meant anyone who opened a socket held one
-        // of the three client seats -- and, because roster_ledger.cpp:310 births
-        // the roster row on IsSlotReady alone, also a player number, a puppet in
-        // everyone's world and the ~20-subsystem person fan-out. The connection
-        // is parked instead; the seat is spent in AdmitPending() and nowhere
-        // else. See session.h's pending band and PLAN_04 s1 Action 2.
-        // Never fails: a full band evicts its OLDEST un-proved entry rather than
-        // refusing this arrival (see ParkPending).
+        // No seat is spent here: the connection is parked, and the seat is spent in AdmitPending
+        // and nowhere else (a seat spent at accept gave anyone who opened a socket a player number,
+        // a puppet in every world and the whole person fan-out, since the roster births a row on
+        // IsSlotReady alone). Never fails: a full band evicts its oldest unproved entry.
         const int pend = ParkPending(hConn);
-        // Tag with the PENDING id, deliberately outside [1, kMaxPeers): the one
-        // drain site validates that range, so this connection's traffic reaches
-        // the admission handler and nothing else.
+        // Tagged with the pending id, outside [1, kMaxPeers), so the one drain site routes this
+        // connection's traffic to the admission handler and nowhere else.
         sockets->SetConnectionUserData(hConn, kPendingTag | pend);
         // Add to the host's PollGroup so we drain all clients with one call.
         const uint32_t hPoll = hPollGroup_.load();
@@ -498,27 +385,17 @@ void Session::HandleConnStatusChanged(void* info) {
         return;
     }
 
-    // --- Both roles: state transitions on an existing connection.
+    // --- both roles: transitions on an existing connection ---
 
     if (newState == k_ESteamNetworkingConnectionState_Connected) {
         int slot = FindPeerSlotForConn(hConn);
-        // GNS may skip the None->Connecting transition in rare cases (per
-        // SteamNetConnectionStatusChangedCallback_t header doc). When that
-        // happens on host, the slot is unregistered. Late-register here so
-        // the connection has a known slot and SetConnectionUserData lands.
+        // GNS may skip the None to Connecting transition (its header says so); on a host such a
+        // connection has no band entry yet, so it is parked here.
         if (slot < 0 && cfg_.role == Role::Host) {
-            // SECURITY A2/A57 (2026-08-26): THIS IS THE SECOND ALLOCATION SITE,
-            // and it used to seat the peer. An earlier draft of this fix changed
-            // only the Connecting edge, which would have left every pending
-            // connection taking a seat right here -- the site-list-instead-of-
-            // invariant failure TRACKER A57b names. Both edges now run ONE
-            // policy: park, never seat.
-            //
-            // A connection reaching Connected with no slot is either (a) already
-            // parked at the Connecting edge -- the normal path now -- or (b) one
-            // where GNS skipped None->Connecting entirely (rare; its own header
-            // documents this). Case (b) never met the accept-edge ban filter, so
-            // it is re-run here exactly as before.
+            // The second accept site runs the same policy as the first: park, never seat. A
+            // connection reaching Connected with no slot is either already parked (the normal path)
+            // or one where GNS skipped Connecting, which never met the accept-edge ban filter, so
+            // the filter runs here.
             if (!IsPendingConn(hConn)) {
                 if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
                     UE_LOGW("net: rejecting late-register connection (banned remote IP)");
@@ -535,11 +412,8 @@ void Session::HandleConnStatusChanged(void* info) {
                 UE_LOGI("net: late-parked PENDING %d (Connecting was skipped, h=0x%08x)",
                         pend, static_cast<unsigned>(hConn));
             }
-            // Lanes are configured at ADMISSION (AdmitPending), not here: an
-            // unadmitted peer has no seat, and ConfigureLanesForPeer's whole
-            // purpose is per-kind app-traffic mapping it is not entitled to.
-            // The admission exchange itself rides raw SendMessageToConnection,
-            // which needs only the handle.
+            // The lanes are configured at admission, not here: an unadmitted peer has no seat, and
+            // the exchange rides raw sends that need only the handle.
             return;
         }
         if (slot < 0) {
@@ -548,21 +422,13 @@ void Session::HandleConnStatusChanged(void* info) {
                     cfg_.role == Role::Host ? "host" : "client");
             return;
         }
-        // Reaching here means role == Client and slot == 0: on a HOST every
-        // inbound connection is parked above and gets its slot from AdmitPending,
-        // long after this callback has come and gone.
-        //
-        // THE LINK IS NOT FINISHED HERE ANY MORE. It used to be, and that made a
-        // transport fact ("the socket is up") the trigger for everything
-        // IsSlotReady gates -- including the joiner's own SaveTransferRequest. The
-        // client now opens the admission exchange instead and finishes the link in
-        // FinishClientLink, when the host's AssignPeerSlot proves it was admitted.
-        // Same shape as the host's band, one level down: nothing downstream needed
-        // an edit, because nothing downstream can see a slot that is not ready.
+        // Here role == Client and slot == 0 (a host's inbound connections are parked above). The
+        // link is not finished here: the client opens the admission exchange and finishes the link
+        // in FinishClientLink when the host's AssignPeerSlot proves it was admitted, so "the socket
+        // is up" triggers nothing IsSlotReady gates.
         if (!peer_admission::ClientOnConnected(*this, hConn)) {
-            // Say WHY on the flee-to-menu path; a silent close here reads as
-            // "the host vanished", which is the one thing it is not. LeaveHost
-            // is what makes the saying possible -- see its comment.
+            // Say why on the flee path: a silent close reads as "the host vanished", the one thing
+            // it is not.
             LeaveHost("could not start the identity exchange with this host");
         }
         return;
@@ -571,55 +437,43 @@ void Session::HandleConnStatusChanged(void* info) {
     if (newState == k_ESteamNetworkingConnectionState_ClosedByPeer ||
         newState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
         const int slot = FindPeerSlotForConn(hConn);
-        // SECURITY A2/A57: a pending (unadmitted) connection has NO slot, so
-        // FindPeerSlotForConn returns -1 and the whole `if (slot >= 0)` teardown
-        // below is already a no-op for it -- that guard predates this change and
-        // is why a slotless close needed no other edits. What it cannot do is
-        // free the pending entry, so that happens here. Unconditional: releasing
-        // a handle that was never parked is a no-op by construction.
+        // A pending connection has no slot, so the slot teardown below is a no-op for it; its band
+        // entry is freed here, unconditionally (releasing a handle that was never parked is a
+        // no-op).
         ReleasePending(hConn);
         UE_LOGW("net: peer slot %d closed (oldState=%d reason='%s')",
                 slot, static_cast<int>(oldState), cb->m_info.m_szEndDebug);
-        // Client: the host closed OUR connection (kick / ban / host quit / host
-        // crash). Stash GNS's reason so net_pump can log WHY before fleeing to
-        // the main menu. Host role ignores this (a client leaving is not us being
-        // closed). slot 0 is the host on a client.
+        // Client, slot 0: the host closed our connection (kick, ban, quit, crash); stash GNS's
+        // reason so net_pump can say why before fleeing.
         if (cfg_.role == Role::Client && slot == 0) {
             {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
-                // Do not overwrite a reason WE already set (a refused identity
-                // exchange closes the connection itself and names why); GNS's
-                // own m_szEndDebug for a close we initiated is the generic one.
+                // Do not overwrite a reason we set ourselves (a refused exchange names why); GNS's
+                // reason for a close we initiated is the generic one.
                 if (hostCloseReason_.empty()) hostCloseReason_ = cb->m_info.m_szEndDebug;
             }
-            // The exchange dies with the link: a `proved` flag surviving into the
-            // next connection would seat us on an unchallenged host.
+            // The exchange dies with the link: a `proved` flag surviving into the next connection
+            // would seat us on an unchallenged host.
             peer_admission::ClientReset();
         }
         if (slot >= 0) {
-            // GEN: clear -- deferred to the END of this close path (below, after
-            // the reliableInbox_ erase). The generation dropping to 0 is what
-            // tells the game-thread ledger the slot emptied, and that tears down
-            // the departed peer's person-state; clearing it here would let a
-            // still-queued reliable from this peer dispatch AFTER the teardown.
+            // The generation is cleared at the end of this path, after the inbox erase: its drop to
+            // 0 is what tells the ledger the slot emptied, and clearing it here would let a
+            // still-queued reliable from this peer dispatch after the teardown.
             peerConns_[slot].store(0);
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
-            // R-4b: the departing peer's queued reliable state dies with it.
+            // The departing peer's queued reliable state dies with it.
             backlog_.FreeSlot(slot);
-            relayEligible_[slot].store(0, std::memory_order_release);  // seeds arc
+            relayEligible_[slot].store(0, std::memory_order_release);
         }
-        // Per the GNS header doc on the status callback, terminal states
-        // require us to CloseConnection to release the handle.
+        // A terminal state requires CloseConnection to release the handle (the GNS header).
         sockets->CloseConnection(hConn, 0, nullptr, false);
 
-        // Per-slot reset so a reconnecting peer (whose seq restarts at 0) is
-        // not stale-dropped.
+        // Per-slot reset, so a reconnecting peer (seq from 0) is not stale-dropped.
         { std::lock_guard<std::mutex> lk(remoteMutex_);
           if (slot >= 0) ResetPeerRemoteState(slot); }
 
-        // Drop reliable messages still queued from the departing peer.
-        // Without this a PropSpawn from a ghost peer can land in the game
-        // thread AFTER the slot has been cleared, and no future PropDestroy
-        // can ever arrive.
+        // Drop the reliables still queued from the departing peer: a PropSpawn from a ghost landing
+        // after the slot cleared could never be destroyed.
         if (slot >= 0) {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
             for (auto it = reliableInbox_.begin(); it != reliableInbox_.end();) {
@@ -628,21 +482,17 @@ void Session::HandleConnStatusChanged(void* info) {
             }
         }
 
-        // GEN: clear -- the LAST write of the close path, release-ordered, and
-        // deliberately AFTER the inbox erase above (which runs under a DIFFERENT
-        // mutex). A reader that observes generation==0 is therefore guaranteed to
-        // observe an inbox already drained of this peer.
+        // The generation clear is the last write of the close path, after the inbox erase (under a
+        // different mutex), so a reader that sees 0 sees an inbox already drained of this peer.
         if (slot >= 0) {
             peerGenBySlot_[slot].store(0, std::memory_order_release);
             SetProvedGuidForSlot(slot, std::string());  // the identity dies with the seat
         }
 
-        // Aggregate state: stay Connected if any peer still up; otherwise
-        // downgrade and clear everything.
+        // Aggregate state: Connected while any peer remains, otherwise everything is cleared.
         if (connectedPeerCount() == 0) {
-            // Full disconnect goes to Disconnected, not Handshaking.
-            // Reconnect UI / harness polling state()==Disconnected was
-            // permanently blocked when this said Handshaking.
+            // A full disconnect goes to Disconnected, not Handshaking, which the reconnect UI and
+            // the harness poll for.
             state_.store(ConnState::Disconnected);
             { std::lock_guard<std::mutex> lk(remoteMutex_);
               for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
@@ -658,7 +508,7 @@ bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const cha
     if (expectedGeneration == 0) return false;  // an empty-slot token can never authorize a kick
     const uint32_t hConnAtCapture = peerConns_[peerSlot].load();
     if (hConnAtCapture == 0) return false;
-    // Compare the CAPTURED token against the LIVE authority. Stale -> refuse.
+    // Compare the captured token against the live authority; stale means refuse.
     const uint32_t liveGen = peerGenBySlot_[peerSlot].load(std::memory_order_acquire);
     if (liveGen != expectedGeneration) {
         UE_LOGW("net: kick/ban on slot %d REFUSED -- the captured occupant (gen %u) is gone; "
@@ -666,14 +516,10 @@ bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const cha
                 static_cast<unsigned>(expectedGeneration), static_cast<unsigned>(liveGen));
         return false;
     }
-    // Claim by HANDLE, not by slot. The generation check above can go stale
-    // between these two instructions (the net thread could close and re-accept),
-    // and a plain exchange(0) would then hand us the SUCCESSOR's connection --
-    // which is precisely the person this whole path exists to protect. The CAS
-    // closes that: a successor's accept stored a different handle, so it fails.
-    // GEN: clear -- the claim; the generation itself is cleared at the end of
-    // KickClaimed's teardown, after the inbox erase, exactly like the other two
-    // close paths.
+    // Claim by handle, not by slot: the generation check can go stale between these two
+    // instructions (the net thread closes and re-accepts), and a plain exchange(0) would hand us
+    // the successor's connection; the CAS fails on a different handle. The generation itself is
+    // cleared at the end of KickClaimed.
     uint32_t claimed = hConnAtCapture;
     if (!peerConns_[peerSlot].compare_exchange_strong(claimed, 0)) {
         UE_LOGW("net: kick/ban on slot %d REFUSED -- the connection changed under us", peerSlot);
@@ -693,29 +539,20 @@ bool Session::GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
 }
 
 bool Session::Kick(int peerSlot, const char* reason) {
-    // Slot 0 is the host self -- never kickable. Bounds-reject everything else.
+    // Slot 0 is the host itself, never kickable.
     if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
-    // Atomically claim the slot so a concurrent natural ClosedByPeer on the net
-    // thread and this kick can't both run the teardown (exchange -> 0 means we
-    // own the close; a 0 result means someone already closed it).
-    // GEN: clear -- deferred to the end of the teardown below, exactly as the
-    // ClosedByPeer path does. (This site is an exchange, not a store: a census of
-    // `.store(` alone MISSES it, and missing it would leave a kicked slot holding
-    // a live generation, so the ledger would never see the row empty.)
+    // Claim the slot atomically so a concurrent ClosedByPeer on the net thread and this kick cannot
+    // both run the teardown (0 back means someone already closed it). The generation is cleared at
+    // the end of the teardown; this site is an exchange, not a store.
     const uint32_t hConn = peerConns_[peerSlot].exchange(0);
     if (hConn == 0) return false;
     return KickClaimed(peerSlot, hConn, reason);
 }
 
-// R-4b D3: a slot's send backlog tripped a fatal bound (no progress for
-// kNoProgress with a non-empty queue, or the byte cap). "Queued-until-sent or
-// connection-fatal, never warn-and-drop": the honest exit is closing the
-// connection, and the backlog dies WITH it (FreeSlot in KickClaimed's
-// teardown). Host: kick the slot. Client: slot 0 is our host link -- claim it
-// and run the SAME teardown (GNS delivers no callback for a connection we
-// close; KickClaimed is slot-agnostic). A slow-but-DRAINING link never gets
-// here -- progress resets the timer; a truly dead link normally dies at GNS's
-// own connected-timeout first.
+// A slot's send backlog tripped a fatal bound (no progress with a non-empty queue, or the byte
+// cap): queued until sent or connection-fatal, never warn-and-drop, so the connection is closed
+// and the backlog dies with it. Host: kick the slot; client: slot 0 is the host link, the same
+// teardown. A draining link never gets here (progress resets the timer).
 void Session::FatalCloseSlot(int slot, const char* reason) {
     UE_LOGE("net: send backlog FATAL for slot %d -- %s; closing the connection "
             "(delivery guarantee: never silently drop)", slot, reason ? reason : "?");
@@ -727,26 +564,12 @@ void Session::FatalCloseSlot(int slot, const char* reason) {
     LeaveHost(reason ? reason : "send backlog fatal");
 }
 
-// A CLIENT ENDING ITS OWN HOST LINK, ACCOUNTED FOR. Every path where WE decide to
-// leave -- an admission refusal, a host that tried to seat us without proving
-// itself, an exchange that could not start, a fatal send backlog -- comes through
-// here, and nothing calls CloseConnection on the host link directly any more.
-//
-// WHY IT EXISTS (measured 2026-09-01, `mp.py authdrill --arm password --unbound`).
-// The three admission sites used to set `hostCloseReason_` and then close the
-// socket themselves. GNS posts NO status callback for a connection you close, so
-// `state_` stayed Handshaking forever; net_pump's connect-fail edge -- the ONLY
-// consumer of that reason -- is gated on `state() == Disconnected` and therefore
-// never fired. Measured trail: the client refused a locked host in 0 ms, logged
-// exactly why, and then sat on a "Connecting..." cover for the rest of the run
-// with the explanation in a file no player opens. The refusal was right on the
-// wire and completely mute on screen.
-//
-// KickClaimed is what closes that gap: it is slot- and role-agnostic, and its tail
-// downgrades the aggregate state once the last peer is gone -- the same transition
-// the ClosedByPeer branch performs for a close the HOST authored. So a departure we
-// author and one we suffer now leave the session in the same state, which is the
-// property every cover, dialog and reconnect path already assumed it had.
+// A client ending its own host link: every path where we decide to leave (an admission refusal, a
+// host that tried to seat us unproved, an exchange that could not start, a fatal backlog) comes
+// through here. GNS posts no status callback for a connection we close, so a bare CloseConnection
+// left state_ at Handshaking forever and net_pump's connect-fail edge, the only consumer of the
+// reason, never fired: right on the wire, mute on screen. KickClaimed's tail downgrades the
+// aggregate state, so a departure we author and one we suffer leave the session the same.
 void Session::LeaveHost(const char* why) {
     if (cfg_.role != Role::Client) return;
     {   // FIRST WRITER WINS, matching the ClosedByPeer branch: a refusal names the
@@ -755,58 +578,45 @@ void Session::LeaveHost(const char* why) {
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
         if (hostCloseReason_.empty() && why) hostCloseReason_ = why;
     }
-    // GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a peer-slot
-    // occupancy (the client owns no roster generations; the flee path tears down whole)
+    // No generation on a client: slot 0 is the host link, not a roster seat.
     const uint32_t hConn = peerConns_[0].exchange(0);
     if (hConn == 0) return;  // already claimed by another path; its teardown owns it
     KickClaimed(0, hConn, why);
 }
 
-// The teardown for a connection whose slot the caller has ALREADY claimed
-// (peerConns_[peerSlot] exchanged/CAS'd to 0). Split out so the token-checked
-// entry point can do a compare-exchange claim instead of a blind exchange and
-// still share one teardown.
+// The teardown for a connection whose slot the caller has already claimed (exchanged or CAS'd to
+// 0), shared by the blind and the token-checked entry points.
 bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
-    // R-4b: the delivery guarantee is scoped to the connection's lifetime --
-    // the departing peer's queued state dies with the peer.
+    // The delivery guarantee is scoped to the connection: the queued state dies with the peer.
     backlog_.FreeSlot(peerSlot);
-    relayEligible_[peerSlot].store(0, std::memory_order_release);  // seeds arc
+    relayEligible_[peerSlot].store(0, std::memory_order_release);
 
     if (auto* sockets = SteamNetworkingSockets()) {
-        // No linger: an admin kick should drop the peer immediately. The reason
-        // string rides to the peer's status callback (m_szEndDebug) so a kicked
-        // client can surface WHY -- same channel as the protocol-mismatch close.
+        // No linger: a kick drops the peer at once. The reason rides to the peer's status callback,
+        // so a kicked client can say why.
         sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
                                  k_ESteamNetConnectionEnd_App_Generic,
                                  reason ? reason : "kicked", /*bEnableLinger*/false);
     }
 
-    // GNS does not deliver a status callback to US for a connection we close,
-    // so replicate the ClosedByPeer per-slot teardown here. (Even if a terminal
-    // callback for this handle did race in on the net thread, the exchange(0)
-    // above means FindPeerSlotForConn returns -1 there, so its teardown is
-    // skipped and the only double-action would be a CloseConnection on an
-    // already-closed handle -- which GNS handles idempotently. Teardown runs
-    // exactly once, here.) Reset remote pose/prop/ragdoll state (so a
-    // reconnecting peer's seq-from-0 isn't stale-dropped) and drop any reliable
-    // messages still queued from this slot.
+    // GNS delivers no status callback for a connection we close, so the ClosedByPeer teardown is
+    // replicated here; the exchange(0) above makes a racing callback's FindPeerSlotForConn return
+    // -1, so the teardown runs exactly once.
     { std::lock_guard<std::mutex> lk(remoteMutex_); ResetPeerRemoteState(peerSlot); }
     { std::lock_guard<std::mutex> lk(reliableInboxMutex_);
       for (auto it = reliableInbox_.begin(); it != reliableInbox_.end();) {
           if (it->senderPeerSlot == peerSlot) it = reliableInbox_.erase(it);
           else ++it;
       } }
-    // GEN: clear -- last write of the teardown, after the inbox erase (see the
-    // ClosedByPeer path for why the order is load-bearing).
+    // The generation clear is the last write, after the inbox erase (the ClosedByPeer path says why
+    // the order matters).
     peerGenBySlot_[peerSlot].store(0, std::memory_order_release);
-    // ...and the PROVED identity with it. session.h promises "empty when the slot
-    // is free"; until 2026-08-29 nothing cleared it, so that sentence was false
-    // and a recycled slot briefly carried its predecessor's storage name.
+    // And the proved identity with it: a recycled slot must not carry its predecessor's storage
+    // name.
     SetProvedGuidForSlot(peerSlot, std::string());
 
-    // Aggregate state: stay Connected if any peer remains; otherwise downgrade
-    // and clear everything (mirrors the ClosedByPeer branch above).
+    // Aggregate state, as in the ClosedByPeer branch.
     if (connectedPeerCount() == 0) {
         state_.store(ConnState::Disconnected);
         { std::lock_guard<std::mutex> lk(remoteMutex_);
@@ -839,11 +649,9 @@ bool Session::GetPeerAddress(int peerSlot, char* out, int outLen) const {
     return out[0] != '\0';
 }
 
-// True for an address that can only be reached inside a local network:
-// loopback, or one of the RFC1918 private IPv4 ranges. GetIPv4() returns HOST
-// byte order (steamnetworkingtypes.h:1909), so the ranges are compared as
-// 0xAABBCCDD literals; a real IPv6 peer yields 0 there and falls through to
-// "not private", which is the correct answer for a routable v6 address.
+// True for an address reachable only inside a local network: loopback or an RFC1918 range.
+// GetIPv4() returns host byte order, so the ranges are literals; a real IPv6 peer yields 0 and
+// falls through to "not private".
 static bool IsPrivateAddress(const SteamNetworkingIPAddr& addr) {
     if (addr.IsLocalHost()) return true;
     const uint32 v4 = addr.GetIPv4();
@@ -856,27 +664,18 @@ static bool IsPrivateAddress(const SteamNetworkingIPAddr& addr) {
     return false;
 }
 
-// The classifier proper, split out from the connection fetch so it can be
-// exercised over synthetic addresses (see RunLinkClassifySelftest).
-//
-// ORDER IS LOAD-BEARING, and the middle case is the one an audit caught: GNS
-// documents m_addrRemote as "Might be all 0's if we don't know it, or if this is
-// N/A" (steamnetworkingtypes.h) -- true on paths that are not plain direct UDP.
-// An address test alone would then read a same-LAN ICE peer as `Direct`, which
-// is a claim ("public, no relay") the connection never supported. So when the
-// address is absent we answer from GNS's OWN flags, and if those say nothing we
-// answer `Unknown` -- the whole point of this lane is that nobody prints a value
-// nobody measured, and that applies to us too.
+// The classifier, split from the connection fetch so the self-test can run it over synthetic
+// addresses. Order is load-bearing: GNS leaves m_addrRemote all zero on paths that are not plain
+// direct UDP, and an address test alone would read a same-LAN ICE peer as Direct ("public, no
+// relay"), so an absent address is answered from GNS's own flags, and with none, Unknown.
 static LinkKind ClassifyLink(int infoFlags, const SteamNetworkingIPAddr& addr) {
-    // Relay FIRST: a relayed path's remote address is the RELAY's, so an address
-    // test there would describe the wrong hop.
+    // Relay first: a relayed path's remote address is the relay's.
     if (infoFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) return LinkKind::Relayed;
-    // Loopback buffers are same-process by definition -- as local as it gets.
+    // Loopback buffers are same-process by definition.
     if (infoFlags & k_nSteamNetworkConnectionInfoFlags_LoopbackBuffers) return LinkKind::Lan;
     if (addr.IsIPv6AllZeros()) {
-        // No address to classify. GNS's `Fast` bit means "internal/localhost, or
-        // the peer is on the same LAN" -- its own hedged best judgement, which is
-        // still a measurement where we have none. Absent that: Unknown.
+        // No address: GNS's Fast bit means "internal, localhost or the same LAN", a measurement
+        // where we have none; absent that, Unknown.
         return (infoFlags & k_nSteamNetworkConnectionInfoFlags_Fast) ? LinkKind::Lan
                                                                      : LinkKind::Unknown;
     }
@@ -884,34 +683,31 @@ static LinkKind ClassifyLink(int infoFlags, const SteamNetworkingIPAddr& addr) {
 }
 
 bool RunLinkClassifySelftest() {
-    // No port column: ClassifyLink never reads m_port, so a port field would be
-    // the one column of this table with no discriminating power.
+    // No port column: ClassifyLink never reads m_port.
     struct Case { const char* what; const char* ip; int flags; LinkKind want; };
-    // Known POSITIVES and known NEGATIVES. The negatives are what stop a
-    // classifier that answers one value for everything from passing.
+    // Known positives and known negatives; the negatives stop a classifier that answers one value
+    // for everything.
     static const Case kCases[] = {
         {"loopback v4",        "127.0.0.1", 0, LinkKind::Lan},
         {"rfc1918 10/8",       "10.0.0.5", 0, LinkKind::Lan},
         {"rfc1918 172.16/12",  "172.16.4.9", 0, LinkKind::Lan},
         {"rfc1918 192.168/16", "192.168.1.50", 0, LinkKind::Lan},
         {"link-local",         "169.254.7.7", 0, LinkKind::Lan},
-        // NEGATIVES: 172.32 is OUTSIDE 172.16/12 and 11.x is outside 10/8 --
-        // both are the classic off-by-a-mask mistakes, and both must read Direct.
+        // 172.32 is outside 172.16/12 and 11.x outside 10/8, the classic off-by-a-mask mistakes;
+        // both must read Direct.
         {"public 8.8.8.8",     "8.8.8.8", 0, LinkKind::Direct},
         {"public 172.32.0.1",  "172.32.0.1", 0, LinkKind::Direct},
         {"public 11.0.0.1",    "11.0.0.1", 0, LinkKind::Direct},
-        // A real IPv6 peer: GetIPv4() returns 0 there, which must NOT be read as
-        // 0.0.0.0-and-therefore-private.
+        // A real IPv6 peer: GetIPv4() returns 0, which must not read as 0.0.0.0 and private.
         {"public v6",          "2606:4700::1111", 0, LinkKind::Direct},
         {"v6 loopback",        "::1", 0, LinkKind::Lan},
-        // The relay flag WINS over any address, including a private one.
+        // The relay flag wins over any address, a private one included.
         {"relayed public",     "8.8.8.8",
              k_nSteamNetworkConnectionInfoFlags_Relayed, LinkKind::Relayed},
         {"relayed private",    "192.168.1.50",
              k_nSteamNetworkConnectionInfoFlags_Relayed, LinkKind::Relayed},
-        // NO ADDRESS -- GNS leaves m_addrRemote all-zero on paths that are not
-        // plain direct UDP. Answering `Direct` there would assert "public, no
-        // relay" from nothing; these three pin the fallback ladder.
+        // No address: GNS leaves m_addrRemote all zero off plain direct UDP; these three pin the
+        // fallback ladder.
         {"no addr, no flags",  "::",              0, LinkKind::Unknown},
         {"no addr, Fast",      "::",
              k_nSteamNetworkConnectionInfoFlags_Fast, LinkKind::Lan},
@@ -941,12 +737,9 @@ bool RunLinkClassifySelftest() {
 }
 
 LinkKind Session::LinkKindForSlot(int peerSlot) const {
-    // v131. EVERY kind is measured FROM THE CONNECTION. The pre-v131 code
-    // answered "LAN" whenever cfg_.topology was LanDirect -- a config assertion
-    // that labelled a port-forwarded WAN peer "LAN" -- and split relay-vs-direct
-    // by substring-matching m_szConnectionDescription, a human-readable string,
-    // when GNS publishes the fact as a documented bit. Both are retired: a value
-    // nobody measured is the same defect as "VIA HOST" in truer-looking words.
+    // Every kind is measured from the connection: cfg_.topology says how it was established, not
+    // how the peer is connected (it labelled a port-forwarded WAN peer LAN), and the relay fact is
+    // a documented bit, not a substring of the description string.
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return LinkKind::Unknown;
     const uint32_t hConn = peerConns_[peerSlot].load();
     if (hConn == 0) return LinkKind::Unknown;
