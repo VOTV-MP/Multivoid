@@ -1,9 +1,7 @@
-// coop/dev/perf_probe.cpp -- see coop/dev/perf_probe.h.
-//
-// MEASURE-first probe for the 15-FPS audit. Owns the frame counter + the per-
-// subsystem Tick buckets; reads the detour's dispatch/self-time/observer-body
-// counters out of ue_wrap::game_thread (which owns them because it is the lower
-// layer the detour lives in). Once a second it logs the rates + per-frame costs.
+// coop/dev/perf_probe.cpp -- see coop/dev/perf_probe.h. A measure-first probe: it owns the
+// frame counter and the per-subsystem tick buckets, and reads the detour's dispatch,
+// self-time and observer-body counters out of the game-thread layer, which owns them
+// because the detour lives there. Once a second it logs the rates and per-frame costs.
 
 #include "coop/dev/perf_probe.h"
 
@@ -37,7 +35,7 @@ int   g_bypassAfterS  = 0;   // perf_probe_bypass: samples before the transparen
 int   g_statUnitAfterS = 0;  // perf_probe_statunit: samples before `stat unit` (0 = never issue it)
 bool  g_dispatch    = false; // perf_probe_dispatch: arm the per-dispatch counters (not free)
 
-// Frame counter (incremented from the ImGui Present detour) + subsystem buckets.
+// The frame counter (incremented from the present detour) and the subsystem buckets.
 std::atomic<unsigned long long> g_frames{0};
 std::array<std::atomic<unsigned long long>, static_cast<size_t>(Bucket::Count)> g_buckets{};
 
@@ -60,13 +58,13 @@ double TicksToMs(unsigned long long ticks) {
     return f > 0 ? static_cast<double>(ticks) * 1000.0 / static_cast<double>(f) : 0.0;
 }
 
-// ---- 1 Hz sampler window state (game-thread only; Sample() runs there) --------
+// The 1 Hz sampler window state, game thread only (Sample runs there).
 std::chrono::steady_clock::time_point g_lastSample{};
 bool g_haveBaseline = false;
 unsigned long long g_lastPECoop = 0;
 unsigned long long g_lastPE = 0, g_lastPEGT = 0, g_lastSelfNs = 0, g_lastSelfSamp = 0,
                    g_lastObsNs = 0, g_lastFrames = 0;
-// Whole-detour window state (2026-08-29); see the WHOLE readout in Sample().
+// The whole-detour window state; see the whole readout in Sample.
 unsigned long long g_lastWholeNs = 0, g_lastEngineNs = 0, g_lastWholeSamp = 0, g_lastTopLevel = 0;
 std::array<unsigned long long, static_cast<size_t>(Bucket::Count)> g_lastBuckets{};
 
@@ -107,12 +105,11 @@ void Init() {
     g_resDropAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_resdrop));
     g_bypassAfterS  = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_bypass));
     g_statUnitAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_statunit));
-    // Per-dispatch counting is the probe's own hot path and is now opt-in. The frame
-    // counter and the subsystem buckets ride per-FRAME and per-subsystem-call edges
-    // (single digits per second); the dispatch counters ride ~170k/s across threads and
-    // share one cache line. Keeping them on by default made the cheapest possible
-    // baseline -- "how fast does this run with the probe merely watching" -- cost
-    // something nobody had measured, which is the same defect as the stat-unit one above.
+    // Per-dispatch counting is the probe's own hot path and is opt-in. The frame counter and
+    // the subsystem buckets ride per-frame and per-subsystem-call edges (single digits per
+    // second); the dispatch counters ride hundreds of thousands of dispatches per second across
+    // threads and share one cache line, so leaving them on would make the cheapest baseline,
+    // the mod merely watching, cost something unmeasured.
     g_dispatch = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_dispatch);
     g_selfTime = g_selfTime && g_dispatch;
     GT::SetPerfCounting(g_dispatch, g_selfTime);
@@ -126,17 +123,13 @@ void Init() {
 }
 
 void NoteFrame() {
-    // BOTH Init() and Sample() are driven from net_pump::Tick, which does not run
-    // outside a coop session -- so the probe produced NO data at all for "mod loaded,
-    // not hosting", which is exactly the baseline needed to split the DLL's resident
-    // cost from the coop session's (measured 2026-08-29: 120 fps with no mod vs 75 fps
-    // merely hosting, while every instrumented bucket summed to ~0.6 ms/frame).
-    //
-    // Init must be posted too, not just Sample: Init is the ONLY thing that sets
-    // g_armed, so gating this on g_armed first -- as this function did until the fix --
-    // means the probe can never arm without a session and the baseline stays
-    // unmeasurable. Init self-latches and Sample self-throttles to ~1 Hz, so this is at
-    // most one posted task per second and a no-op whenever net_pump already sampled.
+    // Both Init and Sample are driven from the net pump's tick, which does not run outside a
+    // coop session, so the probe would produce no data for a loaded mod that is not hosting,
+    // exactly the baseline that splits the DLL's resident cost from the session's. Init is
+    // posted too, not just Sample: Init is the only thing that arms the probe, so gating this on
+    // the armed flag would keep the probe from arming without a session. Init self-latches and
+    // Sample self-throttles to 1 Hz, so this is at most one posted task per second and a no-op
+    // whenever the pump already sampled.
     static ULONGLONG sNextPost = 0;
     const ULONGLONG now = ::GetTickCount64();
     if (now >= sNextPost) {
@@ -159,12 +152,10 @@ void Sample() {
     if (elapsed < 1.0) return;
     g_lastSample = now;
 
-    // RAM-balloon instrument (2026-06-13): the client slowly balloons to an OOM
-    // safety-kill over ~10 min with NO log signature (off-game-thread heap leak;
-    // all our bounded containers ruled out). This 1 Hz line PROVES the climb +
-    // rate so the next test localizes the source. PrivateUsage (commit) is the
-    // balloon indicator -- it grows with leaked heap regardless of working-set
-    // trimming. K32GetProcessMemoryInfo is a kernel32 export (no psapi.lib link).
+    // The memory line: a client that balloons slowly to an out-of-memory kill leaves no log
+    // signature, so this 1 Hz line shows the climb and its rate. Private (commit) bytes are the
+    // indicator, since they grow with leaked heap regardless of working-set trimming; the
+    // process memory query is a kernel32 export, no extra link.
     {
         PROCESS_MEMORY_COUNTERS_EX pmc{};
         pmc.cb = sizeof(pmc);
@@ -175,23 +166,14 @@ void Sample() {
         }
     }
 
-    // `stat unit`. Our own buckets can only ever account for OUR code; they
-    // cannot say whether a lost millisecond went to the game thread, the render thread
-    // or the GPU -- and on 2026-08-29 that was exactly the open question (120 fps
-    // without the mod vs ~68 with it, while every bucket we own summed to ~1 ms). UE4's
-    // own unit graph splits the frame three ways and is the only thing that can point
-    // at the right half of the engine. Deferred to Sample() rather than Init() because
-    // it needs a world; retried until the call reports success.
-    //
-    // OPT-IN AND DELAYED (2026-08-29). It used to fire unconditionally the moment a
-    // world existed, on nothing but perf_probe=1. That is an instrument that MUTATES
-    // what it measures: enabling any UE4 stat arms FThreadStats collection across the
-    // whole engine, and r.VSync/t.MaxFPS rewrite the player's own frame pacing. With no
-    // before-baseline its cost was not merely unknown, it was UNMEASURABLE -- and the
-    // probe was left armed in the copy the user plays on, so every frame-rate number
-    // taken that day (a 40 fps reading on a fresh save among them) was read through it.
-    // The delay is the repair: the samples before this line are the uninstrumented
-    // baseline on the same world at the same spot, so the step across it IS this
+    // The engine's unit stat. Our own buckets can only account for our code; they cannot say
+    // whether a lost millisecond went to the game thread, the render thread or the GPU, and the
+    // engine's own unit graph is the only thing that splits the frame three ways. Deferred to
+    // Sample rather than Init because it needs a world; retried until the call succeeds. Opt-in
+    // and delayed, because it is an instrument that mutates what it measures: enabling any
+    // engine stat arms stats collection across the whole engine, and the vsync and frame-cap
+    // commands rewrite the player's own frame pacing. The samples before this line are the
+    // uninstrumented baseline on the same world at the same spot, so the step across it is this
     // instrument's own cost, reported rather than assumed.
     if (g_statUnitAfterS > 0) {
         static int sSU = 0;
@@ -199,14 +181,11 @@ void Sample() {
         if (!sStatUnitOn && ++sSU >= g_statUnitAfterS
                 && ue_wrap::engine::ExecuteConsoleCommand(L"stat unit")) {
             sStatUnitOn = true;
-            // UNCAP FIRST, or every number above is a reading of the cap and not of the
-            // workload. Measured 2026-08-29: host and client both reported Frame=16.65 ms
-            // -- identical to a hundredth of a millisecond across two independent
-            // processes, i.e. 60.06 Hz -- with Game 16.13/16.20 and GPU 16.53/16.73. Under
-            // vsync UE4's game thread BLOCKS on the frame sync and `stat unit` counts that
-            // block inside Game, so "Game is 97% of the frame" is what a capped frame
-            // always looks like and says nothing about who is slow. A bottleneck claim
-            // read off a capped frame is unfalsifiable.
+            // Uncap first, or every number is a reading of the cap and not of the workload: under
+            // vsync the engine's game thread blocks on the frame sync and the unit stat counts that
+            // block inside Game, so a Game that is most of the frame is what a capped frame always
+            // looks like and says nothing about who is slow; a bottleneck claim read off a capped
+            // frame is unfalsifiable.
             ue_wrap::engine::ExecuteConsoleCommand(L"r.VSync 0");
             ue_wrap::engine::ExecuteConsoleCommand(L"t.MaxFPS 0");
             UE_LOGW("[perf] STAT-UNIT ARMED after %d samples -- `stat unit` + r.VSync 0 + "
@@ -219,15 +198,13 @@ void Sample() {
         }
     }
 
-    // CPU-vs-GPU discriminator (perf_probe_resdrop=1). `stat unit` alone cannot settle
-    // which side is the bottleneck: when the GPU is the limiter the game thread BLOCKS
-    // waiting on it, so Game inflates to ~Frame and looks like the culprit -- the same
-    // shape a genuinely CPU-bound frame has. Collapsing the render resolution changes
-    // ONLY the GPU's workload, so it separates them by construction:
-    //   frame time falls a lot  -> GPU-bound  (rendering; our CPU cost is irrelevant)
-    //   frame time barely moves -> CPU-bound  (game thread; rendering is irrelevant)
-    // Fires ~20 s in so there is a full-resolution baseline in the same run, on the same
-    // world, at the same spot -- the comparison is within-run, not against a memory.
+    // The CPU-versus-GPU discriminator (perf_probe_resdrop). The unit stat alone cannot settle
+    // which side is the bottleneck: when the GPU is the limiter the game thread blocks waiting
+    // on it, so Game inflates to the frame and looks like the culprit, the same shape a genuinely
+    // CPU-bound frame has. Collapsing the render resolution changes only the GPU's workload, so
+    // it separates them by construction: the frame time falls a lot when GPU-bound and barely
+    // moves when CPU-bound. Fires some seconds in, so there is a full-resolution baseline in the
+    // same run, on the same world, at the same spot.
     if (g_resDropAfterS > 0) {
         static int sSamples = 0;
         static bool sDropped = false;
@@ -240,10 +217,10 @@ void Sample() {
         }
     }
 
-    // WHICH of our reflected calls make up the ~135 blueprint dispatches per frame we
-    // author. Cumulative shares, every 10 s (resolving names walks reflection, so it is
-    // deliberately rare). This is the list to cut from: the frame is CPU-bound on the
-    // game thread and each of these runs real VOTV blueprint there.
+    // Which of our reflected calls make up the blueprint dispatches per frame we author.
+    // Cumulative shares, every 10 s (resolving names walks reflection, so it is deliberately
+    // rare). This is the list to cut from: each of these runs real game blueprint on the game
+    // thread.
     {
         static int sCallTick = 0;
         if (++sCallTick % 10 == 0) {
@@ -275,15 +252,14 @@ void Sample() {
             }
         }
     }
-    // THE DISCRIMINATOR for what is left. Our measured code is 0.6 ms of a 14 ms frame and
-    // fps does not correlate with it, so the missing time is engine work our presence
-    // provokes. The transparent bypass forwards ProcessEvent straight through -- no
-    // observers, no interceptors, no posted-task pump -- while our threads and every actor
-    // we spawned stay exactly as they are. So it splits the remaining space in half:
-    //   fps recovers  -> the cost is in the dispatch path after all
-    //   fps unchanged -> the cost is what we PUT IN THE WORLD, not what we run
-    // Sample() rides a posted task, so it cannot run DURING the window; the first sample
-    // after it covers the window and its frames/elapsed is the bypassed rate.
+    // The discriminator for what is left. Our measured code is a small fraction of the frame and
+    // the frame rate does not correlate with it, so the missing time is engine work our presence
+    // provokes. The transparent bypass forwards ProcessEvent straight through, no observers,
+    // interceptors or posted-task pump, while our threads and every actor we spawned stay as they
+    // are, so it splits the remaining space in half: the frame rate recovers if the cost is in
+    // the dispatch path, and stays unchanged if the cost is what we put in the world. Sample
+    // rides a posted task, so it cannot run during the window; the first sample after it covers
+    // the window, and its frames over elapsed is the bypassed rate.
     if (g_bypassAfterS > 0) {
         static int sB = 0;
         static bool sArmed = false;
@@ -319,13 +295,13 @@ void Sample() {
     const double pePerFr   = dFr > 0 ? static_cast<double>(dPE) / dFr : 0.0;
     const double peGTPerFr = dFr > 0 ? static_cast<double>(dPEGT) / dFr : 0.0;
     const double avgSelfNs = dSamp > 0 ? static_cast<double>(dSelf) / dSamp : 0.0;
-    // detour ms/frame = avg per-dispatch overhead * dispatches/frame
+    // Detour ms per frame: the average per-dispatch overhead times the dispatches per frame.
     const double detourMsFr = dFr > 0 ? (avgSelfNs * pePerFr) / 1e6 : 0.0;
     const double obsMsSec   = (dObs / elapsed) / 1e6;
     const double obsMsFr    = dFr > 0 ? (static_cast<double>(dObs) / dFr) / 1e6 : 0.0;
 
-    // The frame rate rides its own line so it is greppable in BOTH probe modes and can
-    // never be read off a line whose other fields are zeroed by dispatch=0.
+    // The frame rate rides its own line, so it is greppable in both probe modes and can never be
+    // read off a line whose other fields are zeroed with dispatch counting off.
     UE_LOGW("[perf] fps=%.0f (frame=%.2f ms) | obs post=%d pre=%d intc=%d",
             frPerSec, frPerSec > 0 ? 1000.0 / frPerSec : 0.0,
             GT::PostObserverCount(), GT::PreObserverCount(), GT::InterceptorCount());
@@ -339,13 +315,12 @@ void Sample() {
     if (g_selfTime) {
         UE_LOGW("[perf] detour self avg=%.0f ns/dispatch (%llu samp/s) => ~%.2f ms/frame (~%.1f ms/s)",
                 avgSelfNs, dSamp, detourMsFr, (avgSelfNs * pePerSec) / 1e6);
-        // WHOLE-detour readout. `self` above excludes the outer frame and the SEH
-        // __try frame by construction, so it cannot answer "is the detour the
-        // unaccounted per-frame cost?" -- it is blind to that region. This one
-        // brackets the OUTER detour and subtracts the engine's own ProcessEvent
-        // measured on the SAME dispatches, so nothing we add is excluded.
-        // WHOLE-self is the size of the blind spot; if it is ~0 the detour is
-        // fully accounted for and the missing time is somewhere else entirely.
+        // The whole-detour readout. The self figure above excludes the outer frame and the SEH
+        // frame by construction, so it cannot say whether the detour is the unaccounted per-frame
+        // cost; this one brackets the outer detour and subtracts the engine's own ProcessEvent
+        // measured on the same dispatches, so nothing we add is excluded. The difference is the
+        // size of the blind spot; near zero, the detour is fully accounted for and the missing time
+        // is elsewhere.
         const unsigned long long wholeNsTot = GT::PeWholeNsTotal();
         const unsigned long long engNsTot   = GT::PeEngineNsTotal();
         const unsigned long long wSampTot   = GT::PeWholeSampleTotal();
@@ -357,15 +332,15 @@ void Sample() {
         g_lastWholeNs = wholeNsTot; g_lastEngineNs = engNsTot;
         g_lastWholeSamp = wSampTot; g_lastTopLevel = topTot;
         if (dWSamp > 0 && dTop > 0) {
-            // Per TOP-LEVEL dispatch. `engine` here is a whole nested BP call tree, not
-            // one UFunction body, so it is tens of microseconds and is NOT comparable to
-            // the per-dispatch `self` figure above -- it exists only to be subtracted.
+            // Per top-level dispatch. The engine figure here is a whole nested blueprint call tree,
+            // not one UFunction body, so it is tens of microseconds and not comparable to the
+            // per-dispatch self figure above; it exists only to be subtracted.
             const double wholeNs  = static_cast<double>(dWhole)  / dWSamp;
             const double engineNs = static_cast<double>(dEngine) / dWSamp;
             const double oursNs   = wholeNs - engineNs;
-            // Scale by the TOP-LEVEL rate, never by pePerSec: the samples are drawn from
-            // top-level dispatches only, and every nested dispatch's cost is already
-            // inside the bracket.
+            // Scale by the top-level rate, never by the dispatch rate: the samples are drawn from
+            // top-level dispatches only, and every nested dispatch's cost is already inside the
+            // bracket.
             const double topPerSec = dTop / elapsed;
             const double oursMsSec = (oursNs * topPerSec) / 1e6;
             UE_LOGW("[perf] detour WHOLE top-level=%.0f/s (%.1f%% of PE) | per top-level: whole=%.0f ns "
@@ -376,14 +351,15 @@ void Sample() {
         }
     }
 
-    // Observer/interceptor cb-body total + the single worst body seen (cumulative).
+    // The observer and interceptor body total, and the single worst body seen (cumulative).
     std::wstring worstName = L"-";
     if (void* wf = GT::PeObserverWorstFn()) worstName = R::ToString(R::NameOf(wf));
     UE_LOGW("[perf] obs/intc body total=%.2f ms/frame (~%.1f ms/s) | worst body '%ls' %.3f ms (cumulative)",
             obsMsFr, obsMsSec, worstName.c_str(), GT::PeObserverWorstNs() / 1e6);
 
-    // Per-subsystem net_pump buckets. One line; ms/frame leads (the budget metric),
-    // ms/s in parens (robust when frames aren't being counted, e.g. background window).
+    // The per-subsystem pump buckets. One line; ms per frame leads (the budget metric), ms per
+    // second in parentheses (robust when frames are not being counted, as in a background
+    // window).
     std::wstring line;
     wchar_t cell[96];
     for (size_t i = 0; i < g_buckets.size(); ++i) {
@@ -393,9 +369,9 @@ void Sample() {
         const double ms = TicksToMs(d);
         const double msFr = dFr > 0 ? ms / dFr : 0.0;
         const double msSec = ms / elapsed;
-        // Only print buckets that cost something so the line stays readable.
-        // NetPumpTick + OverlayPresent always print: they are the two per-frame
-        // passives the R-3 attribution needs even when near-zero.
+        // Only print buckets that cost something, so the line stays readable; the pump tick and the
+        // overlay present always print, since they are the two per-frame passives the attribution
+        // needs even when near zero.
         if (msSec < 0.05 && i != static_cast<size_t>(Bucket::NetPumpTick) &&
             i != static_cast<size_t>(Bucket::OverlayPresent)) continue;
         std::swprintf(cell, sizeof(cell) / sizeof(cell[0]), L" %hs=%.2f/fr(%.1f/s)",
