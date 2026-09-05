@@ -365,6 +365,7 @@ docs/THUNDERSTORE.md
 # out of the repository. Files were untracked with `git rm --cached`; history is not rewritten.
 docs/*_ARC.md
 docs/kerfur/ARC.md
+docs/READING_ORDER.md
 docs/LESSONS.md
 docs/OPUS_48_DISCIPLINE.md
 docs/DEAD_CAPABILITY_REGISTER.md
