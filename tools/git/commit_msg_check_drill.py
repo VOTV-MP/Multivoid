@@ -47,6 +47,7 @@ ARMS = [
     ("user (lowercase) is fine", "[ui] a thing\n\nthe user presses E", False, None),
     ("Docs-Census trailer", "[docs] close: x\n\nbody\n\nDocs-Census: base=abc rows=1\nCo-Authored-By: A <a@b>", True, "Docs-Census"),
     ("empty message", "\n\n", True, "empty"),
+    ("a hand-made close subject", "[docs] close: by hand\n\nbody", True, "session-close script"),
 ]
 
 
@@ -68,6 +69,14 @@ def run_entry_points():
     r = subprocess.run([sys.executable, script, good_file], capture_output=True, text=True)
     ok = r.returncode == 0
     print("  {} hook mode: good file -> exit {}".format("PASS" if ok else "FAIL", r.returncode))
+    bad += 0 if ok else 1
+    close_file = os.path.join(tmp, "close.txt")
+    with open(close_file, "w", encoding="utf-8") as f:
+        f.write("[docs] close: the record\n\nCo-Authored-By: A <a@b>")
+    r = subprocess.run([sys.executable, script, close_file], capture_output=True, text=True,
+                       env=dict(os.environ, MULTIVOID_CLOSE="1"))
+    ok = r.returncode == 0
+    print("  {} hook mode: a close subject with MULTIVOID_CLOSE=1 -> exit {}".format("PASS" if ok else "FAIL", r.returncode))
     bad += 0 if ok else 1
     r = subprocess.run([sys.executable, script, bad_file], capture_output=True, text=True)
     ok = r.returncode == 1 and "Cyrillic" in r.stdout and "agent" in r.stdout
@@ -112,8 +121,11 @@ def main():
         bad += 0 if ok else 1
         print("  {} {:<32} -> {}".format("PASS" if ok else "FAIL", name,
                                           "; ".join(refusals) if refusals else "accepted"))
+    ok = not C.check_message("[docs] close: by the script\n\nbody", allow_close=True)
+    bad += 0 if ok else 1
+    print("  {} {:<32} -> {}".format("PASS" if ok else "FAIL", "the script's own close subject", "accepted" if ok else "refused"))
     bad += run_entry_points()
-    print("commit_msg_check_drill: {} arms, {} failed".format(len(ARMS) + 4, bad))
+    print("commit_msg_check_drill: {} arms, {} failed".format(len(ARMS) + 6, bad))
     return 1 if bad else 0
 
 

@@ -1,5 +1,5 @@
 {
- "as_of": "7a8e84886",
+ "as_of": "25ba6905f",
  "counters": {
   "md.files": 85,
   "md.lines": 20704,
@@ -15,6 +15,7 @@
   "md.ptr_claude": 26,
   "md.ptr_security": 7,
   "md.dead_links": 0,
+  "md.dead_paths": 46,
   "src.comment_lines": 66777,
   "src.comment_cyrillic": 162,
   "src.comment_user": 48,
@@ -28,6 +29,7 @@
   "src.comment_lesson": 196,
   "src.comment_sha": 14,
   "src.files_half_comment": 20,
+  "src.comment_blocks_over_15": 748,
   "src.comment_permille": 376
  }
 }

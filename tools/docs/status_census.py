@@ -22,11 +22,12 @@ WHAT IT DOES (section 3, WP-1)
   (hand)   fill the verdict column: STILL OPEN / ACTUALLY DONE / STALE DONE / PARTIAL /
            STILL TRUE. The judgment is the hand's; its EXISTENCE is checked.
   close    refuse until every row carries one token (and no STILL TRUE / ACTUALLY DONE rests
-           on a citation the mechanical column resolved gone); then THREE commits -- the
-           private history (snapshot + state + the verdict table), the inner research repo,
-           and main -- each from a PRIVATE index so nothing another session staged in the
-           shared index is swallowed or discarded, each carrying ONE machine-written
-           `Docs-Census:` trailer plus the attribution trailers the caller MUST pass.
+           on a citation the mechanical column resolved gone); then the commits -- every owned
+           inner repo, the private history (snapshot + state + the verdict table, carrying the
+           ONE machine-written `Docs-Census:` record), and main -- each from a PRIVATE index so
+           nothing another session staged in the shared index is swallowed or discarded. Main's
+           commit carries only the attribution trailers the caller MUST pass, and it must pass
+           the commit-message check (tools/git/commit_msg_check.py), which the close runs first.
   --sweep  the whole read set instead of the radius (a census, not a sample).
   --loose  add the skill's loose vocabulary regex as an extra row source.
   resolved read back the RESOLVED LEDGER: every verdict retired because the line it named was
@@ -310,10 +311,10 @@ def last_close(repo):
 
 
 def base_for(repo, since, first_run_head=False):
-    """`first_run_head`: an OWNED repo joining the census for the first time has no trailer to tile
-    onto, and its whole history is not "this session's work" -- so its base is HEAD and nothing in it
-    is TOUCHED. Its docs enter through the sweep like any other never-censused doc. Only MAIN refuses
-    without a base, because main's base is what the gate tiles the close chain on."""
+    """`first_run_head`: an OWNED repo joining the census for the first time has no previous close to
+    tile onto, and its whole history is not "this session's work" -- so its base is HEAD and nothing in
+    it is TOUCHED. Its docs enter through the sweep like any other never-censused doc. Only MAIN refuses
+    without a base, because main's base is what the close chain tiles on."""
     sha = previous_close(repo)
     if sha:
         return sha, "previous close"
@@ -329,8 +330,8 @@ def base_for(repo, since, first_run_head=False):
 
 
 def format_trailer(v):
-    """The column ORDER and every column's KIND live in `trailer_schema`, imported by this script AND
-    by the gate -- one definition, so the four hand-written lists cannot drift apart again."""
+    """The column ORDER and every column's KIND live in `trailer_schema` -- one definition, so the
+    hand-written lists cannot drift apart again."""
     undeclared = [k for k in v if k not in TS.KIND]
     if undeclared:
         raise SystemExit("REFUSE: trailer column(s) with no declared kind: {} -- add them to "
@@ -358,7 +359,7 @@ def ratchet_values(env):
             # ABSENT IS NOT ZERO, and here the difference is not cosmetic: these three are RATCHETED.
             # A close run without the memory corpus would write `pairing-unref=0` where the record
             # says 40, and then EVERY later honest close reads 0 -> 40 as GROWTH and is refused, with
-            # no override flag anywhere in the gate. One run in the wrong environment would poison
+            # no override flag anywhere in the close. One run in the wrong environment would poison
             # the ratchet permanently (DIFF pass, round 6 Q1). The corpus is always present where a
             # close is legitimately made, so its absence is a refusal rather than a default.
             vals["_corpus_absent"] = True
@@ -632,7 +633,9 @@ def private_commit(repo, paths, subject, trailers):
     the history commit had already been made. `opaths` being non-empty says the census SAW those docs,
     not that they are uncommitted; only a diff against HEAD says that."""
     tmp = os.path.join(repo, ".git", "docs_census.index")
-    env = dict(os.environ, GIT_INDEX_FILE=tmp)
+    # MULTIVOID_CLOSE: the commit-msg hook refuses the `[docs] close:` prefix from a hand, and lifts
+    # that refusal for the script -- so a close commit is always one this script made.
+    env = dict(os.environ, GIT_INDEX_FILE=tmp, MULTIVOID_CLOSE="1")
     try:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -710,7 +713,7 @@ def require_corpus(env):
 
     Without it, `check_wikilinks` / `check_pairing` return None and `mem-over200` is never measured,
     which would put 0 in a trailer where the record says 40 and 37 -- and the NEXT honest close then
-    reads that as GROWTH and is refused, permanently, with no override anywhere in the gate (round 6
+    reads that as GROWTH and is refused, permanently, with no override anywhere in the close (round 6
     Q1). In practice the CLI never reached that branch: `memory_index.write` raised a bare
     FileNotFoundError first, so the same environment produced a traceback instead of an explanation.
     One refusal, stated where it actually happens.
@@ -990,7 +993,8 @@ def run_close(env, args):
     # repositories have been committed, or a refusal at the hook would leave the close half done.
     sys.path.insert(0, os.path.join(os.path.dirname(HERE), "git"))
     import commit_msg_check
-    refusals = commit_msg_check.check_message(CLOSE_PREFIX + " " + args.subject + "\n\n" + "\n".join(trailers))
+    refusals = commit_msg_check.check_message(CLOSE_PREFIX + " " + args.subject + "\n\n" + "\n".join(trailers),
+                                              allow_close=True)
     if refusals:
         raise SystemExit("REFUSE: the close subject would not pass the commit-message check: "
                          + "; ".join(refusals))
@@ -1116,11 +1120,14 @@ def run_close(env, args):
             "REFUSE: the memory corpus is absent ({}), so four RATCHETED numbers -- mem-over200, "
             "wikilinks-dead, pairing-unref, pairing-dead -- would be written as 0 rather than "
             "measured. That is not a cosmetic default: the NEXT honest close then reads 0 -> their "
-            "real values as GROWTH and is refused, and the gate has no override. A close is a local "
+            "real values as GROWTH and is refused, and the close has no override. A close is a local "
             "act and the corpus is always there for one; point MULTIVOID_MEMORY_DIR at it."
             .format(env.memory))
     rv["accretion"] = accretion_count(env, rs)
     prev_sha, prev = last_close(env.history)
+    if not prev and previous_close(env.repo):
+        print("NOTE: main has a previous close but the private history holds no record of it -- "
+              "the ratchet has no baseline for this close")
     if prev:
         grew = [c for c in RATCHET_COLS if c in prev and prev[c].isdigit() and rv[c] > int(prev[c])]
         if grew:
@@ -1276,12 +1283,19 @@ def run_close(env, args):
                          "memory/INDEX_BY_DATE.md is stale -- re-run `census --force`, which "
                          "regenerates the index and re-pins it (verdicts carry forward)")
     subject = CLOSE_PREFIX + " " + args.subject
-    # 7. EVERY owned inner repo, not `research` alone (round 15: ownership is the local git
+    # 7. The main leg's refusal, decided BEFORE any tree is committed: if no censused main path
+    # differs from HEAD and nothing is new, `private_commit` would return None only after the owned
+    # repositories and the history had been committed and the pending table renamed away.
+    existing = sorted(p for p in set(main_paths) if p not in new)
+    if not new and (not existing or subprocess.run(["git", "diff", "--quiet", "HEAD", "--"] + existing,
+                                                    cwd=env.repo).returncode == 0):
+        raise SystemExit(
+            "REFUSE: main's {} censused path(s) are ALL already committed, so this close would record "
+            "no doc change at all. Commit the docs through the close, not by hand."
+            .format(len(set(main_paths))))
+    # 8. EVERY owned inner repo, not `research` alone (round 15: ownership is the local git
     # identity, and `site/` -- the public website copy -- was invisible to the census entirely).
     owned_shas = []
-    rbases = meta.get("research_base") or {}
-    if isinstance(rbases, str):                      # a table written before the map (one owner)
-        rbases = {"research": rbases}
     for owned in env.owned:
         name = os.path.basename(owned)
         pre = name + "/"
@@ -1289,16 +1303,25 @@ def run_close(env, args):
                         if p.startswith(pre) and rs.get(p, ("",))[0] == name)
         if not opaths:
             continue
-        otrailer = format_trailer(dict(vals, base=(rbases.get(name) or "-")[:12]))
-        osha = private_commit(owned, opaths, subject, [otrailer] + trailers)
-        if osha is None:                     # the session already committed these itself
-            print("{} close: skipped -- its {} censused path(s) are already committed"
-                  .format(name, len(opaths)))
+        # No machine trailer on an owned repo's commit either: the private history's record names
+        # every owned sha, and `site/` is meant to be pushed one day.
+        osha = private_commit(owned, opaths, subject, trailers)
+        if osha is None:
+            # committed already -- by this close's own earlier attempt (record its sha) or by the
+            # session itself (skip)
+            if git(["log", "-1", "--format=%s"], owned).strip() == subject:
+                osha = git(["rev-parse", "HEAD"], owned).strip()
+                owned_shas.append("{}:{}".format(name, osha[:10]))
+                print("{} close: already committed by an earlier attempt of this close ({})"
+                      .format(name, osha[:10]))
+            else:
+                print("{} close: skipped -- its {} censused path(s) are already committed"
+                      .format(name, len(opaths)))
             continue
         owned_shas.append("{}:{}".format(name, osha[:10]))
         print("{} close: {} ({} paths)".format(name, osha[:10], len(opaths)))
     vals["research-base"] = ",".join(owned_shas) if owned_shas else "-"
-    # 6. the private history: snapshot + state + the verdict table, and the ONE machine record of
+    # 9. the private history: snapshot + state + the verdict table, and the ONE machine record of
     # this close -- its trailer carries every column, main's base and the owned repositories' shas.
     snapshot_sync(env, rs)
     state_save(env, st)
@@ -1323,7 +1346,7 @@ def run_close(env, args):
             os.remove(hidx)
     git(["reset", "-q"], env.history)
     hsha = git(["rev-parse", "HEAD"], env.history).strip()
-    # 8. main: an ordinary commit with the attribution trailers only. The public tree carries no
+    # 10. main: an ordinary commit with the attribution trailers only. The public tree carries no
     # machine trailer (CONTRIBUTING.md, Commits); the record above is the close's ledger.
     msha = private_commit(env.repo, sorted(set(main_paths)), subject, trailers)
     if msha is None:                          # main has nothing to say -- refuse loudly, do not "close"

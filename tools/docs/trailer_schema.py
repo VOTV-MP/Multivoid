@@ -14,17 +14,15 @@ about to be added. That is ONE missing rule, not fourteen omissions.
 
 THE RULE: every column declares its KIND at birth.
 
-  IDENTITY    a sha or a base the gate checks for tiling / distinctness.
-  VERDICT     a hand-verdict count; the gate asserts sum(VERDICT counts) == rows.
+  IDENTITY    a sha or a base, recorded for a human reading the private log; nothing checks them.
+  VERDICT     a hand-verdict count; the close asserts sum(VERDICT counts) == rows.
   RATCHETED   monotone non-increasing across closes -- and ONLY for a number the CLOSING SESSION CAN
               MOVE. A whole-corpus citation count is NOT one: `[V]` a single rename touches 5 tracked
               docs against a close radius of ~50, so an ordinary extraction would refuse a session
               over work it did not do (round 19, Q4).
   MONOTONE    a CUMULATIVE total that may never DECREASE -- the opposite direction to RATCHETED, and
-              a distinct kind for that reason. It exists because CI cannot read the private history
-              where the underlying ledger lives, so the only property it can check on a running total
-              is that a close never un-records what an earlier one recorded.
-  GATED       a named REFUSAL path exists for it (in the close, in CI, or both).
+              a distinct kind for that reason: a close never un-records what an earlier one recorded.
+  GATED       a named REFUSAL path exists for it in the close.
   REPORTED    printed and never enforced -- declared so on purpose, so "nothing reads it" is a
               decision on the record rather than an omission nobody noticed.
 

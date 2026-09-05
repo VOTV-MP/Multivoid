@@ -787,6 +787,14 @@ def drill_undrilled_refusals():
         check(code != 0 and "must not carry its own prefix" in out,
               "RED: a subject carrying the prefix refuses -- the script owns it")
 
+        # the close subject must pass the commit-message check BEFORE any tree is committed
+        code, out = run_sc(E, "close", "-m", "x" * 70, *T)
+        check(code != 0 and "would not pass the commit-message check" in out and "72" in out,
+              "RED: a close subject over 72 characters (prefix included) refuses before any commit")
+        code, out = run_sc(E, "close", "-m", "the audit agent said so", *T)
+        check(code != 0 and "would not pass the commit-message check" in out,
+              "RED: the working-notes vocabulary in a close subject refuses")
+
         def verdict_all(v):
             t = io.open(pend, encoding="utf-8").read().split(NLC)
             for i, l in enumerate(t):

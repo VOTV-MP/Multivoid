@@ -22,6 +22,7 @@ DOC = """# A doc
 USER said, verbatim: «делай». A /qf round and two audit agents agreed on 2026-09-05.
 See memory/feedback_x.md, research/runs/x, CLAUDE.md, .claude/skills and docs/security/TRACKER.md.
 A [tracked link](../README.md), an [external](https://example.com), and a [dead one](../nowhere.md).
+A backticked `docs/nowhere.md` names no file; a backticked `docs/a.md` does.
 """
 SRC = """// 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
 // see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
@@ -29,6 +30,23 @@ int f() { return 0; } // trailing comments are code lines
 const char* s = "// not a comment";
 /* a block
    comment */
+// line 0 of a long block
+// line 1 of a long block
+// line 2 of a long block
+// line 3 of a long block
+// line 4 of a long block
+// line 5 of a long block
+// line 6 of a long block
+// line 7 of a long block
+// line 8 of a long block
+// line 9 of a long block
+// line 10 of a long block
+// line 11 of a long block
+// line 12 of a long block
+// line 13 of a long block
+// line 14 of a long block
+// line 15 of a long block
+int g() { return 1; }
 """
 
 
@@ -71,8 +89,8 @@ def main():
         counters = json.load(f)["counters"]
     expect = {"md.files": 2, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
-              "md.ptr_security": 1, "md.dead_links": 1,
-              "src.comment_lines": 4, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "md.ptr_security": 1, "md.dead_links": 1, "md.dead_paths": 1,
+              "src.comment_lines": 20, "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_lesson": 1, "src.comment_sha": 1,
               "src.files_half_comment": 0}

@@ -101,12 +101,22 @@ def split_message(text):
     return subject, body, trailers
 
 
-def check_message(text):
-    """-> list of refusal strings; empty when the message passes."""
+CLOSE_PREFIX = "[docs] close:"
+
+
+def check_message(text, allow_close=False):
+    """-> list of refusal strings; empty when the message passes.
+
+    `allow_close`: the `[docs] close:` subject belongs to the session-close script, which finds the
+    previous close by that subject; a hand-made one would move its base while recording nothing. The
+    script sets MULTIVOID_CLOSE=1 for its own commits and the hook passes that through."""
     subject, body, trailers = split_message(text)
     out = []
     if not subject:
         return ["empty message"]
+    if subject.startswith(CLOSE_PREFIX) and not allow_close:
+        out.append("`{}` is the session-close script's subject; a hand-made close records nothing "
+                   "(run the close script)".format(CLOSE_PREFIX))
     if len(subject) > SUBJECT_MAX:
         out.append("subject is {} characters; the limit is {}".format(len(subject), SUBJECT_MAX))
     if not SCOPE_RE.match(subject) and not EXEMPT_SUBJECT_RE.match(subject):
@@ -148,7 +158,7 @@ def check_range(repo, rng):
             continue
         sha, subject, body = rec.lstrip("\n").split("\x00", 2)
         total += 1
-        refusals = check_message(body)
+        refusals = check_message(body, allow_close=True)   # a recorded close was made by the script
         if refusals:
             bad += 1
             print("{} {}".format(sha[:10], subject[:80]))
@@ -168,7 +178,7 @@ def main():
     a = ap.parse_args()
     if a.message_file:
         with io.open(a.message_file, encoding="utf-8", errors="replace") as f:
-            refusals = check_message(f.read())
+            refusals = check_message(f.read(), allow_close=os.environ.get("MULTIVOID_CLOSE") == "1")
         if refusals:
             print("commit_msg_check: REFUSED (CONTRIBUTING.md, Commits):")
             for r in refusals:

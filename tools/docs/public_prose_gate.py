@@ -39,6 +39,8 @@ HALF_COMMENT_MIN_LINES = 300
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
+BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
+LONG_COMMENT_BLOCK = 15
 
 # name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
 LINE_MARKERS = collections.OrderedDict([
@@ -84,28 +86,39 @@ def read(repo, path):
 
 
 def comment_lines(text):
-    """-> (comment_line_texts, code_line_count). A line counts as COMMENT when it holds nothing
-    but comment (and whitespace); quotes are respected so a `//` inside a string is code."""
+    """-> (comment_line_texts, code_line_count, long_blocks). A line counts as COMMENT when it holds
+    nothing but comment (and whitespace); quotes are respected so a `//` inside a string is code.
+    `long_blocks` counts runs of more than LONG_COMMENT_BLOCK consecutive comment lines (blank lines
+    do not break a run; a code line does)."""
     lines = text.split("\n")
-    comments, code = [], 0
+    comments, code, long_blocks, run = [], 0, 0, 0
     in_block = False
+
+    def comment(line):
+        nonlocal run, long_blocks
+        comments.append(line)
+        run += 1
+        if run == LONG_COMMENT_BLOCK + 1:
+            long_blocks += 1
+
     for line in lines:
         s = line.strip()
         if not s:
             continue
         if in_block:
-            comments.append(line)
+            comment(line)
             if "*/" in s:
                 in_block = False
             continue
         if s.startswith("//"):
-            comments.append(line)
+            comment(line)
             continue
         if s.startswith("/*"):
-            comments.append(line)
+            comment(line)
             if "*/" not in s[2:]:
                 in_block = True
             continue
+        run = 0
         # code line; a trailing block opener leaves the state in a block
         i, n, q = 0, len(s), None
         while i < n:
@@ -126,7 +139,7 @@ def comment_lines(text):
                 break
             i += 1
         code += 1
-    return comments, code
+    return comments, code, long_blocks
 
 
 def measure(repo):
@@ -142,6 +155,7 @@ def measure(repo):
     for k in LINE_MARKERS:
         c["md." + k] = 0
     c["md.dead_links"] = 0
+    c["md.dead_paths"] = 0
     for p in md:
         text = read(repo, p)
         if text is None:
@@ -168,6 +182,12 @@ def measure(repo):
                     continue
                 c["md.dead_links"] += 1
                 who["md.dead_links"][p] += 1
+            for m in BACKTICK_PATH.finditer(line):
+                rel = m.group(1)
+                if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set):
+                    continue
+                c["md.dead_paths"] += 1
+                who["md.dead_paths"][p] += 1
     src = [p for p in files if p.startswith(SRC_ROOTS) and p.endswith(SRC_EXT)]
     c["src.comment_lines"] = 0
     code_total = 0
@@ -176,14 +196,18 @@ def measure(repo):
             continue
         c["src.comment_" + k] = 0
     c["src.files_half_comment"] = 0
+    c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     for p in src:
         text = read(repo, p)
         if text is None:
             continue
-        comments, code = comment_lines(text)
+        comments, code, long_blocks = comment_lines(text)
         c["src.comment_lines"] += len(comments)
         code_total += code
         who["src.comment_lines"][p] = len(comments)
+        if long_blocks:
+            c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] += long_blocks
+            who["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK][p] = long_blocks
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
@@ -216,6 +240,8 @@ FIXED_DESCRIPTIONS = {
     "md.lines": "markdown lines",
     "md.over_%d" % MD_HARD_CAP: "docs over the %d-line hard cap" % MD_HARD_CAP,
     "md.dead_links": "markdown links to a path not in the repository",
+    "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
+    "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
