@@ -153,7 +153,7 @@ The honest bus-factor answer, in the order a stranger would need it:
 3. `sdk_profile.h` / `sdk_profile_names.h` — the two files that hold the
    version-specific knowledge, each constant commented with its provenance
    (`mainPlayer.hpp:13`, an RE finding, an IDA address).
-4. `docs/LESSONS.md` — the categorized ledger of everything the project learned
+4. the maintainer's lessons ledger (kept outside the repository) — the categorized ledger of everything the project learned
    the hard way, each row pointing at the file to read first.
 5. `research/findings/` — dated, append-only RE and design log.
 6. `tools/` — build, deploy, launch, autonomous tests, `sdk_diff.py`.
@@ -320,7 +320,7 @@ surface is as small as it is.
    "is this even the build we built against?"
 5. **Logging.** `ue_wrap/log` writes `multivoid.log` next to the mod — levelled,
    timestamped, the primary diagnosis tool. (INFO lines are buffered until a WARN;
-   a killed process loses them — see `docs/LESSONS.md`.)
+   a killed process loses them — see the maintainer's lessons ledger (kept outside the repository).)
 
 ### The adaptation toolchain (shipped 2026-05-25)
 
@@ -494,7 +494,7 @@ named "a successor fork becomes the live line" but never "the game's devs reject
 the approach"). A 5-round /qf re-audit then broke this record's fact base twice:
 (1) the LOC premise — the real tracked count is 515,392 (`cat|wc -l`,
 parts-sum-checked 341,054 + 174,338; the 146,347 above came from the xargs-batch
-instrument `docs/LESSONS.md` already records), and (2) the F2 blocker's surviving
+instrument the maintainer's lessons ledger (kept outside the repository) already records), and (2) the F2 blocker's surviving
 leg ("public-clone reproducibility") was Claude-authored inside this record,
 never a user requirement — DROPPED per the drop-my-requirement rule. The terms
 leg (`RE-UE4SS/docs/contributing.md:131`, Epic licensing) kills F3 (vendoring)

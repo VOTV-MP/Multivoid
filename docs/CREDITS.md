@@ -176,7 +176,7 @@ a day: every counter the mod owns times **its own code**, so none of them can
 price the engine work that code provokes — and a comparison between two installs
 is worthless until you have diffed the installs. Multivoid now ships a boot
 notice naming any frame-costly mods it finds beside it, so no player has to
-repeat this. Details in `docs/LESSONS.md` §7.
+repeat this. Details in the maintainer's lessons ledger (kept outside the repository) §7.
 
 ---
 

@@ -1645,7 +1645,7 @@ load-bearing and should not be silently re-opened.
    > `boot_warning_dialog`, `config_review_panel`, `connect_failed_dialog`, `server_browser` — and P5
    > retires exactly **one**. The header sentence I quoted as proof (*"ImGui buttons have no native
    > audio, so this supplies the same two sounds for our server browser"*) continues **"(and any
-   > future ImGui menu surface)"** — I stopped at the comma. That is `docs/LESSONS.md`'s *read the
+   > future ImGui menu surface)"** — I stopped at the comma. That is the maintainer's lessons ledger's *read the
    > clause after the claim*, firing on text I committed the same day I wrote that lesson down.
    >
    > So: **`server_browser`'s `menu_sfx` calls go with the browser; the module stays** for the other
