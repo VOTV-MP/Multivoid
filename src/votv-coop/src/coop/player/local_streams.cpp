@@ -1,20 +1,17 @@
-// coop/local_streams.cpp -- see coop/local_streams.h.
-//
-// Extracted from net_pump.cpp 2026-06-12 (modular soft cap). Bodies moved
-// VERBATIM with their rationale comments: ReadLocalPose, the held-prop
-// stream + edges, and the v22 ragdoll pelvis-physics stream.
+// coop/local_streams.cpp -- the local player's outbound streams: the pose, the held prop (with
+// its new-held and release edges) and the ragdoll pelvis physics. See coop/local_streams.h.
 
 #include "coop/player/local_streams.h"
 
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element.h"
 #include "coop/config/config.h"
-#include "coop/creatures/kerfur_entity.h"  // K-5: GetKerfurMirrorEidForActor (held-kerfur-prop eid fallback)
+#include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the held kerfur prop's eid
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/player/hand_item.h"     // v105: the hotbar hand-item display axis (owner announce + mirrors)
+#include "coop/player/hand_item.h"     // the hotbar hand-item axis
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
-#include "coop/props/trash_channel.h"   // docs/piles/08: CtxForEid -- the trash sync-time-context (carry stamp + trash-eid gate)
+#include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
@@ -39,98 +36,60 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Held-prop edge detector: file-scope (NOT a static-local in Tick). A
-// static-local would carry a stale prop pointer + key across a session stop/
-// restart, causing the next pump to fire SendPropRelease for the OLD session's
-// key on the NEW session -- a real bug found by the audit. Cleared by
-// OnSessionStart on each session.Start.
-// take-30 (audit) -> 2026-08-22: cached ACROSS ticks (set on the new-held edge, read on
-// the later release/flight edges) => CachedObjRef. The ad-hoc {raw ptr,
-// g_lastHeldPropIdx} pair this file hand-rolled was the same concept (RULE 2), and its
-// LastHeldActor read still probed the raw pointer BARE (islive-zeroav census row).
+// The held-prop edge state, file scope rather than a static local in Tick: a static local would
+// carry a stale prop and key across a session restart and send the old session's PropRelease on
+// the new one. Cleared by OnSessionStart. A CachedObjRef, since the actor is set on the new-held
+// edge and read on later edges.
 ue_wrap::CachedObjRef g_lastHeldProp;
 coop::net::WireKey g_lastHeldKey{};
-// v81 MORPH V2: the held actor's wire eid, resolved ONCE on the new-held edge (where the O(n)
-// ResolveMirrorEidByActor fallback for a morph-bound clump may run) and reused for the per-tick stream so
-// the hot path stays O(1) -- a held actor's identity is stable for the whole carry. kInvalidId = unkeyed.
+// The held actor's wire eid, resolved once on the new-held edge (where the O(n) mirror lookup
+// for a morph-bound clump may run) and reused per tick; a held actor's identity is stable for
+// the carry. kInvalidId = unkeyed.
 coop::element::ElementId g_lastHeldEid = coop::element::kInvalidId;
 uint64_t g_propEmitCount = 0;
 
-// v22 ragdoll-physics edge detector (same file-scope rationale as g_lastHeldProp:
-// a static-local would carry a stale "was ragdolling" across a session restart and
-// emit a spurious recover-edge false on the next session). Cleared by OnSessionStart.
+// The ragdoll-physics edge state, file scope for the same reason; cleared by OnSessionStart.
 bool g_wasRagdolling = false;
 uint64_t g_ragdollEmitCount = 0;
 
-// Game thread, ~send-rate: read the local player's pose. Pulled in from
-// harness.cpp 2026-05-28; full rationale comments preserved.
+// The local player's pose, on the game thread at the send rate.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
     const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
-    // BODY yaw: read from the ACTOR (the real body facing direction). Earlier
-    // attempt sent controller yaw -- sending it made the puppet body show the
-    // CAMERA direction instead of the BODY direction while moving = sideways-
-    // when-camera-leads (user-confirmed regression). NOTE (falsified 2026-06-11):
-    // on foot the actor yaw FOLLOWS the camera ~immediately (standing actor.Yaw
-    // == ctrl.Yaw, headYawDelta ~= 0), so the receiver does NOT get a natural
-    // head-lead from this stream -- RemotePlayer::UpdateBodyYaw synthesizes the
-    // standing turn-in-place presentation on the puppet instead.
-    // HEAD pitch: read from the CONTROLLER (actor pitch is always 0 on an
-    // upright character; the controller carries the real view pitch). Cached
-    // by net_pump::Tick to skip re-resolving GetController every tick.
+    // Body yaw from the actor (sending the controller yaw made the puppet body face the camera
+    // while moving); on foot the actor yaw follows the camera almost immediately, so the receiver
+    // synthesises the standing turn-in-place itself (RemotePlayer::UpdateBodyYaw). Head pitch from
+    // the controller (an upright character's actor pitch is 0); net_pump caches the controller.
     out.x = loc.X;
     out.y = loc.Y;
-    // Z = source actor.Z (capsule centre on an ACharacter). Receiver
-    // reconstructs visible body offset from its own mainPlayer_C's
-    // RelLoc.Z at puppet spawn -- same BP class on every peer so the
-    // authored constant matches. MTA-fidelity shape (CEntitySA streams
-    // matrix.vPos = capsule centre).
+    // Z is the actor's Z (the capsule centre); the receiver reconstructs the visible body offset
+    // from its own mainPlayer_C's relative Z at puppet spawn, the same BP class on every peer.
+    // MTA's shape: the streamed position is the capsule centre.
     out.z = loc.Z;
-    // Normalize yaw and pitch into the canonical FRotator axis range (-180, 180]
-    // BEFORE they go on the wire. UE4's AController::GetControlRotation returns
-    // RAW ControlRotation unnormalized: looking 10 deg DOWN reads back as
-    // Pitch=350. Without this normalize, pitch=350 fails coop::net::ValidatePose's
-    // (-90, 90) bound and the ENTIRE packet is dropped on the receiver -- root
-    // cause of the "puppet freezes when host looks below horizontal" bug.
+    // Yaw and pitch normalised into (-180, 180] before the wire: GetControlRotation returns the raw
+    // ControlRotation, so looking 10 degrees down reads Pitch=350, which fails ValidatePose's bound
+    // and dropped the whole packet (the puppet froze whenever the host looked below the horizon).
     out.yaw = ue_wrap::NormalizeAxis(actorRot.Yaw);
     const ue_wrap::FRotator ctlRot = controller
         ? ue_wrap::engine::GetControlRotation(controller)
         : actorRot;
     out.pitch = ue_wrap::NormalizeAxis(ctlRot.Pitch);
-    // headYawDelta: the source's controller-yaw LEAD over its body yaw, in
-    // (-180, 180]. The puppet's AnimBP headLookAt yaw reads this so the puppet's
-    // head turns to match where the source's CAMERA is looking (free-look /
-    // camera-lead-body) -- decoupled from body facing.
+    // headYawDelta is the controller yaw's lead over the body yaw, in (-180, 180]; the puppet's
+    // AnimBP head look-at reads it so the head turns where the source's camera looks.
     out.headYawDelta = ue_wrap::NormalizeAxis(ctlRot.Yaw - actorRot.Yaw);
     out.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);
-    // Pack the source's airborne state. The receiver's BUA-POST observer
-    // reads this bit to clear useLegIK on the puppet during the airborne
-    // window so the foot-IK trace doesn't plant the puppet's feet to
-    // ground while the source is jumping/falling. A-2 (2026-05-29 audit):
-    // CMC pointer + MovementMode bytes accessed through ue_wrap::puppet::
-    // ReadCharacterIsFalling -- symmetric with the write-side wrapper
-    // DriveCharacterMovement (Principle 7: gameplay/coop layer reads
-    // engine memory only through ue_wrap). The wrapper also adds IsLive
-    // guards on actor + CMC that the prior inline code lacked -- raw
-    // deref of a PendingKill mainPlayer_C (e.g. mid level transition)
-    // was technically UB; false-positive rate in steady-state gameplay
-    // is zero because the possessed mainPlayer_C never carries
-    // PendingKill/Unreachable flags.
+    // The airborne bit: the receiver clears the puppet's leg IK for the airborne window so the foot
+    // trace does not plant its feet while the source jumps or falls. Read through the wrapper,
+    // which guards the actor and the movement component.
     out.stateBits = 0;
     if (ue_wrap::puppet::ReadCharacterIsFalling(local)) {
         out.stateBits |= coop::net::kStateBitInAir;
     }
-    // v20 (Inc2b): piggyback the LOCAL player's ragdoll/faint state. isRagdoll
-    // is the AnimBP gate flipped by EVERY ragdoll cause (manual C-key, exhaustion
-    // faint, KO); we sync it as a per-peer DISPLAY flag so each peer's puppet
-    // flops on the others' screens. Death is EXCLUDED -- a death-ragdoll routes
-    // through VOTV's native SP menu flow + ends the session ([[project-coop-no-
-    // host-migration]]), so it must not show as a recoverable faint on a puppet
-    // that's about to be torn down. One wrapper read (a couple of derefs after
-    // the offset cache fills) on this hot path -- same cost class as the
-    // ReadCharacterIsFalling above it.
+    // The ragdoll bit: isRagdoll is the AnimBP gate every ragdoll cause flips (the C key, an
+    // exhaustion faint, a KO), synced as a display flag so the puppet flops on the other screens; a
+    // death is excluded by `dead`. One wrapper read.
     {
         bool isRagdoll = false, dead = false;
         if (ue_wrap::engine::ReadMainPlayerRagdollState(local, isRagdoll, dead) &&
@@ -138,15 +97,10 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
             out.stateBits |= coop::net::kStateBitRagdoll;
         }
     }
-    // v19: piggyback the LOCAL player's vitals (health fraction + food + sleep)
-    // in the 3 bytes that were `_pad` -- ZERO wire-size change. ue_wrap::vitals
-    // reads THIS machine's UsaveSlot_C (one per machine), so the values are
-    // per-peer-authoritative (host packs host's, each client its own). Default
-    // to full (255) until the save resolves so a booting peer doesn't flash an
-    // empty bar; overwrite per field only on a successful read. The receiver
-    // treats these as DISPLAY-ONLY (puppet nameplate) -- never a saveSlot write.
-    // After the one-time resolution cache fills, each Read is O(1) (a couple of
-    // cheap derefs); 3-4 per pose-send tick is negligible on this hot path.
+    // The vitals (health fraction, food, sleep) in three bytes: ue_wrap::vitals reads this
+    // machine's UsaveSlot_C, so each peer packs its own. Full (255) until the save resolves, so a
+    // booting peer does not flash an empty bar; the receiver treats them as display only. O(1)
+    // reads after the one-time resolve.
     out.healthFrac = out.foodFrac = out.sleepFrac = 255;
     {
         namespace V = ue_wrap::vitals;
@@ -154,7 +108,7 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
         bool gotHealth = false;
         if (V::Read(V::Field::Health, &health)) {
             gotHealth = true;
-            V::Read(V::Field::MaxHealth, &maxHealth);  // best-effort; 100 fallback on miss
+            V::Read(V::Field::MaxHealth, &maxHealth);  // best effort; 100 on a miss
             out.healthFrac = coop::net::QuantizeUnitFraction(
                 maxHealth > 0.f ? health / maxHealth : 1.f);
         }
@@ -162,9 +116,8 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
             out.foodFrac = coop::net::QuantizeUnitFraction(food * (1.f / coop::net::kVitalScalarMax));
         if (V::Read(V::Field::Sleep, &sleep))
             out.sleepFrac = coop::net::QuantizeUnitFraction(sleep * (1.f / coop::net::kVitalScalarMax));
-        // One-shot proof the vitals chain RESOLVED (vs silently defaulting to a
-        // full bar). Latched on the first successful health read so it can't spam
-        // this hot path. Game-thread only -> a plain static latch is safe here.
+        // One log line on the first successful health read, so a full bar is proven rather than a
+        // silent default; game thread only, so a plain static latch.
         static bool sVitalsLogged = false;
         if (gotHealth && !sVitalsLogged) {
             sVitalsLogged = true;
@@ -176,20 +129,16 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     return true;
 }
 
-// Resolve the wire elementId for a held prop. An ordinary keyed prop is in prop_element_tracker's
-// LOCAL map (g_actorToPropElementId). A kerfur prop on a CLIENT is a host-owned MIRROR (m_mirror=true)
-// that is NOT in that local map -- fall back to its host-range eid from the kerfur held-pose map so the
-// carry streams cross-peer by eid (its random BP key won't resolve; the host's remote_prop receiver
-// resolves the authoritative kerfur prop by this eid + kinematic-drives it). K-5. kInvalidId if neither.
+// The wire eid of a held prop: a keyed prop is in the tracker's local map; a kerfur prop on a
+// client is a host-owned mirror outside it, so its host-range eid comes from the kerfur held-pose
+// map (its random BP key would not resolve, and the host's receiver drives the authoritative
+// prop by eid); a garbage clump bound to its pile's eid by a client's morph is a mirror too, and
+// resolves through the mirror lookup. kInvalidId if none. New-held edge only; the caller caches
+// it.
 coop::element::ElementId ResolveHeldPropEid(void* heldActor) {
     auto eid = coop::prop_element_tracker::GetPropElementIdForActor(heldActor);
     if (eid == coop::element::kInvalidId)
         eid = coop::kerfur_entity::GetKerfurMirrorEidForActor(heldActor);
-    // v81 MORPH V2: a held garbageClump bound to the grabbed pile's eid E by pile_morph (the host's own
-    // morph rebinds the local tracker Element -> resolved above; a client's morph rebinds a MIRROR ->
-    // resolved here). Without this the carried clump would stream eid=0 ("no local match" flood) and the
-    // peers' clump mirror would never follow the hand. Reached only on the new-held edge + cached for the
-    // per-tick stream by the caller, so the O(n) mirror snapshot is not a hot path.
     if (eid == coop::element::kInvalidId)
         eid = coop::remote_prop::ResolveMirrorEidByActor(heldActor);
     return eid;
@@ -198,8 +147,8 @@ coop::element::ElementId ResolveHeldPropEid(void* heldActor) {
 }  // namespace
 
 void NotifyPropEidRebound(void* actor) {
-    // v122 (A'): refresh the held-eid cache when the held actor's identity rebinds
-    // mid-carry (the cache is otherwise re-resolved only at the held EDGE -- measured).
+    // The held-eid cache refreshes when the held actor's identity rebinds mid-carry; otherwise it
+    // is resolved only at the held edge.
     if (!actor || actor != g_lastHeldProp.Raw()) return;
     const coop::element::ElementId neweid = ResolveHeldPropEid(actor);
     if (neweid == g_lastHeldEid) return;
@@ -211,9 +160,8 @@ void NotifyPropEidRebound(void* actor) {
 }
 
 void* LastHeldActor() {
-    // The rest-exclusion read for trash_channel::TickCarry (v106): the local
-    // player's currently-held actor, or null. IsLive-guarded so a stale pointer
-    // never aliases a recycled address into a wrong exclusion.
+    // The local player's held actor, or null, for the trash channel's rest exclusion; live-guarded
+    // so a stale pointer never aliases a recycled address.
     return g_lastHeldProp.Get();
 }
 
@@ -232,46 +180,29 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     { PP::Scope _s{PP::Bucket::LocalSend};
       if (ReadLocalPose(local, controller, mine)) {
           session.SetLocalPose(mine);
-          // Skin step FX on the OWN body (mynet burst / keljoy squeak at your
-          // own feet): the native mainPlayer stride calls lib_C::step through
-          // an EX_CallMath (invisible to the ProcessEvent hook), so the coop
-          // layer re-strides the same pose sample it just read for the wire.
+          // The skin step FX on the own body: the native stride calls lib_C::step through an
+          // EX_CallMath the ProcessEvent hook cannot see, so the coop layer re-strides the pose
+          // sample it just read.
           coop::skin_effects::TickStride(
               local, ue_wrap::FVector{mine.x, mine.y, mine.z}, mine.speed,
               (mine.stateBits & coop::net::kStateBitInAir) == 0);
       }
     }
 
-    // Held-prop replication. Read mainPlayer.grabbing_actor; if non-null,
-    // build a PropPoseSnapshot from the prop's current world transform and
-    // publish to the net thread. On the edge held -> not-held, send a
-    // RELIABLE PropRelease so the peer re-enables SimulatePhysics (and we
-    // never rely solely on the 500 ms stream-stop timeout).
-    //
-    // 2026-05-29 (post-A-4 follow-up): both fields read via
-    // ue_wrap::engine::ReadMainPlayerGrabState (Principle 7 -- no inline raw
-    // struct-offset derefs at coop layer). The wrapper resolves
-    // mainPlayer.holding_actor via reflected_offset (MainPlayer_holding_actor
-    // IS defined), so holdingActor is populated whenever the field exists.
-    // Whether picking up a chipPile/clump actually SETS holding_actor (vs the
-    // clump self-driving off its own holdPlayer) is a live-BP question
-    // (Candidate A vs B); the [probe] below answers it from a real hands-on.
+    // The held-prop stream: mainPlayer.grabbing_actor (through the wrapper) becomes a
+    // PropPoseSnapshot per tick, and the held-to-not-held edge sends a reliable PropRelease so the
+    // peer re-enables physics without waiting for the 500 ms stream-stop timeout.
     ue_wrap::engine::MainPlayerGrabState gs{};
     void* heldActor = nullptr;
     void* hotbarProp = nullptr;  // holding_actor when it is the HAND item (Aprop_C)
     if (ue_wrap::engine::ReadMainPlayerGrabState(local, gs)) {
         heldActor = gs.grabbingActor;
-        // 2026-05-27: chipPile/clump pickup sets mainPlayer.holding_actor
-        // INSTEAD of grabbing_actor (their morph path doesn't use the
-        // PhysicsHandle). Fall back to holding_actor so the PropPose
-        // stream covers them too -- gated by IsKeyedInteractable since
-        // holding_actor can also point at non-prop carry targets.
-        // v105 (2026-07-06, RULE 2): an Aprop_C in holding_actor is the HOTBAR
-        // HAND ITEM -- player expression, NOT a world entity (updateHold
-        // respawns it per switch) -- and is routed to coop::hand_item instead
-        // of the world-prop pipeline (whose PRE-QUIESCENCE gate never lifts on
-        // the host: the never-mirrored-hand root, hands-on 12:40:05). Only the
-        // non-Aprop_C trash lineage (clump/pile morph carry) stays here.
+        // A chipPile or clump pickup sets holding_actor, not grabbing_actor (its morph path does
+        // not use the physics handle), so holding_actor is the fallback, gated on
+        // IsKeyedInteractable since it can point at other carry targets. An Aprop_C in
+        // holding_actor is the hotbar hand item, player expression rather than a world entity
+        // (updateHold respawns it per switch), and goes to coop::hand_item; only the trash lineage
+        // stays here.
         if (gs.holdingActor && R::IsLive(gs.holdingActor) &&
             ue_wrap::prop::IsKeyedInteractable(gs.holdingActor)) {
             if (ue_wrap::prop::IsDescendantOfProp(gs.holdingActor))
@@ -280,22 +211,16 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 heldActor = gs.holdingActor;
         }
     }
-    // v105 hand-item axis: announce the hotbar hand on change + maintain the
-    // peers' display mirrors (both are cheap idle no-ops).
+    // The hand-item axis: the owner announces a change, the peers maintain their mirrors; both idle
+    // cheaply.
     coop::hand_item::TickOwner(session, local, hotbarProp);
     coop::hand_item::TickMirrors();
-    // v76: the ATV is owned by coop::atv_sync (occupant-OR-grabber pose stream + AtvRelease), NOT the
-    // held-prop pipeline -- exclude it so a grabbed ATV doesn't emit zero-key PropPose packets here
-    // (it is not a keyed interactable: EnsureHeldItemBroadcast fails, so receivers would just drop
-    // them as "no local match"). One concept, one pipeline (RULE 2).
+    // The ATV belongs to coop::atv_sync: a grabbed ATV is not a keyed interactable and would emit
+    // zero-key poses the receivers drop.
     if (heldActor && ue_wrap::atv::IsAtv(heldActor)) heldActor = nullptr;
-    // [probe] garbage-ball pickup diagnostic (2026-05-31, ini
-    // garbage_pickup_probe=1): resolves whether a chipPile/clump pickup sets
-    // grabbing_actor or holding_actor (the open Candidate-A-vs-B question)
-    // from a real hands-on carry, plus the held actor's class + key +
-    // keyed-interactable verdict, proving the held-pose path can see the
-    // clump. Only fires while something is held, throttled ~4 Hz; gated off
-    // by default so steady-state cost is one atomic-bool load.
+    // The garbage-pickup probe (ini garbage_pickup_probe=1): which of grabbing_actor and
+    // holding_actor a clump pickup sets, plus the held class, key and keyed verdict; while
+    // something is held, about 4 Hz; one bool load when off.
     static const bool sProbeGarbage =
         ::coop::config::ResolveFlag(::coop::config_registry::rows::garbage_pickup_probe);
     if (sProbeGarbage && (gs.grabbingActor || gs.holdingActor)) {
@@ -317,25 +242,18 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     haKeyed, hKey.c_str());
         }
     }
-    // v68 stick-sync (audit finding 2): a held wall-attachable that has just
-    // STUCK (the commit set frozen/static; the engine hold lingers ~0-100 ms)
-    // is stream-end NOW. Streaming poses for a frozen prop could reach the
-    // receiver's 5-pose unstick streak and rip the just-stuck mirror back
-    // off; ending the stream here also fires the release edge below in the
-    // SAME pump pass as -- and therefore lane-ordered AFTER -- the
-    // PropStickState broadcast (prop_stick_sync::Tick runs in TickGameplay,
-    // before this stream tick), so the receiver's release gate already sees
-    // frozen=true. A re-grab unstick (playerGrabbed_pre) clears the flags
-    // before this read, so the carry stream resumes immediately.
+    // A held wall-attachable that just stuck (frozen or static; the engine hold lingers up to
+    // 100 ms) ends the stream now: streamed poses could reach the receiver's unstick streak and rip
+    // the mirror back off, and ending here fires the release edge in the same pump pass as, and
+    // lane-ordered after, the PropStickState broadcast. A re-grab unstick clears the flags before
+    // this read, so the stream resumes at once.
     if (heldActor && R::IsLive(heldActor) &&
         coop::prop_stick_sync::IsWallAttachable(heldActor) &&
         (ue_wrap::prop::IsFrozen(heldActor) || ue_wrap::prop::IsStatic(heldActor))) {
         heldActor = nullptr;
     }
-    // DIAGNOSTIC (2026-06-22): the held-state at the branch point -- which branch runs each frame.
-    // MAIN(pose) = heldActor live -> the pose stream; RELEASE-EDGE = heldActor null but g_lastHeldProp set;
-    // idle = neither. Distinguishes a dead main branch (heldActor undetected between E) from a firing
-    // release-edge vs a pose-skip. Throttled ~8/s; only logs while something is/was held.
+    // The held-state diagnostic at the branch point: the pose branch, the release edge, or idle;
+    // about 8 a second while something is or was held.
     if (heldActor || g_lastHeldProp.Raw()) {
         static uint32_t sHS = 0;
         if ((sHS++ % 15) == 0) {
@@ -348,31 +266,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         }
     }
     if (heldActor && R::IsLive(heldActor)) {
-        // New-held edge: broadcast a PropSpawn so each peer spawns a mirror. Aprop_C
-        // items get a force-minted Key; the NON-KEYABLE trash CLUMP rides the SAME
-        // prop pipeline identified by our EID (key=None -- setKey doesn't stick on
-        // it). The clump renders on its own (a bare spawn = the 'dirtball' mesh),
-        // floats in front of the puppet via this pose stream (like the mannequin),
-        // and gets physics on release. [[project-bug-trash-chippile-uaf-crash]]
+        // The held item: an Aprop_C carries a force-minted key; the non-keyable trash clump rides
+        // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
+        // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
-            // New-held edge. A held trash CLUMP (the chipPile's grab product) is ADOPTED HERE onto the
-            // grabbed pile's eid E: the v106 birth certificate (recorded at the clump's BeginDeferred by
-            // the UFunction::Func thunk -- EVERY dispatch route) carries {pile eid, chipType}; this edge
-            // consumes it + broadcasts PropConvert{ToClump}. EnsureHeldItemBroadcast returns false for a clump (class gate at
-            // trash_collect_sync.cpp); a normal Aprop_C item is broadcast as a fresh keyed prop. Resolve the
-            // wire eid ONCE here (the only place the O(n) ResolveMirrorEidByActor
-            // fallback for the eid-only clump may run) and CACHE it (g_lastHeldEid) so the carry stream is O(1).
+            // The new-held edge. A held trash clump is adopted here onto the grabbed pile's eid:
+            // the birth certificate the BeginDeferred thunk recorded at its spawn carries the pile
+            // eid and chipType, and this edge consumes it and broadcasts the ToClump convert.
+            // EnsureHeldItemBroadcast is false for a clump; an Aprop_C is broadcast as a fresh
+            // keyed prop. The wire eid resolves once here and is cached for the carry.
             const bool mirrored = coop::trash_collect_sync::EnsureHeldItemBroadcast(heldActor, &session);
-            // HOST grab adoption (v106, docs/piles/08): the clump's IDENTITY comes from its
-            // BIRTH CERTIFICATE -- the BeginDeferred Func thunk records {source pile eid,
-            // chipType} at the exact spawn (every clump is born from a chipPile; bytecode
-            // toClump @141 / uber @3493), covering E-press AND use-HOLD grabs alike. The
-            // held-edge CONSUMES it here. Fallback: an EXISTING tracked clump re-entering
-            // the hand (a gate-aborted rest clump picked back up) resolves by the tracker.
-            // (RULE 2: the InpActEvt-PRE pending-grab slot and the "no pending + mid-carry
-            // => churn re-grab of MY last carry" heuristic are RETIRED -- with 2+ clumps in
-            // flight the heuristic bound a foreign clump to the wrong lane; 2026-07-07
-            // eid-4809 permanent HELD deny-lock, the client ghost-pile root.)
+            // The host's grab adoption: the clump's identity is its birth certificate (every clump
+            // is born from a chipPile, on an E-press or a use-hold alike). An existing tracked
+            // clump re-entering the hand resolves by the tracker. A "no certificate mid-carry means
+            // a churn re-grab of my last carry" guess bound a foreign clump to the wrong lane with
+            // two clumps in flight, so no such guess.
             coop::element::ElementId adoptedEid = coop::element::kInvalidId;
             bool churnRegrab = false;
             if (session.role() == coop::net::Role::Host && ue_wrap::prop::IsGarbageClump(heldActor)) {
@@ -387,11 +295,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 }
                 if (bornE != coop::element::kInvalidId) {
                     if (coop::trash_channel::IsCarrying(bornE)) {
-                        // The game auto-re-grabbed MY carried entity (churn: the just-re-piled
-                        // pile morphs straight back). Rebind + cancel the settle.
+                        // The game re-grabbed my carried entity (the just-re-piled pile morphs
+                        // straight back): rebind and cancel the settle.
                         coop::trash_channel::OnHostRegrab(bornE, heldActor);
                         churnRegrab   = true;
-                        g_lastHeldEid = bornE;  // deterministic (was: assumed unchanged)
+                        g_lastHeldEid = bornE;
                     } else {
                         adoptedEid = coop::trash_channel::AdoptBornClump(
                             session, bornE, heldActor, cloc, crot, bornChip);
@@ -407,28 +315,14 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     heldActor, R::ClassNameOf(heldActor).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                     eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
-            // ---- THE CARRY-ONLY INVARIANT (2026-09-04, doctaaaaa's field log) --------------
-            // Every `return false` in EnsureHeldItemBroadcast is an anti-DUPE gate, and each
-            // one's comment asserts that the receiver still resolves the item by ANOTHER
-            // route: the kerfur prop by its host-range mirror eid, the clump by its source
-            // pile's eid E, a claimed save-loaded local by its shared key. Those assertions
-            // all rest on the same precondition -- that we HAVE a cross-peer identity for the
-            // thing we are about to stream.
-            //
-            // With eid == kInvalidId that precondition is FALSE, and the stream is
-            // undeliverable BY CONSTRUCTION: the receiver's resolver tries key then eid
-            // (remote_prop's ResolveAndStartDrive) and we are handing it a zero eid plus a key
-            // it may never have seen. `[V]` the field cost of the unnoticed case: 91 poses in
-            // ~1.5 s that no peer could resolve, and the item invisible to everyone but its
-            // holder -- the reported "host does not see the items that fall out of the IRP",
-            // whose workaround (re-pick and re-drop) works precisely because it routes the
-            // item back through the path that DOES author identity.
-            //
-            // Report it ONCE per held edge, not per packet, and name the actor so the next
-            // log says which gate produced it. Deliberately NOT a suppression: the stream
-            // still goes out. A key-only pose is legitimate when both peers already share a
-            // save-loaded prop, and refusing to send would break that -- so this states the
-            // broken precondition and leaves the behaviour alone until a log names the gate.
+            // The carry-only invariant: every refusal in EnsureHeldItemBroadcast is an anti-dupe
+            // gate that assumes the receiver resolves the item by another route (a kerfur prop by
+            // its mirror eid, a clump by its pile's eid, a claimed save-loaded local by its shared
+            // key). With no eid that precondition is false and the stream is undeliverable: the
+            // receiver tries key then eid and gets a zero eid plus a key it may never have seen (in
+            // the field, 91 poses in 1.5 s no peer could resolve, and an item invisible to everyone
+            // but its holder). Reported once per held edge with the actor named, and not
+            // suppressed: a key-only pose is legitimate when both peers share a save-loaded prop.
             if (!mirrored && g_lastHeldEid == coop::element::kInvalidId) {
                 UE_LOGW("local_streams: CARRY-ONLY WITH NO WIRE IDENTITY -- held actor %p "
                         "cls='%ls' key='%ls' is streaming a held pose with eid=0 and no spawn "
@@ -439,52 +333,46 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                         ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                         (session.role() == coop::net::Role::Host) ? "host" : "client");
             }
-            // [PILE] carry phase: a trash clump (carry-only, eid-identified) is now in hand. The convert
-            // (pile->clump) was broadcast by AdoptBornClump on the new-held edge above; this stream
-            // just carries E's pose.
+            // The carry phase: the pile-to-clump convert went out on the edge above; this stream
+            // carries the eid's pose.
             if (!mirrored && eidLog != 0 && ue_wrap::prop::IsGarbageClump(heldActor)) {
                 UE_LOGI("[PILE] %s CARRY eid=%u clump in hand -> streaming carry pose (ctx-stamped); "
                         "clients drive their mirror of E",
                         (session.role() == coop::net::Role::Host) ? "HOST" : "CLIENT", eidLog);
             }
         }
-        // Stream the held world transform. key (None for the clump) + eid (the
-        // clump's cross-peer identity); the receiver resolves the mirror by key,
-        // falling back to eid.
+        // The held world transform: key (None for the clump) and eid; the receiver resolves by key,
+        // then eid.
         const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(heldActor);
         coop::net::PropPoseSnapshot pp{};
         pp.key.len = 0;
         for (size_t i = 0; i < keyW.size() && i < 31; ++i) {
-            // The save UUIDs are ASCII; this lossless narrowing is fine.
+            // Save keys are ASCII; the narrowing is lossless.
             pp.key.data[pp.key.len++] = static_cast<char>(keyW[i]);
         }
-        // v81 MORPH V2: use the eid CACHED on the new-held edge (O(1)) -- do NOT re-run the O(n)
-        // ResolveHeldPropEid every tick (the CLAUDE.md per-frame full-scan hot-path regression).
+        // The eid cached on the new-held edge; the O(n) resolve never runs per tick.
         pp.elementId = (g_lastHeldEid == coop::element::kInvalidId) ? 0u
                                                                     : static_cast<uint32_t>(g_lastHeldEid);
-        // v82 (docs/piles/08): stamp the trash entity's current sync-time-context so the receiver can DROP
-        // a carry pose that arrives after a transition (re-pile/throw); 0 for a non-trash held prop.
+        // The trash entity's sync-time context, so the receiver drops a carry pose that arrives
+        // after a transition; 0 for a non-trash prop.
         pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
         const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
         const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
         pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
-        // Normalize at the wire boundary: physics-prop rotation accumulates
-        // through FQuat<->Euler conversions and can end up at Yaw=359.8 or
-        // Pitch=-270; receiver's canonical (-180,180] guard would reject.
+        // Normalised at the wire boundary: a physics prop's rotation accumulates through quaternion
+        // conversions to values like Yaw 359.8 that the receiver's guard rejects.
         pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         pp.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-        // Only STREAM a held-prop pose that carries a cross-peer IDENTITY (a Key OR an eid). A clump
-        // grabbed PRE-QUIESCENCE that EnsureHeldItemBroadcast declined to express is keyless AND eid-less
-        // -- the receiver can't resolve it, so streaming it floods the peer with 'no local match' warns
-        // (~60/s) for an actor it will never have, and shows nothing. Skip the SEND until it gains an
-        // identity; the stream resumes the instant the item is expressed. (Join-window flood fix
-        // 2026-06-17. g_lastHeldProp is still tracked below so the release edge + re-acquire work; a
-        // PropRelease for a never-expressed held prop is harmless -- the peer has no mirror to release.)
+        // Only a pose with a cross-peer identity (a key or an eid) is streamed: a clump grabbed
+        // before quiescence that the broadcast declined has neither, and streaming it floods the
+        // peer with unresolved-pose warnings for an actor it will never have. The stream resumes
+        // the instant the item is expressed; g_lastHeldProp is still tracked so the release edge
+        // works, and a PropRelease for a never-expressed prop is harmless.
         if (pp.key.len > 0 || pp.elementId != 0) {
             session.SetLocalPropPose(true, pp);
-            // Throttled emit log: first 3 + every 60th, matches receiver
-            // throttle so the two logs can be diff'd line-for-line.
+            // The first 3 and every 60th, matching the receiver's throttle so the two logs diff
+            // line for line.
             const uint64_t n = ++g_propEmitCount;
             if (n <= 3 || (n % 60) == 0) {
                 UE_LOGI("net: PropPose emit #%llu -> world(%.1f, %.1f, %.1f) rot(%.1f, %.1f, %.1f) key.len=%d eid=%u ctx=%u",
@@ -493,68 +381,47 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                         static_cast<int>(pp.key.len), pp.elementId, static_cast<unsigned>(pp.ctx));
             }
         } else {
-            // DIAGNOSTIC (2026-06-22): the held clump has NO identity (eid=0 AND key.len=0) -> the pose is NOT
-            // streamed. If this fires between E-events while a clump is held, the carry freeze is g_lastHeldEid
-            // going invalid (the eid was cleared), NOT a dead main branch. Throttled ~8/s.
+            // The held clump has no identity, so the pose is not streamed; firing between grabs
+            // means the cached eid went invalid, not a dead branch.
             static uint64_t sPK = 0;
             if ((sPK++ % 15) == 0)
                 UE_LOGI("[POSE-SKIP] eid=0 key.len=0 -- held clump has NO identity to stream (g_lastHeldEid invalid -> carry frozen between E)");
         }
-        // heldActor is live in this branch (the IsLive(heldActor) guard above) -> Set's
-        // fresh-same-task contract holds; the ref captures index + serial itself.
+        // heldActor is live here, so Set's contract holds; the ref captures the index and serial.
         g_lastHeldProp.Set(heldActor);
         g_lastHeldKey = pp.key;
     } else if (g_lastHeldProp.Raw()) {
-        // CLOSE-B (2026-06-22): the LATCH owns "carrying", not the flickering holding_actor. A churn re-pile
-        // DESTROYS the held clump -> holding_actor flickers empty for a frame -> this edge would clear
-        // g_lastHeldEid + send a spurious PropRelease, breaking the carry binding (the "position dead between
-        // E-events" symptom). Distinguish the flicker from a REAL release by the RE-PILE RECORD: a flicker is
-        // immediately preceded by a re-pile that started a land-settle (HasPendingSettle); a real drop/throw is
-        // an ALIVE clump with NO pending settle (a churn re-grab cancels the settle before the player could
-        // ever throw -- so a real release never coincides with one). Suppress ONLY (carrying && HasPendingSettle);
-        // a real release fires below + closes the latch so the landing converts as "not carrying". No R::IsLive
-        // (UAF on the just-destroyed clump), no input-event RE (InpActEvt_drop is UI-gated, throwPath is aiming).
+        // The carry latch owns "carrying", not the flickering holding_actor: a churn re-pile
+        // destroys the held clump and the field is empty for a frame, and the held-puppet
+        // recreation (updateHold rebuilds holding_actor) does the same, so this edge would clear
+        // the cached eid and send a spurious PropRelease, churning the context until the client
+        // held every carry pose and froze. No IsLive on the just-destroyed clump.
         const bool carrying_ = coop::trash_channel::IsCarrying(g_lastHeldEid);
-        const bool pending_  = coop::trash_channel::HasPendingSettle(g_lastHeldEid);  // kept only for the diag log
-        // B (2026-06-22, log-confirmed): the LATCH owns "carrying", NOT the flickering holding_actor. The
-        // freeze is the held-puppet RECREATION (updateHold rebuilds holding_actor -> a 1-frame null) firing
-        // this poll edge -> it cleared g_lastHeldEid + sent a spurious PropRelease -> ctx churn -> the client
-        // held carry poses (ctx ahead of known) -> frozen. HasPendingSettle could not catch it (recreation
-        // has no re-pile/settle). So SUPPRESS the PropRelease (send) for the WHOLE carry (!carrying). The latch
-        // closes via the land-settle (a drop/throw's landing re-pile with no re-grab within K -> LAND COMMIT).
-        // THROW ARC (2026-06-22): the release-VERB hunt is dead -- both simulateDrop AND dropGrabObject were
-        // installed and fired ZERO times for the chipPile release (the clump's release path uses neither).
-        // Instead of detecting the release, we STREAM THROUGH it: while carrying, if g_lastHeldProp is still a
-        // LIVE clump (carry flicker OR post-release flight), keep streaming its pose under E (below) -- one
-        // continuous E-stream, the client interp shows the real arc, no verb + no velocity needed. NO HasPendingSettle.
+        const bool pending_  = coop::trash_channel::HasPendingSettle(g_lastHeldEid);  // for the log line only
+        // So the PropRelease is suppressed for the whole carry; the latch closes through the land
+        // settle (a drop or throw's landing re-pile with no re-grab). No release verb is detected:
+        // simulateDrop and dropGrabObject fire zero times for a clump release. Instead the stream
+        // continues through it, one continuous eid stream that the client's interpolation shows as
+        // the real arc.
         const bool relSkip   = carrying_;
         UE_LOGI("[REL-EDGE] eid=%u carrying=%d pendingSettle=%d -> %s",
                 (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
                 carrying_ ? 1 : 0, pending_ ? 1 : 0, relSkip ? "SKIP(carrying)" : "FIRE(release)");
         if (relSkip) {
-            // CARRY/FLIGHT CONTINUITY (throw-arc fix 2026-06-22): the release edge is suppressed while carrying
-            // (the freeze fix). But heldActor going null does NOT mean the clump is gone -- it may be (a) a
-            // 1-frame grab-state flicker mid-carry (the clump is still held at the carry position), or (b) the
-            // player REALLY released it and it is now FLYING (physics) until it re-piles. In BOTH cases
-            // g_lastHeldProp is still a LIVE clump, so KEEP STREAMING its pose under the SAME eid E -- the
-            // carry and the flight are ONE continuous E-pose-stream (the client's fixed-delay interp drives the
-            // same proxy throughout and shows the REAL arc). This needs NO release verb and NO velocity: an
-            // ALIVE clump = carry-or-flight (stream it); a churn re-pile DESTROYS the clump (!IsLive) -> fall to
-            // the gap below (await the re-grab or the land). That IsLive test is the churn/flight discriminator
-            // the elusive drop-verb was meant to be -- a re-pile kills the clump (skip), a real release leaves
-            // it flying (stream). The stream ends naturally when the clump re-piles (wherever -- end of arc OR a
-            // mid-flight contact): the re-pile thunk's ToPile re-skins the proxy + snaps it to the landed spot.
+            // Carry and flight are one stream: heldActor going null is either a one-frame flicker
+            // mid-carry or a real release with the clump now flying, and in both the clump is
+            // alive, so its pose keeps streaming under the same eid with no release verb and no
+            // velocity. A churn re-pile destroys the clump (not alive), the gap: await the re-grab
+            // or the land. The stream ends when the clump re-piles, wherever, and the ToPile
+            // convert re-skins the proxy at the landed spot.
             if (g_lastHeldProp.Alive() &&
                 ue_wrap::prop::IsGarbageClump(g_lastHeldProp.Raw()) &&
                 g_lastHeldEid != coop::element::kInvalidId) {
                 coop::net::PropPoseSnapshot pp{};
-                // SOUND FIX (take-29 #2a): stream the SAME wire key the carry main branch sends
-                // (GetInteractableKeyString -> "None" for the clump), NOT key.len=0. The receiver's drive-
-                // continuity gate (remote_prop.cpp KeyMatchesCache) re-StartDrives -- replaying the pickup
-                // `use click` -- whenever the wire key CHANGES mid-stream for a live drive. Carry streamed
-                // "None", this flight branch streamed "" -> the mismatch fired a spurious re-GRAB-IN + pickup
-                // sound on EVERY throw (take-29: 2 use-clicks/cycle, 58 total). Identical key across carry+
-                // flight = one continuous drive, one grab sound, no churn. The eid is still the identity.
+                // The same wire key the carry branch sends ("None" for the clump), not an empty
+                // one: the receiver re-starts the drive, replaying the pickup click, whenever the
+                // key changes mid-stream for a live drive, and an empty key here fired a spurious
+                // grab and click on every throw.
                 const std::wstring fkeyW = ue_wrap::prop::GetInteractableKeyString(g_lastHeldProp.Raw());
                 pp.key.len = 0;
                 for (size_t i = 0; i < fkeyW.size() && i < 31; ++i)
@@ -573,34 +440,26 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     UE_LOGI("[PILE] HOST carry/flight CONTINUE eid=%u -> world(%.1f,%.1f,%.1f) (clump ALIVE: a "
                             "carry flicker OR the post-release FLIGHT -- one continuous E-stream until re-pile)",
                             static_cast<unsigned>(g_lastHeldEid), pp.x, pp.y, pp.z);
-                // g_lastHeldProp/Eid are intentionally KEPT (not cleared) -- the stream continues; the land
-                // path (re-pile thunk -> ToPile + the land-settle latch close) ends the carry.
+                // The held cache is kept: the stream continues, and the land path ends the carry.
             } else {
                 UE_LOGI("[PILE] HOST carry SUPPRESS release eid=%u -- !carrying gate; clump re-piled/gone "
                         "(!IsLive or not-a-clump) -> the gap; await the re-grab or the land-settle close",
                         static_cast<unsigned>(g_lastHeldEid));
             }
         } else {
-        // Edge: was holding, now not (NOT carrying -- the latch was already closed by the simulateDrop thunk
-        // or the land-settle, or this is a non-trash prop). Stop the PropPose stream + send PropRelease.
-        // Read the body's CURRENT linear+angular velocity. By the time this branch
-        // runs, the engine has executed the BP graph clearing grabbing_actor, the
-        // PHC.ReleaseComponent call, and any post-release AddImpulse the BP issues.
-        // PhysX has not stepped yet, so the body still carries the inherited
-        // kinematic-tracking velocity ("vzhukh" mouse-flick launch energy) PLUS any
-        // impulse-derived velocity, summed into ONE velocity. prop::GetPhysicsVelocity
-        // returns 0 for the non-Aprop_C clump (GetStaticMesh is null on it) -- fall
-        // back to the GENERIC root-component velocity so the clump throws too.
+        // The release edge (not carrying: the latch closed, or this is a non-trash prop). The
+        // stream stops and a PropRelease goes out with the body's current velocity: the BP has
+        // cleared grabbing_actor, released the handle and applied any impulse, and PhysX has not
+        // stepped, so the body carries the kinematic-tracking velocity plus the impulse in one
+        // value. The clump has no StaticMesh for GetPhysicsVelocity, so the generic root velocity
+        // is the fallback.
         session.SetLocalPropPose(false, {});  // stop the held-pose stream (BOTH paths below)
-        // SOUND/RELEASE FIX (take-29 #2b): a TRASH entity's throw is owned end-to-end by the host-authoritative
-        // channel -- the flight-stream above carries the arc, and the re-pile thunk's ToPile convert is the
-        // authoritative landing (it re-skins + snaps + ClearAnyDriveFor on the client). By the time this FIRE
-        // edge runs for a trash eid, carrying has ALREADY closed (the land committed) -> this PropRelease is
-        // REDUNDANT and HARMFUL: the client turned each one into a spurious `proxy throw` ClearAnyDriveFor that
-        // churned the drive (re-GRAB-IN -> replayed pickup sound) -- take-29: 29 spurious releases + 0 whoosh.
-        // The phase-1 NoCollision proxy must NOT simulate clump throw physics anyway. So for a tracked trash
-        // entity (CtxForEid != 0): stop the stream (done) + clear the held cache (below), but DO NOT send a
-        // PropRelease. A non-trash Aprop_C keeps its normal velocity release (the carry/throw it always had).
+        // A trash entity's throw is owned by the host-authoritative channel: the flight stream
+        // carries the arc and the ToPile convert is the landing (it re-skins, snaps and clears the
+        // client's drive). By this edge the carry has already closed, so a PropRelease here was
+        // redundant and harmful: the client turned each into a proxy throw that churned the drive
+        // and replayed the pickup sound. A tracked trash entity stops the stream and clears the
+        // cache without a PropRelease; a non-trash prop keeps its velocity release.
         const uint32_t relEid = (g_lastHeldEid == coop::element::kInvalidId)
                                     ? 0u : static_cast<uint32_t>(g_lastHeldEid);
         const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
@@ -634,26 +493,21 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};
-        g_lastHeldEid = coop::element::kInvalidId;  // v81: invalidate the cached held eid on release
-        }  // end real-release branch (CLOSE-B flicker gate above)
+        g_lastHeldEid = coop::element::kInvalidId;  // the cached held eid goes with the release
+        }
     }
 
-    // v22 ragdoll PHYSICS stream. While the local player's native ragdoll
-    // exists (C-key/faint/KO), read its pelvis world transform + linear+angular
-    // velocity and publish so each peer's mirror body slaves its pelvis to the
-    // real ragdoll (instead of free-simulating its own flop). Mirrors the held-
-    // prop stream above: publish each frame while active, one false-edge on
-    // recover. ReadLocalRagdollPelvisPhysics returns false when not ragdolling,
-    // so the active->idle transition is the recover edge.
+    // The ragdoll physics stream: while the native ragdoll exists (the C key, a faint, a KO) the
+    // pelvis world transform and velocities are published so each peer's mirror slaves its pelvis
+    // to the real ragdoll instead of simulating its own flop; the read returns false when not
+    // ragdolling, so the active-to-idle transition is the recover edge.
     {
         ue_wrap::FVector rdLoc{}, rdLin{}, rdAng{};
         ue_wrap::FRotator rdRot{};
         if (ue_wrap::engine::ReadLocalRagdollPelvisPhysics(local, rdLoc, rdRot, rdLin, rdAng)) {
             coop::net::RagdollPoseSnapshot rp{};
             rp.x = rdLoc.X; rp.y = rdLoc.Y; rp.z = rdLoc.Z;
-            // Normalize the rotation at the wire boundary (the receiver drives
-            // SetActorRotation off it + the canonical FRotator guard expects
-            // (-180,180]); velocities are magnitudes, sent raw.
+            // The rotation normalised at the wire boundary; the velocities go raw.
             rp.pitch = ue_wrap::NormalizeAxis(rdRot.Pitch);
             rp.yaw   = ue_wrap::NormalizeAxis(rdRot.Yaw);
             rp.roll  = ue_wrap::NormalizeAxis(rdRot.Roll);
