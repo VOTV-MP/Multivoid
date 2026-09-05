@@ -17,9 +17,9 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Resolved once per (class, function) pair. Classes and UFunctions never move within a
+// Resolved once per class and function pair. Classes and UFunctions never move within a
 // process, so a null after a successful resolve is impossible and a null before one is a
-// recook problem -- which is why every miss below LOGS rather than failing silently.
+// recook problem, which is why every miss below logs rather than failing silently.
 struct FnCache {
     const wchar_t* cls;
     const wchar_t* fn;
@@ -42,7 +42,7 @@ void* Resolve(FnCache& c) {
     return c.ptr;
 }
 
-// UPanelWidget owns the whole generic panel API -- one resolve serves every panel type.
+// The panel widget base owns the whole generic panel API; one resolve serves every panel type.
 FnCache g_addChild   {L"PanelWidget",   L"AddChild",         nullptr, false};
 FnCache g_removeChild{L"PanelWidget",   L"RemoveChild",      nullptr, false};
 FnCache g_childCount {L"PanelWidget",   L"GetChildrenCount", nullptr, false};
@@ -68,18 +68,10 @@ FnCache g_setContent {L"ContentWidget",  L"SetContent",           nullptr, false
 
 }  // namespace
 
-// UContentWidget::SetContent -- the ONE owner, and it is latched.
-//
-// This existed as SEVEN copies of the same six-line resolve-then-call, none of them latched,
-// and `R::FindFunction` has no result cache: it walks the whole GUObjectArray. Two of the
-// seven sat inside `BuildRow`, i.e. once PER ROW -- so filling a 64-row list did 64 full
-// array walks in a single frame, and opening the hosting window did 24 on the frame the
-// player pressed the button. The post-ship perf audit priced that at 70-102 ms and 26-38 ms
-// respectively, against an 8.5 ms budget.
-//
-// The bitter part: a previous fix had already latched `GetContent` in the same file and left
-// `SetContent` alone -- the reader was cured and the two writers were not. One function with
-// one cache is the shape that cannot rot that way.
+// The content setter, the one owner, latched: the function lookup has no result cache and
+// walks the whole object array, and callers sit inside the row build, once per row, so an
+// unlatched resolve is dozens of full array walks in a single frame (measured at tens of
+// milliseconds against a single-digit frame budget).
 bool SetContent(void* contentWidget, void* child) {
     void* fn = Resolve(g_setContent);
     if (!contentWidget || !child || !fn) return false;
@@ -140,9 +132,9 @@ bool SwitcherSetIndex(void* switcher, int32_t index) {
     return Call(switcher, f);
 }
 
-// The parameter name is NewScrollOffset, read from the CXXHeaderDump (UMG.hpp:1198) --
-// ParamFrame resolves by name off the live FProperty chain, so a wrong name is a silent
-// no-op write into a zeroed frame, i.e. SetScrollOffset(0) whatever you asked for.
+// The parameter name is the new-offset name from the header dump: the frame resolves by name
+// off the live property chain, so a wrong name is a silent no-op write into a zeroed frame, a
+// scroll to zero whatever was asked.
 bool SetScrollOffset(void* scrollBox, float offset) {
     void* fn = Resolve(g_scrollSet);
     if (!scrollBox || !fn) return false;
@@ -173,12 +165,12 @@ void CloneButtonStyle(void* dstButton, void* srcButton) {
     if (!dstButton || !srcButton) return;
     auto* d = reinterpret_cast<uint8_t*>(dstButton);
     auto* s = reinterpret_cast<uint8_t*>(srcButton);
-    // FButtonStyle embeds FOUR FSlateBrushes, each with an unreflected
-    // FSlateResourceHandle at +0x70; CloneStyle zeroes all four.
+    // The button style embeds four Slate brushes, each with an unreflected resource handle; the
+    // clone zeroes all four.
     CloneStyle(d, P::off::UButton_WidgetStyle, s, P::off::UButton_WidgetStyle,
                P::off::FButtonStyle_Size, P::off::FButtonStyleBrushes, 4);
-    // KEEP each FSlateSound's ResourceObject (@ 0x00) so the button plays the native
-    // press + hover sounds; zero ONLY the trailing TSharedPtr cache.
+    // Keep each Slate sound's resource object, so the button plays the native press and hover
+    // sounds; zero only the trailing shared-pointer cache.
     std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_PressedSlateSound +
                 P::off::FSlateSound_CacheStart, 0,
                 P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
@@ -195,10 +187,10 @@ void LogVisibilityChain(const char* tag, void* widget) {
     void* visFn = Resolve(g_getVis);
     void* parFn = Resolve(g_getParent);
     if (!widget || !visFn || !parFn) return;
-    // ESlateVisibility, and the two that matter are neighbours in the enum, which is how
-    // this class of bug hides: HitTestInvisible(3) takes the whole subtree out of the hit
-    // grid, SelfHitTestInvisible(4) takes only the widget itself and is what a container
-    // wants. A chain that paints correctly tells you nothing about which one it carries.
+    // The visibility enum, and the two that matter are neighbours, which is how this class of bug
+    // hides: hit-test-invisible takes the whole subtree out of the hit grid, and
+    // self-hit-test-invisible only the widget itself, what a container wants. A chain that paints
+    // correctly tells nothing about which one it carries.
     static const char* kNames[] = {"Visible", "Collapsed", "Hidden",
                                    "HitTestInvisible", "SelfHitTestInvisible"};
     void* w = widget;
@@ -216,27 +208,14 @@ void LogVisibilityChain(const char* tag, void* widget) {
     }
 }
 
-// THE CURSOR, IN THE SAME SPACE THE RECTS ARE IN -- asked of Slate, not derived.
-//
-// WHY IT IS NOT A SUBTRACTION. `WidgetScreenRect` returns whatever
-// `LocalToAbsolute` returns, and the relationship between that and the OS cursor
-// is not a fact this file gets to assume: it involves the window's client origin
-// AND the viewport's UI scale, and this project has now been wrong about it twice
-// in one day in OPPOSITE directions -- first comparing desktop pixels to the rects
-// directly (measured off by the client origin, 320x180 on the lab rig), then
-// subtracting only the origin, after which a user still reported an offset and in
-// the other direction. Two hand-derived corrections and two wrong answers is the
-// point at which you stop deriving and ask the engine.
-//
-// `ScreenToWidgetAbsolute` is Slate's own inverse of the transform that produced
-// those rects, so whatever the scale and wherever the window sits, both sides of
-// the comparison come from the same source. `screenPos` is VIEWPORT/client pixels
-// (do the ScreenToClient first); `bIncludeWindowPosition=false` because the rects
-// we compare against are the plain LocalToAbsolute ones.
-//
-// Returns false if the function or the context is unavailable, leaving `out`
-// untouched -- the caller decides what a missing conversion means rather than
-// silently receiving an unconverted point.
+// The cursor, in the same space the rects are in, asked of Slate rather than derived. The
+// rects come from the local-to-absolute call, and their relationship to the OS cursor involves
+// the window's client origin and the viewport's UI scale, which this file must not assume; the
+// screen-to-absolute call is Slate's own inverse of the transform that produced the rects, so
+// both sides of the comparison come from one source. The position is viewport pixels
+// (screen-to-client first); the window position is excluded because the rects compared
+// against are the plain local-to-absolute ones. False if the function or the context is
+// unavailable, leaving `out` untouched, so the caller decides what a missing conversion means.
 bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out) {
     void* fn = Resolve(g_screenToAbs);
     if (!fn) return false;
@@ -246,8 +225,8 @@ bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out) {
     if (!ctx) return false;
 
     ParamFrame f(fn);
-    // Named, never positional: a signature change must fail loudly rather than
-    // write a bool into a float pair.
+    // Named, never positional: a signature change must fail loudly rather than write a bool into
+    // a float pair.
     if (f.ParamOffset(L"ScreenPosition") < 0 || f.ParamOffset(L"AbsoluteCoordinate") < 0) {
         static bool warned = false;
         if (!warned) {
@@ -273,25 +252,14 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
     void* absFn  = Resolve(g_localToAbs);
     if (!widget || !geomFn || !sizeFn || !absFn) return false;
 
-    // The library's functions are static, so they dispatch on the CDO -- the same shape
-    // the engine's own BlueprintFunctionLibrary calls take.
-    //
-    // LATCHED, and this is not an optimisation -- it is the difference between a read and a
-    // full-array scan. `FindClassDefaultObject` goes to `FindObject`, which has NO cache and
-    // walks `GUObjectArray` from index 0 rendering EVERY object's name to compare it; each
-    // render allocates and frees an engine buffer. `FindClass` was given a cache on
-    // 2026-08-25 for exactly this reason and `FindObject` never was. This function is called
-    // per ROW per moving frame by the browser's hover pass, so an unlatched resolve here is
-    // a per-frame full-array scan on a per-frame observer -- the precise shape that cost
-    // this project 120 -> 60 fps once already.
-    //
-    // A CDO never moves for the life of the process, so one resolve is all there ever is.
-    // A DYNAMIC-INITIALISER STATIC, so the resolve runs exactly ONCE -- including when it
-    // FAILS. Written first as `if (!sLib) sLib = ...`, which latches only success: a null
-    // resolve re-walked on every call, and this is called once per row per moving frame, so
-    // the failure path WAS the per-frame full-array scan the latch was added to remove --
-    // with an unthrottled UE_LOGE beside it, and log.cpp fflushes every non-INFO line. The
-    // fix for a slow path must not be a fast path with a slow failure mode.
+    // The library's functions are static, so they dispatch on the class default object, as the
+    // engine's own function-library calls do. Latched, and that is the difference between a read
+    // and a full-array scan: the default-object lookup is the uncached object find, which walks
+    // the whole array rendering every object's name, and this is called per row per moving frame
+    // by the browser's hover pass. A default object never moves for the life of the process, so
+    // one resolve is all there is; a dynamic-initialiser static runs it exactly once, including
+    // when it fails, where a latch of success only would re-walk on every call with an
+    // unthrottled error log beside it (which the log flushes on every non-info line).
     static void* const sLib = [] { return R::FindClassDefaultObject(L"SlateBlueprintLibrary"); }();
     void* lib = sLib;
     if (!lib) {
@@ -299,11 +267,11 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
         return false;
     }
 
-    // How many bytes an FGeometry occupies, asked of the engine rather than declared here.
-    // In LocalToAbsolute's frame the geometry is the first parameter, so the offset of the
-    // one after it IS the padded size of the struct -- and GetCachedGeometry's frame holds
-    // nothing but the returned geometry at offset 0. So the struct crosses from one frame
-    // to the other as an opaque span, and this file never learns a single field of it.
+    // How many bytes a geometry occupies, asked of the engine rather than declared here: in the
+    // local-to-absolute frame the geometry is the first parameter, so the offset of the one after
+    // it is the padded size of the struct, and the cached-geometry frame holds nothing but the
+    // returned geometry at offset 0. The struct crosses from one frame to the other as an opaque
+    // span, and this file never learns a single field of it.
     ParamFrame abs(absFn);
     const int32_t geomBytes = abs.ParamOffset(L"LocalCoordinate");
     if (geomBytes <= 0) {
@@ -323,19 +291,17 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
     std::vector<uint8_t> blob(static_cast<size_t>(geomBytes), 0);
     if (!geom.GetRaw(L"ReturnValue", blob.data(), geomBytes)) return false;
 
-    // LOCAL SIZE FIRST, because it is what makes the rect a rect. GetDesiredSize answers a
-    // different question -- what the widget ASKED for, not what its parent gave it -- and a
+    // The local size first, because it is what makes the rect a rect. The desired size answers a
+    // different question, what the widget asked for rather than what its parent gave it, and a
     // button in a fill-weighted row is exactly where those two part company.
     ParamFrame size(sizeFn);
-    // CROSS-CHECK, and it is the only guard against the silent corruption. Two drift modes
-    // are already caught above (LocalCoordinate first -> geomBytes <= 0; geomBytes wider
-    // than the geometry frame). The third is geomBytes too SMALL -- a parameter inserted
-    // before Geometry, or Geometry not first -- and that one does not fail: the blob is a
-    // truncated prefix, the tail of the struct stays zero, and this returns TRUE with a
-    // plausible wrong rect, which downstream means clicking the wrong row. GetLocalSize
-    // returns an FVector2D, so ITS ReturnValue offset must also be the padded size of the
-    // geometry parameter. Two independent frames agreeing is a signature check; one frame's
-    // offset is an assumption.
+    // The cross-check, the only guard against silent corruption. Two drift modes are caught above
+    // (the coordinate parameter first, the geometry wider than its frame); the third is the
+    // geometry too small, a parameter inserted before it, and that one does not fail: the blob
+    // is a truncated prefix, the tail stays zero, and this returns true with a plausible wrong
+    // rect, which downstream means clicking the wrong row. The size call returns a vector, so its
+    // return offset must also be the padded size of the geometry parameter; two independent
+    // frames agreeing is a signature check, one frame's offset an assumption.
     if (size.ParamOffset(L"Geometry") != 0 ||
         size.ParamOffset(L"ReturnValue") != geomBytes) {
         UE_LOGE("umg: SlateBlueprintLibrary signature drift -- LocalToAbsolute puts an "
@@ -350,9 +316,9 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
     if (!abs.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
     abs.Set<FVector2D>(L"LocalCoordinate", FVector2D{0.f, 0.f});
     if (!Call(lib, abs)) return false;
-    // BOTH WRITES AFTER THE LAST FAILURE POINT. The header promises the outs are untouched
-    // when this returns false, and writing outSize before the second call broke that -- a
-    // caller that logs a rect it was told not to trust prints a half-updated one.
+    // Both writes after the last failure point. The header promises the outs are untouched on
+    // false, and writing the size before the second call broke that: a caller that logs a rect it
+    // was told not to trust printed a half-updated one.
     outSize    = size.Get<FVector2D>(L"ReturnValue");
     outTopLeft = abs.Get<FVector2D>(L"ReturnValue");
     return true;
@@ -396,8 +362,8 @@ bool CloneStyle(void* dst, size_t dstOff, void* src, size_t srcOff, size_t style
 bool SetImageTint(void* image, const FLinearColor& tint) {
     void* fn = Resolve(g_imgTint);
     if (!image || !fn) return false;
-    // FSlateColor (0x28): SpecifiedColor (FLinearColor) @0x00, ColorUseRule @0x10 with
-    // 0 = UseColor_Specified. Same shape SetTextBlockColorDispatch already builds.
+    // The Slate colour struct: the specified colour at the start and the use rule after it, 0
+    // meaning use the specified colour; the same shape the text-block colour dispatch builds.
     uint8_t sc[0x28] = {};
     std::memcpy(sc, &tint, sizeof(FLinearColor));
     ParamFrame f(fn);
@@ -440,15 +406,12 @@ bool SetClipping(void* widget, uint8_t clipping) {
 bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
                     uint8_t justify) {
     if (!textBlock) return false;
-    // BOUNDED RETRY, not a plain `if (!sFont)` and not a hard once-latch, because a FONT is
-    // neither a CDO nor a UFunction: it is an ASSET, and an asset can be absent on one call
-    // and present on a later one. So the negative cannot be latched forever the way `sLib`'s
-    // is -- but it must not be retried freely either. `R::FindObject` is an uncached walk of
-    // the whole GUObjectArray that RENDERS every object's name to compare it, and this
-    // function runs FIVE TIMES PER ROW through AddText, so an unbounded retry on a 64-row
-    // list is ~320 full walks in a single frame. Sixteen attempts spans several frames of
-    // widget-building -- long enough for a late-loading font, short enough to be free -- and
-    // then says so once instead of paying that cost forever.
+    // A bounded retry, neither a plain null check nor a hard once-latch: a font is an asset,
+    // absent on one call and present on a later one, so the negative cannot be latched forever,
+    // but the object find is an uncached walk of the whole object array rendering every name, and
+    // this runs several times per row, so an unbounded retry on a long list is hundreds of full
+    // walks in a frame. The attempts span several frames of widget building, long enough for a
+    // late-loading font and short enough to be free, then it says so once.
     static void* sFont = nullptr;
     static int   sFontTries = 0;
     if (!sFont && sFontTries < 16) {
@@ -461,9 +424,9 @@ bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color
     }
     auto* d = reinterpret_cast<uint8_t*>(textBlock);
     auto* font = d + P::off::UTextBlock_Font;
-    // font_ui is loaded whenever the menu is up; if it somehow is not, leave whatever the
-    // block already has rather than falling back to a different face -- a wrong font is a
-    // visible defect, a default one is a silent one.
+    // The menu font is loaded whenever the menu is up; if it somehow is not, leave whatever the
+    // block already has rather than fall back to a different face, since a wrong font is a
+    // visible defect and a default one a silent one.
     if (sFont) *reinterpret_cast<void**>(font) = sFont;
     *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_Size) = fontSize;
     *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_OutlineSettings +
@@ -501,10 +464,10 @@ bool SetSlotHAlignLive(void* slot, uint8_t h) {
     if (!slot) return false;
     void* cls = R::ClassOf(slot);
     if (!cls) return false;
-    // Cached per slot CLASS, not globally: a screen mixes overlay slots and box slots, and
-    // each declares its own setter. One entry is the steady state (the text field only ever
-    // asks about overlay slots), so a two-entry linear scan is the whole structure this
-    // needs -- and it never grows past the number of slot types in the tree.
+    // Cached per slot class, not globally: a screen mixes overlay slots and box slots, and each
+    // declares its own setter. One entry is the steady state (the text field only ever asks about
+    // overlay slots), so a small linear scan is the whole structure this needs, and it never grows
+    // past the number of slot types in the tree.
     struct Entry { void* cls; void* fn; };
     static Entry sCache[8] = {};
     static int   sCount = 0;
