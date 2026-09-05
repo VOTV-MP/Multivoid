@@ -1,4 +1,5 @@
-// coop/email_sync.cpp -- see coop/email_sync.h.
+// coop/world/email_sync.cpp -- the email mirror: the shadow diff, the chunked append and the
+// content-hash delete, the apply park and the join seed adapter. See coop/world/email_sync.h.
 
 #include "coop/world/email_sync.h"
 
@@ -37,17 +38,16 @@ constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 constexpr auto kAssemblyTTL  = std::chrono::seconds(20);
 constexpr auto kTombstoneTTL = std::chrono::seconds(20);
 constexpr size_t kTopicCap = 256, kTextCap = 4096, kPfpCap = 96;
-// A single poll that adds more than this many rows is a SAVE LOAD (the email
-// history materializing all at once), never gameplay (which trickles 1-2 mails per
-// in-game event). Such a batch is ADOPTED as baseline and never broadcast -- the
-// joiner already gets the full history via the v56 save transfer. This is the
-// timing-independent catch-all behind stabilize-before-prime (2026-06-19 flood RCA).
+// A single poll that adds more than this many rows is a save load (the history materialising
+// at once), never gameplay, which trickles a mail or two per event. Such a batch is adopted as
+// baseline and never broadcast: the joiner already has the history from the save transfer. The
+// timing-independent catch-all behind stabilise-before-prime.
 constexpr size_t kBulkAppendThreshold = 32;
 
-// The shadow: one entry per saveSlot.emails row, prefix-aligned with the
-// array between polls (the game only appends at the tail; every other
-// mutation flows through the poll diff or ApplyDeleteByHash, both of which
-// keep alignment). Single steady-state cost: n raw RowKey reads per second.
+// The shadow: one entry per email row, prefix-aligned with the array between polls (the game
+// only appends at the tail; every other mutation flows through the poll diff or
+// ApplyDeleteByHash, which keep alignment). The steady-state cost is one raw key read per row
+// per second.
 struct ShadowRow {
     UE::RowKey   key;       // per-process instance identity (raw bytes)
     uint64_t     hash = 0;  // cross-peer identity (serialized-blob FNV-1a 64)
@@ -57,60 +57,51 @@ struct ShadowRow {
 };
 std::vector<ShadowRow> g_shadow;
 
-// Truncate a topic for the shadow/announce (80 UTF-16 units) WITHOUT splitting a
-// surrogate pair -- a dangling high surrogate would encode as invalid UTF-8 in the
-// peer-action line (audit 2026-07-10 LOW).
+// Truncate a topic for the shadow and the announce without splitting a surrogate pair: a
+// dangling high surrogate would encode as invalid UTF-8 in the feed line.
 std::wstring TruncTopic(const std::wstring& topic) {
     std::wstring t = topic.substr(0, 80);
     if (!t.empty() && t.back() >= 0xD800 && t.back() <= 0xDBFF) t.pop_back();
     return t;
 }
 bool g_primed = false;
-// Stabilize-before-prime (2026-06-19 flood RCA): the save's emails load
-// ASYNchronously, so the array climbs 2 -> ... -> N over the first seconds. Priming
-// at the first sight (N=2 of a 2056-row save) mis-classifies the other 2054 as "new
-// local appends" and broadcasts them to a joiner that already has them via the v56
-// save transfer -> the echo flood + a multi-second game-thread freeze. So we prime
-// only after the count HOLDS for 2 consecutive polls (a lighter take on
-// save_transfer's stable-read guard -- the email array loads monotonically, and the
-// bulk-append re-baseline below is the catch-all if a mid-load pause defeats this).
+// Stabilise before prime: the save's emails load asynchronously, so the array climbs over the
+// first seconds, and priming at first sight would classify the rest as new local appends and
+// broadcast them to a joiner that already has them, an echo flood with a multi-second
+// game-thread freeze. So the prime waits until the count has held for two consecutive polls;
+// the bulk-append re-baseline below is the catch-all if a mid-load pause defeats it.
 int32_t g_primeLastCount = -1;
 int     g_primeStable    = 0;
 uint32_t g_nextSeq = 1;  // per-sender email id
 Clock::time_point g_nextPoll{};
 
-// Receiver assembly: (senderSlot, blobSeq) -> blob (shared transport).
+// Receiver assembly: (sender slot, blob seq) to blob, the shared transport.
 coop::blob_chunks::Assembler g_assembler;
 
-// Wire-applied rows awaiting shadow registration, keyed by the CONTENT HASH (the
-// stable cross-peer identity). The poll's append branch finds the freshly-appended
-// tail row by hash and marks it sent (echo-proof). We deliberately do NOT correlate
-// by the per-process RowKey: addEmail rebuilds the laptop list UI, which can re-touch
-// the row's FText between the apply-time read and the next poll, drifting the RowKey
-// -> a wire row mis-flagged as a local append -> re-broadcast -> the 2026-06-19 echo
-// flood. The content hash is computed from the serialized bytes, so it cannot drift.
+// Wire-applied rows awaiting shadow registration, keyed by the content hash, the stable
+// cross-peer identity: the poll's append branch finds the freshly appended tail row by hash and
+// marks it sent, so it never echoes. Not by the per-process row key: addEmail rebuilds the
+// laptop list, which can re-touch the row's text between the apply-time read and the next poll
+// and drift the key, and a wire row mis-flagged as local is re-broadcast.
 struct AppliedMark {
     uint64_t hash;
     Clock::time_point at;
 };
 std::vector<AppliedMark> g_applied;
 
-// Deletes we couldn't apply yet (row not here / delete beat the append /
-// transient misalignment): hash -> arrival. Retried each poll, TTL-swept.
+// Deletes not yet appliable (row not here, the delete beat the append, a transient
+// misalignment), hash to arrival; retried each poll, swept by TTL.
 std::map<uint64_t, Clock::time_point> g_tombstones;
 
-// Seeds arc (2026-08-23): the receive-side apply PARK -- replaces the old
-// warn-and-drop ("engine unresolved -- row lost" / "apply FAILED -- row lost").
-// FIFO-once-nonempty; drained each Tick; event-anchored on own world-up (no
-// wall-clock TTL); kMaxApplyRetries with the engine RESOLVED = malformed-for-
-// this-world, dropped loudly. Bound kParkCap escalates to the inbox pause.
-// The signal_sync twin carries the same machinery (shared shape, per the
-// deliberate-second-instance doctrine; the SEED half is the extracted third).
+// The receive-side apply park: FIFO once non-empty, drained each tick, anchored on the lane's
+// own settle rather than a wall-clock TTL; after kMaxApplyRetries with the engine resolved a
+// row is malformed for this world and dropped loudly. Reaching kParkCap escalates to the inbox
+// pause. signal_sync carries the same machinery.
 struct ParkedRow {
     std::vector<uint8_t> blob;
     uint8_t senderSlot = 0;
     int retries = 0;
-    Clock::time_point lastAttempt{};  // audit F-3: retries pace at 1 Hz real time
+    Clock::time_point lastAttempt{};  // retries pace at 1 Hz real time
 };
 std::deque<ParkedRow> g_applyPark;
 bool g_parkBackpressure = false;
@@ -121,8 +112,8 @@ bool IsHostRole() {
     auto* s = g_session.load(std::memory_order_acquire);
     return s && s->role() == coop::net::Role::Host;
 }
-// The client lane is mute until its own world-ready announce (the meadow R6
-// gate; email deletes are the client's only send). The host is always ready.
+// The client lane is mute until its own world-ready announce; email deletes are the client's
+// only send. The host is always ready.
 bool CanSend() {
     return IsHostRole() || coop::net_pump::HasAnnouncedWorldReady();
 }
@@ -145,8 +136,8 @@ void AppendWchars(std::vector<uint8_t>& b, const std::wstring& s, size_t cap,
     }
 }
 
-// Blob: {u8 version=1; u8 username; u16 topicChars; u16 textChars; u16 pfpChars;
-//        topic UTF-16LE; text; pfpLeaf}.
+// The blob: version 1, the username byte, three u16 lengths, then the topic, the text and the
+// pfp leaf as UTF-16LE.
 std::vector<uint8_t> SerializeRow(const UE::Row& r) {
     std::vector<uint8_t> b;
     const size_t tc = r.topic.size() > kTopicCap ? kTopicCap : r.topic.size();
@@ -193,9 +184,9 @@ bool DeserializeRow(const std::vector<uint8_t>& b, UE::Row& out) {
            ReadWchars(b, off, pc, out.pfpLeaf);
 }
 
-// Ship one row as chunks via the shared transport. True only if every chunk
-// was accepted (blob_chunks I-3): the caller retries the whole row next poll
-// under a FRESH seq; the receiver's dangling half-assembly is TTL-swept.
+// Ship one row as chunks through the shared transport; true only if every chunk was accepted.
+// The caller retries the whole row next poll under a fresh seq, and the receiver's dangling
+// half-assembly is swept by TTL.
 bool SendRow(coop::net::Session* s, const UE::Row& r) {
     const std::vector<uint8_t> blob = SerializeRow(r);
     const uint32_t seq = g_nextSeq++;
@@ -206,10 +197,10 @@ bool SendRow(coop::net::Session* s, const UE::Row& r) {
     return true;
 }
 
-// Delete the local row whose shadow hash matches. Verifies the shadow row
-// still aligns with the array (a player delete in the same poll window
-// shifts indexes; on mismatch we defer -- the next poll's diff resyncs and
-// the tombstone retry lands it). True = applied (shadow updated inline).
+// Delete the local row whose shadow hash matches, after verifying the shadow row still aligns
+// with the array (a player delete in the same poll window shifts indexes; on a mismatch the
+// next poll's diff resyncs and the tombstone retry lands it). True means applied, with the
+// shadow updated inline.
 bool ApplyDeleteByHash(uint64_t hash, std::wstring* outTopic = nullptr) {
     if (!g_primed) return false;
     if (hash == 0) return false;  // 0 marks hash-unknown shadow rows (unreadable at scan)
@@ -228,18 +219,16 @@ bool ApplyDeleteByHash(uint64_t hash, std::wstring* outTopic = nullptr) {
     return false;
 }
 
-// Deserialize + apply a complete blob (shared by the normal completion path
-// and the audit-C-1 restart path).
-// The apply core. Tombstone/malformed verdicts are TERMINAL; an unresolved
-// engine or a failed native AddEmail is NOT-APPLIABLE (parked + retried -- the
-// old warn-and-drop here was a measured silent loss, seeds-arc doc par.1.3).
+// The apply core, shared by the completion path and the park. A tombstone or a malformed blob
+// is terminal; an unresolved engine or a failed native add is not appliable, parked and
+// retried, since dropping it here was a measured silent loss.
 enum class ApplyVerdict { Applied, Terminal, NotAppliable };
 
 ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     const uint64_t hash = Fnv64(blob.data(), blob.size());
     auto t = g_tombstones.find(hash);
     if (t != g_tombstones.end()) {
-        // The delete outran its own row's chunked append: honor it.
+        // The delete outran its own row's chunked append: honour it.
         g_tombstones.erase(t);
         UE_LOGI("email_sync: append from slot %u dropped -- tombstoned delete won the race",
                 static_cast<unsigned>(senderSlot));
@@ -253,10 +242,9 @@ ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) 
     }
     if (!UE::EnsureResolved()) return ApplyVerdict::NotAppliable;
     if (UE::AddEmail(row)) {
-        // ECHO-PROOF by CONTENT HASH: record the wire hash; the next poll's append
-        // branch finds this freshly-appended tail row by hash and marks it sent, so
-        // we never echo it back to the sender. Hash (not RowKey) because addEmail's
-        // laptop-UI rebuild can drift the row's per-process key before the poll runs.
+        // Echo-proof by content hash: the next poll's append branch finds this freshly appended
+        // tail row by hash and marks it sent. The hash rather than the row key, since addEmail's
+        // laptop rebuild can drift the key before the poll.
         g_applied.push_back({hash, Clock::now()});
         UE_LOGI("email_sync: applied email from slot %u (topic '%ls')",
                 static_cast<unsigned>(senderSlot), row.topic.c_str());
@@ -279,27 +267,26 @@ void ParkRow(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 }
 
 void CompleteAssembly(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
-    // FIFO-once-nonempty: while rows are parked, a newly completed blob applies
-    // BEHIND them, never ahead. Audit F-2: an UNSETTLED lane (!g_primed -- join
-    // load, world travel, array still filling) parks every arrival too, so the
-    // park is the ONE ordering point for the whole unsettled window.
+    // FIFO once non-empty: while rows are parked a newly completed blob applies behind them, never
+    // ahead. An unsettled lane (not primed: a join load, a world travel, the array still filling)
+    // parks every arrival too, so the park is the one ordering point for the whole unsettled
+    // window.
     if (!g_applyPark.empty() || !g_primed) { ParkRow(blob, senderSlot); return; }
     if (ApplyRowBlob(blob, senderSlot) == ApplyVerdict::NotAppliable)
         ParkRow(blob, senderSlot);
 }
 
 void DrainApplyPark() {
-    // Audit F-2: the drain anchor is the lane's OWN settle predicate (g_primed
-    // encodes count-stability via the 2-stable-poll prime), not bare engine-
-    // resolve -- after a mid-session world travel the array RESOLVES while still
-    // asynchronously filling, and applying into that window is the loss class
-    // one level down. While unprimed the park only absorbs (FIFO).
+    // The drain anchor is the lane's own settle predicate (primed encodes count stability), not
+    // bare engine resolve: after a mid-session world travel the array resolves while still filling
+    // asynchronously, and applying into that window loses rows. While unprimed the park only
+    // absorbs.
     if (!g_primed) return;
     const auto now = Clock::now();
     while (!g_applyPark.empty()) {
         ParkedRow& front = g_applyPark.front();
-        // Audit F-3: pace the stuck-front retry at 1 Hz REAL time (per-frame
-        // counting burned all 30 retries in ~0.4 s).
+        // The stuck-front retry paces at 1 Hz real time; per-frame counting burned every retry in
+        // well under a second.
         if (front.retries > 0 && now - front.lastAttempt < std::chrono::seconds(1)) break;
         const ApplyVerdict v = ApplyRowBlob(front.blob, front.senderSlot);
         if (v == ApplyVerdict::NotAppliable) {
@@ -314,7 +301,7 @@ void DrainApplyPark() {
     if (g_parkBackpressure && g_applyPark.size() < kParkCap / 2) SetParkBackpressure(false);
 }
 
-// --- Seeds arc: the ready-edge join seed (shared helper + this lane's adapter) ---
+// The ready-edge join seed: the shared helper and this lane's adapter.
 
 bool SeedHashArray(std::map<uint64_t, int32_t>& out) {
     if (!UE::EnsureResolved()) return false;
@@ -345,7 +332,7 @@ int SeedSendAppendToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int
         }
         return sent;
     }
-    return 0;  // raced away since capture -- fine (meadow :817 precedent)
+    return 0;  // raced away since the capture
 }
 
 int SeedSendDeleteToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int32_t count) {
@@ -367,9 +354,9 @@ coop::join_seed::Seeder g_seeder{kSeedAdapter};
 
 void CaptureJoinSnapshot(int peerSlot) {
     if (!IsHostRole()) return;
-    // Drill mutate control (design doc par.3): with the capture disabled the
-    // in-window drill email must NOT arrive (RED) -- proving the seed, not a
-    // leftover retry, is the delivery mechanism. Env-gated, drill-only.
+    // The drill's mutate control: with the capture disabled the in-window drill email must not
+    // arrive, proving the seed, not a leftover retry, is the delivery mechanism. Env-gated, drill
+    // only.
     if (coop::config::ReadEnv("VOTVCOOP_SEED_DISABLE") == "1") {
         UE_LOGW("%s: capture DISABLED by drill knob VOTVCOOP_SEED_DISABLE", "email_sync");
         return;
@@ -385,8 +372,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 }
 
 void OnDisconnectSlot(int peerSlot) {
-    // Slot teardown is a row transition (roster doctrine): the leaver's half
-    // assemblies and seed bracket must not survive into a recycled occupant.
+    // Slot teardown is a row transition: the leaver's half assemblies and seed bracket must not
+    // survive into a recycled occupant.
     if (peerSlot >= 0 && peerSlot < 256)
         g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
     g_seeder.Cancel(peerSlot);
@@ -400,24 +387,19 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     if (!UE::EnsureResolved()) return;
-    // Seeds arc: drain the apply park FIRST (every tick, not 1 Hz).
+    // The apply park drains first, every tick, not at the poll rate.
     DrainApplyPark();
     const auto now = Clock::now();
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollInterval;
 
-    // JOIN-EPISODE BOUNDARY (2026-07-11, user-observed live). While THIS client is
-    // inside its own join world-load (world_load_episode: Arm at BootStorySaveBlocking
-    // -> quiescence), saveSlot.emails is being torn down / re-materialized by the LOAD,
-    // not by any player verb -- so the shadow must never prime against, nor diff
-    // across, that window. Without this gate the mid-load prime latches onto rows the
-    // load then replaces (fresh instance keys): a small save's default rows ("hi",
-    // "welcome") read as removed.size()==2, slip UNDER the >32 bulk-desync gate, and
-    // broadcast EmailDelete -- the HOST then deletes its content-identical rows and
-    // announces "<client> deleted an email: hi". Same root class as the v106 destroy-
-    // seam host-wipe; the same source-anchored invariant closes it. Placed BEFORE the
-    // TTL sweeps so a host delete arriving mid-load parks in g_tombstones un-swept and
-    // lands after the post-load re-prime. Host never arms the episode (client-only).
+    // The join-episode boundary: while this client is inside its own join world load, the email
+    // array is torn down and re-materialised by the load, not by any player verb, so the shadow
+    // must never prime against or diff across that window. Otherwise a mid-load prime latches onto
+    // rows the load then replaces, a small save's default rows read as removed under the bulk
+    // gate, and the client broadcasts deletes the host then applies to its own content-identical
+    // rows. Placed before the TTL sweeps, so a host delete arriving mid-load parks unswept and
+    // lands after the post-load re-prime. Only a client arms the episode.
     if (coop::world_load_episode::InEpisode()) {
         if (g_primed) {
             g_primed = false;
@@ -429,13 +411,12 @@ void Tick() {
         return;
     }
 
-    // Stale-state sweeps (audit N-1 precedent: sweeping only on arrival left
-    // a quiet session holding dead entries indefinitely). 1 Hz over handfuls.
+    // The stale-state sweeps, 1 Hz over handfuls; sweeping only on arrival would leave a quiet
+    // session holding dead entries.
     g_assembler.Sweep(now, kAssemblyTTL);
-    // Audit F-4: a NON-EMPTY apply park is a live cross-dependency -- a parked
-    // append's tombstone must not wall-clock-expire before the park drains (the
-    // TTL is a leak-guard only, per the cross-lane-TTL lesson). Expiry resumes
-    // once the park is empty; entries merely age while it waits.
+    // A non-empty apply park is a live cross-dependency: a parked append's tombstone must not
+    // expire before the park drains, since the TTL is a leak guard only. Expiry resumes once the
+    // park is empty.
     if (g_applyPark.empty())
     for (auto it = g_tombstones.begin(); it != g_tombstones.end();) {
         if (now - it->second > kTombstoneTTL) {
@@ -451,11 +432,10 @@ void Tick() {
 
     const int32_t n = UE::EmailCount();
     if (n < 0) {
-        // World down (level transition) or array unresolved: the next world's
-        // rows are fresh allocations with fresh instance keys -- never diff
-        // across that boundary. Drop and re-prime silently at world-up.
-        // Tombstones go too (audit IMP-2: a prior-world tombstone must never
-        // eat a new-world append).
+        // World down (a level transition) or the array unresolved: the next world's rows are fresh
+        // allocations with fresh keys, never diffed across that boundary. Drop and re-prime
+        // silently at world-up; the tombstones go too, since a prior world's tombstone must never
+        // eat a new world's append.
         if (g_primed) {
             g_primed = false;
             g_shadow.clear();
@@ -468,12 +448,11 @@ void Tick() {
     }
 
     if (!g_primed) {
-        // First sight of the array this world: the rows are the save's history (a
-        // joiner got them via the v56 save transfer; the host's are its own) -- shadow
-        // them WITHOUT broadcasting. CRITICAL: the array loads ASYNCHRONOUSLY, so wait
-        // until the count has stopped climbing (held for 2 consecutive polls) before
-        // priming -- otherwise the rows that load AFTER the prime are mis-seen as new
-        // local appends and mass-broadcast to the joiner (the 2026-06-19 echo flood).
+        // First sight of the array this world: the rows are the save's history (a joiner got them
+        // from the save transfer, the host's are its own), shadowed without broadcasting. The array
+        // loads asynchronously, so the prime waits until the count has held for two consecutive
+        // polls; rows loading after the prime would read as new local appends and be
+        // mass-broadcast.
         if (n != g_primeLastCount) {
             g_primeLastCount = n;
             g_primeStable = 0;
@@ -497,10 +476,9 @@ void Tick() {
         g_primed = true;
         UE_LOGI("email_sync: shadow primed at %d existing email(s) (settled)", n);
     } else {
-        // Positional diff under the append-at-tail invariant: surviving rows
-        // keep their relative order; anything in the shadow that no longer
-        // matches the array prefix was deleted; the array tail past the
-        // matched prefix is new.
+        // The positional diff under the append-at-tail invariant: surviving rows keep their
+        // relative order, anything in the shadow that no longer matches the array prefix was
+        // deleted, and the tail past the matched prefix is new.
         std::vector<UE::RowKey> cur(static_cast<size_t>(n));
         bool readable = true;
         for (int32_t i = 0; i < n; ++i) {
@@ -514,53 +492,44 @@ void Tick() {
         std::vector<ShadowRow> next;
         next.reserve(static_cast<size_t>(n));
         std::vector<uint64_t> removed;
-        // Local peer's slot for the "<OwnNick> deleted an email" peer-action line
-        // (the subject is always a nickname). Computed once; the removed loop below
-        // is the local-delete branch (a remote delete erased the shadow synchronously
-        // in ApplyDeleteByHash, so it never appears here). Raw LocalPeerId: Announce
-        // resolves the local slot to LocalNickname() itself (the old Unknown->0
-        // forcing would misattribute a pre-assignment delete to the host under nick
-        // rendering; host's id IS 0 already).
+        // The local slot for the deleted-an-email feed line; the removed loop is the local-delete
+        // branch (a remote delete erased the shadow synchronously in ApplyDeleteByHash). The raw
+        // peer id: the announce resolves the local slot to the local nickname itself.
         const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
         size_t j = 0;
         std::vector<std::wstring> removedTopics;  // announces deferred past the bulk gate below
         for (ShadowRow& srow : g_shadow) {
             if (j < cur.size() && srow.key == cur[j]) {
-                // move, not copy: the topic wstring copied per surviving row per poll
-                // was ~2k allocs/s on a big save (audit 2026-07-10 LOW); g_shadow is
-                // replaced by `next` wholesale below, so moving out of it is safe.
+                // Moved, not copied: the topic copied per surviving row per poll was thousands of
+                // allocations a second on a big save, and the shadow is replaced wholesale below.
                 next.push_back(std::move(srow));
                 ++j;
             } else if (srow.hash != 0) {
-                // hash 0 = was unreadable at shadow time (v65 audit I-2 parity:
-                // the hash-unknown sentinel is not a wire key).
+                // Hash 0 means unreadable at shadow time; the sentinel is not a wire key.
                 removed.push_back(srow.hash);
                 removedTopics.push_back(std::move(srow.topic));
             }
         }
-        // Bulk-removed gate (2026-07-10, the append side's kBulkAppendThreshold made
-        // symmetric): the delete-verb census proved the ONLY game code removing from
-        // saveSlot.emails is ui_laptop.delEmail -- a PLAYER action -- so a bulk batch
-        // of removals in ONE poll cannot be gameplay; it is a shadow desync (world
-        // swap / array reset). Re-baseline silently: no announce, no EmailDelete
-        // broadcast (each would misattribute + mass-delete the peers' inboxes).
+        // The bulk-removed gate, symmetric with the append threshold: the game's only remover from
+        // the email array is the laptop's delete, a player action, so a bulk batch of removals in
+        // one poll cannot be gameplay; it is a shadow desync (a world swap, an array reset).
+        // Re-baselined silently, with no announce and no delete broadcast, each of which would
+        // misattribute and mass-delete the peers' inboxes.
         if (removed.size() > kBulkAppendThreshold) {
             UE_LOGW("email_sync: %zu rows removed in one poll -- shadow desync "
                     "re-baseline (adopted, NOT announced/broadcast)", removed.size());
             removed.clear();
             removedTopics.clear();
         }
-        // Announce each user delete to the shared feed so the other peers learn who
-        // deleted what. Only in an actual session (no point telling yourself solo).
+        // Each user delete goes to the shared feed, so the other peers learn who deleted what; only
+        // in a session.
         if (s->connected())
             for (const std::wstring& topic : removedTopics)
                 coop::peer_action_feed::Announce(localSlot,
                                                  L"deleted an email: " + topic);
-        // A bulk batch of new rows in ONE poll is a save load (history materializing),
-        // not gameplay -- adopt it as baseline and never broadcast it (the joiner gets
-        // history via the save transfer). Catches the case where the prime ran before
-        // the real save loaded (count sat stable at a menu/partial value), which the
-        // stabilize guard alone can miss. See kBulkAppendThreshold.
+        // A bulk batch of new rows in one poll is a save load, adopted as baseline and never
+        // broadcast. It catches a prime that ran before the real save loaded (the count sat stable
+        // at a menu or partial value), which the stabilise guard alone can miss.
         const bool bulkLoad = (cur.size() - j) > kBulkAppendThreshold;
         if (bulkLoad)
             UE_LOGW("email_sync: %zu new rows in one poll -- save-load re-baseline "
@@ -568,8 +537,8 @@ void Tick() {
         for (; j < cur.size(); ++j) {
             ShadowRow srow;
             srow.key = cur[j];
-            // Compute the row's STABLE content hash first -- the identity we correlate
-            // a wire-applied row on (the per-process RowKey can drift; see AddEmail).
+            // The row's stable content hash first, the identity a wire-applied row is correlated
+            // on.
             UE::Row r;
             uint64_t rowHash = 0;
             const bool rowReadable = UE::ReadRow(static_cast<int32_t>(j), r);
@@ -612,30 +581,25 @@ void Tick() {
                         static_cast<unsigned long long>(h));
             }
         }
-        // Disconnected deletes stay local-only: a later joiner converges via
-        // the save transfer, and there is no peer to inform now.
+        // Disconnected deletes stay local: a later joiner converges through the save transfer, and
+        // there is no peer to inform now.
     }
 
-    // Retry parked deletes against the freshly-synced shadow.
+    // Retry the parked deletes against the freshly synced shadow.
     for (auto it = g_tombstones.begin(); it != g_tombstones.end();) {
         if (ApplyDeleteByHash(it->first)) it = g_tombstones.erase(it);
         else ++it;
     }
 
-    // Broadcast pending appends in array order. HOST-ONLY (2026-07-09 authority
-    // audit): email is host-owned world state -- every addEmail site is
-    // world/story/system-authored (census), so the client is NOT an email-
-    // distribution authority. Gating the send on role()==Host closes the shared-
-    // inbox pollution vector (a client's diverged world-sim self-authoring a false
-    // email -> broadcast -> permanent host row) AND the startup transient before a
-    // client-side source-kill (e.g. serverbox's ticker_serverBreaker) latches.
-    // Authority-direction parity with weather/time/serverbox. The client keeps ALL
-    // apply + echo-proof bookkeeping (g_applied/prime/shadow/diff are load-bearing
-    // for the mirror); only this send is gated -- its locally-authored sent=false
-    // rows simply stay pending (never broadcast). Delete stays symmetric (a client
-    // USER-delete must propagate; echo-proofed by the synchronous g_shadow erase).
-    // Host rows stay pending while disconnected (audit I-1: dropping them would
-    // silently skip rows produced before the first connect).
+    // Broadcast pending appends in array order, host only: email is host-owned world state, since
+    // every addEmail site is world, story or system authored, so a client is not an email
+    // authority. Gating the send on the role closes the shared-inbox pollution vector (a client's
+    // diverged simulation authoring a false email into a permanent host row) and the startup
+    // transient before a client-side source kill latches. The client keeps all apply and
+    // echo-proof bookkeeping, since the shadow and the diff are load-bearing for the mirror; only
+    // the send is gated, and its locally authored rows stay pending. Delete stays symmetric: a
+    // client's user delete must propagate. Host rows stay pending while disconnected; dropping
+    // them would skip rows produced before the first connect.
     if (s->connected() && s->role() == coop::net::Role::Host) {
         for (size_t i = 0; i < g_shadow.size(); ++i) {
             ShadowRow& srow = g_shadow[i];
@@ -646,11 +610,9 @@ void Tick() {
                 continue;
             }
             if (!SendRow(s, r)) {
-                // Seeds arc (design doc par.2.6): refused with ZERO world-ready
-                // receivers = VACUOUS success -- every absent peer gets this row
-                // via save+seed; retrying across a future ready edge was the
-                // measured pre-existing DUPLICATE (audit I-1's hold-and-retry
-                // delivered a row the joiner already loaded from its save).
+                // Refused with zero world-ready receivers is vacuous success: every absent peer
+                // gets this row through the save and the seed, and retrying across a future ready
+                // edge delivered a row the joiner had already loaded from its save.
                 if (!s->AnyWorldReadyPeer()) { srow.sent = true; continue; }
                 break;  // channel refused with a live audience: retry next poll
             }
@@ -672,12 +634,12 @@ void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     std::wstring topic;
     if (ApplyDeleteByHash(p.contentHash, &topic)) {
-        // A remote peer deleted this shared email -- surface who, to the local feed.
+        // A remote peer deleted this shared email: surface who, to the local feed.
         coop::peer_action_feed::Announce(senderSlot, L"deleted an email: " + topic);
     } else {
-        // Deferred (row not present yet / transient misalignment): the tombstone retry
-        // in Tick applies it later WITHOUT an announce (senderSlot isn't carried on the
-        // retry path -- a rare edge; the delete still converges).
+        // Deferred (row not present yet, a transient misalignment): the tombstone retry in Tick
+        // applies it later without an announce, since the sender slot is not carried on the retry
+        // path.
         g_tombstones[p.contentHash] = Clock::now();
     }
 }
@@ -692,7 +654,7 @@ void OnDisconnect() {
     g_primeStable = 0;
     g_nextSeq = 1;
     g_nextPoll = {};   // no residual throttle into the next session
-    // Seeds arc: parks + seed brackets are session-scoped.
+    // The park and the seed brackets are session-scoped.
     g_applyPark.clear();
     SetParkBackpressure(false);
     g_seeder.Reset();
