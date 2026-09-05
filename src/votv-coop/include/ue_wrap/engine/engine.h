@@ -329,13 +329,6 @@ void* GetCharacterMovementComponent(void* characterPawn);
 // collision). Game thread.
 void* GetStaticMeshComponent(void* actor);
 
-// Write a FVector to a UMovementComponent's `Velocity` UPROPERTY (offset
-// resolved once at startup via reflection: FindPropertyOffset on UMovementComponent).
-// (Kept for potential future use; current v2 anim drive in RemotePlayer::
-// ApplyToEngine writes Velocity via a direct memory store at the known
-// 0xC4 offset rather than the reflection-resolved path.) Game thread only.
-bool SetMovementVelocity(void* movementComp, const FVector& velocity);
-
 // UActorComponent::SetComponentTickEnabled. Used to PARK the orphan
 // puppet's CharacterMovementComponent in puppet::SpawnPuppetMainPlayer --
 // the puppet's CMC would otherwise integrate gravity/walking + reset

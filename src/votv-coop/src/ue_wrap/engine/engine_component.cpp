@@ -10,8 +10,7 @@
 //   - UActorComponent: DestroyComponent, SetComponentTickEnabled
 //   - USkinnedMeshComponent: SetAnimTickAlways (raw byte write),
 //     SetSkeletalMesh, SetAnimClass
-//   - Character helpers: GetCharacterMovementComponent (via ChildObjectsOf),
-//     SetMovementVelocity (reflection-resolved property offset)
+//   - Character helpers: GetCharacterMovementComponent (via ChildObjectsOf)
 
 #include "ue_wrap/engine/engine.h"
 
@@ -168,8 +167,8 @@ FVector GetComponentRelativeLocation(void* component) {
 void* GetParticleSystemTemplate(void* particleSystemComponent) {
     if (!particleSystemComponent) return nullptr;
     // UParticleSystemComponent::Template is a UObjectProperty (UParticleSystem*). Resolve its
-    // offset ONCE via reflection (FindPropertyOffset walks the FProperty chain) -- same idiom as
-    // SetMovementVelocity below. The raw pointer read is safe (the component is game-thread-owned;
+    // offset ONCE via reflection (FindPropertyOffset walks the FProperty chain). The raw pointer
+    // read is safe (the component is game-thread-owned;
     // the caller polls on the game thread).
     static int32_t sTemplateOffset = -1;
     if (sTemplateOffset < 0) {
@@ -391,28 +390,6 @@ bool SetComponentTickEnabled(void* component, bool enabled) {
     ParamFrame f(sFn);
     f.Set<bool>(L"bEnabled", enabled);
     return Call(component, f);
-}
-
-bool SetMovementVelocity(void* movementComp, const FVector& velocity) {
-    if (!movementComp) return false;
-    // Resolve UMovementComponent::Velocity offset ONCE via reflection
-    // (FindPropertyOffset walks the class's FProperty chain). Cached.
-    static int32_t sVelocityOffset = -1;
-    if (sVelocityOffset < 0) {
-        void* mcClass = R::FindClass(L"MovementComponent");
-        if (!mcClass) {
-            UE_LOGE("engine: SetMovementVelocity -- UMovementComponent class not found");
-            return false;
-        }
-        sVelocityOffset = R::FindPropertyOffset(mcClass, L"Velocity");
-        if (sVelocityOffset < 0) {
-            UE_LOGE("engine: SetMovementVelocity -- 'Velocity' property not found on UMovementComponent");
-            return false;
-        }
-        UE_LOGI("engine: UMovementComponent::Velocity offset = 0x%X", sVelocityOffset);
-    }
-    *reinterpret_cast<FVector*>(reinterpret_cast<uint8_t*>(movementComp) + sVelocityOffset) = velocity;
-    return true;
 }
 
 }  // namespace ue_wrap::engine
