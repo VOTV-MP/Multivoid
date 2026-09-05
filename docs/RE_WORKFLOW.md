@@ -10,13 +10,13 @@ beyond being the loader, UE4SS is the everyday reverse-engineering tool.
 
 | Path | Role | Use |
 |---|---|---|
-| `Game_0.9.0n_HOST/` | host | hands-on hosting (`tools/mp.py host`) |
-| `Game_0.9.0n_CLIENT_1/` | client | hands-on joining (`tools/mp.py client`) |
+| `Game_0.9.0n_HOST/` | host | hosting a play session (`tools/mp.py host`) |
+| `Game_0.9.0n_CLIENT_1/` | client | joining a play session (`tools/mp.py client`) |
 | `Game_0.9.0n_CLIENT_2/` | second client | three-peer runs |
-| `Game_0.9.0n_CLIENT_3/` | development | autonomous runs (`tools/mp.py smoke`), Live View, Lua probes, Blueprint dumps |
+| `Game_0.9.0n_CLIENT_3/` | development | scripted runs (`tools/mp.py smoke`), Live View, Lua probes, Blueprint dumps |
 
-Each copy keeps its own saved games, logs and screenshots, so an autonomous run never collides
-with hands-on play. The development copy also carries UE4SS's bundled Lua mods and the UE4SS
+Each copy keeps its own saved games, logs and screenshots, so a scripted run never collides
+with a play session. The development copy also carries UE4SS's bundled Lua mods and the UE4SS
 log. `tools/deploy-all.ps1` deploys the built DLL to all four after a build.
 
 ## What UE4SS gives during development
