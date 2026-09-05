@@ -1,21 +1,14 @@
-// coop/props/prop_key_index.cpp -- the key -> live-actor index family of
-// coop::prop_element_tracker (see coop/props/prop_element_tracker.h).
-//
-// Extracted from prop_element_tracker.cpp 2026-07-10 when the tracker passed
-// the 800-LOC soft cap (the census walk left first; this is the second slice).
-// Behavior preserved byte-for-byte: same mutex scopes, same lazy-evict /
-// overwrite / ownership-gate semantics, same throttle window.
-//
-// One TU owns the whole index: the state (g_keyToActor / g_actorToKey), the
-// private insert/evict helpers the tracker's Mark/Unmark/Reap call (shared via
-// prop_element_tracker_detail.h), and the public lookups + collectors built on
-// it. The tracker never touches the maps directly.
+// coop/props/prop_key_index.cpp -- the key-to-live-actor index of coop::prop_element_tracker
+// (see coop/props/prop_element_tracker.h). One TU owns the whole index: the state, the private
+// insert and evict helpers the tracker's mark, unmark and reap call (shared through
+// prop_element_tracker_detail.h), and the public lookups and collectors built on it. The
+// tracker never touches the maps directly.
 
 #include "coop/props/prop_element_tracker.h"
 
 #include "prop_element_tracker_detail.h"  // co-located private header (src tree, not include/)
 
-#include "ue_wrap/engine/engine.h"  // GetActorLocation (F1 keyed save-time map)
+#include "ue_wrap/engine/engine.h"  // GetActorLocation
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
@@ -33,35 +26,21 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// ---- Key -> live-actor index (O(1) FindByKeyString replacement) ----------
-// Maintained alongside g_actorToPropElementId: every keyed prop that commits a
-// Prop Element (MarkPropElement) is indexed key -> {actor, internalIdx} here,
-// and evicted on UnmarkKnownKeyedProp / ReapDeadLocalPropElements. This is THE
-// fix for the connect-time re-snapshot balloon: remote_prop::OnSpawn used to
-// de-dupe EACH of ~2316 re-snapshotted props via ue_wrap::prop::FindByKeyString,
-// a full ~150k-object GUObjectArray walk WITH a per-candidate wstring alloc +
-// GetKey UFunction dispatch -- O(N_props x N_objects) -> ~5.3M wstring allocs ->
-// the client RSS ballooned to multi-GB and the session stalled. With this index
-// each de-dupe is a single hash lookup + one IsLiveByIndex.
-//
-// Bidirectional: g_keyToActor for the lookup, g_actorToKey for actor-keyed
-// removal (Unmark/Reap have the actor, not the key). The forward entry caches
-// the GUObjectArray InternalIndex so ResolveLiveActorByKey can validate liveness
-// via IsLiveByIndex WITHOUT dereferencing a possibly-freed actor pointer (the
-// [[feedback-islive-unsafe-on-freed-cached-pointer]] rule).
-//
-// Keys are NOT globally unique across a level reload (a purged prop's Key can
-// reappear on a fresh actor) and an actor address can be GC-recycled. Insert
-// OVERWRITES (newest live actor wins). A stale forward entry that survives an
-// address recycle (old key still pointing at a since-reused address+old index)
-// is HARMLESS: IsLiveByIndex rejects it on lookup (the recycled slot no longer
-// matches the old index), and ResolveLiveActorByKey lazily evicts it. Removal
-// is by the actor's CURRENT key mapping so it never clobbers a newer prop that
-// recycled the same address.
-//
-// g_keyIndexMutex is a LEAF: every path acquires it alone (no engine calls, no
-// other mutex held) and releases it before any IsLiveByIndex / FindByKeyString /
-// Registry / ElementDeleter call -> ABBA-free with all sibling mutexes.
+// The key-to-live-actor index, maintained beside the actor-to-element map: every keyed prop
+// that commits a Prop element is indexed key to {actor, internal index}, and evicted on
+// unmark and on the dead-element reap. It replaces the by-key object-array walk in the
+// connect-time spawn dedupe: one full walk with a per-candidate string allocation and a
+// key-getter dispatch, per re-snapshotted prop, ballooned the client to gigabytes and stalled
+// the session; with the index each dedupe is one hash lookup and one IsLiveByIndex.
+// Bidirectional: the forward map for the lookup, the reverse for actor-keyed removal (unmark
+// and reap have the actor, not the key). The forward entry caches the object-array index so
+// the lookup validates liveness without dereferencing a possibly freed pointer. Keys are not
+// unique across a level reload (a purged prop's key can reappear on a fresh actor) and an
+// actor address can be recycled, so insert overwrites (the newest live actor wins); a stale
+// forward entry surviving an address recycle is harmless, since the by-index check rejects it
+// and the lookup evicts it lazily, and removal goes by the actor's current key so it never
+// clobbers a newer prop at the same address. The mutex is a leaf: acquired alone, released
+// before any engine or registry call, so it cannot invert against a sibling mutex.
 struct KeyActorEntry {
     void*   actor       = nullptr;
     int32_t internalIdx = -1;
@@ -72,11 +51,10 @@ std::unordered_map<void*, std::wstring> g_actorToKey;
 
 }  // namespace
 
-// Insert / refresh the key index for `actor` (forward + reverse). No-op for
-// empty/None keys (non-syncable props are never looked up by key). If `actor`
-// previously carried a DIFFERENT key (a rekey), the old forward entry is dropped
-// first so it can't linger pointing at the live actor under a dead key.
-// Caller must hold NO other mutex.
+// Insert or refresh the index for `actor`, both directions. No-op for empty or None keys
+// (non-syncable props are never looked up by key). A rekey drops the old forward entry first,
+// so it cannot linger pointing at the live actor under a dead key. The caller holds no other
+// mutex.
 void IndexKeyForActor_(void* actor, const std::wstring& key, int32_t internalIdx) {
     if (!actor || key.empty() || key == L"None") return;
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
@@ -91,10 +69,9 @@ void IndexKeyForActor_(void* actor, const std::wstring& key, int32_t internalIdx
     g_actorToKey[actor] = key;
 }
 
-// Remove the key index entries for `actor` (both directions). Erases the forward
-// entry only if it still points at THIS actor (so an address-recycle by a newer
-// prop, which overwrote g_actorToKey[actor], is not disturbed). Caller must hold
-// NO other mutex.
+// Remove the entries for `actor`, both directions. The forward entry goes only if it still
+// points at this actor, so a newer prop that recycled the address is not disturbed. The
+// caller holds no other mutex.
 void EraseKeyIndexForActor_(void* actor) {
     if (!actor) return;
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
@@ -107,7 +84,7 @@ void EraseKeyIndexForActor_(void* actor) {
     g_actorToKey.erase(ait);
 }
 
-// ---- Key -> live-actor lookup (public) ----------------------------------
+// The public lookups.
 
 void IndexActorKey(void* actor, const std::wstring& key) {
     if (!actor || key.empty() || key == L"None") return;
@@ -120,9 +97,9 @@ size_t KeyIndexSize() {
 }
 
 void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out) {
-    // v122 (S): the sweep's keyed universe under no-passive-mint. Leaf-mutex copy;
-    // liveness/ownership validation is the caller's (IsLiveByIndex + current-key
-    // re-validation before any doom). No engine calls under the lock.
+    // The sweep's keyed universe. A leaf-mutex copy; liveness and ownership validation is the
+    // caller's (by-index liveness, current-key re-validation before any doom). No engine calls
+    // under the lock.
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
     out.reserve(out.size() + g_keyToActor.size());
     for (const auto& kv : g_keyToActor)
@@ -130,9 +107,9 @@ void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out) {
 }
 
 void EvictKeyIndexEntryIfStale(void* actor, const std::wstring& key) {
-    // v122 (S): drop a sweep-detected stale pairing (recycled slot / un-reindexed
-    // rekey) -- erase only while the maps still hold exactly this key<->actor pair,
-    // so a concurrent re-index of either side is never clobbered.
+    // Drop a sweep-detected stale pairing (a recycled slot or an un-reindexed rekey); erase only
+    // while the maps still hold exactly this pair, so a concurrent re-index of either side is
+    // never clobbered.
     if (!actor || key.empty()) return;
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
     auto kit = g_keyToActor.find(key);
@@ -142,16 +119,12 @@ void EvictKeyIndexEntryIfStale(void* actor, const std::wstring& key) {
 }
 
 size_t DrainDeadKeyIndexEntries() {
-    // v122 (audit IMPORTANT-1): the garbage collector for ELEMENT-LESS keyed entries.
-    // Under no-passive-mint a client's save-loaded keyed props live ONLY in this index
-    // (no Registry row), so an actor dying WITHOUT K2_DestroyActor (mass purge / engine
-    // teardown) leaves its entry invisible to the element reaper. Owners of this drain:
-    // the post-purge world-change re-seed edge (the mass-death moment) and the
-    // stale-index self-heal (ReconcileIndexThrottled) -- both cold; plus the join
-    // sweep's per-entry evict and the lookup lazy-evict for the steady trickle.
-    // Snapshot under the leaf mutex, validate liveness OUTSIDE it (IsLiveByIndex reads
-    // only the GUObjectArray slot -- no deref of possibly-freed pointers), erase under
-    // the mutex with the same still-maps-this-pair ownership gate as the lazy evict.
+    // The collector for element-less keyed entries: a client's save-loaded keyed props live only
+    // in this index (no registry row), so an actor dying without a destroy call (a mass purge, an
+    // engine teardown) leaves an entry the element reaper cannot see. Its owners: the post-purge
+    // world-change re-seed edge and the stale-index self-heal, both cold, plus the join sweep's
+    // per-entry evict and the lookup's lazy evict for the steady trickle. Snapshot under the leaf
+    // mutex, validate liveness outside it, erase under it with the same still-this-pair gate.
     std::vector<KeyIndexEntry> snap;
     CollectKeyIndexEntries(snap);
     size_t drained = 0;
@@ -182,12 +155,10 @@ void* FindLiveActorByKey(const std::wstring& key) {
         actor = it->second.actor;
         internalIdx = it->second.internalIdx;
     }
-    // Validate liveness WITHOUT dereferencing the cached pointer (it may have
-    // been GC-freed since indexing). IsLiveByIndex reads only the GUObjectArray
-    // slot at the cached index. A stale entry (slot recycled / index no longer
-    // points back) reports not-live -> lazily evict it so a never-looked-up-again
-    // recycle leak can't accumulate, then return nullptr (caller falls back to
-    // the cold scan, which will also miss -> behaves exactly like pre-index).
+    // Validate liveness without dereferencing the cached pointer (it may have been freed since
+    // indexing): the by-index check reads only the object-array slot. A stale entry reports not
+    // live; evict it lazily so a recycle never looked up again cannot accumulate, then return
+    // null and the caller falls back to the cold scan.
     if (R::IsLiveByIndex(actor, internalIdx)) return actor;
     {
         std::lock_guard<std::mutex> lk(g_keyIndexMutex);
@@ -205,28 +176,23 @@ void* ResolveLiveActorByKey(const std::wstring& key, bool* outFellBackToScan) {
     if (outFellBackToScan) *outFellBackToScan = false;
     if (key.empty() || key == L"None") return nullptr;
     if (void* a = FindLiveActorByKey(key)) return a;  // O(1) maintained-index hit
-    // Cold fallback: a prop that exists locally but isn't indexed yet. The
-    // GUObjectArray scan preserves exact pre-index behavior; it runs only on an
-    // index miss. A SUCCESSFUL fallback means the index was STALE -- a live prop
-    // with this key exists but wasn't indexed (the index points at dead actors
-    // after a world-change purge the slow re-seed hasn't caught up with). The
-    // caller uses outFellBackToScan to trigger a throttled re-seed so the rest of
-    // a snapshot de-dupe burst resolves O(1) instead of each paying this scan
-    // (the [[project-bug-prop-resnapshot-leak]] balloon). A scan MISS (genuinely
-    // absent prop) leaves the flag false -- nothing to re-seed, the caller spawns.
+    // The cold fallback: a prop that exists locally but is not indexed yet; the object-array scan
+    // runs only on an index miss. A successful fallback means the index was stale (it points at
+    // dead actors after a world-change purge the slow re-seed has not caught up with), and the
+    // caller uses the flag to trigger a throttled re-seed so the rest of a snapshot burst
+    // resolves in constant time. A scan miss leaves the flag false: nothing to re-seed, the
+    // caller spawns.
     void* scanned = ue_wrap::prop::FindByKeyString(key);
     if (scanned && outFellBackToScan) *outFellBackToScan = true;
     return scanned;
 }
 
 bool ReconcileIndexThrottled() {
-    // Self-heal for a STALE key index detected mid-de-dupe (a world-change purged
-    // the indexed actors and the steady-state re-seed -- gated on the slow 256/4s
-    // reaper -- hasn't caught up). Drain the dead Prop Elements then re-seed so the
-    // key index reflects the CURRENT loaded world; the in-flight snapshot burst
-    // then de-dupes O(1). Throttled so only the FIRST stale fallback in a burst
-    // pays the ~150k-object re-seed walk (the rest hit the freshly-rebuilt index).
-    // Game-thread only (drain/re-seed are GT contracts; the de-dupe caller is GT).
+    // The self-heal for a stale key index detected mid-dedupe (a world change purged the indexed
+    // actors and the steady-state re-seed, gated on the slow reaper, has not caught up): drain
+    // the dead Prop elements, then re-seed, so the index reflects the current world and the
+    // in-flight burst dedupes in constant time. Throttled so only the first stale fallback in a
+    // burst pays the full re-seed walk. Game thread only.
     static std::mutex sThrottleMutex;
     static std::chrono::steady_clock::time_point sLast{};
     static bool sEver = false;
@@ -243,8 +209,7 @@ bool ReconcileIndexThrottled() {
         drained += r;
         if (r < 4096) break;  // backlog cleared
     }
-    // v122: also drain dead ELEMENT-LESS keyed entries (no Registry row -> the element
-    // reap above cannot see them). "Index is stale" is precisely this moment.
+    // Also the element-less keyed entries, which the element reap above cannot see.
     drained += DrainDeadKeyIndexEntries();
     const size_t added = ReSeedKnownKeyedProps();
     UE_LOGI("prop_element_tracker: stale-index self-heal -- drained %zu dead, re-seeded %zu new keyed prop(s) into the key index (snapshot de-dupe now O(1))",
@@ -253,11 +218,9 @@ bool ReconcileIndexThrottled() {
 }
 
 void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out) {
-    // The key index (g_keyToActor) holds exactly the live keyed props that minted
-    // a Prop Element with a non-empty wire-key -- i.e. the keyed Aprop_C set the
-    // save persists. Keyless chipPiles never enter it (IndexKeyForActor_ no-ops
-    // empty keys), which is exactly R2's scope (diff/delete by key). Leaf-mutex
-    // copy; no engine calls under lock.
+    // The index holds exactly the live keyed props that minted a Prop element with a non-empty
+    // wire key, the keyed set the save persists; keyless chipPiles never enter it, which is the
+    // key diff's scope. A leaf-mutex copy; no engine calls under the lock.
     std::lock_guard<std::mutex> lk(g_keyIndexMutex);
     out.reserve(out.size() + g_keyToActor.size());
     for (const auto& kv : g_keyToActor) out.insert(kv.first);
@@ -265,14 +228,10 @@ void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out) {
 
 void CollectTrackedKeyedPropTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out) {
-    // F1 (2026-07-09): host save-time KEYED-prop positions by host eid (see the header). The key
-    // index g_keyToActor holds exactly the live keyed Aprops the save persists (keyless chipPiles
-    // never enter it). Copy the actor set under the leaf mutex, then read eid + pos OUTSIDE the lock
-    // (no engine calls under the mutex -- same discipline as CollectTrackedKeyedPropKeys). No self-seed
-    // needed: keyed props are already index-tracked by the connect seed (that is what the R2 key-diff +
-    // the snapshot walk both rely on); an unindexed keyed prop is simply skipped (the snapshot's own
-    // pos still applies for it -- only a HOST-MOVED prop needs this correction, and a moved prop is
-    // tracked).
+    // The host's save-time keyed-prop positions by host eid (see the header). Copy the actor set
+    // under the leaf mutex, then read the eid and position outside it. No self-seed needed: keyed
+    // props are index-tracked by the connect seed; an unindexed one is skipped, since only a
+    // host-moved prop needs this correction and a moved prop is tracked.
     struct KeyedActor { void* actor; int32_t idx; };
     std::vector<KeyedActor> actors;
     {
@@ -282,7 +241,8 @@ void CollectTrackedKeyedPropTransforms(
             actors.push_back({kv.second.actor, kv.second.internalIdx});
     }
     for (const KeyedActor& ka : actors) {
-        // IsLiveByIndex (not raw IsLive): the index may hold a recycled slot; the by-index check rejects it.
+        // By index, not the raw liveness check: the index may hold a recycled slot, which the
+        // by-index check rejects.
         if (!ka.actor || !R::IsLiveByIndex(ka.actor, ka.idx)) continue;
         const coop::element::ElementId eid = GetPropElementIdForActor(ka.actor);
         if (eid == coop::element::kInvalidId || eid == 0u) continue;
