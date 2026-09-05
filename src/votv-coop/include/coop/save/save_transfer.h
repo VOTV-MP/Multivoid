@@ -1,36 +1,22 @@
-// coop/save_transfer.h -- v56 save-transfer join bootstrap (host save -> joining client).
-//
-// THE architecture fix for divergent client worlds (user mandate 2026-06-10: "pull
-// all objects data at connecting time and place/spawn objects naturally"): a
-// menu-mode joining client no longer generates its own fresh world (whose first-run
-// gib spawns put office walls in the air and whose RNG litter never matches). It
-// connects AT THE MENU, requests the HOST's save, receives it chunked on the Bulk
-// lane, writes it as the EPHEMERAL slot `s_coop_dl`, loads it through the game's own
-// LoadStorySave (the engine places every prop naturally, at rest, with the HOST's
-// keys), then announces ClientWorldReady -- at which point the host runs the connect
-// replay (snapshot bracket + state broadcasts) as a thin all-exact-key true-up for
-// whatever moved since the save was written.
-//
-// NO-STEAL lifecycle (user requirement): the slot is `zcoop_<pid>.sav` -- a prefix
-// the game's save MENU never lists, per-instance so same-machine peers can't
-// collide. It lives for the SESSION (the game re-reads the slot for sub-level
-// subsaves -- deleting right after load would break those; design-workflow B5
-// verdict), then is deleted at disconnect, and a boot sweep removes stale zcoop_*
-// older than 1 h (never a concurrent sibling's). Clients are already blocked from
-// saving during coop (save_guard policy 2026-05-30), so the game never refreshes
-// it. data.sav (global progression) is never transferred. Honest limit: bytes on
-// a client's disk can be copied by a determined user mid-session; this is
-// hygiene + deterrence, not DRM.
-//
-// Threading: the HOST side (OnRequest / TickHost / CancelForSlot) runs on the game
-// thread (event_feed + net_pump). The CLIENT side spans three threads -- the bulk
-// sink (net thread), OnBegin (game thread), the harness join poll (timeline
-// thread) -- so client state sits behind one small mutex. File I/O only; the one
-// engine interaction (loading the slot) is the HARNESS's, not ours (principle 7).
+// coop/save/save_transfer.h -- the save-transfer join bootstrap: the host's save to the joining
+// client. A menu-mode joining client does not generate its own fresh world (its first-run
+// spawns and litter would never match the host's): it connects at the menu, requests the
+// host's save, receives it chunked on the bulk lane, writes it as the ephemeral slot
+// zcoop_<pid>, loads it through the game's own story load (the engine places every prop at
+// rest, with the host's keys), then announces world-ready, and the host runs the connect
+// replay (the key diff, the snapshot bracket, the state broadcasts) as a thin true-up for
+// whatever moved since the save was written. The zcoop_ prefix is one the game's save menu
+// never lists, per instance so same-machine peers cannot collide. The slot lives for the
+// session (the game re-reads it after the first load), is deleted at disconnect, and a boot
+// sweep removes stale zcoop_* older than an hour, never a concurrent sibling's. Clients are
+// blocked from saving during coop, so the game never refreshes it; only the slot file is
+// transferred, never the global progression file; a copy of the bytes mid-session is not
+// prevented. The host side runs on the game thread; the client side spans the net thread (the
+// chunk and begin sinks) and the harness join loop (the polls), behind one small mutex.
 
 #pragma once
 
-#include "coop/element/element.h"  // ElementId (v86 Path 1c save-time pile map)
+#include "coop/element/element.h"  // ElementId
 #include "coop/net/protocol.h"
 #include "ue_wrap/core/types.h"  // ue_wrap::FVector
 
@@ -41,136 +27,125 @@ namespace coop::net { class Session; }
 
 namespace coop::save_transfer {
 
-// The ephemeral client-side slot name, per-instance: "zcoop_<pid>". The zcoop_
-// prefix is OUTSIDE the game's menu-listed families (s_/b_), so it never shows
-// in the load menu; GameMode comes from SaveTransferBeginPayload.gameMode (the
-// host's), threaded through LoadStorySave's forceGameMode (the prefix-match
-// can't map an unknown prefix).
+// The ephemeral client-side slot name, per instance: zcoop_<pid>. The prefix is outside the
+// game's menu-listed families, so it never shows in the load menu; the game mode comes from
+// the begin payload (the host's), threaded through the story load's forced mode, since the
+// prefix match cannot map an unknown prefix.
 std::wstring CoopSlotName();
 
-// Register the bulk sink with the session + remember the session pointer for
-// sends. Call once at harness boot, before any session starts.
+// Register the chunk and begin sinks with the session and remember the session pointer for
+// sends. Once at harness boot, before any session starts.
 void Install(coop::net::Session* session);
 
-// ---- HOST side (game thread) ---------------------------------------------------
+// Host side, game thread.
 
-// The slot name the host's world was loaded from (harness boot / Host-Game picker
-// set this). The transfer reads `<SaveGames>\<slot>.sav` fresh per request.
+// The slot name the host's world was loaded from (harness boot or the host picker set it).
+// The transfer reads the slot's .sav under the save directory fresh per request.
 void SetHostSlot(const std::wstring& slot);
 
-// Read the host slot name (v73 per-player inventory: keys the per-save
-// <SaveGames>\<slot>\coop_players\ dir). Empty until SetHostSlot runs. Game thread.
+// The host slot name; the per-player inventory keys its per-save directory on it. Empty until
+// SetHostSlot. Game thread.
 const std::wstring& HostSlot();
 
-// A client asked for the save (event_feed SaveTransferRequest). Arms the slot's
-// stream; the actual FILE READ happens in TickHost under the torn-read guard
-// (VOTV writes saves non-atomically in place -- save_guard.h: 4 in-place writes,
-// no temp+rename -- so the file is only trusted when size+mtime are stable
-// across two polls AND two full reads CRC-identical; design-workflow B1).
-// A missing file sends SaveTransferBegin{totalBytes=0} -> fresh-world fallback.
+// A client asked for the save. Arms the slot's stream; the file read happens in TickHost under
+// the torn-read guard (the game writes saves non-atomically in place, so the file is trusted
+// only when its size and mtime are stable across consecutive polls and two full reads are
+// CRC-identical). A missing file sends a zero-byte begin: the fresh-world fallback.
 void OnRequest(int peerSlot);
 
-// Host pump: per active slot, run the stable-read attempt (until the blob is
-// captured) then chunk sends paced by send-buffer backpressure (a failed send
-// stops the pass; retried next tick). Called from net_pump::Tick on the host.
+// The host pump: per active slot, the stable-read attempt until the blob is captured, then
+// chunk sends paced by send-buffer backpressure (a failed send stops the pass; retried next
+// tick). From the net pump's tick on the host.
 void TickHost();
 
-// Peer left mid-stream -- drop its pump state (net_pump disconnect edge).
+// A peer left mid-stream: drop its pump state (the disconnect edge).
 void CancelForSlot(int peerSlot);
 
-// v86 Path 1c: the SAVE-TIME position of keyless chipPile `eid` for `peerSlot`,
-// captured at the blob instant (OnRequest). Returns false (out untouched) for a
-// stale-fallback join, an unseeded/post-save pile, or an out-of-range slot. The
-// connect-replay snapshot builder (prop_snapshot) stamps it onto the pile's
-// PropSpawn so the client twin-destroy reconciles a host-moved-in-window pile.
-// Game thread.
+// The save-time position of keyless chipPile `eid` for `peerSlot`, captured at the blob
+// instant (OnRequest). False (out untouched) for a stale-fallback join, an unseeded or
+// post-save pile, or an out-of-range slot. The connect-replay snapshot builder stamps it onto
+// the pile's spawn so the client's twin destroy reconciles a pile the host moved in the join
+// window. Game thread.
 bool TryGetSaveTimePileXform(int peerSlot, coop::element::ElementId eid, ue_wrap::FVector& out);
 
-// docs/piles/09 (4th mirror-identity instance): record the PRE-GRAB position of pile `eid` into
-// every active join slot's blob pile map. Called by OnPileGrabPre (host, game thread) at the
-// InpActEvt PRE edge, BEFORE the BP morphs the pile -> clump (so the pos == its save/native pos).
-// No-op outside a join. Lets the kToPile LAND convert carry the save-time key for the client.
+// Record the pre-grab position of pile `eid` into every active join slot's blob pile map.
+// Called on the host at the seam where a grabbed pile's clump is born, before the pile dies
+// in place, so the position is still its save or native one. A no-op outside a join; lets the
+// land convert carry the save-time key for the client.
 void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVector& preGrabLoc);
 
-// docs/piles/09: like TryGetSaveTimePileXform but searches ALL active join slots (BroadcastConvert
-// is a single fan-out, not per-joiner; a pile eid is unique). Game thread.
+// Like TryGetSaveTimePileXform but across all active join slots (the convert broadcast is a
+// single fan-out, not per joiner; a pile eid is unique). Game thread.
 bool TryGetSaveTimePileXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out);
 
-// b3 (v90) + F1 (2026-07-09): at `peerSlot`'s world-ready, send a PropSnapPos position correction for every
-// save-authoritative entity -- chipPILE and KEYED prop -- whose CURRENT host actor position diverges from THIS
-// joiner's save-time position (a pile/prop the host MOVED during the join window). A pile carries no position
-// in the connect snapshot; a keyed prop DOES, but the joiner's loadObjects RECREATES it at the save pos AFTER,
-// clobbering it -- both stale on the joiner, both fixed by re-asserting the host's pos at quiescence. Iterates
-// g_blobPileXforms + g_blobKeyedXforms[peerSlot], resolves each eid's live host actor, position-compares, and
-// SendReliableToSlot's the diverged. Called from ConnectReplayForSlot AFTER the gate opened. Game thread.
+// At `peerSlot`'s world-ready, send a position correction for every save-authoritative entity
+// (chipPile and keyed prop) whose current host actor position diverges from this joiner's
+// save-time position: a pile or prop the host moved during the join window. A pile carries no
+// position in the connect snapshot; a keyed prop does, but the joiner's load re-creates it at
+// the save position afterwards. Both are fixed by re-asserting the host's position at
+// quiescence. From ConnectReplayForSlot after the snapshot trigger. Game thread.
 void FlushDivergedSavePositionsForSlot(int peerSlot);
 
-// scope A (kerfur off->active dup retire, 2026-06-24): the SAVE-TIME position of OFF-form kerfur `eid`,
-// captured at the blob instant (OnRequest), searched across ALL active peer slots' blob maps (the host
-// turn-on broadcast that carries this is a single fan-out, not per-joiner, and a kerfur off-prop's host
-// eid is unique). Returns false (out untouched) if no slot captured this eid (stale-fallback join, a
-// kerfur bought after the save, or one already ACTIVE at every blob instant). The host stamps it onto the
-// KerfurConvert at BindFormActor so the joining client retires its stale local off-prop at the exact key.
-// Game thread.
+// The save-time position of off-form kerfur `eid`, captured at the blob instant and searched
+// across every active peer slot's blob map (a kerfur off-prop's host eid is unique). False
+// (out untouched) if no slot captured it: a stale-fallback join, a kerfur bought after the
+// save, or one already active at every blob instant. The kerfur table reads it at the first
+// conversion to record the off-prop's origin eid, which the connect snapshot's NPC spawn
+// carries to the joiner as the eid to retire. Game thread.
 bool TryGetSaveTimeKerfurXformAnySlot(coop::element::ElementId eid, ue_wrap::FVector& out);
 
-// R2 (2026-06-17, MTA Packet_EntityRemove): send EXPLICIT per-key PropDestroy to
-// `peerSlot` for every keyed prop its save-transfer BLOB contained that the host's
-// LIVE world no longer has (e.g. a prop the host grabbed/destroyed/converted during
-// the ~30-60s the joiner spent downloading + loading). Diffs the key-set captured
-// at blob-capture (OnRequest, LIVE-capture path) against the current live key-set.
-// This replaces the divergence sweep's destructive "unclaimed -> infer-delete" for
-// the save-transfer case (where every kerfur-dupe regression lived). Per-slot (the
-// divergence is specific to THIS joiner's blob), Bulk lane. Call from
-// ConnectReplayForSlot BEFORE prop_snapshot::TriggerForSlot so removes precede the
-// snapshot's adds. No-op if no live-capture baseline was taken (stale-fallback join).
-// Game thread.
+// Send an explicit per-key destroy to `peerSlot` for every keyed prop its blob contained that
+// the host's live world no longer has (a prop the host grabbed, destroyed or converted while
+// the joiner downloaded and loaded): the key set captured at the blob instant diffed against
+// the live key set, the MTA entity-remove shape. Per slot (the divergence is this joiner's
+// blob's), on the bulk lane ahead of the snapshot so the removes precede the adds. A no-op
+// without a live-capture baseline (a stale-fallback join), which the divergence sweep then
+// owns. Game thread.
 void SendBlobDivergenceDeletes(int peerSlot);
 
-// ---- CLIENT side ----------------------------------------------------------------
+// Client side.
 
 enum class ClientState : int {
-    Idle = 0,         // not armed (env/autotest flow, or host role)
-    WaitingBegin,     // armed + request sent (or queued) -- nothing received yet
+    Idle = 0,         // not armed (an env or script client, or the host role)
+    WaitingBegin,     // armed and the request sent or queued; nothing received yet
     Receiving,        // Begin seen and/or chunks flowing
-    ReadySlotWritten, // blob complete + CRC ok + s_coop_dl.sav written -- LOAD IT
-    NoSaveAvailable,  // host has no save (totalBytes=0) -> fresh-world fallback
-    Failed,           // CRC mismatch / write failure -> fresh-world fallback (logged)
+    ReadySlotWritten,  // blob complete, CRC ok, the zcoop slot written: load it
+    NoSaveAvailable,  // the host has no save (a zero-byte begin): the fresh-world fallback
+    Failed,           // CRC mismatch or write failure: the fresh-world fallback, logged
 };
 
-// Arm the transfer (menu-mode browser join only; call BEFORE StartCoopSession).
-// Env/autotest clients that already booted a world never arm -- they keep the
-// fresh-world + true-up baseline and the host never streams to them.
+// Arm the transfer (a menu-mode browser join only; before the session starts). Env and script
+// clients that already booted a world never arm: they keep the fresh-world and true-up
+// baseline and the host never streams to them.
 void ClientArm();
 bool ClientArmed();
 
-// Connect edge reached (net_pump, client): send the SaveTransferRequest once if
-// armed. Idempotent.
+// The connect edge (client): send the request once if armed. Idempotent.
 void ClientNoteConnected();
 
-// SaveTransferBegin arrived. NET THREAD (W3): diverted by the session receive path to
-// save_transfer's BeginSink_, deliberately the same thread as the chunk sink -- an announce
-// processed on a different thread from its payload is what created the unbounded pre-Begin window.
-// Everything this can reach (including MaybeFinishLocked_'s CRC + slot write) already ran on the
-// net thread in the common case, where the final chunk completes the transfer.
+// The begin arrived. Net thread: the session's receive path diverts it to this module's begin
+// sink, deliberately the same thread as the chunk sink, since an announce processed on a
+// different thread from its payload opened an unbounded pre-begin window. Everything this
+// reaches, including the CRC check and the slot write, already runs on the net thread when
+// the final chunk completes the transfer.
 void OnBegin(const coop::net::SaveTransferBeginPayload& p);
 
-// Poll the state machine (harness timeline thread drives the join on it).
+// Poll the state machine; the harness's join wait loop drives the join on it.
 ClientState GetClientState();
 
-// Download progress for the loading screen (bytes). total==0 until Begin.
+// Download progress for the loading screen, in bytes; the total is 0 until the begin.
 void GetProgress(uint32_t& doneBytes, uint32_t& totalBytes);
 
-// The host's GameMode for the transferred save (from Begin; 0=story default).
-// The harness threads it into LoadStorySave's forceGameMode for the zcoop slot.
+// The host's game mode for the transferred save (from the begin; 0 is the story default). The
+// harness threads it into the story load's forced mode for the zcoop slot.
 uint8_t ReceivedGameMode();
 
-// Boot-time sweep: delete stale zcoop_*.sav older than ~1 h (crash leftovers),
-// NEVER a fresh one (a concurrent same-machine sibling may be mid-join).
+// Boot-time sweep: delete stale zcoop_*.sav older than an hour (crash leftovers), never a
+// fresh one (a concurrent same-machine sibling may be mid-join).
 void CleanupStaleSlotsAtBoot();
 
-// Full client-side reset + delete THIS instance's zcoop_<pid>.sav (net_pump
-// aggregate disconnect -- the end of the no-steal window).
+// Full client-side reset and delete this instance's zcoop_<pid>.sav (the aggregate
+// disconnect, the end of the slot's life).
 void OnDisconnect();
 
 }  // namespace coop::save_transfer
