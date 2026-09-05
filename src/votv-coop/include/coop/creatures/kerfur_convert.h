@@ -1,57 +1,17 @@
-// coop/kerfur_convert.h -- host-authoritative kerfur NPC <-> prop conversion
-// (v67, 2026-06-12). Fixes the user-reported dupe: "client sees a turned off
-// kerfur-object, client turns it on, client turns it off - now host sees 2
-// kerfurs lying turned off."
-//
-// GROUND TRUTH (kismet disassembly, research/findings/votv-kerfur-convert-RE-
-// 2026-06-12.md):
-//   - turn OFF: radial menu -> kerfurOmega_C::actionName(Player, Hit, "turn_off")
-//     [cross-object, ProcessEvent-VISIBLE] -> ubergraph `if (kill) return;` ->
-//     dropKerfurProp() [LOCAL self-call, PE-invisible]: spawns the floppy prop
-//     (if hasFloppy, with data/readWrites copied), spawns the `dropProp` class
-//     (Aprop_kerfurOmega_C skin variant) at the NPC's transform (or Z=20000 in
-//     the flesh room), copies `sentient`, K2_DestroyActor()s the NPC. A SENTIENT
-//     kerfur refuses (audio blip only -- no spawn, no destroy).
-//   - turn ON: radial menu -> prop_kerfurOmega_C::actionOptionIndex(.., Action==8)
-//     [PE-VISIBLE] -> spawnKerfuro() [LOCAL]: BeginDeferred+FinishSpawning the
-//     `spawnKerfur` NPC class at spwn+50Z (yaw only); on success K2_DestroyActor()s
-//     the prop, on failure shows a hint and the prop SURVIVES.
-//
-// WHY IT DUPED: every spawn/destroy inside the verbs is BP-INTERNAL
-// (EX_CallMath BeginDeferredActorSpawnFromClass; by-name K2_DestroyActor) --
-// none of it dispatches through ProcessEvent, so our interceptors/observers
-// never saw it (zero npc-suppress[client] / npc-sync[host]-broadcast lines in
-// every real-session log). A client's conversion ran fully LOCAL (untracked
-// rogue kerfur, then an untracked local prop), and even a HOST conversion
-// spawned an NPC no client could see until the next connect-edge world walk.
-//
-// THE FIX (MTA request shape -- DoorOpenRequest precedent):
-//   - CLIENT: PRE-interceptors on the two PE-visible menu dispatchers CANCEL the
-//     local conversion and queue a request; Tick() (game thread) resolves the
-//     WIRE eid off the actor's mirror Element (the host id -- the local tracker
-//     only holds a peer-range shadow) and sends KerfurConvertRequest{eid,
-//     toProp}. (Cancel-at-the-script-fn is the ambient_spawner_suppress
-//     precedent; the verbs themselves are the v44 EX_LocalVirtualFunction trap
-//     -- not hookable.)
-//   - HOST: the request handler resolves eid -> actor, validates (live, right
-//     class, the BP's `kill` guard replicated from the disassembly), executes
-//     the REAL verb via ProcessEvent, then CONVERGES the BP-internal side
-//     effects the pipelines could not see:
-//       actor !IsLive       -> npc_sync::SyncDestroyedNpcActor /
-//                              prop_lifecycle::SyncDestroyedPropActor
-//       new prop (+ floppy) -> ExpressSpawnedProp over a targeted GUObjectArray
-//                              walk (untracked prop_kerfurOmega_C- /
-//                              prop_floppyDisc_C-descendants)
-//       new NPC             -> npc_sync::RegisterExistingWorldNpcs (broadcasts
-//                              EntitySpawn for newly-registered while connected)
-//   - HOST's OWN menu use: the dispatch passes through (the BP converts
-//     natively); the conversion is then detected EVENT-DRIVEN at the fresh
-//     prop's expression edge (TryAdoptFreshKerfurProp -- the generic prop
-//     pipeline gives the kerfur layer first refusal), with the ALIVE->DEAD
-//     death-watch poll as the 5 Hz backstop (solo-host / seam-missed spawns).
-//
-// Principle 7: gameplay/network module; engine access via ue_wrap reflection /
-// game_thread only. One feature, own file pair.
+// coop/creatures/kerfur_convert.h -- host-authoritative kerfur conversion, NPC to prop and
+// back; without it a client's toggle left a second kerfur lying on the host. The game's
+// verbs: turn off runs dropKerfurProp, which spawns the prop (and a floppy if carried) at the
+// NPC's transform and destroys the NPC, refused for a sentient kerfur or one flagged kill;
+// turn on runs spawnKerfuro, which spawns the NPC and destroys the prop on success. Every
+// spawn and destroy inside them is blueprint-internal, dispatched past ProcessEvent, so no
+// interceptor sees a conversion. The host detects its own conversions event-driven at the
+// chokepoints (the fresh prop's expression edge for turn off, the prop's destroy edge for turn
+// on) and converges them onto the wire; a client's conversion is detected by a 5 Hz
+// death-watch poll (a kerfur mirror whose actor died while its element is still present),
+// which sends a request for the host to run the real verb and claims the local ghost the
+// invisible spawn made; the poll is also the solo host's backstop. The host executor lives in
+// kerfur_convert_host.h, the client apply and the ghost custody in kerfur_convert_client.h.
+// Gameplay module: engine access through ue_wrap, game thread only.
 
 #pragma once
 
@@ -67,68 +27,53 @@ struct KerfurConvertBroadcastPayload;
 
 namespace coop::kerfur_convert {
 
-// Idempotent install, retried each net-pump tick until the kerfur BP classes
-// load: resolves kerfurOmega_C::actionName + prop_kerfurOmega_C::actionOptionIndex
-// (+ their 'name' / 'action' param offsets) and registers the two PRE
-// interceptors; resolves dropKerfurProp / spawnKerfuro for the host-execution
-// path + the `kill` field offset for the replicated guard + the prop/floppy
-// classes for the converge walk. Caches `session`.
+// Idempotent install, retried from the pump tick until the kerfur classes load: resolves the
+// menu dispatcher (for the command relay) and its name parameter, the two verbs and the kill
+// flag offset for the host execution path, and the prop and floppy classes for the converge
+// walk; registers the one interceptor. Refuses to install if a verb grew parameters.
 void Install(coop::net::Session* session);
 
-// The HOST executor half (OnConvertRequest + ConvergeAfterConversion + the
-// request-verb bracket / ActiveRequestVerbEid) lives in kerfur_convert_host.h
-// (s27 cut).
+// The host executor half (the request handler, the converge, the request-verb bracket) lives
+// in kerfur_convert_host.h.
 
-// The CLIENT half (the KerfurConvert wire apply + the conversion-ghost custody:
-// claim/cleanup/TakeParkedGhostByEid) lives in kerfur_convert_client.h (s27 cut).
+// The client half (the wire apply and the conversion-ghost custody) lives in
+// kerfur_convert_client.h.
 
-// Drain the deferred-action queue (pushed by the interceptors, which may run
-// on a parallel-anim worker and must not call engine functions or walk the
-// element registries): client entries resolve the wire eid off the actor's
-// mirror Element + send the request; host entries converge -- one full tick
-// AFTER they were pushed (two-phase arming; a nested dispatch inside the
-// conversion verb can drain this queue mid-verb otherwise). Cheap no-op when
-// empty. Game thread (net-pump tick).
+// Drive the death-watch poll: the client's conversion detector (the request plus the ghost
+// claim) and the solo host's backstop, since a host prop's element is drained synchronously
+// with its death and the poll's premise never holds there. A cheap no-op between the 5 Hz
+// passes. Game thread, the pump tick.
 void Tick();
 
-// HOST: FIRST REFUSAL on the generic expression of a kerfur PROP-form actor (take-8
-// 2026-07-12 host-own toggle dupe RCA). The turn_off verb's fresh prop spawns EX-internally;
-// since spawn_authority Inc-1 (2026-07-10) the generic pipeline (FinishSpawningActor seam
-// drain + census incremental express) claims and PropSpawn-broadcasts it within one tick --
-// the death-watch poll's converge then finds it TRACKED, gives up, and never broadcasts
-// KerfurConvert: the client keeps its NPC mirror AND gains a generic prop mirror = the dupe.
-// EVERY generic express lane must therefore offer a kerfur prop HERE before broadcasting:
-// if the actor is UNTRACKED and a dead, un-handled kerfur NPC watch sits within 5 m, this IS
-// the conversion product -- converge it now (mint the eid silently, release the dead NPC
-// element, BindFormActor -> KerfurConvert broadcast, floppies) and return true (caller must
-// NOT express). Otherwise (tracked = established identity; hand-place; purchase) return false
-// -- the generic keyed-prop path is correct for it. The kerfur is ONE entity: KerfurConvert
-// is its sole conversion wire signal (redesign 10.3). Host + game thread only (no-op else).
+// Host: first refusal on the generic expression of a kerfur prop-form actor. The turn-off
+// verb's fresh prop spawns invisibly and the generic pipeline would claim and broadcast it as
+// a keyed prop within a tick, leaving the client with its NPC mirror and a prop mirror, the
+// duplicate; so every generic express lane offers a kerfur prop here first. If the actor is
+// untracked and a dead, unhandled kerfur NPC watch sits within the verb's spawn radius, this
+// is the conversion product: converge it now (mint the eid silently, release the dead NPC
+// element, rebind the form, broadcast the convert, floppies) and return true, and the caller
+// must not express. Otherwise false (a tracked prop is an established identity; a hand-placed
+// or bought one is an ordinary spawn) and the generic keyed-prop path is correct. The kerfur
+// is one entity and the convert is its sole conversion wire signal. Host, game thread.
 bool TryAdoptFreshKerfurProp(void* actor);
 
-// BOTH ROLES: FIRST REFUSAL on the generic DESTROY of a kerfur PROP-form actor (take-9
-// 2026-07-13 turn-on pair RCA) -- the destroy-edge twin of TryAdoptFreshKerfurProp. The
-// turn-on verb spawnKerfuro is SPAWN-then-DESTROY (kismet: BeginDeferred+FinishSpawning the
-// NPC -> IsValid -> K2_DestroyActor self), so when the prop's destroy seam fires INSIDE the
-// verb the conversion-product NPC already exists ZERO ticks old -- a SYNCHRONOUS premise no
-// periodic enroll lane can beat. If a fresh unowned kerfur NPC sits within the spawn radius,
-// this death IS conversion churn the kerfur layer owns; the caller (destroy seam) must NOT
-// broadcast PropDestroy:
-//   CLIENT: suppress the keyed-destroy relay (take-9 bug 1: the relay killed the host's
-//     authoritative prop BEFORE the turn-on request landed -> "no live prop" -> the kerfur
-//     deleted on every peer). The poll's request+ghost machinery stays the client driver.
-//   HOST: converge INLINE at the destroy edge -- RegisterHostNpcSilent + BindFormActor ->
-//     ONE KerfurConvert broadcast, no generic PropDestroy (take-9 bug 2: the host's own
-//     turn-on had NO converge at all -- this same seam drains the prop Element synchronously
-//     with the actor death, so the poll's "element present + actor dead" premise NEVER holds
-//     for a host prop; the client kept a stale off-prop + never saw the NPC).
-// No adjacent fresh NPC -> false: a genuine destroy (hold-R into hand, incinerator) keeps
-// the generic relay. `dyingEid` = the seam's pre-Unmark element id (kInvalidId -> host
-// declines: no wire identity to converge). Game thread (the destroy seam).
+// Both roles: first refusal on the generic destroy of a kerfur prop-form actor, the destroy
+// twin of TryAdoptFreshKerfurProp. The turn-on verb spawns the NPC and then destroys the
+// prop, so when the prop's destroy seam fires inside the verb the conversion-product NPC
+// already exists, zero ticks old, a synchronous premise no periodic enroll lane can beat. If
+// a fresh unowned kerfur NPC sits within the spawn radius, this death is conversion churn the
+// kerfur layer owns and the caller must not broadcast a destroy: the client suppresses the
+// keyed-destroy relay (it would kill the host's authoritative prop before the turn-on request
+// lands, and the kerfur would vanish on every peer), the poll's request and ghost machinery
+// staying its driver; the host converges inline (register the NPC silently, rebind the form,
+// one convert broadcast), since its prop element is drained synchronously with the death and
+// the poll's premise never holds. No adjacent fresh NPC: false, and a genuine destroy keeps
+// the generic relay. `dyingEid` is the seam's element id before the unmark; invalid means the
+// host declines (no wire identity to converge). Game thread, the destroy seam.
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
-// Clear per-session state (the poll watch + the poll throttle) and fan the
-// disconnect to the client/host halves (parked ghosts; the request bracket).
+// Clear per-session state (the poll watch and its throttle) and fan the disconnect to the
+// client and host halves (parked ghosts; the request bracket).
 void OnDisconnect();
 
 }  // namespace coop::kerfur_convert
