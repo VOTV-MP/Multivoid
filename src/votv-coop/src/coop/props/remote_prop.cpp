@@ -12,7 +12,6 @@
 #include "coop/element/mirror_managers.h"  // PropMirrors
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/creatures/kerfur_entity.h"  // NotifyKerfurPropMirrorBound
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_echo_suppress.h"
