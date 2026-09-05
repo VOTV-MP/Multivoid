@@ -57,6 +57,20 @@ import subprocess
 import sys
 import time
 
+def safe_print(msg):
+    """print() that cannot kill the run on a narrow console code page.
+
+    Every diagnostic this tool emits may quote doc text, and doc text here is routinely
+    non-ASCII (Cyrillic user quotes, arrows, em dashes). A cp1251 stdout raises on those, and
+    a REPORTING path must never be able to abort the operation it is reporting on.
+    """
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "ascii"
+        print(msg.encode(enc, "replace").decode(enc, "replace"))
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import lessons_gate as LG  # noqa: E402  -- build_corpora / CITE_ROOTS (same directory)
@@ -1117,7 +1131,13 @@ def run_close(env, args):
             print("reading order: {} clause(s) moved to a destination, {} CUT, {} EXEMPT-LOST"
                   .format(len(moved), len(cut), len(lost)))
         for _, raw in cut[:12]:
-            print("  CUT (found in no doc): " + raw[:140])
+            # `safe_print`, not `print`: a Windows console inherits the ANSI code page
+            # (cp1251 on this box) and the clauses this guard exists to SHOW are exactly the
+            # ones carrying arrows, dashes and Cyrillic. On 2026-09-05 the close died here
+            # with UnicodeEncodeError on a U+2192 -- the reading-order guard crashed the close
+            # while doing its job, AFTER the census had been written, so the run was neither
+            # closed nor cleanly abandoned.
+            safe_print("  CUT (found in no doc): " + raw[:140])
         # An exempt line is a record of what the USER said. PRINTING it is a post-mortem -- the
         # ledger's own row says a detector where it cannot prevent what it names is not a guard
         # -- and `ro-bytes` is RATCHETED, so a close could otherwise EARN the ratchet by
