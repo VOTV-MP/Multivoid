@@ -32,33 +32,29 @@ namespace UP = ue_wrap::prop;
 
 namespace {
 
-// Controls. The F1 menu writes these from the render thread; Update() reads them
-// on the game thread -- atomics, no lock. A layer/radius change sets g_dirty so
-// the candidate cache rebuilds on the next Update instead of waiting out the
-// refresh interval (the user sees the checkbox take effect immediately).
+// Controls: the dev menu writes these from the render thread and Update reads them on the
+// game thread; atomics, no lock. A layer or radius change sets the dirty flag, so the
+// candidate cache rebuilds on the next Update instead of waiting out the refresh interval.
 std::atomic<bool>  g_enabled{false};
 std::atomic<bool>  g_layerNames{true};
 std::atomic<bool>  g_layerNet{true};
 std::atomic<bool>  g_layerPhys{false};
-std::atomic<bool>  g_layerHealth{true};  // 2026-07-11 user ask: creature + prop hp
+std::atomic<bool>  g_layerHealth{true};
 std::atomic<float> g_radiusM{25.f};
 std::atomic<bool>  g_dirty{false};
 
-// Candidate cache -- GAME THREAD ONLY (built by Refresh_, read by Project_).
-// Larger than kMaxLabels: the player moves between refreshes, so the per-tick
-// projection re-gates by CURRENT distance against a deeper distance-sorted pool.
+// The candidate cache, game thread only (built by Refresh_, read by Project_). Larger than
+// kMaxLabels: the player moves between refreshes, so the per-tick projection re-gates by
+// current distance against a deeper distance-sorted pool.
 constexpr int kMaxEntries = 96;
-// Refresh cadence: the rebuild walks GUObjectArray + reads every candidate's
-// location (the ue_wrap/prop.h FindNearest cost profile -- "one-shot fine, never
-// per-frame"). Every ~2 s behind an explicit dev toggle keeps it cold; the
-// per-tick projection keeps label POSITIONS live in between.
+// Refresh cadence: the rebuild walks the object array and reads every candidate's location,
+// one-shot work never done per frame; every 2 s behind an explicit dev toggle keeps it cold,
+// and the per-tick projection keeps the label positions live in between.
 constexpr int kRefreshEveryNTicks = 120;
 
 struct Entry {
     void*   actor = nullptr;
-    int32_t idx   = -1;     // GUObjectArray InternalIndex -- IsLiveByIndex revalidation
-                            // per tick (a GC purge frees actors without notice; never
-                            // deref before validating, registry.h:160 contract)
+    int32_t idx   = -1;     // object-array index for the per-tick by-index revalidation (a purge frees actors without notice)
     uint8_t kind  = 2;
     char    line1[56] = {};
     char    line2[56] = {};
@@ -70,16 +66,15 @@ int  g_tick = 0;
 int  g_sinceRefresh = kRefreshEveryNTicks;  // first enabled tick refreshes immediately
 int  g_trackedInRange = 0;
 int  g_untrackedInRange = 0;
-// Registry totals for the status line, sampled at refresh cadence (audit WARN-4:
-// reading HostCount/LocalCount in Project_ took the registry mutex 60x/s for a
-// number that only needs to be ~2 s fresh).
+// Registry totals for the status line, sampled at refresh cadence: reading them per
+// projection took the registry mutex 60 times a second for a number that only needs to be
+// 2 s fresh.
 size_t g_regHost = 0;
 size_t g_regLocal = 0;
-bool g_publishedAnything = false;  // game-thread-local: skip the publish-empty
-                                   // mutex while disabled and already clear
+bool g_publishedAnything = false;  // game-thread-local: skip the publish-empty mutex while disabled and already clear
 
-// Published snapshot (the nameplate pattern: game thread writes, render thread
-// copies). g_hasAny mirrors "enabled" for the lock-free HUD gate.
+// The published snapshot (the nameplate pattern: the game thread writes, the render thread
+// copies).
 std::mutex g_mu;
 Snapshot   g_snap;
 
@@ -97,8 +92,8 @@ void PublishEmpty_(const char* status) {
     Publish_(s);
 }
 
-// Narrow a reflection wstring into a fixed ASCII buffer (label text; FName
-// strings are ASCII in practice, anything else becomes '?').
+// Narrow a reflection wstring into a fixed ASCII buffer; FName strings are ASCII in practice,
+// anything else becomes '?'.
 void AsciiInto_(char* dst, size_t cap, const std::wstring& w) {
     size_t i = 0;
     for (; i + 1 < cap && i < w.size(); ++i) {
@@ -113,25 +108,16 @@ float DistCm_(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// ---- health layer (2026-07-11, user ask: creature + prop health) ------------
-// Sources, in order:
-//   1. a float 'health' property anywhere on the actor's class chain
-//      (creatures: fossilhound@0x57C / grayboar / npc_zombie / ...; special
-//      props: ATV, prop_fish, prop_snack; + class-chain 'maxHealth' when
-//      present -- FindPropertyOffset climbs SuperStruct);
-//   2. prop fallback: Aprop_C.physicsImpact (Ucomp_physicsImpact_C) --
-//      comp.health = the live pool, comp.damageData.health = the configured
-//      max (health is field 0 of Fstruct_breakableProp).
-// Raw memory reads through reflection-resolved offsets -- no UFunction
-// dispatch -- read at Project_ time (~30 Hz x <=kMaxLabels) so the numbers
-// are LIVE during damage testing. Offsets cache per UClass* (game-thread
-// only); a class pointer recycled across a world swap aliases an old entry,
-// but a re-cooked same-BP class has the identical layout, so a stale hit
-// still reads the right offsets.
-// Decals (2026-07-11 follow-up ask): every dirt/crack/blood decal is an
-// Agrime_C {process@0x250, maxProcess@0x268, clean(sponge,...)} -- the
-// X-out-of-X "how much until it disappears" pool. Read as a second vital
-// source ("proc a/b") through the same class-chain offset cache.
+// The health layer. Sources, in order: a float 'health' property anywhere on the actor's
+// class chain (creatures and a few special props such as the ATV, with a class-chain
+// 'maxHealth' when present); then the prop fallback, the physics-impact component's live
+// health and its damage data's configured maximum. Raw memory reads through
+// reflection-resolved offsets, no UFunction dispatch, read at projection time so the numbers
+// are live during damage testing. Offsets cache per class pointer (game thread only); a class
+// pointer recycled across a world swap aliases an old entry, but a re-cooked same-blueprint
+// class has the identical layout, so a stale hit still reads the right offsets. Decals: every
+// dirt, crack or blood decal is a grime actor with a process pool (how much until it
+// disappears), read as a second vital source through the same class-chain offset cache.
 struct HealthOff {
     int32_t health = -1;
     int32_t maxHealth = -1;
@@ -149,7 +135,7 @@ T RawRead_(void* obj, int32_t off) {
     return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
-// `isProcess` = the numbers are a grime-decal process pool ("proc"), not hp.
+// `isProcess`: the numbers are a decal process pool, not hp.
 bool ReadVitals_(void* actor, float& cur, float& max, bool& isProcess) {
     isProcess = false;
     void* cls = R::ClassOf(actor);
@@ -159,8 +145,8 @@ bool ReadVitals_(void* actor, float& cur, float& max, bool& isProcess) {
         HealthOff ho;
         ho.health    = R::FindPropertyOffset(cls, L"health");
         ho.maxHealth = R::FindPropertyOffset(cls, L"maxHealth");
-        // Only probe the decal pool where no health exists (grime_C has no
-        // 'health'; a class with both would be showing hp anyway).
+        // Only probe the decal pool where no health exists (a class with both would show hp
+        // anyway).
         if (ho.health < 0) {
             ho.process    = R::FindPropertyOffset(cls, L"process");
             ho.maxProcess = R::FindPropertyOffset(cls, L"maxProcess");
@@ -199,11 +185,10 @@ bool ReadVitals_(void* actor, float& cur, float& max, bool& isProcess) {
     return true;
 }
 
-// Extra admissions for the health layer's candidate walk (sticky class pointer
-// + SuperStruct walk -- the IsClassDescendantOfProp idiom, prop.cpp):
-//   Character -- creatures/puppets (the LOCAL player is skipped at the call
-//                site; a label pinned to the camera is noise);
-//   grime_C   -- the dirt/crack/blood decal family (process pools).
+// Extra admissions for the health layer's candidate walk (a sticky class pointer and a
+// superstruct walk, the prop lineage test's idiom): Character for creatures and puppets (the
+// local player is skipped at the call site, a label pinned to the camera being noise) and the
+// grime class for the decal family.
 bool IsLineageOf_(std::atomic<void*>& sticky, const wchar_t* clsName, void* obj) {
     void* base = sticky.load(std::memory_order_acquire);
     if (!base) {
@@ -222,8 +207,8 @@ bool IsLineageOf_(std::atomic<void*>& sticky, const wchar_t* clsName, void* obj)
 std::atomic<void*> g_characterCls{nullptr};
 std::atomic<void*> g_grimeCls{nullptr};
 
-// Identity text for one candidate, baked once per refresh (stable between
-// refreshes; per-tick work is position + projection only).
+// Identity text for one candidate, baked once per refresh; the per-tick work is position and
+// projection only.
 void BuildLines_(Entry& e, void* obj, bool tracked, uint32_t eid, bool mirror,
                  bool wantNames, bool wantNet, bool wantPhys) {
     const bool isProp = UP::IsDescendantOfProp(obj);
@@ -238,10 +223,9 @@ void BuildLines_(Entry& e, void* obj, bool tracked, uint32_t eid, bool mirror,
     }
 
     if (wantNet) {
-        // Key suffix: the save key is a long GUID-ish string; the last 8 chars
-        // are enough to match a log line. Untracked-but-KEYED is itself a
-        // finding (a keyed actor the tracker never seeded), so show the key
-        // for untracked entries too.
+        // Key suffix: the save key is a long GUID-like string, and its last 8 characters are enough
+        // to match a log line. Untracked but keyed is itself a finding (a keyed actor the tracker
+        // never seeded), so the key shows for untracked entries too.
         const std::wstring key = UP::GetInteractableKeyString(obj);
         char keySuf[12] = {};
         if (!key.empty() && key != L"None") {
@@ -260,9 +244,8 @@ void BuildLines_(Entry& e, void* obj, bool tracked, uint32_t eid, bool mirror,
     }
 
     if (wantPhys && isProp) {
-        // Live body state vs the SAVE flags -- `sleep` is what the save says,
-        // IsActorRootBodyAtRest is what physics is DOING (the falling-walls
-        // discriminator, see the v55 body-awake stamp).
+        // Live body state against the save flags: `sleep` is what the save says, the at-rest query
+        // is what physics is doing.
         const bool sim = !E::IsActorRootBodyAtRest(obj);
         std::snprintf(e.line3, sizeof(e.line3), "%s%s%s%s",
                       sim ? "sim" : "rest",
@@ -272,10 +255,10 @@ void BuildLines_(Entry& e, void* obj, bool tracked, uint32_t eid, bool mirror,
     }
 }
 
-// Rebuild the candidate cache: tracked element-registry entries (Prop + Npc)
-// plus a GUObjectArray walk for UNTRACKED prop-lineage / keyed-interactable /
-// chipPile actors -- the local-only orphans are exactly the problem objects this
-// overlay exists to expose. Game thread.
+// Rebuild the candidate cache: the tracked element-registry entries (Prop and Npc) plus an
+// object-array walk for untracked prop-lineage, keyed-interactable and chipPile actors; the
+// local-only orphans are exactly the problem objects this overlay exists to expose. Game
+// thread.
 void Refresh_(const ue_wrap::FVector& eye, void* lp) {
     const float radiusCm  = g_radiusM.load(std::memory_order_relaxed) * 100.f;
     const bool  wantNames = g_layerNames.load(std::memory_order_relaxed);
@@ -296,9 +279,8 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
     std::unordered_set<void*> seen;
     seen.reserve(512);
 
-    // 1) Tracked elements. SnapshotActorsByType copies under the registry mutex;
-    //    the actor pointers may already be GC-purged -> IsLiveByIndex BEFORE any
-    //    deref (registry.h contract; the 2026-05-30 connect-edge AV lesson).
+    // Tracked elements. The snapshot copies under the registry mutex; the actor pointers may
+    // already be purged, so the by-index liveness check comes before any dereference.
     auto& reg = element::Registry::Get();
     std::vector<element::Registry::ActorIdPair> pairs;
     for (const auto type : {element::ElementType::Prop, element::ElementType::Npc}) {
@@ -313,28 +295,22 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
     }
     g_trackedInRange = static_cast<int>(cands.size());
 
-    // 2) Untracked world objects of the prop family. Same walk idiom AND same
-    //    universe predicate as prop_element_tracker::SeedWalk_ (CDO skip by
-    //    name, IsLive gate): IsKeyedInteractable = Aprop + trashBitsPile +
-    //    garbageClump + actorChipPile lineages. Deliberately NOT doors/
-    //    appliances/etc -- those sync via interactable channels, not the
-    //    element registry, so an "UNTRACKED" label on them would be a false
-    //    alarm.
+    // Untracked world objects of the prop family, the same walk idiom and universe predicate as
+    // the tracker's seed walk (the CDO skip by name, the liveness gate): the keyed-interactable
+    // lineages. Deliberately not doors or appliances, which sync through the interactable
+    // channels rather than the element registry, so an untracked label on them would be a false
+    // alarm.
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        // Check order (cheap lineage pointer-compares first, IsLive last) is the
-        // SeedWalk_ idiom, deliberately: IsLive's own first act is a deref of
-        // obj's memory (reflection.h:58), so hoisting it gains no safety and
-        // would run the SEH-guarded check on every one of ~250k slots instead
-        // of the ~3k lineage matches. An ObjectAt pointer is mapped for the
-        // duration of this game-thread task (GC purges run between tasks).
-        // Health layer (2026-07-11): ALSO admit ACharacter-lineage actors
-        // (creatures, puppets -- a fossilhound gets a label + hp even though it
-        // isn't prop-lineage) and grime_C decals (dirt/crack/blood process
-        // pools). Same cheap pointer-walk cost class as IsKeyedInteractable;
-        // the local player is skipped (camera-pinned noise).
+        // Check order, the cheap lineage pointer compares first and the liveness check last: the
+        // liveness check's first act is a dereference of the object's memory, so hoisting it gains
+        // no safety and would run the guarded check on every slot instead of the few lineage
+        // matches. An object-array pointer stays mapped for the duration of this game-thread task
+        // (purges run between tasks). The health layer also admits Character-lineage actors
+        // (creatures, puppets) and grime decals, the same pointer-walk cost class; the local player
+        // is skipped.
         if (!UP::IsKeyedInteractable(obj) &&
             !(wantHp && obj != lp &&
               (IsLineageOf_(g_characterCls, L"Character", obj) ||
@@ -350,8 +326,8 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
     g_regHost  = reg.HostCount();
     g_regLocal = reg.LocalCount();
 
-    // Nearest first; keep the closest kMaxEntries (the per-tick projection caps
-    // again at kMaxLabels by CURRENT distance).
+    // Nearest first; keep the closest kMaxEntries (the per-tick projection caps again at
+    // kMaxLabels by current distance).
     std::sort(cands.begin(), cands.end(),
               [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
     if (cands.size() > static_cast<size_t>(kMaxEntries))
@@ -370,8 +346,8 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
     }
 }
 
-// Re-project the cached candidates at their CURRENT location (a falling wall
-// moves between refreshes -- the label must track it) and publish. Game thread.
+// Re-project the cached candidates at their current location (a falling wall moves between
+// refreshes, and the label must track it) and publish. Game thread.
 void Project_(void* pc, const ue_wrap::FVector& eye) {
     const float radiusCm = g_radiusM.load(std::memory_order_relaxed) * 100.f;
     const float fadeFromCm = radiusCm * 0.85f;  // opaque inside, fading at the rim
@@ -399,9 +375,8 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
         std::memcpy(L.line2, e.line2, sizeof(L.line2));
         std::memcpy(L.line3, e.line3, sizeof(L.line3));
         if (wantHp) {
-            // Built LIVE per projection (unlike the identity lines): hp/process
-            // move between the 2 s refreshes and the whole point is watching
-            // them tick during damage/clean/cement testing.
+            // Built live per projection, unlike the identity lines: hp and process move between
+            // refreshes, and watching them tick is the point.
             float cur = 0.f, max = 0.f;
             bool isProc = false;
             if (ReadVitals_(e.actor, cur, max, isProc)) {
@@ -412,8 +387,8 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
                 } else if (cur > 0.f) {
                     std::snprintf(L.line4, sizeof(L.line4), "%s %.1f", tag, cur);
                 }
-                // cur<=0 with no max = an uninitialized/absent pool ("hp 0.0" on
-                // every plain prop) -- meaningless, stay silent (user 2026-07-11).
+                // Zero with no maximum is an uninitialised or absent pool (every plain prop):
+                // meaningless, so stay silent.
             }
         }
         ++snap.count;
@@ -440,11 +415,11 @@ void InitFromIni() {
 }
 
 void Update() {
-    // Dev info overlay (net identity / phys state labels = ESP on a joined
-    // client). Same self-clear as toggle-off while the gate denies.
+    // A dev overlay (net identity and physics labels are wallhack material on a joined client):
+    // the same self-clear as toggle-off while the gate denies.
     if (!g_enabled.load(std::memory_order_acquire) || !coop::dev_gate::Allowed()) {
-        // Self-clear once so a stale snapshot doesn't linger after toggle-off;
-        // after that the disabled cost is this one atomic load per tick.
+        // Self-clear once so a stale snapshot does not linger after toggle-off; after that the
+        // disabled cost is this one atomic load per tick.
         if (g_publishedAnything) PublishEmpty_(nullptr);
         if (!g_entries.empty()) g_entries.clear();
         g_sinceRefresh = kRefreshEveryNTicks;
@@ -464,8 +439,8 @@ void Update() {
         return;
     }
 
-    // Viewer = camera eye (falls back to the actor when the camera manager isn't
-    // resolvable -- e.g. the first frames of a level).
+    // The viewer is the camera eye, falling back to the actor when the camera manager is not
+    // resolvable (the first frames of a level).
     ue_wrap::FVector eye = E::GetCameraLocation();
     if (eye.X == 0.f && eye.Y == 0.f && eye.Z == 0.f) eye = E::GetActorLocation(lp);
 
@@ -476,9 +451,8 @@ void Update() {
         Refresh_(eye, lp);
     }
 
-    // Projection at ~30 Hz (every other 60 Hz pump tick): halves the per-tick
-    // GetActorLocation + ProjectWorldToScreen UFunction load for up to
-    // kMaxEntries candidates; visually indistinguishable for debug labels.
+    // Projection at 30 Hz (every other pump tick) halves the per-tick location and projection
+    // call load for up to kMaxEntries candidates; visually indistinguishable for debug labels.
     if (g_tick & 1) return;
     Project_(pc, eye);
 }
@@ -489,9 +463,9 @@ void GetSnapshot(Snapshot& out) {
 }
 
 bool IsEnabled() {
-    // Role-aware: reports OFF while connected as a client (coop::dev_gate) so
-    // every draw site + the menu checkbox die together; the latent flag
-    // survives and the overlay returns on disconnect / when hosting.
+    // Role-aware: reports off while connected as a client (the dev gate), so every draw site and
+    // the menu checkbox die together; the latent flag survives and the overlay returns on
+    // disconnect or when hosting.
     return g_enabled.load(std::memory_order_acquire) && coop::dev_gate::Allowed();
 }
 
