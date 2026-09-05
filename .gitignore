@@ -388,9 +388,7 @@ docs/COOP_VM_DISPATCH_PLAN.md
 docs/AUTHORITATIVE_INTERACTABLE_MIGRATION.md
 docs/OVERLAY_CAPTURE_COEXIST.md
 docs/signals/HISTORY.md
-docs/piles/01-HISTORY.md
-docs/piles/findings/
-docs/piles/_archive/
+docs/piles/
 docs/_archive/
 docs/kerfur/0[1-8]-*.md
 reference/agency-agents/

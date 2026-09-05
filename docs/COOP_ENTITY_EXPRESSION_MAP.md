@@ -183,7 +183,7 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
   `MarkPropElement` returns the enrolled key; broadcast callers build their payload key from the return.
   CLIENT/SP never re-key. First-enrollment-only (one-way door — documented at the idempotency early-out).
 
-### chipPile + garbageClump (the dupe-critical family) — REDESIGN 2026-06-21, see [docs/piles/08](piles/08-HOST-AUTH-TRASH-CHANNEL.md)
+### chipPile + garbageClump (the dupe-critical family) — see [piles.md](piles.md)
 
 > **NATIVIZATION 2026-06-30→07-01 [V hands-on — DONE] — the resting/re-piled PILE-form CLIENT MIRROR is now a
 > ROOTED REAL `actorChipPile_C` NATIVE** (`coop/props/native_pile_mirror::Materialize`), not the bare
@@ -200,7 +200,7 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
 > (`RepositionBoundNative` reuses the bound native, suppresses the parallel spawn). Two-owner map: bound-at-convert
 > → create-edge claim; late-load-unbound → the sweep (disjoint).** The camera-cone grab recognition is dead for
 > piles (a native IS `lookAtActor`). Deployed `1C242F82` = HEAD `fa8bc344`, 6 ahead of origin. Canonical:
-> [docs/piles/11](piles/11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md) · [[project-pile-nativization-2026-06-30]].
+> [piles.md](piles.md).
 > The proxy rows below stay TRUE for the clump + the not-yet-nativized
 > pile paths.
 
@@ -215,7 +215,7 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
 > `research/findings/join-identity/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/join.md`.
 >
 > **IDENTITY UPDATE 2026-07-03 [AS-BUILT `2ab718d5`, smoke-V] — identity survives actor churn (the re-bind
-> thread; docs/piles/12 status block is canonical).** (1) The chip entry's savePos is IMMUTABLE (a purge
+> thread).** (1) The chip entry's savePos is IMMUTABLE (a purge
 > re-create ALWAYS spawns there — loadObjects replays the save arrays); the host's PropSnapPos position is a
 > separate hostPos OVERLAY; the RE-BIND is two-phase (@host first — churn-survivor/resurrect protection,
 > excluding natives at any free entry's @save; @save fallback + same-pass pos-correction snap). The earlier
@@ -229,7 +229,7 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
 > actor REBINDS in place (1:1-guarded via EidForActor; displaced actors never destroyed) — the deny-heal
 > re-assert is no longer an Install-reject NO-OP.
 
-> **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch, docs/piles/07) is RETIRED.** A
+> **⚠ The "MORPH" (pile_morph: held-object adopt + PROXIMITY land-watch) is RETIRED.** A
 > real hands-on (2026-06-21) refuted its smoke "VERIFIED": the proximity land-watch
 > (`FindNearestChipPile(lastPos,100cm)`) consumes a NEIGHBOR pile in a cluster → eid mis-binds → divergence,
 > and the client grab never armed. The current design is the **host-authoritative trash channel** (08).

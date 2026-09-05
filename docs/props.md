@@ -5,8 +5,8 @@
 Everything a player can pick up, carry, throw, drop, stick to a wall, put in a pocket or take out
 of a container: how it is named across peers, where the mod catches its birth and death, who
 owns it at rest and in a hand, and what happens to a prop whose own Blueprint keeps changing
-it. Trash piles and clumps are a family of their own with their own page; the item in a player's
-hand is on the players page.
+it. Trash piles and clumps are a family of their own on [piles.md](piles.md); the item in a
+player's hand is on [players.md](players.md).
 
 ## How it works
 

@@ -61,7 +61,8 @@ all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](CO
 window, and the late-join rule every lane answers) · [players.md](players.md) (the remote player:
 the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation) ·
 [props.md](props.md) (props: identity, the birth and death seams, holding and throwing, containers,
-the props that change on their own, the deployables)
+the props that change on their own, the deployables) · [piles.md](piles.md) (trash piles: the
+host's id across pile and clump, the client's grab as an intent, the dispenser piles)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -72,7 +73,7 @@ the props that change on their own, the deployables)
 
 [events/](events/) · [signals/](signals/) (the signal-processing pipeline) ·
 [upgrades/](upgrades/) · [notifications/](notifications/) · [kerfur/](kerfur/) ·
-[piles/](piles/) (trash piles) · [vehicles/](vehicles/) (the ATV)
+[vehicles/](vehicles/) (the ATV)
 
 ## How to read a claim in these docs
 

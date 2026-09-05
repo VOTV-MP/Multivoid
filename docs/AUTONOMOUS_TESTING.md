@@ -72,8 +72,8 @@ override per-run config without editing the ini:
 - `VOTVCOOP_PILE_SHOWCASE=1` — (with the above) the CLIENT teleports to a
   standoff facing the nearest mirrored pile proxy and holds, so an external
   window capture frames the client rendering a pile.
-- `VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1` — HOST-only. Settles the docs/piles/08
-  Increment-2 gate: drives `playerGrabbed` on the slot-1 PUPPET (an unpossessed
+- `VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1` — HOST-only. Settles the client-grab
+  gate of docs/piles.md: drives `playerGrabbed` on the slot-1 PUPPET (an unpossessed
   `mainPlayer_C`, `GetController()==null`) and asserts whether the puppet holds
   + tracks the clump. Verdict (2026-06-22): ENGAGED+HELD but NOT tracked — the
   puppet's tick doesn't drive the PHC, so Increment 2 must drive the hold pose

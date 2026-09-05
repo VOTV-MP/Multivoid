@@ -216,6 +216,7 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 | The trash-pile mirror stands in a bare proxy for the engine's own actor instead of driving it; it is queued for a rebuild | `[V]` [ROADMAP.md](ROADMAP.md) |
 | The stale fallback streams the on-disk slot, which may be older than the live world | `[V]` logged when it happens |
 | The true mid-event join of the walking pyramid is still the open hands-on acceptance test | `[?]` autonomous packet flow only |
+| The divergence sweep can abort at its half-of-the-world valve and leave the joiner's excess keyed props in place, unbound | `[V]` a field log: about a thousand element-less keyed props after an aborted sweep |
 
 ## Code map
 
