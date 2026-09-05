@@ -1,9 +1,7 @@
-// ui/server_browser_selftest.cpp -- see ui/server_browser_selftest.h.
-//
-// EXTRACTED VERBATIM from ui/server_browser_native.cpp 2026-08-26. The scrim and ESC
-// phases below are the shipped body moved without a behavioural edit; the only changes
-// were the seam (`g_scrimW` -> the `scrim` parameter, `SelfCheckTick` -> `Tick`) and the
-// namespace. The T0 scroll phases were added afterwards, in their own commit.
+// ui/server_browser_selftest.cpp -- the native browser's driven self-check: a phase ladder that
+// scrolls the list, probes the scrim, presses ESC, clicks the action bar, a row, Back, HOST, the
+// world list, the hosting window's exits, the input windows and the session-settings step, each
+// verdict a log line the test rig asserts on. Runs only under the dev browser auto-open.
 
 #include "ui/server_browser_selftest.h"
 
@@ -35,17 +33,11 @@ namespace E = ue_wrap::engine;
 namespace U = ue_wrap::umg;
 namespace P = ue_wrap::profile;
 
-// ---- the phase schedule ------------------------------------------------------------
-// NAMED, NEVER LITERAL. A positional case ladder renumbered by hand is the exact hazard
-// s24b measured on console_desk's g_fields table: a missed index is invisible to BOTH a
-// literal diff and the compiler, because every value is still a valid int. Inserting the
-// T0 block ahead of the shipped scrim/ESC phases required renumbering all six of them, so
-// they bind by name and a future insertion is one edit to this block.
-//
-// The unit is ONE MENU TICK, i.e. one frame (~8.5 ms at the 117 fps this menu measured).
-// The eight-tick gaps are the interval the shipped scrim phases already trust: a cursor
-// move and its sample MUST be separate ticks, because IsHovered() read in the same tick as
-// the move answers about the PREVIOUS pointer position.
+// ---- the phase schedule ----
+// Named, never literal: a positional case ladder renumbered by hand hides a missed index from
+// both a diff and the compiler. The unit is one menu tick (~8.5 ms at the menu's 117 fps); a
+// cursor move and its sample must be separate ticks, because IsHovered() read in the move's tick
+// answers about the previous pointer position, so the gaps are eight ticks.
 constexpr int kScrollWait     = 0;   // HOLDING -- waits for rows; does not advance
 constexpr int kScrollProbe    = 1;
 constexpr int kScrollSetBig   = 2;
@@ -66,25 +58,12 @@ constexpr int kScrimSampleIn  = 69;
 constexpr int kEscPress       = 76;
 constexpr int kEscObserve     = 79;
 constexpr int kEscRelease     = 82;
-// ...then re-open and drive the X, because ESC closing the screen is not evidence that
-// the CHROME closes it, and the chrome is what a player will actually reach for.
+// Then re-open and drive Back: ESC closing the screen is no evidence that the chrome does.
 constexpr int kReopen         = 88;
-// (Four phases stood here until 2026-08-30: aim at the list, read hover, nudge one pixel,
-// re-read. They existed to discriminate 'this widget is dead' from 'no input is reaching
-// the game at all', and they did their job -- the answer is now permanent knowledge in
-// native_screen::ChildAtCursor's header and in the DISARMED guard above, and production no
-// longer asks Slate about a row at all. Kept running, they re-proved a known negative every
-// run and printed an eight-line visibility chain to do it. RULE 2.)
-// THE ACTION BAR, and it runs HERE -- after the re-open, BEFORE any row is selected --
-// because that is the only window in which CONNECT's decline branch is reachable, and the
-// decline branch is the one that can be driven without starting a real join and tearing the
-// rest of the run out from under itself.
-//
-// WHY IT NEEDED ITS OWN PHASES AT ALL. Every outcome of CONNECT is a SENTENCE IN THE FOOTER,
-// and a sentence is observable to a human and to nothing else -- so "the button is wired"
-// and "the button does nothing" produced identical evidence. That is precisely the state row
-// hover sat in for three days while looking fine. `server_browser_actions::LastOutcome()`
-// exists to end that, and these phases are what read it.
+// The action bar, after the re-open and before any row is selected: the only window in which
+// CONNECT's decline branch is reachable, and the decline branch is the one that can be driven
+// without starting a real join. Every outcome of CONNECT is a sentence in the footer, observable
+// to nobody but a human, so server_browser_actions::LastOutcome() exists and these phases read it.
 constexpr int kActRefMove     = 90;
 constexpr int kActRefDown     = 98;
 constexpr int kActRefUp       = 102;
@@ -93,33 +72,17 @@ constexpr int kActConnMove    = 112;
 constexpr int kActConnDown    = 120;
 constexpr int kActConnUp      = 124;
 constexpr int kActConnVerify  = 128;
-// ROW HOVER AND SELECTION, before the X, because a browser whose rows cannot be picked is
-// not a browser -- and neither had ever been asserted by anything.
+// Row hover and selection, before Back: a browser whose rows cannot be picked is not a browser.
 constexpr int kRowMove        = 132;
 constexpr int kRowRead        = 140;
 constexpr int kRowDown        = 142;
 constexpr int kRowUp          = 146;
 constexpr int kRowVerify      = 150;
-// ...and then HOLD STILL TWICE, so a human can see what the two state channels drew.
-//
-// WHY A LOG LINE CANNOT CLOSE THIS. `ROW SELECT PASS` above proves the STATE changed --
-// `SelectedRowId()` returns a lobby. It says nothing about PIXELS. The row skin is two
-// UImage tints written through UFunctions, and every failure mode of that (the wrong child
-// index, a raw write that does not repaint, a colour built in the wrong space) leaves the
-// state verdict green and the screen unchanged. mp.py's own closing line is the standing
-// warning: "a log line is not a layout".
-//
-// TWO SHOTS, because the property the user asked for is a RELATION between rows and one
-// frame cannot hold both halves of it:
-//   A -- the cursor parked on a row that is NOT the selected one. That frame carries all
-//        three states at once: the selected row purple with an ordinary grey frame, the
-//        hovered row with a yellow frame and yellow text, and five idle rows between them.
-//   B -- the cursor moved back ONTO the selected row. This is the user's rule itself
-//        ("выделение держится только на нем, а hover игнорится"): the row must still be
-//        purple and must NOT have gained a yellow frame. A green A with a yellow B is
-//        precedence not working, and nothing else distinguishes those two outcomes.
-// Each holds for kShotHoldMs, the same 6 s window the scroll verdicts already use to cover
-// mp.py's 3 s capture poll.
+// Then hold still twice, so a capture shows what the two state channels drew: ROW SELECT PASS
+// proves the state changed and says nothing about pixels. Shot A parks the cursor on a row that
+// is not the selected one (purple with a grey frame, the hovered row yellow, idle rows between);
+// shot B moves it back onto the selected row, which must stay purple with no yellow frame. Each
+// holds kShotHoldMs, the window the rig's 3 s capture poll needs.
 constexpr int kSkinAimOther   = 151;
 constexpr int kSkinHoldOther  = 152;  // HOLDING -- wall clock
 constexpr int kSkinAimSelf    = 153;
@@ -129,39 +92,25 @@ constexpr int kClickSample    = 164;  // eight ticks after the move -- the scrim
 constexpr int kClickDown      = 166;
 constexpr int kClickUp        = 170;
 constexpr int kClickVerify    = 180;
-// ...and LAST, the HOST link, because it is what the user actually asked for: a hosting
-// window they can reach. It runs after the X phases because clicking HOST closes the
-// browser, so nothing about the browser can be asserted after it.
+// Then the HOST link, after the Back phases because clicking HOST closes the browser.
 constexpr int kHostReopen     = 186;
 constexpr int kHostMove       = 194;
 constexpr int kHostDown       = 204;
 constexpr int kHostUp         = 208;
 constexpr int kHostVerify     = 220;
-// ...and finally the WORLD LIST inside that window, which is a different screen's rows in a
-// different ScrollBox. It gets its own phases because it was a CRITICAL of its own: those
-// rows were hit-tested with `IsHovered`, which does not answer inside a ScrollBox, so no
-// world could be picked and HOST could only ever start a New game.
+// Then the world list inside that window, a different screen's rows in a different ScrollBox:
+// its own phases, since a row hit test through IsHovered does not answer inside a ScrollBox.
 constexpr int kWorldMove      = 228;
 constexpr int kWorldRead      = 236;
 constexpr int kWorldDown      = 238;
 constexpr int kWorldUp        = 242;
 constexpr int kWorldVerify    = 252;
-// ...and LAST, the hosting window's EXITS. Both windows lost their X on 2026-08-30 (USER:
-// "не надо крестиков значит. Пусть окна закрывает юзер также как и нативные
-// менюшки votv" -- no native VOTV window has one), so Back and ESC are the only ways
-// out and they are what has to be driven. The deleted X was measured WORKING hours before
-// it went (`HOST X PASS`, 23:43): it was removed for FIDELITY, not because it failed.
-//
-// BOTH exits get a phase, because they fail INDEPENDENTLY. Back goes through the same
-// `E::WidgetIsHovered` predicate the X used, one line from where the X's sat
-// (host_window_native.cpp:518-519), so it inherits every failure mode the X had --
-// including the capture-starved pointer that makes every native widget read not-hovered
-// at once (SERVER_BROWSER_ARC section 8.1). ESC is a `GetAsyncKeyState` poll and is the
-// only exit that survives that. Proving one says nothing about the other.
-constexpr int kHostWindowHold = 253;   // one frame of the hosting window, for the eye
-                                       // (kWorldVerify + 1: the step counter advances
-                                       // by one after a `break`, so a hold phase must
-                                       // be the NEXT number, not a round one)
+// Then the hosting window's exits. No native VOTV window has an X, so neither does ours: Back and
+// ESC are the only ways out, and they fail independently (Back goes through the WidgetIsHovered
+// predicate and inherits the capture-starved pointer that makes every native widget read
+// not-hovered; ESC is a GetAsyncKeyState poll and survives that), so each gets a phase.
+constexpr int kHostWindowHold = 253;   // one frame of the hosting window, for the eye; kWorldVerify + 1,
+                                       // since the counter advances by one after a break
 constexpr int kHostBackMove   = 258;
 constexpr int kHostBackDown   = 266;
 constexpr int kHostBackUp     = 270;
@@ -171,23 +120,17 @@ constexpr int kHostEscPress   = 292;
 constexpr int kHostEscHold    = 298;
 constexpr int kHostEscRelease = 302;
 constexpr int kHostEscVerify  = 308;
-// THE TWO INPUT WINDOWS, last in the schedule because they are the only phases that leave
-// a window OTHER than the browser on screen. They assert that each one OPENS -- which is
-// the whole of "can a player reach the address box at all" now that the browser itself
-// has no text entry -- and hold it long enough to be photographed, because the rest of
-// what makes a window right is a thing to look at.
+// The two input windows, last because they are the only phases that leave a window other than
+// the browser on screen; each asserts that it opens (the browser itself has no text entry) and
+// holds long enough to be photographed.
 constexpr int kInputDirectShot = 314;
 constexpr int kInputDirectHold = 315;
 constexpr int kInputNameOpen   = 322;
 constexpr int kInputNameShot   = 328;
 constexpr int kInputNameHold   = 329;
-// SESSION SETTINGS -- step two of hosting, which since 2026-08-31 is the ONLY thing that
-// calls `HostWithSave`. It is reached by pressing Next on the hosting window and by nothing
-// else (there is deliberately no dev auto-open for it: a lab door that skips the real one
-// is how a lab result lies), so these phases drive the real path.
-//
-// The Host button itself is NEVER pressed here. It starts a game, loads a world and
-// announces a lobby; a self-check that did that would leave the rig hosting.
+// Session settings, step two of hosting and the only caller of HostWithSave: reached by pressing
+// Next on the hosting window and by nothing else (no dev auto-open for it), so these phases drive
+// the real path. The Host button itself is never pressed: it would leave the rig hosting.
 constexpr int kSessOpen       = 336;
 constexpr int kSessNextMove   = 344;
 constexpr int kSessNextDown   = 350;
@@ -204,45 +147,33 @@ constexpr int kSessBackDown   = 402;
 constexpr int kSessBackUp     = 406;
 constexpr int kSessBackVerify = 414;
 
-// The forced offset for the positive control. Far past any real content extent, so a
-// getter that returns it UNCHANGED has told us it echoes the request rather than reading
-// Slate -- which is the one failure mode that would let a green T0 mean nothing.
+// The forced offset for the positive control, far past any real extent: a getter that returns it
+// unchanged echoes the request rather than reading Slate.
 constexpr float    kHugeOffset   = 1.0e6f;
 constexpr uint64_t kRowWaitMs    = 30000;  // rows arrive over HTTP; 30 s covers a cold fetch at the 5 s cadence
 constexpr uint64_t kShotHoldMs   = 6000;   // mp.py polls the log every 3 s
 constexpr uint64_t kWindowWaitMs = 15000;  // how long a null active window is a WAIT, not a fault
 
-// THE PRECONDITION, AND WHY IT TAKES TWO TERMS. The first version of this gate waited on
-// `GetScrollOffsetOfEnd() > 0` alone, on the theory that a positive maximum implies
-// content. MEASURED FALSE 2026-08-26 (run 1): an EMPTY UScrollBox -- rows=0, one tick
-// after Show(), before the first lobby fetch returned -- reports offsetOfEnd = 1.0. The
-// gate opened, and the whole positive control then ran against a box with nothing in it,
-// which is a reading at a degenerate edge dressed up as a measurement.
-//
-// So both terms, and neither is an epsilon test. ROWS answers "is there content", and it
-// is the quantity the fixture actually controls. OVERFLOW answers "is there anywhere to
-// go", at a threshold of one full row (server_browser_native.cpp's kRowH) rather than
-// >0, so no layout artifact can satisfy it. The viewport measured ~8 rows at 1920x1080,
-// so 12 rows overflow it at any plausible window size.
+// The precondition takes two terms: an empty UScrollBox one tick after Show() reports offsetOfEnd
+// = 1.0 (measured), so a positive maximum does not imply content. Rows answers "is there content";
+// overflow answers "is there anywhere to go", at one whole row rather than > 0. The viewport holds
+// ~8 rows at 1920x1080, so 12 overflow it at any plausible size.
 constexpr int   kMinRows     = 12;
 constexpr float kMinOverflow = 64.f;   // == kRowH: one whole row past the viewport
 
 int g_selfCheckStep     = -1;  // -1 = idle; the dev scrim self-check's phase counter
 int g_scrimOutside      = -1;  // -1 = not sampled, never a negative (an unrun phase is not a NO)
 int g_scrimInsideWindow = -1;
-// Password length sampled immediately BEFORE the lock click, so the verify step knows
-// whether a MINT was due at all (the box was empty) or whether keeping the existing value
-// is the correct outcome. Sampled per run; -1 would be indistinguishable from "empty".
+// Password length sampled before the lock click, so the verify step knows whether a mint was due
+// (the box was empty) or keeping the value is the right outcome.
 int g_lockPwLenBefore   = 0;
-// ...and whether the lock was ALREADY on. A click onto an already-locked row is a no-op by
-// design, so without this the verify step cannot tell a working click from a dead one.
+// And whether the lock was already on: a click on an already-locked row is a no-op by design,
+// indistinguishable from a dead click without this.
 bool g_lockWasLockedBefore = false;
 
-// ---- T0 state ----------------------------------------------------------------------
+// ---- scroll-probe state ----
 // Every reading starts at a value no measurement can produce, so an unrun phase is
-// distinguishable from a phase that ran and read zero. Zero is a LEGITIMATE answer to
-// three of these (a list at the top; a list that cannot scroll; a wheel that moved
-// nothing), which is precisely why the sentinel has to be negative.
+// distinguishable from one that read zero, which is a legitimate answer to three of these.
 uint64_t g_windowWaitStartMs = 0;
 uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
@@ -260,35 +191,11 @@ int      g_listHovered       = -1;
 int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
 int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
-// PLACE THE OS CURSOR ON A WIDGET, converting out of the widget's space first.
-//
-// `WidgetScreenRect` reports CLIENT pixels (Slate's LocalToAbsolute); `SetCursorPos`
-// takes DESKTOP pixels. SIX sites in this file handed the former straight to the
-// latter, under a comment asserting "Slate's absolute space is desktop pixels, the
-// same space SetCursorPos takes, so this needs no ClientToScreen and no DPI factor".
-// That was false -- and it is why every browser run passed for days while a player
-// could not click anything: production's hit test made the SAME mistake, so the two
-// errors cancelled and the instrument could not see the defect it existed to catch.
-// Measured 2026-08-30: client origin (320,180) on the lab rig, a whole list-height.
-// The seventh site (the X button) already converted, which is why the close-button
-// phase was the one that behaved.
-// PLACE THE POINTER AT A POINT EXPRESSED IN SLATE'S ABSOLUTE SPACE -- which is DESKTOP
-// pixels, so this is a straight `SetCursorPos` and every caller may hand it a rect from
-// `WidgetScreenRect` unchanged.
-//
-// IT DID A `ClientToScreen` FOR ONE DAY, AND THAT WAS A REGRESSION I INTRODUCED. On
-// 2026-08-30 the row hit test was found comparing the cursor against these rects and
-// "corrected" on the theory that the rects were CLIENT pixels; the harness was changed to
-// match. The theory was wrong in the harness's direction too: adding the client origin
-// here moved every aim by exactly that origin -- `measured`, the row phase asked for
-// (1280,592) and the pointer landed at (1600,772) on a rig whose client area starts at
-// (320,180) -- which put the cursor BELOW the last live row, where -1 is the correct
-// answer. Three runs then reported ROW SELECT FAIL for a hit test that was working.
-//
-// The comment this replaced said Slate's absolute space is desktop pixels and needs no
-// conversion. I deleted it as false. It was true, and the run that proved it is the child
-// table in `native_screen`'s probe: rows at desktop y 496..752 with the panel at (796,496),
-// i.e. the same space `GetCursorPos` reports.
+// Place the pointer at a point in Slate's absolute space, which is desktop pixels (measured: the
+// child table in native_screen's probe puts rows at desktop y 496..752 with the panel at
+// (796,496), the space GetCursorPos reports), so this is a straight SetCursorPos and every caller
+// hands it a WidgetScreenRect unchanged. A ClientToScreen here moves every aim by the client
+// origin and lands the cursor below the last live row.
 void PlaceCursorOnAbsolute(float absX, float absY) {
     ::SetCursorPos(static_cast<long>(absX), static_cast<long>(absY));
 }
@@ -296,20 +203,16 @@ void PlaceCursorOnAbsolute(float absX, float absY) {
 int      g_rowHovered        = -1;   // ...and the same for the row the click phase aims at
 int      g_worldBefore       = -2;   // -2 = unsampled; -1 is New game, a real value
 
-// One row's height, mirroring server_browser_native's kRowH. Kept as a constant rather
-// than measured because the aim only has to land INSIDE a row, and the verdict prints the
-// row index it actually got -- so a drift here shows up as a different index, not as a
-// false failure.
+// One row's height (server_browser_native's kRowH), a constant rather than measured: the aim only
+// has to land inside a row, and the verdict prints the index it got, so a drift shows as a
+// different index.
 constexpr float kRowPx = 64.f;
 
-// ...and the HOSTING WINDOW's rows are 56. Two screens, two row heights; using one
-// constant for both landed inside row 0 only by margin.
+// The hosting window's rows are 56; one constant for both landed inside row 0 only by margin.
 constexpr float kHostRowPx = 56.f;
 
-// UWidget::GetDesiredSize -- the non-visual instrument the native_ui_probe used to prove a
-// hand-built widget lays out at all (GetDesiredSize (0,0) -> (654,64) was RUNG 1's whole
-// verdict). Resolved lazily: this runs only inside a dev self-check, so paying a
-// FindFunction once there is cheaper than resolving it at build time for every player.
+// UWidget::GetDesiredSize, the non-visual proof that a hand-built widget lays out at all;
+// resolved lazily, since this runs only inside a dev self-check.
 ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     ue_wrap::FVector2D v{0.f, 0.f};
     if (!widget) return v;
@@ -324,11 +227,10 @@ ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     return v;
 }
 
-// The four fields that decide whether a wheel event moves a UScrollBox. We HAND-SPAWN the
-// box, so each is whatever the engine CDO carries and none of them has ever been read on
-// this build. Printing them is what turns "the wheel did nothing" from a dead end into a
-// named cause -- ConsumeMouseWheel=Never(2), a zero multiplier and a Horizontal
-// orientation each produce exactly that symptom and are indistinguishable without this.
+// The four fields that decide whether a wheel event moves a UScrollBox; the box is hand-spawned,
+// so each is whatever the CDO carries. ConsumeMouseWheel=Never, a zero multiplier and a
+// Horizontal orientation each produce "the wheel did nothing" and are indistinguishable without
+// this.
 void LogWheelFields(void* list) {
     const auto* base = reinterpret_cast<const uint8_t*>(list);
     const uint8_t orientation = base[P::off::UScrollBox_Orientation];
@@ -344,34 +246,17 @@ void LogWheelFields(void* list) {
 
 }  // namespace
 
-// THE SCRIM IS FUNCTIONAL, NOT DECORATIVE -- it is what eats a click that misses the
-// window, so "it looks dim in the screenshot" is not evidence. This asks the only question
-// that matters, the way RUNG 2 established: put the cursor somewhere OUTSIDE the window
-// (over the menu's own button list) and ask Slate whether the scrim is under it. A window
-// hit is checked too, so a scrim that answers `true` everywhere is not read as a pass.
-//
-// Runs only under [dev] browser_autoopen and only once. The move and the sample are
-// SEPARATE ticks: sampling IsHovered() in the same tick as the move reads the PREVIOUS
-// pointer position (measured 2026-08-26 -- the probe made exactly that mistake).
+// The scrim is functional, not decorative (it eats a click that misses the window), so "it looks
+// dim" is not evidence: put the cursor outside the window and ask Slate whether the scrim is under
+// it, with a window hit checked too so a scrim that answers true everywhere is not a pass. Runs
+// only under the dev browser auto-open, once; the move and the sample are separate ticks.
 void Tick(void* scrim, void* list, void* exitBtn) {
     if (g_selfCheckStep < 0 || !scrim) return;
-    // WE DRIVE INPUT, SO WE MUST OWN THE FOREGROUND -- and this is the root of every
-    // intermittency this instrument showed on 2026-08-26.
-    //
-    // `keybd_event` and `mouse_event` inject into the SYSTEM input queue; they land in
-    // whatever window is foreground at that instant, not in ours. So a run where the game
-    // is not foreground silently sends ESC and the click somewhere else and then reports
-    // "the screen did not close" -- an accusation against the feature for something the
-    // harness did. That is exactly what happened: ESC failed at 13:24 and passed at 13:32,
-    // the X click failed at 13:47 and passed at 13:32, and the wheel failed at 13:47 and
-    // passed at 13:44, all on code paths that could not tell those pairs apart.
-    //
-    // `GetActiveWindow()` was the wrong question twice over: it reports the active window
-    // of the CALLING THREAD (null transiently while the menu is still being built) and it
-    // says nothing about who will receive injected input. `GetForegroundWindow()` plus the
-    // existing ownership predicate answers the question we actually have. Not ours is a
-    // bounded WAIT, and a LOUD disarm -- never a silent one, which is how the whole
-    // self-check once vanished from a run and read as a missing feature.
+    // We drive input, so we must own the foreground: keybd_event and mouse_event inject into the
+    // system queue and land in whatever window is foreground, so a run without focus sends ESC and
+    // the click elsewhere and then blames the feature. GetForegroundWindow plus the ownership
+    // predicate is the question; GetActiveWindow answers for the calling thread only. Not ours is a
+    // bounded wait, then a loud disarm, never a silent one.
     HWND hwnd = ::GetForegroundWindow();
     RECT cr{};
     if (!hwnd || !ui::input_focus::IsOurWindowForeground() || !::GetClientRect(hwnd, &cr)) {
@@ -389,27 +274,11 @@ void Tick(void* scrim, void* list, void* exitBtn) {
     }
     g_windowWaitStartMs = 0;   // it came back; a later blip starts its own patience
 
-    // THE SECOND PRECONDITION, AND THE ONE THIS FILE WAS MISSING FOR THREE DAYS.
-    //
-    // Owning the foreground is not enough: an ImGui surface that is up ALSO owns the mouse,
-    // and while it does, `WndProcDetour` swallows every mouse message before the game sees
-    // it and `SetCursorPosDetour` returns TRUE without moving the pointer. So this test can
-    // aim perfectly at a widget that is perfectly built, and read `IsHovered() == false` on
-    // all of it, because Slate was never told the pointer moved.
-    //
-    // That is not a hypothesis. MEASURED 2026-08-29: `SetCursorPos` asked for (1280,711),
-    // returned ok=1 with err=0 and no ClipCursor rect in the way, and the pointer stayed at
-    // desktop (320,160) -- client (0,0) -- for the whole run. Everything inside the window
-    // read not-hovered; the full-screen scrim, which covers (0,0), read hovered. The owner
-    // was `config_review`, armed at boot by an ordinary ini finding and never dismissed,
-    // because nothing in an autonomous run clicks it away.
-    //
-    // The cost of not having this guard: every BROWSER BACK FAIL since the panel started
-    // arming was an accusation against a button that was never given a pointer. Three
-    // causes were proposed and each falsified -- a five-day-old commit, our own boot modal,
-    // a mounted pak -- while the real one was printing itself in the same log. So this
-    // refuses to produce a verdict at all rather than produce a false one, which is the
-    // same call the foreground guard above already makes for the same reason.
+    // The second precondition: an ImGui surface that is up owns the mouse, WndProcDetour swallows
+    // every mouse message and SetCursorPosDetour returns TRUE without moving the pointer, so a
+    // perfect aim at a perfect widget reads IsHovered() == false everywhere (measured: the
+    // config-review panel, armed at boot by an ini finding, held the pointer at client (0,0) for a
+    // whole run). This refuses to produce a verdict rather than a false one.
     {
         const std::string owners = ui::imgui_overlay::CaptureOwners();
         if (owners != "none") {
@@ -430,24 +299,14 @@ void Tick(void* scrim, void* list, void* exitBtn) {
     const int w = cr.right - cr.left, h = cr.bottom - cr.top;
     const uint64_t nowMs = ::GetTickCount64();
     switch (g_selfCheckStep) {
-        // ---- T0: DOES THE WHEEL SCROLL THIS WIDGET AT ALL -------------------------
-        //
-        // Three of the eight steps in docs/MULTIPLAYER_UI.md section 8c.-1 are entirely
-        // about scrolling -- build a scroll drive, preserve an offset across a rebuild,
-        // choose between one-widget-per-row and a viewport pool -- and no wheel event had
-        // ever reached this widget. Nothing in the plan priced the work of MAKING it
-        // scroll if the answer came back no, which is why this runs first.
-        //
-        // IT IS NOT A SCREENSHOT TEST. An unchanged capture is three-way ambiguous: the
-        // wheel never arrived / the box does not scroll / the capture beat Slate's layout.
-        // The offset is read back through GetScrollOffset instead, and a POSITIVE CONTROL
-        // runs before the question so a green answer can mean something. The shots are
-        // corroboration and never the gate.
+        // ---- does the wheel scroll this widget at all ----
+        // Not a screenshot test: an unchanged capture is three-way ambiguous (the wheel never
+        // arrived, the box does not scroll, the capture beat Slate's layout). The offset is read
+        // back instead, and a positive control runs first so a green answer means something.
         case kScrollWait:
-            // HOLDING. Rows arrive over HTTP on a 1 Hz refresh, so at Show() there is
-            // nothing in the list and GetScrollOffsetOfEnd is legitimately 0. Wait for the
-            // CONTENT TO OVERFLOW rather than for a row count against an assumed viewport
-            // height -- the engine already computes the exact quantity the question needs.
+            // Holding: rows arrive over HTTP, so at Show() the list is empty and
+            // GetScrollOffsetOfEnd is legitimately 0. Wait for the content to overflow, the exact
+            // quantity the question needs.
             if (!list) {
                 UE_LOGE("server_browser_native: SCROLL CONTROL SKIP -- no list widget");
                 g_selfCheckStep = kScrimMoveOut;
@@ -490,25 +349,16 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                     g_rowsSeen, g_offAtRest, g_endAtRest, g_fracAtRest);
             break;
         case kScrollSetBig:
-            // THE POSITIVE CONTROL. Ask for an offset far past the end. What comes back
-            // decides whether anything downstream is measurable at all:
-            //   ~= offsetOfEnd -> Slate CLAMPED it, so the box scrolls and the getter
-            //                     reads real state. The instrument works.
-            //   ~= kHugeOffset -> the getter ECHOES the request. Blind; nothing it says
-            //                     about the wheel would mean anything.
-            //   0             -> the box refused to move at all.
+            // The positive control: ask for an offset far past the end. About offsetOfEnd means
+            // Slate clamped it and the getter reads real state; about kHugeOffset means the getter
+            // echoes the request (blind); 0 means the box refused to move.
             U::SetScrollOffset(list, kHugeOffset);
             break;
         case kScrollReadBig: {
-            // THE VERDICT IS THE FRACTION, NOT THE OFFSET. The first version of this
-            // control asked whether Slate had CLAMPED the absolute Set, and failed the
-            // whole probe when it had not -- which was a true observation about
-            // GetScrollOffset (it echoes; measured 2026-08-26 on an empty box AND on 30
-            // rows with 1391 units of real overflow) applied to the wrong question. T0
-            // does not need clamping. It needs to know the view MOVED, and
-            // GetViewOffsetFraction reads exactly that -- the scrollbar's own
-            // distance-from-top, which is physical post-layout state. The offset is still
-            // logged, as the request it is.
+            // The verdict is the view fraction, not the offset: GetScrollOffset echoes the request
+            // (measured on an empty box and on 30 rows of real overflow), while
+            // GetViewOffsetFraction reads the scrollbar's own post-layout distance from the top.
+            // The offset is logged as the request it is.
             U::ScrollOffset(list, g_offAfterBig);
             U::ViewOffsetFraction(list, g_fracAfterBig);
             const bool moved = g_fracAfterBig - g_fracAtRest > 0.1f;
@@ -539,10 +389,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             if (!g_controlPassed) {
                 UE_LOGE("server_browser_native: WHEEL VERDICT SKIPPED -- the control did "
                         "not pass, so no wheel result could be read either way");
-                // Jump, but only after the same hold every other verdict gets. Without it
-                // the scrim and ESC phases run within ~250 ms and ESC closes the screen
-                // before the 3 s capture poll arrives -- which is how run 5's "post-wheel"
-                // shot ended up showing the main menu instead of the browser.
+                // Jump, but only after the same hold every other verdict gets: without it the scrim
+                // and ESC phases run within ~250 ms and ESC closes the screen before the capture
+                // poll arrives.
                 g_holdUntilMs = nowMs + kShotHoldMs;
                 g_selfCheckStep = kScrollHoldB;
                 return;
@@ -553,10 +402,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             moveTo(w / 2, h / 2);   // the list occupies the middle of the window
             break;
         case kScrollWheelPre:
-            // Ask Slate whether the cursor is actually over the list before blaming the
-            // wheel. RUNG 2 measured that IsHovered() answers and discriminates on a
-            // BOUNDED widget; a false here means the notches went somewhere else, which
-            // is a different finding from "the box ignores the wheel".
+            // Ask Slate whether the cursor is over the list before blaming the wheel: a false here
+            // means the notches went somewhere else, a different finding from "the box ignores the
+            // wheel".
             g_listHovered = E::WidgetIsHovered(list) ? 1 : 0;
             U::ScrollOffset(list, g_wheelPre);
             U::ViewOffsetFraction(list, g_fracWheelPre);
@@ -568,20 +416,18 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         case kScrollNotch2:
         case kScrollNotch3:
         case kScrollNotch4:
-            // Four notches over eight ticks, not four in one. A real hand delivers them
-            // spaced, and one notch may be inside the tolerance a settling read allows.
+            // Four notches over eight ticks, not four in one: a real hand spaces them, and one
+            // notch may sit inside a settling read's tolerance.
             ::mouse_event(MOUSEEVENTF_WHEEL, 0, 0, static_cast<DWORD>(-WHEEL_DELTA), 0);
             break;
         case kScrollReadPost: {
             U::ScrollOffset(list, g_wheelPost);
             U::ViewOffsetFraction(list, g_fracWheelPost);
             const float delta = g_fracWheelPost - g_fracWheelPre;
-            // Verdict on MOVEMENT, not on direction. Which sign a negative WHEEL_DELTA
-            // produces here is unmeasured, and T0 asks whether the wheel reaches this
-            // widget at all -- so the magnitude decides and the sign is reported.
-            // The threshold is one row's worth of the total travel: four notches that
-            // move the view less than that have not scrolled it in any sense a user would
-            // recognise, and a bare != would fire on layout noise.
+            // A verdict on movement, not direction: which sign a negative WHEEL_DELTA produces here
+            // is unmeasured, and the question is whether the wheel reaches the widget at all. The
+            // threshold is one row's worth of the total travel; a bare != would fire on layout
+            // noise.
             const float oneRow = g_endAtRest > 0.f ? (kMinOverflow / g_endAtRest) : 1.f;
             if (std::fabs(delta) >= oneRow)
                 UE_LOGW("server_browser_native: WHEEL VERDICT YES -- four notches moved "
@@ -609,7 +455,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             if (nowMs < g_holdUntilMs) return;   // HOLDING
             g_selfCheckStep = kScrimMoveOut;     // the next phase, by either route in
             return;
-        // ---- the scrim (shipped; renumbered only) ---------------------------------
+        // ---- the scrim ----
         case kScrimMoveOut:  // OUTSIDE the window: far left, over the menu's own button column.
             moveTo(w / 12, h * 3 / 4);
             break;
@@ -634,29 +480,18 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         g_scrimOutside, g_scrimInsideWindow);
             break;
         case kEscPress:
-            // ESC SELFTEST. Until the chrome exists ESC is the ONLY way out, and an escape
-            // hatch nobody has seen work is not an escape hatch. Synthesize a real key so
-            // the production poll (GetAsyncKeyState in OnMenuTick) is what answers -- not a
-            // direct Hide() call, which would prove only that Hide() compiles.
-            // PRESS and hold. Down+up back-to-back in one tick is invisible to a per-tick
-            // GetAsyncKeyState poll -- the key is already released before the next tick
-            // samples it -- which is exactly how the first version of this selftest
-            // "passed" while the hatch did nothing. A human holds a key for tens of ms,
-            // i.e. several ticks; the synthesis has to do the same.
-            //
-            // NOTE the wording of this line: it deliberately does NOT contain the string
-            // the runner asserts on. The first version quoted its own expected output, so
-            // the runner's find() matched THIS line and reported ALL PASS on a failure.
+            // ESC: synthesize a real key so the production poll (GetAsyncKeyState in OnMenuTick)
+            // answers, not a direct Hide(). Press and hold across ticks: down and up in one tick is
+            // invisible to a per-tick poll. This line deliberately does not contain the string the
+            // runner asserts on, or the runner's find() would match it and report a pass on a
+            // failure.
             UE_LOGW("server_browser_native: ESC SELFTEST -- holding VK_ESCAPE for several ticks; "
                     "the close line below is the only evidence that counts");
             ::keybd_event(VK_ESCAPE, 0, 0, 0);
             break;
         case kEscObserve:
-            // The ESC test was binary until run 1 failed it: "did not close" could mean
-            // the synthesized key never entered the system, or that it did and the
-            // production poll or Hide() failed to act. Those are different bugs and the
-            // verdict could not tell them apart. Sample the same global state the poll
-            // reads, mid-hold, so it can.
+            // Sample the same global state the poll reads, mid-hold, so "did not close" can tell a
+            // key that never entered the system from a poll or Hide() that failed to act.
             UE_LOGW("server_browser_native: ESC held -- GetAsyncKeyState(VK_ESCAPE) reads "
                     "%s at this tick, which is what the production poll sees",
                     (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) ? "DOWN" : "UP");
@@ -665,9 +500,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             ::keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
             break;
         case kReopen:
-            // ESC has closed the screen by now. Re-open it through the PUBLIC Open(), the
-            // same call the MULTIPLAYER button makes, so the X gets driven against a
-            // screen that came up the ordinary way rather than one we never let close.
+            // ESC has closed the screen; re-open it through the public Open(), the MULTIPLAYER
+            // button's call, so Back is driven against a screen that came up the ordinary way.
             if (!exitBtn) {
                 UE_LOGE("server_browser_native: BROWSER BACK SKIP -- no X was built, so "
                         "whether the chrome closes this screen is UNMEASURED");
@@ -676,13 +510,11 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             }
             ui::server_browser_native::Open();
             break;
-        // ---- the action bar: REFRESH, then CONNECT's decline branch ------------------
-        //
-        // One helper drives both, because a button is a button: read the rect Slate cached
-        // for it, put the real cursor on its centre, and let the production release-edge
-        // poll route the click. Nothing here calls DoConnect or DoRefresh directly -- the
-        // defect this screen has actually suffered is a control that draws and cannot be
-        // reached, and a test that calls the handler proves only the tail of the path.
+        // ---- the action bar: REFRESH, then CONNECT's decline branch ----
+        // One helper drives both: read the rect Slate cached, put the real cursor on its centre,
+        // let the production release-edge poll route the click. Nothing calls DoConnect or
+        // DoRefresh directly: the defect this screen has suffered is a control that draws and
+        // cannot be reached.
         case kActRefMove:
         case kActConnMove: {
             void* btn = (g_selfCheckStep == kActRefMove) ? ui::server_browser_actions::RefreshButton()
@@ -694,8 +526,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "geometry (btn=%p %.0fx%.0f). Whether the action bar can be reached "
                         "at all is UNMEASURED; the row phases below still run.",
                         what, btn, sz.X, sz.Y);
-                // Fall through to the row phases rather than aborting: the action bar is
-                // not a precondition for anything below it.
+                // Fall through to the row phases rather than abort: the action bar is not a
+                // precondition for anything below.
                 g_selfCheckStep = (g_selfCheckStep == kActRefMove) ? kActConnMove - 1 : kRowMove - 1;
                 return;
             }
@@ -728,13 +560,10 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         }
         case kActConnVerify: {
             const char* out = ui::server_browser_actions::LastOutcome();
-            // WITH NOTHING SELECTED, and that is the assertion. "connect:none" is the one
-            // outcome that proves the whole path -- layout, hit test, routing, and
-            // SelectedRow() answering honestly -- without starting a join that would tear
-            // the rest of this run down. The ACCEPT branch differs by one line: it calls
-            // `session_manager::JoinLobby`, the same entry point the hands-on-verified
-            // ImGui browser calls, with a row `ROW SELECT PASS` below proves is the one the
-            // player clicked. That line is NOT exercised here and the doc says so.
+            // With nothing selected, and that is the assertion: "connect:none" proves the whole
+            // path (layout, hit test, routing, SelectedRow() answering honestly) without starting a
+            // join. The accept branch differs by one call to session_manager::JoinLobby and is not
+            // driven here.
             const bool open = ui::server_browser_native::IsOpen();
             if (out && std::strcmp(out, "connect:none") == 0 && open)
                 UE_LOGW("server_browser_native: CONNECT PASS -- a real click on CONNECT with "
@@ -749,9 +578,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             break;
         }
         case kRowMove: {
-            // AIM AT THE SECOND ROW, not the first: the first row's top edge is also the
-            // list's top edge, so a rounding error there lands outside the list and the
-            // failure would be the harness's. One and a half rows down is unambiguous.
+            // Aim at the second row: the first row's top edge is also the list's, so a rounding
+            // error there would be the harness's failure. One and a half rows down is unambiguous.
             ue_wrap::FVector2D ltl{}, lsz{};
             if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 2.f) {
                 UE_LOGE("server_browser_native: ROW HOVER SKIP -- the list is %.0f px tall, "
@@ -770,11 +598,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                     "highlight is dead, and with it the only way to choose a server.",
                     g_rowHovered);
             if (g_rowHovered < 0) {
-                // TWO LINKS CAN PRODUCE THAT -1 and they need different fixes: the outer
-                // containment gate said the pointer is not over the list, or it said yes and
-                // no row's own hit test answered. Print both, plus the row's rect, so the
-                // next edit lands on the link that is actually failing instead of on the one
-                // that is easier to change.
+                // Two links can produce that -1 and need different fixes: the containment gate said
+                // the pointer is not over the list, or it said yes and no row's hit test answered.
+                // Print both, plus the row's rect.
                 POINT cur{};
                 ::GetCursorPos(&cur);
                 ue_wrap::FVector2D ltl{}, lsz{};
@@ -786,20 +612,17 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "%s(%.0f,%.0f) %.0fx%.0f, contains=%d, children=%d",
                         cur.x, cur.y, haveList ? "" : "UNREAD ", ltl.X, ltl.Y, lsz.X, lsz.Y,
                         inList ? 1 : 0, kids);
-                // FIND THE ROW THE CURSOR IS ACTUALLY ON, then dump THAT one. The first
-                // version of this printed rows 0-2 and asked whether their SizeBox was
-                // hovered -- two mistakes at once: the cursor was over neither (the wheel
-                // phases leave the list scrolled, so the top rows are off-screen and their
-                // cached geometry is stale), and a SizeBox is SelfHitTestInvisible by
-                // default, so it answers 0 whatever is true. It could not have found
-                // anything.
+                // Find the row the cursor is actually on, then dump that one: the wheel phases
+                // leave the list scrolled, so the top rows are off-screen with stale cached
+                // geometry, and a SizeBox is SelfHitTestInvisible by default and answers 0 whatever
+                // is true.
                 int aimed = -1;
                 for (int32_t i = 0; i < kids; ++i) {
                     void* kid = U::ChildAt(list, i);
                     ue_wrap::FVector2D rtl{}, rsz{};
                     if (!kid || !U::WidgetScreenRect(kid, rtl, rsz)) continue;
-                    // Intersected with the list, because a scrolled-out row's stale rect
-                    // can still contain the cursor and would name the wrong row.
+                    // Intersected with the list: a scrolled-out row's stale rect can still contain
+                    // the cursor.
                     const float top = rtl.Y > ltl.Y ? rtl.Y : ltl.Y;
                     const float bot = (rtl.Y + rsz.Y) < (ltl.Y + lsz.Y) ? (rtl.Y + rsz.Y)
                                                                         : (ltl.Y + lsz.Y);
@@ -840,14 +663,10 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 UE_LOGE("server_browser_native: ROW SELECT FAIL -- row %d was hovered and a "
                         "full press-release was delivered, yet nothing is selected. The "
                         "hover is fine and the CLICK path is the defect.", g_rowHovered);
-            // THE CLICK-MOMENT SHOT, AND IT IS THE ONE THAT MATTERS MOST -- the cursor is
-            // NOT moved. Shots A and B below both move it first, and a move REPAINTS the
-            // row it leaves and the row it lands on, which HEALS exactly the defect this
-            // window contains. A post-ship audit found that the selection repaint updated
-            // the fill and the frame but not the TEXT, so a just-clicked row sat purple
-            // with yellow glyphs until the pointer happened to move -- invisible to both
-            // shots, because both begin by moving. The hold starts here and the next phase
-            // waits it out, so no renumbering of the ladder was needed to insert it.
+            // The click-moment shot, with the cursor not moved: shots A and B both move it first,
+            // and a move repaints the row it leaves and the row it lands on, which heals exactly
+            // the defect this window can contain (a selection repaint that updated the fill and the
+            // frame but not the text). The hold starts here; the next phase waits it out.
             UE_LOGW("server_browser_native: ROW SKIN SHOT C -- the click has just landed on "
                     "row %d and the cursor has NOT moved. That row must read PURPLE with a "
                     "grey frame and NO yellow anywhere, glyphs included: it is selected, and "
@@ -858,22 +677,18 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         }
         case kSkinAimOther:
         case kSkinAimSelf: {
-            // Aim by the SAME arithmetic kRowMove used, so "the selected row" here is the
-            // row that was actually clicked: 1.5 rows in. The other aim is 4.5 rows in --
-            // three rows lower, still inside the ~470 px list at any window size this rig
-            // runs, and far enough that the two are never the same row.
+            // Aim by the same arithmetic kRowMove used, so "the selected row" is the row that was
+            // clicked, 1.5 rows in; the other aim is 4.5 rows in, inside the ~470 px list at any
+            // window size this rig runs.
             if (nowMs < g_holdUntilMs) return;   // HOLDING: the click-moment shot's window
             const bool self = (g_selfCheckStep == kSkinAimSelf);
-            // NEVER handed straight to %s: SelectedRowId returns the raw pointer of a
-            // std::string that is empty when nothing is selected, and a null would be UB
-            // in the logger's vsnprintf. The caller two phases up already guards it.
+            // Never handed straight to %s: SelectedRowId returns a std::string's raw pointer, and a
+            // null would be UB in the logger's vsnprintf.
             const char* selId = ui::server_browser_native::SelectedRowId();
             if (!selId) selId = "(none)";
-            // BOTH TERMS, and the first version had only the second. A pixel height says
-            // the list is tall enough to CONTAIN five rows; it does not say five rows
-            // EXIST. With three lobbies the box is still 470 px, the aim lands in empty
-            // space, nothing is hovered -- and the shot would be archived under a line
-            // asserting a yellow highlight that is not in it. (Post-ship audit, 2026-08-30.)
+            // Both terms: a pixel height says the list can contain five rows, not that five exist;
+            // with three lobbies the aim lands in empty space and the shot would be archived under
+            // a line asserting a highlight that is not in it.
             ue_wrap::FVector2D ltl{}, lsz{};
             const int32_t rows = U::ChildCount(list);
             if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 5.f || rows < 5) {
@@ -885,8 +700,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             }
             PlaceCursorOnAbsolute(ltl.X + lsz.X * 0.5f,
                                 ltl.Y + kRowPx * (self ? 1.5f : 4.5f));
-            // The needle mp.py captures on. It names what the frame should show, so the
-            // shot is falsifiable by looking at it rather than merely archived.
+            // The needle the rig captures on; it names what the frame should show, so the shot is
+            // falsifiable by looking.
             if (self)
                 UE_LOGW("server_browser_native: ROW SKIN SHOT B -- the cursor is back on the "
                         "SELECTED row (lobby '%s'). It must still be PURPLE and must NOT "
@@ -908,25 +723,12 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             if (nowMs < g_holdUntilMs) return;   // HOLDING: give the capture poll a window
             break;
         case kClickMove: {
-            // ASK THE ENGINE WHERE THE X IS. Do not compute it, and do not hunt for it.
-            //
-            // Two instruments stood here before, and both were the same mistake at
-            // different sizes. The first moved to a hard-coded estimate -- top-right of a
-            // 980x620 window, `w/2 + 490 - 40`, `h/2 - 310 + 34` -- which is a SECOND
-            // implementation of a layout the engine had already performed, kept in step
-            // with the real one by hand. `23481e3c` rewrote the title row and the estimate
-            // went stale in the very next commit after the one that recorded BROWSER BACK
-            // PASS. The second replaced it with a 70-point sweep of that region, asking
-            // IsHovered at each point -- but the region itself was `w/2 + 980/2 - 134`,
-            // the same three constants, so the sweep inherited the guess it was written to
-            // retire and could only ever be wrong over a wider area.
-            //
-            // `WidgetScreenRect` reads Slate's own cached geometry, so it is correct under
-            // any window size, any UI scale, and any future edit to this screen's layout.
-            // The two failure modes stay distinguishable, which is the property both
-            // earlier versions were reaching for: a rect that comes back empty means the
-            // button was never given a place to be, and a good rect whose centre does not
-            // answer IsHovered means the button is there and not hit-testable.
+            // Ask the engine where the button is; do not compute it or hunt for it. A hard-coded
+            // estimate is a second implementation of a layout the engine already performed, and a
+            // sweep of that region inherits the guess. WidgetScreenRect reads Slate's own cached
+            // geometry, correct under any window size, UI scale or layout edit, and keeps the two
+            // failure modes apart: an empty rect means the button was never placed, a good rect
+            // whose centre does not answer IsHovered means it is not hit-testable.
             ue_wrap::FVector2D tl{}, size{};
             const bool haveRect = U::WidgetScreenRect(exitBtn, tl, size);
             const ue_wrap::FVector2D want = DesiredSizeOf(exitBtn);
@@ -938,20 +740,15 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 g_selfCheckStep = -1;
                 return;
             }
-            // ALLOTTED vs DESIRED, printed together, because the gap between them is the
-            // diagnosis. Equal and non-zero: the row gave the button what it asked for.
-            // Allotted (0,0) against a desired (53,48): it laid out and was then given no
-            // room -- a slot problem, invisible to any amount of clicking.
+            // Allotted and desired printed together: equal and non-zero, the row gave the button
+            // what it asked for; allotted (0,0) against a desired (53,48), a slot problem invisible
+            // to any amount of clicking.
             UE_LOGW("server_browser_native: X geometry -- allotted %.0fx%.0f at desktop "
                     "(%.0f,%.0f), desired %.0fx%.0f, client %dx%d",
                     size.X, size.Y, tl.X, tl.Y, want.X, want.Y, w, h);
-            // CALIBRATION, and it is not optional. A coordinate is meaningless without the
-            // space it is in, and the first run of this probe put the X at desktop
-            // (1711,396) -- which reads as "261 px outside a 980-wide centred window" only
-            // if absolute space is 1:1 with client pixels. The SCRIM is the ruler: it is
-            // known to span the whole screen (the phase above proves it by hover), so its
-            // rect states the space's extent directly. The LIST is the second reading,
-            // because it is the one widget whose place inside the window is unambiguous.
+            // Calibration: a coordinate is meaningless without its space. The scrim is the ruler
+            // (it spans the whole screen, proven by hover above), so its rect states the space's
+            // extent; the list is the second reading.
             {
                 ue_wrap::FVector2D stl{}, ssz{}, ltl{}, lsz{};
                 const bool haveScrim = U::WidgetScreenRect(scrim, stl, ssz);
@@ -962,19 +759,11 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "smaller is the UI scale, and every other number here divides by it.",
                         haveScrim ? "" : "UNREAD ", ssz.X, ssz.Y, stl.X, stl.Y,
                         haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y);
-                // ...AND NOW SOMETHING READS IT. That line has printed the answer since it
-                // was written and nothing ever compared the two numbers, so on 2026-08-31
-                // a run where the game window came up 1392x782 instead of the 1920x1080
-                // mp.py asks for reported CONNECT FAIL, ROW SELECT FAIL and BROWSER BACK
-                // FAIL -- three widget verdicts, all false, on a build whose only change
-                // was a refactor. It took a re-run to clear the code, which is exactly the
-                // cost an instrument exists to avoid.
-                //
-                // At any scale but 1 this whole harness is VOID, not failing: it places a
-                // real cursor with SetCursorPos (DESKTOP pixels) at a rect Slate reports in
-                // ABSOLUTE units, and the two are the same space only while the viewport is
-                // unscaled. So say VOID, loudly, and say it about the RUN rather than about
-                // whatever widget the next phase happens to aim at.
+                // And something reads it: at any scale but 1 this harness is void, not failing
+                // (SetCursorPos takes desktop pixels, Slate reports absolute units, and they
+                // coincide only while the viewport is unscaled). A window that came up 1392x782
+                // instead of 1920x1080 once produced three false widget verdicts. So say VOID,
+                // loudly, about the run.
                 if (haveScrim && w > 0 && h > 0) {
                     const float sx = ssz.X / static_cast<float>(w);
                     const float sy = ssz.Y / static_cast<float>(h);
@@ -999,17 +788,15 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 g_selfCheckStep = -1;
                 return;
             }
-            // Slate reports CLIENT pixels; SetCursorPos takes DESKTOP. The comment that
-            // stood here claimed they were one space and that no ClientToScreen was
-            // needed -- measured FALSE 2026-08-30 (client origin 320,180).
+            // Slate's absolute space is desktop pixels at scale 1 (the calibration above), so the
+            // rect is handed over unchanged.
             PlaceCursorOnAbsolute(tl.X + size.X * 0.5f, tl.Y + size.Y * 0.5f);
             break;
         }
         case kClickSample:
-            // Sampled a full eight ticks after the move, the interval the scrim phases
-            // already trust: IsHovered read too soon answers about the PREVIOUS pointer
-            // position. Recorded BEFORE the click so the verdict can separate "the cursor
-            // never got there" from "it got there and the button did nothing".
+            // Sampled eight ticks after the move (IsHovered read too soon answers about the
+            // previous position), and before the click, so the verdict can separate "never got
+            // there" from "got there and nothing happened".
             g_closeHovered = E::WidgetIsHovered(exitBtn) ? 1 : 0;
             UE_LOGW("server_browser_native: the X reads IsHovered=%d with the cursor at its "
                     "own centre (list=%d scrim=%d at the same moment) -- clicking there now",
@@ -1017,9 +804,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                     E::WidgetIsHovered(scrim) ? 1 : 0);
             break;
         case kClickDown:
-            // PRESS and hold across ticks. The poll this drives fires on the RELEASE edge
-            // and samples once per tick, so a down+up inside one tick is invisible to it --
-            // the same trap the ESC phase records one screen up.
+            // Press and hold across ticks: the poll fires on the release edge and samples once per
+            // tick, so a down and up inside one tick is invisible to it.
             ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
             break;
         case kClickUp:
@@ -1067,9 +853,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             break;
         case kHostVerify: {
-            // BOTH halves, because either one alone is a broken screen: the hosting window
-            // must be up, and the browser must have got out of the way. They are siblings
-            // in one switcher, so "both open" is not a state that can render.
+            // Both halves: the hosting window must be up and the browser must have got out of the
+            // way; they are siblings in one switcher, so "both open" cannot render.
             const bool hostUp     = ui::host_window_native::IsOpen();
             const bool browserOut = !ui::server_browser_native::IsOpen();
             if (hostUp && browserOut)
@@ -1096,13 +881,11 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 g_selfCheckStep = -1;
                 return;
             }
-            // Half a row down: the FIRST save row, which is the one a player reaches for.
+            // Half a row down: the first save row, the one a player reaches for.
             UE_LOGW("host_window_native: world list has %d row(s) at desktop (%.0f,%.0f) "
                     "%.0fx%.0f -- aiming at the first", rows, tl.X, tl.Y, sz.X, sz.Y);
-            // kHostRowPx, NOT the browser's kRowPx: this window's rows are 56 px and the
-            // browser's are 64. Half of 64 still landed inside row 0 -- by margin, not by
-            // construction, which is exactly the kind of aim that goes wrong silently the
-            // day a layout constant moves.
+            // kHostRowPx, not the browser's kRowPx: this window's rows are 56 px, and half of 64
+            // landed inside row 0 by margin, not by construction.
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f,
                                 tl.Y + kHostRowPx * 0.5f);
             break;
@@ -1118,10 +901,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             break;
         case kWorldVerify: {
             const int now = ui::host_window_native::SelectedSave();
-            // A CHANGE, not merely a non-negative value. Asserting `now >= 0` alone would
-            // report PASS on a run where something was already selected and the click did
-            // nothing -- silence dressed as success, which is the one thing this file is
-            // written not to do.
+            // A change, not merely a non-negative value: `now >= 0` alone would pass a run where
+            // something was already selected and the click did nothing.
             if (now >= 0 && now != g_worldBefore)
                 UE_LOGW("host_window_native: WORLD LIST PASS -- a real click on the first "
                         "save row selected world %d (was %d). The world list is clickable, "
@@ -1132,10 +913,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "first save row left SelectedSave() at %d (was %d). The rows draw "
                         "and cannot be picked, so this window can only ever start a NEW "
                         "game.", now, g_worldBefore);
-            // HOLD, so the capture poll gets a frame of this window. Its footer and its
-            // two lists are the only thing in the tree a picture can judge, and the last
-            // defect found in it was found by eye ("the buttons Back and Host are not
-            // aligned with the main box and look unnatural").
+            // Hold, so the capture poll gets a frame of this window: its footer and its two lists
+            // are what a picture can judge, and the last defect in it was found by eye (misaligned
+            // footer buttons).
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
@@ -1177,10 +957,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             break;
         }
         case kHostEscReopen:
-            // ESC IS A SEPARATE EXIT AND OWES A SEPARATE MEASUREMENT. It is the one that
-            // survives a capture-starved pointer -- the leading candidate for the user's
-            // "cannot close it" report -- so a green Back says nothing about the case that
-            // actually bit them.
+            // ESC is a separate exit and owes a separate measurement: it is the one that survives a
+            // capture-starved pointer, so a green Back says nothing about it.
             ui::host_window_native::Open();
             UE_LOGW("host_window_native: HOST ESC -- reopened the window to drive its keyboard exit");
             break;
@@ -1203,14 +981,12 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 UE_LOGE("host_window_native: HOST ESC FAIL -- the window is STILL OPEN after a "
                         "real VK_ESCAPE press-release. With the X gone and this dead, a player "
                         "whose pointer is starved of mouse messages cannot leave at all.");
-            // Ask for the direct-connect window so the phase below has something to
-            // measure. Deferred through Open(), like every other consumer.
+            // Ask for the direct-connect window so the next phase has something to measure;
+            // deferred through Open(), like every consumer.
             ui::browser_input_screens::Open(ui::browser_input_screens::Kind::DirectConnect);
-            // BREAK, NOT RETURN. The step counter is incremented by the `++` after this
-            // switch, so a `return` from a case is how a phase repeats itself forever --
-            // which is exactly what this one did on its first run, logging HOST ESC PASS
-            // and re-opening the window every tick. Every phase that ENDS the run sets
-            // step -1 and returns; every phase that hands over must break.
+            // Break, not return: the step counter increments after the switch, so a return from a
+            // case repeats the phase forever. A phase that ends the run sets step -1 and returns; a
+            // phase that hands over breaks.
             break;
         }
         case kInputDirectShot: {
@@ -1228,15 +1004,14 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             break;
         }
         case kInputDirectHold:
-            // HOLDING: give mp.py's 3 s capture poll a window onto this screen. Returning
-            // WITHOUT advancing is how every hold in this file works -- the step counter is
-            // incremented after the switch, so a return re-enters this same case next tick.
+            // Holding: a window for the rig's 3 s capture poll. Returning without advancing is how
+            // every hold here works; the counter increments after the switch.
             if (nowMs < g_holdUntilMs) return;
             ui::browser_input_screens::Open(ui::browser_input_screens::Kind::ChangeName);
             break;
         case kInputNameOpen:
-            // One phase of slack: the open is deferred to the next menu tick and the shot
-            // must not fire on the window it is replacing.
+            // One phase of slack: the open is deferred to the next menu tick, and the shot must not
+            // fire on the window it is replacing.
             break;
         case kInputNameShot: {
             if (!ui::browser_input_screens::IsOpen()) {
@@ -1253,9 +1028,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         }
         case kInputNameHold:
             if (nowMs < g_holdUntilMs) return;
-            // Put the input window away and re-open STEP ONE, so the phases below have a
-            // real Next button to press. Close() is deferred; Open() is too, and the two
-            // land on the same tick in the order they were asked for.
+            // Put the input window away and re-open step one, so the phases below have a real Next
+            // button; Close() and Open() are both deferred and land on the same tick in order.
             ui::browser_input_screens::Close();
             break;
         case kSessOpen:
@@ -1289,10 +1063,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             break;
         case kSessVerify: {
-            // BOTH halves, like the HOST LINK phase: step two must be up AND step one must
-            // have got out of the way. They are siblings in one switcher, so "both open" is
-            // not a state that can render -- and if step one were still showing, its Back
-            // would restore an index that is now ours.
+            // Both halves, as in the HOST LINK phase: step two up and step one gone; if step one
+            // were still showing, its Back would restore an index that is now ours.
             const bool up   = ui::host_session_settings::IsOpen();
             const bool gone = !ui::host_window_native::IsOpen();
             if (up && gone)
@@ -1321,11 +1093,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 return;
             }
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
-            // THE LENGTH BEFORE THE CLICK DECIDES WHICH CLAIM THE VERIFY STEP CAN MAKE.
-            // `SetLocked` mints only into an EMPTY box -- deliberately, so toggling the lock
-            // does not discard a value the host already told a friend. So on a rig that has
-            // hosted before, the field is restored from the ini and this click mints nothing;
-            // asserting a mint length there would report a working feature as broken.
+            // The length before the click decides which claim the verify step can make: SetLocked
+            // mints only into an empty box, so on a rig that has hosted before the field is
+            // restored from the ini and this click mints nothing.
             g_lockPwLenBefore = ui::host_session_settings::PasswordLength();
             g_lockWasLockedBefore = ui::host_session_settings::Locked();
             UE_LOGW("host_session_settings: LOCK row at desktop (%.0f,%.0f) %.0fx%.0f "
@@ -1341,28 +1111,20 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             break;
         case kSessLockVerify: {
-            // TWO CLAIMS, because the row lighting up is not the feature. The user asked for
-            // "если жмет на замок то пароль сразу появляется сгенерированный" -- so the
-            // measurement is that the click both SET the lock and MINTED a value, and a
-            // padlock with an empty box behind it fails here rather than in front of a
-            // player. The LENGTH is asserted, never the characters (see PasswordLength).
-            // ...AND THE EXPECTED LENGTH IS ASKED FOR, not written down here. This said
-            // `len >= 8` until 2026-09-01, when the user shortened the mint to six -- a
-            // literal that would have reported a working feature as a broken padlock, in
-            // exactly the words a real defect uses.
+            // Two claims, because the row lighting up is not the feature: the click both set the
+            // lock and minted a value, so a padlock over an empty box fails here rather than in
+            // front of a player. The length is asserted, never the characters, and the expected
+            // length is asked for, not written down here: a literal reported a working feature as
+            // broken when the mint was shortened.
             const bool locked = ui::host_session_settings::Locked();
             const int  len    = ui::host_session_settings::PasswordLength();
             const int  want   = ui::host_session_settings::GeneratedPasswordLength();
             const bool minted = (g_lockPwLenBefore == 0);
             const int  expect = minted ? want : g_lockPwLenBefore;
-            // ...AND THE LOCK MUST HAVE ACTUALLY MOVED. Without this term the no-mint arm
-            // passes a click that did NOTHING: if the box is non-empty and net.lobby_locked
-            // is 1, the window opens already locked, `SetLocked` returns at its first line,
-            // and "the value survived" is true of a dead pointer path too. That arm is the
-            // one that runs on every rig that has hosted before -- i.e. every dev rig after
-            // its first run -- and this phase is cited as the behaviour-preservation
-            // evidence for two refactors. The aim step already sampled the flag; it just
-            // was not consumed. (Post-ship audit, 2026-09-01.)
+            // And the lock must have actually moved: without this term the no-mint arm passes a
+            // click that did nothing (a non-empty box with net.lobby_locked=1 opens already locked,
+            // and SetLocked returns at its first line), which is the arm every rig that has hosted
+            // before runs.
             const bool turnedOn = !g_lockWasLockedBefore;
             if (locked && turnedOn && len == expect)
                 UE_LOGW("host_session_settings: LOCK PASS -- a real click on \"Password "
@@ -1404,12 +1166,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             break;
         case kSessBackVerify: {
-            // BACK GOES TO STEP ONE, not to the main menu, and that is the whole claim. A
-            // Back that dropped the player out of the flow would make them redo the world
-            // choice to change one connection mode -- and restoring the switcher index is
-            // NOT enough on its own, because the hosting window tracks its own shown flag
-            // and reconciled itself closed when we took the switcher. This asserts the flag
-            // and the index agree again.
+            // Back goes to step one, not the main menu, and that is the whole claim; restoring the
+            // switcher index alone is not enough, since the hosting window tracks its own shown
+            // flag, so this asserts the flag and the index agree.
             const bool ours = ui::host_session_settings::IsOpen();
             const bool back = ui::host_window_native::IsOpen();
             if (!ours && back)
