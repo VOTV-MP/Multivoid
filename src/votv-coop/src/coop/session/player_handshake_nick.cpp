@@ -1,18 +1,8 @@
-// coop/session/player_handshake_nick.cpp -- OUR OWN NAME, and the boundary its
-// text crosses. Split out of player_handshake.cpp 2026-07-28 (arc D2 pushed that
-// file to 826 LOC, past the 800 soft cap).
-//
-// WHY THESE FUNCTIONS ARE ONE FILE. They answer a single question -- "what name
-// do we go by, and what text is a name allowed to contain" -- and they are the
-// module's only consumers of coop/text. The handshake's other half is about
-// SLOTS, EPOCHS and PAYLOAD FRAMING; nothing here touches a slot. The two stores
-// are the reason it has to be one file rather than three: g_requestedNick (what
-// the human typed) and g_localNick (what the host decided we are called) only
-// make sense as a pair, and every rule about which one is persisted lives in
-// AdoptCanonicalNickname below.
-//
-// Nothing moved namespace. These are declared in player_handshake_detail.h and
-// player_handshake.h exactly as before, so no call site changed.
+// coop/session/player_handshake_nick.cpp -- our own name, and the boundary its text crosses:
+// what name we go by, and what text a name may contain. The two stores only make sense as a
+// pair, the requested name (what the person typed) and the displayed name (what the host
+// decided we are called), and every rule about which one is persisted lives in
+// AdoptCanonicalNickname. Declared in player_handshake.h and player_handshake_detail.h.
 
 #include "coop/session/player_handshake.h"
 
@@ -34,37 +24,32 @@ namespace coop::player_handshake {
 
 namespace {
 
-// T7 (ini rework): MY-NAME default from the shared registry constant. NOTE:
-// SanitizeNickname's empty-result fallback below deliberately STAYS "Player" --
-// that function runs on inbound REMOTE nicks too (symmetric defense), and a
-// garbage remote nick must not render as our my-name default.
+// The my-name default from the shared registry constant. SanitizeNickname's empty-result
+// fallback stays "Player" on purpose: it runs on inbound remote nicks too, and a garbage
+// remote nick must not render as our own default.
 std::wstring g_localNick = coop::config_registry::MyNameDefaultW();
-// What the human TYPED. The Join asks for this; g_localNick above is what we
-// DISPLAY, which the host may rename for uniqueness (arc B). Two stores, one
-// author each: the human owns the request, the host owns the display.
+// What the person typed. The Join asks for this; g_localNick is what we display, which the
+// host may rename for uniqueness. Two stores, one author each: the person owns the request,
+// the host owns the display.
 std::wstring g_requestedNick = g_localNick;
-// Whether SanitizeNickname CHANGED the last request we set. See SetLocalNickname:
-// the raw string is never stored, so this bit is the only surviving evidence that
-// our own rules edited what the human asked for. AdoptCanonicalNickname needs it
-// to decide whether a host-assigned suffix is safe to persist.
+// Whether SanitizeNickname changed the last request we set: the raw string is never stored, so
+// this bit is the only evidence that our own rules edited what the person asked for.
+// AdoptCanonicalNickname needs it to decide whether a host-assigned suffix may persist.
 bool g_requestWasAltered = false;
 
 }  // namespace
 
-// ARC D / RULE 2: the encoder existed THREE times (here, chat_sync::NickUtf8,
-// chat_feed::ToUtf8). These are thin adapters over the ONE owner in coop/text --
-// kept only because the wire code speaks vector<uint8_t>.
+// A thin adapter over the one encoder in coop/text, kept because the wire code speaks
+// vector<uint8_t>.
 std::vector<uint8_t> ToUtf8(const std::wstring& w) {
     const std::string s = coop::text::ToUtf8(w);
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
-// STRICT on the way in. These bytes came from a PEER, so an ill-formed field is
-// refused WHOLE rather than repaired: a repair invents a name nobody chose, and
-// MultiByteToWideChar without MB_ERR_INVALID_CHARS silently substitutes U+FFFD.
-// Until arc D the ASCII allowlist was the only thing destroying ill-formed bytes,
-// so removing it without this would have made bad input merely ugly. An empty
-// return reads as "no name" and the caller's placeholder takes over.
+// Strict on the way in: the bytes came from a peer, so an ill-formed field is refused whole
+// rather than repaired, since a repair invents a name nobody chose (a lenient decode would
+// silently substitute U+FFFD). An empty return reads as no name, and the caller's placeholder
+// takes over.
 std::wstring FromUtf8(const uint8_t* p, int len) {
     if (len <= 0) return {};
     std::wstring out;
@@ -76,69 +61,32 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
     return out;
 }
 
-// Nickname sanitizer (2026-05-25, VT-inspired): trust-boundary defense at
-// the nameplate / hud-feed display surface. Borrowed from VoidTogether-
-// Server's utilityModule.js SimplifyName (regex /^-+|-+$|[^A-Za-z0-9 ]+/g
-// + truncate to 20) -- adjusted for our wchar_t pipeline and to ALLOW
-// internal spaces (single-space runs collapsed; leading/trailing trimmed).
-//
-// Why: a peer's Join reliable payload carries an arbitrary UTF-8 byte
-// string of arbitrary length. Without sanitization, a malicious or buggy
-// peer could inject:
-//   - Control chars (newline / null / ANSI escape) that corrupt our
-//     chat-feed / nameplate text rendered by our ImGui HUD.
-//   - Right-to-left override unicode (U+202E) that visually inverts the
-//     subsequent text in the nameplate.
-//   - Combining diacritics that render glyphs taller than the widget bg.
-//   - Very long strings that overflow the floating nameplate beyond the
-//     screen and waste reliable-channel bandwidth on join.
-//
-// Pattern: keep ASCII alphanumerics + space + the safe punctuation set
-// `[-_.]`. Strip everything else. Collapse multi-space runs to single.
-// Trim leading/trailing whitespace + dashes. Truncate to 20 wchars max.
-// Empty result falls back to "Player" so the nameplate isn't blank.
-//
-// This applies SYMMETRICALLY to both the inbound Join receive (defense
-// against peer-side garbage) AND to our own outbound SetLocalNickname
-// (defense against env-var typos / Windows path leakage / our own
-// future bugs).
-//
-// NOT a profanity filter -- VoidTogether uses obscenity.js for that
-// (450 KB of regexes + transformers). Out of scope for the standalone
-// C++ mod; a strict-character sanitizer + length cap is the trust-
-// boundary fix, profanity moderation is a separate moderation feature
-// pending Phase 6+ (per the VT adoption findings ranked shortlist).
+// The nickname sanitizer, the trust-boundary defence at the nameplate and feed surfaces; its
+// shape follows VoidTogether-Server's SimplifyName (trim, cap), adapted to codepoints and to
+// allow internal spaces. A peer's Join carries an arbitrary byte string of arbitrary length,
+// which could otherwise inject control characters into the feed, a right-to-left override
+// into the nameplate, combining marks that stack above the widget, or a string that overflows
+// the plate and the join. Applied symmetrically to the inbound Join and to our own outbound
+// name. Not a profanity filter.
 std::wstring SanitizeNickname(const std::wstring& raw) {
-    // ARC D: a DENYLIST. See the note above -- an allowlist cannot survive a
-    // widening alphabet, because the script we forgot fails silently.
-    //
-    // ARC D2 replaced four hand-written rows (U+200B-200F, U+202A-202E,
-    // U+2066-2069, U+FEFF) with the Unicode PROPERTY they were each sampling:
-    // Default_Ignorable_Code_Point. The rows were not wrong, they were
-    // incomplete in a way nobody could see from reading them -- U+034F (CGJ) has
-    // advance 0 in Fixedsys AND Roboto, the two default families, and sailed
-    // through, so `Ann͏a` carried a distinct fold key and identical pixels. An
-    // enumeration of the invisibles we happened to think of is a site list; the
-    // property is the invariant (RULE 1).
+    // A denylist: an allowlist cannot survive a widening alphabet, because the script it forgot
+    // fails silently. The invisibles are the Unicode Default_Ignorable_Code_Point property rather
+    // than a hand-written list of ranges: an enumeration of the invisibles one happens to think of
+    // is a site list, and one it missed (the combining grapheme joiner, advance 0 in both default
+    // families) gave two identical-looking names distinct fold keys.
     auto denied = [](uint32_t c) {
         if (c < 0x20 || c == 0x7F) return true;          // C0 controls + DEL
         if (c >= 0xD800 && c <= 0xDFFF) return true;     // unpaired surrogate
         return coop::text::IsDefaultIgnorable(c);
     };
-    // RULE 2, commit 2 (2026-07-30): the literal `c >= 0x0300 && c <= 0x036F`
-    // that used to sit here is GONE. It was correct while the Latin block was the
-    // only mark range that could bake -- and it became silently wrong the moment
-    // the marks were admitted, because Thaana, Tamil, Thai, Arabic and Hebrew
-    // marks all draw now and none of them is in 0x0300-0x036F. A hand-written
-    // range beside a generated table is two owners of one fact, and the hand
-    // written one loses without a symptom: the rule below would have policed
-    // Latin diacritics and let the other five scripts stack onto the UI.
+    // No hand-written mark range here: five scripts' marks draw now, and a range beside the
+    // generated table would be a second owner of one fact, silently policing Latin diacritics
+    // alone.
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
-    // In CODEPOINTS. Iterating wchar_t units cannot see a supplementary-plane
-    // character at all, so every tag character in U+E0000-E0FFF -- all of them
-    // ignorable -- would have passed the denylist as two anonymous halves.
+    // In codepoints: iterating wchar_t units cannot see a supplementary-plane character, so every
+    // tag character, all ignorable, would pass the denylist as two anonymous halves.
     for (size_t i = 0; i < raw.size(); ) {
         uint32_t c = 0;
         const size_t units = coop::text::DecodeCodepoint(raw, i, &c);
@@ -149,23 +97,19 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
             if (!lastWasSpace) { out.push_back(L' '); lastWasSpace = true; }
             continue;
         }
-        // A combining mark with nothing to combine with stacks onto whatever the
-        // UI drew before the name. Only position 0 -- a mark in the MIDDLE of a
-        // name is legitimate text in five scripts and passes untouched.
+        // A combining mark with nothing to combine with stacks onto whatever the UI drew before the
+        // name. Only at position 0: a mark in the middle is legitimate text in five scripts.
         if (out.empty() && coop::text::IsCombiningMark(c)) continue;
         out.append(at, units);
         lastWasSpace = false;
     }
-    // Cap in CODEPOINTS, never in wchar_t units: the old cap could cut an astral
-    // character in half and leave an unpaired surrogate on the wire.
+    // The cap is in codepoints, never wchar_t units, or an astral character could be cut in half
+    // and leave an unpaired surrogate on the wire.
     out = coop::text::CapCodepoints(out, kNickMaxChars);
-    // Trim trailing space.
+    // Trailing spaces and dashes.
     while (!out.empty() && (out.back() == L' ' || out.back() == L'-'))
         out.pop_back();
-    // Trim leading dashes (the SimplifyName regex's ^-+ rule -- VT
-    // didn't trim leading space because their regex stripped all space
-    // implicitly; we kept internal spaces so leading-space is already
-    // gone via the `lastWasSpace=true` prime).
+    // Leading dashes; leading spaces are already gone through the primed space flag.
     size_t start = 0;
     while (start < out.size() && out[start] == L'-') ++start;
     if (start > 0) out.erase(0, start);
@@ -173,70 +117,43 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
 }
 
 void SetLocalNickname(const std::wstring& nick) {
-    // VT-inspired sanitize-on-input (2026-05-25): symmetric defense.
-    // Sanitizing here too means our env-var setup (VOTVCOOP_NET_NICK)
-    // can't accidentally send garbage over the wire that we then
-    // sanitize on the OTHER end -- net is cleaner if both ends agree
-    // on the displayable form.
+    // Sanitised on input too, so our own env setup cannot send garbage the other end then
+    // sanitises; both ends agree on the displayable form.
     if (nick.empty()) return;
-    // Both stores: this is a fresh REQUEST, and until a host arbitrates it the
-    // requested name IS the displayed one. Splitting them here is what lets a
-    // host rename us without the next session re-asking for the suffix.
+    // Both stores: this is a fresh request, and until a host arbitrates it the requested name is
+    // the displayed one. Splitting them here is what lets a host rename us without the next
+    // session re-asking for the suffix.
     g_requestedNick = SanitizeNickname(nick);
     g_localNick = g_requestedNick;
-    // DID OUR OWN RULES ALTER THE REQUEST? Recorded HERE because this is the only
-    // moment the raw string exists -- the store above is already sanitized, so
-    // every later reader is structurally blind to whatever was removed. That
-    // blindness is not hypothetical: the repertoire scan in
-    // AdoptCanonicalNickname reads this same sanitized store, so a name that lost
-    // a leading mark scans perfectly clean.
-    //
-    // A second store holding the raw string would need its own sanitization at
-    // every other use, so what is kept is the one BIT that the decision needs.
+    // Did our own rules alter the request? Recorded here, the only moment the raw string exists:
+    // the store is already sanitised, so every later reader is blind to whatever was removed, and
+    // the repertoire scan in AdoptCanonicalNickname reads this same store. One bit is kept rather
+    // than a second raw store that would need its own sanitisation at every use.
     g_requestWasAltered = (g_requestedNick != nick);
 }
 
 void AdoptCanonicalNickname(const std::wstring& canonical) {
-    // ARC B: the host assigned this. g_localNick is the single store that
-    // chat_sync.cpp:128, peer_action_feed.cpp:51, both of roster.cpp's local-row
-    // reads (:73, :121) and the nameplate all derive from, so writing it is the
-    // whole DISPLAY half of the handback.
+    // The host assigned this. g_localNick is the single store the chat, the action feed, the
+    // roster's local row and the nameplate derive from, so writing it is the whole display half.
     if (canonical.empty() || canonical == g_localNick) return;
     const std::wstring asked = g_requestedNick;
     g_localNick = canonical;
 
-    // ...and the KEEPING half (user decision 2026-07-28). The name is now ours:
-    // it becomes what we ask for, in this process and in the ini, so the next
-    // session opens as Pelmentor2 and stays Pelmentor2 unless someone else is
-    // already using it. Writing all three stores in one place is deliberate --
-    // a name that is displayed but not requested would silently revert on the
-    // next launch, which is exactly the "temporary" behaviour that was rejected.
+    // The keeping half: the name is now ours, so it becomes what we ask for, in this process and in
+    // the ini, and the next session opens under it unless someone else already uses it. A name
+    // displayed but not requested would silently revert on the next launch.
     if (canonical == g_requestedNick) return;
 
-    // ARC D2 -- THE PERSIST SPLIT, and it is decided HERE, locally, with no new
-    // wire kind and no kProtocolVersion bump.
-    //
-    // The arbiter now collides names that merely LOOK alike: every codepoint
-    // this build cannot draw folds to one sentinel, so two CJK names take a
-    // suffix even though they share no character. That suffix is a fact about
-    // OUR FONT SET, not about the human -- and a later build that embeds more
-    // scripts would stop producing it. Persisting it would make a rendering
-    // artifact permanent: the user would be Zhang2 forever, in an install that
-    // can draw 张伟 perfectly well.
-    //
-    // Only the receiving peer can tell the two apart, because only it knows what
-    // it ASKED for. A genuine string clash (two literal "Pelmentor") is the
-    // user's own name meeting someone else's and is kept, per the decision
-    // above. A repertoire-suspect request -- one containing any codepoint the
-    // fold sentinels -- keeps DISPLAYING the assigned name and keeps REQUESTING
-    // the original. See [[lesson-a-placeholder-must-never-become-an-identity]]:
-    // the last time a derived string was allowed to become the stored identity,
-    // a joiner learned "Player" and wrote it over its real name forever.
-    // The predicate must match what FoldKey ACTUALLY does, not what the
-    // repertoire says. U+FFFD is IN the repertoire (it is the fallback glyph and
-    // must be baked), so a name containing a literal one is "drawable" here while
-    // its fold key is pure sentinel -- it would collide with any CJK name, take a
-    // suffix, and PERSIST it. Same test, both sides.
+    // The persist split, decided here with no new wire kind. The arbiter collides names that
+    // merely look alike: every codepoint this build cannot draw folds to one sentinel, so two CJK
+    // names take a suffix even though they share no character. That suffix is a fact about our
+    // font set, not about the person, and a later build that embeds more scripts would stop
+    // producing it; persisting it would make a rendering artefact permanent. Only the receiving
+    // peer can tell the two apart, because only it knows what it asked for: a genuine string
+    // clash is kept, while a repertoire-suspect request (any codepoint the fold sentinels) keeps
+    // displaying the assigned name and keeps requesting the original. The predicate must match
+    // what the fold does, not what the repertoire says: U+FFFD is in the repertoire (it is the
+    // fallback glyph) while its fold key is pure sentinel.
     bool repertoireSuspect = false;
     for (size_t i = 0; i < asked.size() && !repertoireSuspect; ) {
         uint32_t cp = 0;
@@ -244,15 +161,10 @@ void AdoptCanonicalNickname(const std::wstring& canonical) {
         if (!coop::text::InRepertoire(cp) || cp == coop::nickname_arbiter::kAbsentSentinel)
             repertoireSuspect = true;
     }
-    // ...AND THE OTHER WAY OUR OWN RULES CAN EARN A SUFFIX (commit 2). The scan
-    // above asks "does the request contain something we cannot DRAW". It cannot
-    // ask "did we EDIT the request", because it reads the already-sanitized store
-    // -- so a name that lost a leading combining mark, or an ignorable, or a
-    // control character scans perfectly clean, takes the branch below, and writes
-    // a suffix into multivoid.ini that the human never asked for and cannot see
-    // the cause of. Same class as the repertoire case: a local artefact, not a
-    // fact about the human, so it displays but does not persist.
-    // [[lesson-a-placeholder-must-never-become-an-identity]]
+    // The other way our own rules can earn a suffix: the scan above asks whether the request holds
+    // something we cannot draw, and cannot ask whether we edited it, since it reads the sanitised
+    // store; a name that lost a leading mark, an ignorable or a control character scans clean. The
+    // same class as the repertoire case: a local artefact, so it displays but does not persist.
     if (repertoireSuspect || g_requestWasAltered) {
         UE_LOGI("nick: host renamed us '%ls' -> '%ls' (display only -- %s, so the "
                 "suffix is a local artefact and is NOT persisted)",
@@ -277,9 +189,7 @@ const std::wstring& LocalNickname() { return g_localNick; }
 const std::wstring& RequestedNickname() { return g_requestedNick; }
 
 const std::wstring& NicknameForSlot(int slot) {
-    // Thin ledger read (arc A T9): the signature is unchanged on purpose so the
-    // ~14 call sites across 9 files keep compiling untouched. The placeholder
-    // fallback lives in the ledger now -- it is the ONE copy.
+    // A thin ledger read; the placeholder fallback lives in the ledger, the one copy.
     return coop::roster_ledger::DisplayName(slot);
 }
 
