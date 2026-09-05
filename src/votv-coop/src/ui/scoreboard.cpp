@@ -21,21 +21,16 @@ namespace {
 
 using ui::scale::S;
 
-// Pending permanent-ban confirmation (render-thread only). >=0 == a ban is
-// awaiting the modal's confirm; the nick is copied for the prompt text so the
-// modal survives the row's roster snapshot changing under it.
-//
-// The TOKEN is stashed alongside, and it is the load-bearing part: the modal sits
-// open across an arbitrary typing delay, and slots recycle. Aiming the ban at
-// g_banConfirmSlot alone meant a permanent IP ban could land on whoever inherited
-// the seat while the admin was typing.
+// The pending ban confirmation, render thread only: a slot at or above 0 means a ban awaits
+// the modal's confirm, with the nick copied for the prompt. The token is the load-bearing
+// part: the modal sits open across an arbitrary typing delay and slots recycle, so a ban aimed
+// at the slot alone could land on whoever inherited the seat.
 int  g_banConfirmSlot = -1;
 char g_banConfirmNick[24] = {};
 coop::moderation::PlayerToken g_banConfirmToken{};
 
-// A small filled status dot drawn inline before a name (green = connected). Uses
-// the window draw list + a Dummy spacer so the following SameLine() name lands
-// just to its right, vertically centred on the text line.
+// A small filled status dot before a name, green when connected, drawn on the window draw list
+// with a dummy spacer so the following name lands to its right, centred on the text line.
 void StatusDot(bool connected) {
     const ImVec4 col = connected ? ImVec4(0.36f, 0.85f, 0.42f, 1.0f)
                                  : ImVec4(0.60f, 0.60f, 0.62f, 1.0f);
@@ -56,18 +51,15 @@ void Render() {
     coop::roster::GetSnapshot(s);
 
     const ImGuiIO& io = ImGui::GetIO();
-    // Top-centre, pinned. Pivot (0.5, 0) keeps it centred regardless of width.
+    // Top-centre, pinned; the pivot keeps it centred regardless of width.
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.14f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.0f));  // upper-centre, below the top HUD
-    // 540 wide, auto height. 300 -> 460 in 2026-06-12 (truncated nicks + a clipped
-    // "LAN HOST"); 460 -> 540 in 2026-07-28 once the columns got HEADERS -- at 460
-    // the labels had less room than the values under them, so "Mic" bled into
-    // "Link" and the whole strip read as one run of words (user: "текст над
-    // колонками уходит на сразу несколько колонок").
+    // 540 wide, auto height: wide enough for the column headers to sit over their values, so the
+    // strip does not read as one run of words.
     ImGui::SetNextWindowSize(ImVec2(S(540.0f), 0.0f), ImGuiCond_Always);
 
-    // Clean translucent panel: padded, rounded, borderless, dark bg so it reads over
-    // any scene. Own header (no OS-style title bar).
+    // A translucent panel: padded, rounded, borderless, dark, so it reads over any scene; its own
+    // header, no title bar.
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16.0f), S(13.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(8.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -83,9 +75,8 @@ void Render() {
     coop::voice_chat::GetUiSnapshot(vs);
 
     if (ImGui::Begin("###coop_scoreboard", nullptr, flags)) {
-        // Header: bright "PLAYERS" + accent online count + a dim "V: voice" key
-        // hint (the settings window moved to its own V-key surface, user
-        // 2026-06-12 round 1 -- no button here).
+        // The header: PLAYERS, the online count in the accent, and a dim key hint for the voice
+        // settings, which live on their own surface.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.98f, 1.00f, 1.0f));
         ImGui::TextUnformatted("PLAYERS");
         ImGui::PopStyleColor();
@@ -101,64 +92,42 @@ void Render() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Role is conveyed by NICK COLOUR (host = gold, client = soft white) -- no
-        // separate role text column. "(you)" marks the local player. On the HOST's
-        // interactive board, every OTHER connected client's row is a clickable
-        // Selectable that opens an action popup (Teleport-to-me / Kick / Ban -- all
-        // host-standard admin verbs, no dev gate). A client's board (and the host's
-        // own row) is plain text -- the client peek is passive (no input capture).
+        // Role is conveyed by nick colour (host gold, client soft white), with no role column, and
+        // "(you)" marks the local player. On the host's board every other connected client's row is
+        // a selectable that opens the action popup (teleport to me, kick, ban: host-standard admin
+        // verbs, not dev-gated); a client's board and the host's own row are plain text.
         const bool host = LocalIsHost();
-        // BordersInnerH + a lifted alt-row tint: with RowBg alone the stripes were
-        // invisible over the dark overlay and the rows read as one block (user
-        // 2026-07-27, on the first screenshot of this surface).
+        // Inner horizontal borders and a lifted alternate-row tint: with the row background alone
+        // the stripes were invisible over the dark overlay and the rows read as one block.
         const ImGuiTableFlags tflags =
             ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_BordersInnerH;
         const bool voiceOn = vs.enabled != 0 && vs.started != 0;
-        // First attempt used 0.055 / 0.10 alpha and was still unreadable in a
-        // screenshot -- over a dark, busy 3D backdrop a stripe has to be far
-        // stronger than it would need to be on a flat UI. Three cues now, not one:
-        // a visible alternating tint, a real separator line, and vertical breathing
-        // room so the rows are not one block of text.
+        // Over a dark, busy 3D backdrop a stripe has to be far stronger than on a flat UI, so three
+        // cues: a visible alternating tint, a real separator line, and vertical room.
         ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
         ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ImVec4(1.0f, 1.0f, 1.0f, 0.28f));
-        // Roomier cells (was 4x5): with a header row above them the table needed
-        // vertical air, and the horizontal pad is what keeps each label off its
-        // neighbour's column edge.
+        // Roomier cells: with a header row the table needs vertical air, and the horizontal pad
+        // keeps each label off its neighbour's column edge.
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(S(8.0f), S(7.0f)));
         if (ImGui::BeginTable("##roster", voiceOn ? 5 : 4, tflags)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-            // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
-            // Click = self: toggle mute; remote: per-player volume popup.
+            // The voice-state icon: a click on the self row toggles mute, on a remote row opens the
+            // per-player volume popup.
             if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, S(40.0f));
-            // Connection (v131): how THIS PLAYER reaches the session -- "LAN" /
-            // "DIRECT" / "RELAY", or "n/a" on the host row, whose traffic never
-            // crosses a socket. Host-measured and host-published, so every board
-            // shows the same value for the same player. It used to be derived
-            // per viewer, which put transport on some rows and routing ("VIA
-            // HOST") on others, in one column, side by side.
+            // The connection: how this player reaches the session (LAN, direct, relay), or n/a on
+            // the host row, whose traffic never crosses a socket. Host-measured and host-published,
+            // so every board shows the same value for the same player.
             ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(84.0f));
             ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(66.0f));
-            // ID (arc A): the occupant's session number, host-issued and never
-            // reused within a session. It is NOT the slot -- slots recycle, so a
-            // slot number names a seat, not a person -- and it is deliberately
-            // NOT shown on the nameplate (user 2026-07-27); TAB is where the full
-            // information lives, SA-MP-shaped.
-            //
-            // FAR RIGHT (user 2026-07-27). It led the row at first, which put the
-            // least-scanned field where the eye lands and pushed the NAME -- the
-            // thing anyone actually looks for -- off the left edge.
+            // The ID: the occupant's session number, host-issued and never reused within a session.
+            // Not the slot, which names a seat rather than a person, and not shown on the
+            // nameplate; the player list is where the full information lives. Far right, so the
+            // name leads the row.
             ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(44.0f));
-            // The columns had NEVER been named (user 2026-07-27: "the rows are
-            // not even named properly"). TableSetupColumn only DECLARES a name;
-            // something has to draw it.
-            //
-            // Hand-drawn rather than ImGui::TableHeadersRow(), because that helper
-            // left-aligns EVERY label: "Ping" and "ID" then sat on the left of the
-            // right-aligned numbers underneath, so no label was clearly over its own
-            // value (user 2026-07-28: "нечетко над своей областью/колонкой"). Each
-            // header here takes the SAME alignment as the data below it, so a
-            // label and its column read as one unit. TableNextRow's Headers flag
-            // still paints the header background; we only replace the text.
+            // The headers are drawn by hand rather than with the table's helper, which left-aligns
+            // every label, so the numeric labels sat on the left of their right-aligned values;
+            // each header takes the alignment of the data below it. The headers row flag still
+            // paints the background.
             {
                 const ImVec4 hdrCol(0.62f, 0.71f, 0.82f, 1.0f);
                 int hc = 0;
@@ -181,10 +150,9 @@ void Render() {
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
-                // v103 (12f): a custom nick color (synced pref) overrides the role
-                // color -- role stays readable via the HOST tag beside the name.
-                // The local row resolves through the local pref directly (our own
-                // slot never receives its color over the wire).
+                // A custom nick colour (a synced preference) overrides the role colour; the role
+                // stays readable through the HOST tag. The local row resolves through the local
+                // preference, since our own slot never receives its colour over the wire.
                 const uint32_t custom = r.isLocal ? coop::nick_color::LocalPacked()
                                                   : coop::nick_color::PackedForSlot(r.slot);
                 const ImVec4 nickCol =
@@ -203,12 +171,10 @@ void Render() {
                 const bool actionable = host && !r.isLocal && r.connected && r.slot >= 1;
                 if (actionable) {
                     ImGui::PushStyleColor(ImGuiCol_Text, nickCol);
-                    // DontClosePopups: clicking the row toggles the popup; the
-                    // selection state itself is meaningless here. AllowOverlap:
-                    // the row spans ALL columns, and ImGui gives a click to the
-                    // FIRST-submitted item -- without it the row selectable eats
-                    // the Mic-column icon's clicks and pops the kick/ban menu
-                    // instead of the volume popup (user 2026-06-12 round 2).
+                    // DontClosePopups, since clicking the row toggles the popup and the selection
+                    // state is meaningless; AllowOverlap, since the row spans all columns and a
+                    // click goes to the first submitted item, so without it the row would eat the
+                    // mic icon's clicks.
                     if (ImGui::Selectable(nick, false,
                                           ImGuiSelectableFlags_DontClosePopups |
                                               ImGuiSelectableFlags_SpanAllColumns |
@@ -219,12 +185,10 @@ void Render() {
                     if (ImGui::BeginPopup("##act")) {
                         ImGui::TextDisabled("%s", nick);
                         ImGui::Separator();
-                        // Host-standard action, NOT dev-gated (user 2026-07-03: the host
-                        // should always have it, like Kick/Ban -- it is an admin verb).
-                        // Capture the TOKEN, not the slot. Slots recycle, so a
-                        // slot number stops naming this person the moment they
-                        // leave -- and these actions execute later, on the game
-                        // thread, by which time the seat may have a new occupant.
+                        // Host-standard actions, not dev-gated. The token is captured, not the
+                        // slot: slots recycle, so a slot number stops naming this person the moment
+                        // they leave, and these actions execute later on the game thread, when the
+                        // seat may have a new occupant.
                         const auto token =
                             coop::moderation::TokenFor(r.slot, r.playerNo, r.generation);
                         if (ImGui::MenuItem("Teleport to me"))
@@ -235,10 +199,9 @@ void Render() {
                         const bool banClicked = ImGui::MenuItem("Ban (permanent)");
                         ImGui::PopStyleColor();
                         if (banClicked) {
-                            // The confirm modal executes after an ARBITRARY typing
-                            // delay, which is exactly the window a slot can change
-                            // hands in. Stash the token so the ban is aimed at the
-                            // person, not at the seat.
+                            // The confirm modal executes after an arbitrary typing delay, exactly
+                            // the window a slot can change hands in, so the token is stashed and
+                            // the ban aimed at the person.
                             g_banConfirmToken = token;
                             g_banConfirmSlot = r.slot;
                             std::snprintf(g_banConfirmNick, sizeof(g_banConfirmNick), "%s", nick);
@@ -248,22 +211,18 @@ void Render() {
                 } else {
                     ImGui::TextColored(nickCol, "%s", nick);
                     if (r.isLocal) { ImGui::SameLine(0.0f, S(6.0f)); ImGui::TextDisabled("(you)"); }
-                    // HOST belongs on the NAME, not in the Link column. It is a
-                    // fact about WHO this player is; the Link column answers how
-                    // their traffic reaches the session, and the old "LAN HOST"
-                    // fused the two. Without this marker the word would vanish
-                    // from the UI entirely -- and it is what explains why the
-                    // host's Link and Ping cells read "n/a". (A host row is never
-                    // `actionable`, so this branch is its only path.)
+                    // HOST belongs on the name, not in the link column: it is a fact about who the
+                    // player is, while the link column answers how their traffic reaches the
+                    // session, and it explains why the host's link and ping cells read n/a. A host
+                    // row is never actionable, so this is its only path.
                     if (r.isHost) {
                         ImGui::SameLine(0.0f, S(6.0f));
                         ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.35f, 0.85f), "HOST");
                     }
                 }
 
-                // Voice column (v66): the per-player mic-state icon. Self row:
-                // click toggles your mute. Remote row: click opens the local
-                // mute/volume popup (SetSlotVolume is render-thread-safe).
+                // The voice column, the per-player mic-state icon: the self row toggles your mute,
+                // a remote row opens the local mute and volume popup.
                 int col = 1;  // 0 = Player; Mic/Link/Ping/ID follow in that order
                 if (voiceOn) {
                     ImGui::TableSetColumnIndex(col++);
@@ -273,8 +232,8 @@ void Render() {
                             ? vs.icons[r.slot] : 0);
                     const float ih = ImGui::GetTextLineHeight();
                     const ImVec2 cell = ImGui::GetCursorScreenPos();
-                    // Locally-silenced peers show the muted-mic glyph dimmed even
-                    // when their own state is None (you chose not to hear them).
+                    // A locally silenced peer shows the muted glyph dimmed even when its own state
+                    // is none.
                     const bool localSilenced =
                         !self && r.slot >= 0 &&
                         r.slot < static_cast<int>(coop::players::kMaxPeers) &&
@@ -283,9 +242,8 @@ void Render() {
                         if (self) coop::voice_chat::SetMuted(vs.muted == 0);
                         else if (r.connected) ImGui::OpenPopup("##vvol");
                     }
-                    // An idle peer (icon None) draws a DIM mic outline instead of
-                    // nothing -- an invisible cell read as "no mute icons" (user
-                    // round 1) and gave the click target no affordance.
+                    // An idle peer draws a dim mic outline instead of nothing: an invisible cell
+                    // read as no mute icons and gave the click target no affordance.
                     const bool idle =
                         !localSilenced && icon == coop::voice_chat::VoiceIcon::None;
                     const auto shown = localSilenced ? coop::voice_chat::VoiceIcon::MicMuted
@@ -318,17 +276,14 @@ void Render() {
                     }
                 }
 
-                // Link column: how THIS PLAYER reaches the session. One shared
-                // renderer (ui::link_format) across scoreboard / admin panel /
-                // nameplate -- three hand-copied cascades used to drift here.
+                // The link column, through the one shared renderer the scoreboard, the admin panel
+                // and the nameplate use.
                 ImGui::TableSetColumnIndex(col++);
                 ImGui::TextDisabled("%s", ui::link_format::LinkLabel(r.linkKind));
 
-                // Ping column, right-aligned. EVERY row renders, including your
-                // own: the host measures your link and publishes it, so your own
-                // ping is a real number and belongs on your row. The old
-                // `!r.isLocal` gate is exactly why the user saw their own row
-                // blank ("the client himself doesn't see anything on himself").
+                // The ping column, right-aligned. Every row renders, your own included: the host
+                // measures your link and publishes it, so your own ping is a real number and
+                // belongs on your row.
                 ImGui::TableSetColumnIndex(col++);
                 {
                     char pb[16];
@@ -339,8 +294,8 @@ void Render() {
                     ImGui::TextDisabled("%s", pb);
                 }
 
-                // ID column, LAST and right-aligned so the numbers form a clean edge
-                // instead of a ragged one against the ping cell.
+                // The ID column, last and right-aligned, so the numbers form a clean edge against
+                // the ping cell.
                 ImGui::TableSetColumnIndex(col);
                 {
                     char ib[16];
@@ -361,22 +316,13 @@ void Render() {
         ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
         if (s.count == 0) ImGui::TextDisabled("No players.");
 
-        // HOST-ONLY SESSION BLOCK. A session is CONFIGURED WHEN IT IS CREATED and not
-        // afterwards -- password, lock and connection are settled in the hosting flow and
-        // changing them means hosting again (user, 2026-08-31: "раз создает хост сессию и
-        // всё, с этим и живёт ... надо пусть пересоздает", and for this menu specifically
-        // "забрать редактирование сессии у хоста в mid coop session, пусть там просто
-        // информация сервера/сессии").
-        //
-        // HIDING IS THE ONE EXCEPTION, and the user named it as such ("hiding is the only
-        // tilde mid session edit exception i guess"). It is an exception for a MEASURED
-        // reason rather than a taste: for an AUTO/relay lobby the master is the ONLY
-        // rendezvous, so hiding at creation would make the game unjoinable -- the choice
-        // can only exist after friends are in. A DIRECT lobby makes the same choice at
-        // host time and this simply mirrors it.
-        //
-        // So: one control, and it is the only one. Anything else about the session is
-        // shown, never edited. Posts /v1/visibility async; the session stays live.
+        // The host-only session block. A session is configured when it is created and not
+        // afterwards: the password, the lock and the connection are settled in the hosting flow,
+        // and changing them means hosting again. Hiding is the one exception, for a measured
+        // reason: for a relay lobby the master is the only rendezvous, so hiding at creation would
+        // make the game unjoinable, and the choice can only exist after friends are in; a direct
+        // lobby makes the same choice at host time. So one control, and everything else about the
+        // session is shown, never edited.
         if (host) {
             ImGui::Separator();
             bool listed = coop::session_manager::ListedState();
@@ -387,10 +333,9 @@ void Render() {
                                        : "(hidden -- friends join by invite/IP)");
         }
 
-        // Permanent-ban confirmation modal (shared across rows; g_banConfirmSlot
-        // carries the pending slot). A ban is destructive + irreversible from the
-        // UI, so it gets an explicit confirm step. Opened once on the transition;
-        // closed by either button.
+        // The ban confirmation modal, shared across rows: a ban is destructive and irreversible
+        // from the UI, so it gets an explicit confirm step. Opened once on the transition, closed
+        // by either button.
         if (g_banConfirmSlot >= 0 && !ImGui::IsPopupOpen("Confirm ban##coop"))
             ImGui::OpenPopup("Confirm ban##coop");
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
