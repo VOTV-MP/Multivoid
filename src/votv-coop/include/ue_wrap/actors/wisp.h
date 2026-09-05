@@ -1,30 +1,17 @@
-// ue_wrap/wisp.h -- standalone engine access for the VOTV Killer Wisp
-// (Akillerwisp_C / FName "killerwisp_C"). Principle-7 engine-wrapper layer: it wraps
-// the reflection / struct-offset details of a killerwisp actor. NO network logic, NO
-// gameplay/coop state -- coop::wisp_attack_sync (and the dev probe) own those and read
-// the wisp's resolved FSM state through here.
-//
-// THE WISP IS AN ACharacter (killerwisp.hpp:4) so it already rides the NPC pose-mirror
-// pipeline (coop::npc_sync). What this wrapper adds is the read side of its attack FSM:
-//   * Target  @0x0610 (APawn*)  -- who it ACQUIRED (proximity+LOS+nearest over the
-//     {mainPlayer_C, kerfurOmega_C, fossilhound_C} class allow-set; our client puppets
-//     are mainPlayer_C orphans so they're already valid targets).
-//   * grab    @0x0600 (bool)    -- the lift/tear is in progress.
-//   * tryGrab @0x05D8 (bool)    -- a grab is being attempted (precedes grab).
-//   * killed  @0x0618 (bool)    -- the fatality committed.
-//   * harmless@0x0658 (bool)    -- the wisp is in its non-lethal/idle mode.
-// THE LOAD-BEARING SP FACT (RE, votv-event-system / wisp findings): the grab/tear/KILL
-// steps in the wisp's ubergraph operate on GetPlayerPawn(0)/getMainPlayer() -- the LOCAL
-// player -- NOT on `Target`. So on the host the wisp always grabs+kills the HOST even
-// when `Target` is a client puppet. coop::wisp_attack_sync polls these fields to learn
-// the REAL victim (Target) vs who the BP physically grabbed (always the host), and to
-// drive the cross-peer mirror. The grab/kill verbs themselves dispatch BP-internally
-// (EX_LocalVirtualFunction / EX_CallMath), so they are INVISIBLE to our ProcessEvent
-// detour -- polling the resolved fields is the only host-side observation path (the same
-// reason keypad_sync / door_sync POLL rather than observe).
-//
-// RE: research/findings/npc-creatures/votv-wisp-and-client-inventory-RE-2026-06-12.md +
-//     research/findings/events/votv-event-system-RE-2026-06-13.md (sec 10).
+// ue_wrap/actors/wisp.h -- engine access for the Killer Wisp (killerwisp_C). Engine-wrapper
+// layer: the reflection and struct-offset details of a killerwisp actor, no network or coop
+// state; wisp_attack_sync and the dev probe own those and read the wisp's attack state
+// through here. The wisp is a Character, so it already rides the NPC pose-mirror pipeline;
+// this adds the read side of its attack machine: Target (the acquired victim, nearest by
+// proximity and line of sight over the player, kerfur and hound classes; our client puppets
+// are player orphans, so they are valid targets), grab (the lift and tear in progress),
+// tryGrab (a grab being attempted), killed (the fatality committed) and harmless (the idle,
+// non-lethal mode). The load-bearing single-player fact: the grab, tear and kill steps in the
+// wisp's graph operate on player 0, the local player, not on Target, so on the host the wisp
+// always grabs and kills the host even when Target is a client puppet. The attack sync polls
+// these fields to learn the real victim against who the graph physically grabbed, and drives
+// the cross-peer mirror. The grab and kill verbs dispatch blueprint-internally, invisible to
+// the ProcessEvent detour, so polling the resolved fields is the only host-side observation.
 
 #pragma once
 
@@ -32,146 +19,127 @@ namespace ue_wrap { struct FVector; }
 
 namespace ue_wrap::wisp {
 
-// Resolve killerwisp_C UClass + the field offsets (Target / grab / tryGrab / killed /
-// harmless). Idempotent; true once everything resolved (false while the BP class is not
-// yet loaded -- the caller retries on a later tick). Offsets come from FindPropertyOffset
-// (reflection-first), with documented Alpha 0.9.0-n fallbacks. Game thread.
+// Resolve the killerwisp class and the field offsets. Idempotent; true once everything
+// resolved (false while the blueprint class is not loaded yet, and the caller retries).
+// Offsets come from reflection, with documented fallbacks. Game thread.
 bool EnsureResolved();
 
-// True iff `obj`'s class is killerwisp_C or a subclass. Cheap (bounded super walk; no
-// allocation). False if not yet resolved / null.
+// True if `obj`'s class is killerwisp_C or a subclass. Cheap, a bounded super walk with no
+// allocation. False if not yet resolved, or null.
 bool IsKillerWisp(void* obj);
 
-// The mirror-relevant attack-FSM state of one wisp. `target` is the acquired victim
-// APawn* (null when not chasing) -- the discriminator between host and a client puppet
-// is GetController(target) (possessed == the host's own player; null == a puppet) and is
-// resolved by the caller (coop domain), NOT here (principle 7).
+// The mirror-relevant attack state of one wisp. `target` is the acquired victim pawn (null
+// when not chasing); whether it is the host or a client puppet is the controller test,
+// resolved by the caller, not here.
 struct State {
-    bool  grab          = false;  // @0x0600 -- lift/tear in progress
-    bool  tryGrab       = false;  // @0x05D8 -- grab being attempted (precedes grab)
-    bool  killed        = false;  // @0x0618 -- fatality committed
-    bool  playerDamaged = false;  // @0x0635 -- at least one limb torn (the 4x24 cumulative dmg has started)
-    bool  harmless      = false;  // @0x0658 -- non-lethal/idle mode
-    void* target        = nullptr; // @0x0610 -- acquired victim APawn* (or null)
+    bool  grab          = false;  // lift or tear in progress
+    bool  tryGrab       = false;  // grab being attempted; precedes grab
+    bool  killed        = false;  // fatality committed
+    bool  playerDamaged = false;  // at least one limb torn; the cumulative damage has started
+    bool  harmless      = false;  // non-lethal idle mode
+    void* target        = nullptr;  // acquired victim pawn, or null
 };
 
-// Read `wisp`'s attack-FSM state into `out`. False if the read could not be made
-// (null / not resolved / not a killerwisp); leaves `out` untouched on failure. Pure
-// field reads (no UFunction dispatch). Game thread.
+// Read `wisp`'s attack state into `out`. False if the read could not be made (null,
+// unresolved, not a killerwisp), leaving `out` untouched. Pure field reads. Game thread.
 bool ReadState(void* wisp, State& out);
 
-// True iff `target` is within the wisp's grab/kill radius -- the BP's SphereOverlapActors
-// 550u grab-arm radius (killerwisp.json scanForActors @5702). The HOST synthesizes the
-// grab trigger against the wisp's ACTUAL Target with this, because the BP's own `grab`
-// flag arms only on GetPlayerPawn(0) (the host's local pawn within 550u) -- so a client
-// puppet (or an NPC) the host happens to be far from is chased but never grabbed/killed.
-// Pure 3D distance read (actor locations), no UFunction. False on null. Game thread.
+// True if `target` is within the wisp's grab radius, the graph's 550-unit sphere overlap. The
+// host synthesises the grab trigger against the wisp's actual Target with this, because the
+// graph's own grab flag arms only on player 0 within that radius, so a client puppet the host
+// is far from is chased but never grabbed. A pure distance read. False on null. Game thread.
 bool InGrabRange(void* wisp, void* target);
 
-// 3D distance wisp->target in cm (FLT_MAX on null / dead read) -- the v2 two-stage
-// close uses it against the contact radius before firing the synthetic grab, so the
-// wisp visibly swoops onto its victim first (native Capture fires at MoveTo acceptance
-// ~5u, not at the 550u arm radius). Game thread.
+// The distance from the wisp to the target in cm (FLT_MAX on null or a dead read). The
+// two-stage close uses it against the contact radius before firing the synthetic grab, so the
+// wisp visibly swoops onto its victim first; the native capture fires at move-to acceptance,
+// not at the arm radius. Game thread.
 float DistanceTo(void* wisp, void* target);
 
-// Raw write of the wisp's `Target` @0x0610 (APawn* or null). The BP has NO setter --
-// scanForActors writes the field inline via EX_LetObj, so this masked write IS the
-// game's own write mechanism (same legitimacy class as wisp_C `landed`). The v2 aggro
-// selector re-asserts its host-authoritative pick through this every Tick, dominating
-// the BP's own nearest-pick re-scan. False if unresolved / not a killerwisp. Game thread.
+// A raw write of the wisp's Target. The graph has no setter; its scan writes the field inline,
+// so this write is the game's own mechanism. The aggro selector re-asserts its
+// host-authoritative pick through this every tick, dominating the graph's own nearest-pick
+// re-scan. False if unresolved or not a killerwisp. Game thread.
 bool WriteTarget(void* wisp, void* pawnOrNull);
 
-// Native-parity LOS test -- the BP's canReach() shape (killerwisp.json 1b): a
-// LineTraceSingleForObjects from the wisp to `target` on the {WorldStatic, WorldDynamic}
-// object set (lib_obj.obj_statDyn); reachable == the trace did NOT hit. Pawns are not in
-// the object set, so neither body self-blocks. The native canReach player-arm hard-codes
-// GetPlayerPawn(0) as the trace end, so it cannot answer "can the wisp reach THIS
-// puppet" -- this wrapper is that answer. False (blocked) on any resolution failure --
-// the caller treats unreachable as not-attackable, the native default. Game thread.
+// A line-of-sight test with the graph's canReach shape: a line trace from the wisp to `target`
+// against the static-and-dynamic object set; reachable means the trace did not hit. Pawns are
+// not in the set, so neither body self-blocks. The native test hard-codes player 0 as the
+// trace end, so it cannot answer for a puppet; this can. False (blocked) on any resolution
+// failure, since the caller treats unreachable as not attackable, the native default. Game
+// thread.
 bool CanReach(void* wisp, void* target);
 
-// World location of the wisp body mesh's 'playerGrab' socket -- the native victim hold
-// point (Capture attaches the grabbed player there). The cross-peer hold drives the
-// victim PUPPET to this point each tick. False if the mesh/socket is unresolvable
-// (out untouched). Game thread.
+// The world location of the wisp body mesh's grab socket, the native victim hold point. The
+// cross-peer hold drives the victim puppet to it each tick. False if the mesh or socket is
+// unresolvable, `out` untouched. Game thread.
 bool GrabSocketWorldLocation(void* wisp, ue_wrap::FVector& out);
 
-// ---- v2 victim-side grab choreography (the native Capture player template) ------------
-// The native kill sequence is hard-bound to player 0: Capture does (bytecode, killerwisp
-// .json @12313 region): player.CMC.SetMovementMode(MOVE_None) -> player.K2_AttachTo
-// Component(wisp.Mesh, 'playerGrab', KeepWorld x3, weld) -> mainPlayer.Mesh.SetVisibility
-// (true) -> mainPlayer.held := true -> pawn.bUseControllerRotationYaw := false ->
-// mainPlayer.lag.bUsePawnControlRotation := false (camera decoupled so the ride owns the
-// view). On a VICTIM CLIENT we replay exactly that template against the LOCAL player and
-// the LOCAL wisp MIRROR -- the montage + the timed death ride the existing WispTear/
-// WispGrab paths. Divergence note: we attach SnapToTarget (loc/rot) instead of the
-// native KeepWorld because our Capture-equivalent fires at the <=200u close radius, not
-// at MoveTo-acceptance contact -- KeepWorld from 2 m away would leave the victim hanging
-// off-socket for the whole ride.
+// The victim-side grab choreography, the native capture's player template. The native kill
+// sequence is hard-bound to player 0: the capture sets the player's movement mode to none,
+// attaches it to the wisp mesh at the grab socket, shows the player mesh, sets the held flag
+// and decouples the controller rotation flags, so the ride owns the view. A victim client
+// replays that template against the local player and the local wisp mirror; the montage and
+// the timed death ride the existing tear and grab paths. One divergence: the attach snaps to
+// the socket (location and rotation) rather than keeping the world transform, since our
+// capture equivalent fires at the close radius rather than at contact, and keeping world from
+// 2 m away would leave the victim hanging off the socket for the ride.
 
-// Replay the Capture player-side template: `localPlayer` (the LOCAL possessed
-// mainPlayer_C) is grabbed by `wispActor` (the local killerwisp mirror -- or the real
-// wisp on the host). Idempotent enough for a one-shot call per grab; the caller latches.
-// False if the wisp mesh / player members are unresolvable (logged; the flat v1 death
-// still runs). Game thread.
+// Replay the capture's player-side template: the local possessed player is grabbed by
+// `wispActor` (the local killerwisp mirror, or the real wisp on the host). Idempotent enough
+// for one call per grab; the caller latches. False if the wisp mesh or the player members are
+// unresolvable (logged; the flat death still runs). Game thread.
 bool ApplyGrabToLocalPlayer(void* wispActor, void* localPlayer);
 
-// Undo the grab template on the local player: K2_DetachFromActor (KeepWorld) +
-// SetMovementMode(MOVE_Walking) + held := false + restore the two rotation-follow
-// flags. Called right before the scheduled ragdoll death fires (native releasePlayer
-// shape: detach FIRST, then ragdoll) and on session teardown (a mid-grab disconnect
-// must not strand the player in MOVE_None). Safe no-op if never grabbed. Game thread.
+// Undo the grab template on the local player: detach, walking movement mode, the held flag
+// cleared, the two rotation-follow flags restored. Called right before the scheduled ragdoll
+// death fires (the native release detaches first, then ragdolls) and on session teardown, so a
+// mid-grab disconnect does not strand the player without movement. A safe no-op if never
+// grabbed. Game thread.
 bool ReleaseGrabOnLocalPlayer(void* localPlayer);
 
-// The wisp's four limb static-mesh components -- the gib weld targets (killerwisp.hpp:
-// leg_L@0x0550, arm_L@0x0558, LEG_R@0x0560, arm_R@0x0568). On the kill, the BP spawns a
-// prop_bloodGib and welds it to one of these; the coop tear-mirror does the same on the
-// mirrored wisp. ReadLimbComponent returns the UStaticMeshComponent* (or null).
+// The wisp's four limb static-mesh components, the gib weld targets: on the kill the graph
+// spawns a blood gib and welds it to one of these, and the tear mirror does the same on the
+// mirrored wisp. Returns the component, or null.
 enum class Limb { ArmL, LegR, LegL, ArmR };
 void* ReadLimbComponent(void* wisp, Limb limb);
 
-// Dispatch the wisp's own `releasePlayer()` verb -- its canonical grab CANCEL: detaches
-// the grabbed player, clears held@mainPlayer, restores controller/sit, ragdolls the player
-// (NON-LETHALLY if no limb has torn yet -- the death flag is the wisp's `playerDamaged`),
-// then after 1 s resets grab/tryGrab so the wisp can re-acquire. This is the clean,
-// BP-native way to abort a host false-grab when the wisp's real Target is a client puppet.
-// May run latent sub-chains; never assume synchronous completion. False on null /
-// unresolved. Game thread.
+// Dispatch the wisp's own releasePlayer verb, its canonical grab cancel: detaches the grabbed
+// player, clears the held flag, restores the controller, ragdolls the player (non-lethally if
+// no limb has torn yet; the death flag is playerDamaged), then after a second resets grab and
+// tryGrab so the wisp can re-acquire. The clean, native way to abort a host false-grab when
+// the wisp's real Target is a client puppet. May run latent sub-chains; never assume
+// synchronous completion. False on null or unresolved. Game thread.
 bool CallReleasePlayer(void* wisp);
 
-// ---- Inc1b: tear-mirror substrate (engine API; no game-BP RE) -------------------------
-// On a peer that is NOT the victim, the mirrored wisp is a KINEMATIC puppet (npc_sync
-// parked its actor + CMC tick), so it never plays the BP `fatality` montage itself. The
-// coop tear-mirror drives the tear visual explicitly through these.
+// The tear-mirror substrate. On a peer that is not the victim, the mirrored wisp is a
+// kinematic puppet (npc_sync parked its actor and movement tick), so it never plays the
+// fatality montage itself; the tear mirror drives the visual explicitly through these.
 
-// The wisp's body skeletal-mesh component (ACharacter::Mesh) -- the montage AnimInstance
-// host AND the parent for the victim grab-hold ('playerGrab' socket). Null if not
-// resolvable. Game thread.
+// The wisp's body skeletal-mesh component: the montage AnimInstance host and the parent of the
+// grab socket. Null if unresolvable. Game thread.
 void* BodyMesh(void* wisp);
 
-// Force the wisp's body skeletal mesh to ALWAYS tick its pose (engine SetAnimTickAlways),
-// inverting the npc_sync park so a played montage actually advances on the parked mirror.
-// Idempotent; false if the mesh is unresolvable. Game thread.
+// Force the wisp's body mesh to always tick its pose, inverting the park so a played montage
+// advances on the parked mirror. Idempotent; false if the mesh is unresolvable. Game thread.
 bool ForceMeshTick(void* wisp);
 
-// Play the `fatality` montage on the wisp's body AnimInstance: Montage_Play the
-// killerWispAnim1 montage asset (resolved once via FindObject) then Montage_JumpToSection
-// 'fatality'. Best-effort -- false (logged) if the asset / AnimInstance / UFunctions are
-// unresolved (the caller still has ForceMeshTick + the gibs as the degraded tear). Call
-// ForceMeshTick FIRST so the played montage advances. Game thread.
+// Play the fatality montage on the wisp's body AnimInstance: play the montage asset (resolved
+// once), then jump to its fatality section. Best-effort: false, logged, if the asset, the
+// AnimInstance or the UFunctions are unresolved (the caller still has the mesh tick and the
+// gibs as the degraded tear). Call ForceMeshTick first, so the montage advances. Game thread.
 bool PlayFatalityMontage(void* wisp);
 
-// ---- plain wisp_C landing drive (2026-07-03 wisp mirror lane) --------------------------
-// The plain wispSwarm-event wisp (Awisp_C -- a DIFFERENT class from killerwisp_C above,
-// and NOT the colored wisp_o/b/g siblings) spawns INVISIBLE and fades in only at its
-// landing edge: its ReceiveTick reads CMC CurrentFloor.bBlockingHit -> landed := true +
-// dir(true) (fade timeline forward + PointLight ramp). A network mirror parks the CMC
-// tick (the pose lane owns position), so CurrentFloor stays stale and the native edge can
-// NEVER fire -- the mirror would stay invisible forever. This drives that edge explicitly:
-// write `landed` (a plain BP bool the BP itself writes inline -- no setter exists) + call
-// the `dir` event through the normal dispatcher. Idempotent per landed wisp (re-driving a
-// landed wisp re-plays an already-finished forward timeline: no-op). Exact-class-gated
-// internally. False until wisp_C + its members resolve (caller retries). Game thread.
+// The plain wisp landing drive. The swarm wisp (wisp_C, a different class from the killer
+// wisp, and not the coloured siblings) spawns invisible and fades in at its landing edge: its
+// tick reads the movement component's floor hit, then sets landed and fires the dir event (the
+// fade timeline forward and the point-light ramp). A network mirror parks the movement tick
+// (the pose lane owns position), so the floor stays stale, the native edge can never fire, and
+// the mirror would stay invisible forever. This drives that edge explicitly: write landed (a
+// plain blueprint bool the graph itself writes inline; no setter exists) and call the dir
+// event through the normal dispatcher. Idempotent per landed wisp: re-driving replays an
+// already-finished forward timeline, a no-op. Exact-class-gated inside. False until the class
+// and its members resolve; the caller retries. Game thread.
 bool DriveWispLanding(void* wispActor);
 
 }  // namespace ue_wrap::wisp
