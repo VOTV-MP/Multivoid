@@ -4,8 +4,8 @@ The method every lane that survived converged on, written so that anyone can fol
 re-deriving it. [ARCHITECTURE.md](ARCHITECTURE.md) holds the authority model this applies;
 [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md) answers whether a hook fires;
 [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md) says how each entity family gets its
-identity; [CODE_MAP.md](CODE_MAP.md) says where lanes live; [STATUS.md](STATUS.md) says how well
-each one is established.
+identity; [CODE_MAP.md](CODE_MAP.md) says where lanes live; [STATUS.md](STATUS.md) says how far
+each one is.
 
 ## In one paragraph
 
@@ -119,10 +119,10 @@ is a separate ledger).
 
 ## Step 8: evidence, or it did not happen
 
-A build that compiles proves it compiles. The lane exists when the pre-handoff checklist on
-[../CONTRIBUTING.md](../CONTRIBUTING.md) passes: the hot-path audit (no per-frame object-array
-walk, no heavy work per dispatch or per tick), the file-size check, the deploy, a two-peer smoke of
-thirty seconds or more, and a clean log diff, with the evidence attached. Every detector and gate
+A build that compiles proves it compiles. The lane exists when the checks on
+[../CONTRIBUTING.md](../CONTRIBUTING.md) pass: the hot-path check (no per-frame object-array
+walk, no heavy work per dispatch or per tick), the file-size check, the deploy, the two-peer smoke
+of thirty seconds or more, and a clean log diff. Every detector and gate
 is shown red before it is trusted, because a gate that cannot fire passes forever. Differential
 evidence beats absolute: baseline against change, with a negative control.
 
@@ -136,7 +136,6 @@ evidence beats absolute: baseline against change, with a negative control.
   a world stamp.
 - A bound or clamp applied symmetrically to the host: the host may cheat, and bounds are
   client-scoped.
-- A status label carried forward unverified; "was open last time" is not evidence.
 
 ## Worked references
 
