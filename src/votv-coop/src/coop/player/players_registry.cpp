@@ -1,4 +1,4 @@
-// coop/players_registry.cpp -- see header for rationale.
+// coop/player/players_registry.cpp -- see coop/player/players_registry.h.
 
 #include "coop/player/players_registry.h"
 
@@ -18,20 +18,10 @@
 #include <string>
 
 namespace {
-// A4 audit finding 2026-05-29 (CRITICAL #1): the AssignPeerSlot stamp in
-// coop/net/session_status.cpp::HandleConnStatusChanged runs on the GNS net
-// thread, not the game thread. Reading through the non-atomic
-// `unique_ptr<Player>` in `playerBySlot_[localPeerId_]` from that thread
-// is data-race UB. Publish the local-slot ElementId through this atomic
-// so net-thread readers (notably LocalPlayerElementId() called from the
-// AssignPeerSlot stamp path) get a lock-free coherent value.
-//
-// v16 PR-FOUNDATION-1b: previously this atomic held a packed (eid:32,
-// ctx:8) pair because senderContext stamping needed both fields atomically
-// (single load -> coherent tuple, vs two-load tear during a game-thread
-// DropPlayerElement_ race). v16 retired the ctx half (stale-generation
-// defense moved to the packet header's senderEpoch); this atomic now
-// holds the ElementId alone.
+// The local slot's ElementId, published through an atomic: the AssignPeerSlot stamp in
+// session_status runs on the net thread, and reading the slot's unique_ptr from there is a
+// data race. Net-thread readers (LocalPlayerElementId from the stamp path) get a lock-free
+// coherent value.
 std::atomic<coop::element::ElementId>
     g_localPlayerElementIdAtomic{coop::element::kInvalidId};
 }  // namespace
@@ -43,30 +33,24 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 Registry& Registry::Get() {
-    // Force-touch element::Registry FIRST so the destruction order is sane:
-    // element::Registry constructed first -> destroyed last. Player Elements
-    // owned here call element::Registry::FreeId in their destructors; if
-    // element::Registry was destroyed first (default Meyers order would
-    // destroy whichever was constructed last first), the FreeId would be UAF.
-    // Touching the other singleton here forces our static-locals order.
+    // Touch the element registry first, so the destruction order is sane: constructed first,
+    // destroyed last. Player Elements owned here free their ids in their destructors, and with the
+    // default static-local order the element registry could be gone by then.
     (void)coop::element::Registry::Get();
     static Registry s_instance;
     return s_instance;
 }
 
 void* Registry::RescanLocal() {
-    // Allocation-free walk (RAM-balloon root-cause fix 2026-06-10): the old
-    // ClassNameOf/ToString compares constructed TWO strings per UObject
-    // scanned (~250k/walk) -- the wstring bomb every "cold rescan in a
-    // no-player window" balloon traced back to. Class matched by pointer
-    // (primed on the first textual hit); names compared against the
-    // per-thread scratch. The primed UClass* persists across rescans
-    // (game-thread-only static); a BP class dies on world unload and its
-    // address can be recycled, so it is revalidated (live + still named
-    // mainPlayer_C) before each walk trusts it.
+    // An allocation-free walk: the class is matched by pointer, primed on the first textual hit,
+    // and names are compared against the per-thread scratch, since two strings per scanned object
+    // was the allocation bomb behind every cold rescan in a no-player window. The primed class
+    // persists across rescans (a game-thread static); a blueprint class dies on world unload and
+    // its address can be recycled, so it is revalidated (live and still named mainPlayer_C)
+    // before each walk trusts it.
     static ue_wrap::CachedObjRef sMpClass;
-    // NameOf derefs -- reached only after Alive() (slot-validated) short-circuits,
-    // so the read is validated-same-task, never a blind deref of a freed class.
+    // The name deref is reached only after the slot-validated Alive short-circuits, never as a
+    // blind deref of a freed class.
     if (sMpClass.Raw() && (!sMpClass.Alive() ||
                            !R::NameEquals(R::NameOf(sMpClass.Raw()), P::name::MainPlayerClass))) {
         sMpClass.Reset();
@@ -87,26 +71,18 @@ void* Registry::RescanLocal() {
         }
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // skip CDO
         if (!R::IsLive(obj)) continue;
-        // WORLD CURRENCY -- and this term is why wiring the (never-called)
-        // InvalidateLocal() would NOT have fixed the 2026-08-23 storm: an immediate
-        // re-walk finds the SAME dead pawn, because it is still slot-live and
-        // GetController() still succeeds on its intact memory. Invalidating a cache
-        // whose refill has the same blind spot just re-caches the bug.
-        //
-        // FAILS CLOSED, unlike the CachedObjRef term: for an ACTOR, "I cannot
-        // determine your world" is not a legitimate state, and the cost of being
-        // wrong here is one more walk (self-healing, 500 ms later) versus 44 seconds
-        // of feeding a dead world's PlayerController to the engine. The
-        // cannot-determine-ANY-world case is handled one level up: when
-        // CurrentWorld() is null the whole term is skipped.
+        // World currency, and it fails closed, unlike the cached reference: for an actor an
+        // undeterminable world is not a legitimate state, and being wrong here costs one more walk
+        // half a second later, against feeding a dead world's controller to the engine for a whole
+        // load. An immediate re-walk after a cache invalidation would find the same dead pawn,
+        // still slot-live with an intact controller read, so invalidation alone could not fix that.
+        // With no current world at all the term is skipped.
         if (void* const curWorld = ue_wrap::world_identity::CurrentWorld()) {
             if (ue_wrap::world_identity::WorldOf(obj) != curWorld) continue;
         }
-        // The discriminator: only the LOCAL player has a non-null Controller.
-        // Puppets are explicitly unpossessed (AutoPossess + AI disabled at
-        // deferred-spawn) per [[project-coop-enemies-target-both]]. This
-        // check is the SINGLE place this discriminator lives -- everywhere
-        // else uses Registry::IsLocal(actor) which queries the cache.
+        // The discriminator: only the local player has a non-null controller. Puppets are
+        // unpossessed (auto-possess and the AI controller disabled at deferred spawn). The single
+        // place the discriminator lives; everything else asks IsLocal, which reads the cache.
         if (!E::GetController(obj)) continue;
         return obj;
     }
@@ -114,28 +90,20 @@ void* Registry::RescanLocal() {
 }
 
 void* Registry::Local() {
-    // Warm-cache validation by IDENTITY, not possession. The local mainPlayer_C
-    // never becomes a puppet, so "alive AND not a registered puppet" is the stable
-    // invariant for a known-good cached pointer. Do NOT re-require a non-null
-    // Controller here: a POSSESSABLE local -- driving the ATV/quadbike or sitting on
-    // a kerfur -- hands its Controller to the vehicle pawn (PlayerController.Possess
-    // unpossesses mainPlayer_C) yet is still the local player. The old GetController
-    // check invalidated this cache EVERY FRAME while seated, so Local() fell through
-    // to RescanLocal() -- a full GUObjectArray walk with a std::wstring alloc per
-    // UObject (hundreds of k) -- per rendered frame via the unconditional
-    // nameplate::Update(), collapsing the host to ~5 fps and ballooning the seated
-    // peer's RAM (the same wstring-bomb shape as the 19 GB Install regression). The
-    // COLD RescanLocal() still uses GetController as the tie-breaker among the
-    // mainPlayer_C instances (local vs puppets); only the re-validation of an
-    // already-resolved cache changed. (quadbike RE 2026-06-08.)
+    // Warm-cache validation by identity, not possession: the local player never becomes a puppet,
+    // so alive and not a registered puppet is the stable invariant for a cached pointer. A
+    // non-null controller is not re-required here: a possessable local (driving the ATV, sitting
+    // on a kerfur) hands its controller to the vehicle pawn yet is still the local player, and
+    // re-requiring it invalidated the cache every frame while seated, so every frame fell through
+    // to the full array walk. The cold rescan still uses the controller as the tie-breaker among
+    // the mainPlayer instances.
     if (localCached_.Alive() && !IsPuppet(localCached_.Raw())) {
         return localCached_.Raw();
     }
-    // Negative-result TTL (v56 menu-window balloon fix, see header): a miss is
-    // DETERMINISTIC while no gameplay world is up -- and a dead cached pawn
-    // mid-travel misses for the whole load window -- so per-tick callers must
-    // not re-walk GUObjectArray at tick rate for it. Worst case the new pawn
-    // is detected kLocalMissTtlMs late, against a multi-second world load.
+    // The negative-result TTL: a miss is deterministic while no gameplay world is up, and a dead
+    // cached pawn mid-travel misses for the whole load window, so per-tick callers must not
+    // re-walk the array at tick rate. Worst case the new pawn is detected kLocalMissTtlMs late,
+    // against a multi-second load.
     localCached_.Reset();
     const unsigned long long now = ::GetTickCount64();
     if (localMissAtMs_ != 0 && now - localMissAtMs_ < kLocalMissTtlMs) {
@@ -151,31 +119,27 @@ uint8_t Registry::LocalPeerId() const {
 }
 
 void Registry::SetLocalPeerId(uint8_t id) {
-    // Reads + (via Drop/EnsurePlayerElement_) mutates playerBySlot_ (T-7,
-    // GT-only). Callers: net_pump host self-registration each tick + the
-    // AssignPeerSlot handshake handler -- both on the game thread.
+    // Reads and, through the drop and ensure paths, mutates the slot map; game thread only. The
+    // callers are the pump's host self-registration each tick and the AssignPeerSlot handler.
     UE_ASSERT_GAME_THREAD("players::Registry::SetLocalPeerId (playerBySlot_)");
-    // Idempotent on same id (caller pattern: host calls this every tick).
+    // Idempotent on the same id; the host calls this every tick.
     if (localPeerId_ == id && id < kMaxPeers && playerBySlot_[id]) return;
-    // If the local peer id changes (re-assign after reconnect), drop the
-    // old slot's Element shadow first so its destructor frees the ElementId.
+    // A changed local id (a re-assign after a reconnect) drops the old slot's Element first, so
+    // its destructor frees the id.
     if (localPeerId_ != id && localPeerId_ < kMaxPeers) {
         DropPlayerElement_(localPeerId_);
     }
     localPeerId_ = id;
-    // D9-2 (PR-FOUNDATION Tier 2): a CLIENT now knows its peer slot, so
-    // activate its exclusive ElementId band BEFORE allocating the local
-    // Player Element -- otherwise EnsurePlayerElement_ -> AllocLocalId would
-    // mint from the pre-slot band and could collide with another client's
-    // pre-slot id on the host relay. Slot 0 (host) is skipped: the host
-    // allocates from the host range (AllocHostId), never the peer range.
+    // A client now knows its slot, so its exclusive id band is activated before the local Player
+    // Element is allocated; otherwise the allocation would mint from the pre-slot band and could
+    // collide with another client's pre-slot id on the host relay. Slot 0 is skipped: the host
+    // allocates from the host range.
     if (id != kPeerIdHost && id < kMaxPeers) {
         coop::element::Registry::Get().SetLocalPeerBand(id);
     }
     if (id < kMaxPeers) {
-        // Create the LOCAL Player Element (puppet=nullptr; the local IS
-        // the local player). Other slots' Player Elements track puppets
-        // and are created by RegisterPuppet.
+        // The local Player Element, with no puppet; other slots' Elements track puppets and are
+        // created by RegisterPuppet.
         EnsurePlayerElement_(id, /*puppet=*/nullptr);
     }
 }
@@ -192,7 +156,7 @@ void Registry::RegisterPuppet(uint8_t peerSessionId, RemotePlayer* puppet) {
         return;
     }
     puppetByPeer_[peerSessionId] = puppet;
-    // Create or refresh the Player Element shadow for this peer.
+    // Create or refresh the Player Element for this peer.
     EnsurePlayerElement_(peerSessionId, puppet);
     UE_LOGI("players::Registry: registered puppet peerId=%u -> %p", peerSessionId, puppet);
 }
@@ -228,27 +192,23 @@ uint8_t Registry::PeerIdOfActor(void* actor) {
 }
 
 coop::element::Player* Registry::GetPlayerElement(uint8_t peerSlot) {
-    // playerBySlot_ is GT-only-by-convention (T-7); the net-thread-safe read is
-    // LocalPlayerElementId()'s atomic, not this raw map walk. Enforce GT here.
+    // The slot map is game-thread-only by convention; the net-thread-safe read is the atomic
+    // behind LocalPlayerElementId.
     UE_ASSERT_GAME_THREAD("players::Registry::GetPlayerElement (playerBySlot_)");
     if (peerSlot >= kMaxPeers) return nullptr;
     return playerBySlot_[peerSlot].get();
 }
 
 coop::element::ElementId Registry::LocalPlayerElementId() const {
-    // Lock-free atomic read so callers from non-game threads (notably the
-    // GNS net-thread AssignPeerSlot stamp in session_status.cpp) get a
-    // well-defined value. The atomic is published from EnsurePlayerElement_
-    // / DropPlayerElement_ under the game-thread invariant. See namespace
-    // comment at top of file for the audit context.
+    // A lock-free read for non-game threads (the net-thread AssignPeerSlot stamp); published from
+    // the ensure and drop paths under the game-thread invariant.
     return g_localPlayerElementIdAtomic.load(std::memory_order_acquire);
 }
 
 bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
                                        coop::element::ElementId wireEid) {
-    // Reads + writes playerBySlot_ directly (T-7, GT-only). Callers: the
-    // HandleJoin / HandlePlayerJoined / HandleAssignPeerSlot handshake handlers,
-    // all dispatched from event_feed::Update on the game thread.
+    // Reads and writes the slot map, game thread only; the callers are the handshake handlers,
+    // dispatched from event_feed.
     UE_ASSERT_GAME_THREAD("players::Registry::EstablishMirrorForSlot (playerBySlot_)");
     if (peerSlot >= kMaxPeers) {
         UE_LOGW("players::Registry: EstablishMirrorForSlot peerSlot=%u out of range "
@@ -262,31 +222,25 @@ bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
                 static_cast<unsigned>(peerSlot), wireEid);
         return false;
     }
-    // Idempotent: if the slot already carries an Element whose id matches
-    // wireEid, nothing to do. AssignPeerSlot is sent once but a reconnect
-    // edge could legitimately re-fire; treat duplicates as no-ops.
-    // v16: prior versions also refreshed Element::m_syncContext here on
-    // a context change between handshakes; m_syncContext is gone.
+    // Idempotent: a slot already carrying a mirror with this id is a no-op, since a reconnect
+    // edge can legitimately re-fire the assignment.
     if (auto* existing = playerBySlot_[peerSlot].get()) {
         if (existing->GetId() == wireEid && existing->IsMirror()) {
             return true;
         }
     }
-    // Snapshot the puppet pointer the OLD Element carried (if any) so the
-    // new MIRROR Player Element preserves the puppet binding for downstream
-    // code (RemotePlayer* lookups via Puppet()). The local-slot mirror call
-    // (puppet was always nullptr for the local) preserves nullptr correctly.
+    // The puppet pointer the old Element carried is kept, so the new mirror preserves the binding
+    // for the puppet lookups; the local slot's is always null.
     coop::RemotePlayer* puppet = nullptr;
     if (auto* existing = playerBySlot_[peerSlot].get()) {
         puppet = existing->Puppet();
     }
-    // Drop the locally-allocated placeholder (returns its eid to the
-    // appropriate free stack via ~Element -> Registry::FreeId).
+    // Drop the locally allocated placeholder, which returns its id to the free list through the
+    // destructor.
     DropPlayerElement_(peerSlot);
-    // Build the mirror element, then register it at wireEid. RegisterMirror
-    // pattern per [[feedback-registry-register-mirror-pattern]]: install in
-    // the slot map FIRST, then RegisterMirror; on failure drain the slot
-    // outside the lock so ~Element early-returns (m_id stayed kInvalidId).
+    // Build the mirror, then register it at the wire id: install in the slot map first, then
+    // RegisterMirror; on failure drain the slot, so the destructor sees an invalid id and returns
+    // without touching the registry.
     auto mirror = std::make_unique<coop::element::Player>(peerSlot, puppet);
     coop::element::Player* raw = mirror.get();
     playerBySlot_[peerSlot] = std::move(mirror);
@@ -295,16 +249,13 @@ bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
         UE_LOGW("players::Registry: EstablishMirrorForSlot peerSlot=%u "
                 "RegisterMirror(0x%08x) failed -- dropping placeholder",
                 static_cast<unsigned>(peerSlot), wireEid);
-        // Slot collision or out-of-range. Drain the slot so the failed
-        // mirror's destructor sees m_id == kInvalidId and early-returns
-        // without touching element::Registry (no double-free).
+        // A slot collision or out of range: drain the slot, so the failed mirror's destructor
+        // early-returns with no double free.
         playerBySlot_[peerSlot].reset();
         return false;
     }
-    // Defensive: if the local slot ever gets mirrored (not done today --
-    // EstablishMirrorForSlot is called for remote slots only), publish
-    // the mirror's wireEid into the cross-thread atomic snapshot for
-    // consistency with EnsurePlayerElement_'s publish.
+    // Defensive: if the local slot is ever mirrored (not done today, since this is called for
+    // remote slots only), publish the wire id into the atomic, as the ensure path does.
     if (peerSlot == localPeerId_) {
         g_localPlayerElementIdAtomic.store(wireEid,
                                             std::memory_order_release);
@@ -317,23 +268,20 @@ bool Registry::EstablishMirrorForSlot(uint8_t peerSlot,
 }
 
 void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet) {
-    // Mutates playerBySlot_ AND publishes g_localPlayerElementIdAtomic; the
-    // publish is the net-thread-safe READ side, the mutation is GT-only (T-7).
+    // Mutates the slot map and publishes the atomic: the publish is the net-thread-safe read side,
+    // the mutation is game-thread-only.
     UE_ASSERT_GAME_THREAD("players::Registry::EnsurePlayerElement_ (playerBySlot_)");
     if (peerSlot >= kMaxPeers) return;
-    // Idempotent: if an Element already exists with the same (peerSlot, puppet)
-    // signature, no-op. Callers like net_pump's host self-registration loop
-    // re-invoke this every tick.
+    // Idempotent: an Element with the same slot and puppet is a no-op; the pump's host
+    // self-registration re-invokes this every tick.
     if (auto* existing = playerBySlot_[peerSlot].get()) {
         if (existing->PeerSlot() == peerSlot && existing->Puppet() == puppet) {
             return;
         }
-        // A4 (2026-05-29): mirror Player Elements are wire-authoritative
-        // (bound to the SENDER's allocation id). If the AssignPeerSlot /
-        // Join handshake established a mirror before RegisterPuppet ran,
-        // drop+realloc here would destroy the wire binding and the next
-        // ItemActivate/Weather/etc. packet's Registry::Get(senderElementId)
-        // would fail to resolve. Bind the puppet pointer in place instead.
+        // Mirror Player Elements are wire-authoritative, bound to the sender's id. If the handshake
+        // established a mirror before RegisterPuppet ran, dropping and reallocating here would
+        // destroy the wire binding and the next packet's lookup by sender id would fail; the puppet
+        // is bound in place instead.
         if (existing->IsMirror()) {
             existing->SetPuppet_(puppet);
             UE_LOGI("players::Registry: bound puppet=%p to existing MIRROR "
@@ -341,24 +289,15 @@ void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet
                     puppet, existing->GetId(), static_cast<unsigned>(peerSlot));
             return;
         }
-        // Mismatch: same slot but different puppet (e.g. local re-allocated
-        // as a puppet, or vice versa). Drop the old before re-creating.
+        // A mismatch, the same slot with a different puppet: drop the old before re-creating.
         DropPlayerElement_(peerSlot);
     }
     auto el = std::make_unique<coop::element::Player>(peerSlot, puppet);
-    // (v14 stamped a per-process-monotonic syncContext byte here for the
-    // wire stale-gen defense; v16 PR-FOUNDATION-1b moved that defense to
-    // the packet header's senderEpoch -- no per-Element context anymore.)
-    // Role-aware allocation (audit fix 2026-05-28): host range is reserved
-    // for the authoritative side; client processes must allocate from the
-    // peer range so client-local Player Elements don't collide with host-
-    // allocated NPC/Prop ElementIds when the v12 protocol bump puts
-    // ElementId on the wire. The host process always has localPeerId_=0
-    // (kPeerIdHost); any other localPeerId_ value means this is a client
-    // process. localPeerId_ == kPeerIdUnknown (0xFF) means role not yet
-    // determined -- in that case treat as client (safer: peer range is
-    // larger and never wire-authoritative; mistaken host-range allocation
-    // would cause id collisions later).
+    // Role-aware allocation: the host range is reserved for the authoritative side, and a client
+    // allocates from the peer range so its Player Elements do not collide with host-allocated ids
+    // on the wire. The host process always has local id 0; an unknown id (the role not yet
+    // determined) is treated as a client, the safer choice, since the peer range is never
+    // wire-authoritative.
     const bool isHost = (localPeerId_ == kPeerIdHost);
     auto& reg = coop::element::Registry::Get();
     const coop::element::ElementId eid =
@@ -371,9 +310,7 @@ void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet
         return;
     }
     playerBySlot_[peerSlot] = std::move(el);
-    // Publish the local-slot eid to the cross-thread atomic snapshot so
-    // net-thread readers (AssignPeerSlot stamp via LocalPlayerElementId)
-    // see it lock-free.
+    // Publish the local slot's id to the atomic, so net-thread readers see it lock-free.
     if (peerSlot == localPeerId_) {
         g_localPlayerElementIdAtomic.store(eid, std::memory_order_release);
     }
@@ -384,23 +321,20 @@ void Registry::EnsurePlayerElement_(uint8_t peerSlot, coop::RemotePlayer* puppet
 }
 
 void Registry::DropPlayerElement_(uint8_t peerSlot) {
-    // Mutates playerBySlot_ (and clears g_localPlayerElementIdAtomic); GT-only
-    // (T-7). The dtor briefly takes element::Registry::m_mutex -- safe on GT.
+    // Mutates the slot map and clears the atomic; game thread only. The destructor briefly takes
+    // the element registry's mutex.
     UE_ASSERT_GAME_THREAD("players::Registry::DropPlayerElement_ (playerBySlot_)");
     if (peerSlot >= kMaxPeers) return;
     if (!playerBySlot_[peerSlot]) return;
     const auto eid = playerBySlot_[peerSlot]->GetId();
-    // Clear the cross-thread atomic snapshot BEFORE the dtor fires so a
-    // concurrent net-thread reader can't observe an eid that's about to
-    // be freed. Only the local slot is published; other slots aren't
-    // mirrored into the atomic.
+    // The atomic is cleared before the destructor fires, so a concurrent net-thread reader cannot
+    // observe an id about to be freed. Only the local slot is published.
     if (peerSlot == localPeerId_) {
         g_localPlayerElementIdAtomic.store(coop::element::kInvalidId,
                                             std::memory_order_release);
     }
-    // unique_ptr reset -> destructor -> element::Registry::FreeId.
-    // No shared lock with element::Registry; the destructor will acquire
-    // element::Registry::m_mutex briefly. Safe here on the game thread.
+    // The reset runs the destructor, which frees the id under the element registry's mutex,
+    // briefly.
     playerBySlot_[peerSlot].reset();
     UE_LOGI("players::Registry: released Player Element eid=%u for peerSlot=%u",
             eid, peerSlot);
