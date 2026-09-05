@@ -1,4 +1,4 @@
-// ui/native_text_field.cpp -- see ui/native_text_field.h for WHY this owns its own input.
+// ui/native_text_field.cpp -- see ui/native_text_field.h for why this owns its own input.
 
 #include "ui/native_text_field.h"
 
@@ -31,17 +31,16 @@ struct Field {
     int32_t      maxLen  = 64;
     bool         focused = false;
     bool         submit  = false;     // Enter edge, consumed by the owner
-    // Escape edge, consumed by the owner. See the VK_ESCAPE branch: the screens used to
-    // ask `AnyFocused()` on their own key-UP edge, which is always false by then because
-    // the blur happens on key-DOWN. This is the same question asked in a way that cannot
-    // race.
+    // The Escape edge, consumed by the owner: the screens take their edge on key-up, by which
+    // time the blur (on key-down) has already happened, so a focus query cannot answer; this latch
+    // can.
     bool         ateEscape = false;
     bool         dirty   = true;      // repaint owed
     bool         wasDown = false;     // left button edge, for click-to-focus
     uint64_t     caretAt = 0;         // tick count of the last caret phase flip
     bool         caretOn = false;
     std::string  utf8;                // cache so Text() can return a reference
-    // ---- the overflow window (see UpdateWindowing) ----
+    // The overflow window (see UpdateWindowing).
     bool         alignRight  = false;   // the slot alignment currently in force
     size_t       measuredLen = static_cast<size_t>(-1);  // value length when last measured
     int          remeasureIn = -1;      // ticks until the pending measurement; -1 = none
@@ -49,72 +48,48 @@ struct Field {
 
 namespace {
 
-// EXACTLY ONE FIELD HOLDS THE KEYBOARD. A registry rather than a bare pointer because the
-// detour runs on the game thread (`gate3`, 2026-07-31) but a screen can be torn down from
-// its own tick in the same frame; the vector lets Destroy() clear the focus without the
-// detour ever seeing a dangling handle.
+// Exactly one field holds the keyboard. A registry rather than a bare pointer: the detour runs
+// on the game thread, but a screen can be torn down from its own tick in the same frame, and
+// the vector lets Destroy clear the focus without the detour seeing a dangling handle.
 std::vector<Field*> g_live;
 std::atomic<Field*> g_focus{nullptr};
 
-// Repaint budget: the caret blinks at the rate the game's own menus do, and a field that
-// is not focused never blinks at all -- so an idle browser costs zero widget writes.
+// The repaint budget: the caret blinks at the rate the game's menus do, and an unfocused field
+// never blinks, so an idle browser costs no widget writes.
 constexpr uint64_t kCaretMs = 530;
 
-// Forward-declared: the windowing and paste helpers below repaint, and they are grouped
-// with the concept they belong to rather than sorted by definition order.
+// Forward-declared: the windowing and paste helpers repaint, and they are grouped by concept.
 void Repaint(Field* f);
 
-// The frame `Create` puts around the text, and the gutter its glyphs sit in. Both are
-// this module's own constants, and `UpdateWindowing` has to subtract them to know how much
-// room the text really has.
+// The frame Create puts around the text and the gutter its glyphs sit in; UpdateWindowing
+// subtracts them to know the room the text has.
 constexpr float kFrameBorderPx = 2.f;
 constexpr float kTextGutterPx  = 8.f;
 
-// WHICH END OF AN OVER-LONG VALUE THE PLAYER SEES -- and it must be the end they are
-// TYPING at.
-//
-// THE DEFECT, verbatim from the user on the first build that shipped a field: "ебаный
-// текст в ебаное окно ввода ip не помещается". A long address typed INVISIBLY. The text
-// block is clipped to its box (Create sets ClipToBounds, which is what stops it painting
-// across the screen), and a Left-aligned clipped block keeps its HEAD -- so past the
-// box's width the player was typing into a part of the string that is not drawn, caret
-// included, with no way to tell whether a keystroke had landed.
-//
-// THE FIX IS AN ALIGNMENT FLIP, NOT A TRIM SUBSYSTEM. Slate clips whichever end the
-// alignment pushes out of the box, so a Right-aligned block inside a clipped frame shows
-// the TAIL and the caret and hides the head -- which is exactly the window a text cursor
-// wants. It costs one enum, works at any font and any size, needs no glyph measuring, and
-// the value itself is never touched (paste and prefill window the same way a keystroke
-// does). An earlier design measured character widths against an em constant and sliced the
-// string; the whole of it died in one /qf round (`SERVER_BROWSER_ARC.md` section 7.10, R7)
-// when this appeared, and it should not be re-derived.
-//
-// MEASURED ONE TICK LATE, ON PURPOSE. `GetDesiredSize` reads the built SWidget, so a value
-// set this frame is not laid out yet and would measure at its PREVIOUS width. The
-// evaluation is therefore deferred a tick, and keyed on the value's LENGTH rather than run
-// per repaint -- the caret blinks twice a second and changes the drawn width by one glyph,
-// so measuring on every repaint would make the flip chatter at the boundary.
+// Which end of an over-long value the player sees, and it must be the end they type at. The
+// block is clipped to its box, and a left-aligned clipped block keeps its head, so past the
+// box's width the player would type into a part of the string that is not drawn, caret
+// included. The fix is an alignment flip, not a trim: Slate clips whichever end the alignment
+// pushes out, so a right-aligned block in a clipped frame shows the tail and the caret. One
+// enum, any font and size, no glyph measuring, and the value is never touched. Measured one
+// tick late on purpose: the desired size reads the built widget, so a value set this frame
+// would measure at its previous width; and keyed on the value's length rather than run per
+// repaint, since the caret changes the drawn width by one glyph twice a second.
 void UpdateWindowing(Field* f) {
     if (!f || !f->text || !f->box) return;
     if (f->remeasureIn < 0) return;
     if (f->remeasureIn-- > 0) return;   // the deferred tick has not arrived yet
     ue_wrap::FVector2D desired{}, topLeft{}, allotted{};
-    // THE GUARDS RUN BEFORE `measuredLen` IS CLAIMED, and the order is the fix.
-    //
-    // It used to record "measured at this length" FIRST and then bail on any of these, so a
-    // measurement that never happened still disarmed the retry -- and `MarkValueChanged`
-    // re-arms only on a LENGTH change. A screen shown with an over-long PREFILL (Slate has
-    // not arranged it yet, so the rect is legitimately zero) therefore kept Left alignment
-    // and hid its own tail until the player typed a character, which is the exact defect
-    // the flip exists to prevent. Re-arming means the next tick tries again.
-    // (Post-ship correctness audit, 2026-08-31.)
+    // The guards run before the measured length is claimed: a measurement that never happened
+    // must not disarm the retry, since MarkValueChanged re-arms only on a length change, and a
+    // screen shown with an over-long prefill (not yet arranged, so a zero rect) would keep left
+    // alignment until the player typed.
     auto retry = [f] { f->remeasureIn = 1; };
     if (!U::WidgetDesiredSize(f->text, desired)) { retry(); return; }
     if (!U::WidgetScreenRect(f->box, topLeft, allotted)) { retry(); return; }
     const float inner = allotted.X - 2.f * kFrameBorderPx - kTextGutterPx;
-    // A widget Slate has never laid out reports a zero rect, and that is a real answer
-    // rather than a failure (umg_build.h) -- but it is not one this can act on, so ask
-    // again next tick rather than pretending this length was measured.
+    // A widget Slate has never laid out reports a zero rect, a real answer but not one to act on;
+    // ask again next tick.
     if (inner <= 0.f || desired.X <= 0.f) { retry(); return; }
     f->measuredLen = f->value.size();
     const bool want = desired.X > inner;
@@ -128,23 +103,14 @@ void MarkValueChanged(Field* f) {
     if (f && f->value.size() != f->measuredLen) f->remeasureIn = 1;
 }
 
-// CTRL+V, and the reason it lands HERE rather than in each screen: an address or a
-// nickname is exactly the kind of string a player has in their clipboard and does not want
-// to retype, and a field that accepts typing but not pasting is the sort of gap that reads
-// as the field being broken. One implementation, so every screen that has a field has
-// paste, and none of them can implement it differently.
-//
-// ENTRY-TRIMMED. A copied address almost always carries a trailing newline or a leading
-// space from wherever it was copied, and `host:port ` is not an address. MTA does the same
-// at its own entry (`SharedUtil::Trim` on the connect string) rather than teaching every
-// consumer to tolerate whitespace.
-//
-// APPENDED, NOT REPLACING. The grammar of this field is append + backspace + paste with no
-// selection (there is no cursor to select with), so paste is a bulk append and behaves
-// exactly like typing the characters would -- same cap, same sanitising, same windowing.
-// THE PURE HALF, split from the clipboard read so the selftest can drive it. A test that
-// went through the real clipboard would have to WRITE to it, and clobbering what the player
-// had copied to prove our paste works is not a trade this makes.
+// Paste, here rather than in each screen: an address or a nickname is exactly what a player
+// has in the clipboard, and a field that accepts typing but not pasting reads as broken. One
+// implementation, so every field pastes the same way. Trimmed at entry, since a copied address
+// usually carries a trailing newline or a leading space (MTA trims its connect string at the
+// same point). Appended, not replacing: the grammar is append, backspace and paste with no
+// selection, so paste behaves like typing, with the same cap, sanitising and windowing. The
+// pure half, split from the clipboard read so the selftest can drive it without writing to the
+// player's clipboard.
 void ApplyPastedText(Field* f, const std::wstring& in) {
     if (!f || in.empty()) return;
     auto isSpace = [](wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' ||
@@ -152,8 +118,8 @@ void ApplyPastedText(Field* f, const std::wstring& in) {
     size_t b = 0, e = in.size();
     while (b < e && isSpace(in[b])) ++b;
     while (e > b && isSpace(in[e - 1])) --e;
-    // CONTROL CHARACTERS ARE NOT CONTENT, the same rule `OnChar` applies one keystroke at
-    // a time -- an embedded newline would otherwise arrive as a glyph nothing can type.
+    // Control characters are not content, the rule OnChar applies per keystroke; an embedded
+    // newline would arrive as a glyph nothing can type.
     std::wstring add;
     for (size_t i = b; i < e; ++i)
         if (in[i] >= 0x20 && in[i] != 0x7F) add += in[i];
@@ -173,8 +139,8 @@ void Paste(Field* f) {
     std::wstring in;
     if (HANDLE h = ::GetClipboardData(CF_UNICODETEXT)) {
         if (auto* p = static_cast<const wchar_t*>(::GlobalLock(h))) {
-            // Bounded by the field's own cap plus slack for what the trim will remove: a
-            // clipboard can hold megabytes and none of it can reach the value.
+            // Bounded by the field's cap plus slack for what the trim removes; a clipboard can hold
+            // megabytes.
             const size_t cap = static_cast<size_t>(f->maxLen) * 4 + 64;
             for (size_t i = 0; i < cap && p[i]; ++i) in += p[i];
             ::GlobalUnlock(h);
@@ -194,8 +160,8 @@ void Repaint(Field* f) {
         if (f->focused && f->caretOn) shown += L'|';
     }
     E::SetWidgetText(f->text, shown.c_str());
-    // The hint is dimmer than real content -- the style doc's secondary grey. A dimmed
-    // placeholder is how a player tells "nothing typed yet" from "someone typed this".
+    // The hint is dimmer than content, the secondary grey: a dimmed placeholder is how a player
+    // tells nothing-typed from typed.
     E::SetTextBlockColorDispatch(
         f->text, (f->value.empty() && !f->focused) ? NS::Dim() : NS::Text());
     f->dirty = false;
@@ -206,40 +172,28 @@ void Repaint(Field* f) {
 Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx) {
     if (!parent) return nullptr;
 
-    // A REAL SizeBox CARRIES THE WIDTH, and the frame goes INSIDE it.
-    //
-    // The first version called `SetSizeBoxWidth` on what `AddFramedBox` returns -- which
-    // is an OVERLAY, as its own comment says. That writes a float at a SizeBox's property
-    // offset into an object that has no such property, and the game paid for it three
-    // frames later: `PE detour-outer-callback AV caught -- function='SpawnObject' ...
-    // 0xC0000005` three times over, then the whole action bar failing to build
-    // (`refresh=0 host=0 connect=0`) because the next spawns landed in corrupted memory.
-    // The crash was NOT at the write; a wrong-offset write never is.
+    // A real SizeBox carries the width, and the frame goes inside it. Writing a size-box width
+    // onto the overlay AddFramedBox returns lands a float at a property offset the object does
+    // not have, and the fault surfaces frames later in unrelated spawns, never at the write.
     void* sizer = NS::Spawn(L"SizeBox", parent);
     if (!sizer) return nullptr;
     if (widthPx > 0.f) U::SetSizeBoxWidth(sizer, widthPx);
 
     void* box = NS::AddFramedBox(sizer, NS::RowBg(), 2.f);
     if (!box) return nullptr;
-    // The frame is the hit target, so it must be a real Visible widget rather than the
-    // HitTestInvisible chrome AddFramedBox gives its two images (a fill and a border, in
-    // either layout).
+    // The frame is the hit target, so it must be a real visible widget rather than the
+    // hit-test-invisible chrome AddFramedBox gives its images.
     E::SetWidgetVisibility(box, 0);
     void* tb = NS::AddText(box, hint ? hint : L"", NS::kBtnFontPx, NS::Dim(), NS::kLeft, 0.f);
     if (!tb) return nullptr;
-    // CLIP TO THE BOX. `AddText` only sets clipping for a FILL slot, and this one is
-    // auto-sized, so a value longer than the field painted straight out of its own frame
-    // and across whatever sat beside it. The user saw exactly that on the first build that
-    // shipped a field: "ебаный текст в ебаное окно ввода ip не помещается".
-    // EWidgetClipping::ClipToBounds = 1.
+    // Clip to the box: AddText only sets clipping for a fill slot, and this one is auto-sized, so
+    // a value longer than the field would paint out of its frame across whatever sits beside it.
+    // ClipToBounds is 1.
     U::SetClipping(tb, 1);
 
-    // ATTACH, and attach at BIRTH. `AddFramedBox` spawns with `parent` as the OUTER but
-    // does not add the widget to it -- every other caller in this tree does its own
-    // AddChild, and the first version of this function did not. An unattached widget tree
-    // is GC food: it renders until the next collection and then vanishes, which this
-    // project has already paid for once with the MULTIPLAYER button
-    // (`[[lesson-an-unattached-widget-tree-is-gc-food]]`).
+    // Attach, and attach at birth: AddFramedBox spawns with `parent` as the outer but does not add
+    // the widget to it, and an unattached widget tree is GC food, rendering until the next
+    // collection and then vanishing.
     U::SetContent(sizer, box);
     if (!U::AddChild(parent, sizer)) return nullptr;
 
@@ -254,8 +208,8 @@ Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx) 
     return f;
 }
 
-// Everything teardown does EXCEPT touching the engine. See the header: a caller running on
-// a dead menu instance must not dispatch into its widgets.
+// Everything teardown does except touching the engine: a caller running on a dead menu
+// instance must not dispatch into its widgets.
 void Release(Field* f) {
     if (!f) return;
     Field* expect = f;
@@ -267,8 +221,8 @@ void Release(Field* f) {
 
 void Destroy(Field* f) {
     if (!f) return;
-    // Clear focus FIRST: the detour reads g_focus without a lock, so the window in which
-    // it could reach a half-destroyed field has to be closed before anything is freed.
+    // Focus is cleared first: the detour reads the focus without a lock, so the window in which it
+    // could reach a half-destroyed field must close before anything is freed.
     Field* expect = f;
     g_focus.compare_exchange_strong(expect, nullptr);
     for (size_t i = 0; i < g_live.size(); ++i)
@@ -311,9 +265,8 @@ const std::string& Text(const Field* f) {
 
 void SetText(Field* f, const std::string& utf8) {
     if (!f) return;
-    // Lossy on the way IN is right: this is a local string the player or our own ini
-    // supplied, and refusing it whole would leave the field mysteriously empty. The
-    // STRICT boundary is the wire, and it is elsewhere.
+    // Lossy on the way in is right: a local string from the player or our ini, and refusing it
+    // whole would leave the field mysteriously empty. The strict boundary is the wire.
     f->value = T::CapCodepoints(T::FromUtf8Lossy(utf8.data(), utf8.size()),
                                 static_cast<size_t>(f->maxLen));
     f->dirty = true;
@@ -324,8 +277,7 @@ void SetText(Field* f, const std::string& utf8) {
 void Tick(Field* f) {
     if (!f) return;
 
-    // CLICK TO FOCUS, by geometry -- the same mechanism the rows and the NEW GAME row use,
-    // and the only one measured to work in this tree. A press anywhere else blurs, so a
+    // Click to focus, by geometry, the mechanism the rows use; a press anywhere else blurs, so a
     // player clicking a server row is not still typing into the address box.
     const bool down = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     if (down && !f->wasDown) {
@@ -343,8 +295,8 @@ void Tick(Field* f) {
         }
     }
     if (f->dirty) Repaint(f);
-    // AFTER the repaint: the measurement is about the text that was just written, and it
-    // is deferred internally by a tick anyway.
+    // After the repaint: the measurement is about the text just written, and it is deferred a tick
+    // internally anyway.
     UpdateWindowing(f);
 }
 
@@ -363,9 +315,9 @@ bool ConsumeSubmit(Field* f) {
 bool OnChar(wchar_t c) {
     Field* f = g_focus.load();
     if (!f) return false;
-    // Control characters are not content. Backspace and Enter arrive as WM_CHAR too on
-    // some layouts, and they are handled on the KEYDOWN edge instead -- taking them here
-    // as well would type a box glyph AND act on them.
+    // Control characters are not content. Backspace and Enter arrive as WM_CHAR too on some
+    // layouts and are handled on the key-down edge; taking them here as well would type a box
+    // glyph and act on them.
     if (c < 0x20 || c == 0x7F) return true;   // swallowed, deliberately not inserted
     if (static_cast<int32_t>(T::CountCodepoints(f->value)) >= f->maxLen) return true;
     f->value += c;
@@ -377,19 +329,11 @@ bool OnChar(wchar_t c) {
     return true;
 }
 
-// ---- SELFTEST -----------------------------------------------------------------------
-//
-// UN-GATED, and it runs on every boot. The editing rules here are PURE -- append, cap,
-// backspace, the Enter edge, Escape -- so they need no widget and no game to exercise:
-// a Field with null `box`/`text` makes Repaint a no-op and everything else is the real
-// production path, `OnChar` and `OnKeyDown` included. This is deliberately not a dev flag.
-// Three separate instruments today reported confident wrong answers because nobody had
-// run them against the failing axis; a test that only runs when someone remembers to arm
-// it is the same bet.
-//
-// What it CANNOT cover, stated so the coverage is not overclaimed: whether the WndProc
-// seam actually delivers a keystroke to this module. That is a live-process question and
-// belongs to a run, not to a unit check.
+// The selftest, un-gated, on every boot. The editing rules are pure (append, cap, backspace,
+// the Enter edge, Escape), so a Field with no widgets makes Repaint a no-op and everything
+// else is the production path, OnChar and OnKeyDown included; a test that runs only when
+// someone remembers to arm it is no test. It cannot cover whether the WndProc seam delivers a
+// keystroke to this module; that belongs to a run.
 bool RunSelftest() {
     int checks = 0, failed = 0;
     auto ok = [&](bool cond, const char* what) {
@@ -397,13 +341,9 @@ bool RunSelftest() {
         if (!cond) { ++failed; UE_LOGE("native_text_field selftest FAIL: %s", what); }
     };
 
-    // STATIC, not a stack local, and the reason is a real hazard rather than style:
-    // `Focus()` publishes this pointer into `g_focus`, which the WndProc detour reads from
-    // the GAME thread. A stack object would leave that global pointing at a dead frame the
-    // moment this function returned -- the window is microseconds and the detour is not
-    // even installed this early in boot, so it has probably never fired, but "probably
-    // never" is not a lifetime argument. A function-local static cannot dangle, and the
-    // final check below still proves the focus was released.
+    // Static, not a stack local: Focus publishes this pointer into the focus global, which the
+    // WndProc detour reads from the game thread, and a stack object would leave that global
+    // pointing at a dead frame. The final check still proves the focus was released.
     static Field f;               // no widgets: Repaint no-ops, the logic is untouched
     f.maxLen = 5;
     Focus(&f);
@@ -428,8 +368,8 @@ bool RunSelftest() {
     ok(ConsumeSubmit(&f), "Enter raises the submit edge");
     ok(!ConsumeSubmit(&f), "...and the edge is consumed ONCE");
 
-    // A surrogate pair is ONE character to the player. Deleting half of it would leave an
-    // unpaired surrogate in a string that is about to be encoded to UTF-8.
+    // A surrogate pair is one character to the player; deleting half would leave an unpaired
+    // surrogate in a string about to be encoded.
     f.maxLen = 8;
     SetText(&f, "");
     OnChar(static_cast<wchar_t>(0xD83D)); OnChar(static_cast<wchar_t>(0xDE00));  // U+1F600
@@ -438,8 +378,7 @@ bool RunSelftest() {
     OnKeyDown(VK_BACK);
     ok(Text(&f).empty(), "backspace removes the WHOLE surrogate pair");
 
-    // PASTE, driven through the pure half (the clipboard read is the untestable part and
-    // is one GetClipboardData call above it).
+    // Paste through the pure half; the clipboard read is one call above it.
     f.maxLen = 24;
     SetText(&f, "");
     ApplyPastedText(&f, L"  10.0.0.5:7777\r\n");
@@ -462,14 +401,13 @@ bool RunSelftest() {
     ok(!ConsumeEscape(&f), "no escape edge before Escape");
     ok(OnKeyDown(VK_ESCAPE), "Escape is consumed");
     ok(!AnyFocused(), "Escape leaves the field");
-    // THE LATCH SURVIVES THE BLUR, which is the whole point -- the owner asks AFTER the
-    // field has already let go, and `AnyFocused()` cannot answer for it by then.
+    // The latch survives the blur, which is the point: the owner asks after the field has let go.
     ok(ConsumeEscape(&f), "the escape edge is readable after the blur");
     ok(!ConsumeEscape(&f), "and it is consumed exactly once");
     ok(!OnChar(L'x'), "an unfocused module refuses the key so the game still gets it");
 
-    // Blur() cleared g_focus; the local Field is about to die, so nothing may still point
-    // at it. (Destroy() is not used here: it would try to touch a parent that never existed.)
+    // Blur cleared the focus; nothing may still point at the local Field. Destroy is not used,
+    // since it would touch a parent that never existed.
     ok(g_focus.load() == nullptr, "no dangling focus at teardown");
 
     if (failed == 0) UE_LOGI("native_text_field selftest: ALL PASS (%d checks)", checks);
@@ -483,9 +421,7 @@ bool OnKeyDown(int vk) {
     switch (vk) {
         case VK_BACK:
             if (!f->value.empty()) {
-                // Pop a whole CODEPOINT: a surrogate pair is one character to the player,
-                // and deleting half of it leaves an unpaired surrogate in a string that is
-                // about to be encoded to UTF-8.
+                // Pop a whole codepoint: a surrogate pair is one character to the player.
                 size_t n = f->value.size();
                 if (n >= 2 && (f->value[n - 1] & 0xFC00) == 0xDC00 &&
                               (f->value[n - 2] & 0xFC00) == 0xD800) f->value.resize(n - 2);
@@ -496,11 +432,9 @@ bool OnKeyDown(int vk) {
             }
             return true;
         case 'V':
-            // CTRL+V. The modifier is read here rather than passed in because the detour
-            // hands us only the virtual key -- and it runs synchronously on the message
-            // (`gate3`: WndProc is the game thread), so `GetKeyState` reports the state
-            // that key was pressed WITH. A bare V is content and must fall through to
-            // WM_CHAR; only the chord is ours.
+            // Ctrl+V. The modifier is read here because the detour hands over only the virtual key,
+            // and it runs synchronously on the message, so GetKeyState reports the state the key
+            // was pressed with. A bare V is content and falls through to WM_CHAR.
             if ((::GetKeyState(VK_CONTROL) & 0x8000) == 0) return false;
             Paste(f);
             return true;
@@ -508,23 +442,17 @@ bool OnKeyDown(int vk) {
             f->submit = true;
             return true;
         case VK_ESCAPE:
-            // Escape LEAVES THE FIELD, it does not close the screen. Swallowing the
-            // message is NOT enough to make that true: the screens read Escape with
-            // GetAsyncKeyState, which sees the physical key whatever the detour does.
-            //
-            // AND `AnyFocused()` WAS THE WRONG QUESTION FOR THEM TO ASK. This runs on
-            // WM_KEYDOWN, which strictly precedes the key-UP the screens take their edge
-            // on -- so by the time they asked, the field had already blurred and the
-            // guard could NEVER fire. A player who pressed Escape to stop editing lost
-            // the window and the password they had typed (post-ship audit, 2026-08-31).
-            // The latch below is the deterministic answer: it says "an Escape was MINE",
-            // and it cannot race, because it is set by the same event that consumed it.
+            // Escape leaves the field; it does not close the screen. Swallowing the message is not
+            // enough, since the screens read Escape from the physical key state; and a focus query
+            // is the wrong question for them, because this runs on key-down, before the key-up they
+            // take their edge on, so the field has already blurred by the time they ask. The latch
+            // says an Escape was consumed here, and cannot race, since the same event sets it.
             f->ateEscape = true;
             Blur(f);
             return true;
         default:
-            // Everything else falls through to whoever else wants it. A focused address
-            // box has no business swallowing F1 or the movement keys.
+            // Everything else falls through: a focused address box has no business swallowing F1 or
+            // the movement keys.
             return false;
     }
 }
