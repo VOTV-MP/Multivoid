@@ -1,56 +1,14 @@
-// harness/autotest_death.cpp -- the NATIVE DEATH CHAIN instrument
-// (VOTVCOOP_RUN_DEATH_TEST). One process, TWO CONFIGURATIONS, and they measure
-// different things because they EXCLUDE each other -- and since the arc landed they
-// assert DIFFERENT, EQUALLY REAL CONTRACTS:
-//
-//   `mp.py death --session`  -- SOLO HOST, and the arc's ACCEPTANCE run. `running()` is
-//                               true from `Start()` with zero clients
-//                               (session_start.cpp:234), so this is a real coop session
-//                               by the user's own definition (2026-08-31: "Solo host in
-//                               a session a a coop session... Single player is when
-//                               playing solo game in solo save, no session"). Here the
-//                               whole native death must play out (~10 s, black screen at
-//                               +5 s), the level travel must be REFUSED at
-//                               UGameplayStatics::OpenLevel, and the player must come
-//                               back standing at the KPP with the pause menu reachable.
-//
-//   `mp.py death`            -- SESSIONLESS, and it is the discriminator's NEGATIVE
-//                               CONTROL, not a lesser run. The user's decision is that
-//                               single player is untouched, so the travel MUST still
-//                               happen and the seam must refuse NOTHING. Without this
-//                               arm a fix that cancelled every travel would pass.
-//
-// Neither configuration needs a second peer; the whole chain is local BP. What neither
-// can show is the OBSERVER's screen -- that is a two-peer run.
-//
-// IT REPORTS TWO DIFFERENT THINGS, AND ONLY ONE OF THEM CAN FAIL.
-//
-// 1. OBSERVATION (never fails). The measured timeline of VOTV's own death, from a
-//    real lethal `Add Player Damage` to the level travel (or its refusal), plus a memory
-//    profile across it and the travel seam's own counters. This is the RE doc's bytecode
-//    chain (research/findings/world-systems/votv-player-death-chain-RE-2026-08-31.md)
-//    confronted with the running game: `dead := true` -> +5 s blackScreen_C -> +5 s
-//    loadLevel('menu') -> OpenLevel. A disagreement here is a finding.
-//
-// 2. ACCEPTANCE (fails). docs/DEATH_ARC.md's contract, per configuration. The arms are
-//    asserted in `death_test:` lines and NEVER inferred from a module's own log -- a
-//    module logging "REVIVE OK" is the subject speaking about itself.
-//
-// M0 -- THE MEASUREMENT THE ARC HINGES ON. `net_pump.cpp`'s death policy has
-// asserted since 2026-06-01, from "4 hands-on + an autonomous probe arc", that
-// "the balloon is VOTV's OWN possessed-ragdoll leak in the GAMEPLAY world
-// (~165 MB/s to OOM)" and that therefore the only cure is to leave the world.
-// The arc does the opposite -- it keeps the player in the world through the whole
-// ten seconds and past it -- so if that rate is real the design is dead on
-// arrival. The claim has no surviving finding doc and predates the v122
-// no-passive-mint root fix; it is inherited, not measured, so this instrument
-// re-measures it as a DIFFERENTIAL: the RSS slope across the dead window against
-// the slope across an equally long ALIVE window immediately before it, on the
-// same process, same save, same frame rate. A shared baseline drift cancels.
-//
-// The hit is the game's own `Add Player Damage`, so it walks the real lethal
-// chain (Add Player Damage -> kill() -> ragdollMode(...,death=true) -> fallen ->
-// the two RetriggerableDelays); only the trigger is synthetic.
+// harness/autotest_death.cpp -- the native death-chain instrument (VOTVCOOP_RUN_DEATH_TEST), one
+// process in two configurations. `mp.py death --session` is a solo host (a session with zero
+// clients), the acceptance run: the native death plays out (about 10 s, the black screen at
+// +5 s), the level travel is refused at UGameplayStatics::OpenLevel, and the player comes back
+// standing at the KPP with the pause menu reachable. `mp.py death` is sessionless, the negative
+// control: single player is untouched, so the travel must still happen and the seam refuse
+// nothing. Neither needs a second peer. The observation half never fails (the measured
+// timeline from a real lethal Add Player Damage to the travel or its refusal, a memory
+// profile, the seam's counters); the acceptance half does, asserted in `death_test:` lines and
+// never inferred from a module's own log. The hit is the game's own Add Player Damage, so the
+// real lethal chain runs; only the trigger is synthetic.
 
 #include "harness/autotest.h"
 
@@ -87,12 +45,9 @@ namespace V = ue_wrap::vitals;
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// The widget the death chain adds at +5 s (mainPlayer uber @4353,
-// Create(blackScreen_C).AddToViewport(0)). Measured 2026-08-31 from the asset
-// itself: blackScreen_C's name table carries a CanvasPanel, an Image and a
-// SlateBrush and NO function or ubergraph export at all -- it is a static
-// full-screen black image that never removes itself. That is why it is worth
-// observing: whoever cancels the travel inherits it.
+// The widget the death chain adds at +5 s (Create(blackScreen_C).AddToViewport): the asset
+// carries a CanvasPanel, an Image and a brush and no function or ubergraph at all, a static
+// full-screen black image that never removes itself. Whoever cancels the travel inherits it.
 constexpr const wchar_t* kBlackScreenClass = L"blackScreen_C";
 
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
@@ -119,71 +74,56 @@ struct Sample {
     bool  haveState = false;
     float health = -1.f;
     bool  blackScreen = false;        // a blackScreen_C OBJECT exists
-    // ...and whether it is actually ON THE SCREEN. These are different questions and the
-    // difference is the whole point: `RemoveFromParent` DETACHES, so a removed widget is
-    // STILL FINDABLE ([[lesson-removefromparent-detaches-a-widget-it-does-not-destroy-it]]).
-    // Any "is the black screen gone" assertion must read IsInViewport.
+    // Whether it is on the screen, a different question: RemoveFromParent detaches, so a removed
+    // widget is still findable, and "is the black screen gone" must read IsInViewport.
     bool  blackScreenInViewport = false;
     bool  inGameplay = false;   // the live UWorld is still untitled_1 (we did not travel)
     bool  haveWorld = false;
-    // Add Player Damage's own early-out terms (uber @659:
-    // gamemode.immortal || isDreaming || dead || startInvinc -> return). Read so
-    // a hit that lands NOWHERE can say WHY instead of just failing: the retired
-    // KO test's first run lost its lethal hit here (health 100.00 -> 100.00) and
-    // the verdict alone could not name the term.
+    // Add Player Damage's own early-out terms (gamemode.immortal, isDreaming, dead, startInvinc),
+    // so a hit that lands nowhere can name the term.
     bool  startInvinc = false;
     bool  haveStartInvinc = false;
     bool  immortal = false;
     bool  haveImmortal = false;
-    // `grabbing_actor` -- the physics-grabbed actor. Sampled because the revive's
-    // teleport is NOT position-only: `teleportWObackrooms` @10-@449 drops the
-    // grabbed actor, transforms it, and `pickupObjectDirect`s it back (@435/@847/
-    // @909). `ragdollMode` already ran `dropGrabObject()` on the death's common
-    // path, so this SHOULD read invalid by the time a revive teleports -- but that
-    // is an inference, and if it is wrong the revive performs a second
-    // shared-world write on someone else's prop.
+    // The physics-grabbed actor. The revive's teleport drops the grabbed actor, transforms it and
+    // picks it back up; ragdollMode already ran dropGrabObject on the death path, so this should
+    // read invalid before a revive teleports, and if it does not, the revive writes someone else's
+    // prop.
     bool  grabValid = false;
     bool  haveGrab = false;
     bool  sessionRunning = false;
-    // Where the player is. The revive repositions to the coop KPP (USER 2026-08-31: "Кпп"),
-    // and `ApplyLocally` has a THREE-TIER fallback whose report says a call was dispatched,
-    // not that the player moved -- so the position is the only honest assertion.
+    // Where the player is. The revive repositions to the coop KPP, and its three-tier fallback
+    // reports that a call was dispatched, not that the player moved; the position is the only
+    // honest assertion.
     float locX = 0.f, locY = 0.f, locZ = 0.f;
     bool  haveLoc = false;
-    // `lib.loadLevel`'s menu prep, read back. NOT cosmetic and NOT belt-and-braces: it is the
-    // arm that catches a SILENTLY LOST CAPABILITY, which is exactly the shape of the retired
-    // KO lane's H1 (a header promising a thing that had zero call sites). `pause_mainMenu`
-    // lives on the screen tree all session, so `loadLevel`'s two writes stick through a
-    // cancelled travel and the next ESC shows a LOADING SCREEN instead of the pause menu.
+    // lib.loadLevel's menu prep, read back: pause_mainMenu lives on the screen tree all session, so
+    // loadLevel's two writes stick through a cancelled travel and the next ESC shows a loading
+    // screen instead of the pause menu.
     int32_t screenSwiIdx = -1;   // in-game value is 1 (ui_menu uber @2445)
     int32_t canvasLoadingVis = -1;  // in-game value is 1 = ESlateVisibility::Collapsed
     // The damage indicator's worst directional accumulator
-    // (gamemode.playerInterface.umg_damageIndicator.damage_{up,down,left,right}). A revived
-    // player at full health wearing a red screen is death state that outlived the revive.
+    // (gamemode.playerInterface.umg_damageIndicator.damage_{up,down,left,right}): a revived player
+    // at full health wearing a red screen is death state that outlived the revive.
     float dmgRed = -1.f;
-    // `dmg_full`'s LIVE Visibility byte. Separate from dmgRed because the four quadrant
-    // floats and this one image fail INDEPENDENTLY: the death branch zeroes the quadrants
-    // and shows dmg_full in the same block, so a reader of only the floats reports a clean
-    // HUD while a full-screen red image is on screen. D10 could not have caught 11.3b #11.
+    // dmg_full's live Visibility. Separate from dmgRed: the death branch zeroes the four quadrants
+    // and shows dmg_full in the same block, so a reader of the floats alone reports a clean HUD
+    // while a full-screen red image is on screen.
     int dmgFullVis = -1;   // ESlateVisibility; 1 = Collapsed = the authored default
-    // The SECOND red, and a different mechanism: `Add Player Damage` @3414 spawns an
-    // `effect_bloodLoss_C` whose PostProcess + ui_bloodLossBlur wash the whole WORLD red.
-    // `[V]` any lethal hit pins its duration at the 120 s cap, so it outlives the revive by
-    // two minutes unless the revive expires it. Counted as live actors, not as a float,
-    // because "is one still standing" is the question.
+    // The second red: Add Player Damage spawns an effect_bloodLoss_C whose post-process and
+    // ui_bloodLossBlur wash the whole world red, and a lethal hit pins its duration at the 120 s
+    // cap, so it outlives the revive by two minutes unless the revive expires it. Counted as live
+    // actors.
     int32_t bloodLossActors = -1;
     float bloodLossTime = -1.f;
-    // The effect's OWN widget. `[V]` `effect_bloodLoss_C` carries `widgetBlur` / `setBlur` /
-    // `AddToViewport` / `RemoveFromParent` / `ReceiveDestroyed`, so the blur SHOULD die with
-    // the actor -- but "should" is what the user's screenshot disagreed with, so it gets
-    // counted separately. If the actor is gone and this is not, the actor's teardown is the
-    // bug; if both are gone and the screen is still red, there is a THIRD source.
+    // The effect's own widget: effect_bloodLoss_C removes it in ReceiveDestroyed, so it should die
+    // with the actor; counted separately, since an actor gone with the blur still up is the
+    // teardown's bug, and both gone with the screen still red is a third source.
     int32_t bloodBlurInViewport = -1;
     double rssMb = -1.0;
 };
 
-// Read an object-pointer property by name off a live object and report whether it
-// points at something live. Test-local.
+// An object-pointer property by name off a live object, and whether it points at something live.
 bool ReadBpObjectValid(void* obj, const wchar_t* name, bool& outValid) {
     if (!obj || !R::IsLive(obj)) return false;
     const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);
@@ -193,8 +133,7 @@ bool ReadBpObjectValid(void* obj, const wchar_t* name, bool& outValid) {
     return true;
 }
 
-// Read a plain BP bool by name off a live object (byte+mask, same shape as the
-// engine's canRagdoll accessor). Test-local: nothing in the mod needs these.
+// A BP bool by name off a live object (byte and mask).
 bool ReadBpBool(void* obj, const wchar_t* name, bool& out) {
     if (!obj || !R::IsLive(obj)) return false;
     int32_t byteOff = -1; uint8_t mask = 0;
@@ -203,12 +142,8 @@ bool ReadBpBool(void* obj, const wchar_t* name, bool& out) {
     return true;
 }
 
-// Walk gamemode -> pause_mainMenu -> {canvas_loading, screenSwi} and read back the two values
-// `lib.loadLevel` stomps on the way to the menu. Test-local; the mod's own restore lives in
-// coop/player/death_revive.cpp. Every engine verb resolves off its DECLARING class, because
-// `FindFunction` is exact-owner and does not climb SuperStruct.
-// The worst of the damage indicator's four quadrant accumulators, or -1 if the chain does
-// not resolve. Test-local, and it walks the SAME chain the game's own damage path writes.
+// The worst of the damage indicator's four quadrant accumulators, or -1 if the chain does not
+// resolve; the same chain the game's own damage path writes.
 float ReadDamageRed() {
     void* gm = R::FindObjectByClass(P::name::GamemodeClass);
     if (!gm || !R::IsLive(gm)) return -1.f;
@@ -231,9 +166,8 @@ float ReadDamageRed() {
     return worst;
 }
 
-// How many live effect_bloodLoss_C actors there are and the worst remaining `time`.
-// -1/-1 means the class is not loaded at all (no bloodLoss has ever been added this session),
-// which is a legitimate pre-hit state and NOT a resolution failure.
+// Live effect_bloodLoss_C actors and the worst remaining `time`; -1 / -1 means the class is not
+// loaded (no bloodLoss this session), a legitimate pre-hit state.
 void ReadBloodLoss(int32_t& outCount, float& outWorst) {
     void* cls = R::FindClass(L"effect_bloodLoss_C");
     if (!cls) { outCount = -1; outWorst = -1.f; return; }
@@ -249,8 +183,7 @@ void ReadBloodLoss(int32_t& outCount, float& outWorst) {
     }
 }
 
-// Count live `ui_bloodLossBlur_C` widgets that are actually ON the viewport. -1 = the class
-// is not loaded (none has ever existed this session).
+// Live ui_bloodLossBlur_C widgets on the viewport; -1 means the class is not loaded.
 int32_t ReadBloodBlurInViewport() {
     if (!R::FindClass(L"ui_bloodLossBlur_C")) return -1;
     void* userWidgetCls = R::FindClass(P::name::UserWidgetClass);
@@ -264,12 +197,8 @@ int32_t ReadBloodBlurInViewport() {
     return n;
 }
 
-// EVERY UUserWidget-descended object currently ON the viewport, by class name.
-//
-// This exists because three successive TARGETED probes each measured their own target clear
-// while the user was still looking at a red screen. A probe aimed at what you already suspect
-// cannot find a source you have not thought of; an enumeration can. One full GUObjectArray
-// walk, run ONCE at the end of the run, so the cost is irrelevant.
+// Every UUserWidget-descended object on the viewport, by class name: a probe aimed at a suspect
+// cannot find a source nobody thought of, an enumeration can. One array walk, once per run.
 std::wstring CensusViewportWidgets() {
     void* userWidgetCls = R::FindClass(P::name::UserWidgetClass);
     if (!userWidgetCls) return L"(UserWidget class unresolved)";
@@ -290,21 +219,10 @@ std::wstring CensusViewportWidgets() {
     return out.empty() ? L"(none)" : out;
 }
 
-// EVERY live `ui_damageIndicator_C` INSTANCE with its four quadrant values.
-//
-// The reader used by the revive and by D10 walks ONE path -- gamemode.playerInterface
-// .umg_damageIndicator -- and reports that object's values. If more than one instance exists,
-// that reader can report 0.00 with perfect honesty while a DIFFERENT instance is the one on
-// screen. Counting instances is the question "am I even looking at the right object", which
-// no amount of re-reading the same pointer can answer.
-// `dmg_full`'s live Visibility. -1 = unresolved (never treated as a failure -- an
-// unresolvable offset must not turn into a red verdict about the game's state).
-//
-// `[V]` the Tick's death branch does `@2292 dmg_full.SetVisibility(b0 = Visible)` while the
-// widget's export authors it Collapsed, and the ALIVE path never writes the field -- so this
-// is a ONE-WAY LATCH and the only thing that clears it is the revive. Asserting it is what
-// makes 11.3b #11 a REGRESSION test rather than a story: without this, deleting the fix still
-// prints 12/12.
+// dmg_full's live Visibility, -1 when unresolved (never a failure: an unresolvable offset is not
+// a claim about the game's state). The Tick's death branch sets it Visible while the widget's
+// export authors it Collapsed, and the alive path never writes the field: a one-way latch only
+// the revive clears, so asserting it makes the fix a regression test.
 int ReadDmgFullVisibility() {
     void* gm = R::FindObjectByClass(P::name::GamemodeClass);
     if (!gm || !R::IsLive(gm)) return -1;
@@ -326,6 +244,9 @@ int ReadDmgFullVisibility() {
     return static_cast<int>(*(reinterpret_cast<uint8_t*>(full) + oVis));
 }
 
+// Every live ui_damageIndicator_C instance with its four quadrant values, and which one the
+// revive's path (gamemode.playerInterface.umg_damageIndicator) points at: a reader of that one
+// object can report 0.00 honestly while a different instance is the one on screen.
 std::wstring CensusDamageIndicators() {
     void* cls = R::FindClass(L"ui_damageIndicator_C");
     if (!cls) return L"(class unresolved)";
@@ -334,7 +255,7 @@ std::wstring CensusDamageIndicators() {
     const int32_t oL = R::FindPropertyOffset(cls, L"damage_left");
     const int32_t oR = R::FindPropertyOffset(cls, L"damage_right");
     if (oU < 0 || oD < 0 || oL < 0 || oR < 0) return L"(offsets unresolved)";
-    // which one the revive's path points at, so a mismatch is visible rather than inferred
+    // The one the revive's path points at.
     void* target = nullptr;
     if (void* gm = R::FindObjectByClass(P::name::GamemodeClass)) {
         const int32_t offUi = R::FindPropertyOffset(R::ClassOf(gm), L"playerInterface");
@@ -360,8 +281,7 @@ std::wstring CensusDamageIndicators() {
                      *reinterpret_cast<float*>(b + oL), *reinterpret_cast<float*>(b + oR));
         out += buf;
     }
-    // ...and the WORLD-side red sources, because the pre-hit screenshot proved the tint is
-    // present BEFORE any damage: a live redSkyEvent_C / weatherFogController_C / blackFog_C
+    // The world-side red sources too: a live redSkyEvent_C, weatherFogController_C or blackFog_C
     // tints the whole scene and has nothing to do with the death.
     for (const wchar_t* c : {L"redSkyEvent_C", L"weatherFogController_C", L"blackFog_C"}) {
         int live = 0;
@@ -371,20 +291,9 @@ std::wstring CensusDamageIndicators() {
     return L"instances=" + std::to_wstring(n) + out;
 }
 
-// THE RENDER STATE ITSELF -- what can actually tint the scene while leaving UMG untouched.
-//
-// Written after four subsystem probes each measured clean while the user still saw red, and
-// after a pre-hit screenshot proved the tint predates the death entirely. Enumerating
-// SUBSYSTEMS asks "is my suspect guilty"; this asks "what is the renderer actually doing",
-// which is the question the screen answers.
-//
-// In UE4 exactly four things tint the world but not the UI: a camera FADE, a post-process on
-// the camera/player/gamemode component, a PostProcessVolume, or scene lighting. The first
-// three are readable by name.
-// Blendable materials on ONE FPostProcessSettings, by name and weight. A post-process
-// MATERIAL is the only thing that can tint the sky, the stars and the near ground by the same
-// amount while leaving UMG alone, so every settings struct in the pipeline gets asked -- not
-// just the one I happened to suspect.
+// Blendable materials on one FPostProcessSettings, by name and weight: a post-process material is
+// the only thing that tints the sky, the stars and the near ground by the same amount while
+// leaving UMG alone.
 std::wstring BlendablesOf(void* owner, const wchar_t* settingsProp, const wchar_t* label) {
     if (!owner || !R::IsLive(owner)) return L"";
     void* cls = R::ClassOf(owner);
@@ -410,11 +319,14 @@ std::wstring BlendablesOf(void* owner, const wchar_t* settingsProp, const wchar_
     return out + L"]";
 }
 
+// The render state itself, what can tint the scene while leaving UMG untouched. In UE4 four
+// things do: a camera fade, a post-process component on the camera, player or gamemode, a
+// PostProcessVolume, or scene lighting; the first three are readable by name.
 std::wstring CensusRenderState() {
     std::wstring out;
     wchar_t buf[256];
 
-    // 1. APlayerCameraManager fade -- SetManualCameraFade leaves these set.
+    // 1. The camera fade (SetManualCameraFade leaves these set).
     if (void* pcm = R::FindObjectByClass(L"PlayerCameraManager")) {
         if (R::IsLive(pcm)) {
             void* cls = R::ClassOf(pcm);
@@ -436,7 +348,7 @@ std::wstring CensusRenderState() {
         }
     }
 
-    // 2/3. the post-process components, by their owner.
+    // 2/3. The post-process components, by owner.
     auto pp = [&](const wchar_t* ownerCls, const wchar_t* propName) {
         void* o = R::FindObjectByClass(ownerCls);
         if (!o || !R::IsLive(o)) return;
@@ -458,10 +370,9 @@ std::wstring CensusRenderState() {
     pp(P::name::MainPlayerClass, L"PostProcess");
     pp(P::name::GamemodeClass, L"PostProcess");
 
-    // 3b. WHAT IS ACTUALLY IN THE PLAYER'S POST-PROCESS. `enabled=1 weight=1.00` says a
-    //     component is live, not what it does. `WeightedBlendables.Num` names an INJECTED
-    //     material -- the only way a component tints the world red -- and the colour-grading
-    //     overrides say whether someone graded the scene instead.
+    // 3b. What is in the player's post-process: enabled and weight say a component is live, not
+    // what it does; WeightedBlendables names an injected material, and the colour-grading overrides
+    // say whether the scene was graded instead.
     {
         void* mp2 = R::FindObjectByClass(P::name::MainPlayerClass);
         if (mp2 && R::IsLive(mp2)) {
@@ -476,10 +387,9 @@ std::wstring CensusRenderState() {
                         auto* sb = reinterpret_cast<uint8_t*>(comp) + offS;
                         const int32_t oWB = R::FindPropertyOffset(st, L"WeightedBlendables");
                         if (oWB >= 0) {
-                            // FWeightedBlendables{ TArray<FWeightedBlendable> Array }, and
-                            // FWeightedBlendable{ float Weight; UObject* Object } = 16 B.
-                            // NAME the material: "there is one" is not an identification, and
-                            // a uniform scene-wide tint with UI untouched can only be this.
+                            // FWeightedBlendables is a TArray of FWeightedBlendable {float Weight;
+                            // UObject* Object}, 16 B each; the material is named, since "there is
+                            // one" is not an identification.
                             auto* arr = reinterpret_cast<uint8_t*>(sb + oWB);
                             void* data = *reinterpret_cast<void**>(arr);
                             const int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
@@ -496,7 +406,7 @@ std::wstring CensusRenderState() {
                                 out += L"]";
                             }
                         }
-                        // any colour-ish override that is ON is worth naming
+                        // Any colour override that is on is named.
                         for (const auto& f : R::EnumerateStructFields(st)) {
                             if (f.name.rfind(L"bOverride_", 0) != 0) continue;
                             if (f.name.find(L"Color") == std::wstring::npos &&
@@ -513,10 +423,9 @@ std::wstring CensusRenderState() {
         }
     }
 
-    // 3c. THE FOG. The frames are distance-dependent -- near grass still green, distant trees
-    //     deep red -- which is fog inscattering, not a uniform post-process multiply.
-    //     `daynightCycle` owns SetFogInscatteringColor / SetFogDensity / enable_fog and
-    //     `newsky` owns fog_color_A/B, so this reads the value they land on.
+    // 3c. The fog: a distance-dependent tint (near grass green, distant trees red) is fog
+    // inscattering, not a uniform post-process; daynightCycle owns the inscattering colour and
+    // density, so this reads the value they land on.
     for (void* fog : R::FindObjectsByClass(L"ExponentialHeightFogComponent")) {
         if (!fog || !R::IsLive(fog)) continue;
         void* fc = R::ClassOf(fog);
@@ -530,7 +439,7 @@ std::wstring CensusRenderState() {
         out += buf;
     }
 
-    // 3d. blendables on EVERY source, not just the player's.
+    // 3d. Blendables on every source, not just the player's.
     if (void* gm2 = R::FindObjectByClass(P::name::GamemodeClass)) {
         const int32_t o = R::FindPropertyOffset(R::ClassOf(gm2), L"PostProcess");
         if (o >= 0) {
@@ -540,7 +449,7 @@ std::wstring CensusRenderState() {
     }
     for (void* v2 : R::FindObjectsByClass(L"PostProcessVolume"))
         out += BlendablesOf(v2, L"Settings", R::ToString(R::NameOf(v2)).c_str());
-    // and the camera's own settings, the last stop before the frame
+    // And the camera's own settings, the last stop before the frame.
     if (void* mp3 = R::FindObjectByClass(P::name::MainPlayerClass)) {
         const int32_t o = R::FindPropertyOffset(R::ClassOf(mp3), L"Camera");
         if (o >= 0) {
@@ -549,10 +458,8 @@ std::wstring CensusRenderState() {
         }
     }
 
-    // 3e. WHICH BRANCH LIT THE MEGASUN. `[V]` daynightCycle's new-day block spawns the Bad Sun
-    //     either because `GameInstance.gamemode == b7` (deterministic, every day) or on a
-    //     0.1%/day roll gated on the `badsun` achievement. Reading the mode says which -- and
-    //     saves asking a question that is measurable.
+    // 3e. Which branch lit the Bad Sun: daynightCycle's new-day block spawns it every day when the
+    // game instance's mode is b7, otherwise on a 0.1%-per-day roll behind the badsun achievement.
     if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) {
         if (R::IsLive(gi)) {
             const uint8_t mode = *(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_GameMode);
@@ -562,7 +469,7 @@ std::wstring CensusRenderState() {
         }
     }
 
-    // 4. every PostProcessVolume in the world with a non-zero blend.
+    // 4. Every PostProcessVolume with a non-zero blend.
     int vols = 0, hot = 0;
     for (void* v : R::FindObjectsByClass(L"PostProcessVolume")) {
         if (!v || !R::IsLive(v)) continue;
@@ -583,9 +490,8 @@ std::wstring CensusRenderState() {
                      oW >= 0 ? *reinterpret_cast<float*>(vb + oW) : -1.f,
                      (oUB >= 0) ? (((*(vb + oUB)) & oUM) ? 1 : 0) : -1);
         out += buf;
-        // THE COLOUR GRADING -- the field I kept not reading. Weight says a volume is
-        // contributing; only these say WHAT it contributes, and a scene-wide uniform red
-        // with UI untouched is exactly what a graded volume looks like.
+        // The colour grading: the weight says a volume contributes, only these say what, and a
+        // scene-wide uniform red with the UI untouched is what a graded volume looks like.
         const int32_t oS = R::FindPropertyOffset(vc, L"Settings");
         void* vst = R::PropertyInnerStruct(vc, L"Settings");
         if (oS >= 0 && vst) {
@@ -609,13 +515,9 @@ std::wstring CensusRenderState() {
     return out.empty() ? L"(nothing readable)" : out;
 }
 
-// EVERY live actor descending from `effect_C`, by class name, plus the gamemode's own
-// `effects_names` array -- the two halves of VOTV's effect system, which can disagree.
-//
-// The SCREENSHOT settled what three property probes could not: the tint covers the WORLD and
-// not the HUD, so it is a POST-PROCESS, and `effect_C`'s base carries a `PostProcessComponent`.
-// `effect_bloodLoss_C` measured absent, so either another effect class is up, or the gamemode
-// is still holding a row for one that is gone. Enumerate both rather than guess again.
+// Every live actor descending from effect_C, by class name, plus the gamemode's own effects_names
+// array: the two halves of VOTV's effect system, which can disagree. effect_C's base carries a
+// PostProcessComponent, so a world-only tint is one of these or a stale gamemode row.
 std::wstring CensusEffects() {
     std::wstring out;
     void* effectCls = R::FindClass(L"effect_C");
@@ -634,7 +536,7 @@ std::wstring CensusEffects() {
     } else {
         out += L"(effect_C unresolved)";
     }
-    // the gamemode's parallel bookkeeping
+    // The gamemode's parallel bookkeeping.
     if (void* gm = R::FindObjectByClass(P::name::GamemodeClass)) {
         if (R::IsLive(gm)) {
             const int32_t off = R::FindPropertyOffset(R::ClassOf(gm), L"effects_names");
@@ -642,8 +544,8 @@ std::wstring CensusEffects() {
                 struct FNameArr { void* data; int32_t num; int32_t max; };
                 auto* a = reinterpret_cast<FNameArr*>(reinterpret_cast<uint8_t*>(gm) + off);
                 out += L" | gamemode.effects_names.Num=" + std::to_wstring(a->num);
-                // FName is 8 bytes {ComparisonIndex, Number}; render each through the engine's
-                // own FName::ToString so a stale row is NAMED, not just counted.
+                // FName is 8 bytes {ComparisonIndex, Number}; each is rendered through the engine's
+                // own ToString, so a stale row is named, not counted.
                 for (int32_t i = 0; i < a->num && i < 16 && a->data; ++i) {
                     const auto& fn = *reinterpret_cast<const R::FName*>(
                         reinterpret_cast<uint8_t*>(a->data) + static_cast<size_t>(i) * 8);
@@ -657,6 +559,10 @@ std::wstring CensusEffects() {
     return out.empty() ? L"(none)" : out;
 }
 
+// gamemode -> pause_mainMenu -> {canvas_loading, screenSwi}: the two values lib.loadLevel
+// stomps on the way to the menu. Every engine verb resolves off its declaring class, since
+// FindFunction is exact-owner and does not climb SuperStruct. The mod's own restore is in
+// coop/player/death_revive.cpp.
 void ReadMenuPrep(int32_t& outSwiIdx, int32_t& outCanvasVis) {
     void* gm = R::FindObjectByClass(P::name::GamemodeClass);
     if (!gm || !R::IsLive(gm)) return;
@@ -723,9 +629,8 @@ Sample Probe() {
                     out->blackScreenInViewport = f.Get<bool>(L"ReturnValue");
             }
         }
-        // The gameplay world's leaf name contains "ntitled" (untitled_1.Untitled_1);
-        // the menu / loading worlds do not. Same discriminator the menu-travel probe
-        // settled on.
+        // The gameplay world's leaf name contains "ntitled" (untitled_1.Untitled_1); the menu and
+        // loading worlds do not.
         if (void* w = R::FindObjectByClass(P::name::WorldClass)) {
             out->haveWorld = true;
             out->inGameplay = R::ToString(R::NameOf(w)).find(L"ntitled") != std::wstring::npos;
@@ -745,7 +650,7 @@ void Verdict(const char* arm, bool ok, const char* detail) {
     else    { ++g_fail; UE_LOGW("death_test: %s FAIL -- %s", arm, detail); }
 }
 
-// A window's memory profile: first/last RSS and the slope between them.
+// A window's memory profile: first and last RSS and the slope between them.
 struct MemWindow {
     double firstMb = -1.0, lastMb = -1.0, peakMb = -1.0;
     uint64_t ms = 0;
@@ -761,21 +666,17 @@ struct MemWindow {
     }
 };
 
-// How far the dead window's RSS slope may exceed the alive window's before M0 is
-// called a balloon. The inherited claim is ~165 MB/s; ordinary VOTV drift while
-// simply standing still is the control this subtracts. 20 MB/s is an order of
-// magnitude under the claim and an order of magnitude over normal streaming
+// How far the dead window's RSS slope may exceed the alive window's before it is a balloon: an
+// order of magnitude under the inherited ~165 MB/s claim and an order over normal streaming
 // churn, so neither answer is a coin flip.
 constexpr double kBalloonMbPerSec = 20.0;
 
-// How long to watch, alive and then dead. The alive window is the control; the
-// dead window has to outlast the chain's own 10 s so the travel (or its absence)
-// is inside the observation.
+// How long to watch, alive and then dead; the dead window outlasts the chain's own 10 s so the
+// travel or its absence is inside the observation.
 constexpr int kAliveWindowMs = 10000;
 constexpr int kDeadWindowMs  = 22000;
-// The write-diff's noise floor must cover the whole span it grades, which is kDeadWindowMs
-// PLUS the hit post, the observation loop's own overrun and the diff latency -- so this is
-// deliberately longer than kDeadWindowMs rather than equal to it.
+// The write-diff's noise floor must cover the whole span it grades: the dead window plus the hit
+// post, the loop's overrun and the diff latency, so longer than kDeadWindowMs.
 constexpr int kNoiseFloorWindowMs = 26000;
 constexpr int kSampleMs      = 250;
 
@@ -786,9 +687,7 @@ DWORD WINAPI DeathTestThread(LPVOID) {
             "chain to completion; the timeline + memory are OBSERVED, and the "
             "docs/DEATH_ARC.md contract is the ACCEPTANCE half");
 
-    // Wait for a pawn that can actually be killed. canRagdoll must be TRUE: the
-    // retired KO lane held it shut for the session, and a run in which anything
-    // still holds it measures the gate, not the death.
+    // A pawn that can be killed: canRagdoll true, no invincibility term set, in the gameplay world.
     Sample s;
     bool ready = false;
     for (int i = 0; i < 120 && !ready; ++i) {
@@ -812,14 +711,11 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         return 0;
     }
 
-    // ---- the ALIVE control window -------------------------------------------
-    // The same cadence, the same reads, the same frame load, with the player
-    // simply standing there. Whatever this drifts is what the dead window is
-    // allowed to drift.
-    // The write-diff's NOISE FLOOR rides this same window: whatever moves while the player
-    // just stands there is world churn (animated hints, radar points, pooled log rows,
-    // ticking floats) and can never be attributed to the death. Without it the death diff
-    // reads ~319 changed cells and the signal is buried in its own instrument.
+    // The alive control window: the same cadence, reads and frame load with the player standing
+    // still; whatever drifts here the dead window may drift. The write-diff's noise floor rides it,
+    // since whatever moves while the player stands (animated hints, radar points, pooled log rows,
+    // ticking floats) is world churn, never death; without it the death diff reads about 300
+    // changed cells and buries its own signal.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([done] {
@@ -855,23 +751,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         if (*n < 0) UE_LOGW("death_test: write-diff floor pass 1 did NOT run (see death_diff)");
     }
 
-    // A SECOND, LONGER control stretch -- OFF BY DEFAULT, and that default is the point.
-    //
-    // Why it exists: the floor must cover at least as long as the window it grades. The alive
-    // window is 10 s; the graded span is the whole dead window (22 s) plus the hit post and the
-    // diff latency. A cell whose period sits in that gap -- an autosave timer, a world-clock
-    // field, an NPC state machine, an effect cooldown -- never enters the floor and is reported
-    // death-attributable forever. It has to be ITSELF longer than the graded span, not the
-    // remainder that would make two stretches SUM to it (10 + 12 still misses an 18 s period,
-    // which is inside the very gap being closed): coverage is the LONGEST stretch.
-    //
-    // Why it is off: it costs 26 s of the player standing still, IN EVERY RUN, and the user
-    // said so directly (2026-08-31) -- the pawn has loaded and is just standing there while the
-    // harness waits. A drill that burns half a minute of wall clock on completeness nobody
-    // asked for that run is a bad drill. So the default run pays 0 s and carries a NAMED
-    // residual (periods between ~10 s and the graded span are uncovered, and the DIFF END line
-    // says so); `mp.py death --deep-floor` buys the full coverage when the residual is actually
-    // being classified, which is the only time it matters.
+    // A second, longer control stretch, off by default. The floor must cover at least as long as
+    // the span it grades (the 22 s dead window plus the hit post and the diff latency), or a cell
+    // with a period inside that gap (an autosave timer, a world clock, an NPC state machine) is
+    // reported as death-attributable forever; coverage is the longest single stretch, not a sum. It
+    // costs 26 s of the player standing still per run, so the default run pays nothing and names
+    // the residual (periods between about 10 s and the graded span are uncovered); `mp.py death
+    // --deep-floor` buys the coverage when the residual is being classified.
     const bool deepFloor = (coop::config::ReadEnv("VOTVCOOP_DEATH_DEEP_FLOOR") == "1");
     if (deepFloor) {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -890,34 +776,27 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         if (*n < 0) UE_LOGW("death_test: write-diff floor pass 2 did NOT run (see death_diff)");
     }
 
-    // ---- the write-diff BEFORE instant ---------------------------------------
-    // Taken here and not on the `dead` edge ON PURPOSE: `Add Player Damage` writes the four
-    // damage quadrants BEFORE `dead` exists, so a snapshot armed on the flag is already too
-    // late (`[[lesson-a-chain-derived-design-is-blind-to-side-effects-before-the-chain]]`).
-    // The drill CONTROLS the trigger, so it simply snapshots immediately before delivering
-    // the hit -- no production seam is needed or implied. See coop/dev/death_write_diff.h.
+    // The write-diff's before instant, here and not on the `dead` edge: Add Player Damage writes
+    // the four damage quadrants before `dead` exists, so a snapshot armed on the flag is already
+    // late. The drill controls the trigger and snapshots right before delivering the hit; no
+    // production seam is implied. See coop/dev/death_write_diff.h.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         auto n = std::make_shared<int>(0);
         GT::Post([done, n] { *n = coop::dev::death_write_diff::Snapshot(); done->store(1); });
         WaitDone(done, 30000);
-        // A silent no-op here would leave the run's VERDICT line byte-identical to one where
-        // the instrument worked (`[[lesson-a-check-whose-output-you-do-not-read-is-not-a-
-        // check]]`). It is not a gate -- but it must not be invisible.
+        // A silent no-op here would leave the VERDICT line identical to a run where the instrument
+        // worked; not a gate, but not invisible.
         if (*n < 0) UE_LOGW("death_test: write-diff PRE-HIT SNAPSHOT did NOT run -- the death "
                             "diff below is meaningless (see death_diff lines)");
     }
 
-    // ---- deliver the lethal hit ---------------------------------------------
-    // 2x max health. It USED to be 10x, and that was a real instrument defect rather than
-    // caution: `[V]` `Add Player Damage` @4269 ACCUMULATES `damage/maxHealth*4` into one of
-    // the damage indicator's four directional floats, so a 10x hit put FORTY units of red on
-    // the screen -- a full-screen red wash that outlived the revive and read as a bug in the
-    // arc (the user saw it and asked). The only scaling anywhere on the path is
-    // `SelectFloat(0.75, 1.0, isStrong)` (@856) -- damage is NEVER scaled UP -- so 2x is
-    // lethal with a 100% margin and puts a realistic 8 units in the quadrant instead of 40.
-    // A synthetic trigger has to stay inside the range the game itself produces, or it
-    // measures its own exaggeration.
+    // The lethal hit: 2x max health. Add Player Damage accumulates damage/maxHealth*4 into one of
+    // the damage indicator's four directional floats, so a 10x hit put forty units of red on the
+    // screen, a wash that outlived the revive and read as a bug in the arc; the only scaling on the
+    // path is SelectFloat(0.75, 1.0, isStrong), never upward, so 2x is lethal with a 100% margin
+    // and puts a realistic 8 units in the quadrant. A synthetic trigger must stay inside the range
+    // the game produces, or it measures its own exaggeration.
     float maxHp = 100.f;
     { auto done = std::make_shared<std::atomic<int>>(0);
       auto mh = std::make_shared<float>(100.f);
@@ -931,10 +810,8 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     auto hitOk = std::make_shared<int>(0);
     GT::Post([hitDone, hitOk, lethal] {
         void* mp = coop::players::Registry::Get().Local();
-        // blood=TRUE. `[V]` @2784 gates the `addEffect('bloodLoss', ...)` block on it, and
-        // that effect is one of the two reds the revive has to clear -- so a hit without it
-        // makes D11 pass while testing nothing (it did exactly that on the 15:09 run:
-        // `0 live effect_bloodLoss_C` because none was ever created).
+        // blood=true: it gates the addEffect('bloodLoss') block, one of the two reds the revive
+        // must clear; without it D11 passes while testing nothing.
         if (mp && R::IsLive(mp) && E::InvokeAddPlayerDamage(mp, lethal, /*blood=*/true)) *hitOk = 1;
         hitDone->store(1);
     });
@@ -943,12 +820,12 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     UE_LOGI("death_test: delivered Add Player Damage(%.0f, blood=true) (health was %.2f, invoke=%s)",
             lethal, hpBefore, *hitOk ? "ok" : "FAILED");
 
-    // ---- observe the chain ---------------------------------------------------
+    // The chain, observed.
     MemWindow dead;
     long long tDead = -1, tRagdoll = -1, tBlack = -1, tTravel = -1;
     long long tGrabCleared = -1, tBlackGone = -1;
-    // When each red source actually left the screen. The revive runs at ~+10 s; anything
-    // materially later than that is a source the revive is not reaching.
+    // When each red source left the screen; the revive runs at about +10 s, and anything much later
+    // is a source it is not reaching.
     long long tRedGone = -1, tBloodGone = -1, tBlurGone = -1;
     bool sawZeroHealth = false;
     Sample last = s;
@@ -963,13 +840,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         else if (tBlack >= 0 && tBlackGone < 0) tBlackGone = dt;
         if (p.haveWorld && !p.inGameplay && tTravel < 0) tTravel = dt;
         if (p.haveGrab && !p.grabValid && tGrabCleared < 0) tGrabCleared = dt;
-        // Only stamp AFTER each red has been seen up, so "never appeared" is not "cleared".
+        // Stamped only after each red has been seen up, so "never appeared" is not "cleared".
         if (p.dmgRed > 0.05f) tRedGone = -1; else if (tRedGone < 0 && tDead >= 0) tRedGone = dt;
         if (p.bloodLossActors > 0) tBloodGone = -1; else if (tBloodGone < 0 && tDead >= 0) tBloodGone = dt;
         if (p.bloodBlurInViewport > 0) tBlurGone = -1; else if (tBlurGone < 0 && tDead >= 0) tBlurGone = dt;
         if (p.health <= 0.f && p.health >= -0.5f) sawZeroHealth = true;
-        // Only the in-world part of the run is a memory measurement; once the
-        // travel starts, RSS is dominated by the teardown + the new level.
+        // Only the in-world part is a memory measurement; once the travel starts, RSS is the
+        // teardown and the new level.
         if (tTravel < 0) dead.Add(p.rssMb);
         last = p;
         ::Sleep(kSampleMs);
@@ -981,10 +858,9 @@ DWORD WINAPI DeathTestThread(LPVOID) {
             "blackScreen~5000, travel~10000; with the arc armed, travel should read -1 and "
             "blackGone should land just past 10000 -- the revive is what removes it]",
             tDead, tRagdoll, tBlack, tBlackGone, tTravel, tGrabCleared);
-    // The AFTER instant: the revive has run, so whatever still differs from the pre-hit
-    // snapshot is a write the death made and NOTHING disposed of. Expect a large delta with
-    // `VOTVCOOP_DEATH_NO_RECONCILE=1` (the RED arm) and a smaller one without it; the pair is
-    // the reading, not either arm alone.
+    // The after instant: the revive has run, so whatever still differs from the pre-hit snapshot is
+    // a write the death made and nothing disposed of. VOTVCOOP_DEATH_NO_RECONCILE=1 is the red arm
+    // (a large delta); the pair is the reading.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         auto n = std::make_shared<int>(0);
@@ -993,8 +869,8 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                 coop::death_revive::ReconcileDisabled()
                     ? (deepFloor ? "reconcile OFF, deep floor" : "reconcile OFF, SHALLOW floor")
                     : (deepFloor ? "reconcile ON, deep floor" : "reconcile ON, SHALLOW floor"));
-            // Tens of MB, and the drill GRADES A MEMORY BALLOON two verdicts later -- an
-            // instrument that inflates the number it is measured beside is measuring itself.
+            // Tens of MB, released before the balloon verdict: an instrument that inflates the
+            // number it is measured beside measures itself.
             coop::dev::death_write_diff::Release();
             done->store(1);
         });
@@ -1053,17 +929,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
             coop::death_revive::LastReviveSucceeded() ? 1 : 0,
             last.sessionRunning ? 1 : 0);
 
-    // ---- ACCEPTANCE ----------------------------------------------------------
-    //
-    // THE TWO CONFIGURATIONS ASSERT DIFFERENT, EQUALLY REAL CONTRACTS. That is not a
-    // convenience: the SESSIONLESS run is the discriminator's NEGATIVE CONTROL. The user's
-    // decision is that single player is untouched ("Gate of course, we only work in coop,
-    // single player games are not touched by us"), so a sessionless death MUST still travel
-    // -- and without this arm a fix that cancelled EVERY travel would pass.
+    // Acceptance. The two configurations assert two contracts: the sessionless run is the negative
+    // control (single player is untouched, so a sessionless death must still travel), and without
+    // it a fix that cancelled every travel would pass.
     const bool inCoopSession = last.sessionRunning || s.sessionRunning;
 
-    // D1/D2 are the falsifiers, and they hold in BOTH configurations: without them "the world
-    // survived" would pass on a run where the hit simply never landed.
+    // D1 and D2 are the falsifiers in both configurations: without them "the world survived" passes
+    // on a run where the hit never landed.
     Verdict("D1 death-ran", tDead >= 0 && (sawZeroHealth || tRagdoll >= 0),
             tDead >= 0 ? "dead=true was observed -- the lethal chain really started"
                        : "dead never became true; the hit did not kill, so nothing below "
@@ -1088,17 +960,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                 (last.havePawn && last.haveState && !last.isRagdoll && last.health > 1.f)
                     ? "the player is up, off the ragdoll, with positive health"
                     : "the player is not standing with health");
-        // The positional arm. `ApplyLocally` reports that a call was dispatched, not that the
-        // player moved -- three-tier fallback -- so this is the only honest test of step 5.
+        // The positional arm: ApplyLocally reports a dispatched call, not a moved player.
         const float dx = last.locX - P::name::kKPPSpawnX;
         const float dy = last.locY - P::name::kKPPSpawnY;
         const float dz = last.locZ - P::name::kKPPSpawnZ;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        // The DELTA, not just the distance. A 2026-08-31 run revived with the revive's own
-        // read-back reporting `distKPP=0 cm` and D7 then measuring 2669 cm TWELVE SECONDS
-        // LATER -- so the teleport had landed exactly and the player DRIFTED afterwards. A
-        // scalar distance cannot tell a fall from a walk from a slide, and that is precisely
-        // the discrimination the client-KPP-spawn lane needs; the components give it for free.
+        // The delta, not only the distance: a run once landed the teleport exactly and the player
+        // drifted afterwards, and a scalar cannot tell a fall from a walk from a slide.
         char at[256];
         _snprintf_s(at, sizeof(at), _TRUNCATE,
                     "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- delta (%.0f,%.0f,%.0f), "
@@ -1107,8 +975,8 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                     P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ,
                     dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
         Verdict("D7 at-KPP", last.haveLoc && dist <= 500.f, at);
-        // The silently-lost-capability arm (H1's shape). `pause_mainMenu` survives the whole
-        // session on the screen tree, so loadLevel's prep sticks through a cancelled travel.
+        // The silently-lost-capability arm: pause_mainMenu survives the session on the screen tree,
+        // so loadLevel's prep sticks through a cancelled travel.
         char mp[192];
         _snprintf_s(mp, sizeof(mp), _TRUNCATE,
                     "screenSwi=%d (want 1, ui_menu's own in-game value) canvas_loading vis=%d "
@@ -1117,33 +985,25 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                     last.screenSwiIdx, last.canvasLoadingVis);
         Verdict("D8 menu-restored",
                 last.screenSwiIdx == 1 && last.canvasLoadingVis == 1, mp);
-        // `blackScreen_C` has NO script of its own -- `[V]` its whole asset carries no
-        // function or ubergraph export -- so the level travel is the only thing that ever
-        // disposed of it. With the travel refused, the ONLY way it leaves the screen is the
-        // revive removing it. A permanent black screen is what a player would actually see
-        // if this step were missing, which makes it the most visible arm here.
+        // blackScreen_C has no script of its own, so the level travel was the only thing that ever
+        // disposed of it; with the travel refused, only the revive removes it, and a permanent
+        // black screen is what a player would see without this step.
         char bs[192];
         _snprintf_s(bs, sizeof(bs), _TRUNCATE,
                     "reached the viewport at %lld ms and left at %lld ms (IsInViewport, not "
                     "findability -- RemoveFromParent DETACHES, it does not destroy)",
                     tBlack, tBlackGone);
-        // The user found this one by LOOKING at a run: revived at the KPP, full health, and
-        // the whole HUD washed red. It is the same class as the black screen -- an artifact
-        // of the death that the level travel used to dispose of -- so it gets the same
-        // treatment and its own arm. The runtime treats the clear as best-effort (a red
-        // screen is not worth fleeing to the menu over); this bar is deliberately stricter.
+        // The HUD red, the same class as the black screen (a death artifact the travel used to
+        // dispose of), gets its own arm; the runtime clears it best-effort, this bar is stricter.
         char red[192];
         _snprintf_s(red, sizeof(red), _TRUNCATE,
                     "worst damage_{up,down,left,right} = %.2f (want ~0; the death's own hit "
                     "accumulates damage/maxHealth*4 into one quadrant and nothing in the game "
                     "clears it, because the level travel used to)", last.dmgRed);
         Verdict("D10 hud-clear", last.dmgRed >= 0.f && last.dmgRed <= 0.05f, red);
-        // D13 -- the SIXTH image, and the one D10 is blind to. The death branch zeroes the four
-        // quadrants and shows `dmg_full` in the SAME block, so D10 can report a clean HUD with
-        // perfect honesty while a full-screen red image is on screen; that is exactly how
-        // 11.3b #11 survived every run until the pak disassembly found it. Want 1 = Collapsed
-        // = the widget's own authored export value. -1 (unresolved) is NOT a failure -- an
-        // offset we could not resolve is not a claim about the game's state.
+        // D13, the image D10 is blind to: the death branch zeroes the four quadrants and shows
+        // dmg_full in the same block, so D10 reports a clean HUD with a full-screen red image on
+        // screen. Want 1, Collapsed, the authored value; -1 (unresolved) is not a failure.
         char full[224];
         _snprintf_s(full, sizeof(full), _TRUNCATE,
                     "dmg_full Visibility = %d (want 1 = Collapsed, its authored default; the "
@@ -1151,8 +1011,8 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                     "the field, so only the revive can clear this one-way latch)",
                     last.dmgFullVis);
         Verdict("D13 dmgfull-collapsed", last.dmgFullVis != 0, full);
-        // The second red. ONE arm per mechanism, because they fail independently and a
-        // single "is the screen red" arm could not say which to fix.
+        // The second red, one arm per mechanism: they fail independently, and one "is the screen
+        // red" arm could not say which to fix.
         char blood[224];
         _snprintf_s(blood, sizeof(blood), _TRUNCATE,
                     "%d live effect_bloodLoss_C, worst time=%.1f s (want 0 actors; any lethal "
@@ -1170,7 +1030,7 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         Verdict("D9 black-screen-cleared",
                 tBlack >= 0 && tBlackGone > 0 && !last.blackScreenInViewport, bs);
     } else {
-        // SINGLE PLAYER (no session). The contract is that we do NOTHING.
+        // Single player, no session: the contract is that nothing of ours acts.
         Verdict("D3 sp-untouched", tTravel >= 0,
                 tTravel >= 0 ? "the level travel ran, as vanilla VOTV does -- single player is "
                                "not touched by the arc (the veto's first term is a live session)"
