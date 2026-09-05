@@ -1,6 +1,6 @@
-// coop/interactables/atv_corrector.cpp -- see header. The body below MOVED VERBATIM from
-// atv_sync.cpp on 2026-08-30; equivalence was proven by a body-diff instrument against a frozen
-// pre-extraction copy, with delete-a-line and change-a-constant mutants shown to FAIL it.
+// coop/interactables/atv_corrector.cpp -- see coop/interactables/atv_corrector.h. The corrector
+// for an ATV this peer does not author: a velocity bias between packets, a cut when the error
+// is too far to converge, and nothing at all while the author is parked.
 
 #include "coop/interactables/atv_corrector.h"
 
@@ -26,121 +26,91 @@ using coop::atv_sync::Len;
 
 namespace {
 
-// The corrector. Warp is speed-scaled after CClientVehicle.cpp:3901 (their 15 + 10*|v| is in GTA
-// units); ours is sized off the measured rig -- the ATV is ~2 m long and its native suspension
-// travel is 2-4 cm (docs/vehicles/ATV.md 13.1), so 2 m plus half a second of travel is "so far
-// apart that closing it smoothly would look worse than a cut".
+// The warp distance is speed-scaled, after MTA's CClientVehicle, but sized off the measured
+// rig: the ATV is about 2 m long and its native suspension travel is a few centimetres, so 2 m
+// plus half a second of travel is too far apart to close smoothly.
 constexpr float kWarpBaseCm     = 200.f;
 constexpr float kWarpPerSpeedS  = 0.5f;
-constexpr float kWarpAngleDeg   = 45.f;   // orientation alone can justify a warp: a body can spin
-                                          // in place without ever tripping the distance threshold
+constexpr float kWarpAngleDeg   = 45.f;   // orientation alone can justify a warp: a body can spin in place
 constexpr float kCorrDeadbandCm = 5.f;    // inside this, the wire velocity alone is the correction
 constexpr float kCorrMaxCmS     = 400.f;  // bound the corrective term: it must nudge, never launch
-// The corrective velocity is sized to close kCorrGain of the remaining error by the time the NEXT
-// packet is due, using the MEASURED interval since the last one. A fixed window cannot do this:
-// this lane has two cadences (50 ms authored, 200 ms idle), and `err / 0.1 s` held for 200 ms
-// travels TWICE the error -- it overshoots to -err and then oscillates at constant amplitude
-// forever, which looks exactly like the jitter this model exists to remove. A gain below 1 over
-// the real interval converges geometrically at any cadence, including a bunched or delayed packet.
+// The corrective velocity closes kCorrGain of the remaining error by the time the next packet
+// is due, over the measured interval since the last one. A fixed window cannot: this lane has
+// two cadences (50 ms authored, 200 ms idle), and an error over a fixed 0.1 s held for 200 ms
+// travels twice the error, overshoots and oscillates at constant amplitude, which looks
+// exactly like the jitter this exists to remove. A gain below 1 over the real interval
+// converges geometrically at any cadence.
 constexpr float kCorrGain     = 0.5f;
-// THE CORRECTOR MUST CONVERGE OR CUT -- measured 2026-08-29, and this arm is why.
-// A velocity nudge is the right correction for a MOVING body and is powerless against a resting
-// one: a client that joined mid-settle had its ATV come to rest 40.5 cm BELOW the host's, both
-// copies then perfectly still, and a 20 cm/s upward corrective velocity is erased by gravity in
-// 20 ms. The error stood for the whole run. So the corrector watches itself: if the distance
-// stops shrinking while it is still outside the deadband, the nudge is not working here and we
-// stop pretending it will. This is cadence-independent by construction -- it counts PACKETS in
-// which the error failed to shrink, not seconds -- and it needs no threshold on velocity, which
-// is exactly the quantity that was lying about whether convergence was possible.
+// The corrector must converge or cut. A velocity nudge corrects a moving body and is powerless
+// against a resting one: a mirror that came to rest 40 cm below the host's, both still, sees
+// a 20 cm/s upward nudge erased by gravity in 20 ms, and the error stands. So the corrector
+// watches itself: if the distance stops shrinking while still outside the deadband, the nudge
+// is not working and it stops pretending. Cadence-independent by construction, counting
+// packets in which the error failed to shrink, with no threshold on velocity, the quantity
+// that was lying about whether convergence was possible.
 constexpr float kStallShrinkFrac  = 0.95f;  // "shrank" = at least 5% closer than last packet
 constexpr int   kStallWarpPackets = 5;      // 250 ms on the drive lane, 1 s on the idle one
-// AT REST, DO NOT TOUCH IT AT ALL -- measured 2026-08-30, and this arm is the whole of A6.
-//
-// WHAT WAS MEASURED. The [ATVC] instrument logs the RECEIVED wire velocity at the instant the
-// corrector acts. On a parked ATV the author reports |v| = 0.0 and holds one Z to the decimal,
-// while the MIRROR falls: cur.z 6282.5 -> 6272.5 -> 6236.6 over about a second, which is free
-// fall. It comes to rest 25-40 cm low and stays. Cutting it back to the author's pose lands
-// (5405.2 -> 5430.5 the sample after) and it falls again within 500 ms, every time, in four
-// driven runs. The only thing this lane does to a mirror between packets is write its root's
-// physics velocity -- and writing velocity WAKES the body, every packet, for a rig that had
-// settled.
-//
-// WHY A VELOCITY TEST HERE IS NOT THE ONE ARC 1 REJECTED. The comment on kStallShrinkFrac says
-// the stall arm "needs no threshold on velocity, which is exactly the quantity that was lying
-// about whether convergence was possible" -- and that stands: it is about whether a NUDGE can
-// close a gap, where the mirror's own velocity says nothing. This asks a different question of
-// a different value: is the AUTHOR moving? If it is not, there is no velocity to mirror, the
-// corrective term is meaningless by 14.4 (a nudge cannot move a body at rest), and the write is
-// the only thing left that can be causing the fall. The worry that the branch might not be
-// TAKEN at the handoff -- because the author's own copy is settling and reports a downward
-// velocity -- was measured and did not happen: |v| = 0.0 at exactly those packets.
-//
-// MTA SHAPE (RULE 2026-05-28). CUnoccupiedVehicleSync carries `bSyncVelocity : 1` and sets it
-// only when the velocity is non-negligible (Client/.../CUnoccupiedVehicleSync.cpp:311, server
-// clears it again at :315-321), and the receiver calls SetMoveSpeed ONLY under that flag (:194).
-// MTA never writes velocity onto a resting mirrored vehicle either. DELIBERATE DIVERGENCE: they
-// spend a wire bit, we test the received value -- our payload is fixed-layout so the bit costs
-// more than the test, and a value cannot be lied about independently of the pose it comes with.
-// Their threshold is NOT ported: MTA's 0.1 is in units the vendored tree establishes nowhere,
-// and porting a bare constant across unit systems is this project's most recent lesson.
-// Ours comes from our own logs: a parked author reports 0.0, a coasting one 27 / 8.2 / 2.6 /
-// 1.0 / 0.2 cm/s, a driven one 780-1500.
+// At rest, do not touch it at all. On a parked ATV the author reports zero velocity and one
+// steady height while the mirror falls, free fall over about a second, comes to rest a few
+// tens of centimetres low and stays; cut back to the author's pose, it falls again within
+// half a second, every time. The only thing this lane does to a mirror between packets is
+// write its root's physics velocity, and writing a velocity wakes a settled body. This is not
+// the velocity test the stall arm rejects: that one asks whether a nudge can close a gap,
+// where the mirror's own velocity says nothing; this asks whether the author is moving, and
+// if it is not there is no velocity to mirror and the write is the only thing left that can
+// cause the fall. MTA's unoccupied-vehicle sync carries a sync-velocity bit set only when the
+// velocity is non-negligible, and the receiver writes the speed only under it; the divergence
+// is that they spend a wire bit and we test the received value, since our payload is
+// fixed-layout and a value cannot be lied about independently of its pose. Their threshold is
+// not ported (its units are established nowhere in the vendored tree); ours comes from our
+// logs: a parked author reports 0, a coasting one a few cm/s, a driven one hundreds.
 constexpr float kRestLinCmS  = 5.f;
 constexpr float kRestAngDegS = 5.f;
-// How many times we will re-place a resting mirror before admitting the pose lane cannot hold
-// it. Three is enough to distinguish "it settled" from "it cannot settle here"; past that the
-// difference is under the vehicle, not in this lane, and saying so beats teleporting forever.
+// How many times a resting mirror is re-placed before admitting the pose lane cannot hold it:
+// three distinguishes settled from cannot-settle-here, and past that the difference is under
+// the vehicle, where saying so beats teleporting forever.
 constexpr int   kRestMaxReplaces = 3;
-// ...within THIS long. A rest episode is a stretch of packets in which the author does not move;
-// counting consecutive ones cannot bound it, because a re-place puts the rig exactly on the
-// author's pose and the next packet is therefore the one most likely to be in band, which resets
-// the count. Measured 2026-08-30: "bounded at three re-places" gave up three times in 46 s, and
-// in the mirror-image regime -- error re-crossing the deadband every other packet -- it would
-// never reach three and the diagnostic would never be emitted while the teleports ran forever.
+// Within this long. A rest episode is a stretch of packets in which the author does not move,
+// and counting consecutive ones cannot bound it: a re-place puts the rig exactly on the
+// author's pose, so the next packet is the one most likely in band, which resets the count.
+// Bounded per episode the diagnostic is reached; bounded by consecutive packets, an error
+// re-crossing the deadband every other packet would teleport forever without it.
 constexpr uint64_t kRestEpisodeMs = 10000;
 
 constexpr uint64_t kCorrMinDtMs = 20;    // a burst must not manufacture a huge corrective velocity
 constexpr uint64_t kCorrMaxDtMs = 1000;  // a long gap must not manufacture a vanishing one
 
-// Ceilings for a velocity that arrives over the wire. Sized well above anything the vehicle can
-// legitimately reach (its own speed_turbo is 3200) so a real throw or a fall still lands intact.
+// Ceilings for a velocity that arrives over the wire, well above anything the vehicle reaches
+// (its own speed_turbo is 3200), so a real throw or fall lands intact.
 constexpr float kMaxWireLinCmS  = 20000.f;
 constexpr float kMaxWireAngDegS = 3600.f;
 
 FVector ClampVelocity(const FVector& v, float maxMag) {
     const float m = Len(v);
-    if (!(m > maxMag)) return v;   // inverted: a NaN cannot reach here (guarded upstream) but the
-                                   // idiom keeps the property if that ever changes
+    if (!(m > maxMag)) return v;   // inverted, so the property holds against a NaN
     const float k = maxMag / m;
     return FVector{ v.X * k, v.Y * k, v.Z * k };
 }
 
-uint64_t g_warps = 0;        // diagnostic counters -- a corrector nobody can see is a corrector
-uint64_t g_corrs = 0;        // nobody can falsify (the instrument-blindness lesson)
+uint64_t g_warps = 0;        // diagnostic counters: a corrector nobody can see is one nobody can falsify
+uint64_t g_corrs = 0;
 uint64_t g_stallWarps = 0;   // ...and specifically: how often the nudge had to give up
 uint64_t g_restPlaces = 0;   // ...and how often a PARKED author's pose had to be re-placed
 
-// THE VALUE THE LANE ACTS ON, WHICH NOTHING HAS EVER RECORDED. Three driven runs measured a
-// mirror sinking 23-40 cm the moment it stopped authoring, and the archive cannot say why,
-// because no instrument sampled `p.linVel*` -- the velocity we write onto the mirror -- at the
-// instant we write it. The probe samples each peer's OWN root velocity every 500 ms, which is a
-// different quantity at a different time. A design that turns on whether the author's reported
-// velocity is ~0 at the handoff cannot be decided from a log that never contains it.
-// Rate-limited to ~1 Hz for the routine case; every CUT logs unconditionally, because the cut is
-// the instant in question.
+// The value the lane acts on, logged where it is written: the received wire velocity at the
+// instant the corrector acts, since a mirror sinking the moment it stops authoring cannot be
+// explained from a log that samples each peer's own root velocity at another time.
+// Rate-limited to about 1 Hz for the routine case; every cut logs unconditionally, since the
+// cut is the instant in question.
 uint64_t g_lastSampleLogMs = 0;
 constexpr uint64_t kSampleLogMs = 1000;
 
-// THE ONE WRITE RULE, at every site that writes a velocity onto a mirror.
-//
-// The defect this lane shipped on 2026-08-30 was not "the corrector writes too hard", it was that
-// assigning a LINEAR velocity to one body of a settled constraint rig wakes it and it sinks. So
-// the rule is about the linear component alone, and it is applied HERE rather than at one branch:
-// the first version gated a whole early-return on both components, which (a) let the warp arm
-// above it keep writing a linear velocity onto a resting mirror, unbounded, and (b) was defeated
-// entirely by a parked-but-ROCKING author, whose angular velocity exceeded the band and routed the
-// packet onto the full write path -- measured in the very run that shipped it (wireLin |v|=4.63,
-// mirror then gained +51 cm/s of Z). Two quantities, two gates, one place.
+// The one write rule, at every site that writes a velocity onto a mirror: assigning a linear
+// velocity to one body of a settled constraint rig wakes it and it sinks, so the rule is about
+// the linear component alone and applied here rather than at one branch. A gate on a whole
+// early return let the warp arm keep writing a linear velocity onto a resting mirror, and was
+// defeated by a parked-but-rocking author whose angular velocity exceeded the band and routed
+// the packet onto the full write path. Two quantities, two gates, one place.
 void WriteMirrorVelocity(void* actor, const FVector& lin, const FVector& ang, bool linAtRest) {
     if (linAtRest) {
         ue_wrap::engine::SetActorRootPhysicsAngularVelocity(actor, ang);
@@ -158,23 +128,20 @@ void LogWire(const char* what, const AtvEntry& e, float dist,
 
 }  // namespace
 
-// THE CORRECTOR. Called ONLY on packet arrival for an ATV this peer does not author -- there is no
-// per-frame mirror work at all any more. The body simulates between packets; we bias its velocity
-// so it converges, and cut to the authority's pose when it is too far gone to converge gracefully.
-//
-// MTA shape with one deliberate divergence (RULE 2026-05-28). CNetAPI::ReadVehiclePuresync writes
-// the wire velocity HARD every packet -- we do that. CClientVehicle::UpdateTargetPosition:3896
-// then nudges the TRANSFORM by a per-frame slice of the position error; we bias VELOCITY instead,
-// because their vehicle is one rigid body and AATV_C is a five-body constraint rig: a per-frame
-// root nudge stretches sus_*/ax_* by the slice every frame, which is the same mechanism as the
-// defect this whole model exists to remove. Letting the solver keep the rig rigid and steering it
-// by velocity is the only correction that leaves the suspension free to do its own job.
+// The corrector, called only on packet arrival for an ATV this peer does not author; there is
+// no per-frame mirror work. The body simulates between packets; its velocity is biased so it
+// converges, and it is cut to the authority's pose when too far gone to converge gracefully.
+// MTA's shape with one divergence: their pure-sync read writes the wire velocity hard every
+// packet, as this does, and then nudges the transform by a per-frame slice of the position
+// error; this biases velocity instead, because their vehicle is one rigid body and the ATV is
+// a five-body constraint rig, where a per-frame root nudge stretches the suspension and axle
+// bodies by the slice every frame, the very defect this model removes. Steering by velocity
+// leaves the solver free to keep the rig rigid.
 void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap) {
-    // THE CONTROL ARM. Resolved once -- a config read per packet on a lane that runs at 20 Hz per
-    // vehicle is not free, and the value cannot change mid-session anyway. When it is off this
-    // function is the ONLY thing that stops happening: the rig still simulates, still receives
-    // vitals, still runs its own tick. That is what makes the two arms a single-variable
-    // comparison rather than "coop on vs coop off".
+    // The control arm, resolved once: a config read per packet on a lane at 20 Hz per vehicle is
+    // not free, and the value cannot change mid-session. Off, this function is the only thing that
+    // stops: the rig still simulates, still receives vitals, still runs its own tick, so the two
+    // arms are a single-variable comparison.
     static const bool sEnabled =
         ::coop::config::ResolveFlag(::coop::config_registry::rows::atv_corrector);
     if (!sEnabled) return;
@@ -184,9 +151,9 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
 
     const FVector wirePos{ p.x, p.y, p.z };
     const FRotator wireRot{ p.pitch, p.yaw, p.roll };
-    // Finite is not the same as sane: these go straight into PhysX. event_dispatch_state rejects
-    // NaN/Inf; this bounds the finite-but-absurd. CLIENT-SCOPED by the standing rule -- a symmetric
-    // clamp would be the bug, because the host is allowed to be authoritative about physics.
+    // Finite is not the same as sane: these go straight into PhysX. The dispatch rejects NaN and
+    // Inf; this bounds the finite-but-absurd. Client-scoped by the standing rule: a symmetric
+    // clamp would be the bug, since the host is authoritative about physics.
     const FVector wireLin = ClampVelocity({ p.linVelX, p.linVelY, p.linVelZ }, kMaxWireLinCmS);
     const FVector wireAng = ClampVelocity({ p.angVelX, p.angVelY, p.angVelZ }, kMaxWireAngDegS);
 
@@ -207,20 +174,16 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
                                                : (rawDt > kCorrMaxDtMs ? kCorrMaxDtMs : rawDt);
     e.lastPktMs = now;
 
-    // Every test is INVERTED on purpose, MTA's own idiom (CClientVehicle.cpp:3905's comment): a
-    // comparison against NaN is false, so writing them this way makes a NaN WARP rather than feed
-    // a corrective velocity computed from garbage. THE THREE ANGLES ARE TESTED SEPARATELY, and
-    // that is not style: folding them through a max() first DESTROYS the property, because
-    // `NaN > x` is false, so a nested-ternary max silently returns the finite operand and a
-    // NaN pitch sails through a test written to catch it.
+    // Every test is inverted on purpose, MTA's own idiom: a comparison against NaN is false, so
+    // written this way a NaN warps rather than feeding a corrective velocity computed from
+    // garbage. The three angles are tested separately: folding them through a max first destroys
+    // the property, since a nested-ternary max silently returns the finite operand.
     if (snap || !(dist <= warpD) ||
         !(dPitch <= kWarpAngleDeg) || !(dYaw <= kWarpAngleDeg) || !(dRoll <= kWarpAngleDeg)) {
-        // FAIL CLOSED: if the rig could not be re-placed (teleportVehicle unresolved after a game
-        // update), do NOT then write the authority's velocity onto a body still sitting in the
-        // wrong place -- that accelerates the error instead of cutting it.
-        // LOG AFTER THE TELEPORT SUCCEEDS. Logging before it claimed a warp per packet that
-        // never happened whenever teleportVehicle was unresolved -- an instrument reporting an
-        // action it did not take is worse than no instrument.
+        // Fail closed: if the rig could not be re-placed (the teleport unresolved after a game
+        // update), do not write the authority's velocity onto a body still in the wrong place; that
+        // accelerates the error. Logged after the teleport succeeds; an instrument reporting an
+        // action it did not take is worse than none.
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         LogWire("WARP", e, dist, wireLin, cur, wirePos);
         WriteMirrorVelocity(e.actor, wireLin, wireAng, linAtRest);
@@ -228,41 +191,31 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         return;
     }
 
-    // THE AUTHOR IS PARKED: mirror its POSE, never its velocity, and then leave the rig alone.
-    // Falling through to the code below would write a zero velocity onto a settled body every
-    // packet, which is the measured cause of A6 (see kRestLinCmS above).
+    // The author is parked: mirror its pose, never its velocity, then leave the rig alone. Falling
+    // through would write a zero velocity onto a settled body every packet, the measured cause of
+    // the fall.
     if (linAtRest && angAtRest) {
         e.stallPackets = 0;
         e.lastErrCm    = -1.f;
-        if (dist <= kCorrDeadbandCm) return;  // in band, nobody moving it: touch NOTHING. The
-                                              // episode counter is NOT cleared here -- landing
-                                              // in band is the expected RESULT of a re-place,
-                                              // so clearing on it is what unbounded the bound.
+        if (dist <= kCorrDeadbandCm) return;  // in band and nobody moving it: touch nothing. The episode counter is not cleared here, since landing in band is the expected result of a re-place
         if (now - e.lastRestPlaceMs > kRestEpisodeMs) e.restReplaces = 0;  // a new episode
         if (e.restReplaces >= kRestMaxReplaces) return;   // already said our piece, below
         ++e.restReplaces;
         e.lastRestPlaceMs = now;
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         ++g_restPlaces;
-        // NO velocity write after the teleport. Both existing cut paths write one immediately
-        // after TeleportRig, so in four runs the rig was never once put down and left to rest --
-        // which is why "it fell back, so the worlds differ" could never be told apart from "it
-        // fell back because we pushed it". This branch is the experiment as well as the fix.
+        // No velocity write after the teleport. The two cut paths write one immediately after the
+        // teleport, so the rig was never once put down and left to rest, and fell-back-because-the-
+        // worlds-differ could not be told from fell-back-because-we-pushed-it. This branch is the
+        // experiment as well as the fix.
         if (e.restReplaces >= kRestMaxReplaces) {
-            // NAMES THE CLASS, NOT A SUBSYSTEM -- and the first version of this line got the
-            // class WRONG, which is why the wording is now what it is. It used to say "terrain
-            // under the vehicle, or a constraint the other peer cannot see, e.g. a hook. Not
-            // the pose stream". It fired four times in one run, and BOTH named causes were
-            // false: the two copies' wheel bodies agreed to <=1 mm at the same XY, so the
-            // terrain is identical, and the real cause was in this process -- our own collision
-            // guard cancelling the wheel ComponentHit delegates and taking the rig's SHAPE with
-            // them (docs/vehicles/ATV.md 17). A verdict that points outward when the cause is
-            // ours costs more than no verdict: it sends the next session to measure the world.
-            //
-            // So the line now points at the CHEAPEST DISCRIMINATOR first. Ride height -- the
-            // body's Z above the mean of its own three rig bodies, in the probe's [ATVP] line --
-            // separates "this rig is the wrong SHAPE" (ours, always) from "this rig is in the
-            // wrong PLACE" (possibly the world's). A pose lane can only ever fix the second.
+            // The line names the class, not a subsystem, and points at the cheapest discriminator
+            // first: ride height, the body's Z above the mean of its own rig bodies in the probe
+            // line, separates a rig of the wrong shape (ours, always; the last case was our own
+            // collision guard cancelling the wheel hit delegates and taking the rig's shape with
+            // them) from a rig in the wrong place (possibly the world's). A pose lane can only ever
+            // fix the second, and a verdict that points outward when the cause is ours sends the
+            // next session to measure the world.
             UE_LOGW("atv: a parked mirror would not stay on the authority's pose after %d "
                     "re-places (last error %.1f cm). CHECK THE RIG'S SHAPE BEFORE THE WORLD: "
                     "compare rideH in [ATVP] on both peers ([dev] atv_probe=1). If they differ, "
@@ -275,8 +228,8 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     }
     if (!linAtRest) e.restReplaces = 0;   // the episode ended because the author moved
 
-    // Is the correction actually working? Count packets where the error stayed outside the
-    // deadband and refused to shrink; past the limit, cut instead of nudging.
+    // Is the correction working? Count packets where the error stayed outside the deadband and
+    // refused to shrink; past the limit, cut instead of nudging.
     if (dist <= kCorrDeadbandCm) {
         e.stallPackets = 0;
     } else if (e.lastErrCm >= 0.f && dist >= e.lastErrCm * kStallShrinkFrac) {
@@ -298,11 +251,11 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     }
 
     FVector lin = wireLin;
-    // The corrective term is a LINEAR push and is therefore governed by the linear gate too: a
-    // parked-but-rocking author reaches here, and pushing its resting mirror is the defect.
+    // The corrective term is a linear push, so the linear gate governs it too: a parked-but-rocking
+    // author reaches here, and pushing its resting mirror is the defect.
     if (dist > kCorrDeadbandCm && !linAtRest) {
-        // Close kCorrGain of the error over the interval we actually observed, NOT over a fixed
-        // window -- see the constant's comment for why a fixed one oscillates on the idle cadence.
+        // Close kCorrGain of the error over the observed interval, not a fixed window (see the
+        // constant).
         const float gain = kCorrGain * 1000.f / static_cast<float>(dtMs);
         FVector corr{ err.X * gain, err.Y * gain, err.Z * gain };
         const float mag = Len(corr);
@@ -312,11 +265,10 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         }
         lin.X += corr.X; lin.Y += corr.Y; lin.Z += corr.Z;
     }
-    // Rotation gets NO continuous corrective term in this commit: mapping a rotator delta onto an
-    // angular-velocity vector is only exact for small aligned deltas, and an ATV on the ground
-    // takes its orientation from the terrain it is standing on once its position and velocity
-    // agree. Orientation divergence is caught by the kWarpAngleDeg arm above instead -- one
-    // mechanism, measurable, rather than a term whose gain we would be guessing.
+    // Rotation gets no continuous corrective term: mapping a rotator delta onto an angular
+    // velocity is only exact for small aligned deltas, and an ATV on the ground takes its
+    // orientation from the terrain once its position and velocity agree. Orientation divergence
+    // is caught by the angle warp arm instead: one measurable mechanism, not a guessed gain.
     if (now - g_lastSampleLogMs >= kSampleLogMs) {
         g_lastSampleLogMs = now;
         LogWire(dist > kCorrDeadbandCm ? "NUDGE" : "INBAND", e, dist, wireLin, cur, wirePos);
