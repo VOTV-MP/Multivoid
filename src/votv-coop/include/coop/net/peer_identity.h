@@ -1,45 +1,18 @@
-// coop/net/peer_identity.h -- the durable per-install player identity.
-//
-// WHAT THIS IS. One Ed25519 keypair per install. Its PUBLIC KEY *is* the peer's
-// network identity: `[V]` GNS's `k_cbMaxGenericBytes` is exactly 32 bytes
-// (`steamnetworkingtypes.h:326`), so the raw key fits a `GenericBytes` identity
-// with nothing left over, and the 32-char guid every store already uses becomes
-// `hex(SHA-256(pubkey)[0..16])` -- DERIVED from the key, never asserted by the
-// peer that wants to be called by it.
-//
-// WHY IT REPLACED A CA. The design of record until 2026-08-29 was a master-run
-// certificate authority (`docs/security/PLAN_01_PEER_AUTH.md`, since retired in
-// place). Its enforcement was "set `IP_AllowWithoutAuth = 0`", and `[V]` that
-// convar is consulted ONLY by `CSteamNetworkConnectionUDP`
-// (`steamnetworkingsockets_udp.cpp:1824-1841`) while the base class returns
-// `k_EUnsignedCert_Allow` unconditionally under `STEAMNETWORKINGSOCKETS_OPENSOURCE`
-// (`steamnetworkingsockets_connections.cpp:1806-1814`) and the P2P connection --
-// our primary transport -- does not override it. The mechanism could never have
-// hardened the lane it was written for. Making the identity BE the key needs no
-// CA, no minting, no master round trip, and it therefore covers the direct-IP and
-// LAN-only lanes too.
-//
-// WHAT THIS MODULE DOES NOT DO, AND MUST NOT BE READ AS DOING.
-// `[V]` A cert's `identity_string` and its `key_data` are two INDEPENDENT
-// protobuf fields, and GNS binds NEITHER to the other: `:1452-1458` compares the
-// identity to the one the connection already expects, `:1497` verifies the
-// session signature against `key_data`. So a peer can present a VICTIM'S public
-// key as its identity while signing with its own cert key and pass every check
-// the library makes. Installing an identity here is therefore only half the
-// story -- `coop/net/peer_admission.h`'s challenge, where a peer must sign with
-// the key its IDENTITY names, is what makes the identity mean anything. Delete
-// that exchange and this module is decoration.
-//
-// THREADING. `Load()` runs once at boot (file I/O). `InstallInto()` runs on the
-// thread that starts the session, before any connection exists. `Sign` / `Verify`
-// are pure and re-entrant: they touch no shared state beyond the immutable key
-// loaded at boot, so the net thread may call them freely.
-//
-// THE KEY FILE. `multivoid_identity.key`, beside `multivoid.ini` but NOT IN IT:
-// anyone holding this file can BE you, and players paste their ini into bug
-// reports. The old `player_guid=` line is retired with this module (RULE 2) --
-// its migration advice ("copy the line to another PC") becomes "copy the key
-// file", with the warning the old advice never needed.
+// coop/net/peer_identity.h -- the durable per-install player identity: one Ed25519 keypair
+// per install, whose public key is the peer's network identity. The transport's generic
+// identity holds exactly 32 bytes, so the raw key fits it with nothing left over, and the
+// 32-char guid every store uses is derived from the key, never asserted by the peer that
+// wants to be called by it. It replaced a master-run certificate authority whose enforcement
+// was a convar only the UDP connection class consults, while the P2P connection, our primary
+// transport, allows an unsigned cert unconditionally in the open-source build; making the
+// identity be the key needs no authority, no minting and no master round trip, so it covers
+// the direct and LAN lanes too. What this module does not do: the transport binds a cert's
+// identity string and its key to nothing, so a peer can present a victim's public key as its
+// identity while signing with its own cert key and pass every check the library makes; the
+// admission challenge in coop/net/peer_admission.h, where a peer must sign with the key its
+// identity names, is what makes the identity mean anything. Sign and Verify are pure and
+// re-entrant, touching only the immutable key loaded at boot. The key file sits beside the
+// ini but not in it: anyone holding it can be you, and inis get pasted into bug reports.
 
 #pragma once
 
@@ -52,99 +25,74 @@ class ISteamNetworkingSockets;
 namespace coop::net::peer_identity {
 
 inline constexpr int kPubKeyBytes  = 32;  // Ed25519 public key == GNS k_cbMaxGenericBytes
-inline constexpr int kPrivKeyBytes = 32;  // the seed; `[V]` CEC25519KeyBase::SetRawData wants 32
+inline constexpr int kPrivKeyBytes = 32;  // the seed; the transport's key type takes 32
 inline constexpr int kSigBytes     = 64;  // Ed25519 signature
 
 using PubKey = std::array<uint8_t, kPubKeyBytes>;
 using Sig    = std::array<uint8_t, kSigBytes>;
 
-// Load the durable keypair, generating and persisting one on first launch.
-// Returns false only when no key could be established at all (in which case the
-// session must not start -- an identity-less peer cannot be admitted anywhere).
-// A key that could not be PERSISTED still works for this session and says so in
-// the log, mirroring how the retired `player_guid` handled an unreadable ini.
+// Load the durable keypair, generating and persisting one on first launch. False only when no
+// key could be established at all, in which case the session must not start, since an
+// identity-less peer cannot be admitted anywhere; a key that could not be persisted still
+// works for this session and says so in the log.
 bool Load();
 
-// Our own public key / the 32-char lowercase-hex guid derived from it. Both are
-// empty/zero before a successful Load().
+// Our own public key, and the 32-char lowercase-hex guid derived from it. Empty or zero
+// before a successful load.
 const PubKey& LocalPublicKey();
 const std::string& LocalGuid();
 
-// Our identity as GNS renders it: `gen:` + 64 lowercase hex = 68 chars. This is
-// the string the P2P lane rendezvouses on -- the host publishes it to the master
-// at /v1/host and a joiner ParseString()s it back into the identity it dials --
-// so it is the SAME value as LocalPublicKey(), not a second name for the same
-// peer. It is empty before a successful Load().
-//
-// WHY THE ROUTING NAME AND THE PROVABLE NAME ARE ONE VALUE. They were two until
-// 2026-08-29: the master minted an ephemeral `h<16hex>` / `c<16hex>` per session
-// and `StartP2P` installed it with ResetIdentity, which SILENTLY OVERWROTE the
-// durable identity installed at Start() -- so on our primary transport the key
-// identity never reached the wire at all. Keeping both would be two
-// implementations of one concept (RULE 2).
-//
-// THIS PARAGRAPH USED TO GIVE A SECOND REASON AND IT WAS FALSE. It said keeping
-// both "would foreclose the only known fix for the relay lane -- `PLAN_01` s6's
-// GNS fork binds the remote IDENTITY to the cert key, which is meaningless if the
-// identity is a routing token". `[V]` That fork cannot be implemented as
-// specified: `SetLocalCertUnsigned` is PER-CONNECTION and mints `key_data` itself
-// (`connections.cpp:1303-1314`), so satisfying it would need an identity that
-// differs per connection AND equals a value GNS chooses. The implementable fork
-// is an accessor on `key_data()`, which is identity-agnostic. So P1 requires
-// neither fusion nor split, and the fusion stands on RULE 2 alone. Corrected
-// 2026-08-29 while fixing A59; see `PLAN_01` s6's correction box.
-//
-// THE COST, stated rather than discovered: the master and the signaling relay now
-// see a value that is stable across sessions, where they previously saw a fresh
-// one each time. That stability is what made security A59 possible -- the relay
-// registered self-asserted names, so a permanent one could be squatted forever.
-// The relay now proves every registration (`ef755e68`); the residual on a
-// PLAINTEXT signaling leg is in `PLAN_01` s6c.
+// Our identity as the transport renders it: a prefix plus 64 lowercase hex, 68 chars. The
+// string the P2P lane rendezvouses on: the host publishes it to the master and a joiner
+// parses it back into the identity it dials, so it is the same value as the public key, not a
+// second name for the same peer. Empty before a successful load. The routing name and the
+// provable name are one value: as two, the master minted an ephemeral name per session and
+// the P2P start installed it, silently overwriting the durable identity installed at start,
+// so on the primary transport the key identity never reached the wire; keeping both would be
+// two implementations of one concept. The cost, stated: the master and the signaling relay
+// see a value stable across sessions where they saw a fresh one each time, and a permanent
+// self-asserted name can be squatted, so the relay now proves every registration; the
+// residual on a plaintext signaling leg remains.
 const std::string& LocalIdentityString();
 
-// THE INVERSE OF THE ABOVE: `gen:<64 hex>` -> the 32 key bytes it names. False for
-// anything that is not exactly that form, so a caller cannot end up comparing
-// against a half-parsed key.
-//
-// It lives HERE, beside the renderer, because a second hex codec somewhere else is
-// the drift class this project keeps paying for -- and its one caller compares the
-// result BYTE-WISE against the key on a socket. Never compare the STRINGS: GNS
-// renders an identity in its own way, `GuidForPublicKey` is a DIFFERENT value
-// entirely, and a string comparison would silently answer "not equal" for two
-// spellings of the same key.
+// The inverse of the above: the rendered form to the 32 key bytes it names. False for
+// anything not exactly that form, so a caller cannot end up comparing against a half-parsed
+// key. It lives here, beside the renderer, since a second hex codec elsewhere is the drift
+// class this project keeps paying for, and its one caller compares the result byte-wise
+// against the key on a socket. Never compare the strings: the transport renders an identity
+// its own way, the guid is a different value entirely, and a string comparison would silently
+// answer not-equal for two spellings of the same key.
 bool PublicKeyFromIdentityString(const std::string& identity, PubKey& out);
 
-// Cryptographic random bytes (BCryptGenRandom). Exposed because the admission
-// exchange's nonces must come from the same source as the keys, not from a
-// second RNG somebody picks later. Returns false if the OS refused, and a caller
-// that cannot get randomness must FAIL rather than proceed with a weak nonce.
+// Cryptographic random bytes from the OS. Exposed because the admission exchange's nonces
+// must come from the same source as the keys, not a second generator picked later. False if
+// the OS refused, and a caller that cannot get randomness must fail rather than proceed with
+// a weak nonce.
 bool RandomBytes(void* out, size_t len);
 
-// hex(SHA-256(pubkey)[0..16]) -- the canonical short form of ANY identity, used
-// by the host to name a REMOTE peer's stored rows. Pure; 32 lowercase hex chars,
-// or empty if `pub` is not a plausible key.
+// The canonical short form of any identity (a hash prefix of the public key, 32 lowercase hex
+// chars), used by the host to name a remote peer's stored rows. Pure; empty if the key is not
+// plausible.
 std::string GuidForPublicKey(const PubKey& pub);
 
-// Install our identity into GNS for this process, as a `GenericBytes` identity
-// carrying the raw public key (`ResetIdentity`; the .cpp records why it is NOT
-// `SetCertificate`). Must be called after GNS init and before any listen/connect,
-// and NOTHING may ResetIdentity after it -- see LocalIdentityString() for the
-// overwrite that made that sentence necessary. Returns false on any failure --
-// the caller must NOT start a session that would then present a different
-// identity than it signs with.
+// Install our identity into the transport for this process, as a generic-bytes identity
+// carrying the raw public key (the .cpp records why it is not a certificate). Must be called
+// after the transport init and before any listen or connect, and nothing may reset the
+// identity after it; see LocalIdentityString for the overwrite that made that sentence
+// necessary. False on any failure, and the caller must not start a session that would
+// present a different identity than it signs with.
 bool InstallInto(ISteamNetworkingSockets* sockets);
 
-// Sign / verify a domain-separated challenge blob. `Verify` takes the 32 identity
-// bytes the caller read off the connection, so the question it answers is exactly
-// "does this peer hold the key its identity names".
+// Sign or verify a domain-separated challenge blob. Verify takes the 32 identity bytes the
+// caller read off the connection, so the question it answers is exactly whether this peer
+// holds the key its identity names.
 Sig  SignBlob(const uint8_t* data, size_t len);
 bool VerifyBlob(const PubKey& pub, const uint8_t* data, size_t len, const Sig& sig);
 
-// Un-gated arithmetic + crypto selftest, run once per session start. Logs
-// `peer_identity selftest: ALL PASS (N checks)` or one FAIL line per failing
-// check. Deliberately impossible to switch off, for the same reason the movement
-// ledger's is: a wrong verdict here does not crash -- it either locks every
-// honest player out or admits anyone, and both read as "working" from outside.
+// The un-gated arithmetic and crypto selftest, run once per session start; logs an all-pass
+// line or one failure line per failing check. Deliberately impossible to switch off, for the
+// same reason the movement ledger's is: a wrong verdict here does not crash, it either locks
+// every honest player out or admits anyone, and both read as working from outside.
 bool RunSelftest();
 
 }  // namespace coop::net::peer_identity
