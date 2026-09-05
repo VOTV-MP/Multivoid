@@ -1,8 +1,6 @@
-// coop/trash_channel.cpp -- see coop/trash_channel.h.
-//
-// The client-initiated grab/throw INTENT LANE (senders, host executors, the
-// HELD_BY registry + client carry toggles) lives in trash_grab_intent.cpp
-// (2026-07-10 soft-cap extraction); this core reaches HELD_BY only through
+// coop/props/trash_channel.cpp -- see coop/props/trash_channel.h. The client-initiated grab and
+// throw intent lane (the senders, the host executors, the holder registry and the client carry
+// toggles) lives in trash_grab_intent.cpp; this core reaches the holder registry only through
 // the three ops in trash_channel_detail.h.
 
 #include "coop/props/trash_channel.h"
@@ -13,8 +11,8 @@
 #include "coop/net/session.h"
 #include "coop/element/registry.h"    // EidForActor (birth prune) + Get(eid) (carry termination)
 #include "coop/props/remote_prop.h"   // RegisterPropMirror (the single rebind entry point)
-#include "coop/save/save_transfer.h"  // docs/piles/09: TryGetSaveTimePileXformAnySlot (kToPile save-time key)
-#include "ue_wrap/engine/engine.h"      // GetActorScale3D (v83 per-form proxy scale) + transform/velocity reads
+#include "coop/save/save_transfer.h"  // the save-time pile transform for a land
+#include "ue_wrap/engine/engine.h"      // the per-form scale and the transform and velocity reads
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsGarbageClump (rest detection)
 #include "ue_wrap/core/reflection.h"  // ClassNameOf / InternalIndexOf / IsLiveByIndex
@@ -29,18 +27,19 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Per-eid sync-time-context. HOST: the AUTHORITY (BumpCtx writes via OnHostConvert -- grab/land converts).
-// CLIENT: a pure MIRROR (AdoptInboundConvertCtx writes). Both are GAME-THREAD-only. The two never run
-// on the same machine for the same eid (the host authors, clients mirror), so there is no contention.
+// The per-eid sync-time context. The host is the authority (the bump writes it through the
+// convert); a client is a pure mirror (the inbound adopt writes it). Both game thread only,
+// and the two never run on the same machine for the same eid, so there is no contention.
 std::unordered_map<uint32_t, uint8_t> g_ctx;  // eid -> current generation (0 = never transitioned)
 
-// Wrap-aware generation compare: is `a` newer-than-or-equal-to `b`? A uint8 ctx won't realistically wrap
-// within one eid's grab sequence, but the signed-difference test is correct across the 255->0 boundary.
+// The wrap-aware generation compare: is `a` at least as new as `b`? A byte context will not
+// realistically wrap within one eid's grab sequence, but the signed-difference test is correct
+// across the wrap.
 inline bool AtLeast(uint8_t a, uint8_t b) {
     return static_cast<int8_t>(static_cast<uint8_t>(a - b)) >= 0;
 }
 
-// Advance E's generation, skipping the 0 "no enforcement" sentinel on wrap.
+// Advance E's generation, skipping the 0 no-enforcement sentinel on wrap.
 uint8_t Bump(uint32_t E) {
     uint8_t& c = g_ctx[E];
     c = static_cast<uint8_t>(c + 1);
@@ -48,27 +47,28 @@ uint8_t Bump(uint32_t E) {
     return c;
 }
 
-// Re-skin eid E onto `actor` in place (the salvaged morph primitive). RegisterPropMirror is the single
-// rebind entry point -- it routes on the Element's authoritative IsMirror() flag (a MIRROR -> SetActor;
-// a host's OWN local element -> RebindLocalElementActor, keeping the forward map consistent), so it is
-// correct for a host re-pointing its own pile/clump.
+// Re-skin eid E onto `actor` in place. The mirror registration is the single rebind entry
+// point: it routes on the Element's authoritative mirror flag (a mirror is re-pointed; a host's
+// own local element rebinds through the tracker, keeping the forward map consistent), so it is
+// correct for a host re-pointing its own pile or clump.
 void RebindE(coop::element::ElementId E, void* actor) {
     coop::remote_prop::RegisterPropMirror(E, actor, L"", R::ClassNameOf(actor), /*senderSlot=*/0,
                                           /*rebindInPlace=*/true);
 }
 
-// v106 clump birth certificates (see trash_channel.h): clump actor -> {source pile eid, chipType},
-// recorded by the BeginDeferred Func thunk at the clump's spawn, consumed by the held-edge (or by
-// OnGrabIntent for a puppet grab). TTL-pruned in TickCarry; an expiring certificate whose clump is
-// still live+tracked gets its conversion EXPRESSED there (a denied grab still converted the world).
-// idx = the clump's GUObjectArray InternalIndex at birth (IsLiveByIndex across the multi-tick TTL --
-// never raw IsLive on a possibly-freed pointer).
+// The clump birth certificates (see trash_channel.h): clump actor to the source pile's eid and
+// chip type, recorded by the deferred-spawn thunk at the clump's spawn, consumed by the held
+// edge (or by the grab intent for a puppet grab). TTL-pruned in the tick; an expiring
+// certificate whose clump is still live and tracked gets its conversion expressed there, since
+// a denied grab still converted the world. The index is the clump's object-array index at
+// birth, for the liveness check across the multi-tick TTL; never a raw check on a possibly
+// freed pointer.
 struct ClumpBirth { uint32_t eid = 0; uint8_t chipType = 0; uint32_t bornTick = 0; int32_t idx = -1; };
 std::unordered_map<void*, ClumpBirth> g_clumpBirths;
 constexpr uint32_t kClumpBirthTtlTicks = 60;  // ~1s; the grab's clump enters the hand within a few frames
 
-// ---- CLOSE-B carry latch + land-settle (host-side) -- see trash_channel.h for the full model ----------
-// v106: PRESENCE in the map = carrying. deadTicks/restTicks drive the guaranteed-termination pass.
+// The carry latch and the land settle, host side; see trash_channel.h for the model. Presence
+// in the map is carrying; the dead and rest tick counts drive the guaranteed-termination pass.
 struct CarryLane {
     uint32_t lastTick  = 0;  // last activity (diagnostic)
     int      deadTicks = 0;  // consecutive ticks the Registry actor for this eid read dead
@@ -79,12 +79,12 @@ struct LandSettle {
     int               countdown;  // ticks until COMMIT (a re-grab CANCELS first)
     int               sincePile;  // ticks since the held ToPile (the ToPile->ToClump gap, logged on CANCEL)
     uint8_t           chipType;
-    // take-31: the spawned pile actor + its GUObjectArray index. At the BeginDeferred POST the pile is NOT yet
-    // positioned (FinishSpawning runs later), so the loc/rot/scale captured then are the CLUMP fallback. At the
-    // COMMIT (K ticks later, post-FinishSpawning) we RE-READ the pile's REAL transform via this pointer
-    // (IsLiveByIndex-guarded -- it is cached across the multi-tick settle). A committing settle (no re-grab
-    // within K) always has a live, settled pile, so the re-read is the authoritative source; loc/rot/scale
-    // below are the fallback if the pile somehow died.
+    // The spawned pile actor and its object-array index. At the deferred-spawn POST the pile is
+    // not yet positioned (the finish runs later), so the location, rotation and scale captured
+    // then are the clump fallback; at the commit, after the finish, the pile's real transform is
+    // re-read through this pointer, liveness-checked since it is cached across the multi-tick
+    // settle. A committing settle always has a live, settled pile, so the re-read is the
+    // authoritative source and the fallback covers a pile that somehow died.
     void*             pileActor = nullptr;
     int32_t           pileIdx   = -1;
     ue_wrap::FVector  scale{1.f, 1.f, 1.f};  // FALLBACK scale (clump/default at the thunk; re-read at COMMIT)
@@ -93,9 +93,6 @@ struct LandSettle {
     std::string       cls;        // the pile class to broadcast at COMMIT
 };
 std::unordered_map<uint32_t, LandSettle> g_settle;
-
-// (The HELD_BY registry + the client-side pending-grab/carry toggles moved to
-// trash_grab_intent.cpp with the intent lane -- 2026-07-10 soft-cap extraction.)
 
 uint32_t g_tick = 0;
 constexpr int kLandSettleTicks = 6;   // K: > a synchronous churn re-grab (~1 frame). TUNE from the CANCEL-gap log.
@@ -106,8 +103,9 @@ std::string NarrowAscii(const std::wstring& w) {          // BP class names are 
     return s;
 }
 
-// The SINGLE PropConvert send primitive (bumps ctx). OnHostConvert calls it for the OPEN (real grab) + the
-// not-carrying land; TickCarry calls it for the settle COMMIT (the real land). `why` is a log tag.
+// The single convert send primitive, which bumps the context. OnHostConvert calls it for the
+// open (the real grab) and the not-carrying land; the tick calls it for the settle commit (the
+// real land). `why` is a log tag.
 uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind,
                          const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
                          const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls,
@@ -122,16 +120,17 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    // v83: the host's real per-form scale (a clump and a pile differ) so the proxy is host-sized.
+    // The host's real per-form scale (a clump and a pile differ), so the proxy is host-sized.
     p.scaleX = scale.X; p.scaleY = scale.Y; p.scaleZ = scale.Z;
     p.chipType = chipType;
     p.kind     = kind;
     p.ctx      = ctx;
-    // docs/piles/09: a kToPile LAND carries the pile's PRE-GRAB save-time position IF one was recorded
-    // (the host grabbed an UNTRACKED pile in a join window -> OnPileGrabPre self-seeded the eid +
-    // RecordGrabTimePileXform stamped the pre-grab pos into the blob map). ANY-SLOT lookup (this is a
-    // single fan-out; the eid is unique). The client OnConvert then arms a pending save-time twin so the
-    // quiescence sweep retires its stale native@old. kToClump carries no key (no native twin at that edge).
+    // A to-pile land carries the pile's pre-grab save-time position if one was recorded (the host
+    // grabbed an untracked pile in a join window, and the grab observer self-seeded the eid and
+    // stamped the pre-grab position into the blob map). An any-slot lookup, since this is a single
+    // fan-out and the eid is unique. The client's convert then arms a pending save-time twin so the
+    // quiescence sweep retires its stale native at the old position. A to-clump carries no key,
+    // since there is no native twin at that edge.
     p.hasMatchPos = 0;
     if (kind == coop::net::propconvert_kind::kToPile && static_cast<uint32_t>(E) != 0u) {
         ue_wrap::FVector sv;
@@ -149,8 +148,9 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
     return ctx;
 }
 
-// CANCEL E's pending land-settle (a re-grab arrived -> the preceding re-pile was churn, not the land). Logs
-// the ToPile->ToClump gap (= the churn re-grab latency) -- READ THIS to tune kLandSettleTicks.
+// Cancel E's pending land settle: a re-grab arrived, so the preceding re-pile was churn, not
+// the land. Logs the to-pile-to-to-clump gap, the churn re-grab latency, which is what the
+// settle window is tuned from.
 void CancelSettle(uint32_t eid, const char* why) {
     auto it = g_settle.find(eid);
     if (it == g_settle.end()) return;
@@ -170,38 +170,42 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
 
     RebindE(E, newActor);                                 // ALWAYS track the live actor locally (keep the rebind)
     const std::string cls = NarrowAscii(R::ClassNameOf(newActor));
-    const ue_wrap::FVector scale = ue_wrap::engine::GetActorScale3D(newActor);  // v83: the new form's real scale
+    const ue_wrap::FVector scale = ue_wrap::engine::GetActorScale3D(newActor);  // the new form's real scale
 
     if (toClump) {
         if (!carrying) {
-            // OPEN: the REAL grab (pile->clump, via AdoptBornClump). Broadcast the one ToClump + start
-            // the carry session; the host's churn (re-pile + auto-re-grab) is SUPPRESSED until the real land.
+            // Open: the real grab (pile to clump, through the clump adoption). Broadcast the one
+            // to-clump and start the carry; the host's churn (the re-pile and auto-re-grab) is
+            // suppressed until the real land.
             g_carry[eid].lastTick = g_tick;
             BroadcastConvert(s, E, kind, loc, rot, scale, chipType, cls, "GRAB OPEN");
             UE_LOGI("[TRASH-CH] HOST carry OPEN eid=%u -- churn re-pile/re-grab suppressed until the land", eid);
         } else {
-            // Defensive: a ToClump reaching OnHostConvert while carrying (the held-edge OnHostRegrab is the
-            // normal re-grab path; the thunk skips pile-source so it should not). Fold as churn -- rebind
-            // (done), cancel any pending settle, suppress the broadcast + ctx bump.
+            // Defensive: a to-clump reaching here while carrying (the held edge's re-grab is the
+            // normal path, and the thunk skips pile sources, so it should not). Folded as churn:
+            // rebound already, any pending settle cancelled, the broadcast and the context bump
+            // suppressed.
             g_carry[eid].lastTick = g_tick;
             CancelSettle(eid, "re-grab(convert)");
             UE_LOGI("[TRASH-CH] HOST SUPPRESS ToClump eid=%u (carry re-grab) -- rebound, no broadcast/ctx", eid);
         }
     } else {  // kToPile
         if (!carrying) {
-            // A re-pile we are NOT tracking as a carry (an ambient/untracked clump, or a land after we already
-            // closed) -- no churn to fold -> broadcast immediately.
+            // A re-pile not tracked as a carry (an ambient or untracked clump, or a land after the
+            // carry already closed): no churn to fold, so broadcast immediately.
             BroadcastConvert(s, E, kind, loc, rot, scale, chipType, cls, "LAND (not carrying)");
         } else {
-            // CARRYING: this re-pile is EITHER a churn re-pile (a re-grab follows within K -> CancelSettle) OR
-            // the real land (no re-grab -> TickCarry COMMITs it). Hold the broadcast + ctx bump; capture the
-            // payload. A later ToPile before commit just refreshes the settle (latest wins).
+            // Carrying: this re-pile is either a churn re-pile (a re-grab follows within the window
+            // and cancels the settle) or the real land (no re-grab, and the tick commits it). Hold
+            // the broadcast and the context bump and capture the payload; a later to-pile before
+            // the commit refreshes the settle, latest wins.
             g_carry[eid].lastTick = g_tick;
             LandSettle ls{};
             ls.countdown = kLandSettleTicks; ls.sincePile = 0;
             ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls; ls.scale = scale;
-            // take-31: remember the pile actor (+ its index) so the COMMIT can re-read its REAL, settled
-            // transform (newActor is unpositioned NOW; loc/rot/scale above are the clump fallback).
+            // Remember the pile actor and its index so the commit can re-read its real, settled
+            // transform; the new actor is unpositioned now, and the captured values are the clump
+            // fallback.
             ls.pileActor = newActor; ls.pileIdx = R::InternalIndexOf(newActor);
             g_settle[eid] = ls;
             UE_LOGI("[TRASH-CH] HOST land-settle START eid=%u K=%d -- holding the ToPile (re-grab within K = "
@@ -234,23 +238,17 @@ coop::element::ElementId AnyCarryingEid() {
                            : static_cast<coop::element::ElementId>(g_carry.begin()->first);
 }
 
-// (RULE 2, take-29 #2b: OnHostRelease -- the throw-edge ctx bump -- is RETIRED. The trash throw no longer
-// sends a PropRelease (host-auth flight-stream + ToPile own the throw end); the LAND COMMIT's BroadcastConvert
-// already bumps the ctx, so a separate throw bump is obsolete. Removed with its caller in local_streams.)
-
 void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
     if (!clump || E == 0u || E == coop::element::kInvalidId) return;
     g_clumpBirths[clump] = ClumpBirth{static_cast<uint32_t>(E), chipType, g_tick,
                                       R::InternalIndexOf(clump)};
-    // v106b MIGRATION-FIRST (2026-07-07, the 11:43 regression root): identity moves to the
-    // successor AT BIRTH, before the pile husk's K2_DestroyActor fires microseconds later in
-    // the SAME playerGrabbed call. Without this the husk died still owning E, and the v106
-    // destroy seam (correctly firing on every dispatch route now) treated the morph-husk
-    // death as ELEMENT death: UnmarkKnownKeyedProp Took the row into the ElementDeleter
-    // (flushed AFTER the held-edge rebind -> row gone), and a DESTROY(eid) broadcast raced
-    // ahead of the ToClump -> the client's mirror died, the carry lane dead-closed ~1s in,
-    // the host's kinematic clump froze mid-air. The RE-PILE direction already migrates at
-    // its thunk (OnHostConvert rebinds immediately); this makes GRAB symmetric.
+    // Migration first: identity moves to the successor at birth, before the pile husk's destroy
+    // fires microseconds later in the same grab call. Without it the husk died still owning E,
+    // the destroy seam treated the morph-husk death as element death (the keyed-prop unmark took
+    // the row into the deleter, flushed after the held-edge rebind, so the row was gone), and a
+    // destroy broadcast raced ahead of the to-clump: the client's mirror died, the carry lane
+    // dead-closed, and the host's kinematic clump froze mid-air. The re-pile direction already
+    // migrates at its thunk; this makes the grab symmetric.
     RebindE(E, clump);
     UE_LOGI("[PILE] HOST clump BORN %p from pile eid=%u variant=%u (BeginDeferred thunk -- the "
             "deterministic grab certificate; identity MIGRATED to the clump at birth; held-edge "
@@ -260,11 +258,10 @@ void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
 bool TakeClumpBorn(void* clump, coop::element::ElementId* outE, uint8_t* outChipType) {
     auto it = g_clumpBirths.find(clump);
     if (it == g_clumpBirths.end()) return false;
-    // Recycled-slot guard (2026-07-10 audit; the IsLiveByIndex lesson): the map key
-    // is a bare pointer, so a certificate whose clump DIED can match a DIFFERENT
-    // actor recycled into the same address. The reaper (:616) already validates by
-    // the stored birth idx -- the consume path must too, else a recycled stranger
-    // walks off with a dead clump's identity.
+    // The recycled-slot guard: the map key is a bare pointer, so a certificate whose clump died
+    // can match a different actor recycled into the same address. The reaper validates by the
+    // stored birth index, and the consume path must too, or a recycled stranger walks off with a
+    // dead clump's identity.
     if (!R::IsLiveByIndex(clump, it->second.idx)) {
         UE_LOGW("[PILE] TakeClumpBorn: certificate for %p is STALE (actor recycled; "
                 "birth idx=%d dead) -- dropping it unconsumed", clump, it->second.idx);
@@ -287,19 +284,15 @@ coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::El
     return E;
 }
 
-// ---- Client-initiated grab/throw INTENT LANE: EXTRACTED to trash_grab_intent.cpp
-// (2026-07-10 soft-cap extraction: SendGrabIntent / SendThrowIntent /
-// NoteClientConvertObserved / ClientCarryEid / ClearClientCarry / OnGrabIntent /
-// OnThrowIntent / OnGrabHolderLeft / ReleaseClientHold + the HELD_BY registry).
+// The client-initiated grab and throw intent lane lives in trash_grab_intent.cpp.
 
 void TickCarry(coop::net::Session& s, void* localHeldActor) {
     ++g_tick;
-    // 1. prune expired clump birth certificates (a grab whose clump never reached
-    //    the hand: hands full / denied / consumed mid-morph). v106b: birth already
-    //    MIGRATED identity to the clump (the pile husk is gone), so an expiring
-    //    certificate with a live, still-tracked, un-carried clump = the world DID
-    //    convert but no hand-edge ever expressed it -- broadcast the ToClump here
-    //    (at the clump's REST transform) so peers re-skin their stale pile form.
+    // Prune the expired birth certificates (a grab whose clump never reached the hand: hands
+    // full, denied, or consumed mid-morph). Birth already migrated identity to the clump and the
+    // pile husk is gone, so an expiring certificate with a live, still-tracked, un-carried clump
+    // means the world did convert but no hand edge expressed it: broadcast the to-clump here, at
+    // the clump's rest transform, so peers re-skin their stale pile form.
     for (auto it = g_clumpBirths.begin(); it != g_clumpBirths.end(); ) {
         if (g_tick - it->second.bornTick > kClumpBirthTtlTicks) {
             const uint32_t beid = it->second.eid;
@@ -328,27 +321,28 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
             ++it;
         }
     }
-    // 2. land-settles: count down; COMMIT (broadcast the held ToPile + CLOSE the latch) on timeout. A re-grab
-    //    (OnHostRegrab) cancels a settle before it can commit -> only a re-pile with NO following re-grab
-    //    survives K ticks here = the real land (drop/throw/force).
+    // The land settles: count down, and commit on timeout (broadcast the held to-pile and close
+    // the latch). A re-grab cancels a settle before it can commit, so only a re-pile with no
+    // following re-grab survives the window here, the real land (a drop, a throw, a force).
     for (auto it = g_settle.begin(); it != g_settle.end(); ) {
         LandSettle& ls = it->second;
         ++ls.sincePile;
         if (--ls.countdown <= 0) {
             const coop::element::ElementId E = static_cast<coop::element::ElementId>(it->first);
-            // take-31 FIX: re-read the pile's REAL transform NOW (post-FinishSpawning, the pile is positioned).
-            // The thunk-captured ls.loc/rot/scale are the CLUMP fallback (the pile was unpositioned = (0,0,0)
-            // at the BeginDeferred POST). A committing settle (survived K ticks with no re-grab) is the real
-            // land, so its pile is alive + settled; IsLiveByIndex guards the cross-tick cached pointer.
+            // Re-read the pile's real transform now, after the finish, when the pile is positioned;
+            // the thunk-captured values are the clump fallback, the pile having been unpositioned
+            // at the POST. A committing settle is the real land, so its pile is alive and settled;
+            // the liveness check guards the cross-tick cached pointer.
             ue_wrap::FVector  cloc   = ls.loc;
             ue_wrap::FRotator crot   = ls.rot;
             ue_wrap::FVector  cscale = ls.scale;
             const bool reread = (ls.pileActor && R::IsLiveByIndex(ls.pileActor, ls.pileIdx));
             if (reread) {
                 cloc   = ue_wrap::engine::GetActorLocation(ls.pileActor);
-                // The settled pile's visual orientation is on its StaticMesh component's relative
-                // rotation (random roll), not the actor root -- capture the mesh WORLD rotation so
-                // the re-skinned proxy reproduces it (else every re-piled proxy looks identical).
+                // The settled pile's visual orientation is on its mesh component's relative
+                // rotation (a random roll), not the actor root, so the mesh's world rotation is
+                // captured for the re-skinned proxy to reproduce it; otherwise every re-piled proxy
+                // looks identical.
                 crot   = ue_wrap::engine::GetVisibleMeshWorldRotation(ls.pileActor);
                 cscale = ue_wrap::engine::GetActorScale3D(ls.pileActor);
             }
@@ -358,18 +352,16 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
                     "(transform %s)", static_cast<unsigned>(E),
                     reread ? "re-read from the settled pile" : "FALLBACK (pile not live -- clump transform)");
             g_carry.erase(it->first);                     // CLOSE the carry latch
-            ClearHeldBy(it->first);                       // v84: the land ends a client-grab hold (re-grabbable)
+            ClearHeldBy(it->first);                       // the land ends a client-grab hold
             it = g_settle.erase(it);
         } else {
             ++it;
         }
     }
-    // 3. GUARANTEED CARRY TERMINATION (v106, 2026-07-07 -- the eid-4809 permanent
-    //    "already HELD" deny-lock root). Every open lane must eventually close:
-    //    the native re-pile gate (IsValid(holdPlayer.grabbing_actor)) ABORTS a
-    //    thrown clump's re-pile when the thrower's hand is busy at land -- the
-    //    clump then lies as a clump forever and NO ToPile ever closes the lane.
-    //    A settle in flight owns its own closure (the COMMIT above), so skip those.
+    // Guaranteed carry termination: every open lane must eventually close. The native re-pile gate
+    // (the holder's grabbing actor being valid) aborts a thrown clump's re-pile when the thrower's
+    // hand is busy at the land, so the clump lies as a clump forever and no to-pile ever closes
+    // the lane. A settle in flight owns its own closure (the commit above), so those are skipped.
     constexpr int   kDeadCloseTicks = 30;   // ~0.5s grace: a morph rebinds the row the SAME tick
     constexpr int   kRestCloseTicks = 45;   // ~0.75s of stillness = the clump has landed for good
     constexpr float kRestSpeedSq    = 25.f; // (5 cm/s)^2
@@ -384,9 +376,9 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
         if (!live) {
             lane.restTicks = 0;
             if (++lane.deadTicks >= kDeadCloseTicks) {
-                // The clump was CONSUMED (destroyed with no re-pile rebind). Close the
-                // lane + broadcast PropDestroy(eid) so every peer drains its row (the
-                // ReleaseClientHold shape -- positive evidence, never a silent wedge).
+                // The clump was consumed, destroyed with no re-pile rebind. Close the lane and
+                // broadcast a destroy for the eid so every peer drains its row: positive evidence,
+                // never a silent wedge.
                 UE_LOGW("[TRASH-CH] HOST carry eid=%u actor DIED with no re-pile -- lane CLOSED + "
                         "PropDestroy(eid) broadcast (consumed clump; peers drain the row)", eid);
                 coop::net::PropDestroyPayload dp{};
@@ -401,8 +393,8 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
             continue;
         }
         lane.deadTicks = 0;
-        // Rest detection: only a CLUMP lying FREE counts (not the local player's
-        // held clump -- a still hold has ~0 velocity -- and not a puppet-held one).
+        // Rest detection: only a clump lying free counts, not the local player's held clump (a
+        // still hold has no velocity) and not a puppet-held one.
         if (ue_wrap::prop::IsGarbageClump(a) && a != localHeldActor &&
             !HeldByAny(eid)) {
             const ue_wrap::FVector v = ue_wrap::engine::GetActorVelocity(a);
@@ -455,29 +447,29 @@ bool AdoptInboundConvertCtx(coop::element::ElementId E, uint8_t ctx) {
 bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx, bool requireCurrentGen) {
     if (ctx == 0) return true;                            // legacy/non-trash keyed prop -> no enforcement
     auto it = g_ctx.find(static_cast<uint32_t>(E));
-    // A trash carry/throw (ctx>=1) for an eid we have seen NO convert for yet: the ToClump convert (reliable
-    // lane) has not landed, so E still renders as a PILE here. Applying the clump's carry pose would DRIVE
-    // the pile to the carry point + fire its grab cue BEFORE the re-skin -- the 2026-06-21 double-grab-sound
-    // + pre-convert pile-jump glitch (the unreliable pose beats the reliable convert). HOLD until the convert
-    // arrives (reliable -> it will); then g_ctx[E] is set and poses apply to the clump.
+    // A trash carry or throw for an eid with no convert seen yet: the to-clump convert on the
+    // reliable lane has not landed, so E still renders as a pile here, and applying the clump's
+    // carry pose would drive the pile to the carry point and fire its grab cue before the
+    // re-skin, the double grab sound and the pre-convert pile jump (the unreliable pose beating
+    // the reliable convert). Hold until the convert arrives, which it will; then the context is
+    // set and poses apply to the clump.
     if (it == g_ctx.end() || it->second == 0) return false;
-    // requireCurrentGen splits the gate by packet kind (2026-06-21 sound fix, client-log root-caused):
-    //   * CARRY POSE (true): apply ONLY the CURRENT generation (ctx == known). A pose for generation N drives
-    //     the gen-N rendering, which exists ONLY after convert N is adopted (known==N). A pose AHEAD of its
-    //     convert (ctx>known) is HELD -- else it drives the still-PRE-convert OLD rendering (the pile-jump +
-    //     the SECOND grab-cue: the convert then re-skins -> the actor swaps -> a fresh GRAB-IN re-fires the
-    //     cue = the triple sound). The reliable convert always lands, so the held pose is superseded by the
-    //     continuous 30-60 Hz stream -- carry just starts AT the convert, no animation loss.
-    //   * RELEASE (false): apply if NOT STALE (ctx >= known, AtLeast). A throw legitimately LEADS the last
-    //     convert (ctx=N+1 over the grab's known=N) -- the throw is NOT a re-skin (the clump stays a clump),
-    //     so it applies immediately to the current rendering; only a throw delayed past a re-pile drops.
+    // `requireCurrentGen` splits the gate by packet kind. A carry pose applies only the current
+    // generation: a pose for generation N drives the gen-N rendering, which exists only after
+    // convert N is adopted, and a pose ahead of its convert is held, or it drives the still
+    // pre-convert old rendering (the pile jump, and a second grab cue when the convert then swaps
+    // the actor and a fresh grab-in re-fires it). The reliable convert always lands, so the held
+    // pose is superseded by the continuous stream and the carry just starts at the convert. A
+    // release applies if not stale: a throw legitimately leads the last convert, since it is not a
+    // re-skin (the clump stays a clump), so it applies at once to the current rendering, and only
+    // a throw delayed past a re-pile drops.
     return requireCurrentGen ? (ctx == it->second) : AtLeast(ctx, it->second);
 }
 
 void OnDisconnect() {
     g_ctx.clear();
-    g_clumpBirths.clear();  // v106: drop unconsumed birth certificates
-    g_carry.clear();    // CLOSE-B: drop all carry latches + settles (gross reset)
+    g_clumpBirths.clear();  // drop unconsumed birth certificates
+    g_carry.clear();    // drop all carry latches and settles
     g_settle.clear();
     ResetIntentState();  // HELD_BY + the client pending-grab/carry toggles (trash_grab_intent.cpp)
     g_tick = 0;
