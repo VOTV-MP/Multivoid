@@ -128,8 +128,8 @@ refuses, and the packet header is the backstop.
 ## Identity
 
 **Peers.** Every install holds an Ed25519 keypair (`coop/net/peer_identity`); the public key *is*
-the peer's network identity, and the id the master server, the ban list and the per-player
-inventory store use is derived from it. A name proves nothing by itself, so before a host spends
+the peer's network identity, and the id the master server and the per-player inventory store
+use is derived from it. A name proves nothing by itself, so before a host spends
 a seat the two ends sign each other's nonces with the key their identity names
 (`coop/net/peer_admission`); the host proves itself first. The lobby password, when set, is a
 proof carried inside that exchange and bound to the host's key, so a host you were steered to

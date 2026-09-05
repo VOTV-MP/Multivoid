@@ -63,7 +63,7 @@ attacker. Encrypting this leg is the next transport-security item on the list.
   the README is not boilerplate.
 - **Peer identity is proven; the path is not.** Every install holds a key that is its network
   identity, and before a seat is spent each end signs the other's challenge with the key its
-  identity names, so nobody can join as someone else and a ban sticks to a key rather than a name.
+  identity names, so nobody can join as someone else. A ban is still by address, not by key.
   What that does not close is an attacker on the network path relaying the whole exchange: the mod
   has no defence against a man in the middle of the transport, and the plaintext signaling leg
   above is where one would sit.
