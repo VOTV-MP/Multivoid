@@ -71,7 +71,9 @@ catch and the dishes, the deck, drives and racks, the laptop, the database, and 
 the drone, and the economy: the balance, shop orders, the coin gun) · [vehicles.md](vehicles.md)
 (the ATV: a mirror that runs the rig natively and is corrected, the two authority predicates,
 the condition that travels) · [ui.md](ui.md) (the native screens, the F1 overlay, the HUD, and
-the game's notifications)
+the game's notifications) · [master-server.md](master-server.md) (the lobby list, the join
+brokering, the signaling relay and TURN, self-hosting) · [voice-and-chat.md](voice-and-chat.md)
+(host-authored chat and its history, proximity voice over the same connection)
 
 **Maps, where a thing lives and what state it is in**
 
