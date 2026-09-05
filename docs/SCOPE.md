@@ -13,14 +13,14 @@ the commit that ships the change.
 | Chat and the event feed | text chat; join, leave and error lines | the host relays chat; each machine surfaces its own transport errors |
 | Voice | 3D positional voice | each peer |
 | Master server and browser | an opt-in listing of the host's game, the update check, signaling for NAT traversal | the host opts in per session; the master is external infrastructure |
-| Physics props | pickup, drag, throw and drop; per-grab authority; an identity that survives saves and rejoins; world-to-inventory and inventory-to-world transitions | the holder while held; the host arbitrates conflicts and owns everything at rest |
+| Physics props | pickup, drag, throw and drop; per-grab authority; an identity that survives saves and rejoins; world-to-inventory and inventory-to-world transitions | the holder while held; the host owns everything at rest |
 | Piles and trash | the whole collection loop: piles, clumps, carrying, depositing | the host |
 | NPCs and creatures | pose, spawn and despawn, the kerfur prop-to-NPC cycle; enemies target every peer and a pursuit can switch targets between peers; creatures whose AI reads the local player are owned per peer and visible to all | the host, except the per-peer owned creatures |
 | Doors, lights and devices | doors, light switches and light groups, keypads, power panels, the garage, appliances, locker lids, windows, grime, the wind turbine, containers and their contents, the delivery drone, shop orders, the coin gun and the shared balance | the host holds the state; a client sends an intent that the host performs |
 | The signal workstation | the dish, pinging, signal catch, downloads, decoding, the playback deck, drives and racks, tapes, the physical modules, the laptop and its floppies, the meadow signal database, the signal-server simulation and the notices it produces | one authority per axis: the pressing peer authors inputs, the host runs every simulation |
 | World state | the clock, the sky, weather and lightning, fireflies, ambient spawners, the story and scheduled events, the base alarm, emails, the daily task, world props that change over time | the host; clients mirror and never roll their own randomness |
 | Saves | the joiner boots from the host's world; the host is the only peer that saves | the host |
-| Vehicles | the ATV: a peer that is not driving runs the rig natively and is corrected toward the driver's pose; its condition travels; vitals, configuration and the act-as-host intents are in scope and not all built | the driver authors the pose; the host the rest |
+| Vehicles | the ATV: a peer that is not driving runs the vehicle's physics natively and is corrected toward the driver's pose; its condition travels; vitals, configuration and the act-as-host intents are in scope and not all built | the driver authors the pose; the host the rest |
 | Sleep, damage and hazards | sleep state, hazard damage, the resulting vitals | the host for shared effects; each peer for its own vitals |
 
 ## Not synced
