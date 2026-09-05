@@ -49,7 +49,7 @@ in a comment at the site.
 | `src/votv-coop/src/ue_wrap/` | engine wrapper: reflection, signatures, hooks, the game-thread pump |
 | `src/votv-coop/src/coop/` | gameplay and network: elements, sync lanes, sessions, players |
 | `src/votv-coop/src/ui/` | the in-game UI: native UMG screens and the ImGui overlay |
-| `src/votv-coop/src/harness/` | boot glue and the autonomous test scenarios |
+| `src/votv-coop/src/harness/` | boot glue and the scripted test scenarios |
 | `src/votv-coop/src/loader/` | the UE4SS `start_mod()` entry |
 | `src/votv-coop/include/` | the headers, same split |
 | `tools/` | build, deploy, the test rig, release, the master server (`coop-server-rs/`), the gates |
@@ -89,7 +89,7 @@ Small, single-concern commits, with a message a reader can follow in `git log --
 [scope] imperative summary, at most 72 characters
 
 What changed and why, in at most 12 lines. One line of evidence:
-what was measured, on what rig, with what result.
+what was measured and what it showed.
 
 Co-Authored-By: ...
 ```
