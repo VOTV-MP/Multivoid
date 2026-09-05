@@ -1,36 +1,11 @@
-// coop/player_handshake.h -- Player-Element mirror exchange (Join + AssignPeerSlot).
-//
-// Gameplay/network layer (principle 7). Extracted from event_feed.cpp on
-// 2026-05-29 (C5) to keep event_feed below the 800 LOC soft cap after the
-// A4 v13 wire migration pushed it to 841 LOC. The handshake is its own
-// subsystem: it owns the local + per-slot nickname state, the per-slot
-// Join-sent latch, and the two reliable kinds (Join, AssignPeerSlot) that
-// carry the mirror Element ids between peers.
-//
-// Mirror exchange model (A4 / v13):
-//   - Host -> Client (AssignPeerSlot): host stamps its local Player
-//     Element id (hostElementId) when issuing the slot assignment.
-//     Client EstablishMirrorForSlot(0, hostElementId).
-//   - Peer -> Peer (Join): each peer's Join payload prepends its own
-//     senderElementId (uint32). Receiver EstablishMirrorForSlot(
-//     senderPeerSlot, senderElementId).
-//   - Result: both peers' element::Registry agree on the same id for
-//     each Player Element.
-//
-// State ownership (arc A, 2026-07-27):
-//   - The per-slot identity state -- nickname, guid, skin, the join-announced
-//     latch -- lives in the ROSTER LEDGER (coop/player/roster_ledger.h), not
-//     here. This module owns only g_localNick (ours) and the
-//     per-slot Join-sent latch (a property of the LINK, not of the person, so it
-//     is a PerSlotState rather than a row field).
-//   - Teardown is a ledger ROW TRANSITION, not a disconnect callback: this
-//     module and event_feed each register one subscriber. The previous shape --
-//     event_feed reading the nick for the "<X> left" line and then calling
-//     OnSlotDisconnected to clear it -- made that ORDERING load-bearing, and it
-//     could not fire at all when a slot was refilled between two ticks.
-//
-// Game thread only (it reads/writes UE engine objects via Puppet().SetNickname,
-// chat_feed::Push, players::Registry, and reads our process-local cfg).
+// coop/session/player_handshake.h -- the Player-Element mirror exchange (Join and AssignPeerSlot)
+// and the per-slot identity announcements. The host stamps its local Player Element id into
+// the AssignPeerSlot it issues, each peer's Join carries its own element id, and the receiver
+// binds a mirror for the sender's slot, so every peer's element registry agrees on the id of
+// each Player Element. Per-slot identity state (nickname, guid, skin, the join-announced latch)
+// lives in the roster ledger; this module owns only the local nickname and the per-slot
+// Join-sent latch, a property of the link rather than of the person. Teardown is a ledger row
+// transition, which fires on a replacement as well as a departure. Game thread only.
 
 #pragma once
 
@@ -42,223 +17,158 @@
 
 namespace coop::player_handshake {
 
-// The display-name length cap, in wchar_t units. ONE owner: SanitizeNickname
-// enforces it and coop::nickname_arbiter sizes its suffix variants against it,
-// so a variant can never be longer than a name the sanitizer would accept.
-// (Arc D re-expresses this in CODEPOINTS -- the unit change moves the truncation
-// point and therefore re-partitions who collides, which is why it is named here
-// rather than repeated as a literal.)
+// The display-name cap, with one owner: SanitizeNickname enforces it and the nickname arbiter
+// sizes its suffix variants against it, so a variant is never longer than a name the sanitizer
+// would accept.
 inline constexpr size_t kNickMaxChars = 20;
 
-// Set the local player's REQUESTED display name -- what the human typed, in the
-// browser or the ini. Sanitized on the way in (see SanitizeNickname inside the
-// .cpp -- the same sanitizer that runs on inbound peer nicknames, so both ends
-// agree on the displayable form). Also updates the displayed name optimistically:
-// until a host says otherwise, what you asked for is what you are.
+// Set the local player's requested display name, what the person typed in the browser or the
+// ini, sanitized on the way in by the sanitizer that also runs on inbound peer names. Also sets
+// the displayed name: until a host says otherwise, what you asked for is what you are.
 void SetLocalNickname(const std::wstring& nick);
 
-// ARC B. Adopt the display name the HOST assigned us. The host is the only peer
-// that sees every name at once, so uniqueness is its call and ours to accept;
-// this arrives on our own RosterRow (player_handshake_roster.cpp).
-//
-// USER DECISION 2026-07-28: the assigned name is KEPT, not borrowed. "What user
-// gets as a nickname gets recorded and persisted into his config files. It's not
-// something temporary." So adopting writes all three stores -- displayed,
-// requested, and multivoid.ini -- and the NEXT session asks to be called
-// Pelmentor2, which it then keeps, because there should not be another
-// Pelmentor2. A second Pelmentor2 is the one that gets renamed.
-//
-// This makes the ledger's ghost-freeness load-bearing rather than cosmetic: a
-// rename earned by colliding with your OWN un-reaped row would now persist. It
-// is safe because roster_ledger::ReconcileFromSession runs death FIRST and
-// unconditionally (roster_ledger.cpp:289), so no row survives its occupant.
+// Adopt the display name the host assigned us; the host sees every name at once, so uniqueness
+// is its call. It arrives on our own roster row. The assigned name is kept, not borrowed:
+// adopting writes the displayed name, the requested name and the ini, so the next session asks
+// for the assigned name and a later duplicate is the one renamed. That makes the ledger's
+// freedom from ghost rows load-bearing, since a rename earned by colliding with your own
+// un-reaped row would persist; the ledger's reconcile runs its death pass first.
 void AdoptCanonicalNickname(const std::wstring& canonical);
 
-// Read the local player's (sanitized) DISPLAYED name -- the host-assigned one
-// once we have joined, the requested one before that. Game thread only (returns
-// a reference to the game-thread-owned string). Every surface that prints "my
-// name" derives from this: the roster's local row, chat authorship, the action
-// feed and the nameplate.
+// The local player's displayed name: the host-assigned one once joined, the requested one
+// before. Game thread only (a reference to a game-thread string). Every surface that prints
+// our name derives from it.
 const std::wstring& LocalNickname();
 
-// Read the local player's REQUESTED name -- what we ask a host to call us. Only
-// the Join payload uses it; everything user-visible uses LocalNickname().
+// The requested name, what we ask a host to call us; only the Join payload uses it.
 const std::wstring& RequestedNickname();
 
-// v144: SetLocalGuid is RETIRED (RULE 2). A peer no longer names its own storage
-// row -- there is no guid on the Join packet at all, because the host DERIVES it
-// from the public key the peer proved at admission. Nothing sends what nothing
-// reads, and leaving the setter would have kept a value alive that only looked
-// authoritative.
-
-// HOST-side read of a peer's storage GUID by slot -- hex(SHA-256(pubkey)[0..16])
-// of the key that peer PROVED it holds (Session::ProvedGuidForSlot, copied into
-// the roster row when its Join lands). Empty on a client, and empty on a host
-// until the Join arrives. Game thread only.
+// Host-side read of a peer's storage GUID by slot: hex(SHA-256(pubkey)[0..16]) of the key the
+// peer proved at admission, copied into the roster row when its Join lands. Empty on a client,
+// and on a host until the Join arrives. Game thread only.
 const std::string& GuidForSlot(int slot);
 
-// True iff `guid` is exactly 32 hex chars ([0-9a-fA-F]) -- the durable-identity format. The GUID
-// becomes a HOST FILESYSTEM PATH COMPONENT (coop_players/<guid>.json), so a remote-supplied GUID
-// MUST be validated to this charset before use: it is the only thing that keeps a hostile/tampered
-// Join (guid="..\\..\\evil") from steering a host file write outside coop_players (path traversal).
-// Hex is inherently filesystem-safe (no '.', '/', '\\', ':'). Used at the wire boundary AND in
-// PlayerFilePath (defense in depth). Pure; any thread.
+// True iff `guid` is exactly 32 hex characters. The GUID becomes a host filesystem path
+// component (coop_players/<guid>.json), so a remote-supplied one is validated to this charset
+// before use, which is what keeps a hostile Join from steering a file write outside that
+// directory. Used at the wire boundary and in the path builder. Pure; any thread.
 bool IsValidGuid(const std::string& guid);
 
-// v93 skins: the skin name peer `slot` announced (Join field / SkinChange).
-// Empty until known -> the puppet spawns native kel and is re-skinned when the
-// name lands. Game thread only.
+// The skin name peer `slot` announced (a Join field or a SkinChange); empty until known, in
+// which case the puppet spawns with the native body and is re-skinned when the name lands.
+// Game thread only.
 const std::string& SkinForSlot(int slot);
 
-// v93 skins: announce the LOCAL player's skin change mid-session. Client ->
-// host (slot 0); host -> every ready client (slot=0 payload). The at-join
-// announce needs no call -- MaybeSendJoinToSlot reads local_body::LocalSkinName
-// when building the Join payload. Game thread only.
+// Announce the local player's skin change mid-session: client to host, host to every ready
+// client. The at-join announce needs no call; the Join builder reads local_body::LocalSkinName.
+// Game thread only.
 void AnnounceLocalSkin(coop::net::Session& session, const std::string& name);
 
-// v93 skins: handle a delivered SkinChange ([u8 slot][u8 len][name]). Host:
-// sender forgery-checked (slot == senderPeerSlot), stored, applied to the
-// slot's puppet, rebroadcast to the other clients. Client: host-only sender
-// accepted, stored, applied. Returns true when recognized.
+// Handle a delivered SkinChange ([u8 slot][u8 len][name]). Host: the sender must match the
+// slot, then stored, applied to the slot's puppet and rebroadcast to the other clients. Client:
+// host-only sender, stored, applied. True when recognised.
 bool HandleSkinChange(coop::net::Session& session,
                       const coop::net::Session::ReliableMessage& msg);
 
-// v94 nameplate pref: announce the LOCAL player's plate visibility mid-session
-// (same trust/relay shape as AnnounceLocalSkin). The at-join state rides the
-// prefs flags byte in the Join payload. Game thread only.
+// Announce the local plate visibility mid-session, with the same trust and relay shape as the
+// skin. The at-join state rides the prefs flags byte of the Join. Game thread only.
 void AnnounceLocalNameplate(coop::net::Session& session, bool visible);
 
-// v94: handle a delivered NameplateChange ([u8 slot][u8 visible]). Host:
-// forgery-checked + stored (coop::nameplate) + rebroadcast; client: host-only
-// sender, stored. Returns true when recognized.
+// Handle a delivered NameplateChange ([u8 slot][u8 visible]). Host: sender-checked, stored,
+// rebroadcast; client: host-only sender, stored. True when recognised.
 bool HandleNameplateChange(coop::net::Session& session,
                            const coop::net::Session::ReliableMessage& msg);
 
-// v103 nick color (12f): announce the LOCAL player's nick color mid-session
-// (same trust/relay shape as AnnounceLocalNameplate; packed 0 = reset to
-// default). The at-join state rides the [has][r][g][b] field in the Join
-// payload. Game thread only.
+// Announce the local nick colour mid-session, the same shape; packed 0 resets to the default.
+// The at-join state rides the [has][r][g][b] field of the Join. Game thread only.
 void AnnounceLocalNickColor(coop::net::Session& session, uint32_t packed);
 
-// v103: handle a delivered NickColorChange ([u8 slot][u8 has][r][g][b]). Host:
-// forgery-checked + stored (coop::nick_color) + rebroadcast; client: host-only
-// sender, stored. Returns true when recognized.
+// Handle a delivered NickColorChange ([u8 slot][u8 has][r][g][b]), the same trust shape. True
+// when recognised.
 bool HandleNickColorChange(coop::net::Session& session,
                            const coop::net::Session::ReliableMessage& msg);
 
-// Reset per-slot caches. Called from event_feed::OnSessionStart so a
-// Session::Stop()/Start() in the same process sees clean state.
+// Reset the per-slot caches; called from event_feed's session start, so a stop and start in one
+// process sees clean state.
 void Reset();
 
-// Per-tick connect-edge Join sender for one slot. event_feed iterates
-// over slots, detects the connect edge, and calls this. joinPayload +
-// joinPayloadBuilt are lazy-build state shared across the loop so we
-// don't pay the UTF-8 conversion + heap alloc every 8 ms once Join has
-// already been sent to every slot.
-//
-// Sender holds off (returns without sending and without latching) when
-// the local Player Element id isn't allocated yet (boot/seed race
-// window after AssignPeerSlot, before EnsurePlayerElement_ runs). The
-// guard is bounded (~1 net pump tick = ~8 ms at 125 Hz). Send is also
-// no-op if the slot has already received our Join.
+// The per-tick connect-edge Join sender for one slot; event_feed detects the edge and calls
+// this. The payload and its built flag are lazy state shared across the slot loop, so the
+// conversion and allocation are not paid every pump tick once every slot has our Join. Holds
+// off, without latching, while the local Player Element id is not yet allocated (the window
+// after AssignPeerSlot, about one pump tick); a no-op for a slot that already has it.
 void MaybeSendJoinToSlot(coop::net::Session& session, int slot,
                           std::vector<uint8_t>& joinPayload,
                           bool& joinPayloadBuilt);
 
-// ARC A / RULE 2: OnSlotDisconnected is GONE. Person-state teardown is driven by
-// the roster ledger's ROW TRANSITION now (roster_ledger::SubscribeSlotReplaced),
-// which fires on a REPLACEMENT as well as a departure -- the case a disconnect
-// callback structurally cannot see, because a recycled slot goes X -> Y with no
-// absence in between. Register the module's subscribers once:
+// Person-state teardown is driven by the roster ledger's row transition, which fires on a
+// replacement as well as a departure; a disconnect callback cannot see a slot recycled between
+// two ticks. Registers the module's subscribers once.
 void InstallLedgerSubscribers();
 
-// Read-only access to the nickname for a peer slot. Thin read of the ledger row,
-// placeholder fallback applied. Signature deliberately unchanged across arc A so
-// its call sites are untouched.
+// The nickname for a peer slot: a thin read of the ledger row with the placeholder fallback
+// applied.
 const std::wstring& NicknameForSlot(int slot);
 
-// HOST: assert the current roster to every ready client. Adaptive period (~1 s
-// for the first ~10 s after a roster change, ~5 s after), so a row lost in the
-// join-time burst -- the measured window where reliable enqueue drops silently --
-// heals inside the seconds a joiner is actually looking at TAB. Game thread,
-// called once per net-pump tick.
+// Host: assert the current roster to every ready client, at about 1 s for the first 10 s after
+// a roster change and 5 s after, so a row lost in the join-time burst heals within the seconds
+// a joiner is looking at the player list. Game thread, once per pump tick.
 void PulseRosterRows(coop::net::Session& session);
 
-// HOST: arm the pulse's fast window (a roster change just happened).
+// Host: arm the pulse's fast window after a roster change.
 void MarkRosterChanged();
 
-// CLIENT: called the instant AssignPeerSlot stamps our LocalPeerId, to apply any
-// roster rows that arrived before we knew which slot was ours.
+// Client: called the instant AssignPeerSlot stamps our slot, to apply roster rows that arrived
+// before we knew which slot was ours.
 void OnLocalPeerIdStamped(coop::net::Session& session);
 
-// Two-phase join announcement (2026-06-15, seam moved 2026-07-03): the Join handshake announces
-// "<nick> is connecting to the game" (connected, not loaded/spawned yet); net_pump calls THIS the
-// moment the peer's puppet actually SPAWNS -- the visible appearance the "<nick> joined the game"
-// line must coincide with (user 2026-07-03; the old host announce on ClientWorldReady+5s ran ~6 s
-// before the puppet in the measured live flow). Role-aware: on a CLIENT, slot 0 is the HOST whose
-// game WE joined ("Joined <host>'s game", kept at +5 s -- own loading screen, user 2026-06-21).
-// net_pump calls it for the CLIENT role unconditionally (gated on the client's own
-// g_worldReadyAnnounced) and for the HOST role once IsSlotWorldReady(slot) holds (a pre-world
-// menu/loading pose can spawn the puppet early -- user 2026-06-17; that order is covered by
-// OnClientWorldReady below). Joiner lines are latched once per join (cleared on slot disconnect),
-// so the two seams never repeat. Game thread (chat_feed push).
+// The second phase of the join announcement: the Join announces that a peer is connecting, and
+// this, called from the puppet spawn path, announces that it joined, the moment the body is
+// visible. Role-aware: on a client, slot 0 is the host whose game we joined. The caller
+// announces the client role unconditionally and the host role once the slot is world-ready (a
+// pre-world pose can spawn the puppet early; OnClientWorldReady covers that order). Latched
+// once per join, so the two seams never repeat. Game thread.
 void AnnouncePeerSpawned(net::Role role, int slot);
 
-// HOST-side reverse-order cover for the join line: fired from event_feed when a client's
-// ClientWorldReady reliable lands. If the slot's puppet ALREADY spawned (pre-world menu pose --
-// the 2026-06-17 case), the body is standing here and world-ready is the moment it becomes the
-// real joiner -> announce now (same once-per-join latch). Normal flow (spawn after world-ready,
-// the measured live order) leaves this a no-op; the spawn seam announces. Game thread.
+// Host-side cover for the reverse order, fired when a client's ClientWorldReady lands: if the
+// slot's puppet already spawned (a pre-world menu pose), world-ready is the moment it becomes
+// the real joiner, so the line is announced now under the same latch. In the normal order this
+// is a no-op. Game thread.
 void OnClientWorldReady(int slot);
 
-// Handle a delivered reliable Join message. Parses the v13 prefix
-// (senderElementId), then the nickname (UTF-8 length-prefixed),
-// sanitizes the nickname, sets the puppet's nameplate, and posts the
-// chat_feed entry. Returns true if the message was a recognized Join
-// (regardless of validation outcome); returns false if payloadLen is
-// too short for the header (caller may log).
+// Handle a delivered Join: parses the sender's element id, then the length-prefixed UTF-8
+// nickname, sanitises it, sets the puppet's nameplate and posts the feed entry. True when the
+// message was a recognised Join, whatever the validation outcome; false when the payload is too
+// short for the header.
 bool HandleJoinMessage(coop::net::Session& session,
                        const coop::net::Session::ReliableMessage& msg);
 
-// Handle a delivered reliable AssignPeerSlot message. Stamps the
-// client's LocalPeerId and (v13) installs the host's mirror Player
-// Element via EstablishMirrorForSlot when hostElementId is present
-// and valid. Drops on host side (host self-assigns). Returns true if
-// the message was recognized; false on payload-too-short.
+// Handle a delivered AssignPeerSlot: stamps the client's slot and binds the host's mirror
+// Player Element when the host element id is present and valid. Dropped on the host, which
+// self-assigns. True when recognised; false on a short payload.
 bool HandleAssignPeerSlot(coop::net::Session& session,
                           const coop::net::Session::ReliableMessage& msg);
 
-// HOST-side: cross-peer identity broadcast for the host-relay topology
-// (PR-FOUNDATION Tier 2 T2-1). Called from HandleJoinMessage once the
-// host has established the joiner's mirror + stored its nick. Performs
-// the MTA InitialDataStream two-way exchange:
-//   (1) sends PlayerJoined{joiner} to every OTHER connected client, and
-//   (2) sends PlayerJoined{X} to the joiner for every already-known
-//       client X (X != joiner, X != host).
-// No-op unless this peer is the host. `joinerSlot` is the slot whose
-// Join just arrived; `joinerEid` its Player Element id; `joinerNick`
-// its (already-sanitized) nickname.
+// Host-side cross-peer identity broadcast, called from HandleJoinMessage once the joiner's
+// mirror and nick are stored; MTA's initial-data-stream exchange: a PlayerJoined for the
+// joiner to every other client, and one for every already-known client to the joiner. No-op on
+// a client.
 void BroadcastRosterFromHost(coop::net::Session& session,
                                    int joinerSlot,
                                    uint32_t joinerEid,
                                    const std::wstring& joinerNick);
 
-// CLIENT-side: handle a delivered reliable PlayerJoined message
-// describing a THIRD peer (another client). Range-validates the eid,
-// installs the peer's mirror Player Element via EstablishMirrorForSlot,
-// and caches its nickname so the puppet (spawned later on the first
-// relayed pose) is born identified. Drops on host side (host originates
-// these; never receives them). Returns true if recognized; false on
-// payload-too-short.
+// Client-side handling of a PlayerJoined describing a third peer: range-validates the eid,
+// binds the peer's mirror Player Element and caches its nickname, so the puppet spawned later
+// on the first relayed pose is born identified. Dropped on the host, which originates these.
+// True when recognised; false on a short payload.
 bool HandleRosterRow(coop::net::Session& session,
                         const coop::net::Session::ReliableMessage& msg);
 
-// SKIN CONVERGE (2026-08-29): re-assert every live puppet's ledger skin on a
-// ~2 s throttle. RemotePlayer::ApplySkin early-outs when already applied, so a
-// converged slot costs one string compare -- but a puppet whose apply DEFERRED
-// (client_model's atomic mesh+tex gate: the pak was still mounting during the
-// join window) now heals instead of wearing the wrong body for the session.
-// Game thread (subsystems::TickGameplay).
+// Re-assert every live puppet's ledger skin on a 2 s throttle. ApplySkin early-outs when
+// already applied, so a converged slot costs one string compare, and a puppet whose apply
+// deferred (the pak still mounting during the join window) heals instead of wearing the wrong
+// body all session. Game thread.
 void TickSkinConverge();
 
 }  // namespace coop::player_handshake
