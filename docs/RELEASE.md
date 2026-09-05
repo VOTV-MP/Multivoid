@@ -22,9 +22,9 @@ builds.
 
 ## The procedure
 
-1. **The gate.** The pre-handoff checklist has passed on the commit being released: a Release
-   build, deployed, and a two-peer smoke of at least thirty seconds with clean logs; for a stable,
-   a hands-on run by a person. The smoke's host log carries `config-selftest: DONE fail=0` (the
+1. **The gate.** The checks on [../CONTRIBUTING.md](../CONTRIBUTING.md) have passed on the commit
+   being released: a Release build, deployed, and a two-peer smoke of at least thirty seconds with
+   clean logs; for a stable, a play session by a person. The smoke's host log carries `config-selftest: DONE fail=0` (the
    smoke run with `VOTVCOOP_RUN_CONFIG_SELFTEST=1`), and every peer's log carries
    `repertoire selftest: PASS` and `font selftest: DONE fail=0`. Run `tools/release/tripwires.ps1`
    and keep its output; it advises and never blocks.
