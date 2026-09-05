@@ -27,17 +27,15 @@ namespace {
 
 using ui::scale::S;  // 1080p-authored px -> live-resolution px (ui/scale.h)
 
-// Nameplate BASE text size (px) -- the size up CLOSE. The whole plate scales DOWN with
-// distance (p.scale, ~1/distance, computed in coop::nameplate::DistanceScale) so it stays
-// proportional to the peer's on-screen body instead of looming over a far, shrunken
-// character (user 2026-06-08: the old fixed size "grew" relative to a receding peer).
-// 16 px up close reads at a few metres without dominating when a peer stands right next
-// to you (user 2026-06-08: 22 px felt huge up close). Distance also fades OPACITY
-// (DistanceAlpha); p.scale is capped at 1.0 so the plate is never bigger than this.
+// The nameplate base text size in px, the size up close. The whole plate scales down with
+// distance (about 1/distance, computed by the nameplate module), so it stays proportional to
+// the peer's on-screen body instead of looming over a far, shrunken character; 16 px reads at
+// a few metres without dominating when a peer stands next to you. Distance also fades the
+// opacity, and the scale is capped at 1, so the plate is never bigger than this.
 constexpr float kNickPx = 16.f;
 
-// Draw `text` at `size` with a cheap outline (4-way offset, ~1px at 1080p and
-// proportional above) so it stays legible over any scene.
+// Draw `text` at `size` with a cheap outline, a 4-way offset of about 1 px at 1080p and
+// proportional above, so it stays legible over any scene.
 void TextOutlined(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
                   ImU32 col, ImU32 outline, const char* text) {
     const float o = std::max(1.f, S(1.f));
@@ -49,25 +47,14 @@ void TextOutlined(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
 }
 
 void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
-    // A plate has only ONE parenthetical slot, so it cannot say "not applicable"
-    // the way the scoreboard's cell can -- it can only show a number or nothing.
-    // A ping < 0 therefore renders as a bare name, which now means only "not sampled
-    // yet". It used to ALSO mean the host, whose own row publishes -1 because there is
-    // no RTT to itself to report -- but a client no longer reads that row: it reads its
-    // own, via roster_ledger::DisplayLink, because host<->client is one link with one
-    // RTT (user 2026-07-31: "client should see a Host <X> too"). Host-side, the host's
-    // own row is still Local/-1, and you never see your own plate anyway. The number
-    // itself is formatted by the one shared renderer.
-    //
-    // The name and the ping are still drawn as two pieces (they carry one colour
-    // each), but they are CENTRED AS ONE UNIT -- see the anchor block below, which
-    // records the 2026-07-31 user decision that supersedes the 2026-07-28 one.
-    // Kept for the record, because it is the cost the user accepted: centring
-    // `"<nick> (<ping>)"` as a unit means the NICK's centre sits half the suffix's
-    // width left of the bar's centre, and the name slides sideways as latency gains
-    // or loses a digit. 2026-07-28 that was the complaint ("никнейм не идеально
-    // прилегает своим центром к полоске hp, а выперает слева"); 2026-07-31, shown
-    // the result, the user asked for the whole label centred instead.
+    // A plate has one parenthetical slot, so it cannot say "not applicable" the way the
+    // scoreboard's cell can; it shows a number or nothing, and a negative ping renders as a bare
+    // name, meaning not sampled yet. A client reads its own roster row for the host's ping, since
+    // host and client are one link with one RTT; host-side the host's own row is local, and you
+    // never see your own plate. The number is formatted by the shared renderer. The name and the
+    // ping are drawn as two pieces (one colour each) but centred as one unit, see the anchor
+    // below; the cost is that the nick's centre sits half the suffix's width left of the bar's
+    // centre and slides sideways as the latency gains or loses a digit.
     char nickTxt[coop::text::kNickBufBytes];
     std::snprintf(nickTxt, sizeof(nickTxt), "%s", p.nick);
     char pingTxt[20] = {};
@@ -77,28 +64,26 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
         std::snprintf(pingTxt, sizeof(pingTxt), " (%s)", pb);
     }
 
-    // Occlusion (minecraft nametag shape; user 2026-07-05 refining 07-04): a peer
-    // behind world geometry keeps a readable plate, but the WHOLE unit -- nick AND
-    // health bar (badge/outline ride the same `a`) -- goes GRAY + half-transparent
-    // (x0.5) so "behind something" reads at a glance and nothing vanishes outright.
-    // Hurt-flash red keeps priority -- a hurt peer stays visible either way.
+    // Occlusion, the minecraft nametag shape: a peer behind world geometry keeps a readable plate,
+    // but the whole unit (the nick and the health bar; the badge and the outline ride the same
+    // alpha) goes grey and half-transparent, so behind-something reads at a glance and nothing
+    // vanishes. The hurt flash keeps priority.
     const float a = std::clamp(p.alpha, 0.f, 1.f) * (p.occluded ? 0.5f : 1.f);
     const ImU32 white   = IM_COL32(255, 255, 255, static_cast<int>(a * 245.f));
     const ImU32 gray    = IM_COL32(158, 158, 164, static_cast<int>(a * 245.f));
     const ImU32 red     = IM_COL32(255, 48, 48, static_cast<int>(a * 255.f));
     const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 215.f));
-    // v103 (12f): the peer's custom nick color replaces the white base; the
-    // flash/occluded signal colors keep priority (a hurt or hidden peer must
-    // read as such regardless of the cosmetic pick).
+    // The peer's custom nick colour replaces the white base; the flash and occluded colours keep
+    // priority, since a hurt or hidden peer must read as such regardless of the cosmetic pick.
     const ImU32 base = coop::nick_color::IsCustom(p.colorRGB)
         ? IM_COL32(coop::nick_color::R(p.colorRGB), coop::nick_color::G(p.colorRGB),
                    coop::nick_color::B(p.colorRGB), static_cast<int>(a * 245.f))
         : white;
     const ImU32 textCol = p.flash ? red : (p.occluded ? gray : base);
 
-    // Distance SIZE scale: the whole plate (text + bar + box + gaps) scales as ONE unit
-    // so a far peer's label stays proportional to their shrunken on-screen body. p.scale
-    // is 1.0 up close (capped) and shrinks ~1/distance to a legible floor far away.
+    // The distance size scale: the whole plate (text, bar, box, gaps) scales as one unit, so a far
+    // peer's label stays proportional to their shrunken body. The scale is 1 up close, capped, and
+    // shrinks about 1/distance to a legible floor.
     const float s = std::clamp(p.scale, 0.20f, 1.f);
     const float px = S(kNickPx) * s;
     const float barW = S(44.f) * s, barH = S(5.f) * s;
@@ -107,15 +92,14 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
 
     ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Nameplate);  // per-role font (F1 > Interface)
     if (!font) font = ImGui::GetFont();
-    // Measured SEPARATELY because they carry one colour each and are drawn as two
-    // calls -- NOT because the anchor centres the nick alone; it no longer does.
+    // Measured separately because they carry one colour each and are drawn as two calls, not
+    // because the anchor centres the nick alone; it does not.
     const ImVec2 sz     = font->CalcTextSizeA(px, FLT_MAX, 0.f, nickTxt);
     const ImVec2 pingSz = pingTxt[0] ? font->CalcTextSizeA(px, FLT_MAX, 0.f, pingTxt)
                                      : ImVec2(0.f, 0.f);
 
-    // 12g overhead chat bubble rows -- split BEFORE the on-screen clamp so the
-    // clamp can reserve the bubble's height (audit 2026-07-05: an unclamped
-    // bubble stack rendered off-screen-top when looking up at a nearby peer).
+    // The overhead chat bubble rows, split before the on-screen clamp so the clamp can reserve the
+    // bubble's height; an unclamped stack rendered off the top when looking up at a nearby peer.
     const float bpx = px * 0.88f;
     const float rowH = bpx + S(1.f) * s;
     constexpr int kMaxRows = 5;
@@ -136,23 +120,14 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     }
     const float bubbleH = nRows > 0 ? rowH * static_cast<float>(nRows) + S(4.f) * s : 0.f;
 
-    // Keep the whole nameplate on-screen: a peer in FRONT of you but whose head sits
-    // past a screen edge still shows the label at the edge instead of vanishing.
+    // Keep the whole nameplate on-screen: a peer in front of you whose head sits past a screen
+    // edge still shows the label at the edge instead of vanishing.
     const ImGuiIO& io = ImGui::GetIO();
     const float m = S(6.f);
-    // The WHOLE label is centred on the bar -- nick AND ping as one unit, so the
-    // plate is symmetric about the anchor again.
-    //
-    // USER DECISION 2026-07-31, and it SUPERSEDES the 2026-07-28 one recorded above.
-    // Shown the live plate, the user reported "Client <1ms> is not centered on the
-    // health bar" and, asked to choose between centring the whole string, moving the
-    // ping to its own line, or dropping it, answered "1. Center all actually". The
-    // known cost is the one 2026-07-04 objected to: the nick shifts a few pixels when
-    // the ping gains or loses a digit. That is accepted, not overlooked -- do not
-    // "fix" it back to nick-only centring without asking.
-    //
-    // Same shape as MTA, which draws the whole nametag string with DT_CENTER on the
-    // X the health bar is centred on (Client/mods/deathmatch/logic/CNametags.cpp:281).
+    // The whole label is centred on the bar, the nick and the ping as one unit, so the plate is
+    // symmetric about the anchor. The known cost is accepted: the nick shifts a few pixels when
+    // the ping gains or loses a digit; do not change it back to nick-only centring. MTA's
+    // nametags do the same, drawing the whole string centred on the health bar's X.
     const float labelW = sz.x + pingSz.x;
     const float ext = std::max(labelW, barW) * 0.5f;
     const float loX = m + ext, hiX = io.DisplaySize.x - m - ext;
@@ -161,31 +136,26 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     const ImVec2 textPos(ax - labelW * 0.5f, ay - sz.y - gap);
     const ImVec2 bp(ax - barW * 0.5f, ay - barGap);
 
-    // Plate extents (nick + bar union), kept for the voice-badge anchor below. The
-    // translucent black backing box once drawn from these extents is REMOVED (user
-    // 2026-07-02: no black rectangle behind the plate; if it ever returns, restore
-    // the AddRectFilled from git history) -- readability rides the 1px text outline
-    // + the health bar's own outline.
+    // The plate extents (the nick and bar union), kept for the voice-badge anchor below. No
+    // backing box is drawn: readability rides the text outline and the health bar's own outline.
     const float padX = S(6.f) * s, padY = S(3.f) * s;
     const ImVec2 boxMin(std::min(textPos.x, bp.x) - padX, textPos.y - padY);
     const ImVec2 boxMax(std::max(textPos.x + sz.x + pingSz.x, bp.x + barW) + padX,
                         bp.y + barH + padY);
 
     TextOutlined(dl, font, px, textPos, textCol, outline, nickTxt);
-    // The annotation still hangs off the nick's right edge -- but the pair is now
-    // centred as one unit (see the anchor above), so this is a layout continuation,
-    // not an exemption from the centring.
+    // The annotation hangs off the nick's right edge, but the pair is centred as one unit (the
+    // anchor above), so this is a layout continuation, not an exemption from the centring.
     if (pingTxt[0]) {
         TextOutlined(dl, font, px, ImVec2(textPos.x + sz.x, textPos.y),
                      textCol, outline, pingTxt);
     }
 
-    // 12g overhead chat bubble (MTA/SAMP shape): the peer's last chat message,
-    // word-wrapped + centered ABOVE the nick, its own hold/fade (chat_bubbles)
-    // multiplied into the plate's distance/occlusion alpha. Outlined text only --
-    // no backing box, consistent with the plate (user 2026-07-02: no black
-    // rectangles). Rows were split above (before the clamp, which reserved
-    // bubbleH); capped so a max-length line can't tower over the scene.
+    // The overhead chat bubble, the MTA and SAMP shape: the peer's last chat message, word-wrapped
+    // and centred above the nick, its own hold and fade multiplied into the plate's distance and
+    // occlusion alpha. Outlined text only, no backing box, like the plate. The rows were split
+    // above, before the clamp, which reserved their height; capped, so a max-length line cannot
+    // tower over the scene.
     if (nRows > 0) {
         const float ba = a * std::clamp(p.bubbleAlpha, 0.f, 1.f);
         const ImU32 bCol = IM_COL32(255, 255, 255, static_cast<int>(ba * 235.f));
@@ -203,11 +173,9 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
         }
     }
 
-    // Health bar (dark red). While occluded the fill stays RED -- a darker,
-    // more transparent red than the normal fill (user 2026-07-05: not gray;
-    // "hp остаётся красным, но потемнее и полупрозрачным" behind objects).
-    // Note `a` already carries the occlusion x0.5, so the lower constant here
-    // stacks on that. The nick keeps the gray treatment; hurt-flash wins.
+    // The health bar. While occluded the fill stays red, a darker and more transparent red than
+    // the normal fill; `a` already carries the occlusion halving, so the lower constant stacks on
+    // it. The nick takes the grey treatment; the hurt flash wins.
     const float frac = std::clamp(p.healthPct / 100.f, 0.f, 1.f);
     dl->AddRectFilled(bp, ImVec2(bp.x + barW, bp.y + barH), IM_COL32(0, 0, 0, static_cast<int>(a * 160.f)));
     const ImU32 fillCol = p.flash    ? red
@@ -216,8 +184,7 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     dl->AddRectFilled(bp, ImVec2(bp.x + barW * frac, bp.y + barH), fillCol);
     dl->AddRect(bp, ImVec2(bp.x + barW, bp.y + barH), IM_COL32(0, 0, 0, static_cast<int>(a * 200.f)));
 
-    // Voice badge (v66): right of the plate backing, scaled+faded with it
-    // (the SVC nameplate icon placement, design SS3.1).
+    // The voice badge: right of the plate extents, scaled and faded with it.
     if (p.voiceIcon != 0) {
         const float ih = S(13.f) * s;
         ui::voice_icons::Draw(dl, ImVec2(boxMax.x + S(4.f) * s + ih * 0.5f,
@@ -230,11 +197,10 @@ void DrawNameplates() {
     coop::nameplate::Snapshot ns;
     coop::nameplate::GetSnapshot(ns);
     if (ns.count <= 0) return;
-    // BACKGROUND draw list: over the game scene but UNDER every ImGui window
-    // (user 2026-06-12: nameplates are the lowest-priority layer -- the scoreboard /
-    // voice panel / browser must never be overdrawn by a plate). It renders in the
-    // same ImDrawData as everything else, so the screenshot grab still captures it;
-    // it never hit-tests input.
+    // The background draw list: over the game scene but under every ImGui window, since nameplates
+    // are the lowest-priority layer and the scoreboard, the voice panel and the browser must never
+    // be overdrawn by a plate. It renders in the same draw data as everything else, so the
+    // screenshot grab captures it; it never hit-tests input.
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < ns.count; ++i) {
         const auto& p = ns.plates[i];
@@ -243,11 +209,10 @@ void DrawNameplates() {
     }
 }
 
-// Dev object-overlay labels (coop::dev::object_overlay snapshot): a small anchor
-// dot at each projected object + up to 3 stacked text lines (names / net identity
-// / physics layers -- empty lines are skipped). Line 1 is tinted by tracking kind
-// so the problem class jumps out at a glance: cyan = wire mirror, green = tracked
-// local, ORANGE = untracked local-only (the objects that cannot mirror-sync).
+// The dev object-overlay labels: a small anchor dot at each projected object and up to three
+// stacked text lines (names, net identity, physics layers; empty lines skipped). Line 1 is
+// tinted by tracking kind, so the problem class jumps out: cyan is a wire mirror, green a
+// tracked local, orange an untracked local-only object, the kind that cannot mirror-sync.
 void DrawObjectOverlay() {
     namespace OO = coop::dev::object_overlay;
     if (!OO::IsEnabled()) return;
@@ -258,8 +223,8 @@ void DrawObjectOverlay() {
     ImFont* font = ImGui::GetFont();
     const ImGuiIO& io = ImGui::GetIO();
 
-    // Always-on status line (top-right): proves the overlay is live + shows the
-    // in-range tracked/untracked counts even when no label is on screen.
+    // The always-on status line, top right: proves the overlay is live and shows the in-range
+    // tracked and untracked counts even when no label is on screen.
     if (os.status[0]) {
         const float statusPx = S(13.f);
         const ImVec2 sz = font->CalcTextSizeA(statusPx, FLT_MAX, 0.f, os.status);
@@ -271,14 +236,14 @@ void DrawObjectOverlay() {
     for (int i = 0; i < os.count; ++i) {
         const auto& L = os.labels[i];
         if (L.alpha <= 0.02f) continue;
-        // Cull labels projected outside the viewport (small margin keeps a label
-        // attached to an object sliding off the edge from popping).
+        // Cull labels projected outside the viewport; a small margin keeps a label attached to an
+        // object sliding off the edge from popping.
         const float cm = S(60.f);
         if (L.x < -cm || L.y < -cm ||
             L.x > io.DisplaySize.x + cm || L.y > io.DisplaySize.y + cm) continue;
 
-        // Same billboard shape as the nameplates: base size up close, ~1/distance
-        // shrink to a legible floor.
+        // The same billboard shape as the nameplates: base size up close, about 1/distance shrink
+        // to a legible floor.
         const float s = (L.dist <= 600.f) ? 1.f : std::max(600.f / L.dist, 0.45f);
         const float a = std::clamp(L.alpha, 0.f, 1.f);
 
@@ -300,8 +265,8 @@ void DrawObjectOverlay() {
         if (L.line2[0]) { TextOutlined(dl, font, px2, ImVec2(tx, ty), grey, outline, L.line2);   ty += px2 + S(1.f); }
         if (L.line3[0]) { TextOutlined(dl, font, px2, ImVec2(tx, ty), grey, outline, L.line3);   ty += px2 + S(1.f); }
         if (L.line4[0]) {
-            // Health/process ramp: green (full) -> yellow -> red (empty); grey
-            // when no max is known (a bare pool has no meaningful fraction).
+            // The health or process ramp: green when full, through yellow, red when empty; grey
+            // when no maximum is known, since a bare pool has no meaningful fraction.
             ImU32 hcol = grey;
             if (L.healthFrac >= 0.f) {
                 const float f = L.healthFrac;
@@ -317,46 +282,40 @@ void DrawObjectOverlay() {
 }  // namespace
 
 bool IsActive() {
-    // chat_feed::HasAny() is LIVE lines only. RevealActive() is the other half: while
-    // the T-history is on screen -- including the fade-out after a close -- the frame
-    // must keep being built even if every live line has already expired, or the fade
-    // draws zero frames and the block vanishes instead of dimming.
+    // The live-lines check covers only live lines; the reveal check is the other half: while the
+    // chat history is on screen, including the fade-out after a close, the frame must keep being
+    // built even if every live line expired, or the fade draws zero frames and the block vanishes
+    // instead of dimming.
     return coop::nameplate::HasAny() || coop::chat_feed::HasAny() ||
            coop::chat_feed::RevealActive() ||
            coop::dev::object_overlay::IsEnabled() ||
            coop::dev::ragdoll_bone_overlay::IsEnabled() ||
-           coop::voice_chat::Enabled();  // v66: the local mic indicator works pre-join too
+           coop::voice_chat::Enabled();  // the local mic indicator works before a join too
 }
 
-// The local voice indicator (v66): a compact bottom-left icon, the SVC HUD chain
-// (talking / whispering / muted / disconnected; PTT idle shows nothing). Reads
-// the published UiSnapshot -- this runs on the RENDER thread, and the live
-// chain (LocalHudIcon) walks game-thread state (audit I-1).
+// The local voice indicator: a compact bottom-left icon (talking, whispering, muted,
+// disconnected; push-to-talk idle shows nothing). Reads the published snapshot, since this
+// runs on the render thread and the live chain walks game-thread state.
 void DrawLocalVoiceIcon() {
     coop::voice_chat::UiSnapshot vs;
     coop::voice_chat::GetUiSnapshot(vs);
     if (!vs.enabled || !vs.started) return;
     const auto icon = static_cast<coop::voice_chat::VoiceIcon>(vs.localIcon);
     if (icon == coop::voice_chat::VoiceIcon::None) return;
-    // Hide the "voice disconnected" badge when solo (no remote players present): a
-    // lone host/client hasn't failed at anything -- there is simply nobody to talk to
-    // yet, so the "no signal" glyph was pure noise (it vanished the instant a peer
-    // joined, which is exactly what the user saw). Once a peer IS present the icon is
-    // meaningful again (a real voice-transport-down state). (user 2026-06-18)
+    // Hide the disconnected badge when solo: a lone host or client has not failed at anything,
+    // there is nobody to talk to yet, and the no-signal glyph was noise that vanished the instant
+    // a peer joined. With a peer present the icon means a real transport-down state.
     if (icon == coop::voice_chat::VoiceIcon::Disconnected && !coop::nameplate::HasAny()) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();  // under windows, like the nameplates
-    // Offset right of the far-left edge so it clears VOTV's native bottom-left vitals
-    // column (food / stamina icons + their numbers), which the old x=26 fought with
-    // (user, 2026-06-13). x=170 clears the vitals readout; a compact 28 px badge
-    // sat near the bottom edge (user 2026-06-18: the prior 72 px badge was far too
-    // large).
+    // Offset right of the left edge so it clears the game's native bottom-left vitals column (the
+    // food and stamina icons and their numbers); a compact badge near the bottom edge.
     ui::voice_icons::Draw(dl, ImVec2(S(170.f), io.DisplaySize.y - S(36.f)), S(28.f), icon, 0.9f);
 }
 
-// Dev ragdoll skeleton ESP (coop::dev::ragdoll_bone_overlay snapshot): bone->parent
-// lines + joint dots for every ACTIVE ragdoll body. Orange = the local player's own
-// native ragdoll; cyan = a remote peer's mirror body (the v22 pelvis-coupled one).
+// The dev ragdoll skeleton overlay: bone-to-parent lines and joint dots for every active
+// ragdoll body. Orange is the local player's own native ragdoll; cyan a remote peer's mirror
+// body.
 void DrawRagdollBones() {
     namespace RB = coop::dev::ragdoll_bone_overlay;
     if (!RB::IsEnabled()) return;
@@ -377,7 +336,7 @@ void DrawRagdollBones() {
 
     for (int i = 0; i < rs.count; ++i) {
         const auto& L = rs.lines[i];
-        // Cull segments fully outside the viewport (margin keeps partially-visible limbs).
+        // Cull segments fully outside the viewport; the margin keeps partially visible limbs.
         const float m = S(80.f);
         if ((L.x1 < -m && L.x2 < -m) || (L.y1 < -m && L.y2 < -m) ||
             (L.x1 > io.DisplaySize.x + m && L.x2 > io.DisplaySize.x + m) ||
