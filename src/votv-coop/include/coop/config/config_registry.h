@@ -1,30 +1,16 @@
-// coop/config/config_registry.h -- the declarative config registry.
-//
-// BORN (ini rework arc 1, 2026-07-25) with the section order + the my-name
-// constant; GREW the full per-key row table in arc 2 (T2-enum); arc 3
-// (T2-migrate) moved DEFAULT OWNERSHIP into the rows and made the row the
-// TYPED READ/WRITE HANDLE (the const Row& ratchet) per the certified design
-// (research/findings/tooling/votv-ini-config-registry-DESIGN-2026-07-24.md +
-// the arc-3 impl design votv-ini-arc3-impl-DESIGN-2026-07-25.md).
-//
-// The registry is the SINGLE SOURCE for per-key config metadata:
-//   - the canonical key spelling + its multivoid.ini section;
-//   - the value KIND (flag / int / float / enum / free string / minted
-//     identity) with the numeric range or the enum token list;
-//   - the DEFAULT (arc 3) -- typed, aliasing the one owning constant where one
-//     exists (kDefaultPort / kOfficialMasterUrl / ... ) -- never a second copy;
-//   - the twin environment variable (env beats ini, F17);
-//   - the one seeded-active marker (net.nick, user-ruled).
-//
-// THE RATCHET: the only public read/write APIs (config.h) take the TYPED
-// handles declared below (rows::<ident>). Handles are constructible ONLY by
-// the registry TU (private-tag ctor) -- a future producer cannot mint an
-// unregistered key, and a wrong-kind read is a compile error. The row list
-// itself lives in config_registry_rows.inc (ONE list -> table + handles).
-//
-// ValidateRows() (config_registry.cpp) is a constexpr compile gate: numeric
-// defaults in [lo,hi], enum defaults in tokens (empty-sentinel allowlist:
-// net.role / net.ice), font-role rows key/suffix/def-family coherent.
+// coop/config/config_registry.h -- the declarative config registry, the single source for
+// per-key config metadata: the canonical key spelling and its multivoid.ini section; the
+// value kind (flag, int, float, enum, free string, minted identity) with the numeric range or
+// the enum token list; the typed default, aliasing the one owning constant where one exists
+// (the default port, the official master URL), never a second copy; the twin environment
+// variable (env beats ini); and the one seeded-active marker (net.nick). The ratchet: the
+// only public read and write APIs (config.h) take the typed handles declared below, which
+// are constructible only by the registry TU (a private-tag constructor), so a future
+// producer cannot mint an unregistered key and a wrong-kind read is a compile error. The row
+// list itself lives in config_registry_rows.inc, one list feeding both the table and the
+// handles. ValidateRows (config_registry.cpp) is a constexpr compile gate: numeric defaults
+// in range, enum defaults among the tokens (an empty-sentinel allowlist for net.role and
+// net.ice), font-role rows coherent in key, suffix and default family.
 
 #pragma once
 
@@ -33,38 +19,29 @@
 
 namespace coop::config_registry {
 
-// The default for MY OWN display name everywhere the local player's nick is
-// resolved with nothing configured (env absent, ini absent). A fresh ini SEEDS
-// a visible net.nick line meant to be SEEN AND REPLACED, per the standing user
-// rule ("оно должно не навязываться, игрок поменяет это на свой ник"), so the
-// value's whole job is to ANNOUNCE ITSELF AS A PLACEHOLDER. It used to be the
-// author's own handle, which read as a name a player might mistake for someone
-// else's rather than as a blank to fill in (USER 2026-08-26). Never used for
-// OTHER peers' missing nicks.
-//
-// Length is not incidental: `[V]` `player_handshake.h:51` caps a nick at
-// kNickMaxChars = 20 codepoints, and the host's arbiter appends a dense
-// smallest-free suffix over the WHOLE requested name as the stem
-// (`nickname_arbiter.cpp:28`). Every fresh install seeds the SAME value, so
-// a full lobby is the collision case by construction, not the rare one: `[V]`
-// kMaxPeers = 4, so the longest name this can produce is PlayerNickname4 at 15
-// of the 20 codepoints. The arbiter also sizes its variants against the cap
-// (`player_handshake.h:46`), so a longer default degrades gracefully rather
-// than silently -- but keep a new default short enough not to rely on that.
+// The default for my own display name wherever the local player's nick is resolved with
+// nothing configured (env absent, ini absent). A fresh ini seeds a visible net.nick line
+// meant to be seen and replaced, so the value's whole job is to announce itself as a
+// placeholder rather than read as someone's name. Never used for other peers' missing nicks.
+// The length matters: a nick is capped at kNickMaxChars codepoints and the host's arbiter
+// appends a dense smallest-free suffix over the whole requested name as the stem; every
+// fresh install seeds the same value, so a full lobby is the collision case by construction,
+// and the longest name this produces (the default plus a one-digit suffix) must fit the cap.
+// The arbiter also sizes its variants against the cap, so a longer default degrades
+// gracefully, but keep a new default short enough not to rely on that.
 inline constexpr const char* kMyNameDefault = "PlayerNickname";
 
-// Wide twin BUILT from the one narrow constant (ASCII) -- never a second
-// literal (that would be the transcription drift this header exists to kill).
+// The wide twin, built from the one narrow constant (ASCII), never a second literal: the
+// transcription drift this header exists to kill.
 inline std::wstring MyNameDefaultW() {
     std::wstring w;
     for (const char* p = kMyNameDefault; *p; ++p) w.push_back(static_cast<wchar_t>(*p));
     return w;
 }
 
-// Canonical multivoid.ini section order. [net] FIRST and [dev] LAST are the
-// verbatim ask; the middle is grouped by domain. Sections are decorative to
-// the parser (F3) -- this order exists for the human reading the file, and for
-// the T3 writer's section placement in a headered file.
+// The canonical multivoid.ini section order: [net] first and [dev] last, the middle grouped
+// by domain. Sections are decorative to the parser; this order exists for the human reading
+// the file and for the writer's section placement in a headered file.
 inline constexpr const char* kSectionOrder[] = {
     "net",     // multiplayer: nick, master, signaling, topology...
     "player",  // durable identity: player_guid, player_skin, nameplate, nick_color
@@ -74,7 +51,7 @@ inline constexpr const char* kSectionOrder[] = {
 };
 inline constexpr size_t kSectionCount = sizeof(kSectionOrder) / sizeof(kSectionOrder[0]);
 
-// ---- the per-key row table (T2-enum arc 2; defaults T2-migrate arc 3) -------
+// The per-key row table.
 
 enum class Kind : unsigned char {
     Flag,      // truthiness: 1|true|yes|on / 0|false|no|off (ci); anything else = garbage
@@ -86,63 +63,52 @@ enum class Kind : unsigned char {
 };
 
 struct Row {
-    const char* key;      // canonical spelling (all-lowercase; F40: no ci twins)
+    const char* key;      // canonical spelling (all lowercase; no case-insensitive twins)
     const char* section;  // one of kSectionOrder
     Kind kind;
     double lo, hi;        // Int/Float validity range (unused otherwise)
     const char* tokens;   // Enum: "a|b|c" (ci). nullptr otherwise.
     const char* envVar;   // twin env var (env beats ini) or nullptr
-    bool seededActive;    // T1: the skeleton seeds key=kMyNameDefault (net.nick only)
-    // ---- the typed default (arc 3, T2-migrate; exactly the kind's member is
-    // meaningful; Identity rows have none) ------------------------------------
+    bool seededActive;    // the skeleton seeds the key with the name default (net.nick only)
+    // The typed default: exactly the kind's member is meaningful; Identity rows have none.
     bool defB;
     long defI;
     float defF;
-    const char* defS;     // Enum: the default token ("" = unset sentinel);
-                          // String: the default value. nullptr for other kinds.
-    // ---- the T8 catalog columns (arc 4) -------------------------------------
-    const char* gatedBy;  // key of the Flag row gating the INI read (nullptr =
-                          // ungated; ValidateRows: must exist + be a Flag row)
-    const char* desc;     // human catalog text -- SEMANTICS ONLY (tokens/range/
-                          // env twin are generator-emitted from the columns)
+    const char* defS;     // Enum: the default token, empty meaning unset; String: the default; null otherwise
+    // The catalog columns.
+    const char* gatedBy;  // key of the Flag row gating the ini read, or null; must exist and be a Flag row
+    const char* desc;     // catalog text, semantics only; tokens, range and env twin are emitted from the columns
 };
 
-// The row list. Completeness vs the call-site universe is enforced by the
-// ratchet itself (no string-keyed read/write API exists); the reverse
-// direction (a row nobody references) is policed by tools/config/
-// registry_gate.ps1 in CI.
+// The row list. Completeness against the call-site universe is enforced by the ratchet
+// itself (no string-keyed read or write API exists); the reverse direction, a row nobody
+// references, is policed by tools/config/registry_gate.ps1 in CI.
 const Row* Rows(size_t& count);
 
-// First row whose key ci-equals `key`, or nullptr. FOR THE SCHEMA'S OWN
-// MACHINERY ONLY (the T10 sweep / T3 writer / panel classify keys discovered
-// IN THE FILE, inherently by string). Its result feeds no read API: typed
-// handles cannot be built from it outside the registry TU.
+// The first row whose key equals `key` case-insensitively, or null. For the schema's own
+// machinery only (the unknown-key sweep, the writer and the panel classify keys discovered
+// in the file, inherently by string); its result feeds no read API, since typed handles
+// cannot be built from it outside the registry TU.
 const Row* FindRow(const char* key);
 
-// True if `key` is a registry key (ci). The T10 unknown-key report is the
-// complement of this predicate. (Since arc 3 the ui.font.<role> family are
-// real rows, so this is a plain row lookup.)
+// True if `key` is a registry key (case-insensitive). The unknown-key report is the
+// complement of this predicate.
 bool IsKnownKey(const char* key);
 
-// A key that USED to be a real setting and was retired. Returns the sentence a
-// player should read instead of "typo, or a retired key", or nullptr for a key
-// this build never had.
-//
-// WHY THIS TABLE EXISTS. RULE 2 guarantees keys get retired, and the settings
-// sweep can only ask "is this key in the registry" -- so every retirement
-// presents a player with their own ini line flagged as a probable typo, in a
-// popup, with no explanation. The first one to actually ship that way was
-// `player_guid` (v144), and the user's screenshot of it is why this is a table
-// and not a special case: the NEXT retirement gets the same treatment for one
-// added line. The row stays Unknown so "Tidy up multivoid.ini" still removes it
-// -- what changes is that the panel can say WHERE the setting went.
+// A key that used to be a real setting and was retired: the sentence a player should read
+// instead of a typo warning, or null for a key this build never had. Keys get retired, and
+// the settings sweep can only ask whether a key is in the registry, so every retirement
+// would otherwise present a player with their own ini line flagged as a probable typo, in a
+// popup, with no explanation; the next retirement gets the same treatment for one added
+// line. The row stays unknown, so the tidy-up still removes it; what changes is that the
+// panel can say where the setting went.
 const char* RetiredKeyNote(const char* key);
 
-// ---- typed handles (the arc-3 ratchet) --------------------------------------
+// The typed handles.
 
 namespace detail {
-// Private construction tag: only the registry TU (RegistryDef) can mint
-// handles -- FindRow's Row* cannot be wrapped elsewhere (impl-design R10).
+// The private construction tag: only the registry TU can mint handles, so a row pointer from
+// FindRow cannot be wrapped elsewhere.
 struct RegistryCtorKey {
   private:
     constexpr RegistryCtorKey() = default;
@@ -171,20 +137,18 @@ struct StringRow {
     const Row* row;
     constexpr StringRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
 };
-// Identity rows have NO read handle (the mint machinery reads them internally,
-// config.cpp) -- this handle exists for the WRITE door only (C3b): the mint
-// persist + the skin picker go through the same typed WriteIniValue as every
-// other product write.
+// Identity rows have no read handle (the mint machinery reads them internally, in
+// config.cpp); this handle exists for the write door only, so the mint persist and the skin
+// picker go through the same typed write as every other product write.
 struct IdentityRow {
     const Row* row;
     constexpr IdentityRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
 };
 
-// The named handles, one per row, generated from config_registry_rows.inc
-// (definitions in config_registry.cpp). Reference these QUALIFIED
-// (rows::<ident>) -- using-directives/-declarations/namespace-aliases for this
-// namespace are forbidden and CI-asserted (registry_gate.ps1), which is what
-// makes the gate's reference census exact.
+// The named handles, one per row, generated from config_registry_rows.inc (definitions in
+// config_registry.cpp). Reference them qualified: using-directives, using-declarations and
+// namespace aliases for this namespace are forbidden and CI-asserted, which is what makes
+// the gate's reference census exact.
 namespace rows {
 #define CFG_FLAG(ident, key, section, defB, envVar, desc) extern const FlagRow ident;
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) extern const IntRow ident;
@@ -206,27 +170,25 @@ namespace rows {
 #undef CFG_FONTROLE
 }  // namespace rows
 
-// ---- the composed ui.font.<role> family (real Enum rows since arc 3) --------
+// The composed ui.font.<role> family, real Enum rows.
 
-// Role ini-key suffixes, in ui::fonts::Role order (fonts.cpp static_asserts
-// its kRoles table against this count; ValidateRows pins each font-role row's
-// key to "ui.font." + this suffix, in this order).
+// Role ini-key suffixes, in the font Role order (fonts.cpp asserts its role table against
+// this count; ValidateRows pins each font-role row's key to this suffix, in this order).
 inline constexpr const char* kFontRoleKeys[] = {
     "menu", "chat", "net", "nameplate", "toast",
 };
 inline constexpr size_t kFontRoleCount = sizeof(kFontRoleKeys) / sizeof(kFontRoleKeys[0]);
 
-// Font family ini tokens, in ui::fonts::Family order (fonts.cpp consumes these
-// by index for its kFamilies table -- the token spelling lives ONLY here).
+// Font family ini tokens, in the font Family order (fonts.cpp consumes these by index; the
+// token spelling lives only here).
 inline constexpr const char* kFontFamilyTokens[] = {
     "jetbrains", "roboto", "cascadia", "fixedsys",
 };
 inline constexpr size_t kFontFamilyCount =
     sizeof(kFontFamilyTokens) / sizeof(kFontFamilyTokens[0]);
 
-// Per-role DEFAULT family index (into kFontFamilyTokens), generated from the
-// SAME .inc rows (arc 3; replaces fonts.cpp's RoleDesc.defaultFam column --
-// the user-2026-07-09 per-role assignment now lives in the row list only).
+// The per-role default family index, generated from the same rows; the per-role assignment
+// lives in the row list only.
 inline constexpr int kFontRoleDefaultFamily[] = {
 #define CFG_FLAG(ident, key, section, defB, envVar, desc)
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
@@ -250,7 +212,7 @@ static_assert(sizeof(kFontRoleDefaultFamily) / sizeof(kFontRoleDefaultFamily[0])
                   kFontRoleCount,
               "font-role rows and kFontRoleKeys must stay in lockstep");
 
-// The per-role Enum row handle, in Role order (for ui/fonts.cpp's indexed read).
+// The per-role Enum row handle, in Role order, for the fonts module's indexed read.
 const EnumRow& FontRoleRow(size_t roleIdx);
 
 }  // namespace coop::config_registry
