@@ -129,7 +129,7 @@ ping, coordinate, refiner, radar and detector simulations. No lane mirrors them:
 the transferred save, once, so a level bought mid-session diverges silently. The desk routes
 around it by streaming the derived frequency and polarity data, but the struct itself, and the
 purchase as an intent the host validates against the shared research points, are designed and
-not built. The ATV's physical modules are on the vehicles page.
+not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 
 ## Who owns what
 

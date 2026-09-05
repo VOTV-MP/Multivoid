@@ -69,7 +69,9 @@ and how a client sees one fire, the event actors, the pyramid, the alarm, emails
 [signals.md](signals.md) (the signal workstation: occupancy, the desk, the download simulation, the
 catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades) ·
 [devices.md](devices.md) (doors, keypads, lights, the power panel, the turbine, windows and grime,
-the drone, and the economy: the balance, shop orders, the coin gun)
+the drone, and the economy: the balance, shop orders, the coin gun) · [vehicles.md](vehicles.md)
+(the ATV: a mirror that runs the rig natively and is corrected, the two authority predicates,
+the condition that travels)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -78,8 +80,7 @@ the drone, and the economy: the balance, shop orders, the coin gun)
 
 **Per-domain trees**, one folder per game system, each with its own README
 
-[notifications/](notifications/) ·
-[vehicles/](vehicles/) (the ATV)
+[notifications/](notifications/)
 
 ## How to read a claim in these docs
 
