@@ -1,67 +1,41 @@
-// coop/config/config_registry_rows.inc -- THE one registry row list (ini rework
-// arc 3, T2-migrate; arc 4 adds the desc/gatedBy columns for the T8 catalog).
-// X-macro'd: config_registry.h expands it into the typed handle DECLARATIONS
-// (rows::<ident>), config_registry.cpp expands it three times (index enum /
-// Row table / handle definitions) -- ONE list, every artifact, no
-// transcription (the drift class T2 exists to kill).
-//
-// Entry forms (ident = the C++ handle name; key = canonical ini spelling;
-// desc = the T8 catalog's human text -- SEMANTICS ONLY: allowed tokens,
-// ranges and the env twin are generator-emitted from the columns, never
-// written into desc):
-//   CFG_FLAG    (ident, key, section, defB, envVar, desc)
-//   CFG_INT     (ident, key, section, defI, lo, hi, envVar, desc)
-//   CFG_FLOAT   (ident, key, section, defF, lo, hi, envVar, desc)
-//   CFG_ENUM    (ident, key, section, defS, tokens, envVar, desc) // defS "" =
-//               // unset sentinel, ONLY net.role / net.ice (ValidateRows)
-//   CFG_STRING  (ident, key, section, defS, envVar, seeded, desc)
-//   CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
-//               // gatedBy = the Flag row key that gates the INI read
-//               // (ValidateRows: must exist + be a Flag row)
-//   CFG_IDENTITY(ident, key, section, desc)                // minted, no def
-//   CFG_FONTROLE(ident, key, roleSuffix, defFamilyIndex, desc)
-//
-// DEFAULTS carry the arc-3 migration (BEFORE harvest 2026-07-25: 100 keys,
-// 108 sites, ZERO same-key conflicts) or ALIAS the one owning constant
-// (kDefaultPort / kOfficialMasterUrl / kOfficialSignalingUrl / kMyNameDefault).
+// coop/config/config_registry_rows.inc -- the one registry row list, X-macro'd:
+// config_registry.h expands it into the typed handle declarations, and config_registry.cpp
+// expands it three times (the index enum, the row table, the handle definitions), so every
+// artifact comes from one list with no transcription. The entry forms (ident is the C++ handle
+// name, key the canonical ini spelling, desc the catalog's human text, semantics only, since
+// the allowed tokens, ranges and env twin are generator-emitted from the columns): CFG_FLAG
+// (ident, key, section, default, envVar, desc); CFG_INT and CFG_FLOAT add a range; CFG_ENUM
+// takes the token list, an empty default being the unset sentinel allowed only for the role
+// and ICE rows; CFG_STRING adds the seeded flag; CFG_STRING_GATED adds the flag row key that
+// gates the ini read; CFG_IDENTITY is minted with no default; CFG_FONTROLE takes the role
+// suffix and the default family index. A default is either the value the code used before the
+// registry or an alias of the one owning constant.
 
-// ---- [net] ------------------------------------------------------------------
+// The [net] section.
 CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", true,
     "Your display name, shown to other players (nameplates, chat, the scoreboard).")
-// THE LOBBY PASSWORD, remembered between sessions so a host who has told their friends one
-// value does not have to tell them a new one every time they host. Written by the hosting
-// flow's second window (`ui/host_session_settings`), which mints one the moment the player
-// chooses "Password required" and leaves it editable.
-//
-// IT HAS AN ENV TWIN, AND THE FIRST VERSION OF THIS COMMENT ARGUED IT SHOULD NOT. That
-// argument was "an env var is visible to every process on the box"; it is true and it is
-// also true of the ini line directly above it, so the exclusion bought nothing an attacker
-// who can already run code as this user would notice. What it DID buy was an untestable
-// lane -- the drill that proves a wrong password is refused has no other way to configure
-// the two peers -- and an untestable path hides more than its residual. `net.signaling_token`
-// is the same shape and already carries one.
-//
-// NOT SEEDED. A generated value written into the ini at first boot would mint a password
-// for every player who never hosts, and a value in a config file that nothing produced is
-// exactly the kind of thing that gets pasted into a bug report.
+// The lobby password, remembered between sessions so a host who has told friends one value
+// need not tell them a new one every time. Written by the hosting window, which mints one the
+// moment the player chooses a password and leaves it editable. It has an env twin: an env var
+// is visible to every process on the box, but so is the ini line, so excluding it would buy
+// nothing against an attacker already running as this user, and it would leave an untestable
+// lane, since the drill that proves a wrong password is refused has no other way to configure
+// the two peers. Not seeded: a generated value written at first boot would mint a password
+// for every player who never hosts, and a value nothing produced is what gets pasted into a
+// bug report.
 CFG_STRING(net_lobby_password, "net.lobby_password", "net", "", "VOTVCOOP_NET_LOBBY_PASSWORD",
     false,
     "Password for sessions you host with the lock on. Generated for you when you first turn "
     "the lock on; change it to anything you like. Only players you give it to can join.")
-// THE PASSWORD YOU OFFER WHEN JOINING SOMEONE ELSE'S LOCKED SESSION -- a DIFFERENT
-// secret from the one above, and separating them closes a real leak.
-//
-// They were one row for half a day. `TakeJoinPassword` fell back to `net.lobby_password`
-// when no prompt had been filled in, and that row holds the password the player's OWN
-// hosted sessions require -- so a player who had ever hosted a locked lobby offered THEIR
-// OWN lobby's secret to any locked host they reached on the direct/LAN/scripted lanes.
-// The binding gate stops a stranger grinding it, but carrying the wrong secret to the
-// right host is not something binding was ever meant to cover (post-ship audit,
-// 2026-08-31).
-//
-// Normal play never touches this: the browser's password prompt supplies the value for
-// the one join it was typed for and it is cleared on use. This row exists for the client
-// that has no prompt -- a scripted, LAN or dedicated joiner.
+// The password offered when joining someone else's locked session, a different secret from
+// the one above; separating them closed a real leak. As one row, the join fell back to the
+// lobby password when no prompt had been filled in, and that row holds the password the
+// player's own hosted sessions require, so a player who had ever hosted a locked lobby offered
+// their own secret to any locked host reached on the direct, LAN or scripted lanes; the
+// binding gate stops a stranger grinding it, but carrying the wrong secret to the right host
+// is not what binding covers. Normal play never touches this: the browser's prompt supplies
+// the value for the one join it was typed for and clears it on use. The row exists for the
+// client with no prompt: a scripted, LAN or dedicated joiner.
 CFG_STRING(net_join_password, "net.join_password", "net", "", "VOTVCOOP_NET_JOIN_PASSWORD",
     false,
     "Password to offer when you join a locked server, for setups with no UI to type it in. "
@@ -102,16 +76,13 @@ CFG_STRING_GATED(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSi
 CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false,
     "Access token for a self-hosted signaling server. The official flow mints per-session "
     "tokens automatically -- leave empty.")
-// ITS JOB DOUBLED ON 2026-08-31 AND THE DESCRIPTION HAD TO FOLLOW. It used to be a
-// ROUTING value read on the P2P branch alone -- which host to rendezvous with over
-// signaling. A65 made the same value the ANCHOR a joiner binds the answering key to, and
-// A2's password proof refuses to be emitted without that binding, so it is now read on the
-// DIRECT and LAN lanes too (`config.cpp:473`, `session_manager.cpp:817`). A player who was
-// given only an address is unbound: they can still join any OPEN server and are refused by
-// a locked one with a sentence saying why.
-//
-// A STALE VALUE HERE NOW REFUSES EVERY DIRECT/LAN JOIN, which the old wording did not warn
-// about because it could not happen. Hence the sharper "clear it" in the text.
+// The host identity's job doubled and the description followed. It was a routing value read
+// on the internet branch alone, which host to rendezvous with over signaling; it is now also
+// the anchor a joiner binds the answering key to, and the password proof refuses to be
+// emitted without that binding, so it is read on the direct and LAN lanes too. A player given
+// only an address is unbound: they can still join any open server and are refused by a
+// locked one with a sentence saying why. A stale value here refuses every direct and LAN
+// join, hence the sharper clear-it in the text.
 CFG_STRING(net_host_identity, "net.host_identity", "net", "", "VOTVCOOP_NET_HOST_IDENTITY", false,
     "The host you expect to reach, as their `gen:` line -- needed only to join a "
     "PASSWORD-LOCKED server by direct address or on a LAN, where nothing else can tell you "
@@ -131,22 +102,20 @@ CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay|disable|default", "VOTVCOOP_N
     "ICE candidate policy for p2p sessions. Unset/all = every path; relay = force the TURN "
     "relay; disable/default = engine defaults.")
 
-// The receive-boundary novelty cap (coop/text/novelty_ledger.h). Since the ImGui
-// 1.92 flip every codepoint in the repertoire is rasterisable on demand from chat
-// text, which is the one attacker-controlled string in the process -- so a few
-// hundred bytes of diverse UTF-8 can force thousands of FreeType rasterisations
-// on every receiving peer, inside one frame. These bound the BURST, not the total
-// (the ledger is monotone by design); pack exhaustion is answered by capacity, in
-// ui/fonts.cpp's TexMax reasoning. Filed under [net] because what they police is
-// an INBOUND PEER FIELD -- the refusal happens beside the strict UTF-8 decode,
-// not at any draw call.
+// The receive-boundary novelty cap (coop/text/novelty_ledger.h). Every codepoint in the
+// repertoire is rasterisable on demand from chat text, the one attacker-controlled string in
+// the process, so a few hundred bytes of diverse UTF-8 can force thousands of rasterisations
+// on every receiving peer inside one frame. These bound the burst, not the total (the ledger
+// is monotone by design); pack exhaustion is answered by capacity, in the fonts module. Filed
+// under [net] because what they police is an inbound peer field: the refusal happens beside
+// the strict UTF-8 decode, not at any draw call.
 CFG_INT(net_novelty_budget, "net.novelty_budget", "net", 512, 0, 100000, nullptr,
     "Never-before-seen codepoints one peer may introduce per window (0 = no cap). "
     "A text field that would exceed it is refused whole.")
 CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 3600000, nullptr,
     "Length of the novelty budget window, in milliseconds.")
 
-// ---- [player] ---------------------------------------------------------------
+// The [player] section.
 CFG_IDENTITY(player_skin, "player_skin", "player",
     "Persisted body-skin choice, rolled from the starter list on first launch. Change it "
     "in-game (F1 menu > skins).")
@@ -155,9 +124,8 @@ CFG_FLAG(nameplate, "nameplate", "player", true, nullptr,
 CFG_STRING(nick_color, "nick_color", "player", "unset", nullptr, false,
     "Your nickname color as RRGGBB hex, or unset. Pick it in-game (F1 menu color picker).")
 
-// ---- [ui] -------------------------------------------------------------------
-// ui.scale range = the user-pref clamp; scale.cpp consumes THIS row's range AND
-// default -- single source.
+// The [ui] section. The scale range is the user-preference clamp; the scale module consumes
+// this row's range and default, a single source.
 CFG_FLOAT(ui_scale, "ui.scale", "ui", 1.25f, 0.75, 1.75, nullptr,
     "Scale multiplier for the mod's UI panels.")
 CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
@@ -171,9 +139,9 @@ CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefault
     "ours, so the box offered a port nothing in the mod has ever bound.")
 CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
     "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
-// The composed ui.font.<role> family, per-role Enum rows. Default family per
-// role = the user-2026-07-09 decision: menu/chat/toast = fixedsys(3),
-// net/nameplate = roboto(1). Family index order = kFontFamilyTokens.
+// The composed font family, per-role enum rows. The default family per role: the menus, chat
+// and the toast use fixedsys, the net overlay and the nameplates use roboto; the family index
+// order is the font family token list.
 CFG_FONTROLE(ui_font_menu, "ui.font.menu", "menu", 3,
     "Font family for the mod's menus and panels.")
 CFG_FONTROLE(ui_font_chat, "ui.font.chat", "chat", 3,
@@ -185,7 +153,7 @@ CFG_FONTROLE(ui_font_nameplate, "ui.font.nameplate", "nameplate", 1,
 CFG_FONTROLE(ui_font_toast, "ui.font.toast", "toast", 3,
     "Font family for the update/version toast.")
 
-// ---- [voice] ----------------------------------------------------------------
+// The [voice] section.
 CFG_FLAG(voice_enabled, "voice.enabled", "voice", true, "VOTVCOOP_VOICE_ENABLED",
     "Master switch for voice chat (restart the game after changing).")
 CFG_ENUM(voice_mode, "voice.mode", "voice", "ptt", "ptt|activation", "VOTVCOOP_VOICE_MODE",
@@ -217,9 +185,8 @@ CFG_FLAG(voice_test_tone, "voice.test_tone", "voice", false, "VOTVCOOP_VOICE_TES
 CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPBACK",
     "Dev: play your own transmitted voice back locally.")
 
-// ---- [dev] ------------------------------------------------------------------
-// enabled: the master kill-switch -- ABSENT/garbage default TRUE (= granular
-// switches decide); only an explicit falsy forces dev features off.
+// The [dev] section. The master switch: absent or garbage defaults to on, the granular
+// switches deciding; only an explicit off forces dev features off.
 CFG_FLAG(enabled, "enabled", "dev", true, nullptr,
     "Master switch for ALL dev/test features below: an explicit 0 disables them; absent or "
     "1 lets the granular switches decide.")
@@ -377,21 +344,19 @@ CFG_FLAG(force_kerfur_unmap, "force_kerfur_unmap", "dev", false, nullptr,
 CFG_FLAG(force_save_churn, "force_save_churn", "dev", false, nullptr,
     "Test driver: force save churn (identity stress).")
 
-// THE TWO ATLAS DRILL KNOBS. ui/atlas_watch.cpp ships two silent-degradation
-// detectors, and a detector nobody has watched go RED is decoration
-// ([[lesson-an-instrument-never-shown-failing-passes-by-construction]]). Each of
-// these forces the exact condition one detector exists to catch, so the drill is
-// a launch away instead of a source edit plus a rebuild -- which is the
-// difference between a drill that gets re-run after the next refactor and one
-// that does not. Both default to OFF and neither is reachable from any UI.
+// The two atlas drill knobs. The atlas watch ships two silent-degradation detectors, and a
+// detector nobody has watched go red is decoration; each of these forces the exact condition
+// one detector exists to catch, so the drill is a launch away instead of a source edit plus a
+// rebuild, the difference between a drill that gets re-run after the next refactor and one
+// that does not. Both default off; neither is reachable from any UI.
 CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
     "VOTVCOOP_ATLAS_TEXMAX",
     "Override the font atlas size ceiling (0 = the shipped 2048). Set 256 to starve "
     "the packer and prove the pack-failure detector fires.")
-// The admission drill (v144). CLIENT-SIDE ONLY, and that is the whole design:
-// the host's gate has no knob, no dev branch and no env check anywhere, so the
-// drill exercises the REAL refusal or it proves nothing. A knob on the host would
-// make the drill's own pass conditional on a bypass existing in shipped code.
+// The admission drill, client side only, and that is the whole design: the host's gate has no
+// knob, no dev branch and no env check anywhere, so the drill exercises the real refusal or
+// it proves nothing; a knob on the host would make the drill's own pass conditional on a
+// bypass existing in shipped code.
 CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
     "VOTVCOOP_AUTH_DRILL",
     "Sabotage THIS CLIENT's identity proof, to prove the host refuses it. corrupt = "
@@ -405,12 +370,11 @@ CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "
     "cmaps. Proves the superset invariant fires. Breaks name folding -- drill only.")
 
-// THE NATIVE-UI PROBE (docs/MULTIPLAYER_UI.md section 8, P1). Two knobs on
-// purpose: the read half answers every question the native server browser's
-// design left unmeasured and touches nothing, while RUNG 1 -- the one that
-// decides the screen's PLACEMENT -- writes into the live shipped
-// `switcher_widgets`. A write into the one hands-on-verified native inject does
-// not ride the same opt-in as a log line.
+// The native-UI probe, two knobs on purpose: the read half answers the questions the native
+// server browser's design left unmeasured and touches nothing, while the write rung, the one
+// that decides the screen's placement, writes into the live shipped widget switcher, and a
+// write into the one hands-on-verified native inject does not ride the same opt-in as a log
+// line.
 CFG_FLAG(native_ui_probe, "native_ui_probe", "dev", false, "VOTVCOOP_NATIVE_UI_PROBE",
     "Diagnostic probe (READ-ONLY): UMG class/function resolution census, donor "
     "residency, the ui_menu switcher child map, and the count of frames presented "
@@ -428,21 +392,13 @@ CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
     "live ui_menu widget switcher, shows it for ~2 s, then restores the previous "
     "active index and removes it. Main menu only, never with a session up. Requires "
     "native_ui_probe=1.")
-// THE NATIVE SERVER BROWSER IS THE DEFAULT, PERMANENTLY (USER DECISION 2026-08-30:
-// "делаем нативный браузер дефолтом вечным"). This row is no longer a dev flag and no
-// longer a trial: it is the user-facing FALLBACK SWITCH that plan step T8 said it would
-// become. ON (the default) means the MULTIPLAYER button opens the native UMG screen, which
-// is drawn inside the game's own menu, obeys its palette and carries its button sounds.
-//
-// OFF is the deliberate way back to the ImGui browser, which STAYS -- an explicit RULE-2
-// exception on the user's own call (2026-08-26: "пусть imgui server browser пока живёт,
-// даже когда он уйдёт на пенсию, пусть будет как запасной вариант"). It is a product
-// decision about what they want, not a HOW that RULE 1 could override.
-//
-// KNOWN LIMIT OF THE FALLBACK, and it is not fixed by this row: reaching it costs an ini
-// edit plus a RESTART, so a player whose native browser breaks cannot fall back during the
-// session that broke. What «запасной вариант» should mean -- feature-equal, or
-// last-resort-connect -- is still the user's to answer (MULTIPLAYER_UI section 8c.-1, T8).
+// The native server browser is the default, permanently. This row is not a dev flag and not
+// a trial: it is the user-facing fallback switch. On, the default, means the multiplayer
+// button opens the native screen, drawn inside the game's own menu, obeying its palette and
+// carrying its button sounds. Off is the deliberate way back to the overlay browser, which
+// stays as the spare, a product decision about what the player wants. The known limit of the
+// fallback: reaching it costs an ini edit plus a restart, so a player whose native browser
+// breaks cannot fall back during the session that broke.
 CFG_FLAG(browser_native, "browser_native", "ui", true, "VOTVCOOP_BROWSER_NATIVE",
     "Use the native in-game server browser (drawn inside VOTV's own menu). Turn this off "
     "to fall back to the older overlay browser; the change needs a restart.")
