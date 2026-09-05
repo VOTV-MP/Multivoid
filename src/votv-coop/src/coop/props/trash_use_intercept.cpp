@@ -1,24 +1,17 @@
-// coop/props/trash_use_intercept.cpp -- the CLIENT-grab bridge on the "use" (E) input.
-//
-// Extracted from trash_collect_sync.cpp (2026-07-07 modularization B1a). This is the
-// InpActEvt_use PRE-interceptor family: on a CLIENT it cancels the native pile grab /
-// carry-throw press (and the paired use_deny "EHHH") and routes GrabIntent/ThrowIntent
-// to the host; on the HOST it always runs native. The re-pile / drop OBSERVERS and the
-// held-item broadcast stay in trash_collect_sync -- this file owns ONLY the use-input
-// interception + the LMB hard-throw bridge. Its Install/OnDisconnect are delegated to by
-// trash_collect_sync::Install/OnDisconnect. Game thread only (input dispatch).
-//
-// docs/piles/08 (the client-grab full chain + the three "use" delegate seams _41/_38/_42
-// and the _58/_59 fire seams) is the authority for the mechanism; the code moved verbatim.
+// coop/props/trash_use_intercept.cpp -- the client-grab bridge on the use input: the interceptor
+// family on the player's use input event. On a client it cancels the native pile grab and
+// carry-throw press (and the paired deny sound) and routes a grab or throw intent to the host;
+// on the host it always runs native. The re-pile and drop observers and the held-item
+// broadcast stay in trash_collect_sync, which delegates its install and disconnect here; this
+// file owns only the use-input interception and the left-button hard-throw bridge. Game thread
+// only.
 
 #include "coop/props/trash_use_intercept.h"
 
-// OnPileUseIntercept runs the CLIENT-grab full chain (docs/piles/08), so it pulls in the
-// same broad dependency set trash_collect_sync did; the observer-only headers among these
-// are harmless (unused-include) and can be trimmed later.
+// The client-grab chain pulls in the same broad dependency set trash_collect_sync did.
 #include "coop/dev/spawn_order_probe.h"
 #include "coop/element/element.h"
-#include "coop/element/quiescence_drain.h"   // ArmGhostSweep (v106b)
+#include "coop/element/quiescence_drain.h"   // ArmGhostSweep
 #include "coop/creatures/kerfur_entity.h"    // IsKerfurActor / IsKerfurPropClass
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -56,48 +49,32 @@ namespace P  = ue_wrap::profile;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
 
-// Own cached Session (the PRE callbacks are param-less UFunction hooks -> they must read a
-// cached pointer). Set by Install (delegated from trash_collect_sync::Install), cleared by
-// OnDisconnect. Game-thread read inside the callbacks. (trash_collect_sync keeps its OWN
-// g_session for its observers -- each subsystem caches the session it needs; both are set
-// from the one top-level Install call, so they never diverge.)
+// The cached session: the PRE callbacks are param-less UFunction hooks, so they read a cached
+// pointer. Set by Install, cleared by OnDisconnect, read on the game thread;
+// trash_collect_sync keeps its own for its observers, both set from the one top-level install.
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_grabObserverInstalled = false;  // InpActEvt_use PRE registration latch (process life)
 
-// GESTURE-PAIRING latch: a CANCELLED client use-PRESS must cancel its paired IE_Released
-// (_42) too -- the BP never saw the press, so its release handler would run against a
-// press-less state and hit useAction's use_deny. Armed by every cancelled press seam,
-// consumed by the next _42 fire. Game-thread only.
+// The gesture-pairing latch: a cancelled client use press must cancel its paired release too,
+// since the blueprint never saw the press and its release handler would run against a
+// press-less state and hit the deny. Armed by every cancelled press seam, consumed by the next
+// release. Game thread only.
 bool g_cancelPairedUseRelease = false;
 
-// ---- The client-grab INTERCEPTOR on InpActEvt_use (docs/piles/08) ------------------------------------
-//
-// DECISIVE RE (votv-pile-grab-observable-hook-RE-2026-06-08-pass1.md): a chipPile grab is the E-press
-// input action AmainPlayer_C::InpActEvt_use_..._41 -> icast(lookAtActor)->playerGrabbed (spawn clump +
-// pickupObjectDirect(clump) + K2_DestroyActor(self)), all dispatched BP-internally (EX_LocalVirtualFunction
-// -> ProcessInternal) and INVISIBLE to our ProcessEvent detour. InpActEvt_use itself IS ProcessEvent-visible
-// (the native input->UFunction dispatch), and it is a thin stub: `CALL ExecuteUbergraph_mainPlayer(112867)`
-// -- the whole use flow (the grab AND `useAction`, which plays `use_deny` on its fail branches) is that one
-// event's ubergraph entry.
-//
-// This is a PRE-INTERCEPTOR (returns true -> the native InpActEvt_use dispatch is CANCELLED entirely, never
-// reaching the ubergraph). On the CLIENT, whenever we route the press to the host (a pile GRAB or a carry
-// THROW), we return true: the native grab AND its `use_deny` "EHHH" both die at the source (RE 2026-07-01 --
-// nulling lookAtActor was a HALF-suppression: it killed the grab but `useAction` re-traces on its own and
-// still hit a deny branch, playing use_deny in parallel with our synthesized pickup cue -- the suppression
-// axis, not delivery). For any non-pile E-press (and for the HOST, which grabs natively) we return false ->
-// the native use runs unchanged (devices, legit denies, the host's own grab). Puppets are unpossessed ->
-// never process input -> this only ever fires for the local player.
-// The "use" action has THREE delegate bindings (mainPlayer.json Export 483): _41 (IE_Pressed, the grab press we
-// fully intercept below), _38 (a SECOND IE_Pressed), and _42 (IE_Released). All three reach useAction's use_deny
-// "EHHH". Hooking only _41 left _38 firing on every E-press -> the native deny played in PARALLEL with our
-// cancelled grab (the 19:06 regression -- RE 2026-07-01: the deny is on a SEPARATE seam than the one _41
-// cancels). This SIDE-EFFECT-FREE suppressor covers the SECOND PRESS seam (_38): on a CLIENT pile interaction
-// it only CANCELS the dispatch (kills the parallel deny) -- it does NOT send a grab/throw intent or play a cue
-// (_41 is the sole author of those). Same recognition as OnPileUseIntercept's client branch: carrying, or aimed
-// at ANY native pile (bound or unbound -- the 2026-07-03 twin-grab gate) / proxy pile. On cancel it ARMS the
-// paired-release latch (a cancelled press's _42 must die
-// with it -- see g_cancelPairedUseRelease; the RELEASE seam is pairing-only, NOT condition-derived).
+// The client-grab interceptor on the use input. A chip-pile grab is the use press, whose
+// handler calls the looked-at actor's grab (spawn a clump, pick it up, destroy the pile)
+// blueprint-internally, invisible to the ProcessEvent detour; the input event itself is
+// visible, a thin stub into the ubergraph, and the whole use flow, the grab and the use action
+// that plays the deny sound on its fail branches, hangs off it. A PRE interceptor: true
+// cancels the native dispatch entirely. On a client, whenever the press is routed to the host
+// (a pile grab or a carry throw) it returns true, so the grab and the deny both die at the
+// source; nulling the looked-at actor was only a half-suppression, since the use action
+// re-traces and still denies. Any other press, and the host, run native; puppets never process
+// input, so this fires for the local player only. The use action has three bindings, a second
+// press and a release beside the grab press, all reaching the deny, so the second press gets
+// this side-effect-free suppressor: on a client pile interaction it only cancels the dispatch
+// (the grab press alone sends the intent and plays the cue), with the same recognition
+// (carrying, or aimed at any native or proxy pile), and on cancel it arms the release latch.
 static bool OnPileUseDenySuppress(void* self, void* /*params*/) {
     if (!self) return false;
     auto* s = g_session.load(std::memory_order_acquire);
@@ -108,9 +85,8 @@ static bool OnPileUseDenySuppress(void* self, void* /*params*/) {
     } else {
         void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
         if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative)) {
-            // ANY native pile aim -- bound OR unbound -- mirrors _41's shape (audit
-            // 45bdb7ac W-2): _41 cancels the unbound press too now (the twin-grab
-            // gate), so _38 must die with it or the native deny "EHHH" plays alone.
+            // Any native pile aim, bound or unbound, mirrors the grab interceptor, which cancels
+            // the unbound press too; this seam must die with it or the deny plays alone.
             cancel = true;
         } else {
             const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
@@ -127,11 +103,10 @@ static bool OnPileUseDenySuppress(void* self, void* /*params*/) {
     return cancel;  // false: not a pile interaction -> native use runs (devices, other interactions, SP deny)
 }
 
-// The IE_Released seam (_42) is PAIRING-ONLY: cancel iff this release's press was cancelled (by _41's
-// interceptor or _38's suppressor -- either arms the latch). NO condition re-derivation here: the press
-// conditions are stale by release time (the throw press already cleared the carry; the post-drop aim
-// wanders), and matching conditions against a NATIVE press's release would eat a legit drop (e.g.
-// releasing a natively-held prop while aiming at a pile). One latch consume per gesture; user-rate.
+// The release seam is pairing-only: cancel iff this release's press was cancelled by either
+// press seam. No condition re-derivation: the press conditions are stale by release time (the
+// throw press cleared the carry, the aim wandered), and matching a native press's release
+// would eat a legitimate drop. One latch consume per gesture.
 static bool OnPileUseReleaseSuppress(void* /*self*/, void* /*params*/) {
     if (!g_cancelPairedUseRelease) return false;  // paired with a NATIVE press -> the native release must run
     g_cancelPairedUseRelease = false;
@@ -144,22 +119,20 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return false;  // no coop session -> native use runs normally (SP / disconnected)
 
-    // CLIENT (Increment 2, the client-grab direction): the client has NO real actorChipPile_C -- every pile it
-    // sees is an AStaticMeshActor PROXY (trash_proxy). Recognition is a CAMERA-RAY CONE (EidForAimedPileProxy):
-    // the most-centered pile proxy within range of the aim ray. (The earlier "give the proxy collision so the
-    // game's TraceTypeQuery1 trace hits it + read lookatActorCurrent" approach was DISPROVEN by the harness --
-    // the worn pile mesh has no simple collision body, so the trace never hit; RULE 2, retired 2026-06-23. A
-    // future garbageCollider-analog SHAPE component is the faithful fix for both occlusion-correct aim AND the
-    // walk-through-pile movement-block.) NO suppress-native needed: the proxy fails every native int_player_C
-    // cast on E-press, so the local grab no-ops on its own. The host re-validates + enforces one-hold-per-peer.
+    // Client: it has no real chip pile; every pile it sees is a static-mesh proxy, and recognition
+    // is a camera-ray cone, the most-centred proxy within range of the aim. Giving the proxy
+    // collision so the game's own trace hit it was disproven: the pile mesh has no simple
+    // collision body, so the trace never hit. The proxy itself needs no suppression, since it
+    // fails every native interaction cast on press; the host re-validates and enforces one hold
+    // per peer.
     if (s->role() != coop::net::Role::Host) {
-        // TOGGLE: carrying a clump already? an E-press is a THROW (release it, regardless of aim). Else, if
-        // aimed at a mirrored pile, an E-press is a GRAB request. (A player holds at most one trash clump.)
+        // Toggle: carrying a clump already, a press is a throw regardless of aim; else, aimed at a
+        // mirrored pile, a press is a grab request. A player holds at most one clump.
         const coop::element::ElementId carry = coop::trash_channel::ClientCarryEid();
         if (carry != coop::element::kInvalidId) {
-            // Self-heal (belt-and-suspenders for the audit HIGH): if we think we're carrying but the proxy is
-            // gone (a missed/dropped host abort edge), clear the stale toggle + fall through to a fresh grab
-            // rather than throwing a dead eid forever.
+            // Self-heal: if we think we are carrying but the proxy is gone (a missed host abort
+            // edge), clear the stale toggle and fall through to a fresh grab rather than throwing a
+            // dead eid forever.
             if (!coop::trash_proxy::ProxyActorForEid(carry)) {
                 UE_LOGW("[THROW-INTENT] CLIENT carry eid=%u has NO live proxy -- stale toggle, clearing + falling "
                         "through to grab", static_cast<unsigned>(carry));
@@ -169,35 +142,32 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                         "(native use CANCELLED -- no use_deny)", static_cast<unsigned>(carry));
                 coop::trash_channel::SendThrowIntent(*s, static_cast<uint32_t>(carry),
                                                      coop::net::throw_mode::kRelease, ue_wrap::FVector{});
-                g_cancelPairedUseRelease = true;  // this press's _42 release must die with it (deny lives there too)
+                g_cancelPairedUseRelease = true;  // this press's release dies with it; the deny lives there too
                 return true;  // handled: cancel the native InpActEvt_use (the client holds no native clump -> would deny)
             }
         }
-        // (X) native-authoritative GRAB recognition (items 5+6). A save-loaded pile the client BOUND as the
-        // host-range mirror (save_identity_bind) is a REAL actorChipPile_C native -> it IS the game's own
-        // lookAtActor (the int_player_C interaction trace), occlusion-correct + collision-blocked, unlike a
-        // bare proxy. PREFER it: read lookAtActor; if it's a bound native pile, CANCEL the whole native
-        // InpActEvt_use dispatch (return true below) -- the ubergraph's grab (icast(lookAtActor)->playerGrabbed)
-        // AND `useAction`'s `use_deny` both die at the source. (RULE 2, 2026-07-01: the old NULL-lookAtActor
-        // suppression is RETIRED -- it was a HALF-suppression that killed the grab but let useAction re-trace
-        // and play use_deny "EHHH" in parallel; cancelling the dispatch subsumes it, no field mutation.) Route
-        // the grab via GrabIntent (host-auth, the sole author of the shared mutation; the host runs
-        // playerGrabbed on the requester's puppet). The camera-cone below stays only for UNBOUND proxy piles.
+        // Native-authoritative grab recognition first: a save-loaded pile the client bound as the
+        // host-range mirror is a real chip pile, so it is the game's own looked-at actor,
+        // occlusion-correct and collision-blocked, unlike a bare proxy. If the looked-at actor is a
+        // bound native pile, the whole native dispatch is cancelled, so the grab and the deny both
+        // die, and the grab goes to the host as an intent, the sole author of the shared mutation,
+        // which runs the grab on the requester's puppet. The camera cone below stays for unbound
+        // proxy piles only.
         {
             void* aimedNative = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
             if (aimedNative && ue_wrap::prop::IsChipPile(aimedNative)) {
                 if (PT::IsBoundMirrorNative(aimedNative)) {
                     const coop::element::ElementId beid = coop::remote_prop::ResolveMirrorEidByActor(aimedNative);
                     if (beid != coop::element::kInvalidId) {
-                        // Pickup cue: the native grab (which plays the `use` click + material soft cue in its
-                        // playerGrabbed chain) is CANCELLED for this press, so synthesize the same feedback locally
-                        // at the pile -- the grabber hears its own grab (the host hears it natively via playerGrabbed
-                        // on the puppet; observers via ResolveAndStartDrive).
+                        // The pickup cue: the native grab, which plays the use click and the
+                        // material cue, is cancelled, so the same feedback is synthesised at the
+                        // pile; the host hears it natively on the puppet, observers through the
+                        // drive.
                         coop::prop_sound::PlayUseClick(aimedNative);
                         coop::prop_sound::PlayGrabSound(aimedNative);
-                        // [PILE-TYPE probe 2026-07-04] pos+chipType of the pile the CLIENT is aiming at --
-                        // the host's "[GRAB-INTENT] EXEC ... at(...) chipType=" for the same eid must match;
-                        // a mismatch names the ordinal identity misalignment (the 18:45 wrong-type morph).
+                        // The position and chip type of the pile the client aims at; the host's
+                        // grab-intent line for the same eid must match, and a mismatch names an
+                        // identity misalignment.
                         const ue_wrap::FVector cloc = ue_wrap::engine::GetActorLocation(aimedNative);
                         UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS on BOUND native pile eid=%u at(%.1f,%.1f,%.1f) "
                                 "chipType=%u (lookAtActor, occlusion-correct) -> native use CANCELLED "
@@ -209,23 +179,20 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                         return true;  // handled: cancel the native InpActEvt_use dispatch entirely
                     }
                 }
-                // UNBOUND native pile (2026-07-03, the 11:49 client-local clump chain): a REAL
-                // actorChipPile_C in the client's aim that NO eid owns -- a HOST-VACATE twin the
-                // sweep has not retired yet (the 11:48:51 seed: twin@old grabbed 7 s before the
-                // sweep pass), a mid-bind-window native, or a descendant of an earlier native
-                // grab. Letting the native use run here is how the self-perpetuating client-only
-                // chain seeds: native grab -> local prop_garbageClump_C -> native land -> another
-                // unbound pile, all invisible to the host (and a grabbed twin becomes a CLUMP the
-                // pile sweep can no longer retire). On a connected client EVERY pile interaction
-                // is host-authoritative -- a pile no eid owns must not be interactable at all.
+                // An unbound native pile: a real chip pile in the client's aim that no eid owns (a
+                // host-vacate twin the sweep has not retired, a mid-bind-window native, a
+                // descendant of an earlier native grab). Letting the native use run here seeds a
+                // self-perpetuating client-only chain (native grab, local clump, native land,
+                // another unbound pile), all invisible to the host, and a grabbed twin becomes a
+                // clump the sweep can no longer retire. On a connected client every pile
+                // interaction is host-authoritative, so a pile no eid owns must not be
+                // interactable.
                 if (coop::join_membership_sweep::HasLoadTailQuiesced()) {
-                    // v106b (RULE 2 -- user 2026-07-07: "why wait for an E-press per ghost"): the
-                    // v106 inline one-pile retire is RETIRED. The wholesale owner is the reconcile
-                    // pass's GHOST-RETIRE tail (save_identity_bind::BindUnboundReCreates), which
-                    // re-binds what a map key still claims and retires EVERY provably identity-less
-                    // native at once. This press is positive evidence a ghost slipped the event
-                    // triggers -> ARM the pass (it runs within the 250ms reconcile debounce) and
-                    // cancel the press (a native no eid owns must not be interactable).
+                    // Post-quiescence: the wholesale owner is the reconcile pass's ghost-retire
+                    // tail, which re-binds what a map key still claims and retires every provably
+                    // identity-less native at once. This press is positive evidence a ghost slipped
+                    // the event triggers, so the pass is armed (it runs within the reconcile
+                    // debounce) and the press cancelled.
                     UE_LOGW("[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile %p POST-quiescence "
                             "-- identity-less ghost -> arming the wholesale GHOST-RETIRE reconcile "
                             "(all ghosts adjudicated at once)", aimedNative);
@@ -233,8 +200,8 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                     g_cancelPairedUseRelease = true;
                     return true;
                 }
-                // Pre-quiescence: the bind window is still open -- CANCEL the press (the
-                // pile binds or retires within seconds; a re-press then routes normally).
+                // Pre-quiescence, the bind window still open: cancel the press; the pile binds or
+                // retires within seconds, and a re-press then routes normally.
                 UE_LOGW("[GRAB-INTENT] CLIENT E-PRESS on UNBOUND native pile %p -- native use CANCELLED "
                         "(no eid owns it: bind-window; it binds or retires shortly, re-press then)",
                         aimedNative);
@@ -242,9 +209,9 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                 return true;
             }
         }
-        // Aim ray from the live view camera (FALLBACK -- unbound proxy piles only). Forward from the camera
-        // rotation (deg->rad): the unit vector the cone tests each pile proxy against. maxRange 400 cm (a
-        // generous reach), minDot 0.94 (~20 deg cone -- forgiving so a slightly-off aim still grabs).
+        // The aim ray from the live view camera, the fallback for unbound proxy piles: the unit
+        // forward vector the cone tests each proxy against, a generous 400 cm reach and a forgiving
+        // cone of about 20 degrees.
         const ue_wrap::FVector  camLoc = ue_wrap::engine::GetCameraLocation();
         const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
         const float d2r = 3.14159265f / 180.f;
@@ -255,8 +222,8 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
             coop::trash_proxy::EidForAimedPileProxy(camLoc, camFwd, /*maxRangeCm=*/400.f, /*minDot=*/0.94f);
         if (eid == coop::element::kInvalidId)
             return false;  // not aiming at a mirrored pile -> let the native use run (devices, other interactions)
-        // Pickup cue at the aimed proxy pile (same as the bound-native branch -- the native use is CANCELLED
-        // below, so the grabber hears nothing without this). ProxyActorForEid gives the proxy actor.
+        // The pickup cue at the aimed proxy, as in the bound-native branch; the native use is
+        // cancelled below, so the grabber would otherwise hear nothing.
         if (void* proxyActor = coop::trash_proxy::ProxyActorForEid(eid)) {
             coop::prop_sound::PlayUseClick(proxyActor);
             coop::prop_sound::PlayGrabSound(proxyActor);
@@ -268,13 +235,13 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
         return true;  // handled: cancel the native InpActEvt_use dispatch (a bare proxy would deny)
     }
 
-    // HOST: aim at a REAL chipPile (it implements int_player_C -> it IS lookAtActor). The host ALWAYS runs the
-    // native use (it grabs natively) -- this branch only records the pending grab; every host path returns false.
+    // Host: aimed at a real chip pile, the looked-at actor. The host always runs the native use,
+    // which grabs; this branch only logs, and every host path returns false.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the pile (PRE-conversion, alive)
     if (!aimed || !ue_wrap::prop::IsChipPile(aimed)) return false;   // E-press not aimed at a pile -> native use runs
-    // The HOST grab syncs WITHOUT arming anything here -- the BP's own BeginDeferred(clump) is caught at
-    // the thunk's GRAB direction (the v106 birth certificate); the held-edge adopts the spawned clump onto
-    // the pile's eid + broadcasts PropConvert{ToClump}. This branch logs diagnostics only.
+    // The host grab syncs without arming anything here: the blueprint's own deferred clump spawn
+    // is caught at the thunk's grab direction, and the held edge adopts the spawned clump onto the
+    // pile's eid and broadcasts the convert.
     coop::element::ElementId fwdEid = PT::GetPropElementIdForActor(aimed);
     coop::element::ElementId mirEid = coop::remote_prop::ResolveMirrorEidByActor(aimed);
     ue_wrap::engine::MainPlayerGrabState gs{};
@@ -287,23 +254,16 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
             (fwd != 0 || mir != 0) ? "[TRACKED -> grab will sync]"
                                    : "[UNTRACKED -> grab will NOT sync; tracking gap]",
             gs.grabbingActor, gs.holdingActor);
-    // (v106: the self-seed + pre-grab-xform record + pending-grab arm MOVED to the
-    // BeginDeferred thunk's GRAB direction -- ONE owner at the seam the clump is
-    // actually born, covering use-HOLD grabs this press seam never sees. This host
-    // branch is diagnostics-only now.)
     return false;  // HOST: never cancel -- the native grab must run
 }
 
-// (X) LMB hard-throw bridge (2026-06-26). The NATIVE throw input is InpActEvt_fire (LMB) -> throwHoldingProp
-// -> throwShit(velocity_fromCamera) -- a SEPARATE input from use/E (which is grab + the E-drop release). The
-// client holds NO native clump (host-authoritative; it renders a proxy), so the native fire's throwHoldingProp
-// finds no grabbing_component and no-ops -- and we never routed it, hence LMB did nothing (the 12:35 symptom).
-// Here: while carrying a clump proxy, an LMB press requests a hardThrow with the client's INSTANTANEOUS camera-
-// forward (Variant B -- the throw flies exactly where the client looks at the press, native-faithful); the host
-// applies the native velocity formula (cameraFwd * 15000/max(mass,10) + puppetVel, NO cap) with the real clump
-// mass. The native fire is left to run (it no-ops with no held native prop; nothing to suppress -- there is no
-// single lookAtActor-style field, and the client holds no equipment while carrying a clump). Client-only: the
-// host throws natively via its own InpActEvt_fire. E-drop (the #3 path) is untouched.
+// The left-button hard-throw bridge. The native throw input is the fire event, which throws
+// the held prop with a camera-directed velocity, a separate input from use, which grabs and
+// drops. The client holds no native clump (it renders a proxy), so the native fire finds
+// nothing to throw and no-ops. Here, while carrying a clump proxy, a fire press requests a
+// hard throw with the client's instantaneous camera forward, and the host applies the native
+// velocity formula with the real clump mass. The native fire is left to run, since it no-ops.
+// Client only; the host throws natively.
 static void OnFirePre(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
     auto* s = g_session.load(std::memory_order_acquire);
@@ -315,8 +275,8 @@ static void OnFirePre(void* self, void* /*function*/, void* /*params*/) {
         coop::trash_channel::ClearClientCarry(static_cast<uint32_t>(carry));
         return;
     }
-    // The client's instantaneous camera-forward unit vector (same derivation as the grab cone). The native
-    // throw is camera-DIRECTED, so this is the authoritative aim; the host applies the mass-scaled speed.
+    // The client's instantaneous camera-forward unit vector, the same derivation as the grab cone;
+    // the native throw is camera-directed, so this is the authoritative aim.
     const ue_wrap::FRotator camRot = ue_wrap::engine::GetCameraRotation();
     const float d2r = 3.14159265f / 180.f;
     const float yaw = camRot.Yaw * d2r, pitch = camRot.Pitch * d2r;
@@ -351,10 +311,9 @@ void Install(coop::net::Session* session) {
             "always runs native; client: cancels the native use for a pile GRAB/THROW -> no native grab, no "
             "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host; docs/piles/08)");
 
-    // The "use" action's OTHER two bindings (_38 = 2nd IE_Pressed, _42 = IE_Released) also reach useAction's
-    // use_deny -- hooking only _41 left the client hearing "EHHH" on every E-press (parallel deny). _38 gets the
-    // press-condition suppressor; _42 gets the PAIRING-ONLY release suppressor. Best-effort (a missing ordinal
-    // after a BP recook just means the deny returns on that seam -- sdk_check flags it).
+    // The use action's other two bindings, the second press and the release, also reach the deny:
+    // the second press gets the press-condition suppressor, the release the pairing-only one.
+    // Best-effort: a missing ordinal after a recook just means the deny returns on that seam.
     int denySeams = 0;
     if (void* uf38 = R::FindFunction(cls, P::name::MainPlayerUseInputEventFn38))
         if (GT::RegisterInterceptor(uf38, &OnPileUseDenySuppress)) ++denySeams;
@@ -365,9 +324,9 @@ void Install(coop::net::Session* session) {
             "on ALL its seams incl. its OWN release -> no 'EHHH' on grab OR drop",
             denySeams);
 
-    // LMB hard-throw bridge: PRE-observe BOTH fire handlers (_58/_59 = press/release). The OnFirePre gate on
-    // ClientCarryEid + SendThrowIntent's optimistic carry-clear mean only the press edge that finds a live
-    // carry acts; the other no-ops. Best-effort (a missing handler just means no LMB-throw on that edge).
+    // The hard-throw bridge observes both fire handlers, press and release: the carry gate and the
+    // intent's optimistic carry-clear mean only the edge that finds a live carry acts.
+    // Best-effort.
     int fireObs = 0;
     for (const wchar_t* fireFn : { P::name::MainPlayerFireInputEventFn58, P::name::MainPlayerFireInputEventFn59 }) {
         void* ff = R::FindFunction(cls, fireFn);
@@ -379,8 +338,8 @@ void Install(coop::net::Session* session) {
 
 void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
-    // Session teardown resets the gesture latch: a press cancelled just before the disconnect
-    // must not eat a release dispatched in the next session.
+    // Session teardown resets the gesture latch: a press cancelled just before the disconnect must
+    // not eat a release in the next session.
     g_cancelPairedUseRelease = false;
 }
 
