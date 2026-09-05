@@ -1,16 +1,7 @@
-// coop/net/session_lanes.h -- INTERNAL (src-tree) shared header for the GNS
-// priority-lane mapping + the host-relay kind whitelist.
-//
-// Not a public API: it lives under src/ (not include/) and is included only by
-// the Session implementation TUs (session.cpp + session_relay.cpp). It exists
-// solely so the lane mapping is shared between the send paths (session.cpp's
-// SendReliable / SendReliableToSlot) and the host-relay path
-// (session_relay.cpp's RelayReliableToOtherClients) without duplicating the
-// switch. Extracted at PR-FOUNDATION Tier 2 T2-3 when the relay subsystem
-// moved into its own TU and session.cpp crossed the 800-LOC soft cap.
-//
-// The functions are `inline` (external linkage, ODR-safe across the two TUs);
-// they were previously file-local (anon-namespace) inside session.cpp.
+// coop/net/session_lanes.h -- the GNS priority-lane mapping, the host-relay whitelist and the
+// pre-world send gate, shared by the Session's send paths and its relay path. Internal to the
+// Session TUs (src tree, not include/); the functions are inline, so the two TUs share one
+// definition.
 
 #pragma once
 
@@ -18,10 +9,8 @@
 
 namespace coop::net {
 
-// PR-3 priority lanes. See research/findings/votv-gns-integration-plan-
-// 2026-05-27.md section 5.4. session_status.cpp's ConfigureLanesForPeer
-// hard-codes kLaneCount=3; session.cpp pins the two together with a
-// static_assert on Lane::Count so a 4th lane can't silently desync them.
+// The priority lanes. session_status's ConfigureLanesForPeer hard-codes the count to 3, and
+// session.cpp pins the two together with a static_assert on Lane::Count.
 enum class Lane : int {
     High = 0,
     Normal = 1,
@@ -29,14 +18,11 @@ enum class Lane : int {
     Count = 3,
 };
 
-// The three ADMISSION kinds (v144). They deliberately appear in NONE of the three
-// routers below, and that is not an omission the checklist missed: they never
-// travel through SendReliableToSlot (no slot exists yet -- Session::
-// SendRawReliableToConn pins them to lane 0), they are never relayed (an identity
-// proof is between two endpoints and means nothing forwarded), and they have no
-// pre-world gate because they run BEFORE the gate's whole premise. This predicate
-// exists so the receive path can drop a replay of one from an ALREADY-ADMITTED
-// peer, which otherwise reaches event_feed and warns once per copy.
+// The three admission kinds appear in none of the three routers below, and that is not an
+// omission: they never travel through a slot send (no slot exists yet; the raw connection send
+// pins them to lane 0), they are never relayed (a proof is between two endpoints), and they
+// have no pre-world gate because they run before its premise. This predicate lets the receive
+// path drop a replay of one from an already-admitted peer.
 inline bool IsAdmissionKind(ReliableKind k) {
     return k == ReliableKind::AuthHello || k == ReliableKind::AuthChallenge ||
            k == ReliableKind::AuthProof;
@@ -48,284 +34,201 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::RestoreVitals:  return Lane::High;
     case ReliableKind::ItemActivate:   return Lane::High;
     case ReliableKind::PlayerDamage:   return Lane::High;  // combat event -- prioritize
-    // Spawn + Destroy must share a lane: GNS guarantees in-order delivery WITHIN
-    // a lane but NOT across lanes. If PropDestroy were on Normal while PropSpawn
-    // were on Bulk, a Destroy could drain to the receiver before its Spawn under
-    // backpressure -> phantom actor never cleaned up.
+    // Spawn and Destroy share a lane: GNS orders delivery within a lane, not across lanes, and a
+    // destroy overtaking its spawn under backpressure leaves a phantom actor.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
     case ReliableKind::PropDestroy:    return Lane::Bulk;
-    // v52: PropConvert destroys the ball (oldEid) + spawns the pile (newEid). It MUST share the
-    // Spawn/Destroy lane so GNS delivers it strictly after the ball's PropSpawn -- on a different
-    // lane a convert could overtake the ball spawn under backpressure -> the ball mirror spawns
-    // after the convert already ran -> a lingering, never-destroyed ball.
+    // PropConvert destroys the ball and spawns the pile, so it shares the spawn lane; on another
+    // lane a convert could overtake the ball's spawn and leave a never-destroyed ball.
     case ReliableKind::PropConvert:    return Lane::Bulk;
-    // b3 (v90): PropSnapPos rides Bulk so it delivers AFTER the connect-snapshot PropSpawns for the same join
-    // (it corrects a save-authoritative native's position; ordering after the snapshot keeps it consistent).
+    // PropSnapPos rides Bulk so it lands after the connect snapshot's spawns for the same join.
     case ReliableKind::PropSnapPos:    return Lane::Bulk;
-    // F2 Inc-1 fix (audit 2026-07-10 HIGH): PropDropIntent is ORDER-PAIRED with PropDestroy -- the lane's
-    // race defense is "the pickup's no-op husk-destroy delivers BEFORE the place's intent re-spawn", which
-    // GNS only guarantees WITHIN a lane. Unpinned it rode Normal via default: while PropDestroy rides Bulk:
-    // under backpressure the intent could overtake the pickup-destroy (host dup-guard sees the key live ->
-    // place lost) or the husk-destroy could land after the intent's re-spawn (fresh authoritative copy
-    // retracted on every peer -- the exact v2 killer this lane exists to beat).
+    // PropDropIntent is order-paired with PropDestroy: the race defence is that the pickup's husk
+    // destroy delivers before the place's intent re-spawn, which holds only within a lane; on the
+    // default lane the intent could overtake the destroy (the place lost) or the destroy land after
+    // the re-spawn (a fresh copy retracted on every peer).
     case ReliableKind::PropDropIntent: return Lane::Bulk;
-    // v114 (L7): ReelEjectIntent is the same order-paired family as PropDropIntent -- the
-    // ejecting client may pocket the reel one pass later (a keyed DESTROY on Bulk); in-lane
-    // ordering guarantees the host authors the spawn BEFORE it processes that destroy.
+    // ReelEjectIntent, the same order-paired family: the ejecting client may pocket the reel a pass
+    // later (a keyed destroy on Bulk), and in-lane ordering makes the host author the spawn first.
     case ReliableKind::ReelEjectIntent: return Lane::Bulk;
     case ReliableKind::EntitySpawn:    return Lane::Bulk;
     case ReliableKind::EntityDestroy:  return Lane::Bulk;
-    // v80 (B3b): WorldActorSpawn + WorldActorDestroy share the Spawn/Destroy lane for the same reason --
-    // GNS guarantees in-order delivery WITHIN a lane, so a destroy can't overtake its spawn (phantom
-    // mirror) under backpressure. (Host-authoritative: NOT relayable, NOT pre-world-sendable.)
+    // The world-actor pair shares the spawn lane for the same reason. Host-authoritative: not
+    // relayable, not pre-world.
     case ReliableKind::WorldActorSpawn:   return Lane::Bulk;
     case ReliableKind::WorldActorDestroy: return Lane::Bulk;
-    // v34: the loading-screen brackets MUST share PropSpawn's lane so GNS's in-lane
-    // ordering delivers them strictly Begin -> [every PropSpawn] -> Complete. If
-    // SnapshotComplete rode a different lane it could overtake the prop stream under
-    // backpressure and lift the joiner's cover mid-build.
+    // The snapshot brackets share PropSpawn's lane, so they deliver as Begin, every spawn,
+    // Complete; on another lane Complete could overtake the stream and lift the joiner's cover
+    // mid-build.
     case ReliableKind::SnapshotBegin:    return Lane::Bulk;
     case ReliableKind::SnapshotComplete: return Lane::Bulk;
-    // v56: the save blob is phase-ordered BEFORE the snapshot bracket (the client
-    // only sends ClientWorldReady after loading the save), so sharing Bulk costs
-    // nothing -- and Begin must precede its chunks in-lane.
+    // The save blob is phase-ordered before the bracket (the client sends ClientWorldReady only
+    // after loading the save), so Bulk costs nothing, and Begin must precede its chunks in-lane.
     case ReliableKind::SaveTransferBegin: return Lane::Bulk;
     case ReliableKind::SaveTransferChunk: return Lane::Bulk;
-    // v73 Inc4: the HOST->CLIENT apply blob must reach the joiner BEFORE its world loads
-    // (OnSaveObjectReady substitutes the inventory pre-materialize). Normal (priority 1, ahead of the
-    // Bulk save-transfer + ~3000-prop snapshot at 2) + pre-world-sendable (below) deliver it promptly
-    // during the joiner's pre-world wait rather than queued behind the bulk streams. It is a
-    // self-contained blob with NO in-lane ordering dependency, so it rides Normal freely. (The
-    // CLIENT->HOST persist stream shares this kind+lane -- small + post-world, unaffected; Normal
-    // keeps it off the urgent High lane.)
+    // The host-to-client inventory blob must reach the joiner before its world loads (the inventory
+    // is substituted before materialisation), so it rides Normal, ahead of the Bulk streams, and is
+    // pre-world sendable; a self-contained blob with no in-lane dependency.
     case ReliableKind::PlayerInventoryBlob: return Lane::Normal;
-    // v68: PropStickState + PropRelease are ORDER-PAIRED: the receiver's release
-    // gate (StickHoldsPhysicsOff) reads the frozen state the stick writes, and the
-    // sender emits stick-then-release ~one pump pass apart -- a release overtaking
-    // its stick re-enables physics on the just-stuck mirror (the falling-camera
-    // bug). They land on Normal via default: anyway; these explicit cases pin the
-    // pairing against a future single-kind lane move (the Spawn/Destroy rule above).
+    // PropStickState and PropRelease are order-paired: the release gate reads the frozen state the
+    // stick writes, and a release overtaking its stick re-enables physics on a just-stuck mirror.
+    // Pinned, so a single-kind lane move cannot split them.
     case ReliableKind::PropStickState: return Lane::Normal;
     case ReliableKind::PropRelease:    return Lane::Normal;
-    // v76/v77: AtvState + AtvRelease + AtvSpawn + AtvDestroy are ORDER-PAIRED -- the grabber streams
-    // pose then emits AtvRelease one pass later, and a runtime-spawned ATV must AtvSpawn (fresh-spawn)
-    // before its first AtvState pose / after its last before AtvDestroy. A release/destroy overtaking
-    // the last pose would re-enable physics / tear down on a mirror mid-update. All land on Normal via
-    // default: anyway; pin them so a future single-kind lane move can't split the group.
+    // The four ATV kinds are order-paired: a release or destroy overtaking the last pose would
+    // re-enable physics or tear down a mirror mid-update, and a runtime-spawned ATV must spawn
+    // before its first pose. Pinned together.
     case ReliableKind::AtvState:       return Lane::Normal;
     case ReliableKind::AtvRelease:     return Lane::Normal;
     case ReliableKind::AtvSpawn:       return Lane::Normal;
     case ReliableKind::AtvDestroy:     return Lane::Normal;
-    // v112: DeskInput + DeskScanEvent are ORDER-COUPLED with each other and
-    // with the adopt DeskState (GNS orders within a lane; the design's
-    // adopt-before-deltas + charge/scan ordering proofs assume one lane).
-    // All three land on Normal via default: anyway; pin them so a future
-    // single-kind lane move can't split the group (audit 2026-07-16).
+    // DeskState, DeskInput and DeskScanEvent are order-coupled (adopt before deltas, charge before
+    // scan); pinned together.
     case ReliableKind::DeskState:      return Lane::Normal;
     case ReliableKind::DeskInput:      return Lane::Normal;
     case ReliableKind::DeskScanEvent:  return Lane::Normal;
-    // v116: LaptopState's op=1/3 scalar edges and their op=4 content chunks
-    // assume in-lane ordering (scalars first, chunks after) -- pin the kind so
-    // a future lane move can't split the pair. The disc PROP lifecycle rides
-    // Bulk independently BY DESIGN (receivers never act on LaptopState for
-    // destroys; the host's one PropDestroy owns twin deaths -- qf R7-Q1).
+    // LaptopState's scalar edges and their content chunks assume in-lane order; pinned. The disc
+    // prop lifecycle rides Bulk independently by design: receivers never act on LaptopState for
+    // destroys.
     case ReliableKind::LaptopState:    return Lane::Normal;
-    // v117 (L6): PlayDeckEvent is ORDER-COUPLED with DeskInput (a play carries
-    // + primes play_selectIndex through the same apply author) and with
-    // SavedSignalAppend (a play must land after its row's append -- the
-    // append-before-play proof assumes one ordered stream). Pin it.
+    // PlayDeckEvent is order-coupled with DeskInput and with SavedSignalAppend (a play must land
+    // after its row's append); pinned.
     case ReliableKind::PlayDeckEvent:  return Lane::Normal;
-    // v118 (L8): PhysModsState's ops/canonical/deny assume in-lane ordering
-    // (an op must not overtake the canonical it was diffed against). Pin it.
-    // NOT in the relay whitelist: ops are host-terminal, the canonical is
-    // host-authored point/broadcast.
+    // PhysModsState's ops, canonical and deny assume in-lane order (an op must not overtake the
+    // canonical it was diffed against); pinned. Not relayable: ops are host-terminal, and the
+    // canonical is host-authored.
     case ReliableKind::PhysModsState:  return Lane::Normal;
-    // v119 (L5): the drive-chain trio assumes in-lane ordering between a slot
-    // line, the payload row it references, and a rack op/canonical pair. All
-    // ride Normal (the desk family lane). Pinned so a future single-kind lane
-    // move can't split the group.
+    // The drive-chain trio assumes in-lane order between a slot line, the payload row it references
+    // and a rack pair; pinned together.
     case ReliableKind::DriveSlotState: return Lane::Normal;
     case ReliableKind::DrivePayload:   return Lane::Normal;
     case ReliableKind::RackState:      return Lane::Normal;
-    // v120 (L9): MeadowAppend/MeadowDelete MUST share one lane -- the join
-    // seed's no-reorder proof (qf R11) assumes one FIFO stream per connection
-    // (a seed append must not be overtaken by a post-flip delete or vice
-    // versa). Pinned so a future single-kind lane move can't split the pair.
+    // MeadowAppend and MeadowDelete share one lane: the join seed's no-reorder argument assumes one
+    // FIFO stream per connection.
     case ReliableKind::MeadowAppend:   return Lane::Normal;
     case ReliableKind::MeadowDelete:   return Lane::Normal;
-    // v137 (A37/A38): CoinGunSell rides **Bulk**, because that is where PropDestroy rides (:43) and
-    // the entire design rests on the sale arriving IN FRONT of the sender's own PropDestroy for the
-    // same prop -- the host mints from the SOLD PROP's component, so it needs that prop still alive.
-    // GNS guarantees order only WITHIN a lane, so pinning this to Normal (its default) would put the
-    // pair on two lanes and let the destroy overtake the sale: the host would destroy first and EVERY
-    // sale would refuse with eid-unresolved. Same hazard class the trash-intent comment at :54
-    // records. If PropDestroy ever moves lane, this MUST move with it.
+    // CoinGunSell rides Bulk because PropDestroy does: the sale must arrive in front of the
+    // sender's own destroy of the same prop, since the host mints from the sold prop's component,
+    // and on separate lanes the destroy could overtake the sale. If PropDestroy moves lane, this
+    // moves with it.
     case ReliableKind::CoinGunSell:    return Lane::Bulk;
-    // v139 (B2): CoinCollect rides Bulk with the rest of the coin family. It races the coin's own
-    // WorldActorDestroy, which is what the host's performed collect produces -- sharing PropDestroy's
-    // lane keeps this forward in the same FIFO stream as the destroy traffic it is interleaved with,
-    // for the same reason CoinGunSell is pinned here. If PropDestroy ever moves lane, this moves too.
+    // CoinCollect rides Bulk with the coin family: it races the coin's own WorldActorDestroy, and
+    // sharing the destroy lane keeps the forward in the same FIFO. Moves with PropDestroy.
     case ReliableKind::CoinCollect:    return Lane::Bulk;
-    // v138 (B1): CoinGunResult is host->one-client and is deliberately NOT pinned. It is ordered
-    // against nothing -- the sale it answers travelled the other direction, and the coins it
-    // describes arrive on their own WorldActorSpawn lane whose ordering relative to a text line is
-    // meaningless. It takes the default (Normal) by decision, not by omission.
-    case ReliableKind::MeadowOrder:    return Lane::Normal;  // v120: same FIFO stream as 112/113 (an order line must not overtake the append it references)
-    // Seeds arc (2026-08-23): RosterRow + the email/signal families are pinned to the
-    // default they already ride because the ready-edge seed's exactly-once + clear-
-    // before-chunks proofs REQUIRE the roster transition, the seed rows and the live
-    // rows to share ONE (slot, lane) FIFO (votv-signal-email-ready-seeds par.2.4);
-    // a future single-kind lane move would silently break both proofs.
+    // CoinGunResult is host-to-one-client and deliberately unpinned: it is ordered against nothing,
+    // and takes the default by decision.
+    case ReliableKind::MeadowOrder:    return Lane::Normal;  // an order line must not overtake the append it references
+    // RosterRow and the email and signal families are pinned to the default they ride: the
+    // ready-edge seed's exactly-once and clear-before-chunks arguments need the roster transition,
+    // the seed rows and the live rows in one FIFO per slot.
     case ReliableKind::RosterRow:         return Lane::Normal;
     case ReliableKind::EmailAppend:       return Lane::Normal;
     case ReliableKind::EmailDelete:       return Lane::Normal;
     case ReliableKind::SavedSignalAppend: return Lane::Normal;
     case ReliableKind::SavedSignalDelete: return Lane::Normal;
-    // v121 (OPEN-10): the laptop family MUST share LaptopState's lane -- an op=1/3
-    // park pairs with the LaptopBlob content stream right behind it, and the
-    // joiner's op=3-then-content ordering rides the same proof (GNS orders within
-    // a lane, across kinds). LaptopQuad batches/canonicals are cross-referenced
-    // with slot edges (floppyType predicate) -- same stream. FloppyBoxState is
-    // self-contained but rides the family lane for the same one-FIFO discipline.
+    // The laptop family shares LaptopState's lane: a park pairs with the content stream behind it,
+    // the quad batches are cross-referenced with slot edges, and the floppy box rides the family
+    // lane for the one-FIFO discipline.
     case ReliableKind::LaptopBlob:     return Lane::Normal;
     case ReliableKind::LaptopQuad:     return Lane::Normal;
     case ReliableKind::FloppyBoxState: return Lane::Normal;
-    // v124 (R11): the container-contents slice must stay behind the entity lifecycle it
-    // references -- a contents blob for an eid whose PropSpawn has not landed parks and retries,
-    // so keeping it in the one Normal FIFO makes the park the rare case, not the norm.
+    // The container-contents slice stays behind the entity lifecycle it references: a blob for an
+    // eid whose spawn has not landed parks and retries, and one FIFO makes the park rare.
     case ReliableKind::ContainerContents: return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
 
-// Host-relay topology (PR-FOUNDATION Tier 2 T2-3): which reliable kinds the
-// host forwards from one client to the others. PEER-ORIGINATED gameplay only:
-//   - ItemActivate: a client's equipment toggle (flashlight) must show on
-//     its puppet for every peer.
-//   - PropSpawn / PropDestroy / PropRelease: a client's inventory drop /
-//     destroy / throw must replicate to every peer (the Aprop_C lineage is
-//     host-authoritative for spawns the HOST detects, but a client's own
-//     takeObj-path drop originates client-side and needs cross-peer fan-out).
-//   - DoorState / LightState / ContainerState / WindowCleanState / GrimeState:
-//     keyed interactables + dirt are SYMMETRIC (any peer can toggle / wipe one
-//     locally), so a client-originated edge must reach the OTHER clients via the host.
-// NOT relayed:
-//   - Weather / RedSky / LightningStrike / EntitySpawn / EntityDestroy /
-//     RestoreVitals / TeleportClient / PlayerDamage: host-authoritative -- they
-//     ORIGINATE on the host and are sent directly to the target client (fan-out
-//     or SendReliableToSlot); a client never legitimately sends them (and
-//     event_feed trust-gates them on senderPeerSlot==0). PlayerDamage is
-//     point-to-point host->owner (Inc3-WIRE combat relay), never client-forwarded.
-//   - Join / AssignPeerSlot / RosterRow: handshake. Join is point-to-point
-//     host<->client; AssignPeerSlot + RosterRow are host-originated (the
-//     latter IS the cross-peer identity relay from T2-1).
-// PropPose rides the unreliable relay (T2-2), not this path.
+// The host relay: the reliable kinds the host forwards from one client to the others,
+// peer-originated gameplay only. A client's equipment toggle must show on its puppet
+// everywhere; a client's drop, destroy or throw must replicate; a symmetric interactable's edge
+// must reach the other clients. Not relayed: the host-authoritative kinds (weather, entity
+// spawns and destroys, the dev keys, damage) originate on the host and go direct, and the
+// router trust-gates them on the host slot; the handshake kinds are point-to-point or
+// host-originated. PropPose rides the unreliable relay.
 inline bool IsClientRelayableReliableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::ItemActivate:
     case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
-    case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
+    case ReliableKind::PropConvert:       // a client's clump-to-pile convert
     case ReliableKind::PropRelease:
-    case ReliableKind::PropStickState:    // v68: a client's wall-attachable stick (camera on a wall) must reach the other clients
+    case ReliableKind::PropStickState:    // a client's wall-attachable stick
     case ReliableKind::DoorState:
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
-    case ReliableKind::GarageDoorState:   // v44: garage door is SYMMETRIC -- relay a client's open/close to the others
-    case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
-    case ReliableKind::LockerDoorState:   // v62: locker/console doors are SYMMETRIC -- relay a client's toggle to the others
-    case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
-    case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-OR-GRABBER-authoritative -- relay a client driver's/grabber's pose to the other clients
-    case ReliableKind::AtvRelease:        // v76: ATV grab-release/throw edge -- relay a client grabber's release to the other clients (companion to AtvState)
-    // DeskState is NOT relayable since v112 (RULE 2): it is ADOPT-ONLY, host->joiner
-    // point-to-point; clients never send it. Live desk input rides DeskInput below.
-    case ReliableKind::DeskInput:         // v112: claim-free field-granular desk input deltas are PRESSER-authored -- relay a client's delta to the others (the host excludes the originator by relay construction)
-    case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
-    case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
-    case ReliableKind::PlayDeckEvent:     // v117 (L6): deck playback edges are PRESSER-authored (organic Activate/Deactivate at the seam; any peer may stop) -- relay a client's edge to the others
-    case ReliableKind::DriveSlotState:    // v119 (L5): slot FSM lines are ANY-PEER-announced idempotent state -- relay a client's edge to the others (host canonical on conflict)
-    case ReliableKind::DrivePayload:      // v119 (L5): drive Data_0 rows are WRITER-authored -- relay a client writer's row to the others
-    case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
+    case ReliableKind::GarageDoorState:   // symmetric
+    case ReliableKind::ApplianceState:    // symmetric
+    case ReliableKind::LockerDoorState:   // symmetric
+    case ReliableKind::PowerControlState: // symmetric
+    case ReliableKind::AtvState:          // occupant- or grabber-authoritative
+    case ReliableKind::AtvRelease:        // the grabber's release edge
+    // DeskState is not relayable: adopt-only, host to joiner; live desk input rides DeskInput.
+    case ReliableKind::DeskInput:         // presser-authored deltas
+    case ReliableKind::DeskScanEvent:     // presser-authored; every mirror replays the visual
+    case ReliableKind::DeskSndFx:         // presser-authored
+    case ReliableKind::PlayDeckEvent:     // presser-authored; any peer may stop
+    case ReliableKind::DriveSlotState:    // any-peer idempotent state; the host is canonical on conflict
+    case ReliableKind::DrivePayload:      // writer-authored rows
+    case ReliableKind::DishAimState:      // claim-owner-authoritative
     case ReliableKind::KeypadState:
-    case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others
-    case ReliableKind::GrimeState:        // v42: surface grime is SYMMETRIC -- relay a client's wipe
-    case ReliableKind::TrashPileState:    // v57: trash-pile collect counters are SYMMETRIC -- relay a client's collect to the others
-    case ReliableKind::FireflySpawn:      // v51: fireflies are PEER-SYMMETRIC -- each peer spawns near its OWN camera + shares; relay a client's spawn to the others so all peers see everyone's
-    case ReliableKind::OwnerEntitySpawn:  // v108 OWNER-ENTITY (eyer): each peer OWNS its stalker + every peer must see it -- relay a client's announce/pose/destroy to the others
+    case ReliableKind::WindowCleanState:  // symmetric
+    case ReliableKind::GrimeState:        // symmetric
+    case ReliableKind::TrashPileState:    // symmetric
+    case ReliableKind::FireflySpawn:      // each peer spawns near its own camera and shares
+    case ReliableKind::OwnerEntitySpawn:  // each peer owns its stalker; every peer must see it
     case ReliableKind::OwnerEntityPose:
     case ReliableKind::OwnerEntityDestroy:
-    case ReliableKind::InventoryPickup:   // v58: the inventory-collect blip is PEER-SYMMETRIC -- relay a client's collect so every peer hears it
-    // ChatMessage is NOT relayable (v133, 2026-07-29): chat is HOST-AUTHORED now. A
-    // client's line reaches the host as an INTENT; the host commits it to the lobby's
-    // record with a lineSeq and broadcasts an authored ChatLine to everyone, the origin
-    // included. It could not stay relayed: the relay fires on the NET thread at receive
-    // time, before the game thread where a lineSeq could be assigned even exists, so at
-    // relay time the order does not yet exist. Keeping both paths would be two
-    // implementations of one concept compiled together (RULE 2) -- and the relayed copy
-    // would arrive with no position in the order, i.e. unsortable against the history.
-    // EmailAppend is NOT relayable (2026-07-10, audit MEDIUM): emails are HOST-AUTHORED
-    // since e5718fc6 (email_sync gates the append send on role()==Host; clients author
-    // ZERO). A client EmailAppend reaching the host is a protocol violation --
-    // event_dispatch_state drops it at the handler; relaying it would re-open the
-    // shared-inbox pollution vector one client-side regression wide.
-    case ReliableKind::EmailDelete:       // v65: email deletes are PLAYER-SYMMETRIC (any peer's del button) -- relay a client's delete to the others
-    case ReliableKind::SavedSignalAppend: // v65: saved-signal saves are PRODUCER-SYMMETRIC (download-save/import/copy at the claimed desk) -- relay
-    case ReliableKind::SavedSignalDelete: // v65: saved-signal deletes/export-moves are PLAYER-SYMMETRIC -- relay
-    case ReliableKind::CompState:         // v65: the decode stream is SIMULATOR-authoritative (the peer whose latch is set) -- relay a client simulator to the others
-    case ReliableKind::CompData:          // v65: comp_data_0 edges come from the claim-owner OR the simulator -- relay
-    case ReliableKind::VoiceState:        // v66: voice mute/disabled display state is PLAYER-SYMMETRIC -- relay a client's edge to the others
-    case ReliableKind::DeskLogLine:       // v70: coords-terminal event lines are PRODUCER-SYMMETRIC (the line originates where the action ran) -- relay a client's line to the others
-    case ReliableKind::ReelSlot:          // v114 (L7): caddy slot edges are PRESSER-authored (any peer inserts/ejects) -- relay a client's edge to the others
-    case ReliableKind::MeadowAppend:      // v120 (L9): meadow-DB saves are PRESSER-SYMMETRIC (any peer's laptop "save to DB" / physMod#5 auto-upload) -- relay
-    case ReliableKind::MeadowDelete:      // v120 (L9): meadow-DB deletes are PLAYER-SYMMETRIC (any peer's laptop delete button) -- relay
+    case ReliableKind::InventoryPickup:   // peer-symmetric
+    // ChatMessage is not relayable: chat is host-authored. A client's line reaches the host as an
+    // intent; the host commits it with a sequence number and broadcasts an authored line to
+    // everyone. The relay fires on the net thread at receive time, before a sequence number can
+    // exist, so a relayed copy would have no position in the order. EmailAppend is not relayable
+    // either: emails are host-authored, and a client's append is a protocol violation the handler
+    // drops.
+    case ReliableKind::EmailDelete:       // player-symmetric
+    case ReliableKind::SavedSignalAppend: // producer-symmetric
+    case ReliableKind::SavedSignalDelete: // player-symmetric
+    case ReliableKind::CompState:         // simulator-authoritative
+    case ReliableKind::CompData:          // from the claim owner or the simulator
+    case ReliableKind::VoiceState:        // player-symmetric
+    case ReliableKind::DeskLogLine:       // producer-symmetric
+    case ReliableKind::ReelSlot:          // presser-authored
+    case ReliableKind::MeadowAppend:      // presser-symmetric
+    case ReliableKind::MeadowDelete:      // player-symmetric
         return true;
     default:
         return false;
     }
 }
 
-// v56 pre-world send gate (design-workflow B2, the MTA invariant): a menu-mode
-// joining client is CONNECTED for ~30-60 s before it has a gameplay world
-// (downloading + loading the host save). Host->client reliable kinds that
-// MUTATE/ASSUME a world must not be sent to a slot until its ClientWorldReady --
-// the world-ready connect replay reconstructs all of it by design. This is the
-// allowlist of kinds that may flow BEFORE world-ready: handshake/identity + the
-// save transfer itself.
+// The pre-world send gate: a menu-mode joiner is connected for tens of seconds before it has a
+// world (downloading and loading the host save), and a host-to-client kind that mutates or
+// assumes a world must not be sent to a slot before its ClientWorldReady, since the world-ready
+// replay reconstructs all of it. The allowlist of kinds that may flow before world-ready.
 inline bool IsPreWorldSendableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::Join:
     case ReliableKind::AssignPeerSlot:
     case ReliableKind::RosterRow:        // roster identity -- engine-free on the receiver
-    // v93 skins: SkinChange is the same roster-identity family and its receiver is
-    // engine-free with no puppet spawned (StoreSkinForSlot just caches the name; the
-    // puppet spawns later reading SkinForSlot). WITHOUT this, a skin changed while a
-    // joiner is still in its 30-60 s load window is SILENTLY dropped by this gate and
-    // the joiner renders the OLD skin for the whole session (audit 2026-07-02 HIGH --
-    // the v90-b3 "mutation during the window" class, killed at the gate itself).
+    // SkinChange is the same roster-identity family, and its receiver only caches the name (the
+    // puppet reads it when it spawns); gated, a skin changed during a joiner's load window would be
+    // dropped, and the joiner would render the old skin all session.
     case ReliableKind::SkinChange:
-    // v94 nameplate pref: same family, same reasoning -- the receiver is a plain
-    // per-slot flag store (coop::nameplate), engine-free pre-puppet. Gating it would
-    // re-create the exact load-window swallow SkinChange had.
+    // The nameplate preference: the same family, a plain per-slot flag store.
     case ReliableKind::NameplateChange:
-    // v103 nick color: same family, same reasoning -- the receiver is a plain
-    // per-slot atomic store (coop::nick_color), engine-free pre-puppet.
+    // The nick colour: the same family, a per-slot atomic store.
     case ReliableKind::NickColorChange:
     case ReliableKind::SaveTransferRequest:
     case ReliableKind::SaveTransferBegin:
     case ReliableKind::SaveTransferChunk:
-    // v73 Inc4: the per-player inventory APPLY blob is BY DESIGN pre-world -- the joiner must have it
-    // buffered before OnSaveObjectReady fires (the one window to substitute the inventory before the
-    // native loadObjects materializes the world). The receiver just deserializes + stores it
-    // (g_pendingApply); it assumes NO world. Without this it was blocked until ClientWorldReady ==
-    // too late, so the apply never ran ("no apply blob arrived" -- the user's "inventory never worked").
+    // The per-player inventory blob is pre-world by design: the joiner must hold it before the save
+    // object is ready, the one window to substitute the inventory. The receiver only deserialises
+    // and stores it.
     case ReliableKind::PlayerInventoryBlob:
-    // v95 EventFire: the receiver is engine-free pre-world BY DESIGN -- event_fire_sync::
-    // OnReliable only policy-checks + QUEUES until the eventer resolves (world-ready drain), so a
-    // story row fired while a joiner is in its 30-60 s transfer/load window is replayed instead
-    // of silently swallowed by this gate (perf-audit 2026-07-03 W-2 -- the same "mutation during
-    // the window" class as SkinChange above). The save snapshot covers everything BEFORE the
-    // slot connected; this covers the window between the snapshot and world-ready; the client's
-    // passEvents dedupe makes the overlap idempotent.
+    // EventFire's receiver is engine-free pre-world: it policy-checks and queues until the eventer
+    // resolves, so a story row fired during a joiner's load window is replayed rather than
+    // swallowed; the client's dedupe makes the overlap with the snapshot idempotent.
     case ReliableKind::EventFire:
     case ReliableKind::ClientWorldReady:
         return true;
