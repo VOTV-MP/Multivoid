@@ -1,14 +1,7 @@
-// coop/config/config.h -- env + ini configuration readers.
-//
-// Both the scenario file (scenario.txt) and the user-facing ini
-// (multivoid.ini) live next to the mod DLL. The LAN test framework
-// overrides via environment variables (one DLL location serves two
-// instances, so per-file configs would alias).
-//
-// Precedence (highest first):
-//   1. Environment variable (set by the launcher, tools/mp.py)
-//   2. multivoid.ini value
-//   3. Hard-coded default
+// coop/config/config.h -- the env and ini configuration readers. multivoid.ini lives next to
+// the mod DLL; the LAN test framework overrides through environment variables, since one DLL
+// location serves two instances and per-file configs would alias. Precedence: the environment
+// variable (set by the launcher, tools/mp.py), then the ini value, then the row default.
 
 #pragma once
 
@@ -20,42 +13,31 @@
 
 namespace coop::config {
 
-// Read an environment variable (ASCII). Empty string if unset.
+// An environment variable (ASCII); empty if unset.
 std::string ReadEnv(const char* name);
 
-// Read the launch scenario: the VOTVCOOP_SCENARIO env var (per-launch signal),
-// or "menu" on a native launch. (The on-disk scenario.txt fallback was RETIRED
-// 2026-06-06 -- a leftover file aliased later native launches.)
+// The launch scenario: the VOTVCOOP_SCENARIO env var, or menu on a native launch.
 std::string ReadScenario();
 
-// (arc 3: the string-keyed ReadIniValue is INTERNAL now -- product reads go
-// through the typed handle Resolve* APIs below; the schema's own machinery
-// reads file-discovered keys via the config-internal twins.)
+// The string-keyed ini read is internal; product reads go through the typed Resolve functions
+// below.
 
-// Seed a fresh multivoid.ini SKELETON (ordered section headers from the
-// registry, [net] first / [dev] last, plus the one user-ruled seeded-active
-// line net.nick=<my-name default>). Runs ONLY when the ini is authoritatively
-// ABSENT (ENOENT); an existing file -- readable or not -- is never touched.
-// Atomic create; loses a concurrent-create race gracefully. Returns true if
-// the skeleton was created. Call BEFORE the first ini write of a launch
-// (harness boot, ahead of the guid/skin mints).
+// Seed a fresh multivoid.ini skeleton: the ordered section headers from the registry and the
+// one seeded-active line, net.nick. Runs only when the ini is authoritatively absent; an
+// existing file, readable or not, is never touched. An atomic create that loses a
+// concurrent-create race gracefully. True if created. Call before the first ini write of a
+// launch.
 bool EnsureIniSkeleton();
 
-// Create/update a single "key=value" line in multivoid.ini. TARGETING = the
-// unified occurrence rule (ini rework T3): the authoritative line is the FIRST
-// case-insensitive key occurrence, edited in place with canonical spelling; at
-// N>1 duplicates only that line is edited; other bytes verbatim; the rewritten
-// line's inline comment is deleted (it described the old value). Best-effort:
-// a read-only dir just means the setting isn't remembered, never a crash (logs
-// + returns false; true = the atomic swap landed). The ini is LOCAL-ONLY
-// (gitignored). ASCII values.
-//
-// KEYED BY TYPED HANDLE (arc 3 C3b -- the write half of the ratchet): product
-// code cannot persist an unregistered key. The VALUE stays a string: it is
-// user-shaped UI output, refused by ValueValidForKey behind this door exactly
-// as the reader would refuse it (T3b -- never persist garbage). The
-// string-keyed machinery (reformat / keep-line / skeleton / selftests below)
-// stays string-keyed by nature: it operates on keys discovered IN the file.
+// Create or update one key=value line in multivoid.ini. The authoritative line is the first
+// case-insensitive occurrence of the key, edited in place with the canonical spelling;
+// duplicates are left alone, other bytes stay as they are, and the rewritten line's inline
+// comment is deleted, since it described the old value. Best-effort: a read-only directory
+// means the setting is not remembered, logged and false; true means the atomic swap landed.
+// ASCII values. Keyed by typed handle, so product code cannot persist an unregistered key; the
+// value stays a string, refused by ValueValidForKey exactly as the reader would refuse it. The
+// string-keyed machinery below (reformat, keep-line, skeleton, selftests) operates on keys
+// discovered in the file.
 bool WriteIniValue(const config_registry::FlagRow& row, const char* value);
 bool WriteIniValue(const config_registry::IntRow& row, const char* value);
 bool WriteIniValue(const config_registry::FloatRow& row, const char* value);
@@ -63,108 +45,79 @@ bool WriteIniValue(const config_registry::EnumRow& row, const char* value);
 bool WriteIniValue(const config_registry::StringRow& row, const char* value);
 bool WriteIniValue(const config_registry::IdentityRow& row, const char* value);
 
-// ---- typed layered reads (arc 2 T6; arc 3 = the const Row& ratchet) ---------
-// Resolve(row) = env -> ini -> the ROW's default (T2-migrate: defaults live in
-// the registry, sites pass no literals). Validation against the row's kind +
-// range/tokens: one vocabulary for flags (1|true|yes|on / 0|false|no|off, ci);
-// numbers must whole-parse AND land in [lo, hi]; enums must ci-match a token
-// (the canonical token is returned). Anything else -- including
-// present-but-empty (F33) -- is garbage: the row DEFAULT applies in memory
-// (user ruling "дефолт ставить"), the T10 boot sweep reports it, nothing is
-// written back. A SET env var that fails validation SHADOWS a valid ini value;
-// an EMPTY env var is unset and falls through (F44). The env var name comes
-// from the row. Handles are registry-minted only (config_registry.h): an
-// unregistered key cannot be read -- the compiler is the gate.
+// The typed layered reads: Resolve(row) is env, then ini, then the row's default, validated
+// against the row's kind and range or tokens. One vocabulary for flags (1, true, yes, on and
+// their negations, case-insensitive); a number must parse whole and land in range; an enum must
+// match a token case-insensitively, and the canonical token is returned. Anything else, an
+// empty value included, is garbage: the row default applies in memory, the boot sweep reports
+// it, nothing is written back. A set env var that fails validation shadows a valid ini value;
+// an empty env var is unset and falls through. Handles are registry-minted, so an unregistered
+// key cannot be read.
 bool        ResolveFlag(const config_registry::FlagRow& row);
 long        ResolveInt(const config_registry::IntRow& row);
 float       ResolveFloat(const config_registry::FloatRow& row);
 std::string ResolveEnum(const config_registry::EnumRow& row);
-// Free strings: env -> ini -> row default, no value validation (arc 3).
+// Free strings: env, ini, row default, no validation.
 std::string ResolveString(const config_registry::StringRow& row);
 
-// Build the net Config from env + ini. Sets `enabled` to true iff a
-// host/client role is configured (otherwise hands-on play stays
-// single-machine).
+// The net Config from env and ini; `enabled` is true iff a host or client role is configured,
+// otherwise hands-on play stays single-machine.
 coop::net::Config ReadNetConfig(bool& enabled);
 
-// The master/lobby server URL ("host:port"). Precedence: env (the net.master row's
-// env twin) -> the custom-master gate (net.master.custom=1 -> ini net.master) -> the
-// official endpoint (coop::net::kOfficialMasterUrl, which is also the row default).
-// Pushed into session_manager at boot so a native (no-env, no-ini) launch points the
-// browser/host flow at the VPS out of the box; set net.master.custom=1 +
-// net.master=... to run your own master.
+// The master server URL. Precedence: the env twin of the net.master row, then the
+// custom-master gate (net.master.custom=1 selects the ini's net.master), then the official
+// endpoint, coop::net::kOfficialMasterUrl, which is also the row default. Pushed into
+// session_manager at boot, so a native launch points the browser at the official master out of
+// the box.
 std::string ReadMasterUrl();
 
-// A forced P2P-host transport Config (signaling/identity/stun from the same
-// env/ini keys as ReadNetConfig's P2P path). The menu Host-Game flow falls back
-// to this when the master announce fails, so hosting never silently dies on an
-// unreachable master (RULE 1). Distinct from ReadNetConfig: does NOT read
-// net.role (it must never trigger the play-path auto-start).
+// A forced P2P-host transport Config from the same keys as ReadNetConfig's P2P path. The
+// Host-Game flow falls back to it when the master announce fails, so hosting never dies on an
+// unreachable master. It does not read net.role, so it never triggers the play-path
+// auto-start.
 coop::net::Config ReadP2PHostFallback();
 
-// The local player's display nickname. Env first, then ini, then the registry
-// my-name default (config_registry::kMyNameDefault).
+// The display nickname: env, then ini, then the registry's my-name default.
 std::wstring ReadNickname();
 
-// v144: ReadPlayerGuid is RETIRED (RULE 2), and with it the `player_guid=` ini
-// line. The durable identity is now an Ed25519 keypair in multivoid_identity.key
-// beside this file (coop/net/peer_identity.h), and the 32-hex guid every store is
-// keyed by is DERIVED from its public key rather than minted here. The two could
-// not coexist: a random guid in a plaintext ini is a bearer token -- copy the line
-// and you ARE that player -- which is exactly the finding (security A15) the key
-// replaces. The migration cost is stated in PLAN_01 s5: a host's stored inventory
-// rows for VISITING players are orphaned once, at this bump.
-
-// v93 skins: the persisted body-skin choice, stored beside the identity
-// (multivoid.ini "player_skin="). Absent/invalid -> the default (the current
-// scientist; the stock body when no starter pak is installed) is assigned + persisted.
+// The persisted body-skin choice (the ini's player_skin). Absent or invalid, the default is
+// assigned and persisted.
 std::string ReadPlayerSkin();
 
-// ---- T10 sweep / T1b owner-reformat file operations (arc 2) -----------------
+// The file operations behind the review panel and the boot sweep.
 
-// All lines of the live multivoid.ini, verbatim (trailing newlines kept).
-// Returns the scan code: 0 = Ok, 1 = Absent (ENOENT), 2 = Unreadable.
+// All lines of the live ini, with trailing newlines kept. The scan code: 0 ok, 1 absent, 2
+// unreadable.
 int ListLiveIniLines(std::vector<std::string>& out);
 
-// Reader-equivalent validation of a raw ini value for `key` against its
-// registry row (kind + range/tokens, comment-stripped exactly like the
-// readers). True for String/Identity rows and unregistered keys. On false,
-// `reasonOut` (optional) gets the panel-facing reason ("not a whole number in
-// [1, 65535]", ...). Shared by the T3b writer and the T10 sweep -- ONE
-// validation, never two.
+// Reader-equivalent validation of a raw ini value for `key` against its registry row,
+// comment-stripped exactly as the readers do. True for string and identity rows and for
+// unregistered keys. On false the optional reason gets the panel-facing text. Shared by the
+// writer and the boot sweep: one validation, never two.
 bool ValueValidForKey(const char* key, const std::string& rawValue, std::string* reasonOut);
 
-// T1b owner action (review panel "keep line" button): keep the FIRST line of
-// `key` whose comment-stripped value equals `keepValue`; drop every other
-// ci-occurrence. Correlated by VALUE, never by line number -- the panel's
-// snapshot ages, and a stale index could delete the wrong (or every) copy of
-// an identity key; refuses when no current line carries the chosen value.
-// The automatic write path never deletes; this is the owner-triggered
-// resolution of a differing-duplicate report. Atomic swap, same guards.
+// The review panel's keep-line action: keep the first line of `key` whose comment-stripped
+// value equals `keepValue`, drop every other occurrence. Correlated by value, never by line
+// number, since the panel's snapshot ages and a stale index could delete the wrong copy of an
+// identity key; refused when no current line carries the value. The automatic write path never
+// deletes. An atomic swap.
 bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 
-// T1b owner opt-in reformat (review panel button; NEVER automatic):
-//   - collapses value-identical duplicate key lines (keep the first);
-//   - emits the registry sections in canonical order ([net] first, [dev]
-//     last) and places each N==1 known key under its section header, its
-//     immediately-attached comment block traveling with it;
-//   - a key with N>1 DIFFERING values is never repositioned and never
-//     adjudicated (stays in the residue, relative order kept -- resolve via
-//     the keep-line buttons); unknown keys and loose comments keep original
-//     order in the residue tail.
-//   - an UNKNOWN key line (nothing in the registry reads it) and a single-
-//     occurrence known key whose value FAILS typed validation are RETIRED to
-//     comments ("; unknown key (tidy): ..." / "; invalid value (tidy): ...")
-//     -- the review panel's complaint is resolved while the user's data stays
-//     readable in the file (fix 2026-07-26: Tidy used to move layout only, so
-//     the panel's rows survived every press and it looked dead).
+// The review panel's opt-in reformat, never automatic. It collapses value-identical duplicate
+// key lines (the first is kept); emits the registry sections in canonical order and places each
+// single-occurrence known key under its section header, its attached comment block travelling
+// with it; never repositions or adjudicates a key with differing duplicate values (it stays in
+// the residue for the keep-line buttons), and unknown keys and loose comments keep their order
+// in the residue tail; and retires an unknown key line or a known key whose value fails
+// validation to a comment, so the panel's complaint resolves while the data stays readable in
+// the file.
 struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; int retired = 0; };
 bool ReformatLiveIni(ReformatStats& out);
 
-// ---- the T8 catalog: multivoid.ini.example (arc 4) --------------------------
+// The catalog: multivoid.ini.example.
 
-// Per-boot outcome of the catalog generation (the drill's FIRST assert -- a
-// failed boot write must fail the drill regardless of surviving old bytes).
+// The per-boot outcome of the catalog generation; the drill's first assert, since a failed boot
+// write must fail it regardless of surviving old bytes.
 enum class ExampleGen : unsigned char {
     NotRun = 0,         // GenerateExampleCatalog never ran this boot
     Regenerated,        // bytes differed (or file absent) -> atomic swap landed
@@ -173,69 +126,49 @@ enum class ExampleGen : unsigned char {
     SkippedUnreadable,  // existing file present but unreadable -- no doomed swap
 };
 
-// Generate multivoid.ini.example beside the DLL: every registry row as wrapped
-// `;; ` description prose (+ generator-emitted allowed-tokens/range/env-twin
-// lines from the row columns) and a copyable `; key=default` line, under bare
-// [section] headers. Deterministic bytes (no timestamp; numeric emission
-// pinned to the C locale); tri-state compare-first; the ONE atomic-swap
-// primitive; fail-soft (the mod NEVER reads this file back). Call once at
-// harness boot after EnsureIniSkeleton.
+// Generate multivoid.ini.example beside the DLL: every registry row as wrapped description
+// prose, the generator-emitted allowed tokens, range and env twin, and a copyable commented
+// key=default line, under bare section headers. Deterministic bytes (no timestamp; numeric
+// emission in the C locale); compare first; the one atomic-swap primitive; fail-soft, since the
+// mod never reads this file back. Once at boot, after EnsureIniSkeleton.
 void GenerateExampleCatalog();
 
-// RETIRE A STORED VALUE THAT A SHIPPED BUG WROTE. Call once at harness boot, after
-// EnsureIniSkeleton.
-//
-// WHY A MIGRATION AND NOT JUST A NEW DEFAULT. `browser.lastdirect` prefilled the
-// direct-connect box with `127.0.0.1:7777` -- Unreal's default port, never ours; a host
-// listens on 47621 (coop::net::kDefaultPort). Changing the row's DEFAULT fixes only
-// installs that never stored one, and the ImGui browser writes the row on
-// `IsItemDeactivatedAfterEdit`, which fires on focus loss with NOTHING TYPED. So a player
-// who merely clicked the box once has the dead port burned into their ini permanently, and
-// the default change is invisible to them. `[V]` measured in this repo's own HOST install.
-//
-// EXACT-MATCH ONLY, and once: the row is rewritten if and only if it still equals the
-// retired literal, so a value the player actually chose -- including a deliberate
-// `:7777` -- is never touched. After it runs the row holds a real address and this is a
-// no-op forever.
+// Retire a stored value a shipped bug wrote; once at boot, after EnsureIniSkeleton. A migration
+// rather than a new default: browser.lastdirect once prefilled the direct-connect box with
+// 127.0.0.1:7777, Unreal's default port and never ours (a host listens on
+// coop::net::kDefaultPort), and the browser writes the row on focus loss with nothing typed, so
+// a player who merely clicked the box has the dead port burned into the ini, where a default
+// change is invisible. Exact match only, and once: the row is rewritten iff it still equals
+// the retired literal, so a value the player chose, a deliberate :7777 included, is never
+// touched.
 void MigrateRetiredIniValues();
 
-// This boot's generation outcome (+ the emitted key count when green).
+// This boot's generation outcome, plus the emitted key count when green.
 ExampleGen ExampleGenStatus(int* keyCountOut);
 
-// Selftest verify of a generated catalog file (the arc-4 drill; probes are
-// RULE-2-exempt): runs the six detectors (grammar/wrap/tri-directional
-// exactly-once/env-only/orphan/section-placement) and the round-trip
-// (strip the leading "; " from every copyable line -> `scratchPath` -> the
-// ONE lexer -> FOUND + typed-equal vs the row defaults via the product
-// cores). Returns the failure count (0 = green); each failure logs one
-// "config-selftest: catalog FAIL ..." line.
+// The selftest verification of a generated catalog: the detectors (grammar, wrap, exactly-once
+// in each direction, env-only, orphan, section placement) and the round trip (every copyable
+// line uncommented into `scratchPath`, through the one lexer, found and typed-equal to the row
+// defaults). Returns the failure count; each failure logs one catalog FAIL line.
 int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& scratchPath);
 
-// ---- T10 identity/durability state (set during the boot mints) --------------
-// True when this launch's guid/skin is SESSION-ONLY: the ini was UNREADABLE at
-// the mint (the gate refused to write over it -- the lock-release overwrite
-// race) or the mint's persist failed. / True when ANY live-ini access hit
-// UNREADABLE this launch (the ini layer dropped out for that read; the launch
-// runs on env+defaults there). Both feed the config review panel's rows.
+// Identity and durability state, set during the boot mints: whether this launch's guid or skin
+// is session-only (the ini was unreadable at the mint, or the persist failed), and whether any
+// live-ini access hit an unreadable file this launch, in which case that read ran on env and
+// defaults. Both feed the config review panel.
 bool IdentityNotDurable();
 bool IniUnreadableSeen();
 
-// ---- boolean ini flags ------------------------------------------------------
+// Boolean flags.
 
-// Returns false ONLY if multivoid.ini (or the env twin) holds an explicit
-// falsy `enabled` -- the [dev] master kill-switch. Absent/garbage = true
-// (granular switches decide). Arc 3: rides rows::enabled (def=true); the
-// string-keyed IsIniKeyTrue is GONE -- flag reads go through
-// ResolveFlag(rows::<flag>).
+// False only when the ini or its env twin holds an explicit falsy `enabled`, the dev master
+// kill-switch; absent or garbage is true, and the granular switches decide.
 bool MasterEnabled();
 
-// ---- dev selftest seams (config corpus instrument; probes are RULE-2-exempt) ----
-// Path-parameterized twins of the two readers + the raw line list + a failing-
-// source scan: the env-gated autotest (VOTVCOOP_RUN_CONFIG_SELFTEST) runs the
-// REAL lexer over corpus ini files and proves the tri-state branches. Not for
-// product use -- product code reads only the module-dir ini via the API above.
-// `scan` codes: 0 = Ok (clean end of stream), 1 = Absent (ENOENT),
-// 2 = Unreadable (open failure other than ENOENT, or mid-stream read error).
+// The dev selftest seams: path-parameterised twins of the readers, the raw line list and a
+// failing-source scan, so the env-gated autotest runs the real lexer over corpus ini files and
+// proves the tri-state branches. Not for product use. `scan` codes: 0 ok, 1 absent, 2
+// unreadable (an open failure other than absence, or a mid-stream read error).
 struct IniSelftestRead {
     int scan = 0;
     bool found = false;
@@ -243,12 +176,10 @@ struct IniSelftestRead {
 };
 IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key);
 int SelftestFlagTriState(const std::wstring& path, const char* key);
-// Typed-resolver twins (arc 3 C5): the INI + DEFAULT halves of the layered
-// resolve over `path` -- same per-kind validate/default cores as the live
-// Resolve* by construction (shared *FromRaw functions), NO env layer. The env
-// layer is drilled by its own control on the LIVE resolver (a dedicated
-// env-twinned row via SetEnvironmentVariableA); the live resolve's absent
-// path is untestable directly (the module ini exists on a rig).
+// The typed-resolver twins: the ini and default halves of the layered resolve over `path`, the
+// same per-kind validate and default cores as the live Resolve functions, with no env layer.
+// The env layer is drilled by its own control on the live resolver through a dedicated
+// env-twinned row.
 bool        SelftestResolveFlagAt(const std::wstring& path, const config_registry::FlagRow& row);
 long        SelftestResolveIntAt(const std::wstring& path, const config_registry::IntRow& row);
 float       SelftestResolveFloatAt(const std::wstring& path, const config_registry::FloatRow& row);
