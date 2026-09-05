@@ -1,8 +1,7 @@
-// coop/event_dispatch_world.cpp -- the ambient / world-event reliable-kind case
-// bodies (FireflySpawn / InventoryPickup / TimeSync / SkyState / RedSky /
-// LightningStrike / WeatherState) + the shared VerifySenderEidRange trust helper,
-// extracted VERBATIM from event_feed.cpp's Update switch (2026-06-11 modularity
-// extraction; see coop/event_dispatch.h).
+// coop/dispatch/event_dispatch_world.cpp -- the ambient and world-event reliable-kind case
+// bodies (the firefly, the event cue, fire and snapshot, the alarm, the server box, the
+// roaches, the inventory pickup, chat, the clock, the sky, the red sky, lightning, weather)
+// and the shared sender-eid range check; see coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
@@ -10,8 +9,8 @@
 
 #include "coop/comms/chat_sync.h"
 #include "coop/world/alarm_sync.h"
-#include "coop/interactables/serverbox_sync.h"  // v107: host-authoritative signal-server state (Inc-1)
-#include "coop/creatures/roach_sync.h"           // v108: host-authoritative roach-infestation snapshot
+#include "coop/interactables/serverbox_sync.h"  // the host-authoritative signal-server state
+#include "coop/creatures/roach_sync.h"           // the host-authoritative roach snapshot
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -31,25 +30,16 @@
 
 namespace coop::event_feed {
 
-// PR-FOUNDATION-1 (2026-05-29): role-range validation for an inbound
-// eid-carrying packet. Without this, a malicious client peer can stamp
-// ItemActivate/RedSky/Lightning/Weather with the HOST's senderElementId;
-// Registry::Get resolves to the host's Player Element and the receiver
-// applies the packet's effect under host identity. The range partition
-// makes that impersonation detectable at the wire boundary: host-role
-// packets MUST carry host-range eids; client-role packets MUST carry
-// peer-range eids. Returns true when the eid is in-range OR when no
-// compare is possible (0 sentinel / invalid sender slot). Logs +
-// returns false on out-of-range.
-//
-// v14 / v15 also performed an 8-bit syncContext compare here (the
-// VerifySenderContext function). v16 PR-FOUNDATION-1b retired that
-// layer entirely: per-peer stale-generation defense now lives in
-// Session::HandleMessage's senderEpoch latch, applied uniformly to
-// EVERY inbound packet by the transport layer (not per-payload by the
-// receiver dispatch). This helper kept the role-range half because
-// it's a wire-format trust boundary (the eid range is the sender's
-// claimed role), independent of the stale-gen defense.
+// The role-range validation for an inbound eid-carrying packet. Without it a malicious client
+// could stamp a packet with the host's sender element id, the Registry would resolve it to the
+// host's Player Element, and the receiver would apply the packet's effect under host identity.
+// The range partition makes that impersonation detectable at the wire boundary: host-role
+// packets must carry host-range eids and client-role packets peer-range eids. True when the
+// eid is in range or no compare is possible (the 0 sentinel, an invalid sender slot); logs and
+// returns false on out-of-range. The per-peer stale-generation defence lives in the session's
+// sender-epoch latch, applied to every inbound packet by the transport; this helper keeps the
+// role-range half because the eid range is the sender's claimed role, a wire-format trust
+// boundary independent of that.
 bool VerifySenderEidRange(int senderPeerSlot,
                           uint32_t senderElementId,
                           const char* kind) {
@@ -75,11 +65,10 @@ bool HandleWorldEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
     case net::ReliableKind::FireflySpawn: {
-        // v51 (2026-06-09): PEER-SYMMETRIC ambient firefly. Any peer may originate one
-        // (each runs its own spawner near its OWN camera + shares); the host relays a
-        // client's spawn to the other clients (IsClientRelayableReliableKind). No trust
-        // gate -- a cosmetic transient particle. The origin never receives its own send,
-        // so OnReliable always materialises ANOTHER peer's firefly at its world position.
+        // The peer-symmetric ambient firefly: any peer may originate one (each runs its own spawner
+        // near its own camera and shares), and the host relays a client's spawn to the other
+        // clients. No trust gate, a cosmetic transient particle; the origin never receives its own
+        // send, so the receiver always materialises another peer's firefly at its world position.
         if (msg.payloadLen < sizeof(net::FireflySpawnPayload)) {
             UE_LOGW("event_feed: FireflySpawn payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::FireflySpawnPayload));
@@ -91,11 +80,10 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EventCue: {
-        // v79 (B1): HOST-AUTHORITATIVE cosmetic emitter cue. Only the host originates one (it is
-        // the sole event producer -- clients run a dormant scheduler), so this only ever runs on
-        // a client and always replays ANOTHER (the host's) cue emitter. No trust gate needed --
-        // a cosmetic transient particle; the wire-level senderEpoch + the host-only-send topology
-        // already bound it. (event_feed trust-gates the eid-carrying state kinds, not this.)
+        // The host-authoritative cosmetic emitter cue. Only the host originates one (it is the sole
+        // event producer; clients run a dormant scheduler), so this only ever runs on a client and
+        // always replays the host's cue emitter. No trust gate needed for a cosmetic transient; the
+        // sender epoch and the host-only send topology already bound it.
         if (msg.payloadLen < sizeof(net::EventCuePayload)) {
             UE_LOGW("event_feed: EventCue payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EventCuePayload));
@@ -107,10 +95,10 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EventFire: {
-        // v95: HOST-AUTHORITATIVE scheduled/story event fired -- the client replays the native
-        // verb per the event_fire_sync replay policy (level/save/cosmetic flips no lane carries;
-        // lane-covered rows are logged + skipped there). World-mutating -> host trust-bound like
-        // WeatherState (no eid in the payload; identity = the transport slot).
+        // The host-authoritative scheduled or story event fired: the client replays the native verb
+        // per the replay policy (the level, save and cosmetic flips no lane carries; lane-covered
+        // rows are logged and skipped there). World-mutating, so host trust-bound like the weather;
+        // there is no eid in the payload, and the identity is the transport slot.
         if (msg.payloadLen < sizeof(net::EventFirePayload)) {
             UE_LOGW("event_feed: EventFire payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EventFirePayload));
@@ -131,9 +119,8 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EventSnapshot: {
-        // v98: HOST->JOINER in-flight event registry entry at the world-ready edge (join-during-
-        // event Phase 1, COOP_EVENT_JOIN.md 3.2). Same trust shape as EventFire: world-mutating,
-        // host-only origin, never relayed.
+        // The host-to-joiner in-flight event registry entry at the world-ready edge. The same trust
+        // shape as the event fire: world-mutating, host-only origin, never relayed.
         if (msg.payloadLen < sizeof(net::EventSnapshotPayload)) {
             UE_LOGW("event_feed: EventSnapshot payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EventSnapshotPayload));
@@ -154,12 +141,11 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AlarmState: {
-        // v101: the base radar alarm shared-world toggle (docs/events/alarm.md). BOTH
-        // directions by design -- host->all is the canonical state, client->host is a local
-        // transition request (the client's own scan/stop-press); role validation lives in
-        // alarm_sync::OnReliable (a client drops non-host senders there). Not relayed by the
-        // transport: the host's reaction to a client's request is its own poll-driven
-        // broadcast, never a forward of the client packet.
+        // The base radar alarm shared-world toggle, both directions by design: host to all is the
+        // canonical state, client to host a local transition request (the client's own scan or stop
+        // press); the role validation lives in the module, where a client drops non-host senders.
+        // Not relayed by the transport: the host's reaction to a client's request is its own
+        // poll-driven broadcast, never a forward of the client packet.
         if (msg.payloadLen < sizeof(net::AlarmStatePayload)) {
             UE_LOGW("event_feed: AlarmState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AlarmStatePayload));
@@ -171,9 +157,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ServerState: {
-        // v107: host-authoritative signal-server sim state (Inc-1). HOST->clients only; the client
-        // drive-reals it (raw-write serverBox.IsBroken + reflected check()). serverbox_sync::OnReliable
-        // drops a non-host sender (host-authoritative one-directional). coop/interactables/serverbox_sync.
+        // The host-authoritative signal-server state, host to clients only; the client drives the
+        // real actor (a raw write of the broken flag and the reflected check). The module drops a
+        // non-host sender.
         if (msg.payloadLen < sizeof(net::ServerStatePayload)) {
             UE_LOGW("event_feed: ServerState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ServerStatePayload));
@@ -185,10 +171,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::RoachState: {
-        // v108: host-authoritative roach-infestation snapshot (paged). The client
-        // assembles pages and applies by ordinal (drive loc/scale, or rebuild via
-        // the game's own addRoach/deleteRoach). roach_sync::OnState drops a
-        // non-host sender. coop/creatures/roach_sync.
+        // The host-authoritative roach-infestation snapshot, paged. The client assembles the pages
+        // and applies by ordinal (driving location and scale, or rebuilding through the game's own
+        // add and delete). The module drops a non-host sender.
         if (msg.payloadLen < sizeof(net::RoachStatePayload)) {
             UE_LOGW("event_feed: RoachState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::RoachStatePayload));
@@ -200,9 +185,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::InventoryPickup: {
-        // v58 (2026-06-11): a peer collected an item into inventory -- play the
-        // native inventory_Cue blip at their broadcast position (PEER-SYMMETRIC,
-        // host-relayed, cosmetic; the origin never receives its own send).
+        // A peer collected an item into its inventory: play the native inventory cue at the
+        // broadcast position. Peer-symmetric, host-relayed, cosmetic; the origin never receives its
+        // own send.
         if (msg.payloadLen < sizeof(net::InventoryPickupPayload)) {
             UE_LOGW("event_feed: InventoryPickup payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::InventoryPickupPayload));
@@ -214,10 +199,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ChatMessage: {
-        // v133: a client's chat INTENT, client->host only. Identity comes from the
-        // TRANSPORT slot -- a peer cannot speak as someone else -- and the payload is
-        // text only, decoded STRICTLY at the boundary in chat_sync before it can enter
-        // the lobby's record or reach a screen.
+        // A client's chat intent, client to host only. Identity comes from the transport slot, so a
+        // peer cannot speak as someone else, and the payload is text only, decoded strictly at the
+        // boundary in chat_sync before it can enter the lobby's record or reach a screen.
         if (msg.payloadLen < sizeof(net::ChatMessagePayload)) {
             UE_LOGW("event_feed: ChatMessage payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ChatMessagePayload));
@@ -234,8 +218,8 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ChatSpeaker: {
-        // v133: WHO the ChatLine that follows is from. Host->client; it always
-        // immediately precedes its line on the same ordered lane.
+        // Who the chat line that follows is from, host to client; it always immediately precedes
+        // its line on the same ordered lane.
         if (msg.payloadLen < sizeof(net::ChatSpeakerPayload)) {
             UE_LOGW("event_feed: ChatSpeaker payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ChatSpeakerPayload));
@@ -247,15 +231,15 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ChatLine: {
-        // v133: the host's AUTHORED chat row, carrying the lineSeq that IS the order.
+        // The host's authored chat row, carrying the line sequence that is the order.
         if (msg.payloadLen < sizeof(net::ChatLinePayload)) {
             UE_LOGW("event_feed: ChatLine payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ChatLinePayload));
             break;
         }
         if (msg.senderPeerSlot != 0) {
-            // Only the host authors. A client claiming to is a protocol violation, and
-            // accepting it would let any peer write the lobby's permanent record.
+            // Only the host authors. A client claiming to is a protocol violation, and accepting it
+            // would let any peer write the lobby's permanent record.
             UE_LOGW("event_feed: ChatLine from senderPeerSlot=%d -- only the host "
                     "authors chat; dropping", msg.senderPeerSlot);
             break;
@@ -266,9 +250,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::TimeSync: {
-        // v36 (2026-06-07): HOST-authoritative world clock (time-of-day). HOST->client; the
-        // client applies it to its cycle (OnReliable no-ops on the host defensively).
-        // Trust gate (like every other host-only kind): only slot 0 (the host) may set the clock.
+        // The host-authoritative world clock, host to client; the client applies it to its cycle
+        // (the module no-ops on the host). The trust gate, like every host-only kind: only slot 0
+        // may set the clock.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: TimeSync from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
@@ -280,9 +264,10 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::TimeSyncPayload tp{};
         std::memcpy(&tp, msg.payload, sizeof(tp));
-        // Reject NaN/Inf / absurd values before the raw float write into the cycle struct (a NaN
-        // clock -> setSunAndMoonRotation(NaN) -> black sky / FRotator assert). totalTime/day are
-        // monotonic game counters (O(1e4)s per game-day); timeScale is ~1.
+        // Reject NaN, infinity and absurd values before the raw float write into the cycle struct:
+        // a NaN clock reaches the sun and moon rotation, a black sky or a rotator assert. The time
+        // and day are monotonic game counters, tens of thousands of seconds per game day; the time
+        // scale is about 1.
         if (!std::isfinite(tp.totalTime) || !std::isfinite(tp.day) || !std::isfinite(tp.timeScale) ||
             std::fabs(tp.totalTime) > 1.0e7f || std::fabs(tp.day) > 1.0e7f ||
             tp.timeScale < 0.0f || tp.timeScale > 1.0e4f) {
@@ -294,9 +279,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::SkyState: {
-        // v44 (2026-06-08): HOST-authoritative night-sky orientation + moon phase (Anewsky_C).
-        // HOST->client; trust-gated to slot 0 like TimeSync. The client writes the sky mesh
-        // world rotation + moonPhase (sky_sync::OnReliable no-ops on the host defensively).
+        // The host-authoritative night-sky orientation and moon phase, host to client, trust-gated
+        // to slot 0 like the clock. The client writes the sky mesh's world rotation and the moon
+        // phase (the module no-ops on the host).
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: SkyState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
@@ -308,9 +293,9 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::SkyStatePayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
-        // NaN/Inf guard before the raw float writes (SetComponentWorldRotation(NaN) -> FRotator
-        // assert / garbage transform). Rotations are bounded angles; moonPhase is a material
-        // scalar. (sky_sync::OnReliable re-checks defensively too.)
+        // The NaN and infinity guard before the raw float writes (a NaN rotation is a rotator
+        // assert or a garbage transform). The rotations are bounded angles and the moon phase a
+        // material scalar; the module re-checks too.
         if (!std::isfinite(sp.skyPitch) || !std::isfinite(sp.skyYaw) ||
             !std::isfinite(sp.skyRoll) || !std::isfinite(sp.moonPhase)) {
             UE_LOGW("event_feed: SkyState non-finite floats -- dropping");
@@ -320,10 +305,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::RedSky: {
-        // Phase 5W Inc-fix-2 (2026-05-27): one-shot/toggle red-sky
-        // story-event sync. Host's POST observer on spawnRedSky +
-        // redSky.set caught the change; broadcast it. Receiver
-        // invokes the same chain on its local gamemode.
+        // The one-shot red-sky story event: the host's POST observer on the spawn and the set
+        // caught the change and broadcast it; the receiver invokes the same chain on its local
+        // gamemode.
         if (msg.payloadLen < sizeof(net::RedSkyPayload)) {
             UE_LOGW("event_feed: RedSky payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::RedSkyPayload));
@@ -335,16 +319,15 @@ bool HandleWorldEvent(net::Session& session,
             UE_LOGI("event_feed: RedSky received on host -- dropping");
             break;
         }
-        // v13 (A4 2026-05-29): host trust-bound. RedSky is host-only;
-        // a non-host senderPeerSlot is a protocol violation.
+        // Host trust-bound: the red sky is host-only, and a non-host sender is a protocol
+        // violation.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: RedSky from non-host senderPeerSlot=%d "
                     "(senderElementId=0x%08x) -- dropping",
                     msg.senderPeerSlot, p.senderElementId);
             break;
         }
-        // PR-FOUNDATION-1: role-range trust on senderElementId.
-        // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+        // The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "RedSky")) {
             break;
@@ -361,13 +344,10 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::LightningStrike: {
-        // Phase 5W Inc2 (2026-05-27): discrete strike event. Host's
-        // POST observer on BeginDeferredActorSpawnFromClass caught
-        // an AlightningStrike_C spawn (BP-internal SpawnActor inside
-        // AdaynightCycle_C::timerLightning) and broadcast the
-        // strike's world location. Client suppressed its own
-        // timerLightning via Inc1's interceptor so no local strike
-        // happened; this packet drives the visual.
+        // The discrete lightning strike: the host's POST observer on the deferred spawn caught a
+        // strike spawn (a blueprint-internal spawn inside the cycle's lightning timer) and
+        // broadcast its world location. The client suppressed its own lightning timer through the
+        // interceptor, so no local strike happened; this packet drives the visual.
         if (msg.payloadLen < sizeof(net::LightningStrikePayload)) {
             UE_LOGW("event_feed: LightningStrike payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::LightningStrikePayload));
@@ -379,21 +359,19 @@ bool HandleWorldEvent(net::Session& session,
             UE_LOGI("event_feed: LightningStrike received on host -- dropping");
             break;
         }
-        // v13 (A4 2026-05-29): host trust-bound. LightningStrike is
-        // host-only; a non-host senderPeerSlot is a protocol violation.
+        // Host trust-bound: the strike is host-only, and a non-host sender is a protocol violation.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: LightningStrike from non-host "
                     "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
                     msg.senderPeerSlot, p.senderElementId);
             break;
         }
-        // PR-FOUNDATION-1: role-range trust on senderElementId.
-        // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+        // The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "LightningStrike")) {
             break;
         }
-        // Trust boundary: validate loc finite + within sane bounds.
+        // The trust boundary: the location must be finite and within sane bounds.
         if (!std::isfinite(p.locX) || !std::isfinite(p.locY) || !std::isfinite(p.locZ) ||
             std::fabs(p.locX) > coop::net::kMaxCoord ||
             std::fabs(p.locY) > coop::net::kMaxCoord ||
@@ -409,11 +387,8 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::WeatherState: {
-        // Phase 5W Inc1 (2026-05-26): host-authoritative weather state.
-        // Sender = host. Receiver looks up local AdaynightCycle_C and
-        // invokes the cycle's mutator UFunctions to apply each delta.
-        // See coop/weather_sync.cpp::ApplyFromHost for the full apply
-        // logic + research/findings/weather-wind/votv-weather-DESIGN-2026-05-26.md.
+        // The host-authoritative weather state. The receiver looks up its local day-night cycle and
+        // invokes the cycle's mutator UFunctions to apply each delta; see the weather sync's apply.
         if (msg.payloadLen < sizeof(net::WeatherStatePayload)) {
             UE_LOGW("event_feed: WeatherState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::WeatherStatePayload));
@@ -421,35 +396,32 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::WeatherStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // Self-echo guard: weather is host->client only; if our role
-        // says we ARE the host, a WeatherState packet must be a loopback
-        // bounce (we'd never send to ourselves but defensive). Drop.
+        // The self-echo guard: weather is host to client only, so a packet arriving on the host is
+        // a loopback bounce, dropped.
         if (session.role() == net::Role::Host) {
             UE_LOGI("event_feed: WeatherState received on host -- dropping "
                     "(host is the authority; no inbound from client)");
             break;
         }
-        // v13 (A4 2026-05-29): host trust-bound. WeatherState is
-        // host-only; a non-host senderPeerSlot is a protocol violation.
+        // Host trust-bound: the weather is host-only, and a non-host sender is a protocol
+        // violation.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: WeatherState from non-host "
                     "senderPeerSlot=%d (senderElementId=0x%08x) -- dropping",
                     msg.senderPeerSlot, p.senderElementId);
             break;
         }
-        // PR-FOUNDATION-1: role-range trust on senderElementId.
-        // (v14 syncContext compare replaced by Session-layer senderEpoch in v16.)
+        // The role-range trust on the sender element id.
         if (!VerifySenderEidRange(msg.senderPeerSlot, p.senderElementId,
                                    "WeatherState")) {
             break;
         }
-        // Trust-boundary: validate EVERY float the receiver writes into engine memory
-        // is finite + within a sane range. Rain scalars are unitless [0, ~10] (lc/dc
-        // chance up to ~120 observed); fog density ~[0, 15]; wind ~[0, 50] -- a generous
-        // (-1e3, 1e3) catches garbage/NaN without clamping any legit value. v43 added
-        // the 4 wind floats (written raw into the wind actor via directionalwind::Write)
-        // AND the v24 fog/rain floats that were applied unvalidated before -- same
-        // trust boundary, all in one check now (audit 2026-06-08).
+        // The trust boundary: every float the receiver writes into engine memory must be finite and
+        // within a sane range. The rain scalars are unitless and small (the chances reach about a
+        // hundred), the fog density about 15 at most, the wind about 50; a generous bound of a
+        // thousand catches garbage and NaN without clamping any legitimate value. The wind floats
+        // are written raw into the wind actor and the fog and rain floats validated here too, one
+        // trust boundary in one check.
         const float vals[] = {
             p.rainStrength, p.rainLightningChance, p.rainDeactivateChance, p.rainWindSpeed,
             p.rain, p.finalFogDensity, p.fogAlpha, p.fogStrength,
