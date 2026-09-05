@@ -1,4 +1,4 @@
-// coop/trash_proxy.cpp -- see coop/trash_proxy.h.
+// coop/props/trash_proxy.cpp -- see coop/props/trash_proxy.h.
 
 #include "coop/props/trash_proxy.h"
 
@@ -6,7 +6,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/props/remote_prop.h"       // ClearAnyDriveFor (evict the pose drive before destroying a proxy)
-#include "coop/props/trash_clump_pose_stream.h"  // v85: evict the per-eid carry drive before destroying a proxy
+#include "coop/props/trash_clump_pose_stream.h"  // evict the per-eid carry drive before destroying a proxy
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/gc_pin.h"
@@ -30,53 +30,50 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 struct ProxyEntry {
-    // CachedObjRef (islive-zeroav 2026-08-22): rooting makes the actor GC-immune in
-    // STEADY state, but a world teardown still force-kills actors regardless of the
-    // root set -- so cross-tick probes go through the slot-validated ref, not bare
-    // IsLive on the raw pointer (the census's 7 trash_proxy rows).
+    // A slot-validated reference: rooting makes the actor GC-immune in steady state, but a world
+    // teardown still force-kills actors regardless of the root set, so cross-tick probes go
+    // through the slot-validated ref, never a bare liveness read of the raw pointer.
     ue_wrap::CachedObjRef actor;
-    // The GC pin, OWNED. Erasing the entry releases it -- so no teardown path can drop a
-    // proxy while leaving its actor rooted. That is exactly what the old hand-written
-    // `if (liveActor) RemoveFromRoot(liveActor)` did at a world teardown, where every
-    // proxy reports not-Alive: 871 actors stayed rooted and anchored the departed UWorld
-    // through their Outer chain, so the world was never collected and the next map load
-    // adopted the corpse (see ue_wrap/core/gc_pin.h).
+    // The GC pin, owned: erasing the entry releases it, so no teardown path can drop a proxy
+    // while leaving its actor rooted. A hand-written unroot guarded on liveness did exactly that
+    // at a world teardown, where every proxy reports not alive: hundreds of actors stayed rooted
+    // and anchored the departed world through their outer chain, so the world was never
+    // collected and the next map load adopted the corpse (see ue_wrap/core/gc_pin.h).
     ue_wrap::GcPin pin;
     void* comp      = nullptr;  // cached UStaticMeshComponent (invariant for the actor's life)
     int   ownerSlot = -1;       // originating peer slot (for the per-slot disconnect retire)
     bool  isClump   = false;    // current FORM (re-skinned pile<->clump) -- so NearestPileProxy can skip clumps
 };
 
-// eid -> proxy. GAME-THREAD only (every entry point runs on the net-pump game
-// thread), so a plain map with no mutex is correct.
+// eid to proxy. Game thread only (every entry point runs on the pump's game-thread task), so
+// a plain map with no mutex is correct.
 std::unordered_map<coop::element::ElementId, ProxyEntry> g_proxies;
 
 void* g_smaClass  = nullptr;  // AStaticMeshActor UClass (the proxy class)
 void* g_chipBase  = nullptr;  // actorChipPile_C     (class-kind base)
 void* g_clumpBase = nullptr;  // prop_garbageClump_C (class-kind base)
 
-// v83: apply the host's per-form scale to the proxy. An AStaticMeshActor defaults to unit
-// scale, so without this the proxy rendered SMALLER than the host's real pile/clump. The
-// comparison guard rejects a degenerate scale (zero OR NaN -- NaN > x is false) so a malformed
-// packet can never collapse the mirror invisibly; a v83 sender always sends a real scale.
+// Apply the host's per-form scale to the proxy: a static-mesh actor defaults to unit scale,
+// so without this the proxy renders smaller than the host's real pile or clump. The guard
+// rejects a degenerate scale (zero or NaN, since a NaN comparison is false), so a malformed
+// packet can never collapse the mirror invisibly.
 void ApplyProxyScale(void* actor, const ue_wrap::FVector& scale) {
     if (!actor) return;
     if (scale.X > 0.001f && scale.Y > 0.001f && scale.Z > 0.001f)
         E::SetActorScale3D(actor, scale);
 }
 
-// (RETIRED 2026-06-23, RULE 2: the phase-2a "give the pile-form proxy QueryOnly collision so the game's
-// interaction trace hits it, read lookatActorCurrent" approach was DISPROVEN by the harness -- the trace
-// gate logged hit=0: the worn pile mesh has no simple collision body, so SetCollisionEnabled on the
-// proxy's StaticMeshComponent is a no-op for a bTraceComplex=false trace. Recognition is now a camera-ray
-// math cone -- EidForAimedPileProxy below -- which needs NO asset collision. Proxies stay NoCollision (the
-// player passing through a mirrored pile is the pre-existing phase-1 regression; the FAITHFUL fix for both
-// movement-block AND occlusion-correct aim is a future garbageCollider-analog SHAPE component on the proxy.)
+// Proxies stay collision-free. Giving the pile-form proxy query-only collision so the game's
+// interaction trace hits it does nothing: the worn pile mesh has no simple collision body,
+// so the trace never hits. Recognition is a camera-ray cone instead (EidForAimedPileProxy
+// below), which needs no asset collision. The player passing through a mirrored pile is the
+// known cost; the faithful fix for both movement blocking and occlusion-correct aim is a
+// collider shape component on the proxy.
 
-// Cached per-className class-kind: IsTrashProxyClass runs once per PropSpawn (a
-// ~2000-prop join burst) and FindClass is a ~237k-entry GUObjectArray walk -- the
-// cache makes only the ~dozen distinct class names ever walk. Folds IsClumpClass
-// into the SAME lookup (one FindClass per class, not two). GT-serial -> no mutex.
+// The cached per-class-name kind: IsTrashProxyClass runs once per prop spawn (a join burst
+// is thousands) and FindClass is a full object-array walk, so the cache makes only the dozen
+// distinct class names ever walk. IsClumpClass folds into the same lookup, one FindClass per
+// class. Game-thread serial, so no mutex.
 struct ClassKind { bool isTrash = false; bool isClump = false; };
 std::unordered_map<std::wstring, ClassKind> g_classKind;
 
@@ -98,41 +95,35 @@ ClassKind ResolveClassKind(const std::wstring& className) {
     return k;
 }
 
-// The fixed dirtball clump mesh (cached). May be null if no clump asset is
-// resident yet on this client -- the caller then falls back to the pile mesh so a
-// proxy is never invisible.
+// The fixed dirtball clump mesh, cached. Null if no clump asset is resident yet on this
+// client; the caller then falls back to the pile mesh, so a proxy is never invisible.
 void* ResolveClumpMesh() {
     static ue_wrap::CachedObjRef sDirtball;
     if (!sDirtball.Alive()) sDirtball.Set(R::FindObject(L"dirtball", L"StaticMesh"));
     return sDirtball.Raw();  // just validated/refilled
 }
 
-// MEDIUM-1 last-ditch: the engine basic Cube, so a proxy is NEVER invisible even if
-// both the dirtball clump mesh and the chipType pile mesh fail to resolve. In
-// practice unreachable -- a trash class being loaded (we resolved IsTrashProxyClass
-// against it) pins its referenced meshes resident, and ResolvePileMesh last-good-
-// caches -- so a full native StaticLoadObject primitive is not warranted; FindObject
-// (resident) is the proportionate guard. Last-good cached.
+// The last-ditch mesh, the engine's basic cube, so a proxy is never invisible even if both
+// the dirtball mesh and the pile mesh fail to resolve. Unreachable in practice: a loaded
+// trash class pins its referenced meshes resident, and the pile mesh resolver caches the last
+// good one, so a native load call is not warranted and the resident find is the
+// proportionate guard. Last-good cached.
 void* ResolveCubeFallback() {
     static ue_wrap::CachedObjRef sCube;
     if (!sCube.Alive()) sCube.Set(R::FindObject(L"Cube", L"StaticMesh"));
     return sCube.Raw();  // just validated/refilled
 }
 
-// Skin the proxy's StaticMeshComponent for the requested form. SetStaticMesh
-// recomputes the component's bounds + collision body in the SAME call (atomic --
-// no window where the visual is the new form but the bound is the old). `worldCtx`
-// is a live UObject for getChipPileType's WorldContext (the proxy actor itself).
-//
-// PILE  = the chipType pile mesh directly (its own slot-0 material is correct). We
-//         re-skin ONE shared component back and forth (unlike the game's separate
-//         actors), so CLEAR any leftover clump material override: SetMaterial(0,null)
-//         reverts slot 0 to the mesh asset default.
-// CLUMP = the FIXED dirtball mesh + the pile mesh's slot-0 MATERIAL. This is the
-//         VERIFIED game behavior (prop_garbageClump_C::setTex bytecode = SetMaterial(
-//         0, getChipPileType(chipType).GetMaterial(0)) on the fixed StaticMesh -- a
-//         MATERIAL swap, NOT a mesh swap). Mesh fallback chain dirtball -> pile mesh
-//         -> Cube so the clump is never invisible.
+// Skin the proxy's mesh component for the requested form. Setting the static mesh recomputes
+// the component's bounds and collision body in the same call, so there is no window where
+// the visual is the new form but the bound is the old. `worldCtx` is a live object for the
+// pile-type lookup's world context (the proxy actor itself). A pile is the chip-type pile
+// mesh directly, with its own slot-0 material; one shared component is re-skinned back and
+// forth, unlike the game's separate actors, so any leftover clump material override is
+// cleared (a null material reverts slot 0 to the mesh's default). A clump is the fixed
+// dirtball mesh plus the pile mesh's slot-0 material, the game's own behaviour (the clump
+// blueprint swaps the material on a fixed mesh, never the mesh). The mesh fallback chain is
+// dirtball, then the pile mesh, then the cube, so the clump is never invisible.
 void SkinProxy(void* worldCtx, void* comp, uint8_t chipType, bool isClump) {
     if (!comp) return;
     void* pileMesh = ue_wrap::prop::ResolvePileMesh(chipType, worldCtx);  // last-good cached
@@ -144,9 +135,8 @@ void SkinProxy(void* worldCtx, void* comp, uint8_t chipType, bool isClump) {
         if (mesh) E::SetStaticMesh(comp, mesh);
         void* mat = pileMesh ? E::GetStaticMeshMaterial(pileMesh, 0) : nullptr;
         E::SetComponentMaterial(comp, 0, mat);  // null -> dirtball default (acceptable fallback)
-        // [diag 2026-06-21] WHICH mesh the clump got: if 'PILE-FALLBACK', the ToClump re-skin is a
-        // visual no-op (clump looks exactly like the pile) -- the prime suspect for the hands-on
-        // "the proxy stays a pile" symptom. Event-driven (once per convert/grab), not a hot path.
+        // Which mesh the clump got: on the pile fallback the clump re-skin is a visual no-op (the
+        // clump looks exactly like the pile). Event-driven, once per convert or grab, not hot.
         UE_LOGI("[PILE] trash_proxy: SkinProxy CLUMP chipType=%u mesh-src=%s mesh=%p mat=%p",
                 static_cast<unsigned>(chipType), meshSrc, mesh, mat);
     } else {
@@ -169,13 +159,12 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
         UE_LOGW("trash_proxy: StaticMeshActor class unresolved -- cannot spawn proxy eid=%u", eid);
         return nullptr;
     }
-    // Re-spawn convergence (a re-seed / duplicate / snapshot-bootstrap spawn for an eid
-    // we already mirror): return the existing proxy, never a second actor. CRITICALLY,
-    // do NOT re-skin here (HIGH-1): the proxy's FORM (pile<->clump) is owned exclusively
-    // by the ctx-ordered convert channel (initial SpawnProxy form + ReskinProxy). A
-    // trailing/stale PropSpawn carries the spawn CLASS, which for a pile that the host
-    // has since grabbed is the chipPile class (isClump=false) -- re-skinning on it would
-    // flip a correctly-converted CLUMP back to a PILE. Form changes ride PropConvert only.
+    // Re-spawn convergence (a re-seed, duplicate or snapshot-bootstrap spawn for an eid already
+    // mirrored): return the existing proxy, never a second actor, and do not re-skin. The
+    // proxy's form is owned exclusively by the context-ordered convert channel (the initial
+    // form here plus ReskinProxy); a trailing or stale spawn carries the spawn class, which for a
+    // pile the host has since grabbed is the pile class, and re-skinning on it would flip a
+    // correctly converted clump back to a pile.
     if (auto it = g_proxies.find(eid);
         it != g_proxies.end() && it->second.actor.Alive()) {
         it->second.ownerSlot = ownerSlot;  // a re-bracket may re-stamp the owner
@@ -187,23 +176,21 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
         return nullptr;
     }
     void* comp = E::GetStaticMeshComponent(actor);             // resolve ONCE (invariant for the actor's life)
-    // AStaticMeshActor defaults to STATIC mobility -> at runtime SetStaticMesh AND SetActorLocation
-    // are silently no-ops on a Static component (AreDynamicDataChangesAllowed()==false): the proxy
-    // would be INVISIBLE (mesh never applies) and unable to follow the carry, while the convert/throw
-    // SOUNDS still fire (the events process). The proxy is a kinematic host-driven follower we re-skin
-    // + move every frame, so make it Movable BEFORE the first skin/transform. (Caught hands-on
-    // 2026-06-21: "client hears interaction + throw sounds but no visual mirror" -- the autonomous
-    // smoke can't see this, screenshots are black + it only checks log markers.)
+    // A static-mesh actor defaults to static mobility, and at runtime both the mesh set and the
+    // location set are silent no-ops on a static component: the proxy would be invisible and
+    // unable to follow the carry while the convert and throw sounds still fire. The proxy is a
+    // kinematic host-driven follower re-skinned and moved every frame, so make it movable before
+    // the first skin or transform.
     E::SetComponentMobility(comp, /*EComponentMobility::Movable=*/2);
     E::SetActorRotation(actor, rot);
-    // (pinned below, into the entry that owns it -- see ProxyEntry::pin)
+    // Pinned below, into the entry that owns it (see the entry's pin).
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // kinematic follower (aim-grab is a camera-ray cone, not collision)
     SkinProxy(actor, comp, chipType, isClump);
-    ApplyProxyScale(actor, scale);                              // v83: host-sized (else default unit -> too small)
+    ApplyProxyScale(actor, scale);                              // host-sized (else default unit -> too small)
     ProxyEntry pe;
     pe.actor.Set(actor);  // fresh from SpawnActor
-    // never GC'd -> never stale -> no dup; released when the entry dies. A failure voids
-    // trash_proxy.h's rules-of-existence argument, so it is never silent.
+    // Never collected, so never stale, so no duplicate; released when the entry dies. A failure
+    // voids the header's rules-of-existence argument, so it is never silent.
     if (!pe.pin.Pin(actor)) {
         UE_LOGW("[PILE] trash_proxy: GC PIN FAILED for actor=%p eid=%u -- the proxy can be "
                 "collected out from under its cached pointer", actor, eid);
@@ -225,7 +212,7 @@ void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, 
     void* actor = it->second.actor.Get();  // slot-validated (rooted, but teardown can kill)
     if (!actor) return nullptr;
     SkinProxy(actor, it->second.comp, chipType, isClump);  // in place -> binding untouched -> no dup
-    ApplyProxyScale(actor, scale);                         // v83: re-apply the per-form scale (clump != pile size)
+    ApplyProxyScale(actor, scale);                         // re-apply the per-form scale (clump != pile size)
     it->second.isClump = isClump;                          // track the new form (NearestPileProxy skips clumps)
     return actor;
 }
@@ -236,28 +223,27 @@ void RetireProxy(coop::element::ElementId eid) {
     if (it == g_proxies.end()) return;
     void* actor = it->second.actor.Raw();      // for pointer-compare drive evict + logs
     void* liveActor = it->second.actor.Get();  // slot-validated for the destroy call
-    // Take the pin OUT of the entry before erasing, so the map can be erased first (the
-    // original ordering: nothing below may re-enter and find a half-retired entry) while
-    // the un-root still happens LAST, after the destroy -- destroy marks PendingKill,
-    // then the un-root makes that memory GC-reapable.
+    // Take the pin out of the entry before erasing, so the map can be erased first (nothing
+    // below may re-enter and find a half-retired entry) while the unroot still happens last,
+    // after the destroy: the destroy marks pending kill, then the unroot makes that memory
+    // reapable.
     ue_wrap::GcPin pin = std::move(it->second.pin);
     g_proxies.erase(it);
-    // Evict the drive FIRST so neither remote_prop::Tick nor ForceRelease touches the
-    // actor we destroy (a stale g_drives entry to a freed actor would UAF).
+    // Evict the drive first, so neither the drive tick nor the force release touches the actor
+    // being destroyed (a stale drive entry to a freed actor would be a use after free).
     coop::remote_prop::ClearAnyDriveFor(actor);
-    coop::trash_clump_pose_stream::ClearDriveForEid(eid);  // v85: drop the host-auth per-eid carry drive too
-    // The DESTROY is conditional because destroying needs a live actor. THE UN-ROOT IS
-    // NOT -- `pin` releases at scope exit whatever state the actor is in. Splitting the
-    // two is the whole fix: pairing them under one liveness guard is what left 871 rooted
-    // actors anchoring a dead world.
+    coop::trash_clump_pose_stream::ClearDriveForEid(eid);  // drop the host-auth per-eid carry drive too
+    // The destroy is conditional because destroying needs a live actor. The unroot is not: the
+    // pin releases at scope exit whatever state the actor is in. Splitting the two is the whole
+    // fix; pairing them under one liveness guard is what left hundreds of rooted actors
+    // anchoring a dead world.
     if (liveActor) E::DestroyActor(liveActor);
-    // Unbind the Prop mirror (deferred dtor outside the manager mutex -- the
-    // documented teardown pattern; ~Prop -> ~Element -> Registry::UnregisterMirror).
+    // Unbind the Prop mirror (a deferred destructor outside the manager mutex, the documented
+    // teardown pattern; the element destructor unregisters the mirror).
     coop::element::ElementDeleter::Get().Enqueue(
         coop::element::MirrorManager<coop::element::Prop>::Instance().Take(eid));
-    // The pin has NOT released yet at this point -- it releases when `pin` leaves scope, one line
-    // below. Said plainly because a log line is the first thing a future reader cites as evidence
-    // of ordering.
+    // The pin has not released yet here; it releases when `pin` leaves scope, one line below.
+    // Said plainly because a log line is the first thing a reader cites as evidence of ordering.
     UE_LOGI("[PILE] trash_proxy: RETIRE eid=%u actor=%p (drive-evicted, destroyed, unbound; "
             "un-root on scope exit)", eid, actor);
 }
@@ -268,10 +254,10 @@ void RetireProxyActorOnly(coop::element::ElementId eid) {
     if (it == g_proxies.end()) return;
     void* actor = it->second.actor.Raw();      // pointer-compare drive evict + logs
     void* liveActor = it->second.actor.Get();  // slot-validated for the destroy call
-    // Same take-the-pin -> erase -> drive-evict -> destroy -> release order as RetireProxy, but
-    // WITHOUT the Element unbind: the caller (remote_prop::OnConvert nativize hand-off) has already
-    // rebound `eid` onto the native pile in place, so Take/Enqueue-ing the Element here would delete
-    // the Element the native now owns (the destroy-before-load hazard). ACTOR-only half of teardown.
+    // The same take-the-pin, erase, drive-evict, destroy, release order as RetireProxy, without
+    // the element unbind: the caller (the convert's nativize hand-off) has already rebound the
+    // eid onto the native pile in place, so draining the element here would delete the element
+    // the native now owns. The actor-only half of the teardown.
     ue_wrap::GcPin pin = std::move(it->second.pin);
     g_proxies.erase(it);
     coop::remote_prop::ClearAnyDriveFor(actor);
@@ -314,11 +300,12 @@ void* ProxyActorForEid(coop::element::ElementId eid) {
 coop::element::ElementId EidForAimedPileProxy(const ue_wrap::FVector& camLoc, const ue_wrap::FVector& camFwd,
                                              float maxRangeCm, float minDot) {
     UE_ASSERT_GAME_THREAD("trash_proxy::EidForAimedPileProxy");
-    // Camera-ray cone: the PILE-form proxy that is within `maxRangeCm` AND most centered on the aim ray
-    // (largest dot >= minDot). `camFwd` MUST be unit length. This is the client-grab recognition -- it needs
-    // NO asset collision (the trace approach was disproven: the pile mesh has no simple collision body). The
-    // host re-validates the eid (live + IsChipPile) in OnGrabIntent, so a cone mis-pick in a dense cluster is
-    // bounded. Returns kInvalidId if nothing qualifies.
+    // The camera-ray cone: the pile-form proxy within `maxRangeCm` and most centred on the aim
+    // ray (the largest dot at or above `minDot`). `camFwd` must be unit length. This is the
+    // client-grab recognition, and it needs no asset collision (the pile mesh has no simple
+    // collision body, so a trace cannot hit it). The host re-validates the eid (live, a chip
+    // pile) on the grab intent, so a cone mis-pick in a dense cluster is bounded. Invalid if
+    // nothing qualifies.
     coop::element::ElementId best = coop::element::kInvalidId;
     float bestDot = minDot;
     for (const auto& kv : g_proxies) {
@@ -338,12 +325,10 @@ coop::element::ElementId EidForAimedPileProxy(const ue_wrap::FVector& camLoc, co
 
 void OnDisconnectForSlot(int slot) {
     UE_ASSERT_GAME_THREAD("trash_proxy::OnDisconnectForSlot");
-    // CRITICAL-1 fix: a PER-SLOT disconnect (a single peer dropping while the
-    // session stays up) drains that slot's Prop mirrors via DrainMirrorsForSlot,
-    // which does NOT call RetireProxy -> the rooted proxy would leak. Retire every
-    // proxy owned by `slot` HERE (called before remote_prop::OnDisconnectForSlot),
-    // so the actor is un-rooted + destroyed + unbound through g_proxies (the
-    // authoritative tracker) before the generic mirror drain runs.
+    // A per-slot disconnect (a single peer dropping while the session stays up) drains that
+    // slot's Prop mirrors through the generic drain, which does not retire proxies, so a rooted
+    // proxy would leak. Retire every proxy owned by `slot` here, before the generic drain runs,
+    // so the actor is unrooted, destroyed and unbound through the authoritative tracker.
     std::vector<coop::element::ElementId> eids;
     for (const auto& kv : g_proxies)
         if (kv.second.ownerSlot == slot) eids.push_back(kv.first);
@@ -356,7 +341,7 @@ void OnDisconnect() {
     UE_ASSERT_GAME_THREAD("trash_proxy::OnDisconnect");
     if (g_proxies.empty()) return;
     const size_t n = g_proxies.size();
-    // Snapshot eids first -- RetireProxy mutates the map.
+    // Snapshot the eids first; RetireProxy mutates the map.
     std::vector<coop::element::ElementId> eids;
     eids.reserve(n);
     for (const auto& kv : g_proxies) eids.push_back(kv.first);
