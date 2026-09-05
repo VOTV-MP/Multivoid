@@ -12,67 +12,46 @@
 namespace ue_wrap::hook {
 namespace {
 
-// The FACADE's armed state -- NOT "MinHook is initialized". Shutdown clears this
-// and deliberately leaves MinHook itself initialized, because uninitializing frees
-// trampolines the process is still calling through (hook.h, "Retirement"). One flag,
-// not two: a second `g_retired` could disagree with this one, and then neither is
-// authority. Ordering is load-bearing -- Shutdown clears it BEFORE lifting patches,
-// so Enable's post-enable re-read cannot miss a teardown that started mid-call.
+// The facade's armed state, not whether MinHook is initialised: Shutdown clears this and
+// deliberately leaves MinHook initialised, because uninitialising frees trampolines the
+// process is still calling through (see hook.h). One flag, not two: a second could disagree
+// with this one, and then neither is authority. The ordering is load-bearing: Shutdown
+// clears it before lifting patches, so Enable's post-enable re-read cannot miss a teardown
+// that started mid-call.
 std::atomic<bool> g_live{false};
 
-// RETIREMENT LATCH -- one-way, never cleared (post-ship audit 2026-08-26).
-//
-// g_live was answering TWO different questions at once: "has MH_Initialize
-// succeeded" and "may a new patch arm". Those genuinely diverge after a teardown,
-// because Shutdown deliberately never calls MH_Uninitialize -- MinHook IS still
-// initialized, and we have still retired. Init() therefore answered the first
-// question with YES, which turned `if (!g_live && !Init())` in Install into a
-// RESURRECTION: it set g_live back to true and armed a fresh patch that nothing
-// would ever lift, because DoShutdown's own latch means hook::Shutdown never runs
-// a second time. The live path is not hypothetical -- dx12_capture's EclHookThread
-// is an un-joined thread that calls Install from outside the shutdown ordering
-// entirely, and DoShutdown does not wait for it.
-//
-// Two flags, but they cannot disagree harmfully: this is a monotonic LATCH, not a
-// mirror of g_live. That is what makes it different from the two-mutable-flags
-// design rejected while building the teardown fix, where neither would be authority.
+// The retirement latch, one-way, never cleared. The live flag answers two questions that
+// diverge after a teardown: whether MinHook initialised and whether a new patch may arm.
+// Shutdown never uninitialises MinHook, so Init would answer the first with yes, and an
+// install after the teardown would resurrect the facade and arm a fresh patch nothing would
+// ever lift, since the shutdown latch never runs a second time; the live path is the capture
+// hook thread, un-joined, which calls Install from outside the shutdown ordering. Two flags
+// that cannot disagree harmfully: this is a monotonic latch, not a mirror of the live flag.
 std::atomic<bool> g_retired{false};
 
 const char* StatusName(MH_STATUS s) { return MH_StatusToString(s); }
 
-// WP-2 (2026-08-22): follow-jmp-immune relay rewrite -- the root-cause fix for
-// the UE4SS-lane boot crash. On x64 MinHook ALWAYS routes a patched target
-// through a relay (`FF 25 [rip+0]` + abs64 detour) that lives inside the 64-byte
-// trampoline slot (hook.c:607 `pHook->pDetour = ct.pRelay`, unconditional).
-// When a co-resident inline-hook engine that FOLLOWS jmp chains (UE4SS ships
-// PolyHook, x64Detour::hook() -> followJmp) hooks the SAME function after us, it
-// takes our target's `E9` into this relay, sees the indirect `FF 25` (a branch
-// WITH displacement), resolves getDestination to the OPERAND effective address
-// (the relay's abs64 POINTER slot), and writes its own target-patch THERE --
-// clobbering &detour. Our relay then `jmp qword [rip]`s through a garbage pointer
-// to a non-canonical address -> #GP (surfaced by Windows as "AV read -1").
-// PROVEN from a full -fullcrashdump decode.
-//
-// Fix: rewrite the relay's LEADING instruction to a NON-branching form
-// (`MOV RAX, imm64 ; JMP RAX`). followJmp stops on the MOV (PolyHook
-// ADetour.cpp:66 `if (!front().isBranching()) return true;`), so PolyHook does a
-// clean in-place hook of the relay itself and BOTH detours chain
-// (PE -> our E9 -> relay -> PolyHook jmp -> UE4SS dispatch -> PolyHook trampoline
-// = `mov rax,&ourDetour; jmp rax` -> our detour -> our MinHook trampoline ->
-// real PE). Source-traced through PolyHook's VALLOC2 path. Absolute-jump
-// semantics identical; only the byte encoding followJmp keys on changes.
-//
-// Safe because it runs BEFORE MH_EnableHook: the target is still unpatched, so
-// nothing is executing the relay yet -- the rewrite races no thread. Fail-closed:
-// if the expected `FF 25 00 00 00 00 <&detour>` signature is not found in the
-// slot, leave it untouched (MinHook layout changed -> surface it, do not guess).
+// The follow-jmp-immune relay rewrite. On x64 MinHook always routes a patched target through
+// a relay (an indirect jump through an absolute pointer) inside the 64-byte trampoline slot.
+// A co-resident inline-hook engine that follows jmp chains (UE4SS ships one) hooking the
+// same function after us takes our target's jump into this relay, sees the indirect branch,
+// resolves its destination to the operand address (the relay's pointer slot) and writes its
+// own patch there, clobbering the detour pointer; our relay then jumps through a garbage
+// pointer to a non-canonical address, a general-protection fault surfaced as an access
+// violation at -1 (proven from a full crash dump). The fix rewrites the relay's leading
+// instruction to a non-branching form (mov rax, imm64; jmp rax): the follower stops on the
+// mov, hooks the relay itself in place, and both detours chain. Absolute-jump semantics are
+// identical; only the byte encoding the follower keys on changes. Safe because it runs
+// before the enable: the target is still unpatched, so nothing executes the relay yet.
+// Fail-closed: if the expected relay signature is not in the slot, leave it untouched
+// (MinHook's layout changed; surface it rather than guess).
 bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
     if (!trampoline || !detour) return false;
     auto* base = static_cast<uint8_t*>(trampoline);
     const uint64_t want = reinterpret_cast<uint64_t>(detour);
     uint8_t* relay = nullptr;
-    // The relay lives at pTrampoline+newPos inside the 64-byte MEMORY_SLOT; scan
-    // for the classic MinHook relay signature whose abs64 target is OUR detour.
+    // The relay lives inside the 64-byte trampoline slot; scan for the classic MinHook relay
+    // signature whose absolute target is our detour.
     for (int off = 0; off + 14 <= 64; ++off) {
         if (base[off] == 0xFF && base[off + 1] == 0x25 && base[off + 2] == 0x00 &&
             base[off + 3] == 0x00 && base[off + 4] == 0x00 && base[off + 5] == 0x00) {
@@ -108,16 +87,14 @@ bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
 }  // namespace
 
 bool Init() {
-    // Retirement outranks MinHook's own opinion: MH_Initialize will happily report
-    // ALREADY_INITIALIZED forever, and that is exactly the answer that used to undo
-    // a completed Shutdown.
+    // Retirement outranks MinHook's own opinion: the initialise call reports already-initialised
+    // forever, and that answer once undid a completed Shutdown.
     if (g_retired) return false;
     if (g_live) return true;
     const MH_STATUS s = MH_Initialize();
-    // MH_ERROR_ALREADY_INITIALIZED is SUCCESS here, not an error. Shutdown clears
-    // g_live without uninitializing MinHook (see hook.h "Retirement"), so the two
-    // states legitimately disagree after a teardown and MinHook is the one telling
-    // the truth about its own heap.
+    // Already-initialised is success here, not an error: Shutdown clears the live flag without
+    // uninitialising MinHook, so the two states legitimately disagree after a teardown, and
+    // MinHook is the one telling the truth about its own heap.
     if (s != MH_OK && s != MH_ERROR_ALREADY_INITIALIZED) {
         UE_LOGE("hook: MH_Initialize failed (%s)", StatusName(s));
         return false;
@@ -139,30 +116,28 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
         UE_LOGE("hook: MH_CreateHook(%p) failed (%s)", target, StatusName(s));
         return false;
     }
-    // WP-2: make the relay followJmp-immune while the target is still unpatched
-    // (before enable = thread-safe). `*trampoline` is the slot base; the relay
-    // lives inside it. Best-effort: a failure is logged and non-fatal (the
-    // classic relay still works absent a co-resident jmp-following hook engine).
+    // Make the relay follow-jmp-immune while the target is still unpatched (before the enable,
+    // so thread-safe). `*trampoline` is the slot base; the relay lives inside it. Best effort: a
+    // failure is logged and non-fatal (the classic relay still works absent a co-resident
+    // jmp-following hook engine).
     if (followJmpImmune) {
         MakeRelayFollowJmpImmune(*trampoline, detour);
     }
     s = MH_EnableHook(target);
     if (s != MH_OK) {
         UE_LOGE("hook: MH_EnableHook(%p) failed (%s)", target, StatusName(s));
-        // THE ONE LEGITIMATE MH_RemoveHook IN THIS PROCESS, and the gate
-        // (tools/hooks/minhook_free_gate.ps1) allowlists exactly this line.
-        // Removing frees the trampoline, which is a use-after-free anywhere the
-        // hook is live -- but ENABLE JUST FAILED, so the target was never patched
-        // and no thread can be inside the trampoline or holding a pointer into it.
-        // Leaving a created-but-disabled hook behind would leak the slot instead.
+        // The one legitimate hook removal in this process, and the gate
+        // (tools/hooks/minhook_free_gate.ps1) allowlists exactly this line. Removing frees the
+        // trampoline, a use-after-free anywhere the hook is live, but the enable just failed, so
+        // the target was never patched and no thread can be inside the trampoline or holding a
+        // pointer into it. Leaving a created-but-disabled hook behind would leak the slot instead.
         MH_RemoveHook(target);
         return false;
     }
-    // COMPARE-AFTER-ACT -- the same contract Enable documents below, and the reason
-    // this exists at all: the entry guard is check-then-act, Install is reachable
-    // from threads that never synchronise with the game thread, and an arm that
-    // lands after Shutdown's blanket disable would survive with no second teardown
-    // to lift it. Teardown wins in every interleaving.
+    // Compare after act, the same contract Enable documents below, and the reason this exists:
+    // the entry guard is check-then-act, Install is reachable from threads that never
+    // synchronise with the game thread, and an arm that lands after Shutdown's blanket disable
+    // would survive with no second teardown to lift it. Teardown wins in every interleaving.
     if (g_retired) {
         MH_DisableHook(target);
         UE_LOGW("hook: install of %p raced Shutdown -- lifted again (teardown wins)", target);
@@ -190,16 +165,14 @@ bool Enable(void* target) {
         UE_LOGW("hook: MH_EnableHook(%p) re-arm (%s)", target, StatusName(s));
         return false;
     }
-    // COMPARE-AFTER-ACT. The guard above is check-then-act on its own: this is
-    // reachable from the RENDER thread (overlay_backend_dx12 -> dx12_capture::Rearm)
-    // while the game thread is inside Shutdown, so a teardown can begin between the
-    // guard and MH_EnableHook and we would re-arm a patch Shutdown had just lifted.
-    // Shutdown sets g_retired BEFORE its blanket disable, so re-reading it here catches
-    // every interleaving: either we see the latch and lift our own patch, or Shutdown's
-    // blanket runs after our enable and lifts it. Both orders end disabled -- and since
-    // 2026-08-26 that is true of Install too, which had this guard missing.
-    // Lock-free on purpose -- Shutdown is reachable from DLL_PROCESS_DETACH under the
-    // loader lock, where a mutex owned by a thread Windows already killed never unlocks.
+    // Compare after act. The guard above is check-then-act on its own: this is reachable from
+    // the render thread (the capture re-arm) while the game thread is inside Shutdown, so a
+    // teardown can begin between the guard and the enable and we would re-arm a patch Shutdown
+    // had just lifted. Shutdown sets the latch before its blanket disable, so re-reading it here
+    // catches every interleaving: either we see the latch and lift our own patch, or Shutdown's
+    // blanket runs after our enable and lifts it; both orders end disabled, as they do in
+    // Install. Lock-free on purpose: Shutdown is reachable from process detach under the loader
+    // lock, where a mutex owned by a thread Windows already killed never unlocks.
     if (g_retired) {
         MH_DisableHook(target);
         UE_LOGW("hook: re-arm of %p raced Shutdown -- lifted again (teardown wins)", target);
@@ -210,29 +183,22 @@ bool Enable(void* target) {
 }
 
 void Shutdown() {
-    // The LATCH goes first and unconditionally -- before the early return, so a
-    // Shutdown that arrives before anything was ever installed still retires the
-    // facade, and before the blanket disable, so a concurrent arm re-reads it.
+    // The latch goes first and unconditionally: before the early return, so a Shutdown that
+    // arrives before anything was installed still retires the facade, and before the blanket
+    // disable, so a concurrent arm re-reads it.
     g_retired = true;
     if (!g_live.exchange(false)) return;   // one-way; also the double-Shutdown guard
-    // Latching retirement FIRST is the whole ordering contract (see Enable and
-    // Install): an arm that slips past its own entry guard re-reads the latch after
-    // MinHook returns and undoes itself.
-    //
-    // Lift every patch, free NOTHING. No MH_RemoveHook, no MH_Uninitialize: both free
-    // trampoline slots, and `[V]` minhook/src/buffer.c:282 writes a linked-list pointer
-    // over the slot's first eight bytes as it does so -- over the stolen prologue a
-    // thread may be about to return through. Measured 2026-08-26: this runs a full 3
-    // seconds before DLL_PROCESS_DETACH, so "the process is dying" does not close that
-    // window. The OS reclaims the slots at exit; there is nothing to buy by freeing.
-    //
-    // KNOWN RESIDUAL, pre-existing and unchanged here: MH_DisableHook(MH_ALL_HOOKS)
-    // reaches MinHook's Freeze, which calls CreateToolhelp32Snapshot + SuspendThread
-    // (`[V]` minhook/src/hook.c:267,348). On the DLL_PROCESS_DETACH path that runs under
-    // the loader lock, where a toolhelp snapshot is a documented deadlock risk. It has
-    // never been observed, and it is not what this change is fixing -- but it is real,
-    // and the graceful-close path does not exercise it (the wndproc latches shutdown
-    // first, so DllMain's call is the idempotent no-op). Filed in docs/UE4SS_ARC.md 4c.
+    // Latching retirement first is the whole ordering contract (see Enable and Install): an arm
+    // that slips past its own entry guard re-reads the latch after MinHook returns and undoes
+    // itself. Lift every patch, free nothing: removing a hook or uninitialising both free
+    // trampoline slots, and MinHook writes a free-list pointer over a slot's first bytes as it
+    // does so, over the stolen prologue a thread may be about to return through; measured, this
+    // runs seconds before process detach, so a dying process does not close that window, and
+    // the OS reclaims the slots at exit. A known residual, pre-existing: the blanket disable
+    // reaches MinHook's thread freeze, a toolhelp snapshot plus thread suspends, which on the
+    // process-detach path runs under the loader lock, a documented deadlock risk. Never
+    // observed; the graceful-close path does not exercise it, since the window procedure latches
+    // shutdown first and the detach call is the idempotent no-op.
     MH_DisableHook(MH_ALL_HOOKS);
     UE_LOGI("hook: all patches lifted (trampolines retained -- MinHook stays initialized)");
 }
