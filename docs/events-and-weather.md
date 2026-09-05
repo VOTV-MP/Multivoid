@@ -167,12 +167,11 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Limit | Evidence |
 |---|---|
-| A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` the weather-birth seam's table |
-| The lightning lane has never been seen received on a client in any log | `[?]` the lane exists; no receive line found |
-| Several rolls are still per peer: the rare gamemode rolls (a one-percent forced quit, dreams, hall food), the server break-minigame variant, the loot content of mid-session containers and piles, the signal scramble and radio-tower shuffle | `[V]` the tracker's open rows; some measured, some inferred |
-| The beehive, walking-tree, growing-plant, hole and leaf spawners are not yet censused for their anchor | `[?]` the spawner table's open rows |
+| A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
+| Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
+| The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither parked on a client nor mirrored from the host, so each peer rolls its own | `[V]` `coop/world/spawn_authority.h`, the unmirrored families |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |
-| Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay verdict in the code | `[V]` the events tracker |
+| Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay policy | `[V]` `coop/world/event_fire_sync`, the replay allowlist |
 
 ## Code map
 
