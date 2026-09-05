@@ -1,0 +1,5 @@
+#!/bin/sh
+# commit-msg hook: the shape of a commit message (CONTRIBUTING.md, "Commits").
+# Install once per clone:  git config core.hooksPath tools/git/hooks
+PY=$(command -v python3 2>/dev/null || command -v python)
+exec "$PY" "$(dirname "$0")/../commit_msg_check.py" "$1"
