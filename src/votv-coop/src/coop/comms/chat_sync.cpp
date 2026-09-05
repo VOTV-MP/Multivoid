@@ -1,4 +1,4 @@
-// coop/chat_sync.cpp -- see coop/chat_sync.h.
+// coop/comms/chat_sync.cpp -- see coop/comms/chat_sync.h.
 
 #include "coop/comms/chat_sync.h"
 
@@ -28,30 +28,24 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- the CLIENT's applied range.
-//
-// A CONTIGUOUS range, not a high-watermark. The distinction is not academic: the join
-// seed delivers rows OLDER than anything a client may already hold, and "apply iff
-// lineSeq > highest" would have discarded the ENTIRE seed -- an empty history with no
-// error logged anywhere. It lives here, next to the apply that reads it, and is
-// cleared by the SAME Reset() as the record itself; a free-floating watermark is
-// exactly how a reset gets forgotten.
+// The client's applied range: a contiguous range, not a high-water mark. The join seed delivers
+// rows older than anything a client may already hold, and apply-iff-newer-than-the-highest
+// would have discarded the entire seed, an empty history with nothing logged. It lives next to
+// the apply that reads it and is cleared by the same Reset as the record; a free-floating
+// watermark is how a reset gets forgotten.
 bool     g_haveRange = false;
 uint32_t g_rangeLo = 0;
 uint32_t g_rangeHi = 0;
 
-// Set once a GAP proves the applied set is NOT one interval, after which the range can
-// no longer describe the truth and dedup is abandoned rather than allowed to lie. See
-// OnChatLine. Cleared by the same Reset() as the range itself.
+// Set once a gap proves the applied set is not one interval, after which the range can no
+// longer describe the truth and dedup is abandoned rather than allowed to lie (see
+// OnChatLine). Cleared by the same Reset.
 bool     g_rangeBroken = false;
 
-// ---- the speaker binding table (client).
-//
-// A ChatSpeaker always immediately precedes its ChatLine on the same ordered lane, so
-// this only has to stay valid across two consecutive messages. speakerId is a PER-BURST
-// index: a live line always uses 0, a seed burst numbers its distinct speakers. There
-// is no minting policy and no eviction policy because there is nothing to bound -- a
-// later burst simply overwrites.
+// The speaker binding table on the client. A speaker message always immediately precedes its
+// line on the same ordered lane, so this only has to stay valid across two consecutive
+// messages. The speaker id is a per-burst index: a live line uses 0, a seed burst numbers its
+// distinct speakers. No minting or eviction policy, since a later burst simply overwrites.
 constexpr int kMaxSpeakers = 16;
 struct Speaker {
     bool        valid = false;
@@ -61,23 +55,15 @@ struct Speaker {
 };
 Speaker g_speakers[kMaxSpeakers];
 
-// ---- which slots the HOST has already seeded.
-//
-// A slot receives live rows ONLY after its seed has been sent, and this gate is what
-// makes the client's applied range a single interval that can only grow upward. Without
-// it the two streams interleave: a line authored between a slot's world-ready and its
-// seed reaches it first, so the seed then delivers rows BELOW everything applied, and a
-// contiguous range cannot express the hole that leaves. Relying on the send path's
-// pre-world gate to do this implicitly would work today and break the moment somebody
-// adds ChatLine to IsPreWorldSendableKind -- which the design very nearly did.
+// Which slots the host has already seeded. A slot receives live rows only after its seed has
+// been sent, which is what makes the client's applied range a single interval that only grows
+// upward: otherwise a line authored between a slot's world-ready and its seed reaches it
+// first, the seed then delivers rows below everything applied, and a contiguous range cannot
+// express the hole. Relying on the pre-world send gate for this would break the moment a
+// chat line became pre-world sendable.
 bool g_seeded[coop::net::kMaxPeers] = {};
 
-// RULE 2, 2026-07-29: the two hand-rolled copies that lived here are GONE. This file
-// already included coop/text/utf8_codec.h -- the ONE owner of text encoding -- while
-// carrying a byte-identical re-implementation of its SanitizeUtf8 and a second
-// re-implementation of its CapUtf8Bytes.
-//
-// Trim is the only part that was genuinely local, so it is the only part left.
+// Trim is the only genuinely local part; the sanitising and the byte cap are coop/text's.
 std::string TrimAndCap(const std::string& in) {
     size_t b = 0, e = in.size();
     while (b < e && (in[b] == ' ' || in[b] == '\t' || in[b] == '\r' || in[b] == '\n')) ++b;
@@ -86,27 +72,17 @@ std::string TrimAndCap(const std::string& in) {
                                     sizeof(coop::net::ChatMessagePayload{}.text));
 }
 
-// THE RECEIVE BOUNDARY. utf8_codec.h states the contract in its own header --
-// "well-formedness is established where we READ, not where we wrote ... the receive
-// boundary decodes STRICTLY and rejects a whole ill-formed field rather than repairing
-// it" -- and chat was the one surface that never honoured it until 2026-07-29.
-//
-// Chat text is the ONLY attacker-controlled string in the process. Refuse, do not
-// repair: a repaired chat line is a sentence nobody typed. The whole message is
-// dropped and the refusal is logged, so a drill can see it and a real defect in
-// someone's sender is attributable rather than silent.
-// TWO ADMISSION QUESTIONS, ONE FUNNEL. Well-formedness is the first; the second
-// arrived with the ImGui 1.92 flip, which made every codepoint in the repertoire
-// rasterisable on demand from exactly this string. A few hundred bytes of
-// deliberately diverse UTF-8 forces thousands of FreeType rasterisations on every
-// receiving peer inside one frame (docs/security TRACKER W11), so the novelty
-// ledger caps how fast a peer may widen the alphabet. Same refusal shape: the
-// whole field is dropped, never repaired or partially admitted.
-//
-// It lives HERE, at the boundary, and not in a draw loop: three surfaces
-// rasterise remote-authored text (the feed rows, the overhead bubble through
-// CalcTextSizeA, the scoreboard's nicks), so a draw-time cap would be a site list
-// that misses two of them.
+// The receive boundary: well-formedness is established where we read, not where we wrote, and
+// the boundary decodes strictly and refuses a whole ill-formed field rather than repairing it.
+// Chat text is the one attacker-controlled string in the process, and a repaired line is a
+// sentence nobody typed; the whole message is dropped and the refusal logged, so a drill can
+// see it. Two admission questions, one funnel: well-formedness, and the novelty budget, since
+// every codepoint in the repertoire is rasterised on demand from exactly this string, and a
+// few hundred bytes of deliberately diverse text force thousands of rasterisations on every
+// receiving peer inside one frame; the ledger caps how fast a peer may widen the alphabet,
+// with the same refusal shape. At the boundary and not in a draw loop: three surfaces
+// rasterise remote text (the feed rows, the overhead bubble, the scoreboard's nicks), so a
+// draw-time cap would be a site list that misses two.
 bool Admissible(uint8_t authorSlot, const char* p, size_t n) {
     std::wstring decoded;
     if (!coop::text::FromUtf8Strict(p, n, &decoded)) return false;
@@ -118,13 +94,12 @@ bool IsHost() {
     return s && s->role() == coop::net::Role::Host;
 }
 
-// Render one committed row into this peer's feed. `seeded` rows land retained.
+// Render one committed row into this peer's feed; seeded rows land retained.
 void ApplyRow(uint8_t slot, const std::string& nick, uint32_t custom,
               const std::string& text, uint32_t lineSeq, bool seeded) {
-    // The RECEIVER resolves the colour, once, here: the wire carries the speaker's
-    // CUSTOM pick (or 0 for none) and the per-slot fallback palette stays render-side
-    // where it belongs. Then it is FROZEN onto the line -- user 2026-07-29, "old chat
-    // history is essentially a frozen history".
+    // The receiver resolves the colour, once, here: the wire carries the speaker's custom pick (or
+    // 0 for none) and the per-slot fallback palette stays render-side. Then it is frozen onto the
+    // line, since old history is a frozen history.
     const uint32_t argb = coop::nick_color::IsCustom(custom)
         ? custom
         : coop::chat_nick_color::kSlotCols[slot % 8u];
@@ -132,15 +107,13 @@ void ApplyRow(uint8_t slot, const std::string& nick, uint32_t custom,
     coop::chat_feed::PushWireChat(line,
                                   static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
                                   argb, lineSeq, seeded);
-    // The overhead bubble is a LIVE-world effect. A seeded row must never reach it --
-    // structurally, not by a flag test at the far end: replaying a joiner's whole
-    // history through it would put N bubbles over peers for conversations that
-    // happened before that player existed.
+    // The overhead bubble is a live-world effect. A seeded row must never reach it, structurally
+    // rather than by a flag at the far end: replaying a joiner's whole history through it would
+    // put bubbles over peers for conversations that happened before that player existed.
     if (!seeded) coop::chat_bubbles::OnChatLine(slot, text.c_str());
-    // The lane's only ORDER observable. A drill cannot read a sort key off a
-    // screenshot, and "the lines appeared" is not the same claim as "they appeared in
-    // the order the lobby said them" -- which is the half a seed interleaving with live
-    // traffic breaks. One line per applied row; a seed burst is a one-time ~100.
+    // The lane's only order observable: a drill cannot read a sort key off a screenshot, and "the
+    // lines appeared" is not "they appeared in the order the lobby said them", which is the half a
+    // seed interleaving with live traffic breaks. One line per applied row.
     UE_LOGI("chat: applied line %u seeded=%d \"%.40s\"", lineSeq, seeded ? 1 : 0,
             line.c_str());
 }
@@ -169,15 +142,14 @@ void SendLine(coop::net::Session& s, int toSlot, uint32_t lineSeq, uint16_t spea
     s.SendReliableToSlot(toSlot, coop::net::ReliableKind::ChatLine, &lp, sizeof(lp));
 }
 
-// HOST: commit `text` as spoken by `slot`, broadcast it, and render it locally.
+// Host: commit `text` as spoken by `slot`, broadcast it, and render it locally.
 void AuthorAndBroadcast(uint8_t slot, const std::string& text) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
 
-    // The nick is resolved ONCE, HERE, and then travels with the row forever. Resolving
-    // at render time on each peer answers a different question -- who is in that slot
-    // NOW -- and slots recycle, so a resident and a joiner would end up holding
-    // permanently different names for the same message.
+    // The nick is resolved once, here, and travels with the row forever: resolving at render time
+    // on each peer answers who is in that slot now, and slots recycle, so a resident and a joiner
+    // would hold different names for the same message.
     const uint8_t localSlot = 0;  // the host is always slot 0
     const std::wstring nickW = (slot == localSlot)
         ? coop::player_handshake::LocalNickname()
@@ -204,12 +176,10 @@ void Install(coop::net::Session* session) {
 }
 
 bool SessionActive() {
-    // Chat exists for the whole COOP SESSION, not just while a peer link is up
-    // (user 2026-07-04: the HOST could not open T-chat until the first client
-    // joined -- a hosting session with zero clients is Handshaking, connected()
-    // false). A RUNNING host session IS a live lobby: typing while alone is
-    // legitimate (the line shows locally; joiners simply weren't there for it).
-    // A client, by contrast, is only in a session while its link is connected.
+    // Chat exists for the whole coop session, not just while a peer link is up: a hosting session
+    // with zero clients is not connected, yet a running host session is a live lobby, and typing
+    // while alone is legitimate (the line shows locally; joiners were not there for it). A client
+    // is in a session only while its link is connected.
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return false;
     return s->role() == coop::net::Role::Host || s->connected();
@@ -218,32 +188,30 @@ bool SessionActive() {
 void QueueSend(const std::string& utf8Text) {
     const std::string text = TrimAndCap(utf8Text);
     if (text.empty()) return;
-    // Hop to the game thread: SendReliable, the record and chat_feed are all
-    // game-thread paths; the ImGui input bar submits on the render thread.
+    // Hop to the game thread: the send, the record and the feed are all game-thread paths, and
+    // the input bar submits on the render thread.
     GT::Post([text] {
         auto* s = g_session.load(std::memory_order_acquire);
         if (!s || !s->running()) return;  // session died between type + send
         if (s->role() == coop::net::Role::Host) {
-            // The host IS the authority. It commits its own line immediately -- a host
-            // alone in its lobby has nobody to send to, and the line still belongs in
-            // the record so the next joiner is seeded with it.
+            // The host is the authority and commits its own line immediately: a host alone in its
+            // lobby has nobody to send to, and the line still belongs in the record so the next
+            // joiner is seeded with it.
             AuthorAndBroadcast(0, text);
             return;
         }
-        // A CLIENT sends an INTENT and waits for the host's authored row. There is no
-        // local echo: the row it will receive is the one with a position in the order,
-        // and drawing a second copy now would mean reconciling two of them later.
+        // A client sends an intent and waits for the host's authored row. No local echo: the row it
+        // will receive is the one with a position in the order, and a second copy now would need
+        // reconciling later.
         coop::net::ChatMessagePayload p{};
         p.len = static_cast<uint8_t>(text.size());
         std::memcpy(p.text, text.data(), text.size());
-        // DEV INJECTION -- the must-FAIL control for the receive boundary in
-        // OnReliable. A validator that has only ever been shown PASSING passes by
-        // construction ([[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]);
-        // the codec selftest proves FromUtf8Strict REFUSES, but nothing proved chat
-        // CALLS it. It APPENDS a lone continuation byte rather than overwriting one:
-        // overwriting is not reliably corrupting, since the last byte of a Cyrillic
-        // message is the tail of a 2-byte sequence and D0 80 is a perfectly legal
-        // U+0400. A trailing 0x80 is ill-formed unconditionally (utf8_codec.cpp:176).
+        // The dev injection, the must-fail control for the receive boundary: a validator only ever
+        // shown passing passes by construction, and the codec selftest proves the strict decode
+        // refuses, but nothing else proves chat calls it. A lone continuation byte is appended
+        // rather than overwriting one, since overwriting is not reliably corrupting (the last byte
+        // of a Cyrillic message is the tail of a two-byte sequence); a trailing continuation byte
+        // is ill-formed unconditionally.
         if (p.len < sizeof(p.text) &&
             coop::config::ReadEnv("VOTVCOOP_CHAT_CORRUPT_WIRE") == "1") {
             p.text[p.len++] = static_cast<char>(0x80);
@@ -261,8 +229,8 @@ void QueueSend(const std::string& utf8Text) {
 
 void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeerSlot) {
     if (!IsHost()) {
-        // Nothing sends ChatMessage to a client any more -- it left the relay whitelist
-        // with v133. Reaching here means a peer is speaking a protocol we retired.
+        // Nothing sends a chat message to a client; reaching here means a peer speaks a retired
+        // protocol.
         UE_LOGW("chat: a ChatMessage arrived on a CLIENT from slot %u -- chat is "
                 "host-authored since v133; dropping",
                 static_cast<unsigned>(senderPeerSlot));
@@ -271,11 +239,10 @@ void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeer
     uint8_t n = payload.len;
     if (n == 0) return;
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
-    // Decode BEFORE anything renders it or enters it into the lobby's permanent
-    // record. A field that is not well-formed UTF-8 is refused whole -- see
-    // Admissible() above for why repairing is not an option. This gate matters MORE
-    // under host authoring than it did under the relay: an ill-formed line committed
-    // here would be re-emitted to every future joiner, for the life of the lobby.
+    // Decoded before anything renders it or enters it into the lobby's permanent record: an
+    // ill-formed field is refused whole (see Admissible). The gate matters more under host
+    // authoring than under the relay, since an ill-formed line committed here would be re-emitted
+    // to every future joiner for the life of the lobby.
     if (!Admissible(senderPeerSlot, payload.text, n)) {
         UE_LOGW("chat: refused a message from slot %u (%u byte(s)) -- ill-formed UTF-8 "
                 "or past the novelty budget", static_cast<unsigned>(senderPeerSlot),
@@ -329,19 +296,13 @@ void OnChatLine(const coop::net::ChatLinePayload& payload) {
     if (g_haveRange && !g_rangeBroken && seq >= g_rangeLo && seq <= g_rangeHi)
         return;  // already applied
     if (g_haveRange && !g_rangeBroken && seq != g_rangeHi + 1 && seq != g_rangeLo - 1) {
-        // A GAP -- and this branch used to PERFORM the corruption its own comment warned
-        // about. It logged, fell through, and then widened [lo,hi] ACROSS the gap, so
-        // every row inside it was thereafter rejected as "already applied" and could
-        // never arrive. A joiner could silently lose almost its whole history and the
-        // only trace was one WARN nobody reads.
-        //
-        // The premise is still that this cannot happen: ChatLine stays off
-        // IsPreWorldSendableKind, the seed is gated + idempotent, and chat seqs in the
-        // record ARE consecutive (only chat Appends mint a seq, and eviction is from the
-        // front, so it never removes from the middle of the surviving run). This is the
-        // behaviour WHEN THAT PREMISE BREAKS, and the choice is deliberate: a range
-        // cannot express a hole, so we stop pretending it can and fall back to applying
-        // everything. Duplicates are VISIBLE and recoverable; swallowed rows are neither.
+        // A gap. The premise is that this cannot happen: the chat line stays off the pre-world
+        // sendable set, the seed is gated and idempotent, and chat sequence numbers in the record
+        // are consecutive (only chat appends mint one, and eviction is from the front). This is the
+        // behaviour when the premise breaks, and the choice is deliberate: a range cannot express a
+        // hole, so dedup stops pretending and everything is applied. Duplicates are visible and
+        // recoverable; swallowed rows are neither. Widening the range across the gap would reject
+        // every row inside it as already applied, and a joiner would silently lose its history.
         g_rangeBroken = true;
         UE_LOGE("chat: applied-range GAP -- line %u against [%u,%u]. A contiguous range "
                 "cannot express this, so dedup is now OFF for this session: later rows "
@@ -367,14 +328,13 @@ void QueueConnectBroadcastForSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || s->role() != coop::net::Role::Host) return;
     if (slot < 1 || slot >= static_cast<int>(coop::net::kMaxPeers)) return;
-    // Set BEFORE the empty-record early return: an empty lobby still has to start
-    // receiving live rows, and a gate that only opens when there was history to send is
-    // a gate that stays shut for the first conversation.
+    // Set before the empty-record early return: an empty lobby still has to start receiving live
+    // rows, and a gate that only opens when there was history to send stays shut for the first
+    // conversation.
     g_seeded[slot] = true;
-    // DEV INJECTION -- the must-FAIL control for the join seed. With this set the slot
-    // is opened for live traffic but the history is never sent, which is precisely the
-    // "joiner sees an empty history and nothing logs an error" failure the contiguous
-    // applied range was introduced to prevent. Drill D-W must go RED.
+    // The dev injection, the must-fail control for the join seed: the slot is opened for live
+    // traffic but the history is never sent, precisely the empty-history-with-no-error failure the
+    // contiguous range was introduced to prevent.
     if (coop::config::ReadEnv("VOTVCOOP_CHAT_SEED_SUPPRESS") == "1") {
         UE_LOGW("chat: [dev] connect-seed SUPPRESSED for slot %d (%d line(s) withheld)",
                 slot, coop::chat_log::Count());
@@ -385,10 +345,10 @@ void QueueConnectBroadcastForSlot(int slot) {
         return;
     }
 
-    // Dedupe the speaker bindings WITHIN this burst: the same handful of people said
-    // most of it, and re-sending an 88-byte binding per line would triple the seed for
-    // nothing. Across bursts nothing is remembered -- a global "last binding I sent
-    // you" is exactly what strands a joiner who never saw the earlier one.
+    // The speaker bindings are deduped within this burst: the same handful of people said most of
+    // it, and re-sending a binding per line would triple the seed. Across bursts nothing is
+    // remembered; a global last-binding-sent is exactly what strands a joiner who never saw the
+    // earlier one.
     struct Binding { uint8_t slot; uint32_t argb; std::string nick; };
     Binding bound[kMaxSpeakers];
     int nBound = 0;
@@ -402,9 +362,9 @@ void QueueConnectBroadcastForSlot(int slot) {
         }
         if (id < 0) {
             if (nBound >= kMaxSpeakers) {
-                // More distinct speakers than the burst can index. Re-bind slot 0 --
-                // correctness over compactness: the row still renders with the right
-                // name, it just costs another binding.
+                // More distinct speakers than the burst can index: re-bind from 0. Correctness over
+                // compactness; the row still renders with the right name at the cost of another
+                // binding.
                 nBound = 0;
             }
             id = nBound++;
@@ -419,9 +379,9 @@ void QueueConnectBroadcastForSlot(int slot) {
 }
 
 void OnSlotDisconnected(int slot) {
-    // A slot that turns over must be re-seeded before it hears anything live -- the
-    // NEXT occupant's applied range starts empty, and live rows arriving before its
-    // seed would put the seed underneath them.
+    // A slot that turns over must be re-seeded before it hears anything live: the next occupant's
+    // applied range starts empty, and live rows arriving before its seed would put the seed
+    // underneath them.
     if (slot >= 0 && slot < static_cast<int>(coop::net::kMaxPeers)) g_seeded[slot] = false;
 }
 
