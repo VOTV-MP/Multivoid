@@ -1,14 +1,12 @@
-# The devs' gauntlet — VOTV developers on multiplayer (saved 2026-07-04)
+# The developers' gauntlet
 
-**Why this doc exists:** the VOTV developers published the statement below about
-why multiplayer mods fail. We keep it verbatim as the project's north star. Every
-claim in it is a testable engineering assertion; this doc maps each claim to the
-architecture that answers it. The bar they set — "safely and consistently",
-items + events included, mid-event joins included — is the bar we build to.
-They explicitly said they would **endorse a mod that achieves it**. That is the
-goal line.
+The developers of *Voices of the Void* published the statement below on why multiplayer mods
+fail. It is kept here whole as the project's north star: every claim in it is a testable
+engineering assertion, and this page maps each claim to the architecture that answers it. The bar
+they set, "safely and consistently", items and events included, mid-event joins included, is the
+bar this project builds to, and they said they would endorse a mod that reaches it.
 
-## The statement (verbatim)
+## The statement
 
 > A lot of people assume you can just tack multiplayer on and it will just work,
 > that's further from the truth.
@@ -39,39 +37,22 @@ goal line.
 > and consistently, but its not something we're going to throw our time and
 > resources trying to accomplish for potentially little to no return on it.
 
-## Claim-by-claim: how this project answers
+## Claim by claim
 
-| Devs' claim | Our answer (code-verified state, 2026-07-04) |
+| The claim | The answer |
 |---|---|
-| "requires a total re-build of the game at a foundational level" | False premise we reject by construction: **augment SP, never replace it** (principle 6). No game file is modified; the mod is an engine layer (proxy DLL + AOB reflection + ProcessEvent detour) that routes per-player inside SP systems. MTA did exactly this to GTA:SA — a fully SP game — at multi-thousand-peer scale, for 15+ years, without a rebuild. |
-| "they all hit the same snag, event synchronisation" | The exact snag is real and we hit it too — and root-caused it: SP events are fired by a local scheduler (`saveSlot.settime` -> `eventer.runEvent`) with **zero replication hooks**. Our answer is the event lane: host is the only firer (client `allEvents` suppressed), host observes fires via the `passEvents` growth seam, broadcasts `EventFire`, clients replay per a **per-row dupe-matrix policy** (69 rows classified replay / lane-owned / host-local — `event_fire_sync.cpp`). "People saw completely different events" is precisely what the dupe matrix prevents: a row whose outputs ride an entity lane is never double-fired. |
-| "the moment items came into play the game fell apart" | Items = the entity-identity problem. Answer: stable-ID identity layer (874/874 native bind + ordinal sidecar), one-owner delivery axis (`prop_snapshot`), grab/throw/hold sync, pile nativization, inventory wire, order sync. The dupe matrix + join-window reconcile are the anti-"fell apart" machinery, each instance verified hands-on. |
-| "people disconnected" | Sessions are GNS (Valve GameNetworkingSockets) with reliable ARQ + unreliable pose streams, heartbeats, clean rejoin (join-window identity root fix, purge-aware sweeps). Disconnect-on-desync is a symptom of state divergence; the architecture makes the host authoritative so divergence converges instead of compounding. |
-| "security aspect ... Webfishing" | Taken seriously, not hand-waved: every inbound payload is length-checked at the dispatcher trust boundary, NUL-bound, range-validated; clients cannot drive host authority (host-authoritative lanes refuse client sends — `session_lanes.h`); save transfer is CRC'd + torn-read-guarded; no remote code paths, no eval, no asset loading from the wire. Security audits ride the standing agent-audit discipline. |
-| "safely and consistently ... we'll happily endorse" | The acceptance bar. Consistency = the verification culture: nothing is "working" from a smoke; hands-on verdicts per runbook, probe-don't-guess, docs that say AS-BUILT vs VERIFIED honestly. |
+| "requires a total re-build of the game at a foundational level" | A premise the project rejects by construction: augment single-player, never replace it. No game file is modified; the mod is an engine layer with its own reflection and hooks that drives the game's own systems ([ARCHITECTURE.md](ARCHITECTURE.md)). |
+| "they all hit the same snag, event synchronisation" | The snag is real and was hit here too, then root-caused: the game's events fire from a local scheduler inside Blueprints with no replication hook. The answer is a host-observed fire replayed per row, a mirrored registry of in-flight events for late joiners, and one lane per event actor ([events-and-weather.md](events-and-weather.md)). |
+| "the moment items came into play the game fell apart" | Items are the entity-identity problem. The answer is one identity per actor assigned at birth, a host-owned name across every transition, and a join that streams the host's world and reconciles the rest ([props.md](props.md), [piles.md](piles.md), [join.md](join.md)). |
+| "people disconnected" | Sessions run on a reliable transport with ordered channels, heartbeats and a clean rejoin. A disconnect on desync is a symptom of state the peers stopped sharing, and every lane names its owner. |
+| "the security aspect" | Taken as a design position rather than a feature: every inbound payload is length-checked and range-validated at the trust boundary, a client acts by intent and never authors host state, and what the mod does and does not protect is stated on [../SECURITY.md](../SECURITY.md). |
+| "safely and consistently, we'll happily endorse" | The acceptance bar. Consistency is a verification culture: nothing is called working on a smoke test alone, every claim carries its evidence, and [STATUS.md](STATUS.md) says how well each system is established. |
 
-## The hard case we build to: join DURING an event
+## The hard case: joining during an event
 
-The devs' strongest implicit test: a player joins mid-pyramid (or any active
-event). This is where "same lobby but different worlds" mods die.
-
-**The native constraint that shapes the design (user-confirmed 2026-07-04, gate
-location being verified in bytecode):** the game itself NEVER allows saving
-during an event. That is the game telling us its own save format cannot
-represent an in-flight event. Consequence for coop: the join save-transfer
-(live world capture) is inherently insufficient DURING an event — by the
-game's own admission, no save blob can carry that state. So mid-event join
-can never be "just send the save": it is save blob (the stable base world)
-**plus** per-lane live snapshots (creatures, props, weather, time, cues)
-**plus** an active-event snapshot lane that tells the joiner which events are
-in flight and how to converge.
-
-Design + as-built status: `docs/join.md` (the join-during-event
-contract — every lane must answer "what does a late joiner receive?").
-
-## Timeline commitment
-
-User's stated goal (2026-07-04): a proper, robust multiplayer in ~3 months,
-built under the standing rules (RULE 1 root-cause-only, MTA precedent, no
-game-file edits, host-authoritative, verify-don't-guess). This doc is the
-scoreboard we return to.
+The strongest implicit test in the statement is a player joining while an event runs. The game
+itself refuses to save during an event (the pause menu disables its save button while one is
+active), which is the game saying its own save format cannot represent an event in flight; so a
+mid-event join can never be "send the save". It is the save as the
+base world, plus every lane's current state, plus a snapshot of the in-flight events that tells
+the joiner what to replay ([join.md](join.md)). The walking pyramid is the acceptance case.
