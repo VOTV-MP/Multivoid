@@ -389,3 +389,8 @@ docs/CRUTCHES.md
 #     references, so it costs the public tree nothing to withdraw.
 docs/THUNDERSTORE.md
 docs/BLENDER_ARC.md
+
+# Local-only: the repo-humanization arc (2026-09-05). It quotes a reviewer's Discord message and the
+# user's own words, and it is a working brief; its OUTPUT (the rewritten tree, the rules, the gates) is
+# public. Same terms as its siblings: on disk, local pointers resolve, none resolves on GitHub.
+docs/GITHUB_ARC.md
