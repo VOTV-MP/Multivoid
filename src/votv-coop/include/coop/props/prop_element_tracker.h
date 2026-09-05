@@ -1,53 +1,20 @@
-// coop/prop_element_tracker.h -- per-actor lifecycle bookkeeping for keyed
-// interactables (Aprop_C + chipPile/clump/trashBitsPile families).
-//
-// Three independent maintained sets, all keyed by AActor*:
-//
-//   1. ProcessedInit set
-//      Dedupes the "Init POST observer fires twice via a BP Super call"
-//      pattern. Entries added on Init POST broadcast, removed on
-//      K2_DestroyActor PRE. Cap 16384.
-//
-//   2. KnownKeyedProps set
-//      The maintained live-actor set. Seeded ONCE at Install via a single
-//      GUObjectArray walk; thereafter maintained by Init POST (insert) +
-//      K2_DestroyActor PRE (evict). Replaces the per-reconnect GUObjectArray
-//      walk that the H2-redux work retired on 2026-05-28.
-//
-//   3. PropElement shadow (the element::Prop owner -- PR-FOUNDATION-3 Inc3)
-//      Each entry in KnownKeyedProps gets a parallel coop::element::Prop
-//      Element. The Element is OWNED by the shared singleton
-//      coop::element::MirrorManager<Prop>::Instance() (the SAME manager
-//      remote_prop uses for wire mirrors) -- the bespoke g_propElementsById
-//      owner map is retired (RULE 2). The actor* -> local eid reverse the
-//      destroy gate + the Init-POST broadcast elementId stamp need is now the
-//      UNIFIED Registry reverse (Registry::EidForActor, sync-refactor
-//      2026-06-28; the bespoke g_actorToPropElementId map is RETIRED).
-//      GetPropElementIdForActor re-imposes the LOCALS-ONLY contract (mirror ->
-//      kInvalidId). Lifetime mirrors npc_sync: MarkPropElement AllocAndInstall's
-//      the Element into the manager (m_mirror=false -> dtor FreeId, which clears
-//      the registry reverse via NoteActorRebind); UnmarkKnownKeyedProp resolves
-//      the eid via the reverse then Take's the Element out + lets the dtor run
-//      outside the lock (ABBA-safe; FreeId acquires element::Registry::m_mutex).
-//
-// Extracted from prop_lifecycle.cpp 2026-05-29 (M-1 follow-up to prop_synth_key);
-// owner-map migrated to MirrorManager<Prop> 2026-05-30 (PR-FOUNDATION-3 Inc3).
-// Behavior preserved: same idempotency / cap / overflow-log semantics, same
-// in-lock role-read for the host/peer-range allocator decision in
-// MarkPropElement, same leaf-mutex lock ordering.
-//
-// Session pointer:
-//   prop_element_tracker holds its OWN cached coop::net::Session* (separate
-//   from prop_lifecycle's). prop_lifecycle::SetSession + Install +
-//   InstallInventory call this module's SetSession too. This keeps the
-//   in-lock role read (audit fix 2026-05-29 prior session: capture role
-//   inside the same locked block as the idempotency check; reading it after
-//   the lock release would race SetSession / role-change).
+// coop/prop_element_tracker.h -- per-actor lifecycle bookkeeping for keyed interactables (the
+// Aprop_C, chipPile, clump and trashBitsPile families): three maintained sets keyed by actor. The
+// ProcessedInit set dedupes an Init POST that fires twice through a BP Super call (cap 16384). The
+// KnownKeyedProps set is the live-actor set, seeded once by a GUObjectArray walk and maintained by
+// the Init POST (insert) and the K2_DestroyActor PRE (evict). The Prop element shadow gives each
+// known actor a coop::element::Prop owned by the shared MirrorManager<Prop>, the same manager the
+// wire mirrors live in; the actor-to-eid reverse is the unified Registry reverse, and
+// GetPropElementIdForActor answers for locals only (a mirror reads kInvalidId). MarkPropElement
+// installs the element into the manager (its dtor frees the id and clears the reverse);
+// UnmarkKnownKeyedProp takes it out under the lock and lets the dtor run outside it (the Registry
+// mutex is acquired by FreeId). The module caches its own Session pointer so the role is read
+// inside the same locked block as the idempotency check.
 
 #pragma once
 
 #include "coop/element/element.h"
-#include "ue_wrap/core/types.h"  // ue_wrap::FVector (v86 Path 1c pile save-time map)
+#include "ue_wrap/core/types.h"  // ue_wrap::FVector
 
 #include <cstddef>
 #include <string>
@@ -59,139 +26,92 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_element_tracker {
 
-// Cache the session pointer. Mirror of prop_lifecycle::SetSession --
-// prop_lifecycle's Install / SetSession / InstallInventory call this too
-// so the in-lock role read in MarkPropElement / SeedKnownKeyedProps has
-// a live pointer to query.
+// Caches the session pointer; prop_lifecycle's Install, SetSession and InstallInventory call it, so
+// the in-lock role read in MarkPropElement and the seed has a live pointer.
 void SetSession(coop::net::Session* session);
 
-// Role reads off the cached session for identity-authority decisions (the v122
-// A' funnel wall / H handback / B census branch). No session (SP / boot window)
-// -> both false, so neither authority branch fires.
+// The role off the cached session, for the identity-authority branches; with no session both are
+// false and neither branch fires.
 bool SessionIsHost();
 bool SessionIsClient();
 
-// ---- ProcessedInit dedupe ------------------------------------------------
+// The ProcessedInit dedupe.
 void MarkProcessedInit(void* actor);
 bool HasProcessedInit(void* actor);
 void UnmarkProcessedInit(void* actor);
 
-// OnDisconnect helper: clear the set, return the count we dropped + reset
-// the overflow-logged latch. Called by prop_lifecycle::OnDisconnect.
+// Clears the set and resets the overflow-logged latch; returns the count dropped.
 size_t ClearProcessedInit();
 
-// ---- KnownKeyedProps maintained set --------------------------------------
+// The KnownKeyedProps set.
 void MarkKnownKeyedProp(void* actor);
 
-// Drains BOTH the known set AND the Prop Element shadow (one operation
-// because they share the actor-keyed lifecycle). Drain-then-destruct
-// pattern: extract shadow under lock, release lock, then let the
-// unique_ptr destructor run. ABBA-safe vs element::Registry::m_mutex.
+// Drains the known set and the Prop element shadow together: the element is extracted under the
+// lock and its destructor runs after the release, so the Registry mutex is never taken inside this
+// one.
 void UnmarkKnownKeyedProp(void* actor);
 
-// ---- Prop Element shadow -------------------------------------------------
-// Create a Prop Element for `actor`. Idempotent: no-op if already tracked.
-// Reads its OWN cached session pointer inside the lock to determine host
-// vs peer allocation range. Names + class name optional (empty wstring
-// skips the field set).
-//
-// Returns the key the actor is ACTUALLY enrolled/known under -- normally the
-// input `key`, but the HOST KEY-UNIQUENESS AUTHORITY (2026-07-11 take-3: the
-// game's own save ships duplicate Keys, e.g. 65 trashBitsPile_C sharing one
-// GUID) re-keys a true duplicate (a DIFFERENT live actor already carries the
-// key) with a fresh unique Key before enrolling. Broadcast callers MUST build
-// their wire payload key from the RETURN, not the input (a payload carrying
-// the pre-rekey key would resolve to the incumbent on every receiver).
-//
-// v122 no-passive-mint (stable-ID root, votv-stable-id-no-passive-mint-DESIGN-2026-07-18):
-// every call site names its enrollment SOURCE. An EXPLICIT express seam (Init-POST
-// broadcast, container extract, held-item express, pile self-seed) mints-and-announces
-// on any peer. The PASSIVE census walk (SeedWalk_) on a CLIENT must NOT mint an Element
-// for a KEYED prop -- keyed identity is host-authored by construction (save-loaded props
-// adopt the host eid by key; client-born props mint at their express seam) -- so the
-// passive+client+keyed branch only refreshes the key index and returns. A silent local
-// eid nobody is ever told about was the zombie double-row factory (~2200 per join).
+// The Prop element shadow: a Prop element for `actor`, idempotent, allocated in the host or peer
+// range by the role read inside the lock; name and class optional. Returns the key the actor is
+// actually enrolled under: the game's own save ships duplicate keys (65 trashBitsPile_C on one
+// GUID), and the host re-keys a true duplicate (a different live actor already carries the key)
+// before enrolling, so a broadcast builds its payload from the return, never the input. Every
+// caller names its enrolment source: an explicit express seam (the Init broadcast, a container
+// extract, a held-item express, a pile self-seed) mints and announces on any peer, while the
+// passive census walk on a client mints nothing for a keyed prop (keyed identity is
+// host-authored: a save-loaded prop adopts the host eid by key, a client-born prop mints at its
+// express seam) and only refreshes the key index; a silent local eid nobody was told about was a
+// zombie double-row factory, thousands per join.
 enum class EnrollSource : uint8_t { kExpressSeam, kPassiveCensus };
 std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::wstring& cls,
                              EnrollSource src);
 
-// Look up the host-allocated ElementId for `actor`. Returns kInvalidId if
-// not tracked.
+// The local element id for `actor`, or kInvalidId.
 coop::element::ElementId GetPropElementIdForActor(void* actor);
 
-// ---- is-save-native (sync-refactor 2026-06-27, was the bound-mirror guard) ----
-// True iff `actor` is a SAVE-LOADED NATIVE bound as a host-range mirror by the eid-range bind
-// (save_identity_bind), live (self-heals a recycled entry). Sourced from Element::IsSaveNative via the unified
-// Registry actor->eid reverse -- NOT a separate set, so it cannot read stale relative to the binding (the D1
-// root). MarkPropElement / SeedWalk_ use it to skip re-minting a LOCAL element on a bound native; the pile/
-// kerfur reconcile use it to exclude a bound native from the save-time-twin doom set. The flag is set by
-// save_identity_bind right after RegisterPropMirror and dies with the Element (no explicit clear needed).
+// True only for a save-loaded native bound as a host-range mirror by the eid-range bind
+// (save_identity_bind) and live (a recycled entry self-heals). Read from Element::IsSaveNative
+// through the unified reverse, not a separate set, so it cannot be stale relative to the binding.
+// MarkPropElement and the seed skip re-minting a local element on a bound native; the pile and
+// kerfur reconciles exclude one from the twin doom set. Set right after RegisterPropMirror; dies
+// with the element.
 bool IsBoundMirrorNative(void* actor);
 
-// Re-point a LOCAL Prop Element (m_mirror=false, owned by THIS peer) from its
-// current actor onto `newActor`, keeping the SAME eid. Used by the host-authoritative
-// trash channel (trash_channel / remote_prop::OnConvert): when this peer's OWN pile
-// (a local tracker Element) re-skins pile-A -> clump -> pile-B, the eid `E` must
-// follow the new UObject so the held-pose stream + a later grab/destroy resolve
-// it. Updates the Element's cached actor/liveness-index; the unified Registry reverse
-// follows automatically (SetActor -> NoteActorRebind drops the old actor's entry if it
-// still names `eid` and binds `newActor -> eid`). No-op for an unknown eid / a mirror eid
-// (mirrors are rebound by remote_prop::RegisterPropMirror with rebindInPlace).
-// Game-thread only (the morph edges all run on the game thread). Keyless props
-// only -- it does NOT touch the key index (chipPile/clump carry Key=None).
+// Re-points a local Prop element from its actor onto `newActor`, keeping the eid: when this
+// peer's own pile re-skins (pile, clump, pile again) the eid follows the new object so the
+// held-pose stream and a later grab or destroy resolve it. The Registry reverse follows through
+// SetActor. A no-op for an unknown or mirror eid (a mirror rebinds through RegisterPropMirror
+// with rebindInPlace). Keyless props only; the key index is untouched. Game thread.
 void RebindLocalElementActor(coop::element::ElementId eid, void* newActor);
 
-// ---- Key -> live-actor index --------------------------------------------
-// O(1) resolution of a wire Key string to the live local Aprop_C* (and the
-// chipPile/clump/trashBits keyed-interactable families). THE replacement for the
-// per-call ue_wrap::prop::FindByKeyString GUObjectArray walk that made the
-// connect-time re-snapshot de-dupe O(N_props x N_objects) -- ~2316 incoming
-// PropSpawns x a ~150k-object scan-with-wstring-alloc each ballooned the client
-// to multi-GB on connect (the [[project-bug-prop-resnapshot-leak]] ship-blocker).
-//
-// The index is maintained automatically by MarkPropElement (insert) +
-// UnmarkKnownKeyedProp / ReapDeadLocalPropElements (evict), so every keyed prop
-// that has a Prop Element is resolvable here.
+// The key-to-live-actor index: O(1) resolution of a wire key to the local actor, replacing the
+// per-call GUObjectArray walk that made the connect-time dedupe O(props x objects) and ballooned
+// a client to gigabytes on connect. Maintained by MarkPropElement (insert) and
+// UnmarkKnownKeyedProp and the reaper (evict).
 
-// Resolve `key` to a LIVE local actor via the maintained index ONLY (no scan).
-// Returns nullptr on a miss. Validates liveness via IsLiveByIndex (no deref of a
-// possibly-freed pointer) and lazily evicts a stale entry it finds.
+// `key` to a live local actor through the index only; null on a miss. Liveness by index, and a
+// stale entry found on the way is evicted.
 void* FindLiveActorByKey(const std::wstring& key);
 
-// Resolve `key` to a LIVE local actor: O(1) index first, then a cold
-// ue_wrap::prop::FindByKeyString GUObjectArray scan on an index miss so behavior
-// is identical to the pre-index path for not-yet-indexed props. This is the
-// drop-in replacement the wire receivers (remote_prop OnSpawn / drive / destroy)
-// call instead of FindByKeyString directly. Game-thread + worker safe.
-//
-// outFellBackToScan (optional): set true iff the index MISSED but the cold scan
-// FOUND a live actor -- i.e. the index was STALE for an existing prop (a
-// world-change purged the indexed actors faster than the steady-state re-seed
-// rebuilt the index). The snapshot de-dupe site passes this and calls
-// ReconcileIndexThrottled() on a true result so the rest of an in-flight de-dupe
-// burst resolves O(1) instead of each falling back to the O(N) scan (the
-// [[project-bug-prop-resnapshot-leak]] balloon). Left false on an index hit or a
-// genuine miss (prop absent -> nothing to re-seed).
+// `key` to a live local actor: the index first, then a cold GUObjectArray scan on a miss, so a
+// not-yet-indexed prop still resolves; the wire receivers call this. Game thread or worker.
+// outFellBackToScan is set only when the index missed and the scan found the actor, a stale index
+// (a world change purged the indexed actors faster than the re-seed rebuilt it); the snapshot
+// dedupe then calls ReconcileIndexThrottled so the rest of the burst resolves O(1).
 void* ResolveLiveActorByKey(const std::wstring& key, bool* outFellBackToScan = nullptr);
 
-// Self-heal for a stale key index detected mid-de-dupe: throttled (>=200 ms)
-// drain-dead + re-seed so the index reflects the CURRENT loaded world. Returns
-// true if it actually reconciled (false if throttled out). Game-thread only.
-// Called by the snapshot receiver when ResolveLiveActorByKey reports a stale
-// fallback; idempotent vs the net_pump world-change re-seed episode path.
+// The self-heal for a stale index: a drain of the dead entries and a re-seed, throttled to one per
+// 200 ms; true when it ran. Game thread.
 bool ReconcileIndexThrottled();
 
-// Refresh the index for `actor` to `key` (e.g. after a fuzzy-match rekey that
-// changed the actor's Key without re-running MarkPropElement). Idempotent;
-// no-op for empty/None keys. Keeps the index hot so a rekeyed held prop's
-// per-grab resolution stays O(1) instead of perpetually falling back to scan.
+// Re-indexes `actor` under `key` (after a fuzzy-match rekey, say), so a rekeyed held prop resolves
+// O(1) per grab; idempotent, a no-op for an empty or None key.
 void IndexActorKey(void* actor, const std::wstring& key);
 
-// v122 (S): the join sweep's KEYED universe. Under no-passive-mint a client's
-// save-loaded keyed props have NO Element row -- the key index IS their tracked
-// membership -- so the divergence sweep adjudicates them from these entries
-// (element-bound actors are excluded by the caller: the row walk owns them).
-// Leaf-mutex snapshot copy; validate each entry via IsLiveByIndex before use.
+// The join sweep's keyed universe: a client's save-loaded keyed props have no element row, the
+// index is their tracked membership, so the sweep adjudicates them from these entries (the row
+// walk owns the element-bound ones). A snapshot copy under the leaf mutex; validate each by index
+// before use.
 struct KeyIndexEntry {
     void*        actor       = nullptr;
     int32_t      internalIdx = -1;
@@ -199,179 +119,108 @@ struct KeyIndexEntry {
 };
 void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out);
 
-// How many keyed props the index holds. A COUNT, because the diagnosis that wanted it was
-// copying every entry -- key string included -- to print one integer. Any thread (leaf mutex).
+// How many keyed props the index holds. Any thread.
 size_t KeyIndexSize();
 
-// v122 (S) doom re-validation companion: erase the index entry for `actor` iff
-// it still maps key<->actor (a recycled-address impostor or an un-reindexed
-// rekey must fall out of the sweep universe instead of dooming a fresh actor;
-// the live actor re-enters at the next census walk's re-index).
+// Erases the index entry for `actor` only if it still maps this key to this actor: a
+// recycled-address impostor or an un-reindexed rekey falls out of the sweep universe instead of
+// dooming a fresh actor, and the live actor re-enters at the next census.
 void EvictKeyIndexEntryIfStale(void* actor, const std::wstring& key);
 
-// v122 (audit IMPORTANT-1): drop every index entry whose actor is dead (element-less
-// keyed entries have no Registry row, so the element reaper cannot evict them; a
-// death WITHOUT K2_DestroyActor would otherwise leak the pair for the process
-// lifetime). Cold-path owners: the post-purge world-change re-seed edge + the
-// stale-index self-heal. Returns the number of entries drained. Game thread.
+// Drops every index entry whose actor is dead: an element-less keyed entry has no Registry row,
+// so the reaper cannot evict it, and a death without K2_DestroyActor would leak the pair for the
+// process. Cold paths: the post-purge re-seed edge and the stale-index self-heal. Returns the
+// count. Game thread.
 size_t DrainDeadKeyIndexEntries();
 
-// ---- R2: blob-vs-live divergence baseline (2026-06-17) -------------------
-// Copy the wire-keys of all currently-tracked keyed props (the host's live
-// keyed-prop set) into `out`. save_transfer snapshots this at blob-capture
-// (OnRequest) and again at the connect edge, diffing the two to send EXPLICIT
-// per-key PropDestroy for props the blob HAD that the host has since removed
-// (MTA Packet_EntityRemove) -- so the joining client never INFERS a delete via
-// the divergence sweep. Keyless chipPiles are NOT in the key index (their
-// cross-peer identity is the eid, not a key), so this is naturally
-// keyed-Aprop_C only. O(tracked) copy under the key-index leaf mutex; no
-// reflection, no GUObjectArray walk. Game-thread or worker safe.
+// The wire keys of every tracked keyed prop, the host's live set. save_transfer snapshots it at
+// the blob capture and again at the connect edge and sends an explicit PropDestroy per key the
+// blob had that the host has since removed, so the joiner never infers a delete. Keyless
+// chipPiles are not in the index (their identity is the eid). A copy under the leaf mutex; no
+// reflection.
 void CollectTrackedKeyedPropKeys(std::unordered_set<std::wstring>& out);
 
-// v86 Path 1c: collect the SAVE-TIME position of every live tracked chipPile,
-// keyed by its host ElementId. Called once at the scratch-save instant
-// (save_transfer::OnRequest) so the host can later stamp each pile's snapshot
-// with the position the client loaded it at (the cross-peer-stable key the
-// join-window two-channel DUP fix matches on). KEYLESS chipPiles only (the
-// thing that duped); an unseeded pile (no eid yet) is skipped -> no key, the
-// receiver falls back to the current pose for it. One GUObjectArray walk on the
-// game thread (same cold connect-edge cost as CollectTrackedKeyedPropKeys).
+// The save-time position of every live tracked chipPile by host eid, captured once at the scratch
+// save so the host can stamp each pile's snapshot with the position the client loaded it at.
+// Keyless piles only; an unseeded pile is skipped and the receiver uses the current pose. One
+// GUObjectArray walk on the game thread, at the connect edge.
 void CollectTrackedPileTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 
-// scope A (kerfur off->active dup retire, 2026-06-24): collect the SAVE-TIME position of every live
-// OFF-FORM kerfur (prop_kerfurOmega_C + skins), keyed by its host ElementId. Same blob-instant capture
-// + self-seed (mint an unseeded eid inline, idempotent) as CollectTrackedPileTransforms, but gated to
-// the kerfur prop lineage. The host carries this position onto the KerfurConvert when it turns the
-// kerfur ON in the join window, so the joining client can RETIRE its stale local off-prop (whose host
-// no longer expresses it as off) matched at the exact save-time key. One GUObjectArray walk, game
-// thread, cold connect-edge cost.
+// The save-time position of every live off-form kerfur by host eid, at the same instant and with
+// the same inline self-seed of an unseeded eid; the host carries it on a window turn-on's
+// KerfurConvert so the joining client retires its stale local off-prop at the exact key. One
+// walk, game thread, connect edge.
 void CollectTrackedKerfurTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 
-// F1 (2026-07-09): collect the SAVE-TIME position of every live KEYED prop (rock etc.),
-// keyed by its host ElementId. Sibling to CollectTrackedPileTransforms but for the KEYED
-// Aprop set (the live key index g_keyToActor). Unlike a pile, a keyed prop DOES ride the
-// connect snapshot at the host's current pos -- but the joiner's own loadObjects RECREATES
-// it at the SAVE pos AFTER, clobbering the snapshot, so it renders stale. Capturing the
-// host pos at the blob instant (== what the joiner loads) lets the diverged-position flush
-// re-assert the host-moved pos at quiescence, past the clobber. Copy the live keyed-actor
-// set under the leaf mutex, read positions OUTSIDE the lock. One index copy + engine reads,
-// game thread, cold connect-edge cost.
+// The save-time position of every live keyed prop by host eid: a keyed prop rides the snapshot at
+// the host's current position, but the joiner's own loadObjects re-creates it at the save
+// position afterwards, so the diverged-position flush re-asserts a host-moved position at
+// quiescence. The index copied under the leaf mutex, positions read outside it. Game thread,
+// connect edge.
 void CollectTrackedKeyedPropTransforms(
     std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& out);
 
-// ---- One-shot seed -------------------------------------------------------
-// GUObjectArray walk that populates KnownKeyedProps + creates Prop Element
-// shadows for every live keyed-interactable. Internal latch; safe to
-// call multiple times. Two-phase: phase 1 walks without lock, phase 2
-// takes the mutex for bulk insert (avoids holding the mutex for the full
-// ~150k object walk).
+// The one-shot seed: a GUObjectArray walk that populates KnownKeyedProps and creates the Prop
+// element shadows for every live keyed interactable; latched, safe to call again. Two phases,
+// the walk without the lock and a bulk insert under it.
 void SeedKnownKeyedProps();
 
-// Re-run the seed walk WITHOUT the one-shot latch (snapshot-completeness fix,
-// 2026-05-30). The boot SeedKnownKeyedProps runs ONCE, before VOTV's boot-time
-// level travel (`open untitled_1` into the story map); after the travel its
-// captured actors are all dead and the new level's PLACED props don't fire a
-// catchable Init POST (which is WHY the seed exists), so the host ends up
-// tracking only the ~70 runtime-spawned props instead of ~2000 -> the
-// late-joiner snapshot ships ~70 props. This re-walks GUObjectArray and adds any
-// live keyed-interactable the world has gained that we are not yet tracking.
-// Fully idempotent (set-insert + idempotent MarkPropElement) so it is safe to
-// call repeatedly; pairs with ReapDeadLocalPropElements (which drains the old
-// level's dead shadows). Returns the number of NEW props added to tracking.
-// Game-thread only; expensive (full ~150k GUObjectArray walk) -- call on a
-// world/level-change edge, never per-tick. This is also the re-seed a future
-// cave/level-travel feature needs.
-//
-// R1 (2026-06-17, MTA CEntityAddPacket streaming): optionally YIELDS the actors
-// this walk newly adopted. The steady-world re-seed (net_pump) passes a vector
-// and broadcasts ONE incremental PropSpawn per new actor (prop_snapshot::
-// ExpressIncrementalSpawn) instead of re-firing the whole bracketed snapshot --
-// a bracket re-arms the client divergence sweep, an incremental add does not.
-// nullptr (boot seed / throttled reconcile) keeps the prior count-only behavior.
+// The seed walk without the latch. The boot seed runs before VOTV's boot-time level travel, so
+// its actors are all dead afterwards and the new level's placed props fire no catchable Init,
+// leaving the host tracking a few dozen runtime props instead of about 2,000. This re-walks and
+// adds every live keyed interactable not yet tracked; idempotent, paired with the reaper. Returns
+// the count added. Expensive: on a world-change edge, never per tick. With `outNewActors` it
+// yields the adopted actors, and the steady re-seed broadcasts one incremental PropSpawn each
+// (MTA's entity-add streaming) instead of a bracketed snapshot, which would re-arm the client's
+// divergence sweep.
 size_t ReSeedKnownKeyedProps(std::vector<void*>* outNewActors = nullptr);
 
 
-// ---- R-2b (2026-08-23): the STEADY re-seed as scan-hub consumer #14 -------
-// The 0.25 Hz single-frame full-census steady branch (retired from
-// registry_reaper, RULE 2) is replaced by a demand-exempt (settleScans=0)
-// hub consumer: the shared sliced pass collects keyed-interactable candidates
-// ({obj, InternalIndex, SlotSerial} scratch, no per-slice filtering), and a
-// BUDGET drain (~1 ms/tick) adjudicates them with today's phase-1/phase-2
-// semantics relocated verbatim (insert().second under the leaf mutex is the
-// SOLE newness authority; MarkPropElement / keyless-pile mint / per-chunk
-// DeliverLateRegisteredProps outside the lock). Design of record:
-// research/findings/architecture-audits/votv-reseed-hub-consumer-DESIGN-2026-08-23.md.
-// Both game thread. Install self-latches; Drain early-returns on an empty queue.
+// The steady re-seed as a scan-hub consumer: the shared sliced pass collects keyed-interactable
+// candidates ({obj, InternalIndex, SlotSerial}), and a budgeted drain (about 1 ms per tick)
+// adjudicates them with the seed's own semantics (the set insert under the leaf mutex is the sole
+// newness authority; the mint and the late delivery run outside it). Game thread; Install latches,
+// Drain returns early on an empty queue.
 void InstallReseedScanConsumer();
 void DrainReseedQueue();
 
-// The reaper's 4 s gameplay-vs-menu verdict, published for the reseed gate
-// (same source + cadence today's steady branch read; world_identity pointers
-// are identities and must not be dereferenced for a name check). Written by
-// registry_reaper only; read by the census-internal gate.
+// The reaper's gameplay-versus-menu verdict, published for the re-seed gate; written by
+// registry_reaper only.
 void SetReaperInGameplayWorld(bool inGameplay);
 
-// ---- World-coherence stamp (Fork A, 2026-06-10) ---------------------------
-// Every seed walk stamps the live gameplay UWorld it expressed; the snapshot
-// trigger gate refuses to open a bracket (a DESTRUCTIVE contract: the client
-// sweeps unclaimed locals at SnapshotComplete) unless the registry's stamped
-// world is still the live one. GT-read; O(1) (IsLiveByIndex on the captured
-// pointer -- a world swap's GC purge kills the stamp with zero latency).
-bool HasSeededOnce();                   // the boot-seed latch, promoted
-bool IsRegistrySeededForCurrentWorld(); // stamp non-null && IsLiveByIndex(stamp)
-uint64_t SeedGeneration();              // bumps at the tail of EVERY seed walk
+// The world-coherence stamp: every seed walk stamps the live gameplay UWorld it expressed, and the
+// snapshot trigger refuses to open a bracket (a destructive contract) unless the stamped world is
+// still the live one. O(1), by index, so a world swap's purge kills the stamp with no latency.
+bool HasSeededOnce();                   // the boot-seed latch
+bool IsRegistrySeededForCurrentWorld();  // the stamp is non-null and alive by index
+uint64_t SeedGeneration();              // bumps at the tail of every seed walk
 
-// Purge-episode flag (gate hardening, 2026-06-10): true between the reaper's
-// mass-purge detection and the episode-end re-seed -- the registry is
-// draining a dead world's elements and must not be snapshot-expressed. The
-// world-stamp alone is insufficient: VOTV's boot/save-load can leave the
-// stamped UWorld alive while the registry is majority-dead (smoke-proven).
-// net_pump owns the detection edges and calls the setter; the snapshot gate
-// reads it.
+// The purge-episode flag: true between the reaper's mass-purge detection and the episode-end
+// re-seed, while the registry drains a dead world's elements and must not be expressed. Needed
+// beside the stamp, since a save load can leave the stamped UWorld alive while the registry is
+// majority-dead. net_pump owns the edges; the snapshot gate reads it.
 void SetInPurgeEpisode(bool active);
 bool InPurgeEpisode();
 
-// ---- Dead-Element reaper (PR-FOUNDATION, 2026-05-30) ----------------------
-// Reconcile the LOCAL Prop Element shadows against the live world: any local
-// (non-mirror) Prop Element whose backing actor the engine has purged
-// (reflection::IsLiveByIndex == false on the cached index) is evicted exactly
-// as its K2_DestroyActor PRE would have -- drained out of the canonical
-// MirrorManager<Prop> by eid and routed through ElementDeleter -- minus the
-// wire PropDestroy (a mass purge is engine teardown, not a gameplay destroy to
-// replicate). Needed because a mass GC purge (cave/level transition, save-load)
-// flags ~2000 props PendingKill AT ONCE without firing per-actor
-// K2_DestroyActor, so the sole eviction path is bypassed and the dead shadows
-// leak: unbounded across transitions, and after ~7 the 16384 KnownKeyedProps /
-// ProcessedInit caps exhaust and NEW props stop being tracked -- silently
-// breaking the late-joiner snapshot and live prop-spawn replication.
-//
-// Reaps by EID with an IsMirror() gate (robust against the engine recycling a
-// purged actor's address for a new keyed prop -- an actor-keyed evict could
-// then kill the live new Element). Caps at `maxEvictions` per call so a
-// post-purge backlog drains across a handful of throttled scans instead of one
-// frame. No-op (returns 0) when nothing is dead. Game-thread only (mirrors the
-// K2_DestroyActor PRE eviction site + the ElementDeleter::Flush contract).
-// Returns the number of dead local Prop Elements evicted.
-//
-// PART 1 (2026-06-18, host-authoritative death-watch): optionally YIELDS the eid of each
-// evicted element. The net_pump reaper, in STEADY state (not a mass-purge transition),
-// broadcasts an explicit PropDestroy(eid) per yielded eid on the HOST -- so a prop/pile the
-// host destroyed via an un-hookable BP-internal EX_CallMath path (garbage-truck collect,
-// ambient cull, removeWOrespawn/LifeSpan despawn) -- which NEVER fires K2_DestroyActor and
-// so was only ever cleaned by the retired 4s full re-snapshot -- now propagates as an
-// explicit per-entity remove (MTA Packet_EntityRemove), by identity, not a proximity guess.
-// nullptr (the boot/self-test callers) keeps the prior silent-eviction behavior.
+// The dead-element reaper: every local Prop element whose actor the engine purged (dead by index)
+// is evicted as its K2_DestroyActor PRE would have, drained from the manager by eid through the
+// deleter, minus the wire PropDestroy (a mass purge is engine teardown, not a gameplay destroy).
+// A level transition flags about 2,000 props PendingKill at once without firing K2_DestroyActor,
+// and the leaked shadows exhausted the 16384 caps after a handful of transitions, after which
+// new props were silently untracked. Reaps by eid with a mirror gate (a recycled address could
+// otherwise kill a live new element); capped per call so a backlog drains over a few scans.
+// Game thread. With `outReapedEids` it yields each evicted eid, and the steady-state reaper
+// broadcasts a PropDestroy per eid on the host, so a prop the host destroyed through an
+// unhookable BP-internal path (a truck collect, an ambient cull, a lifespan despawn) propagates
+// by identity.
 size_t ReapDeadLocalPropElements(size_t maxEvictions,
                                  std::vector<coop::element::ElementId>* outReapedEids = nullptr);
 
-// Self-test (env VOTVCOOP_RUN_PROPREAP_TEST): construct a synthetic DEAD local
-// Prop Element (sentinel actor + internalIdx -1 so IsLiveByIndex rejects it
-// without any deref), verify ReapDeadLocalPropElements evicts it + clears all
-// three actor-keyed maps + frees the eid after a Flush, and verify it leaves a
-// LIVE local Prop Element untouched. Logs PASS/FAIL. Game-thread only. Proves
-// the reap mechanism without the (hard-to-reproduce) natural mass-purge.
+// The self-test (VOTVCOOP_RUN_PROPREAP_TEST): a synthetic dead local element (a sentinel actor,
+// index -1) must be reaped, its maps cleared and its eid freed after a flush, and a live one left
+// alone. Logs PASS or FAIL. Game thread.
 bool DebugCheckPropElementReap();
 
 }  // namespace coop::prop_element_tracker
