@@ -207,7 +207,7 @@ only our sources change.
 This deploys `main.dll` into the mod folder
 (`...\Binaries\Win64\Mods\Multivoid\dlls\`) of **four** local game copies —
 `Game_0.9.0n_HOST` (HOST), `_CLIENT_1` (CLIENT), `_CLIENT_2` (CLIENT2), and
-`_CLIENT_3` (DEV, the autonomous-test copy). It also ships the client-puppet
+`_CLIENT_3` (DEV, the development copy). It also ships the client-puppet
 mesh pak into `...\Content\Paks\LogicMods\multivoid\`. The deploy is
 idempotent (identical bytes are skipped) and refuses a `main.dll` whose
 VERSIONINFO disagrees with the tree. The UE4SS substrate itself is a one-time
@@ -218,15 +218,14 @@ for yourself, install UE4SS once and copy `main.dll` to
 `...\Binaries\Win64\Mods\Multivoid\dlls\main.dll` (+ an `enabled.txt` beside
 `dlls\`) in your own install instead — see [docs/INSTALL.md](docs/INSTALL.md).
 
-For the autonomous LAN smoke (the pre-PR check in [CONTRIBUTING.md](CONTRIBUTING.md)):
+For the LAN smoke (the pre-PR check in [CONTRIBUTING.md](CONTRIBUTING.md)):
 
 ```powershell
-.\mp_host_game.bat    # in one window
-.\mp_client_connect.bat   # in another
+python tools/mp.py smoke --duration 60
 ```
 
-Both .bat files set the OBS-watched window titles ("VotV (Host)" /
-"VotV (Client)").
+It deploys, launches a host and a client, joins them, and reports PASS or FAIL from their logs
+([docs/testing.md](docs/testing.md)).
 
 ## Troubleshooting
 
