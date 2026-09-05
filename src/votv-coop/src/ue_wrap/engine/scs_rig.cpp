@@ -1,14 +1,11 @@
-// ue_wrap/scs_rig.cpp -- see scs_rig.h. RE ground truth for the node/property
-// shapes: research/pak_re/dump_scs.py over kerfurOmega.json (14x
-// eff_kerfurJointLife on skeleton bones + lifeLight on 'belly', all dormant)
-// and kerfurOmega_mynet.json (SCS TREE: 9x eff_mynetEmitterLimb on limb bones,
-// each carrying a decal_digitalGrid + eff_pofinStatic CHILD; 2 foot billboards
-// each carrying a decal child; 3 root eff_zapp spark loops @ att_small). The
-// mynet templates author bAbsoluteRotation=TRUE on every grid decal (the
-// projection box stays world-vertical -- floor grid under the limbs) and
-// bStartWithTickEnabled=FALSE on every electricity emitter (the sim never
-// advances -- authored-off decoration). Take-3 2026-07-03: those template
-// flags are honored bit-exactly via reflection::FindBoolProperty.
+// ue_wrap/engine/scs_rig.cpp -- see scs_rig.h. The node and property shapes come from the
+// reflection dumps of the two kerfur skins: the base skin carries joint-life spark emitters
+// on skeleton bones and a life light on the belly, all dormant; the mynet skin carries limb
+// emitters each with a grid decal and a static burst child, two foot billboards each with a
+// decal child, and root spark loops. The mynet templates author absolute rotation on every
+// grid decal (the projection box stays world-vertical, a floor grid under the limbs) and
+// tick-off on every electricity emitter (the sim never advances, authored-off decoration).
+// Those flags are honoured bit-exactly through the reflected bool-property reads.
 
 #include "ue_wrap/engine/scs_rig.h"
 
@@ -30,17 +27,15 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// ---- reflected property reads on arbitrary UObjects -----------------------
-// Offsets are resolved per (declaring class, property) once and cached. All
-// reads are RAW MEMORY reads of the live object -- a template object holds the
-// EFFECTIVE value for every field (CDO-inherited defaults included), so no
-// "was it serialized?" logic is needed.
+// Reflected property reads on arbitrary objects. Offsets are resolved per declaring class
+// and property once and cached. All reads are raw memory reads of the live object: a
+// template holds the effective value of every field, inherited defaults included, so no
+// was-it-serialised logic is needed.
 
-// Class + property-offset caches. FindClass is a FULL GUObjectArray walk --
-// without the class cache a rig build (~65 nodes x ~7 property reads) would
-// re-walk the array hundreds of times ([[lesson-full-array-walk-cheap-filter-
-// before-nameof]] cost class). Engine classes never unload, so the class
-// cache needs no liveness churn; offsets are engine-lifetime constants.
+// Class and property-offset caches. FindClass is a full object-array walk; without the class
+// cache a rig build (dozens of nodes, several property reads each) would re-walk the array
+// hundreds of times. Engine classes never unload, so the class cache needs no liveness churn;
+// offsets are engine-lifetime constants.
 std::unordered_map<std::wstring, void*> g_clsCache;
 std::unordered_map<std::wstring, int32_t> g_propOff;
 
@@ -52,8 +47,8 @@ void* ClassByName(const wchar_t* className) {
     return cls;
 }
 
-// Offset of `prop` on `declaringClassName` (the class that DECLARES it --
-// FindPropertyOffset does not climb SuperStruct). -1 if unresolved.
+// Offset of `prop` on `declaringClassName` (the class that declares it; the offset lookup does
+// not climb the super chain). -1 if unresolved.
 int32_t PropOff(const wchar_t* declaringClassName, const wchar_t* prop) {
     std::wstring key(declaringClassName);
     key += L'.';
@@ -77,13 +72,11 @@ bool ReadAt(void* obj, int32_t off, T& out) {
     return true;
 }
 
-// Read a BITFIELD bool (uint8 flag:1) off a component TEMPLATE using the
-// FBoolProperty's REAL byte offset + bit mask (reflection::FindBoolProperty).
-// A template holds the EFFECTIVE value of every flag, so the masked bit IS the
-// authored truth -- no CDO baselines, no heuristics. (Take-2's XOR-vs-CDO
-// guess died on the first template that overrode TWO flags in one packed byte:
-// every lifeLight read hit "multi-bit delta t=10 cdo=20", fell back to
-// visible, and flooded every skin with the violet belly light.)
+// Read a bitfield bool off a component template using the bool property's real byte offset
+// and bit mask. A template holds the effective value of every flag, so the masked bit is the
+// authored truth: no CDO baselines, no heuristics (a guess against the CDO fails on the first
+// template that overrides two flags in one packed byte, and this one did, flooding every
+// skin with the violet belly light).
 struct BoolProp {
     int32_t off = -1;
     uint8_t mask = 0;
@@ -116,9 +109,8 @@ bool TemplateFlag(void* templateObj, const wchar_t* declClass, const wchar_t* pr
     return (b & bp.mask) != 0;
 }
 
-// FTickFunction::bStartWithTickEnabled inside ActorComponent's
-// PrimaryComponentTick struct member (offsets composed once). off -2 =
-// unresolved, -1 = resolution failed.
+// The tick function's start-enabled flag inside the component's primary-tick struct member
+// (offsets composed once). Offset -2 is unresolved, -1 is a failed resolution.
 BoolProp g_startTick{-2, 0};
 
 bool TemplateStartsTickEnabled(void* templateObj) {
@@ -149,22 +141,21 @@ struct TArrayRaw {
     int32_t Max;
 };
 
-// ---- GameplayStatics attached-spawn thunks --------------------------------
+// The gameplay-statics attached-spawn thunks.
 
 void* g_gsCdo = nullptr;
 void* g_emitterAttachedFn = nullptr;
 void* g_soundAttachedFn = nullptr;
 void* g_decalAttachedFn = nullptr;
-// AActor component construction (the nameplate/puppet-light path).
+// Actor component construction (the nameplate and puppet-light path).
 void* g_addCompFn = nullptr;
 void* g_finishCompFn = nullptr;
-// USceneComponent::K2_AttachToComponent + UPointLightComponent class.
+// The scene component attach call and the point light class.
 void* g_attachFn = nullptr;
 void* g_pointLightClass = nullptr;
 void* g_setCastShadowsFn = nullptr;
-// Template-fidelity setters: USceneComponent::SetAbsolute (world-anchored
-// transform axes) + UActorComponent::SetComponentTickEnabled (authored-off
-// simulation).
+// Template-fidelity setters: the scene component's SetAbsolute (world-anchored transform
+// axes) and the component's SetComponentTickEnabled (authored-off simulation).
 void* g_setAbsoluteFn = nullptr;
 void* g_setTickEnabledFn = nullptr;
 
@@ -202,11 +193,11 @@ bool ResolveThunks() {
     return g_gsCdo && g_emitterAttachedFn && g_soundAttachedFn && g_decalAttachedFn;
 }
 
-// EAttachLocation::KeepRelativeOffset / EAttachmentRule::KeepRelative.
+// The keep-relative-offset attach location and the keep-relative attachment rule.
 constexpr uint8_t kKeepRelativeOffset = 0;
 constexpr uint8_t kAttachRuleKeepRelative = 0;
 
-// One SCS node, flattened for instantiation.
+// One construction-script node, flattened for instantiation.
 struct Node {
     void* templateObj = nullptr;
     std::wstring className;   // template's class name (leaf)
@@ -220,7 +211,7 @@ struct Node {
 
 bool NameIsNone(const R::FName& n) { return n.ComparisonIndex == 0; }
 
-// Read one SCS_Node object into a flat Node. Returns false on a null template.
+// Read one construction-script node object into a flat node. False on a null template.
 bool ReadNode(void* nodeObj, Node& out) {
     const int32_t offTmpl = PropOff(L"SCS_Node", L"ComponentTemplate");
     const int32_t offVar = PropOff(L"SCS_Node", L"InternalVariableName");
@@ -231,19 +222,18 @@ bool ReadNode(void* nodeObj, Node& out) {
     ReadAt(nodeObj, offAttach, out.attachTo);
     ReadAt(nodeObj, offParent, out.parentVar);
     out.className = R::ClassNameOf(out.templateObj);
-    // Relative transform: effective values from the template's own memory
-    // (USceneComponent fields; non-scene templates just skip).
+    // Relative transform: effective values from the template's own memory (scene component
+    // fields; non-scene templates skip).
     ReadAt(out.templateObj, PropOff(L"SceneComponent", L"RelativeLocation"), out.relLoc);
     ReadAt(out.templateObj, PropOff(L"SceneComponent", L"RelativeRotation"), out.relRot);
     ReadAt(out.templateObj, PropOff(L"SceneComponent", L"RelativeScale3D"), out.relScale);
     return true;
 }
 
-// Recursively collect a node subtree. `parentBone` carries the nearest
-// ancestor's bone anchor so a child of a skipped node (mynet's pofinStatic
-// bursts live under foot billboards) still lands on the right bone; relative
-// offsets do NOT compose across skipped parents (measured: every skipped
-// parent in the kerfur rigs sits at identity relative to its bone).
+// Recursively collect a node subtree. `parentBone` carries the nearest ancestor's bone anchor
+// so a child of a skipped node (the mynet static bursts live under the foot billboards) still
+// lands on the right bone; relative offsets do not compose across skipped parents (every
+// skipped parent in the kerfur rigs sits at identity relative to its bone).
 void CollectNodes(void* nodeObj, const R::FName& parentBone,
                   std::vector<std::pair<Node, R::FName>>& out, int depth) {
     if (!nodeObj || depth > 8 || out.size() > 128) return;
@@ -259,15 +249,15 @@ void CollectNodes(void* nodeObj, const R::FName& parentBone,
     }
 }
 
-// ---- per-class instantiation ----------------------------------------------
+// Per-class instantiation.
 
 void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bone) {
     void* tmpl = nullptr;
     if (!ReadAt(n.templateObj, PropOff(L"ParticleSystemComponent", L"Template"), tmpl) || !tmpl)
         return nullptr;  // a PSC with no Template renders nothing -- skip
-    // TEMPLATE-faithful activation: the kerfur joint-life sparks ship
-    // bAutoActivate=FALSE (makeSentient-only); mynet's emitters keep the PSC
-    // default TRUE. The template byte holds the effective value.
+    // Template-faithful activation: the kerfur joint-life sparks ship auto-activate off (only the
+    // sentient path turns them on); the mynet emitters keep the default on. The template byte
+    // holds the effective value.
     if (!TemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", true))
         return nullptr;  // dormant-by-authoring: nothing to show
     ParamFrame f(g_emitterAttachedFn);
@@ -286,9 +276,9 @@ void* SpawnEmitterAttachedNode(void* meshComp, const Node& n, const R::FName& bo
 }
 
 void* SpawnSoundAttachedNode(void* anchorComp, const Node& n, const R::FName& bone) {
-    // Cosmetic audio ONLY: the game's own naming convention marks effect audio
-    // "eff_*" (mynet's eff_zapp spark loops); behavioral audio (Audio = meow,
-    // kerfurEXE) keeps its plain name and stays with the AI actor.
+    // Cosmetic audio only: the game's own naming convention marks effect audio with an "eff_"
+    // prefix (the mynet spark loops); behavioural audio keeps its plain name and stays with the
+    // AI actor.
     if (!R::NameStartsWith(n.varName, L"eff_")) return nullptr;
     if (!TemplateFlag(n.templateObj, L"ActorComponent", L"bAutoActivate", true))
         return nullptr;  // dormant-by-authoring
@@ -337,24 +327,21 @@ void* SpawnDecalAttachedNode(void* anchorComp, const Node& n, const R::FName& bo
     return f.Get<void*>(L"ReturnValue");
 }
 
-// PointLightComponent has no GameplayStatics spawn helper: AddComponentByClass
-// (deferred) -> copy the template's light fields (pre-registration raw writes =
-// the archetype-copy the engine's own SCS instancing performs) -> finish ->
-// attach -> post-registration setters for the render-state-coupled bits.
+// A point light has no gameplay-statics spawn helper: add the component deferred, copy the
+// template's light fields (pre-registration raw writes, the archetype copy the engine's own
+// construction-script instancing performs), finish, attach, then the post-registration
+// setters for the render-state-coupled bits.
 void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FName& bone) {
     if (!g_addCompFn || !g_finishCompFn || !g_attachFn || !g_pointLightClass) return nullptr;
-    // TEMPLATE-faithful visibility: kerfurOmega's lifeLight ships bVisible=FALSE
-    // (only makeSentient turns it on) -- a light the game keeps dark is not
-    // instanced at all. Force-lighting it was the 2026-07-03 pink-blast bug.
-    // Fallback FALSE: when the flag cannot be proven visible (layout drift), a
-    // missing glow is the cheap failure; a wrongly-lit per-player light is the
-    // screen-flooding one (take-2's exact regression).
+    // Template-faithful visibility: the base skin's life light ships invisible (only the sentient
+    // path turns it on), so a light the game keeps dark is not instanced at all. Fallback false:
+    // when the flag cannot be proven visible (layout drift), a missing glow is the cheap failure;
+    // a wrongly lit per-player light floods every screen.
     if (!TemplateFlag(n.templateObj, L"SceneComponent", L"bVisible", false))
         return nullptr;
-    // Pass the TEMPLATE's relative transform to both halves of the deferred
-    // add: even if FinishAddComponent re-applies its transform param over our
-    // pre-finish field writes (unverified engine detail flagged in the
-    // correctness audit), it re-applies the CORRECT one.
+    // Pass the template's relative transform to both halves of the deferred add: if the finish
+    // call re-applies its transform parameter over the pre-finish field writes, it re-applies
+    // the correct one.
     FTransform tmplRel{};
     ue_wrap::engine::RotatorToQuat(n.relRot.Pitch, n.relRot.Yaw, n.relRot.Roll,
                                    tmplRel.RotX, tmplRel.RotY, tmplRel.RotZ, tmplRel.RotW);
@@ -373,7 +360,7 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
     void* comp = add.Get<void*>(L"ReturnValue");
     if (!comp) return nullptr;
 
-    // Archetype copy of the plain light fields, template -> instance.
+    // Archetype copy of the plain light fields, template to instance.
     auto copyF = [&](const wchar_t* declCls, const wchar_t* prop) {
         const int32_t off = PropOff(declCls, prop);
         float v;
@@ -411,9 +398,9 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
     att.Set<bool>(L"bWeldSimulatedBodies", false);
     Call(comp, att);
 
-    // Render-state-coupled bits go through their setters, post-registration.
-    // CastShadows: the kerfur template ships false (dump_scs.py lifeLight row) --
-    // and a shadow-casting per-player point light would be a perf cliff anyway.
+    // Render-state-coupled bits go through their setters, post-registration. Cast shadows: the
+    // kerfur template ships false, and a shadow-casting per-player point light would be a
+    // performance cliff anyway.
     if (g_setCastShadowsFn) {
         ParamFrame cs(g_setCastShadowsFn);
         cs.Set<bool>(L"bNewValue", false);
@@ -424,13 +411,12 @@ void* AddPointLightNode(void* actor, void* meshComp, const Node& n, const R::FNa
 
 // Post-spawn template fidelity shared by every component kind.
 void ApplyTemplateFidelity(void* comp, const Node& n) {
-    // Absolute transform axes: mynet's grid decals author bAbsoluteRotation
-    // (the projection box stays world-vertical no matter which limb bone the
-    // decal rides -- KeepRelative attach alone tumbles the box with the bone
-    // until it swallows the camera: the take-2 grid-on-the-whole-screen bug);
-    // its electricity emitters author bAbsoluteScale. SetAbsolute reinterprets
-    // the already-applied relative values in world space, exactly how the
-    // engine's own SCS instancing treats an absolute-flagged template.
+    // Absolute transform axes: the mynet grid decals author absolute rotation (the projection box
+    // stays world-vertical whichever limb bone the decal rides; a keep-relative attach alone
+    // tumbles the box with the bone until it swallows the camera) and its electricity emitters
+    // author absolute scale. SetAbsolute reinterprets the already-applied relative values in
+    // world space, exactly how the engine's own construction-script instancing treats an
+    // absolute-flagged template.
     const bool absLoc = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteLocation", false);
     const bool absRot = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteRotation", false);
     const bool absScale = TemplateFlag(n.templateObj, L"SceneComponent", L"bAbsoluteScale", false);
@@ -441,13 +427,10 @@ void ApplyTemplateFidelity(void* comp, const Node& n) {
         f.Set<bool>(L"bNewAbsoluteScale", absScale);
         Call(comp, f);
     }
-    // Tick authoring: mynet's 17 electricity emitters ship
-    // bStartWithTickEnabled=FALSE -- the native sim never advances past its
-    // initial state (authored-off decoration). The GameplayStatics spawn
-    // registers the tick enabled; disabling it synchronously (before this
-    // frame's tick groups run) restores the never-ticked native state. Left
-    // running, 17 continuously-emitting systems are the rest of the take-2
-    // screen blast.
+    // Tick authoring: the mynet electricity emitters ship tick-off, so the native sim never
+    // advances past its initial state. The gameplay-statics spawn registers the tick enabled;
+    // disabling it synchronously, before this frame's tick groups run, restores the never-ticked
+    // native state. Left running, the continuously emitting systems flood the screen.
     if (g_setTickEnabledFn && !TemplateStartsTickEnabled(n.templateObj)) {
         ParamFrame f(g_setTickEnabledFn);
         f.Set<bool>(L"bEnabled", false);
@@ -478,9 +461,8 @@ int InstantiateCosmetics(void* actor, void* meshComp, void* rootComp,
 
     int made = 0;
     for (const auto& [n, bone] : nodes) {
-        // Bone-anchored nodes ride the skin mesh; root-anchored ones (mynet's
-        // grid decals under the actor) ride the actor root so they track the
-        // capsule, not a bone.
+        // Bone-anchored nodes ride the skin mesh; root-anchored ones (the mynet grid decals under
+        // the actor) ride the actor root so they track the capsule, not a bone.
         void* anchor = NameIsNone(bone) ? rootComp : meshComp;
         void* comp = nullptr;
         if (n.className == L"ParticleSystemComponent")
