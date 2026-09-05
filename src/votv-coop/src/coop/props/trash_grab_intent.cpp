@@ -1,17 +1,10 @@
-// coop/props/trash_grab_intent.cpp -- the CLIENT-initiated grab/throw intent
-// lane of coop::trash_channel (see coop/props/trash_channel.h, "CLIENT-GRAB
-// direction" + "CLIENT carry-state").
-//
-// Extracted from trash_channel.cpp 2026-07-10 when it passed the 800-LOC soft
-// cap. Behavior preserved byte-for-byte; the one mechanical change is that the
-// core's carry-latch read at GATE 1 goes through the public IsCarrying()
-// instead of touching g_carry directly (same find != end).
-//
-// This TU owns the intent lane's whole state: the HELD_BY registry (eid ->
-// holder peer slot -- the door holdOpen_ analog; the core reaches it via the
-// three ops in trash_channel_detail.h) and the client-side pending-grab /
-// carry toggles. The core (ctx generations, carry latch, land settle, birth
-// certificates, TickCarry) stays in trash_channel.cpp.
+// coop/props/trash_grab_intent.cpp -- the client-initiated grab and throw intent lane of
+// coop::trash_channel (see coop/props/trash_channel.h). This file owns the intent lane's whole
+// state: the holder registry (eid to holder peer slot, the door hold's analog; the core reaches
+// it through the three ops in trash_channel_detail.h) and the client-side pending-grab and
+// carry toggles. The core (the context generations, the carry latch, the land settle, the
+// birth certificates, the tick) stays in trash_channel.cpp; its carry-latch read here goes
+// through the public IsCarrying.
 
 #include "coop/props/trash_channel.h"
 
@@ -19,9 +12,9 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/element/intent_authority.h"   // A54: may this sender name this pile
-#include "coop/element/registry.h"    // Registry::Get(eid) -- resolve the pile to grab (Increment 2)
-#include "coop/player/players_registry.h"    // Puppet(slot) -- the client-grab direction (Increment 2)
+#include "coop/element/intent_authority.h"   // may this sender name this pile
+#include "coop/element/registry.h"    // resolve the pile to grab
+#include "coop/player/players_registry.h"    // the client-grab direction's puppet
 #include "coop/player/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
 #include "coop/player/remote_player.h"       // RemotePlayer::GetActor / valid
 #include "coop/props/prop_snapshot.h"  // ExpressIncrementalSpawn (wrong-class deny -> re-assert the row)
@@ -33,7 +26,7 @@
 #include "ue_wrap/core/types.h"       // FVector / FRotator
 
 #include <chrono>     // wrong-class deny heal debounce (per-eid, 5 s)
-#include <cmath>      // std::sqrt -- clamp the inherited throw velocity (L4)
+#include <cmath>      // clamp the inherited throw velocity
 #include <cstdint>
 #include <unordered_map>
 
@@ -42,22 +35,23 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// Increment 2 (v84): eid -> the peer slot whose puppet currently holds it via a client-initiated grab.
-// The door holdOpen_ analog: a client-initiated grab is EXCLUSIVE (one holder per eid; one held eid per
-// peer). Cleared on the land COMMIT (TickCarry -> ClearHeldBy), on the holder's disconnect
-// (OnGrabHolderLeft), and on a gross reset (OnDisconnect -> ResetIntentState). HOST-only, game-thread.
+// Eid to the peer slot whose puppet holds it through a client-initiated grab, the door hold's
+// analog: a client grab is exclusive, one holder per eid and one held eid per peer. Cleared on
+// the land commit, on the holder's disconnect, and on the disconnect reset. Host only, game
+// thread.
 std::unordered_map<uint32_t, uint8_t> g_heldBy;
 
-// CLIENT-side carry-state (the E-press grab/throw toggle). A player holds at most one trash clump, so a
-// single eid each: g_clientPendingGrab is a GrabIntent in flight (set on send, cleared when the matching
-// ToClump confirms or a different convert supersedes); g_clientCarry is the eid we are currently carrying
-// (set on the confirming ToClump, cleared on the ToPile land or an optimistic throw send). 0 = none.
+// The client-side carry state, the use-press grab-or-throw toggle. A player holds at most one
+// trash clump, so a single eid each: a grab request in flight (set on send, cleared when the
+// matching to-clump confirms or a different convert supersedes), and the eid we are carrying
+// (set on the confirming to-clump, cleared on the to-pile land or an optimistic throw send).
+// 0 means none.
 uint32_t g_clientPendingGrab = 0;
 uint32_t g_clientCarry       = 0;
 
 }  // namespace
 
-// ---- Internal ops for the core (trash_channel_detail.h) ------------------
+// The internal ops for the core (trash_channel_detail.h).
 
 bool HeldByAny(uint32_t eid) {
     return g_heldBy.find(eid) != g_heldBy.end();
@@ -68,12 +62,12 @@ void ClearHeldBy(uint32_t eid) {
 }
 
 void ResetIntentState() {
-    g_heldBy.clear();   // v84: drop all client-grab HELD_BY records
-    g_clientPendingGrab = 0;  // v85: drop the client carry-state toggle
+    g_heldBy.clear();   // drop all client-grab holds
+    g_clientPendingGrab = 0;  // drop the client carry-state toggle
     g_clientCarry       = 0;
 }
 
-// ---- CLIENT senders + carry-state toggle ----------------------------------
+// The client senders and the carry-state toggle.
 
 void SendGrabIntent(coop::net::Session& s, uint32_t eid) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
@@ -134,22 +128,22 @@ void ClearClientCarry(uint32_t eid) {
     if (eid != 0 && eid == g_clientPendingGrab) g_clientPendingGrab = 0;  // also drop a pending request for a vanished eid
 }
 
-// ---- HOST executors --------------------------------------------------------
+// The host executors.
 
 void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
-    // GATE 1 (door CanOpen analog): already carrying -> mid-hold, deny. The host's PropConvert stream
-    // already conveys the true state to the requester; no correction packet needed.
+    // Gate 1, the door can-open analog: already carrying means mid-hold, so deny. The host's
+    // convert stream already conveys the true state to the requester; no correction packet is
+    // needed.
     if (IsCarrying(static_cast<coop::element::ElementId>(eid))) {
         UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- already HELD (carry latch open)", eid, senderSlot);
         return;
     }
-    // (No "ctx generation" gate: g_ctx is written only when an eid has ALREADY transitioned (a convert
-    // Bumps it). A RESTING pile that has never been grabbed has an eid + proxy but NO ctx entry yet -- which
-    // is the COMMON grab case. The real "is this a valid grab target" check is the live-pile resolve below,
-    // not g_ctx presence. The 2026-06-22 smoke caught this: a fresh pile (eid 4424) was wrongly DENIED here.)
-    // GATE 2 (door per-peer holdOpen_ analog): one held eid per peer. If this slot already holds something,
-    // deny (it must release first).
+    // There is no context-generation gate: the context is written only when an eid has already
+    // transitioned, and a resting pile that has never been grabbed has an eid and a proxy but no
+    // context entry yet, the common grab case; the real is-this-a-valid-target check is the
+    // live-pile resolve below. Gate 2, the door per-peer hold analog: one held eid per peer, so a
+    // slot that already holds something is denied until it releases.
     for (const auto& kv : g_heldBy) {
         if (kv.second == senderSlot) {
             UE_LOGI("[GRAB-INTENT] DENIED eid=%u slot=%u -- slot already holds eid=%u", eid, senderSlot, kv.first);
@@ -157,28 +151,22 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         }
     }
 
-    // Resolve puppet-N + the pile actor.
+    // Resolve the puppet and the pile actor.
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     if (!puppet) {
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live", eid, senderSlot);
         return;
     }
-    // Resolve eid -> the host's pile actor AND ask whether this sender may name it (A54, 2026-08-26).
-    // This replaces a module-local inline resolve; the reason it could not simply move onto the
-    // canonical `LiveActorOfType` is the whole reason `IntentTarget` returns an OUTCOME rather than a
-    // pointer: this lane branches THREE ways with OPPOSITE remedies on what a pointer-returning
-    // resolver collapses into one nullptr, and `[V]` its wrong-class branch CONSUMES the actor.
-    //
-    // ORDER IS LOAD-BEARING AND UNCHANGED: the puppet check above still runs FIRST. Reversing it
-    // would let a sender with no live puppet reach the ghost-heal broadcast below, which is a
-    // host-authored `PropDestroy` for a client-named eid -- exactly the confused deputy tracked as
-    // A56. Identity-then-reach inside the token is a different ordering question and does not
-    // disturb this one.
-    //
-    // The reach is `[V]` the 400 cm cone the client-side producer itself suppresses outside. A
-    // refusal here costs a RETRY and never an item -- the pile stays exactly where it is -- which is
-    // what makes this lane safe to gate.
+    // Resolve the eid to the host's pile actor and ask whether this sender may name it. The
+    // authorizer returns an outcome rather than a pointer because this lane branches three ways
+    // with opposite remedies on what a pointer-returning resolver collapses into one null, and its
+    // wrong-class branch consumes the actor. The order is load-bearing: the puppet check above
+    // runs first, since reversing it would let a sender with no live puppet reach the ghost-heal
+    // broadcast below, a host-authored destroy for a client-named eid, the confused-deputy shape.
+    // The reach is the cone the client-side producer itself suppresses outside; a refusal here
+    // costs a retry and never an item, the pile staying exactly where it is, which is what makes
+    // this lane safe to gate.
     constexpr float kGrabReachUU = 400.0f;
     const auto tok = coop::element::IntentTarget::ForClientIntent(s, senderSlot, kGrabReachUU);
     const coop::element::IntentSubject sub =
@@ -186,9 +174,9 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
 
     if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
         sub.outcome == coop::element::IntentOutcome::NoBody) {
-        // NOT a ghost and NOT a smear: the eid names a real, live pile that this sender simply is
-        // not standing near. There is nothing to heal and nothing to destroy -- broadcasting either
-        // would be answering a reach question with an identity remedy.
+        // Not a ghost and not a smear: the eid names a real, live pile the sender is simply not
+        // standing near. Nothing to heal and nothing to destroy; broadcasting either would answer a
+        // reach question with an identity remedy.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- REASON=%s (dist=%.0f allowed=%.0f); the pile "
                 "is real and untouched, the sender is just not near it",
                 eid, senderSlot, coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU);
@@ -198,22 +186,18 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
     void* pile = sub.actor;
     if (sub.outcome == coop::element::IntentOutcome::NoRow ||
         sub.outcome == coop::element::IntentOutcome::StaleDead) {
-        // The eid is UNRESOLVABLE on the host (no row / stale-dead actor pointer) while the requester
-        // still resolves a mirror to it -- a stale-identity ghost. 2026-07-02 wedge: a GC-churned keyed
-        // prop left the eid-2947 row pointing at a freed address; a chipPile RECYCLED that address on
-        // the client, the stale reverse entry mis-resolved its aim, and it re-sent the same doomed grab
-        // 12x while this deny stayed SILENT -- unwedged only when the host hand-cycled the real pile.
-        // Broadcast PropDestroy(eid) instead: positive per-eid host-authoritative evidence (the
-        // join-reconcile-sweep-safety shape); every peer DRAINS its row for the eid (a stale row
-        // resolves no live actor -> UnregisterPropMirror only, no world actor destroyed; peers without
-        // the row no-op in steady state) and the requester's next aim re-resolves to the REAL entity.
-        // No transition race: a host-grab-in-flight eid is denied at GATE 1 (g_carry) above, and input
-        // dispatch + packet processing are both game-thread-serialized. The host's own corpse row is
-        // the reaper's to drain (one owner; this edge only reports the death).
-        // The log used to print the stale actor POINTER beside this verdict. It no longer can, and
-        // that is deliberate rather than lost: `Resolve` does not hand a dead actor back to anyone
-        // (see intent_authority.h), and the outcome name now distinguishes 'no-row' from
-        // 'stale-dead' directly, which is what the pointer was being read for.
+        // The eid is unresolvable on the host (no row, or a stale dead actor pointer) while the
+        // requester still resolves a mirror to it, a stale-identity ghost: a collected keyed prop
+        // once left a row pointing at a freed address, a chipPile recycled that address on the
+        // client, the stale reverse entry mis-resolved its aim, and it re-sent the same doomed grab
+        // while the deny stayed silent. Broadcast a destroy for the eid instead, positive per-eid
+        // host-authoritative evidence: every peer drains its row for the eid (a stale row resolves
+        // no live actor, so only the mirror registration goes and no world actor is destroyed;
+        // peers without the row no-op) and the requester's next aim re-resolves to the real entity.
+        // No transition race: a host-grab-in-flight eid is denied at gate 1, and input dispatch and
+        // packet processing are both game-thread-serialised. The host's own corpse row is the
+        // reaper's to drain; this edge only reports the death. The outcome name distinguishes
+        // no-row from stale-dead, which is what a dead pointer used to be printed for.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- eid unresolvable on the host (%s) -> "
                 "broadcasting PropDestroy(eid) so every peer drains its stale ghost row",
                 eid, senderSlot, coop::element::OutcomeName(sub.outcome));
@@ -223,24 +207,21 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         s.SendPropDestroy(dp);
         return;
     }
-    // WrongType is checked FIRST and short-circuits: an eid naming a non-Prop Element still names a
-    // REAL entity, and the heal below consumes it. Before this lane used the shared authorizer, such
-    // an eid arrived here as "a live actor that is not a chipPile" and took this same branch.
+    // The wrong-type outcome is checked first and short-circuits: an eid naming a non-prop Element
+    // still names a real entity, and the heal below consumes it.
     if (sub.outcome == coop::element::IntentOutcome::WrongType || !ue_wrap::prop::IsChipPile(pile)) {
-        // A LIVE actor of the wrong class: the identity names a real entity, so NEVER destroy on a
-        // class mismatch. But silence leaves the requester WEDGED: its row for this eid resolves a
-        // pile-shaped mirror (native hover GUI + aim hit), so it re-sends the same doomed grab
-        // forever (19:24 verdict: eid=3129 = trashBitsPile_C here vs a bound native chipPile on the
-        // client; 8 identical denies, user: "pile нельзя взять вообще"). Heal by RE-ASSERTING THE
-        // TRUTH: broadcast ONE incremental authoritative PropSpawn for the live actor (bracket-free
-        // additive; peers re-bind the eid to the real key/class via RegisterPropMirror -- the same
-        // morph re-skin path every rebind takes), so the requester's stale pile-row is replaced and
-        // its next aim re-resolves. Same deny-owner contract as the not-live branch above
-        // (d4833b9b): every terminal deny answers with positive host-authoritative evidence, never
-        // silence. Debounced per eid -- spam-pressed E must not spam the wire (the send is
-        // idempotent on peers). The smear's UPSTREAM (how one eid came to name different actors on
-        // two peers) is the keyed-prop GC-churn re-bind thread (docs/piles/12) -- that root is
-        // prevention; this is the deny edge's truth channel.
+        // A live actor of the wrong class: the identity names a real entity, so never destroy on a
+        // class mismatch. But silence leaves the requester wedged: its row for this eid resolves a
+        // pile-shaped mirror (the native hover UI and the aim hit), so it re-sends the same doomed
+        // grab forever. Heal by re-asserting the truth: broadcast one incremental authoritative
+        // spawn for the live actor (bracket-free, additive; peers re-bind the eid to the real key
+        // and class through the mirror registration, the same re-skin path every rebind takes), so
+        // the requester's stale pile row is replaced and its next aim re-resolves. Every terminal
+        // deny answers with positive host-authoritative evidence, never silence. Debounced per eid,
+        // since a spam-pressed key must not spam the wire (the send is idempotent on peers). The
+        // smear's upstream, how one eid came to name different actors on two peers, is the
+        // keyed-prop re-bind under GC churn; that root is prevention, and this is the deny edge's
+        // truth channel.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- live actor %p class '%ls' is not a chipPile "
                 "(cross-peer identity smear?) -> re-asserting the authoritative row (incremental "
                 "PropSpawn) so the requester re-binds", eid, senderSlot, pile,
@@ -256,14 +237,13 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         return;
     }
 
-    // EXECUTE the real grab on puppet-N. The PROBE-PROVEN pattern (votv-puppet-grab-feasibility-RE-2026-06-22):
-    // pile->playerGrabbed(Player=puppet); HitResult left zeroed (not a gate). The pile self-destructs in the
-    // call (K2_DestroyActor(self)) -- do NOT deref `pile` afterwards. playerGrabbed sets the puppet's
-    // grabbing_actor SYNCHRONOUSLY (pickupObject has no tick gate, RE-confirmed), so we read it on return.
-    // [PILE-TYPE probe 2026-07-04] pos+chipType of the HOST's resolved actor for this eid. Compare
-    // against the requester's "CLIENT E-PRESS ... at(...) chipType=" line for the same eid: positions
-    // differing = the ordinal identity misalignment (client aimed at a DIFFERENT pile than the host
-    // resolves -> the wrong-type clump/morph the 18:45 hands-on saw). Read-only, per-grab cadence.
+    // Execute the real grab on the puppet: the pile's playerGrabbed with the puppet as the player,
+    // the hit result left zeroed (not a gate). The pile self-destructs in the call, so `pile` is
+    // not dereferenced afterwards. playerGrabbed sets the puppet's grabbing_actor synchronously,
+    // so it is read on return. The log line carries the host's resolved position and chip type for
+    // this eid, to compare against the requester's press line for the same eid: differing
+    // positions mean the client aimed at a different pile than the host resolves. Read-only, once
+    // per grab.
     {
         const ue_wrap::FVector hloc = ue_wrap::engine::GetActorLocation(pile);
         UE_LOGI("[GRAB-INTENT] EXEC puppet=%p pile=%p eid=%u slot=%u at(%.1f,%.1f,%.1f) chipType=%u",
@@ -282,8 +262,8 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         ue_wrap::Call(pile, pf);   // pile self-destructs HERE; `pile` is now dangling
     }
 
-    // Read the clump the puppet now holds (grabbing_actor, the PHC slot -- the carry-churn RE established the
-    // clump rides grabbing_actor, NOT holding_actor).
+    // Read the clump the puppet now holds: grabbing_actor, the physics-handle slot, not
+    // holding_actor.
     ue_wrap::engine::MainPlayerGrabState gs{};
     void* clump = nullptr;
     if (ue_wrap::engine::ReadMainPlayerGrabState(puppet, gs))
@@ -293,28 +273,29 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
                 eid, senderSlot);
         return;
     }
-    // v106b: consume the birth certificate -- the puppet's hand IS this clump's hand-edge (the
-    // owner-side held-edge in local_streams never fires for a puppet grab). Without the consume
-    // the certificate expires 60 ticks in and the expiry-express would broadcast a spurious
-    // second ToClump at the carried (mid-air) transform.
+    // Consume the birth certificate: the puppet's hand is this clump's hand edge (the owner-side
+    // held edge never fires for a puppet grab). Without the consume the certificate expires
+    // later, and the expiry express would broadcast a spurious second to-clump at the carried,
+    // mid-air transform.
     {
         coop::element::ElementId bornE = coop::element::kInvalidId;
         uint8_t bornChip = 0;
         TakeClumpBorn(clump, &bornE, &bornChip);
     }
 
-    // L3 (carry-jitter root fix): take the clump OUT of the physics solver for the duration of the carry.
-    // playerGrabbed engaged the puppet's PhysicsHandleComponent on a still-SIMULATING body, but the puppet
-    // tick never advances the PHC target (probe verdict FLOATING), so the PHC spring (frozen at the grab
-    // spot) + gravity FIGHT our per-tick SetActorLocation teleport (puppet_carry_drive) -- the body
-    // oscillates, and the host reads that jittered pose back into the carry stream so every peer shakes.
-    // A kinematic body honors SetActorLocation exactly, with no spring/gravity to fight, so our drive is the
-    // sole authority and the published pose is clean. Re-enabled (false->true) at OnThrowIntent for the arc.
+    // Take the clump out of the physics solver for the duration of the carry. playerGrabbed
+    // engaged the puppet's physics handle on a still-simulating body, but the puppet tick never
+    // advances the handle target, so the handle's spring (frozen at the grab spot) and gravity
+    // fight the per-tick location teleport of the carry drive; the body oscillates, and the host
+    // reads that jittered pose back into the carry stream so every peer shakes. A kinematic body
+    // honours the location write exactly, so the drive is the sole authority and the published
+    // pose is clean. Re-enabled at the throw for the arc.
     ue_wrap::engine::SetActorSimulatePhysics(clump, false);
 
-    // Record HELD_BY before the convert (OnHostConvert opens the carry latch). Then convert E onto the clump
-    // (bumps ctx + broadcasts PropConvert{kToClump} to ALL incl. the requester) + register the per-tick hand
-    // drive (the puppet's own tick won't position the clump -- the probe's verdict).
+    // Record the holder before the convert (OnHostConvert opens the carry latch). Then convert E
+    // onto the clump (the context bump and the to-clump broadcast to all, the requester included)
+    // and register the per-tick hand drive, since the puppet's own tick will not position the
+    // clump.
     g_heldBy[eid] = senderSlot;
     const ue_wrap::FVector  clumpLoc = ue_wrap::engine::GetActorLocation(clump);
     const ue_wrap::FRotator clumpRot = ue_wrap::engine::GetActorRotation(clump);
@@ -329,13 +310,13 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
 void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
                    const ue_wrap::FVector& camFwd, uint8_t senderSlot) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
-    // GATE: the sender must currently HOLD this eid (HELD_BY). Else it's a stale/forged throw -> deny.
+    // The gate: the sender must currently hold this eid; otherwise a stale or forged throw, denied.
     auto held = g_heldBy.find(eid);
     if (held == g_heldBy.end() || held->second != senderSlot) {
         UE_LOGI("[THROW-INTENT] DENIED eid=%u slot=%u -- sender does not hold this eid", eid, senderSlot);
         return;
     }
-    // Resolve puppet-N + the held clump (E is bound to the clump by OnGrabIntent's OnHostConvert -> RebindE).
+    // Resolve the puppet and the held clump; E was bound to the clump by the grab's convert.
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     coop::element::Element* ce = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
@@ -348,41 +329,40 @@ void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
         return;
     }
 
-    // RE (votv-puppet-grab-feasibility-RE / agent throw RE): the throw must (1) RELEASE the puppet's grab so
-    // the clump's re-pile gate (IsValid(holdPlayer.grabbing_actor)) reads NOT-held -- else it aborts the
-    // re-pile; (2) the native release applies NO impulse (the launch is inherited kinematic velocity), but a
-    // host-driven clump has none, so the host applies the throw velocity ITSELF along the puppet's synced aim
-    // (= where the client looks); (3) hit-notify ON + physics ON so the flying clump generates the ground
-    // contact that fires its OWN re-pile ubergraph -> the existing BeginDeferred thunk converts ToPile.
-    ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);   // clear grabbing_actor + PHC ReleaseComponent
+    // The throw must release the puppet's grab, so the clump's re-pile gate (the holder's
+    // grabbing_actor being valid) reads not held, or it aborts the re-pile; the native release
+    // applies no impulse (the launch is inherited kinematic velocity), but a host-driven clump has
+    // none, so the host applies the throw velocity itself; and hit notification and physics go
+    // on, so the flying clump generates the ground contact that fires its own re-pile graph, and
+    // the existing spawn thunk converts to-pile.
+    ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);   // clear grabbing_actor and release the physics handle
     ue_wrap::engine::SetActorRootNotifyRigidBodyCollision(clump, true);  // re-pile depends on the contact stream
     ue_wrap::engine::SetActorSimulatePhysics(clump, true);
     ue_wrap::engine::SetActorRootCollisionEnabled(clump, /*QueryAndPhysics=*/3);  // collide + land (don't sink)
-    // L4 (wild-throw root fix): native E is the ONLY release input and the launch is the body's INHERITED
-    // hand/camera motion at release (a still player -> ~0 -> a soft drop; a flick -> a real throw), NOT a
-    // fixed impulse. The old constant {aim*600, +400} fired a flat ~871 cm/s on EVERY E = always a hard
-    // throw, never a drop. puppet_carry_drive tracks the hold point's smoothed per-tick velocity (the
-    // kinematic analog of the native PHC's inherited tracked velocity) -- use THAT, clamped to a brisk-human
-    // max (a raw teleport delta on a fast flick can spike far past any real throw; the native PHC spring is
-    // damped, so we cap the bound). Direction comes from the actual hand motion, not the aim, so a soft drop
-    // falls straight down under gravity while a forward flick flies forward -- exactly the native feel.
+    // The native release key is the only release input, and the launch is the body's inherited
+    // hand or camera motion at release (a still player drops softly, a flick throws), not a fixed
+    // impulse: a constant impulse fired a hard throw on every release and never a drop. The carry
+    // drive tracks the hold point's smoothed per-tick velocity (the kinematic analog of the native
+    // handle's inherited velocity); that is used, clamped to a brisk human maximum, since a raw
+    // teleport delta on a fast flick can spike far past any real throw. The direction comes from
+    // the hand motion, not the aim, so a soft drop falls straight down and a forward flick flies
+    // forward, the native feel.
     ue_wrap::FVector lin;
     if (mode == coop::net::throw_mode::kHardThrow) {
-        // LMB native throw (RE 2026-06-26, throwHoldingProp->traceThrow->throwShit): the launch is the
-        // engine projectile-toss suggestion, which round-trips to the seed guess
-        //   v = cameraForward * (1000 / d) + playerVelocity,  d = max(objMass, 10) / 15
-        //     = cameraForward * (15000 / max(mass,10)) + playerVelocity      [NO cap -- a deliberate throw]
-        // The host holds the real clump, so read its TRUE mass (the native uses grabbing_component.GetMass);
-        // camFwd is the client's instantaneous camera-forward (Variant B -- flies exactly where it looked at
-        // the press); playerVel = the requester puppet's velocity (the native adds the thrower's locomotion).
+        // The native hard throw: the launch is the engine's projectile-toss suggestion, which
+        // reduces to camera-forward times 15000 over the clump's mass floored at 10, plus the
+        // thrower's velocity, with no cap, a deliberate throw. The host holds the real clump, so it
+        // reads the true mass; the camera forward is the client's at the press, so the clump flies
+        // exactly where it looked; the puppet's velocity stands in for the thrower's locomotion.
         const float mass  = ue_wrap::engine::GetActorRootMass(clump);
         const float denom = (mass > 10.f) ? mass : 10.f;   // FMax(objMass, 10) -- a 0/unresolved mass floors to 10
         const float speed = 15000.f / denom;
         const ue_wrap::FVector pv = ue_wrap::engine::GetActorVelocity(puppet);
         lin = ue_wrap::FVector{ camFwd.X * speed + pv.X, camFwd.Y * speed + pv.Y, camFwd.Z * speed + pv.Z };
     } else {
-        // E-release (#3): the launch is the puppet's smoothed hand motion (a still hold drops soft, a flick
-        // flies), capped to a brisk-human max so a teleport-delta spike isn't a wild throw.
+        // The release: the launch is the puppet's smoothed hand motion (a still hold drops softly,
+        // a flick flies), capped to a brisk human maximum so a teleport-delta spike is not a wild
+        // throw.
         lin = coop::puppet_carry_drive::HandVelocityForEid(static_cast<coop::element::ElementId>(eid));
         constexpr float kMaxThrowCmS = 650.f;   // ~6.5 m/s -- above this is a teleport-delta artifact, not a human throw
         const float sp2 = lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z;
@@ -414,10 +394,11 @@ void ReleaseClientHold(coop::net::Session& s, coop::element::ElementId E) {
     if (g_heldBy.erase(eid))
         UE_LOGI("[GRAB-INTENT] ReleaseClientHold eid=%u -- clump lost before land; hold cleared (re-grabbable)", eid);
     ForgetEid(E);   // drop a stranded carry latch/settle (idempotent if the land COMMIT already closed it)
-    // Audit HIGH 2026-06-23: the trash entity vanished on the host (clump died with no re-pile). Broadcast
-    // PropDestroy(eid) so EVERY client retires the now-frozen carry proxy + clears its g_clientCarry toggle
-    // (OnDestroy -> trash_proxy::RetireProxy [drive cleared] + ClearClientCarry). Without this the requester
-    // is stuck in throw-mode for the dead eid forever (every E-press denied) and its proxy floats in mid-air.
+    // The trash entity vanished on the host (the clump died with no re-pile). Broadcast a destroy
+    // for the eid, so every client retires the now-frozen carry proxy and clears its carry toggle
+    // (the destroy receiver retires the proxy and clears the carry). Without it the requester is
+    // stuck in throw mode for the dead eid forever, every press denied, and its proxy floats in
+    // mid-air.
     coop::net::PropDestroyPayload dp{};
     dp.key.len    = 0;            // eid-only: clients resolve the proxy by host-range eid
     dp.elementId  = eid;
