@@ -1,11 +1,14 @@
-// coop/player_handshake.cpp -- see coop/player_handshake.h.
+// coop/player_handshake.cpp -- the Join handshake: what a peer sends about itself (its element id,
+// nickname, skin, display prefs, nick colour and game target), how the receiver writes it into
+// the roster ledger, the host's roster relay, the connect and joined lines, and the slot
+// assignment. See coop/player_handshake.h.
 
 #include "coop/session/player_handshake.h"
 
 #include "player_handshake_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/config/config.h"           // arc B: persist a host-assigned name
-#include "coop/config/config_registry.h"  // T7: the my-name default constant
+#include "coop/config/config.h"           // persist a host-assigned name
+#include "coop/config/config_registry.h"  // the my-name default
 #include "coop/text/repertoire.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
@@ -16,14 +19,14 @@
 #include "coop/net/session.h"
 #include "coop/player/local_body.h"
 #include "coop/player/nameplate.h"
-#include "coop/player/hand_item.h"  // v105: hand-item mirrors reset/slot-disconnect
+#include "coop/player/hand_item.h"  // hand-item mirrors: reset and slot disconnect
 #include "coop/player/nick_color.h"
 #include "coop/player/nickname_arbiter.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/player/skin_registry.h"
-#include "coop/version.h"                // v122: kGameTarget (the Join game field)
+#include "coop/version.h"                // kGameTarget, the Join's game field
 #include "ue_wrap/core/hot_path_guard.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
@@ -42,48 +45,24 @@ namespace coop::player_handshake {
 
 namespace {
 
-// ARC A / RULE 2: the FIVE per-slot side-tables that used to live here --
-// g_remoteNickBySlot, g_joinSentBySlot, g_joinAnnouncedBySlot, g_guidBySlot,
-// g_skinBySlot -- are GONE. They were five parallel arrays keyed by peer slot,
-// each needing its own line in OnSlotDisconnected to avoid attributing a
-// departed person's state to the next occupant of their slot, and the answer to
-// "did we get them all?" was a checklist.
-//
-// Four are LEDGER ROW FIELDS now (nick / guid / skin / joinAnnounced): they
-// describe the PERSON, so they die with the row.
-//
-// joinSent is the one that is NOT, and the distinction is worth the paragraph:
-// it records whether OUR Join has gone out over a LINK, and a client sends its
-// Join to slot 0 before it has any idea who is on the other end -- row 0 is born
-// later, from the host's own Join. A row field would silently refuse the write
-// (setters ignore unoccupied slots) and the client would re-send its Join every
-// tick forever. So it is per-slot state that must still be cleared when the
-// occupant changes: exactly what PerSlotState exists for. Declaring it through
-// that type IS the whole wiring -- it registers its own clear in its
-// constructor, so it cannot be forgotten the way the five arrays were.
+// Whether our Join has gone out over a link, per slot. Not a ledger row field: a client sends its
+// Join to slot 0 before row 0 exists (the row is born from the host's own Join), and a row setter
+// ignores an unoccupied slot, so the client would re-send every tick forever. PerSlotState clears
+// itself when the occupant changes. The person's own fields (nick, guid, skin, joinAnnounced)
+// live on the row and die with it.
 coop::roster_ledger::PerSlotState<bool> g_joinSent;
 
-// "<nick> is connecting to the game..." / "Connecting to <nick>'s game..." already
-// shown for this slot. A ONE-SHOT LATCH, so it lives here and not on the Row -- the
-// ledger header states the test: a Row setter is occupancy-gated, and the first Join
-// can land before its row exists, so a Row latch would be silently dropped exactly
-// when it is needed.
-//
-// WHY IT IS NEEDED (user report 2026-09-01: the line is still doubled on the second
-// join). The Join handshake legitimately arrives TWICE -- the relay below this
-// announcement says so in its own comment and skips its first arrival, because a
-// joiner with no Element yet sends the 0 sentinel and retries with a real eid. The
-// relay was guarded for that; the announcement was not, so it fired on both. The
-// sibling "<nick> joined the game" line has had a once-per-join latch since it was
-// written (AnnounceJoinerOnce); this is the missing half of the same pattern.
+// The connect line already shown for this slot, a one-shot latch outside the row for the same
+// reason. The Join legitimately arrives twice (a joiner with no element yet sends the 0 sentinel
+// and retries with a real eid), and the roster relay skips the first arrival; without this latch
+// the line printed on both.
 coop::roster_ledger::PerSlotState<bool> g_connectAnnounced;
 
 }  // namespace
 
-// Store + live-apply: if the described slot's puppet is already spawned, re-skin
-// it NOW (mid-session SkinChange, or a Join that raced the first pose).
-// External linkage (player_handshake_detail.h): HandleSkinChange lives in
-// player_handshake_prefs.cpp; the side-table stays owned HERE.
+// Stores the skin and applies it now if the slot's puppet is already spawned (a mid-session
+// SkinChange, or a Join that raced the first pose). External linkage: HandleSkinChange lives in
+// player_handshake_prefs.cpp.
 void StoreSkinForSlot(int slot, std::string name) {
     if (slot < 0 || slot >= net::kMaxPeers) return;
     if (coop::roster_ledger::Get(slot).skin == name) return;
@@ -93,7 +72,7 @@ void StoreSkinForSlot(int slot, std::string name) {
 }
 
 void TickSkinConverge() {
-    // See the header note. Throttled here so the call site stays a bare call.
+    // Throttled to one pass per 2 s; the call site stays bare.
     static uint64_t sLastMs = 0;
     const uint64_t now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -109,16 +88,15 @@ void TickSkinConverge() {
     }
 }
 
-// Parse one [u8 len][ASCII] field. Returns bytes consumed (0 = malformed/absent);
-// `out` untouched unless a well-formed non-empty field validated as a skin name.
-// External linkage (player_handshake_detail.h): shared with HandleSkinChange.
+// One [u8 len][ASCII] field; returns the bytes consumed (0 if malformed or absent), and writes
+// `out` only for a well-formed non-empty name that validates as a skin.
 size_t ParseSkinField(const uint8_t* p, size_t remaining, std::string* out) {
     if (remaining < 1) return 0;
     const int len = p[0];
     if (1 + len > static_cast<int>(remaining)) return 0;
     if (len > 0) {
         std::string name(reinterpret_cast<const char*>(p + 1), static_cast<size_t>(len));
-        // Boundary rule: the name becomes a LoadObject package path component.
+        // The name becomes a LoadObject package path component.
         if (coop::skins::IsValidSkinName(name))
             *out = std::move(name);
         else
@@ -129,8 +107,8 @@ size_t ParseSkinField(const uint8_t* p, size_t remaining, std::string* out) {
 
 namespace {
 
-// v94 display-prefs flags byte (appended to Join + PlayerJoined after the skin
-// field). Bit layout is the wire contract -- extend with new bits, never re-order.
+// The display-prefs flags byte (after the skin field in Join and PlayerJoined): the bit layout is
+// the wire contract, extended with new bits, never re-ordered.
 constexpr uint8_t kPrefNameplateVisible = 0x01;
 
 uint8_t BuildLocalPrefsFlags() {
@@ -139,7 +117,7 @@ uint8_t BuildLocalPrefsFlags() {
     return f;
 }
 
-}  // namespace [the LOCAL prefs byte only; everything below is EXTERNAL and
+}  // namespace: the local prefs byte; everything below is shared through player_handshake_detail.h
    //            shared with the sibling TUs via player_handshake_detail.h]
 
 uint8_t PrefsFlagsForSlot(int slot) {
@@ -152,10 +130,8 @@ void StorePrefsFlagsForSlot(int slot, uint8_t flags) {
     coop::nameplate::StoreVisibleForSlot(slot, (flags & kPrefNameplateVisible) != 0);
 }
 
-// v103 nick color (12f): a self-describing [u8 has][u8 r][u8 g][u8 b] field
-// appended to Join + RosterRow after the prefs flags byte. has=0 -> the 3
-// color bytes are present but ignored (fixed 4-byte field, field-by-field
-// parse discipline).
+// The nick colour field, [u8 has][u8 r][u8 g][u8 b] after the prefs byte in Join and RosterRow;
+// has=0 leaves the three bytes present but ignored (a fixed 4-byte field).
 void AppendNickColorField(std::vector<uint8_t>& out, uint32_t packed) {
     out.push_back(coop::nick_color::IsCustom(packed) ? 1 : 0);
     out.push_back(coop::nick_color::R(packed));
@@ -163,8 +139,8 @@ void AppendNickColorField(std::vector<uint8_t>& out, uint32_t packed) {
     out.push_back(coop::nick_color::B(packed));
 }
 
-// Parse the 4-byte color field at `p` and store for `slot`. Returns bytes
-// consumed (0 = absent/truncated -> slot color untouched).
+// The 4-byte colour field at `p`, stored for `slot`; returns the bytes consumed (0 if absent or
+// truncated, the slot's colour untouched).
 size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot) {
     if (remaining < 4) return 0;
     coop::nick_color::StoreForSlot(
@@ -172,11 +148,8 @@ size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot) {
     return 4;
 }
 
-// ARC D2 EXTRACTION (2026-07-28): the encoding adapters, SanitizeNickname,
-// the two local-name stores and the request/adopt policy now live in
-// player_handshake_nick.cpp -- see its header comment for why they are one
-// concept. They stay in this namespace and are declared in
-// player_handshake_detail.h, so every call site is unchanged.
+// The encoding adapters, SanitizeNickname, the local-name stores and the request-and-adopt policy
+// live in player_handshake_nick.cpp, declared in player_handshake_detail.h.
 
 
 
@@ -189,55 +162,39 @@ const std::string& SkinForSlot(int slot) {
 }
 
 void Reset() {
-    // The per-slot identity state is the ledger's; clearing a row fires the
-    // transition, which is what drives every registered teardown (the four
-    // display-pref side-tables below among them). Belt-and-braces at session
-    // START -- the load-bearing clear is ClearAll at session STOP.
+    // The per-slot identity state is the ledger's; clearing a row fires the transition that drives
+    // every registered teardown. The load-bearing clear is ClearAll at session stop.
     coop::roster_ledger::Reset();
-    coop::hand_item::Reset();  // v105: destroy hand-item display mirrors + states
+    coop::hand_item::Reset();  // destroy the hand-item display mirrors and states
 }
 
 void MaybeSendJoinToSlot(net::Session& session, int slot,
                          std::vector<uint8_t>& joinPayload,
                          bool& joinPayloadBuilt) {
-    // Reads g_localNick + the ledger row's joinSent latch. Called from the
-    // net_pump connect-edge each tick. (The boot-thread WRITER SetLocalNickname
-    // stays unguarded -- it runs once on the bringup thread before the pump
-    // sends any Join.)
+    // From the net-pump connect edge each tick. The boot-thread writer SetLocalNickname runs once
+    // before the pump sends any Join.
     UE_ASSERT_GAME_THREAD("g_localNick/g_joinSent (MaybeSendJoinToSlot)");
     if (slot < 0 || slot >= net::kMaxPeers) return;
     if (g_joinSent[slot]) return;
-    // v13 (A4 2026-05-29): hold off on the FIRST Join until our
-    // own Player Element is allocated. Otherwise the Join goes
-    // out with senderElementId=0 and the receiver can't install
-    // a mirror, leaving cross-peer Registry::Get(senderElementId)
-    // unable to resolve for the lifetime of the session (only
-    // disconnect+reconnect would re-fire the Join). The wait is
-    // bounded: client side allocates after AssignPeerSlot lands
-    // (~one extra net pump tick at 125 Hz, ~8 ms). Host side has
-    // its Element allocated at net pump startup so this guard
-    // only briefly skips at boot.
+    // The first Join waits for our own Player element: sent with senderElementId 0 the receiver
+    // installs no mirror, and Registry::Get(senderElementId) would never resolve for the session. A
+    // client allocates one pump tick after AssignPeerSlot; the host has its element at pump start.
     const coop::element::ElementId selfEidProbe =
         coop::players::Registry::Get().LocalPlayerElementId();
     if (selfEidProbe == coop::element::kInvalidId) {
         return;  // retry next tick
     }
     if (!joinPayloadBuilt) {
-        // v16 prefix: [uint32 senderElementId] then [uint8 nicklen][nick
-        // UTF-8]. Receiver RegisterMirrors senderElementId into the
-        // sender's peer slot so wire packets bearing senderElementId
-        // resolve via Registry::Get on the receiver. (v14 added an
-        // 8-bit senderContext byte after senderElementId; v16
-        // PR-FOUNDATION-1b moved stale-gen defense to the packet header's
-        // senderEpoch and removed the byte.)
+        // The prefix: [uint32 senderElementId], then [uint8 nicklen][nick UTF-8]. The receiver
+        // registers the id as a mirror in the sender's slot, so packets carrying it resolve through
+        // Registry::Get.
         const uint32_t selfEidWire = selfEidProbe;
         joinPayload.resize(4);  // not-name-text: a 4-byte wire field
         std::memcpy(joinPayload.data(), &selfEidWire, 4);
-        // Ask for what the human typed, never for a suffix the host handed us last
-// time -- otherwise a reconnect would ratchet Pelmentor2 -> Pelmentor3.
-        // Cap on a CHARACTER boundary. A raw resize() here manufactures exactly
-        // the ill-formed tail the receive boundary above refuses -- i.e. OUR OWN
-        // name would reach the host as the placeholder.
+        // What the human typed, never a suffix the host handed us last time, or a reconnect would
+        // ratchet the number up. Capped on a character boundary: a raw resize manufactures the
+        // ill-formed tail the receive boundary refuses, and our own name would reach the host as
+        // the placeholder.
         const std::string nickStr = coop::text::CapUtf8Bytes(
             coop::text::ToUtf8(RequestedNickname()), coop::text::kNickMaxBytes);
         std::vector<uint8_t> nickUtf8(nickStr.begin(), nickStr.end());
@@ -245,32 +202,24 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
                 slot, RequestedNickname().c_str(), nickUtf8.size());
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
         joinPayload.insert(joinPayload.end(), nickUtf8.begin(), nickUtf8.end());
-        // v144: THE GUID FIELD IS GONE FROM THE WIRE (RULE 2). It used to ride here
-        // as [u8 guidlen][guid ASCII] and the HOST keyed this peer's inventory file
-        // by it -- i.e. a peer named its own storage row, and the receive boundary
-        // could only check the SHAPE of the name, never the right to it. The host
-        // now DERIVES it from the public key the peer proved at admission
-        // (Session::ProvedGuidForSlot). Deleting the field rather than ignoring it
-        // is what makes that irreversible: there is no reader left to re-enable.
-        // v93 skins: append [uint8 skinlen][skin ASCII] after the nick -- the at-join
-        // skin announce (local_body owns the local choice; validated <=48 chars).
+        // No guid on the wire: the host keyed a peer's inventory file by a guid the peer named
+        // itself, which the receive boundary could only check the shape of. The host derives it
+        // from the public key the peer proved at admission (Session::ProvedGuidForSlot); with no
+        // reader left the field cannot come back. The skin follows the nick as [uint8 skinlen][skin
+        // ASCII], the at-join announce of local_body's choice (48 chars at most).
         const std::string& skin = coop::local_body::LocalSkinName();
         const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());
         joinPayload.push_back(skinLen);
         joinPayload.insert(joinPayload.end(), skin.begin(), skin.begin() + skinLen);
-        // v94 display prefs: [u8 flags] after the skin (bit0 = nameplate visible) --
-        // the at-join announce that keeps LATE JOINERS in agreement with a peer that
-        // hid its plate before they arrived (the user's "no ghost plate" ask).
+        // The prefs flags after the skin (bit 0 = nameplate visible), so a late joiner agrees with
+        // a peer that hid its plate before they arrived.
         joinPayload.push_back(BuildLocalPrefsFlags());
-        // v103 nick color (12f): [u8 has][u8 r][u8 g][u8 b] after the flags byte --
-        // the at-join color announce (nick_color owns the local choice).
+        // The nick colour after the flags byte.
         AppendNickColorField(joinPayload, coop::nick_color::LocalPacked());
-        // v122 version identity: [u8 gamelen][game ASCII] after the color field --
-        // the sender's VOTV game target (the OTHER identity half, the build number,
-        // already rides the packet HEADER as the protocol version). The receiver
-        // byte-equality-validates it at the top of HandleJoinMessage (the wire-level
-        // Minecraft-shape gate that also covers direct connect / env boot, where no
-        // browser row pre-flight ran). Constant is compile-time <=23 chars.
+        // The game target, [u8 gamelen][game ASCII] after the colour: the other half of the version
+        // pair (the build number rides the packet header as the protocol version). The receiver
+        // checks it by byte equality at the top of HandleJoinMessage, the wire-level gate that also
+        // covers direct connect and env boot, where no browser pre-flight ran. At most 23 chars.
         {
             const char* game = coop::version::kGameTarget;
             const size_t gameLen = std::min<size_t>(std::strlen(game), 23);
@@ -284,35 +233,29 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
                                    static_cast<int>(joinPayload.size()))) {
         g_joinSent[slot] = true;
     }
-    // If send fails (transient), the caller will hit this slot again next tick.
+    // A failed send is retried next tick.
 }
 
 namespace {
 
-// The person-state teardown that used to be OnSlotDisconnected, now driven by
-// the LEDGER ROW TRANSITION instead of by a disconnect callback. Two things
-// changed and both matter:
-//   - It fires on a REPLACEMENT too, not only on a departure. A recycled slot
-//     goes X -> Y with no absence in between, so the old callback could be
-//     skipped entirely and Y would inherit X's skin, colour, plate and bubble.
-//   - It receives SNAPSHOTS, so it no longer depends on running BEFORE the
-//     nickname is cleared. That ordering used to be load-bearing and documented
-//     as such; the "<X> left the game" line had to print first.
+// The person-state teardown, driven by the ledger's row transition rather than a disconnect
+// callback: it fires on a replacement too (a recycled slot goes from one peer to the next with
+// no absence between, and the next would inherit the skin, colour, plate and bubble), and it
+// receives snapshots, so it no longer depends on running before the nickname is cleared.
 void OnSlotReplaced_TearDownPerson(int slot, const coop::roster_ledger::Row& outgoing,
                                    const coop::roster_ledger::Row& /*incoming*/) {
     if (!outgoing.occupied()) return;  // nothing was there; nothing to tear down
-    coop::nameplate::OnSlotDisconnected(slot);   // v94: plate pref back to visible
-    coop::nick_color::OnSlotDisconnected(slot);  // v103: nick color back to default
-    coop::chat_bubbles::OnSlotDisconnected(slot);  // 12g: no inherited bubble
-    coop::hand_item::OnSlotDisconnected(static_cast<uint8_t>(slot));  // v105: drop the hand mirror
+    coop::nameplate::OnSlotDisconnected(slot);   // plate pref back to visible
+    coop::nick_color::OnSlotDisconnected(slot);  // nick colour back to default
+    coop::chat_bubbles::OnSlotDisconnected(slot);  // no inherited bubble
+    coop::hand_item::OnSlotDisconnected(static_cast<uint8_t>(slot));  // drop the hand mirror
 }
 
 }  // namespace
 
 void InstallLedgerSubscribers() {
-    // Idempotent inside the ledger (dedupes by function pointer), so a
-    // Stop()/Start() cycle in the same process cannot double-register and
-    // double-fire every teardown.
+    // Idempotent inside the ledger (deduped by function pointer), so a Stop and Start in one
+    // process cannot double-fire every teardown.
     coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced_TearDownPerson);
     InstallRosterPulseSubscriber();  // player_handshake_roster.cpp
 }
@@ -329,11 +272,10 @@ bool IsValidGuid(const std::string& guid) {
 
 bool HandleJoinMessage(net::Session& session,
                        const net::Session::ReliableMessage& msg) {
-    // Writes the sender's LEDGER ROW. Dispatched from event_feed::Update on the
-    // game thread (net_pump::Tick -> Update), which reconciles the ledger BEFORE
-    // draining reliables -- so on the host the sender's row already exists by the
-    // time its Join lands here (the Join arrives over a configured lane, so the
-    // slot is ready, which is exactly the reconcile's birth condition).
+    // Writes the sender's ledger row. Dispatched from event_feed::Update on the game thread, which
+    // reconciles the ledger before draining reliables, so on the host the sender's row exists by
+    // the time its Join lands (the Join arrives over a configured lane, the reconcile's birth
+    // condition).
     UE_ASSERT_GAME_THREAD("ledger row (HandleJoinMessage)");
     const int senderSlot = msg.senderPeerSlot;
     if (senderSlot < 0 || senderSlot >= net::kMaxPeers) {
@@ -341,35 +283,25 @@ bool HandleJoinMessage(net::Session& session,
                 senderSlot);
         return true;
     }
-    // v16 (PR-FOUNDATION-1b 2026-05-29): parse [uint32 senderElementId]
-    // prefix then the existing [uint8 nicklen][nick UTF-8]. The protocol
-    // version bump (v15->v16) at ParseHeader guarantees pre-v16 senders
-    // can't misalign through here -- their packets are rejected upstream.
-    //
-    // W-3 (2026-05-29 audit): reject undersized Join instead of degrading to
-    // no-mirror routing. Silent degradation leaves the peer permanently
-    // without senderEpoch-based stale-gen defense; safer to drop a
-    // malformed Join and let the sender's retry produce a well-formed one.
+    // An undersized Join is dropped rather than degraded to no-mirror routing, which would leave
+    // the peer without the stale-generation defence for the session; the sender's retry produces a
+    // well-formed one. The header's protocol version keeps an older layout from misaligning here.
     if (msg.payloadLen < 4) {
         UE_LOGW("player_handshake: Join payload %zu B too short for v16 prefix "
                 "(senderSlot=%d) -- dropping",
                 static_cast<size_t>(msg.payloadLen), senderSlot);
         return true;
     }
-    // v122 WIRE VERSION GATE -- at the TOP, before ANY identity side effect
-    // (mirror install / guid / skin / prefs / nick store). Owned by
-    // player_handshake_version.cpp: pure pre-pass + byte-equality on the peer's
-    // game target (build number = the header's protocol version, equal by
-    // construction); mismatch or malformed chain -> refuse-close (host Kick +
-    // feed line / client Fail popup). A refused joiner == the already-handled
-    // "connected, never Joined, disconnected" lifecycle. Covers EVERY entry
-    // surface -- browser, direct connect, env boot.
+    // The wire version gate first, before any identity side effect (player_handshake_version.cpp):
+    // byte equality on the peer's game target (the build number is the header's protocol version,
+    // equal by construction); a mismatch or a malformed chain refuses and closes (a host Kick with
+    // a feed line, a client Fail popup). A refused joiner is the already-handled "connected, never
+    // Joined, disconnected" lifecycle.
     if (ValidateJoinVersionOrRefuse(session, senderSlot, msg.payload, msg.payloadLen))
         return true;
-    // CLIENT: this Join is the HOST introducing itself, and it is where our row 0
-    // is born. The host's player number is a ROLE CONSTANT, so a client knows it
-    // without being told -- no wire field, no ordering dependency on the roster
-    // pulse. (On the host, the sender's row was already born by the reconcile.)
+    // On a client this Join is the host introducing itself, and row 0 is born here: the host's
+    // player number is a role constant, so no wire field and no dependence on the roster pulse. On
+    // the host the sender's row was born by the reconcile.
     if (session.role() == net::Role::Client && senderSlot == 0) {
         coop::roster_ledger::InstallRow(0, coop::roster_ledger::kHostPlayerNo,
                                         /*bornGeneration=*/0);
@@ -387,32 +319,25 @@ bool HandleJoinMessage(net::Session& session,
             if (len > 0) nick = FromUtf8(nickStart + 1, len);
         }
     }
-    // v144 per-player inventory identity: THE GUID IS NOT ON THE WIRE ANY MORE.
-    // It is hex(SHA-256(pubkey)[0..16]) of the key this peer PROVED it holds during
-    // admission -- published into the session by the net thread, read here on the
-    // game thread (roster_ledger asserts GT). The validation this field used to
-    // need -- exactly 32 hex chars, because the value becomes a host filesystem
-    // path component in coop_players/<guid>.json -- is now STRUCTURAL: a SHA-256
-    // prefix cannot be "..\..\evil", and no peer can name a row that is not its
-    // own. Only the host can answer this; a client's store is empty and the row
-    // keeps whatever it already had.
+    // The inventory identity is hex(SHA-256(pubkey)[0..16]) of the key the peer proved at
+    // admission, published by the net thread and read here on the game thread. The 32-hex-chars
+    // validation it used to need (the value is a host filesystem path component under
+    // coop_players/) is structural now, and no peer can name a row that is not its own. Only the
+    // host can answer; a client's store is empty.
     if (session.role() == coop::net::Role::Host) {
         const std::string proved = session.ProvedGuidForSlot(senderSlot);
         if (IsValidGuid(proved)) {
             coop::roster_ledger::SetGuid(senderSlot, proved);
         } else {
-            // Unreachable on the admission path -- a seat is spent only after a
-            // verified proof -- so if it ever fires the exchange changed shape and
-            // this peer's stored inventory would silently read as a new player's.
+            // Unreachable on the admission path (a seat is spent only after a verified proof); if
+            // it fires, the exchange changed shape and this peer's stored inventory would read as a
+            // new player's.
             UE_LOGW("handshake: slot %d has no PROVED identity guid -- its stored "
                     "inventory cannot be found (admission changed shape?)", senderSlot);
         }
     }
-    // v93 skins: [u8 skinlen][skin ASCII] follows the NICK -- the guid field that
-    // used to sit between them is gone from the wire, so this is the whole change
-    // to the tail's offset arithmetic. Tolerated absent (pre-v93 never reaches
-    // here -- ParseHeader rejects -- but a malformed field just leaves the slot's
-    // skin empty = native kel until a SkinChange lands).
+    // The skin follows the nick. Tolerated absent: a malformed field leaves the slot's skin empty
+    // (the native body) until a SkinChange lands.
     size_t skinFieldLen = 0;
     if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
         std::string skin;
@@ -422,29 +347,20 @@ bool HandleJoinMessage(net::Session& session,
             StoreSkinForSlot(senderSlot, std::move(skin));
         }
     }
-    // v94 display prefs: [u8 flags] follows the skin field (bit0 = nameplate visible).
-    // Tolerated absent (malformed upstream fields just leave the defaults = visible).
+    // The prefs flags follow the skin; absent, the defaults (visible) stand.
     if (skinFieldLen > 0 && nickFieldLen + skinFieldLen < nickRemaining) {
         StorePrefsFlagsForSlot(senderSlot, nickStart[nickFieldLen + skinFieldLen]);
-        // v103 nick color (12f): [u8 has][r][g][b] follows the flags byte.
+        // The nick colour follows the flags byte.
         const size_t colorOff = nickFieldLen + skinFieldLen + 1;
         if (colorOff < nickRemaining)
             ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
                                 senderSlot);
     }
-    // Install mirror Player Element for this sender so future
-    // ItemActivate/Weather/etc. packets bearing senderElementId
-    // resolve via Registry::Get on this peer. 0 means "no Element
-    // yet"; skip mirror install and fall back to senderPeerSlot
-    // routing per the field's contract.
-    //
-    // PR-FOUNDATION-1 (2026-05-29): range-validate senderElementId
-    // against the sender's role before installing. A peer whose
-    // role is host MUST send a host-range eid; a peer whose role is
-    // client MUST send a peer-range eid. A mismatch indicates a
-    // forged Join (or relay-loop bug) and we drop the mirror install
-    // rather than corrupt the per-slot Player Element mapping. The
-    // 0-sentinel passthrough (boot/seed race) stays as before.
+    // A mirror Player element for this sender, so packets carrying its senderElementId resolve
+    // here; 0 means no element yet, and routing falls back to the sender slot. Range-validated
+    // against the sender's role first: a host must send a host-range eid and a client a peer-range
+    // one, and a mismatch (a forged Join, a relay loop) drops the mirror install rather than
+    // corrupt the per-slot mapping; the nickname still displays.
     if (senderElementId != 0u &&
         senderElementId != coop::element::kInvalidId) {
         const bool senderIsHost = (senderSlot == 0);
@@ -461,47 +377,29 @@ bool HandleJoinMessage(net::Session& session,
                 static_cast<uint8_t>(senderSlot), senderElementId);
         }
     }
-    // VT-inspired nickname sanitizer (2026-05-25, see
-    // SanitizeNickname doc above). Trust-boundary defense: this
-    // string CAME FROM A PEER over UDP and is going to land in
-    // our ImGui nameplate + the chat feed. Without
-    // sanitization a hostile peer could newline-inject our
-    // widget text or insert a RLO unicode override to mirror
-    // the rest of the nameplate. Length-cap to 20 wchars caps
-    // the worst-case widget overflow.
+    // The nickname sanitiser at the trust boundary: the string came from a peer and lands in the
+    // nameplate and the chat feed, where a newline or a right-to-left override would inject into
+    // the widget text; the length cap bounds the widget overflow.
     nick = SanitizeNickname(nick);
-    // ARC B -- the host is the canonical namer. Two clients typing the same name
-    // each believe they are unique and neither can see the other's choice at the
-    // moment it is made, so uniqueness is decided by the one peer that sees every
-    // name at once. The assignment reaches the named peer (and everyone else) on
-    // the RosterRow below, whose nick sits in the FIXED PREFIX above the
-    // `applyDeclared` gate precisely so it can.
-    //
-    // Not gated on "is this a duplicate": Assign is the identity function when
-    // nothing collides, and running it unconditionally means there is ONE path a
-    // name can take to a row rather than two that must agree.
+    // The host is the canonical namer: two clients typing the same name cannot see each other's
+    // choice, so uniqueness is decided by the one peer that sees every name, and the assignment
+    // reaches everyone on the RosterRow, whose nick sits in the fixed prefix above the
+    // applyDeclared gate for that reason. Unconditional: Assign is the identity when nothing
+    // collides, so a name takes one path to a row.
     if (session.role() == net::Role::Host)
         nick = coop::nickname_arbiter::Assign(senderSlot, nick);
     coop::roster_ledger::SetNick(senderSlot, nick);
-    // Label the nameplate of THIS sender's puppet (not all puppets).
+    // The nameplate of this sender's puppet.
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(
             static_cast<uint8_t>(senderSlot))) {
         p->SetNickname(nick);
     }
-    // Two-phase, role-aware phrasing (2026-06-15, user feedback): the Join handshake means the
-    // peer is CONNECTING -- it has not loaded the world / spawned yet. Announce "connecting" here;
-    // the "<nick> joined the game" line fires later from net_pump when the peer's PUPPET actually
-    // spawns (AnnouncePeerSpawned). On the CLIENT the Join arrives FROM the host, so phrase it from
-    // the receiver's POV ("Connecting to <host>'s game", not "<host> is connecting").
-    //
-    // Both are Transient. The client's line is purely this player's OWN status. The
-    // host's is PROGRESS toward a join, not the join: "<nick> joined the game" is the
-    // event, and it fires below once the puppet appears. History keeps the event, not
-    // the approach to it -- otherwise every join costs two history lines.
-    //
-    // ONCE per join, latched: see g_connectAnnounced. The latch clears with the slot's
-    // occupant (PerSlotState registers its own clear), so a peer that leaves and rejoins
-    // is announced again -- which is the case the user was looking at.
+    // Two phases, phrased by role: the Join means the peer is connecting (it has not loaded the
+    // world or spawned), so "connecting" here and "joined the game" later, when its puppet spawns
+    // (AnnouncePeerSpawned); on the client the Join comes from the host, so "Connecting to <host>'s
+    // game". Both transient: the joined line is the event history keeps. Once per join, latched
+    // (g_connectAnnounced clears with the slot's occupant, so a peer that leaves and rejoins is
+    // announced again).
     if (g_connectAnnounced[senderSlot]) {
         UE_LOGI("player_handshake: slot %d connect line already shown -- suppressing the "
                 "repeat from a re-sent Join", senderSlot);
@@ -516,22 +414,16 @@ bool HandleJoinMessage(net::Session& session,
         }
         UE_LOGI("player_handshake: slot %d connect line shown ('%ls')", senderSlot, nick.c_str());
     }
-    // PR-FOUNDATION Tier 2 T2-1 (host-relay): if WE are the host, this Join
-    // came from a client. Run the MTA InitialDataStream two-way cross-peer
-    // identity broadcast so every client learns about this joiner AND the
-    // joiner learns about every existing client. No-op on the client (it
-    // never relays). Pass the validated eid + sanitized nick we just
-    // resolved. Skipped when senderElementId is the 0 sentinel (the joiner
-    // had no Element yet -- its retry Join will carry a real eid and
-    // re-trigger this).
+    // On the host this Join came from a client: the two-way roster broadcast (MTA's initial data
+    // stream) tells every client about the joiner and the joiner about every client. Skipped for
+    // the 0 sentinel; the retry Join with a real eid triggers it.
     if (session.role() == net::Role::Host &&
         senderElementId != 0u &&
         senderElementId != coop::element::kInvalidId) {
         BroadcastRosterFromHost(session, senderSlot, senderElementId, nick);
     }
-    // Seen-players registry (F1 Administration): record this peer's durable
-    // identity (guid + nick + IP + last-seen) on the host. After the guid/nick
-    // stores above so TouchOnJoin reads the just-landed values.
+    // The seen-players registry records the peer's durable identity (guid, nick, IP, last seen) on
+    // the host, after the guid and nick stores so it reads the landed values.
     if (session.role() == net::Role::Host)
         coop::seen_players::TouchOnJoin(session, senderSlot);
     return true;
@@ -539,11 +431,10 @@ bool HandleJoinMessage(net::Session& session,
 
 namespace {
 
-// The single door for "<nick> joined the game" (any viewer role). Latched once
-// per join (cleared on slot disconnect) so the two seams below -- puppet spawn
-// and world-ready -- can both call it in either order without a repeat, and a
-// mid-session puppet respawn stays silent. IMMEDIATE push: the line's whole
-// point (user 2026-07-03) is to coincide with the body actually appearing.
+// The one door for "<nick> joined the game", latched once per join (cleared on slot disconnect),
+// so the puppet-spawn and world-ready seams can both call it in either order without a repeat and
+// a mid-session respawn stays silent. Pushed immediately: the line's point is to coincide with the
+// body appearing.
 void AnnounceJoinerOnce(int slot) {
     UE_ASSERT_GAME_THREAD("ledger row joinAnnounced (AnnounceJoinerOnce)");
     if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
@@ -557,17 +448,13 @@ void AnnounceJoinerOnce(int slot) {
 }  // namespace
 
 void AnnouncePeerSpawned(net::Role role, int slot) {
-    // Called from net_pump the moment a remote peer's PUPPET spawns -- the visible
-    // "appearance" seam (user 2026-07-03: the join line must coincide with the body
-    // showing up; the old ClientWorldReady+5s announce ran ~6 s BEFORE the puppet in
-    // the measured live flow -- world-ready 15:27:23 vs spawn 15:27:34). On the HOST
-    // net_pump gates this call on IsSlotWorldReady, preserving the 2026-06-17
-    // protection against a pre-world menu pose spawning the puppet early; in that
-    // order OnClientWorldReady (below) announces instead.
+    // From net_pump the moment a remote peer's puppet spawns, the visible appearance (a world-ready
+    // plus 5 s announce ran about 6 s before the puppet in a measured join). On the host net_pump
+    // gates the call on IsSlotWorldReady, so a pre-world menu pose cannot spawn the puppet early;
+    // in that order OnClientWorldReady announces instead.
     if (role == net::Role::Client && slot == 0) {
-        // Self-join line: own loading screen still covers the world at the spawn
-        // moment, so an immediate line looks premature (user 2026-06-21) -- keep +5 s.
-        // Transient: this player's own arrival notice, not part of the lobby's record.
+        // The self-join line, delayed 5 s: our own loading screen still covers the world at the
+        // spawn moment. Transient.
         coop::chat_feed::PushDelayed(L"Joined " + NicknameForSlot(0) + L"'s game", 5000,
                                      coop::chat_feed::Keep::Transient);
         return;
@@ -576,11 +463,9 @@ void AnnouncePeerSpawned(net::Role role, int slot) {
 }
 
 void OnClientWorldReady(int slot) {
-    // HOST-side reverse-order cover: if this slot's puppet spawned BEFORE its
-    // world-ready (a pre-world menu/loading pose -- the 2026-06-17 case), the
-    // spawn-seam announce was skipped; the body is standing here already, and
-    // world-ready is the moment it becomes the real joiner. Normal flow (spawn
-    // after world-ready) leaves this a no-op and the spawn seam announces.
+    // The host's reverse-order cover: a puppet that spawned before its world-ready (a pre-world
+    // loading pose) skipped the spawn-seam announce, so world-ready announces it; in the normal
+    // order this is a no-op.
     if (slot < 1 || slot >= net::kMaxPeers) return;
     if (coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot)) != nullptr)
         AnnounceJoinerOnce(slot);
@@ -588,12 +473,8 @@ void OnClientWorldReady(int slot) {
 
 bool HandleAssignPeerSlot(net::Session& session,
                           const net::Session::ReliableMessage& msg) {
-    // Host tells us which peer slot we were assigned. Without
-    // this the client would self-stamp LocalPeerId=1 from a
-    // hardcoded 1v1 mapping, and a second client with the same
-    // local ID would silently self-echo-drop the first's
-    // ItemActivate as a "loopback bounce" (see event_feed's
-    // ItemActivate self-echo guard).
+    // The host's slot assignment. Without it a client would self-stamp slot 1, and a second client
+    // with the same local id would drop the first's ItemActivate as its own loopback.
     if (msg.payloadLen < sizeof(net::AssignPeerSlotPayload)) {
         UE_LOGW("player_handshake: AssignPeerSlot payload too short (%zu < %zu)",
                 static_cast<size_t>(msg.payloadLen), sizeof(net::AssignPeerSlotPayload));
@@ -601,24 +482,20 @@ bool HandleAssignPeerSlot(net::Session& session,
     }
     net::AssignPeerSlotPayload p{};
     std::memcpy(&p, msg.payload, sizeof(p));
-    // Trust boundary: only the host sends this; reject on host.
+    // Only the host sends this; rejected on the host.
     if (session.role() == net::Role::Host) {
         UE_LOGW("player_handshake: AssignPeerSlot received on host -- dropping "
                 "(host self-assigns slot 0; no inbound from client)");
         return true;
     }
-    // Enforce that the SENDER connection is the host (senderPeerSlot == 0).
-    // A malicious client peer could otherwise craft AssignPeerSlot packets
-    // if GNS ever fans out client-to-client traffic; defending here
-    // independent of relay topology.
+    // The sender must be the host connection, independent of the relay topology.
     if (msg.senderPeerSlot != 0) {
         UE_LOGW("player_handshake: AssignPeerSlot from non-host "
                 "senderPeerSlot=%d -- dropping",
                 msg.senderPeerSlot);
         return true;
     }
-    // Slot must be a valid CLIENT slot (1..kMaxPeers-1). Slot 0 is
-    // the host's reserved local-self slot.
+    // A valid client slot; slot 0 is the host's own.
     if (p.slot < 1 || p.slot >= net::kMaxPeers) {
         UE_LOGW("player_handshake: AssignPeerSlot slot=%u out of range [1..%u) -- dropping",
                 p.slot, static_cast<unsigned>(net::kMaxPeers));
@@ -627,25 +504,15 @@ bool HandleAssignPeerSlot(net::Session& session,
     coop::players::Registry::Get().SetLocalPeerId(p.slot);
     UE_LOGI("player_handshake: host assigned us peer slot %u (Registry::LocalPeerId now %u)",
             p.slot, coop::players::Registry::Get().LocalPeerId());
-    // Any roster row that arrived before this stamp was PARKED -- until now a row
-    // about our own slot was indistinguishable from a row about a remote peer.
-    // Apply them in arrival order now that the ambiguity is gone.
+    // Roster rows that arrived before this stamp were parked, since a row about our own slot was
+    // indistinguishable from one about a remote peer; applied in arrival order now.
     OnLocalPeerIdStamped(session);
-    // v13 (A4 2026-05-29): if the host included its Player Element
-    // id, install a mirror in slot 0 so subsequent wire packets
-    // carrying host's senderElementId resolve via Registry::Get on
-    // this client. hostElementId == 0 or kInvalidId means the host
-    // hadn't allocated its Element yet -- skip mirror install; the
-    // receivers will fall back to senderPeerSlot routing. v16
-    // (PR-FOUNDATION-1b): the hostContext byte v14 added is gone;
-    // mirror install no longer carries any generation byte.
+    // The host's Player element id, if included, installs a mirror in slot 0 so the host's packets
+    // resolve here; 0 or invalid means the host had no element yet, and the receivers route by
+    // slot.
     if (p.hostElementId != 0u &&
         p.hostElementId != coop::element::kInvalidId) {
-        // PR-FOUNDATION-1 (2026-05-29): use the canonical helper.
-        // IsAllowedHostAllocatedEid additionally rejects id==0 and
-        // kInvalidId which the outer if-guard above already filters,
-        // so behavior is unchanged -- this is a uniform call-site
-        // refactor so every receiver routes through one validator.
+        // Through the one validator every receiver uses.
         if (!coop::element::Registry::IsAllowedHostAllocatedEid(p.hostElementId)) {
             UE_LOGW("player_handshake: AssignPeerSlot hostElementId=0x%08x is "
                     "not in host range -- dropping mirror install",
@@ -661,9 +528,7 @@ bool HandleAssignPeerSlot(net::Session& session,
     return true;
 }
 
-// The live display-pref change family (SkinChange / NameplateChange /
-// NickColorChange announce + handle) lives in player_handshake_prefs.cpp
-// (extracted 2026-07-05, modular file-size rule). Shared internals:
-// player_handshake_detail.h.
+// The live display-pref changes (SkinChange, NameplateChange, NickColorChange) live in
+// player_handshake_prefs.cpp; the shared internals in player_handshake_detail.h.
 
 }  // namespace coop::player_handshake
