@@ -1,8 +1,6 @@
-// ui/native_screen.cpp -- see ui/native_screen.h for WHY.
-//
-// Every body here MOVED VERBATIM out of server_browser_native.cpp (2026-08-29). The
-// comments came with them: they record measurements, and a measurement's comment is worth
-// more where the code is than where the code used to be.
+// ui/native_screen.cpp -- the hand-built native-screen kit: the measured palette, the framed box,
+// the window shell, the chrome button and the one hit test. See ui/native_screen.h and
+// docs/VOTV_UI_STYLE.md for the measurements behind the constants.
 
 #include "ui/native_screen.h"
 
@@ -29,11 +27,10 @@ namespace P = ue_wrap::profile;
 
 }  // namespace
 
-// THE sRGB CONVERSION IS NOT OPTIONAL. Those are sRGB byte values; FLinearColor is LINEAR,
-// and the framebuffer converts back on the way out. Writing 0x31/255 = 0.192 as a linear
-// tint puts sRGB 0.48 on screen -- #7B, more than double the intended #31 -- so the whole
-// palette would render washed out and no amount of re-picking values would fix it. This is
-// the same transform UE's FLinearColor::FromSRGBColor applies.
+// The palette values are sRGB bytes and FLinearColor is linear (the framebuffer converts back on
+// the way out): 0x31/255 written as a linear tint lands on screen at about #7B, more than double
+// the intended #31, and the whole palette washes out. The same transform as
+// FLinearColor::FromSRGBColor.
 FLinearColor Srgb(int r, int g, int b, float a) {
     auto f = [](int v) {
         const float c = static_cast<float>(v) / 255.f;
@@ -60,12 +57,9 @@ void* ReadPtr(void* base, int32_t off) {
                               : nullptr;
 }
 
-// A sub-screen donor MUST be read off the switcher's own child list. `R::FindObjectByClass`
-// returns a DIFFERENT non-CDO instance -- a WidgetBlueprint carries a widget-tree template
-// that is not named `Default__`, so the CDO skip at reflection.cpp:511 does not exclude it
-// -- and every donor field read through it comes back null. That produced a false finding
-// on the probe's first run and would have forced this design to add a precondition it
-// explicitly rejected. Measured 2026-08-25.
+// A sub-screen donor is read off the switcher's own child list: FindObjectByClass returns a
+// different non-CDO instance (a WidgetBlueprint's widget-tree template is not named Default__, so
+// the CDO skip in reflection.cpp keeps it), and every donor field read through it is null.
 void* SwitcherChild(void* switcher, const wchar_t* className) {
     const int32_t n = U::ChildCount(switcher);
     for (int32_t i = 0; i < n && i < 64; ++i) {
@@ -82,30 +76,16 @@ void* DonorField(void* owner, const wchar_t* field) {
 }
 
 void* DonorChild(void* userWidget, const wchar_t* name) {
-    // WHY NOT DonorField. `DonorField` reads a UPROPERTY, and a UMG widget only HAS one when
-    // the designer ticked "Is Variable". `[V]` `ui_settings.image_border` has
-    // `bIsVariable = False` (its sibling `scrollboxRoot` is True, which is why THAT donor
-    // resolves), so the property does not exist and a field read returns null forever -- which
-    // is exactly what the first attempt at the frame clone did, silently, leaving the flat
-    // rectangle in place with nothing in the log to say so.
-    //
-    // The WidgetTree holds every authored widget regardless of bIsVariable, so walking it
-    // reaches the ones nobody exposed as a variable.
+    // Not DonorField: a UMG widget has a UPROPERTY only when the designer ticked "Is Variable", and
+    // ui_settings.image_border has bIsVariable false (its sibling scrollboxRoot is true, which is
+    // why that donor resolves), so a field read returns null forever. The WidgetTree holds every
+    // authored widget regardless.
     if (!userWidget) return nullptr;
 
-    // `UUserWidget::GetWidgetFromName` WAS tried here and is DELETED, not kept as a fallback:
-    // `[V]` it does not resolve in this build (`fn=0`), it is the more expensive of the two
-    // routes (an uncached `FindFunction` is a full GUObjectArray walk, and a MISS costs the
-    // whole walk every call), and the route below works. RULE 2 -- a measured-dead path is
-    // baggage, not insurance.
-    //
-    // ONE TARGETED WALK, no vectors, no name renders. `R::ChildObjectsOf` would materialise
-    // the entire tree as `std::vector<ObjectRef>` with two std::wstring per entry before the
-    // caller matches a single name, and it is a full walk PER CALL -- two of them here. This
-    // walks once and compares with `R::NameEquals`, which is allocation-free AND
-    // case-INSENSITIVE: `reflection.cpp` states the rule and the scar (a lookup returned null
-    // for a whole session because another package had registered the name with different
-    // casing first).
+    // One targeted walk over the tree's children, compared with NameEquals (allocation-free and
+    // case-insensitive, since a package can register a name with different casing first).
+    // UUserWidget::GetWidgetFromName does not resolve in this build, and ChildObjectsOf would
+    // materialise the whole tree with two wstrings per entry per call.
     void* tree = DonorField(userWidget, L"WidgetTree");
     if (!tree) return nullptr;
     const int32_t n = R::NumObjects();
@@ -123,8 +103,7 @@ void* Spawn(const wchar_t* cls, void* outer) {
     return k ? E::SpawnUObject(k, outer) : nullptr;
 }
 
-// Build one styled UTextBlock and put it in `panel`, with an optional horizontal-box slot
-// fill weight (0 = leave the slot alone, i.e. auto-size).
+// One styled UTextBlock in `panel`, with an optional horizontal-box fill weight (0 = auto-size).
 void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearColor& col,
               uint8_t justify, float fillWeight) {
     void* t = Spawn(P::name::TextBlockClass, panel);
@@ -138,12 +117,11 @@ void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearCo
         *(s + P::off::FSlateChildSize_SizeRule) = 1;  // ESlateSizeRule::Fill
         U::SetSlotAlign(slot, P::off::UHorizontalBoxSlot_HAlign,
                         P::off::UHorizontalBoxSlot_VAlign, kFill, kCenter);
-        // The SLOT bounds the layout, not the painting: without this a long world name
-        // paints straight across the Age column. EWidgetClipping::ClipToBounds = 1.
+        // The slot bounds the layout, not the painting: without clipping a long world name paints
+        // across the Age column. EWidgetClipping::ClipToBounds = 1.
         U::SetClipping(t, 1);
-        // ...and clipping alone leaves a clipped value touching the next column, which
-        // reads as a rendering fault rather than as a long name. FMargin is
-        // {Left, Top, Right, Bottom}; a right gutter is the whole fix.
+        // A clipped value touching the next column reads as a rendering fault; a right gutter fixes
+        // it. FMargin is {Left, Top, Right, Bottom}.
         auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(slot) +
                                              P::off::UHorizontalBoxSlot_Padding);
         pad[0] = 0.f; pad[1] = 0.f; pad[2] = 18.f; pad[3] = 0.f;
@@ -151,18 +129,14 @@ void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearCo
     return t;
 }
 
-// THE FRAME. Every panel, row, header strip and value cell in VOTV's menus is a bordered
-// box with sharp corners (style doc section 3), and nothing in the game's UI floats
-// unboxed. Two stacked UImages give exactly that: an outer one carrying the border colour
-// and an inner one inset by the border width carrying the fill. A UImage with no
-// ResourceObject and only a tint draws a solid rect, which is how the game's own
-// full-screen scrim works -- so this needs no donor and no art.
-//
-// Returns the OVERLAY the caller should put content in; content lands above the fill.
+// The frame: every panel, row, header strip and value cell in VOTV's menus is a bordered box with
+// sharp corners, and nothing floats unboxed. Two stacked UImages give that (an outer one with
+// the border, an inner one inset by the border width with the fill); a UImage with no
+// ResourceObject draws a solid rect, as the game's own scrim does. Returns the overlay the
+// caller puts content in; content lands above the fill.
 namespace {
 
-// The one write both AddHFill and AddVFill perform, so the Fill-vs-Automatic rule is
-// expressed once. ESlateSizeRule: Automatic=0, Fill=1.
+// The one child-size write AddHFill and AddVFill share. ESlateSizeRule: Automatic=0, Fill=1.
 void WriteChildSize(void* slot, size_t sizeOff, float weight) {
     auto* s = reinterpret_cast<uint8_t*>(slot) + sizeOff;
     *reinterpret_cast<float*>(s + P::off::FSlateChildSize_Value) = weight > 0.f ? weight : 1.f;
@@ -212,46 +186,26 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     out = WindowShell{};
     if (!switcher) return false;
     constexpr float kBorderPx = 2.f;
-    // THE WINDOW'S CONTENT IS INSET BY EXACTLY ONE RING, and that is where the ladder comes
-    // from.
-    //
-    // `[V]` On the native Keybinds window the window's ring and the list panel's ring ABUT: the
-    // left edge at y=500 reads `919191x2 646464x2 919191x2 646464x2` -- two pairs, no fill
-    // between them -- while at y=208, a height where no inner panel sits, the same edge reads
-    // the pair ONCE. So the stack is the window's ring plus the panel's, and the panel is inset
-    // by exactly the width the window's ring renders: `[V]` 4 px, measured on both the native
-    // capture and our own.
-    //
-    // Both neighbouring values are wrong and were tried. At 6 (the old value) the panel's ring
-    // landed ON the window's inner band and merged with it -- our window measured
-    // `919191x2 646464x2 919191x4 646464x2 919191x2 646464x2`, a four-pixel light run native
-    // never produces. At 0 the panel's ring is drawn UNDER the window's border image (which is
-    // painted last, at full size) and disappears entirely, leaving one pair everywhere.
-    //
-    // 4 is also the number the game itself authored: `[V]` seven of eleven border slots across
-    // `ui_settings` and `ui_saveSlots` carry a slot offset of 4, and
-    // `ui_saveSlots.image_border_6`/`_7` are a real nested pair on parent-and-child canvases
-    // exactly 4 apart. A previous pass measured that correctly and then spent it on the wrong
-    // thing -- a second ring inset from the SAME box, rather than the inset between a box and
-    // its parent.
-    //
-    // Being a slot offset rather than a screen-pixel constant, it tracks DPI the way the game's
-    // own borders do.
+    // The window's content is inset by exactly one ring width: on a native window the window's ring
+    // and the list panel's ring abut, so the panel is inset by the width the window's ring renders,
+    // 4 px on the native capture and on ours. At 6 the panel's ring merged with the window's inner
+    // band; at 0 it vanished under the border image, painted last at full size. 4 is also what the
+    // game authored (seven of eleven border slots carry a slot offset of 4), and as a slot offset
+    // it tracks DPI the way the game's own borders do.
     constexpr float kPadPx    = kNativeRingPx;
 
     void* root = Spawn(P::name::UserWidgetClass, switcher);
     void* tree = root ? Spawn(P::name::WidgetTreeClass, root) : nullptr;
     void* ovl  = tree ? Spawn(L"Overlay", tree) : nullptr;
     if (!root || !tree || !ovl) return false;
-    // The two back-pointers UMG would have written itself if this widget had been cooked
-    // from a Blueprint. Without them the tree renders nothing and reports no children.
+    // The two back-pointers UMG writes for a cooked widget; without them the tree renders nothing
+    // and reports no children.
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = ovl;
 
-    // THE SCRIM, copied from the game: `ui_saveSlots_C`'s own first child Image_302 is a
-    // full-screen UImage with TintColor (0,0,0,0.5) and NO ResourceObject, and that is what
-    // dims the menu behind every native sub-screen. It needs no donor and no art, and being
-    // Visible is what makes it absorb a click that misses the window.
+    // The scrim, as the game does it: a full-screen UImage with tint (0, 0, 0, 0.5) and no
+    // ResourceObject, which dims the menu behind every native sub-screen; being Visible, it absorbs
+    // a click that misses the window.
     void* scrim = Spawn(L"Image", ovl);
     if (!scrim) return false;
     U::SetImageTintRaw(scrim, FLinearColor{0.f, 0.f, 0.f, 0.5f});
@@ -259,11 +213,8 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     if (void* s = U::AddChild(ovl, scrim))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
 
-    // THE WINDOW IS A FRAMED BOX: a cloned 9-slice of the game's own `inst_uiBorder` around
-    // a #1A1A1A fill with sharp corners (VOTV_UI_STYLE.md, the frame section); see
-    // AddFramedBox. An earlier version cloned `ui_saveSlots.Image_0`'s brush, which gave a
-    // soft borderless panel -- the closest thing available before anyone had measured the
-    // real treatment.
+    // The window is a framed box: the game's own inst_uiBorder 9-slice around a #1A1A1A fill with
+    // sharp corners (AddFramedBox).
     void* winBox = Spawn(L"SizeBox", ovl);
     void* winOvl = winBox ? AddFramedBox(winBox, Panel(), kBorderPx) : nullptr;
     void* col    = winOvl ? Spawn(L"VerticalBox", winOvl) : nullptr;
@@ -279,9 +230,8 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                         kCenter, kCenter);
 
-    // THE TITLE STRIP: centred, WHITE, larger, on a bordered strip of its own (style doc
-    // section 3 rule 5). Never cyan -- that colour appears in no VOTV menu, and the user
-    // settled it for our windows on 2026-08-26.
+    // The title strip: centred, white, larger, on a bordered strip of its own. White is reserved
+    // for the title and body text; cyan appears in no VOTV menu.
     if (title) {
         if (void* titleBox = AddFramedBox(col, Panel(), kBorderPx)) {
             if (void* titleRow = Spawn(L"HorizontalBox", titleBox)) {
@@ -302,31 +252,17 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     return true;
 }
 
-// (The second ring this file used to draw is GONE -- see AddFramedBox. It rested on a
-// reading of the native pattern that a fuller measurement falsified, and with it goes
-// `kNativeRingStepPx`, the four-child layout, and the index hazard that broke every
-// server row.)
-
 void* g_borderDonor = nullptr;
 bool  g_borderDonorTried = false;
 
 void SetBorderDonor(void* donorImage) {
-    // A DONOR WHOSE BRUSH CARRIES NO ART IS REFUSED, so that "we built a framed box" and
-    // "this box looks framed" are ONE fact instead of two that happen to agree.
-    //
-    // `AddFramedBox` chooses its child order from whether a donor exists; `FramedBoxParts`
-    // works out which child is which by reading the border's `ResourceObject`. Those were
-    // different predicates, and a donor that resolved but carried no art would have built the
-    // framed order and been classified flat -- every server row's fill and border swapped,
-    // silently, with no log line and no rect difference to reveal it. Not a hypothetical
-    // shape here: `[V]` on `ui_saveSlots_C.button_back` only three of four brushes carry a
-    // ResourceObject, and which ones do is exactly the kind of fact a recook moves.
-    //
-    // Refusing here collapses the two predicates: a published donor ALWAYS clones a brush with
-    // art (`ZeroBrushHandles` clears only the resource HANDLE at +0x70, never the object at
-    // +0x48), so the classification cannot disagree with the construction. The failure mode is
-    // the one this donor already documents as tolerable -- the flat frame -- rather than an
-    // inverted one.
+    // A donor whose brush carries no art is refused: AddFramedBox chooses its child order from
+    // whether a donor exists, and FramedBoxParts tells the children apart by reading the border's
+    // ResourceObject. A donor that resolved without art would build the framed order and be
+    // classified flat, swapping every row's fill and border with no log line. Refusing collapses
+    // the two predicates: a published donor always clones a brush with art (the clone zeroes only
+    // the resource handle, never the object). On ui_saveSlots_C.button_back only three of four
+    // brushes carry a ResourceObject, and a recook can move which.
     if (donorImage) {
         void* art = ReadPtr(donorImage, static_cast<int32_t>(P::off::UImage_Brush +
                                                              P::off::FSlateBrush_ResourceObject));
@@ -343,10 +279,8 @@ void SetBorderDonor(void* donorImage) {
 }
 
 void ForgetBorderDonor() {
-    // Called on the MENU-INSTANCE edge. The donor is a UImage owned by that menu's
-    // `ui_settings`; keeping it across a rebuild would have `CloneStyle` memcpy 0x88 bytes out
-    // of a widget belonging to a destroyed instance. Nothing cleared it before -- the browser
-    // reset `g_root`/`g_backBtn`/`g_scrimW` and not this.
+    // On the menu-instance edge: the donor is a UImage owned by that menu's ui_settings, and kept
+    // across a rebuild CloneStyle would copy 0x88 bytes out of a destroyed instance's widget.
     g_borderDonor = nullptr;
     g_borderDonorTried = false;
 }
@@ -360,27 +294,18 @@ bool FramedBoxParts(void* overlay, FramedParts& out) {
     void* c0 = U::ChildAt(overlay, 0);
     void* c1 = U::ChildAt(overlay, 1);
     if (!c0 || !c1) return false;
-    // BOTH children must actually be UImages. The header has always promised this function
-    // returns false for an overlay that "does not look like a framed box", and until now it
-    // promised it without checking: two children of any class were enough, and the read below
-    // would then interpret an arbitrary widget's bytes at +0x150 as a brush pointer. In bounds
-    // for any UWidget, so no fault -- just a confident wrong answer, which is the same shape as
-    // the defect this whole function exists to prevent. `NameEquals` is allocation-free and
-    // case-insensitive; `ClassNameOf` would mint two wstrings per row per sync.
+    // Both children must be UImages, or the read below interprets an arbitrary widget's bytes as a
+    // brush pointer: in bounds for any UWidget, so no fault, only a confident wrong answer.
+    // NameEquals is allocation-free; ClassNameOf would mint two wstrings per row per sync.
     if (!R::NameEquals(R::NameOf(R::ClassOf(c0)), P::name::ImageClass) ||
         !R::NameEquals(R::NameOf(R::ClassOf(c1)), P::name::ImageClass)) {
         return false;
     }
     out.content = n >= 3 ? U::ChildAt(overlay, 2) : nullptr;
-    // WHICH of the two images is the border is decided by READING one, not by counting them.
-    //
-    // The two layouts are mirror images -- framed puts the fill underneath and the border on
-    // top, flat has to do the opposite or a solid rectangle would cover the box -- so the
-    // index alone cannot say which is which, and the count no longer differs at all now that
-    // the second ring is gone. What DOES differ is the border itself: a cloned frame carries
-    // the material `inst_uiBorder` in its brush's ResourceObject, and a tinted fill carries
-    // nothing there. That is a fact about the widget in front of us rather than a convention
-    // two functions have to keep agreeing about, which is the whole reason this lives here.
+    // Which image is the border is read, not counted: the framed and flat layouts are mirror images
+    // (framed puts the fill under and the border on top; flat must do the opposite or a solid rect
+    // covers the box), so the index cannot tell. A cloned frame carries inst_uiBorder in its
+    // brush's ResourceObject; a tinted fill carries nothing there.
     const auto resourceObject = [](void* img) -> void* {
         return img ? *reinterpret_cast<void**>(static_cast<uint8_t*>(img) +
                                                P::off::UImage_Brush +
@@ -403,16 +328,12 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     void* edge = Spawn(L"Image", box);
     void* face = Spawn(L"Image", box);
     if (!edge || !face) return nullptr;
-    // THE FRAME IS THE GAME'S OWN, not a rectangle we tint. `image_border`'s brush is the
-    // material `inst_uiBorder` as a 9-slice box, which is why the native frame has a
-    // different pair of greys on each of its four edges (a bevel lit top-left) and why our
-    // single-colour rectangle read as foreign no matter which grey it used. See
-    // native_screen.h's SetBorderDonor for the sampled values.
-    //
-    // The brush is 0x88 bytes and its FSlateResourceHandle at +0x70 is UNREFLECTED -- a
-    // TSharedPtr that a raw copy would shallow-alias with no AddRef -- so this goes through
-    // CloneStyle, which zeroes the handle and lets Slate rebuild it. Exactly the treatment
-    // the button and scrollbar clones already get.
+    // The frame is the game's own: image_border's brush is the material inst_uiBorder as a 9-slice
+    // box, which is why the native frame has a different pair of greys on each edge (a bevel lit
+    // top-left) and a single-colour rectangle read as foreign in any grey. The brush is 0x88 bytes
+    // and its FSlateResourceHandle at +0x70 is unreflected (a TSharedPtr a raw copy would alias
+    // with no AddRef), so it goes through CloneStyle, which zeroes the handle and lets Slate
+    // rebuild it.
     bool framed = false;
     if (g_borderDonor) {
         static constexpr size_t kOneBrush[1] = {0};
@@ -421,34 +342,17 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     }
     if (!framed) U::SetImageTintRaw(edge, Border());
     U::SetImageTintRaw(face, fill);
-    // ESlateVisibility: Visible=0 Collapsed=1 HIDDEN=2 HitTestInvisible=3
-    // SelfHitTestInvisible=4. The first version of this wrote 2 meaning "chrome, not a hit
-    // target" and got HIDDEN -- so the frame and the panel fill never drew AT ALL, and the
-    // screenshot's apparent "window" was nothing but the rows' own backgrounds stacked up
-    // with the title and footer floating outside them. 3 is the one that means what 2 was
-    // meant to mean: it draws, and it never eats a click.
+    // ESlateVisibility: Visible=0, Collapsed=1, Hidden=2, HitTestInvisible=3,
+    // SelfHitTestInvisible=4. 3 draws and never eats a click; 2 does not draw at all.
     E::SetWidgetVisibility(edge, 3);
     E::SetWidgetVisibility(face, 3);
-    // ORDER MATTERS, AND IT DIFFERS BY WHICH FRAME WE GOT.
-    //
-    // CLONED (the 9-slice material): fill UNDERNEATH at full size, border ON TOP at full size,
-    // NO inset. The first attempt kept the old inset and produced `#919191 x2` straight into
-    // the fill where native has `#919191 x2` then `#646464 x2` -- our own fill was painted OVER
-    // the brush's inner bands, clipping the bevel to its outermost step.
-    //
-    // ONE RING PER BOX, and that is a measurement, not a simplification. This file used to add
-    // a SECOND ring inset by 4 px, because a native window edge samples the pair TWICE and that
-    // was read as one box wearing two rings. `[V]` It is not: on the native Keybinds window the
-    // left edge samples `919191x2 646464x2` ONCE across the title strip (y=208) and TWICE
-    // across the list (y=500) -- the same window, two heights. A window that wore two rings
-    // would show two at both. The second pair is the INNER PANEL's own ring sitting flush
-    // against the window's, so the "много скосов" the user pointed at is NESTING, and the way
-    // to have more of it is to nest boxes, never to double a border. Doubling it also cost a
-    // real defect: it made the box four children wide and `server_browser_rows` read the parts
-    // by index (see FramedBoxParts).
-    //
-    // FLAT fallback (no donor): the old order, because a flat edge drawn on top at full size
-    // would cover the whole box rather than ring it.
+    // The child order differs by frame. Cloned: fill underneath at full size, border on top at full
+    // size, no inset; an inset paints the fill over the brush's inner bands and clips the bevel to
+    // its outermost step. One ring per box: a native window edge samples the grey pair once across
+    // the title strip and twice across the list, so the second pair is the inner panel's own ring
+    // flush against the window's, and more bevel comes from nesting boxes, never from doubling a
+    // border. Flat (no donor): the edge under and the fill inset by the border width, since a flat
+    // edge on top at full size would cover the box.
     if (framed) {
         if (void* s = U::AddChild(box, face))
             U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
@@ -471,40 +375,21 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     return box;
 }
 
-// A chrome UButton with a text label, styled from a donor UButton.
-//
-// A REAL UButton, not a text block with a click poll, and the reason is the SOUND. Cloning
-// the style carries the game's own press and hover FSlateSounds, so our X clicks like the
-// menu's own controls -- the same thing that makes the shipped MULTIPLAYER inject feel
-// native. It also gets Slate's press visual for free.
-//
-// The LABEL is authored, never cloned. Cloning a donor UTextBlock's style was tried on the
-// menu inject and REVERTED: the donor reads null at some timings and the silent fallback is
-// Roboto/centred/white. StyleTextBlock writes the measured constants instead.
-//
-// The label's PADDING is what gives the button its hit area -- "X" is one glyph, and an
-// unpadded button is a hit target the width of that glyph.
+// A chrome UButton with a text label, styled from a donor UButton. A real UButton, for the sound:
+// the cloned style carries the game's press and hover FSlateSounds, and Slate's press visual
+// comes free. The label is authored, never cloned (a donor UTextBlock reads null at some timings
+// and the silent fallback is Roboto, centred, white). The label's padding is the hit area; an
+// unpadded "X" is a target one glyph wide.
 void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fontSize) {
     void* b = Spawn(P::name::ButtonClass, parent);
     if (!b) return nullptr;
     U::CloneButtonStyle(b, donorBtn);
-    // WHAT DOES THE DONOR'S OWN LABEL ACTUALLY CARRY? (probe; RULE 2 exempt.)
-    //
-    // User report 2026-08-30, comparing our chrome to VOTV's: "the outer buttons
-    // ('Back') are just colored and normal font, but the buttons which sit inside
-    // the widget are pixelated font ('Reset' and 'Save')". `VOTV_UI_STYLE.md` (structure rule 3)
-    // records the opposite -- "Monospace throughout, the game's font_ui. No
-    // proportional text in a menu" -- so either the doc is one font short or the
-    // difference is size/outline rather than face, and I am not going to settle
-    // that by looking at a screenshot (that doc's own section 7 is a list of three
-    // times looking gave the wrong answer here).
-    //
-    // We clone the donor's FButtonStyle but AUTHOR the label, so this reads what
-    // the game itself put on the same button and logs it once per donor. One
-    // armed run turns "two faces or one" into a measurement.
+    // A probe: the face, size and outline the game puts on the donor's own label, logged once per
+    // donor for the first four, so "two faces or one" is a measurement rather than a screenshot
+    // reading.
     static int sReported = 0;
     if (donorBtn && sReported < 4) {
-        // A UButton is a UContentWidget, i.e. a panel with exactly one child.
+        // A UButton is a UContentWidget: a panel with exactly one child.
         if (void* dt = U::ChildAt(donorBtn, 0)) {
             auto* d = reinterpret_cast<uint8_t*>(dt) + P::off::UTextBlock_Font;
             void* face = *reinterpret_cast<void**>(d);
@@ -524,25 +409,14 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
         }
     }
     if (void* t = Spawn(P::name::TextBlockClass, b)) {
-        // ORANGE, NOT WHITE, and this is the whole of "our buttons look bold".
-        //
-        // `measured` 2026-08-30 by sampling the user's own native captures: every button
-        // label in VOTV is the accent orange -- `Hide all`, `Language`, `Binds`, `Back`,
-        // `Reset all`, `Apply`, `Fix mailbox` on the Settings screen, and every gamemode
-        // tab -- while WHITE is reserved for the window TITLE and body text. The ink
-        // samples `#FF8900` off a compressed PNG against the palette's recorded `#FF7C00`;
-        // the palette wins, because inventing a shade from one crop is exactly the mistake
-        // VOTV_UI_STYLE.md's section on looking versus sampling already records.
-        //
-        // The user read the difference as WEIGHT ("кнопки какие-то жирные"), and it is not:
-        // scaled for the capture sizes our glyphs carry LESS ink than the game's (114 vs
-        // 144 lit pixels over a comparable label). Pure white on near-black is simply the
-        // maximum contrast the panel can hold, so it reads heavy. Nothing about the face
-        // or the size changed here -- only the colour that made them shout.
+        // Orange, not white: every button label in VOTV is the accent orange (Hide all, Language,
+        // Binds, Back, Reset all, Apply, the gamemode tabs), and white is the title and body text.
+        // White on near-black is the maximum contrast the panel holds and reads heavy; our glyphs
+        // carry less ink than the game's, so the weight was never the difference.
         U::StyleTextBlock(t, fontSize, Accent(), kJustCenter);
         E::SetWidgetText(t, label);
         U::SetContent(b, t);
-        // SetContent created the UButtonSlot; centre the glyph and pad it out.
+        // SetContent created the UButtonSlot: centre the glyph and pad it out.
         if (void* cslot = ReadPtr(t, static_cast<int32_t>(P::off::UWidget_Slot))) {
             auto* cs = reinterpret_cast<uint8_t*>(cslot);
             *(cs + P::off::UButtonSlot_HAlign) = kCenter;
@@ -559,11 +433,9 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
 
 namespace {
 
-// TWO answers. There used to be a third -- `Below`, meaning "this child starts under the
-// cursor, so stop walking" -- and the walk that consumed it is gone (see ChildAtCursor):
-// it rested on child order matching arranged top-to-bottom order, which a rebuilt or
-// scrolled-out list does not honour, and one violation returned "no row" for the whole
-// list. The early-out below survives as what it always was underneath: a cheap Miss.
+// Two answers, hit or miss. A third, "this child starts under the cursor, so stop walking",
+// rested on child order matching arranged top-to-bottom order, which a rebuilt or scrolled-out
+// list does not honour, and one violation returned no row for the whole list.
 bool Probe(void* panel, int32_t i, long cx, long cy,
            const ue_wrap::FVector2D& panelTl, const ue_wrap::FVector2D& panelSz) {
     void* child = U::ChildAt(panel, i);
@@ -571,20 +443,15 @@ bool Probe(void* panel, int32_t i, long cx, long cy,
     if (!child || !U::WidgetScreenRect(child, tl, sz) || sz.X < 1.f || sz.Y < 1.f)
         return false;
     if (static_cast<long>(std::floor(tl.Y)) > cy) return false;
-    // CLIPPED TO THE PANEL, and it is not decoration: a child scrolled out of view is not
-    // arranged, so its cached geometry is whatever it was when it last WAS -- rows were
-    // observed reporting positions above the list's own top edge -- and a stale rect must
-    // not be allowed to claim a cursor that is inside the viewport.
+    // Clipped to the panel: a child scrolled out of view is not arranged, so its cached geometry is
+    // whatever it was when it last was (rows have reported positions above the list's own top), and
+    // a stale rect must not claim a cursor inside the viewport.
     const float top = tl.Y > panelTl.Y ? tl.Y : panelTl.Y;
     const float bot = (tl.Y + sz.Y) < (panelTl.Y + panelSz.Y) ? (tl.Y + sz.Y)
                                                               : (panelTl.Y + panelSz.Y);
     if (bot <= top) return false;   // entirely scrolled out
-    // floor, not a truncating cast: `static_cast<long>` rounds toward zero, so a negative
-    // coordinate would round the opposite way and eat the left pixel column of every row.
-    // (The original note said "on a monitor left of the primary (negative desktop X)" --
-    // written when this function was fed DESKTOP coordinates. It is fed CLIENT pixels
-    // now, which are negative only above/left of the client area, but the floor is still
-    // the right call and costs nothing.)
+    // floor, not a truncating cast: static_cast rounds toward zero, so a negative coordinate would
+    // round the other way and eat the left pixel column of every row.
     const bool in = cy >= static_cast<long>(std::floor(top)) &&
                     cy <  static_cast<long>(std::floor(bot)) &&
                     cx >= static_cast<long>(std::floor(tl.X)) &&
@@ -622,29 +489,12 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
         return hint;
     for (int32_t i = 0; i < count; ++i) {
         if (i == hint) continue;   // already probed
-        // NO EARLY BREAK ON `Below` (2026-08-30). This loop used to stop at the first
-        // child whose top edge sits under the cursor, on the reasoning that children of
-        // a vertical list are ordered top-to-bottom, so everything after it is further
-        // down. That ordering is an ASSUMPTION about arranged geometry, and it is not
-        // one this code is entitled to make:
-        //
-        //   * a child scrolled out of view is not arranged, so its rect is whatever it
-        //     was when it last WAS -- the Probe above already documents rows "reporting
-        //     positions above the list's own top edge", and a stale rect can just as
-        //     easily read far BELOW;
-        //   * the rows are rebuilt on every sync (12 -> 4 -> 12 in one lab run), and
-        //     nothing in that path promises child order survives a rebuild.
-        //
-        // One out-of-order child therefore did not cost one row -- it ended the walk and
-        // returned -1, i.e. NO row hovered anywhere, which is total rather than partial:
-        // the selection path reads the same value, so no server could be picked either.
-        // `measured` 2026-08-30: cursor (1600,772) sits inside child 6's own reported
-        // rect (796,752) 955x64 -- all four bounds satisfied by hand -- while this
-        // function returned -1, so the walk provably never reached it.
-        //
-        // The cost of correctness here is at most `count` rect reads on a list bounded
-        // by kMaxRows, on a poll that only runs when the pointer or the scroll actually
-        // moved. That is the right trade against losing the hit test outright.
+        // No early break on a child below the cursor: a scrolled-out child's stale rect can read
+        // far below, and the rows are rebuilt on every sync with no promise that child order
+        // survives. One out-of-order child then ended the walk and returned -1, no row hovered and
+        // none selectable, while the cursor sat inside a later child's rect. At most `count` rect
+        // reads on a list bounded by kMaxRows, on a poll that runs only when the pointer or the
+        // scroll moved.
         if (Probe(panel, i, cx, cy, tl, sz)) return i;
     }
     return -1;
@@ -653,20 +503,16 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
 bool CursorInWidgetSpace(long& outX, long& outY) {
     POINT c{};
     if (!::GetCursorPos(&c)) return false;
-    // The client origin is HALF of it; the other half is the viewport's UI scale, and
-    // this file is not the place to reconstruct Slate's transform from parts (see the
-    // long note in HoverTracker::Poll -- two hand-derived corrections, two wrong answers
-    // in opposite directions).
+    // The client origin is half the transform; the other half is the viewport's UI scale, and
+    // Slate's own inverse (CursorToWidgetAbsolute) is the only source that has both.
     POINT cli = c;
     if (HWND hwnd = ::GetActiveWindow()) ::ScreenToClient(hwnd, &cli);
     ue_wrap::FVector2D abs{};
     if (!U::CursorToWidgetAbsolute(
             ue_wrap::FVector2D{static_cast<float>(cli.x), static_cast<float>(cli.y)}, abs)) {
-        // FAIL CLOSED, and say so ONCE. The old behaviour fell back to CLIENT pixels --
-        // the space that was MEASURED WRONG -- with no log, so a scaled viewport silently
-        // aimed every hit test at an offset instead of reporting that it could not answer.
-        // A skip-if that degrades into a known-bad answer is a RULE-1 crutch (post-ship
-        // audit, 2026-08-31).
+        // Fail closed, and say so once: a fallback to client pixels (the space measured wrong)
+        // silently aimed every hit test at an offset on a scaled viewport instead of reporting that
+        // it could not answer.
         static bool sSaidSo = false;
         if (!sSaidSo) {
             sSaidSo = true;
@@ -682,17 +528,11 @@ bool CursorInWidgetSpace(long& outX, long& outY) {
     return true;
 }
 
-// ONE MECHANISM, WHICH IS WHAT THE HEADER ALWAYS CLAIMED.
-//
-// This compared RAW `GetCursorPos` (DESKTOP pixels) against `WidgetScreenRect` (Slate
-// ABSOLUTE) while `HoverTracker::Poll`, twelve lines below, converted first -- so the kit
-// shipped TWO hit tests in TWO spaces under a header promising "there is ONE hit-test
-// mechanism in the native screens rather than two that disagree". They agree only while
-// the window is unscaled and at the origin; at any other scale the rows that went through
-// the tracker hit and the ones that came here (the hosting window's New-game and
-// connection rows, the text field's click-to-focus) missed by the offset -- half a screen
-// working, which this project has a lesson named after. Found by the post-ship correctness
-// audit, 2026-08-31; both now call `CursorInWidgetSpace`.
+// The one hit-test space: this once compared raw GetCursorPos (desktop pixels) against
+// WidgetScreenRect (Slate absolute) while HoverTracker::Poll converted first, two hit tests in
+// two spaces that agree only with the window unscaled at the origin; at any other scale the
+// hosting window's rows and the text field's click-to-focus missed by the offset. Both go
+// through CursorInWidgetSpace.
 bool WidgetContains(void* w, long hx, long hy) {
     if (!w) return false;
     ue_wrap::FVector2D tl{}, sz{};
@@ -724,10 +564,10 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     const bool moved = (c.x != lastX_ || c.y != lastY_);
     lastX_ = c.x; lastY_ = c.y;
 
-    // THE POINTER IS NOT THE ONLY THING THAT MOVES A ROW UNDER IT. A wheel scroll moves the
-    // rows while the cursor is still, and a sync can change how many there are. On failure
-    // the fraction is left as it was rather than written to a sentinel, so an unreadable
-    // scroll degrades to cursor-only rather than to a permanent re-evaluation.
+    // The pointer is not the only thing that moves a row under it: a wheel scroll moves the rows
+    // with the cursor still, and a sync changes how many there are. On a failed read the fraction
+    // keeps its old value rather than a sentinel, so an unreadable scroll degrades to cursor-only
+    // rather than a permanent re-evaluation.
     float frac = lastFrac_;
     U::ViewOffsetFraction(panel, frac);
     const bool scrolled = (frac != lastFrac_) || (shownCount != lastCount_);
@@ -735,59 +575,29 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     lastCount_ = shownCount;
 
     if (!moved && !scrolled && !pending_) return false;
-    // One settling pass is owed after motion stops: during a sweep the answer trails by a
-    // frame, and without this it would stay trailing -- the next tick sees no delta, skips,
-    // and nothing ever corrects it.
+    // One settling pass after motion stops: during a sweep the answer trails by a frame, and the
+    // next tick would see no delta and never correct it.
     pending_ = moved || scrolled;
 
-    // THE CURSOR MUST BE IN THE RECT'S SPACE, AND IT WAS NOT.
-    //
-    // `GetCursorPos` is DESKTOP space; `WidgetScreenRect` composes Slate's own
-    // `LocalToAbsolute`, whose output is CLIENT pixels. The two were compared
-    // directly from the day this hit test was written, which is correct only when
-    // the window happens to sit at the desktop origin -- i.e. it worked in
-    // fullscreen and silently missed by the whole client origin in a window.
-    //
-    // MEASURED 2026-08-30 (VOTVCOOP_HIT_SPACE_PROBE, 1008 lines, all agreeing):
-    //   cursor desktop=(1282,718) client=(962,538) clientOrigin=(320,180)
-    //   panel (796,496) 968x470  ->  hit(desktop) = -1   hit(client) = 0
-    // The pointer is physically on a row; the desktop comparison finds nothing
-    // because it looks 180 px further down the list than the pointer actually is.
-    //
-    // Reported by the user hands-on ("их хитбокс находится не там где визуал"),
-    // and NOT guessed at: the probe that produced the numbers above shipped first,
-    // in its own commit, precisely because my hypothesis predicted the offset in
-    // the opposite direction to the report. It fixes what it measures. If a small
-    // residual offset survives in FULLSCREEN -- where this bug cannot manifest,
-    // the origin being (0,0) -- that is a second cause and still open.
+    // The cursor must be in the rect's space. GetCursorPos is desktop space and WidgetScreenRect is
+    // Slate absolute; compared directly they agree only with the window at the desktop origin, so
+    // the hit test worked in fullscreen and missed by the whole client origin in a window
+    // (measured: a pointer on a row, and the desktop comparison looking 180 px further down the
+    // list).
     POINT cli = c;
     if (HWND hwnd = ::GetActiveWindow()) ::ScreenToClient(hwnd, &cli);
 
-    // ...AND THEN ASK SLATE, because the client origin was only half of it. After
-    // the conversion above shipped, the same user reported the offset AGAIN and in
-    // the OTHER direction (the top row selecting only with the cursor dragged well
-    // down the widget). Two hand-derived corrections, two wrong answers: the
-    // remaining term is the viewport's UI scale, and this file is not the place to
-    // reconstruct Slate's transform from parts. `CursorToWidgetAbsolute` runs
-    // Slate's own inverse, so both sides of the comparison come from one source
-    // whatever the scale and wherever the window sits.
-    // Through the SHARED converter, so this and `CursorOverWidget` cannot drift into two
-    // spaces again. It fails CLOSED: an unresolvable transform is "no hit", never a guess
-    // in the space that was measured wrong.
+    // Then Slate's own inverse, because the client origin was only half of it: the remaining term
+    // is the viewport's UI scale, and CursorToWidgetAbsolute puts both sides of the comparison in
+    // one space wherever the window sits. Through the shared converter, so this and
+    // CursorOverWidget cannot drift into two spaces again; it fails closed.
     long hx = 0, hy = 0;
     if (!CursorInWidgetSpace(hx, hy)) { index_ = -1; return true; }
 
-    // ALWAYS-ON, first three hovers per process, at WARN so it FLUSHES. The user's
-    // own run left no evidence at all last time -- INFO is buffered and a killed
-    // process never writes it -- so a field report on this arrived with nothing to
-    // read. Three lines is the price of never asking them to re-run with a flag.
-    //
-    // THE CAP IS RAISABLE FOR THE LAB (2026-08-30). Three lines are the right budget
-    // for a player, and exactly the wrong one for the selftest: the browser run spends
-    // all three before the ROW phase begins, so the one moment the lane needs to see --
-    // the cursor placed on a row, the hit test's own answer for it -- was the moment
-    // the probe had already fallen silent. `VOTVCOOP_HIT_PROBE=N` lifts it; the lab
-    // sets it, and nothing a player runs does.
+    // Always on for the first three hovers per process, at WARN so it flushes (INFO is buffered and
+    // a killed process never writes it, which once left a field report with nothing to read).
+    // VOTVCOOP_HIT_PROBE=N raises the cap for the lab, whose selftest spends the three before the
+    // row phase begins.
     static const int sCap = [] {
         if (const char* v = std::getenv("VOTVCOOP_HIT_PROBE")) {
             const int n = std::atoi(v);
@@ -801,19 +611,14 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
         ue_wrap::FVector2D ptl{}, psz{};
         const bool haveP = U::WidgetScreenRect(panel, ptl, psz);
         const int32_t hit = ChildAtCursor(panel, shownCount, hx, hy, -1);
-        // `slateAbs` is no longer conditional: the conversion is now the ONLY way this
-        // function gets a coordinate at all -- a failure returns before here, loudly, and
-        // there is no client-pixel fallback left to label.
+        // The conversion is the only way this function gets a coordinate; a failure returned above.
         UE_LOGW("native_screen[hit] desktop=(%ld,%ld) slateAbs=(%ld,%ld) "
                 "panel %s(%.0f,%.0f) %.0fx%.0f -> row=%d",
                 c.x, c.y, hx, hy,
                 haveP ? "" : "UNREAD ", ptl.X, ptl.Y, psz.X, psz.Y, hit);
-        // A MISS INSIDE THE PANEL IS THE ONLY INTERESTING MISS, and it is the one that
-        // has now survived two hand-derived fixes. Both were reasoned from the ONE rect
-        // the selftest happened to dump; neither author had ever seen the other eleven.
-        // So when the cursor is inside the list and no child claims it, print the whole
-        // child table -- index, rect, and whether the rect was readable at all -- because
-        // the answer is a COMPARISON across children, and no single-row dump can carry it.
+        // A miss inside the panel is the interesting miss: when the cursor is inside the list and
+        // no child claims it, the whole child table (index, rect, readable or not) goes to the log,
+        // because the answer is a comparison across children that no single-row dump can carry.
         if (hit < 0 && haveP && sCap > 3 &&
             hx >= static_cast<long>(ptl.X) && hx < static_cast<long>(ptl.X + psz.X) &&
             hy >= static_cast<long>(ptl.Y) && hy < static_cast<long>(ptl.Y + psz.Y)) {
