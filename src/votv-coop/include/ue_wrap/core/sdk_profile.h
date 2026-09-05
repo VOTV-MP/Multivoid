@@ -233,30 +233,16 @@ inline constexpr size_t UObject_OuterPrivate = 0x20;
 
 inline constexpr size_t FUObjectArray_ObjObjects = 0x10;  // FChunkedFixedUObjectArray
 inline constexpr size_t Chunk_Objects = 0x00;             // FUObjectItem** chunk table
-inline constexpr size_t Chunk_MaxElements = 0x10;
 inline constexpr size_t Chunk_NumElements = 0x14;
-inline constexpr size_t Chunk_NumChunks = 0x1C;
 inline constexpr int32_t ElemsPerChunk = 64 * 1024;
 inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cluster, serial}
 inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObjectFlags (PendingKill/Unreachable -> dying)
 inline constexpr size_t FUObjectItem_SerialNumber = 0x10; // int32, LAZY (0 until a weak ref exists) -- CachedObjRef serial rule
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
 inline constexpr size_t mainGameInstance_GameMode = 0x01E1;  // TEnumAsByte<enum_gamemode::Type> (story/sandbox/...; the menu sets it on load from the slot-name prefix, our LoadStorySave must too) -- mainGameInstance.hpp:11
-inline constexpr size_t UWidgetComponent_WidgetClass = 0x0480;  // TSubclassOf<UUserWidget> (set before register so InitWidget builds it)
-inline constexpr size_t UWidgetComponent_BlendMode = 0x04E4;    // EWidgetBlendMode (uint8): 0=Opaque,1=Masked(ctor DEFAULT!),2=Transparent
-inline constexpr size_t UWidgetComponent_bIsTwoSided = 0x04E5;  // bool
-inline constexpr size_t UWidgetComponent_bDrawAtDesiredSize = 0x04A8;  // bool: quad fits the widget (centers text on the actor)
-inline constexpr size_t UWidgetComponent_TranslucentMaterial = 0x04F0;          // UMaterialInterface* (two-sided slot)
-inline constexpr size_t UWidgetComponent_TranslucentMaterialOneSided = 0x04F8;  // UMaterialInterface*
-inline constexpr size_t UWidgetComponent_MaterialInstance = 0x0528;             // UMaterialInstanceDynamic* (the live drawn material)
-inline constexpr size_t UWidgetComponent_RenderTarget = 0x0520;                 // UTextureRenderTarget2D*
-inline constexpr size_t UWidgetComponent_bManuallyRedraw = 0x0490;             // bool (must be 0 to auto-redraw on tick)
-inline constexpr size_t UWidgetComponent_RedrawTime = 0x0494;                  // float (0 = redraw every tick)
-inline constexpr size_t UWidgetComponent_BackgroundColor = 0x04C0;             // FLinearColor (RT clear color)
 // Own-UMG widget tree (built via SpawnObject):
 inline constexpr size_t UUserWidget_WidgetTree = 0x01D8;       // UWidgetTree*
 inline constexpr size_t UWidgetTree_RootWidget = 0x0028;       // UWidget*
-inline constexpr size_t UTextBlock_Text = 0x0128;              // FText
 inline constexpr size_t UTextBlock_ColorAndOpacity = 0x0150;   // FSlateColor {FLinearColor@0, ColorUseRule(uint8)@0x10}
 inline constexpr size_t UTextBlock_Font = 0x0188;              // FSlateFontInfo {FontObject@0, Size(int32)@0x48, OutlineSettings@0x10 (size 0x20)}
 inline constexpr size_t UTextBlock_ShadowOffset = 0x0268;      // FVector2D (2 floats). UMG.hpp:1447
@@ -329,20 +315,11 @@ inline constexpr size_t FButtonStyleBrushes[4] = {0x08, 0x90, 0x118, 0x1A0};
 inline constexpr size_t FScrollBarStyle_Size = 0x4D0;
 inline constexpr size_t FScrollBarStyleBrushes[9] = {0x08, 0x90, 0x118, 0x1A0, 0x228,
                                                     0x2B0, 0x338, 0x3C0, 0x448};
-// FEditableTextBoxStyle (0x7F8): four brushes + a nested FScrollBarStyle @0x328 = 13.
-inline constexpr size_t FEditableTextBoxStyle_Size        = 0x7F8;
-inline constexpr size_t FEditableTextBoxStyle_ScrollBarStyle = 0x328;
 
 // The UMG widgets the browser builds. UMG.hpp: UImage:695-721, UScrollBox:1173-1214,
 // USizeBox:1227-1262, UEditableTextBox, and the panel slots.
 inline constexpr size_t UImage_Brush            = 0x0108;  // FSlateBrush
-inline constexpr size_t UImage_ColorAndOpacity  = 0x01A0;  // FLinearColor
-inline constexpr size_t UEditableTextBox_WidgetStyle = 0x0130;  // FEditableTextBoxStyle (0x7F8)
-inline constexpr size_t UEditableTextBox_Font        = 0x0958;  // FSlateFontInfo (0x58)
-inline constexpr size_t UEditableTextBox_ForegroundColor = 0x09B0;  // FLinearColor
 inline constexpr size_t UScrollBox_WidgetBarStyle     = 0x0348;  // FScrollBarStyle (0x4D0)
-inline constexpr size_t UScrollBox_ScrollbarThickness = 0x082C;  // FVector2D
-inline constexpr size_t UScrollBox_AlwaysShowScrollbar= 0x0844;  // bool
 // THE FOUR FIELDS THAT DECIDE WHETHER A WHEEL EVENT MOVES THIS WIDGET, read (never
 // written) by the T0 self-check so a "the wheel did nothing" verdict names its cause
 // instead of leaving four candidates open. We hand-spawn the ScrollBox, so every one of
@@ -353,10 +330,6 @@ inline constexpr size_t UScrollBox_Orientation        = 0x0828;  // TEnumAsByte<
 inline constexpr size_t UScrollBox_ConsumeMouseWheel  = 0x082A;  // EConsumeMouseWheel
 inline constexpr size_t UScrollBox_AnimateWheelScroll = 0x0847;  // bool -- offset lands over frames
 inline constexpr size_t UScrollBox_WheelScrollMult    = 0x0854;  // float -- 0 would eat every notch
-// USizeBox::HeightOverride is @0x134, but bOverride_HeightOverride is a BITFIELD at
-// 0x150 -- a raw write to 0x134 leaves the override bit clear and does NOTHING. Always
-// drive it through the SetHeightOverride UFunction; the offset is here for diagnosis only.
-inline constexpr size_t USizeBox_HeightOverride = 0x0134;
 inline constexpr size_t UOverlaySlot_Padding = 0x0040;
 inline constexpr size_t UOverlaySlot_HAlign  = 0x0050;
 inline constexpr size_t UOverlaySlot_VAlign  = 0x0051;
@@ -377,9 +350,6 @@ inline constexpr size_t UVerticalBoxSlot_VAlign  = 0x0059;
 // ESlateSizeRule: Automatic = 0, Fill = 1.
 inline constexpr size_t FSlateChildSize_Value    = 0x00;
 inline constexpr size_t FSlateChildSize_SizeRule = 0x04;
-inline constexpr size_t UWidgetSwitcherSlot_Padding = 0x0040;
-inline constexpr size_t UWidgetSwitcherSlot_HAlign  = 0x0050;
-inline constexpr size_t UWidgetSwitcherSlot_VAlign  = 0x0051;
 
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
@@ -388,8 +358,6 @@ inline constexpr size_t UWidgetSwitcherSlot_VAlign  = 0x0051;
 // flags/size/offset. See research/findings/uproperty-param-marshaling-*.
 inline constexpr size_t UStruct_ChildProperties = 0x50;   // FField* (params first, then locals)
 inline constexpr size_t UStruct_PropertiesSize = 0x58;    // int32 (full frame size)
-inline constexpr size_t UFunction_ParmsSize = 0xB6;       // uint16 (param-region size)
-inline constexpr size_t UFunction_ReturnValueOffset = 0xB8;  // uint16 (0xFFFF = none)
 // UFunction::Func -- the FNativeFuncPtr the BP-VM invokes for EVERY call path (a
 // native function's C++ exec thunk; a script function's ProcessInternal). IDA-pinned
 // 2026-06-21 against exe ad478218 (size kExpectedExeSize): UFunction::Invoke
@@ -464,7 +432,6 @@ inline constexpr size_t APawn_AIControllerClass = 0x238;    // UClass* (TSubclas
 // mesh_playerVisible) walk speed directly: 0 = idle.
 inline constexpr size_t USkinnedMesh_VisibilityBasedAnimTickOption = 0x604;  // uint8 (set 0)  Engine.hpp:18308
 inline constexpr size_t USkeletalMesh_AnimScriptInstance = 0x6B0;            // AnimInstance*  Engine.hpp:18095
-
 
 // ---- skin-puppet (the remote body) ---------------------------------------
 // Root-cause finding (two converging agents, CXX dump): the body AnimBP poses
@@ -606,12 +573,6 @@ inline constexpr size_t USceneComponent_RelativeLocation = 0x011C;     // FVecto
 // + UpdateHandleTransform decompile at 0x142D7C670 / 0x142D7EE30; matches
 // stock UE4.27 source line 336/413 of PhysicsHandleComponent.cpp).
 inline constexpr size_t UPhysicsHandleComponent_GrabbedComponent   = 0x00B0;  // UPrimitiveComponent* (cleared on Release)
-inline constexpr size_t UPhysicsHandleComponent_GrabbedBoneName    = 0x00B8;  // FName (8 bytes)
-inline constexpr size_t UPhysicsHandleComponent_Flags              = 0x00C0;  // DWORD (&=~1 clears bConstrained)
-inline constexpr size_t UPhysicsHandleComponent_TargetRotation     = 0x00E0;  // FQuat (16 bytes)
-inline constexpr size_t UPhysicsHandleComponent_TargetLocation     = 0x00F0;  // FVector (per-tick PhysX kinematic target)
-inline constexpr size_t UPhysicsHandleComponent_KinActorData       = 0x0148;  // FPhysicsActorHandle*
-inline constexpr size_t UPhysicsHandleComponent_ConstraintHandle   = 0x0150;  // FPhysicsConstraintHandle*
 
 // Aprop_C field offsets (prop.hpp).
 //
@@ -647,11 +608,6 @@ inline constexpr size_t CompPhysImpact_physSoundData = 0x00C8;  // Fstruct_physS
 inline constexpr size_t CompPhysImpact_PhysMat       = 0x0290;  // UPhysicalMaterial*  comp_physicsImpact.hpp (the comp's cached physmat -- input for a fresh lib_C::physSound lookup)
 inline constexpr size_t FstructPhysSound_soft        = 0x0010;  // USoundBase* soft_30  struct_physSound.hpp
 
-// ---- HUD / Canvas (screen-space nameplate, MTA-style) --------------------
-// We hook AHUD::ReceiveDrawHUD (ProcessEvent-dispatched), read the live UCanvas
-// off the HUD, project the remote head world->screen and draw the nickname with
-// UCanvas::K2_DrawText (takes an FString -> no FText, outline+shadow built in).
-
 // Freecam gamma fix: a bare ACameraActor renders with default post-process, so the
 // player's exposure/grading is lost and the view goes dark. Copy the player camera's
 // FPostProcessSettings onto the freecam camera. The struct has ONE TArray
@@ -679,37 +635,6 @@ inline constexpr size_t AmainPlayer_crankFlashlight = 0x0CC4;  // bool -- _c var
 // it on the puppet's light_R via SetIntensity (name::SetIntensityFn).
 inline constexpr size_t ULightComponentBase_Intensity = 0x020C;  // float
 
-// ULocalLightComponent::IntensityUnits (Engine.hpp:13636). The unit
-// scale for Intensity (ELightUnits enum: 0=Unitless, 1=Candelas, 2=Lumens).
-// VOTV's mainPlayer flashlight uses Unitless (we read Intensity=0.2 in
-// default state -- 0.2 lumens would be invisible, and stock UE4.27
-// CDO Intensity default in Lumens mode is 5000). On Unitless scale,
-// real "on" intensity is roughly 5-10. Used by Phase 5F receiver to
-// mirror the source's scale when applying intensity to the puppet.
-inline constexpr size_t ULocalLightComponent_IntensityUnits = 0x0328;  // uint8 (ELightUnits)
-
-// ULightComponent::SceneProxy raw pointer (IDA-confirmed 2026-05-26 via
-// the SetIntensity decompile: sub_142A930E0 -> sub_142A98430 reads
-// *(QWORD*)(a1 + 0x3F8) as the proxy; the function HARD NO-OPS if
-// it's null (no MarkRenderStateDirty fallback). This is the single
-// most diagnostic field for the Phase 5F cone-doesn't-render problem
-// -- if it's null on the puppet, MarkRenderStateDirty is a no-op and
-// every Set*-on-light UFunction silently does nothing.
-inline constexpr size_t ULightComponent_SceneProxy = 0x03F8;  // FLightSceneProxy*
-
-// UActorComponent bRegistered bit (IDA-confirmed 2026-05-26: the
-// SetIntensity early-out guard at sub_142A930E0:0x142A93112 tests
-// `(*(BYTE*)(a1 + 0x88) & 1) == 0` which matches UE4.27's
-// `IsRegistered()` && Mobility check. So bRegistered = byte 0x0088,
-// bit 0. Note this packed byte ALSO holds bNetAddressable/bReplicates
-// (reflected names) -- the engine union'd them onto the same byte.
-inline constexpr size_t UActorComponent_RegFlagsByte = 0x0088;  // bRegistered @ bit 0
-
-// USceneComponent::Mobility (Engine.hpp:17916). 0=Static, 1=Stationary,
-// 2=Movable. Static lights don't get runtime-mutable SceneProxies, so
-// if a light is mistakenly Static we'd see exactly the puppet symptom.
-inline constexpr size_t USceneComponent_Mobility = 0x014F;  // uint8
-
 // USpotLightComponent cone-angle offsets (Engine.hpp via UE4.27 stock layout).
 // Read directly from sender's local light_R to snapshot the cone shape; the
 // receiver writes them via the SetOuterConeAngle / SetInnerConeAngle UFunctions
@@ -718,15 +643,6 @@ inline constexpr size_t USceneComponent_Mobility = 0x014F;  // uint8
 // proxy recreate). Phase 5F v6 wire-format (2026-05-26 PM).
 inline constexpr size_t USpotLightComponent_InnerConeAngle = 0x0358;  // float (deg)
 inline constexpr size_t USpotLightComponent_OuterConeAngle = 0x035C;  // float (deg)
-inline constexpr size_t UPointLightComponent_AttenuationRadius = 0x0330;  // float (cm)
-
-// ULightComponentBase flags byte at +0x0214 (bAffectsWorld @ bit 0,
-// CastShadows @ bit 1, bCastVolumetricShadow @ bit 6, bCastDeepShadow
-// @ bit 7). bAffectsWorld=false on the CDO is one of the candidate
-// root causes for "SceneProxy never created" -- the OnRegister path
-// skips proxy creation when bAffectsWorld is false even if bVisible
-// is true.
-inline constexpr size_t ULightComponentBase_FlagsByte = 0x0214;  // bAffectsWorld @ bit 0
 
 // USceneComponent RelativeRotation (Engine.hpp:17900-ish, FRotator at
 // offset 0x0128). FRotator layout is {Pitch, Yaw, Roll} so Pitch is the
@@ -770,12 +686,6 @@ inline constexpr size_t FalloffDistance         = 0x28 + 0x24;  // float
 inline constexpr size_t FlagsByte               = 0x28 + 0xB0;  // bAttenuate@0x01, bSpatialize@0x02
 }  // namespace att
 
-inline constexpr size_t AHUD_bShowHUD = 0x0228;     // uint8  Engine.hpp:7413 (VOTV draws via UMG -> default HUD canvas off; force 1 to get ReceiveDrawHUD)
-inline constexpr size_t AHUD_Canvas = 0x0270;       // UCanvas*  Engine.hpp:7422
-inline constexpr size_t UCanvas_SizeX = 0x0040;     // int32     Engine.hpp:9846
-inline constexpr size_t UCanvas_SizeY = 0x0044;     // int32     Engine.hpp:9847
-inline constexpr size_t UEngine_SmallFont = 0x0050; // UFont*    Engine.hpp:10732
-
 // Phase 5W (2026-05-26): AdaynightCycle_C weather state fields. All offsets
 // from CXXHeaderDump/daynightCycle.hpp -- literal `@ 0xNNN` comments in the
 // dump. Owned by mainGamemode.daynightCycle@0x0450 (singleton per session).
@@ -803,7 +713,6 @@ inline constexpr size_t AdaynightCycle_enable_rain          = 0x044B;  // bool
 // cycle's SetFogDensity() pushes from finalFogDensity into ExponentialHeightFog.
 // Host-authoritative clear = destroy the actors + zero finalFogDensity/thickFog +
 // SetFogDensity(). See research/findings/votv-weather-RE-* + the workflow output.
-inline constexpr size_t AdaynightCycle_ExponentialHeightFog = 0x0270;  // UExponentialHeightFogComponent*
 inline constexpr size_t AdaynightCycle_thickFog             = 0x0330;  // float (per-tick density TARGET)
 inline constexpr size_t AdaynightCycle_fogEventObject       = 0x0338;  // AweatherFogController_C* (rolling fog; presence == active)
 inline constexpr size_t AdaynightCycle_finalFogDensity      = 0x0418;  // float (active height-fog density pushed via SetFogDensity)
@@ -895,7 +804,6 @@ inline constexpr size_t LookAt_LookAtTarget       = 0xE0;   // FBoneSocketTarget
 inline constexpr size_t LookAt_LookAtLocation     = 0x140;  // FVector (fallback if no socket target)
 inline constexpr size_t LookAt_Clamp              = 0x170;  // float degrees (FAnimNode_LookAt::LookAtClamp; class-default 45)
 // FAnimNode_ModifyBone specifics (for direct head-rotation writes):
-inline constexpr size_t ModBone_Translation       = 0xD8;   // FVector
 inline constexpr size_t ModBone_Rotation          = 0xE4;   // FRotator
 inline constexpr size_t ModBone_RotationMode      = 0xFD;   // EBoneModificationMode (0=Ignore,1=Replace,2=Additive)
 // AnimGraphNode_* offsets within the kerfurOmega_regular AnimInstance:
@@ -930,7 +838,6 @@ inline constexpr size_t kKerfurAnimBPVarsAll_End      = 0x2E50;
 // ---- content names: moved to ue_wrap/sdk_profile_names.h (2026-07-04 split;
 //      the 1500-LOC hard cap). Included below so P::name:: keeps resolving
 //      through this single header.
-
 
 }  // namespace ue_wrap::profile
 

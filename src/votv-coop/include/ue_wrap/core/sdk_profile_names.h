@@ -286,7 +286,6 @@ inline constexpr const wchar_t* GetActorBoundsFn = L"GetActorBounds";   // (bool
 // spawn (mainPlayer_C auto-possesses Player0), and that 2nd controller fights the
 // LOCAL player's input/view. Strip it: GetController -> Detach -> destroy.
 inline constexpr const wchar_t* PawnClassName = L"Pawn";
-inline constexpr const wchar_t* AIControllerClassName = L"AIController";  // /Script/AIModule.AIController
 inline constexpr const wchar_t* GetControllerFn = L"GetController";
 inline constexpr const wchar_t* DetachFromControllerFn = L"DetachFromControllerPendingDestroy";
 // Give the remote pawn an AIController (poses the body via the possession drive
@@ -315,7 +314,6 @@ inline constexpr const wchar_t* SetStaticMeshFn = L"SetStaticMesh";       // USt
 // suffix UE4 uses for BP-generated classes). BlueprintUpdateAnimation is the
 // per-frame BP event whose body writes spd=0 on null-Pawn puppets.
 inline constexpr const wchar_t* AnimBPKerfurRegularClass = L"AnimBlueprint_kerfurOmega_regular_C";
-inline constexpr const wchar_t* BlueprintUpdateAnimationFn = L"BlueprintUpdateAnimation";
 
 // Dev freecam: a spawned ACameraActor we point the view at (SetViewTargetWithBlend),
 // look driven by the game's own control rotation (smooth), moved by WASD per frame.
@@ -359,7 +357,6 @@ inline constexpr const wchar_t* GetComponentForwardFn = L"GetForwardVector";
 // Both are USceneComponent BlueprintCallable (Engine.hpp:17941/17950).
 inline constexpr const wchar_t* GetComponentRotationFn = L"K2_GetComponentRotation";
 inline constexpr const wchar_t* SetWorldRotationFn = L"K2_SetWorldRotation";
-inline constexpr const wchar_t* CameraComponentClass = L"CameraComponent";
 
 // Component destruction (UActorComponent::K2_DestroyComponent(Object)) -- to
 // remove the local-only systems a remote pawn must NOT own (its unbound
@@ -385,7 +382,6 @@ inline constexpr const wchar_t* TextBlockClass = L"TextBlock";
 inline constexpr const wchar_t* ImageClass = L"Image";                              // UImage -- every frame, fill and scrim we build
 inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
 inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
-inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)
 // World-space WidgetComponent translucent material (the slot a runtime-added
 // component may have null -> blank quad). bIsTwoSided=true uses the two-sided slot.
 inline constexpr const wchar_t* Widget3DTranslucentMatName = L"Widget3DPassThrough_Translucent";
@@ -496,7 +492,6 @@ inline constexpr const wchar_t* ReleaseComponentFn                     = L"Relea
 inline constexpr const wchar_t* PhysicsConstraintComponentClass        = L"PhysicsConstraintComponent";
 inline constexpr const wchar_t* SetConstrainedComponentsFn             = L"SetConstrainedComponents";
 inline constexpr const wchar_t* BreakConstraintFn                      = L"BreakConstraint";
-inline constexpr const wchar_t* SetDisableCollisionFn                  = L"SetDisableCollision";
 
 // Engine UPrimitiveComponent.AddImpulse (THROW path -- VOTV's throwHoldingProp
 // is BP-pure inline, but it MUST call AddImpulse on the released prop's
@@ -550,7 +545,6 @@ inline constexpr const wchar_t* MainPlayerFlashlightUpdateFn = L"Flashlight Upda
 // internally MarkRenderStateDirty on the light proxy -- direct field
 // writes do NOT mark dirty so the renderer won't pick up changes.
 inline constexpr const wchar_t* SetIntensityFn      = L"SetIntensity";
-inline constexpr const wchar_t* SetIntensityUnitsFn = L"SetIntensityUnits";
 
 // USpotLightComponent cone-angle setter UFunctions (Engine.hpp:14080-ish in
 // stock UE4.27). Both call MarkRenderStateDirty internally -- the receiver
@@ -611,28 +605,6 @@ inline constexpr const wchar_t* PlaySoundAtLocationFn    = L"PlaySoundAtLocation
 // at runtime via UGameplayStatics::SpawnObject. Field offsets live in
 // the `off::att` namespace (block at the top of this file).
 inline constexpr const wchar_t* SoundAttenuationClass = L"SoundAttenuation";
-
-// 2026-05-26 deep-RE breakthrough: BP graphs for input handlers + the
-// updateFlashlight / 'Flashlight Update' functions all compile to
-// tiny bytecode STUBS that call ExecuteUbergraph_mainPlayer via the
-// VM's EX_LocalFinalFunction opcode (which bypasses ProcessEvent's
-// observer hook, hence our trace caught nothing). So none of these
-// stubs are useful to invoke via reflection -- their "real" body is
-// in the ubergraph, locked behind controller / inMenu / inventory
-// guards that fail for the controllerless puppet.
-//
-// THE NATURAL MECHANISM (per architectural-agent verdict + Engine.hpp:
-// mainPlayer.hpp line 184-185): the BP fires the multicast delegate
-// `flashlightStateChanged(USpotLightComponent* Light, bool Visible)`
-// after toggling local state. Subscribers (cooked equipment-flashlight
-// actor + map-side props + global lighting helpers) listen and DO
-// the actual SetVisibility / SetIntensity / MarkRenderStateDirty
-// work on the passed `Light`. Broadcasting this delegate FROM the
-// puppet's mainPlayer_C with the puppet's `light_R` + new state
-// causes the subscribers to apply the SAME work they do on the local
-// peer -- including any side-effects (sound, particles, save-state
-// updates) that match the user-observed local rendering.
-inline constexpr const wchar_t* MainPlayerFlashlightStateChangedFn = L"flashlightStateChanged";
 
 // Vitals pillar Inc2b (2026-05-31, ragdoll/faint DISPLAY sync). mainPlayer_C
 // drives every ragdoll cause (manual C-key, exhaustion faint, KO) through ONE
@@ -709,7 +681,6 @@ inline constexpr const wchar_t* FlashlightEquipmentClass = L"prop_equipment_flas
 // real E-press). These ARE ProcessEvent-dispatched (BP CallFunction nodes).
 inline constexpr const wchar_t* TimelineComponentClass       = L"TimelineComponent";
 inline constexpr const wchar_t* TimelinePlayFromStartFn      = L"PlayFromStart";
-inline constexpr const wchar_t* TimelineStopFn               = L"Stop";
 
 // Aprop_C BP class name (for PropKeyRegistry GUObjectArray scan, Stage 4).
 inline constexpr const wchar_t* PropClass             = L"prop_C";
@@ -840,18 +811,6 @@ inline constexpr const wchar_t* DaynightCycle_setFogDensityFn      = L"SetFogDen
 // flagged this as a fallback path. Receiver calls this after causeRain to
 // guarantee the visible particle component matches state.
 inline constexpr const wchar_t* DaynightCycle_setRainParticlesFn   = L"setRainParticles";
-
-// Phase 5W Inc-fix-1 (2026-05-27): direct UParticleSystemComponent::Activate
-// path on the cycle's eff_rain component. Per
-// research/findings/weather-wind/votv-weather-RE-rendering-2026-05-27.md the previous
-// receiver chain (causeRain UFunction) does NOT reliably activate eff_rain
-// on the client because causeRain's BP body is a Random-roll function, not
-// a particle-Activate dispatcher. Bypass it entirely: direct memory writes
-// for the bools + scalars, then call eff_rain->Activate() directly.
-// Activate is the engine-inherited UActorComponent UFunction; deterministic.
-inline constexpr const wchar_t* ParticleSystemComponentClass    = L"ParticleSystemComponent";
-inline constexpr const wchar_t* ActorComponent_ActivateFn       = L"Activate";
-inline constexpr const wchar_t* ActorComponent_DeactivateFn     = L"Deactivate";
 
 // Phase 5W Inc-fix-2 (2026-05-27): red sky path on AmainGamemode_C.
 // mainGamemode.spawnRedSky() spawns the redSkyEvent_C actor and stashes
