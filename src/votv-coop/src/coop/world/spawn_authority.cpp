@@ -1,53 +1,18 @@
-// coop/world/spawn_authority.cpp -- see header + docs/COOP_RNG_AUTHORITY.md
-// "T1 STRUCTURAL DESIGN". Absorbs coop/session/ambient_spawner_suppress
-// (RULE-2 dissolve 2026-07-10) -- its four PRE-cancels are the t3 rows here,
-// callbacks byte-identical to the proven originals.
-//
-// t3 bytecode facts (research/bp_reflection, 2026-06-10):
-// - mushroomMaster_C: ONE looping K2_SetTimerDelegate('spawn', Time=15s CDO)
-//   armed in ReceiveBeginPlay; spawn() mints mushroomSpawner_C children with
-//   SetLifeSpan(1800) -- cancelled children are reaped by the ENGINE lifespan
-//   (native Destroy), independent of the cancelled BP event.
-// - mushroomSpawner_C: ONE looping K2_SetTimerDelegate('spawn', timer=2s CDO);
-//   spawn() materializes the prop_food_C cap when not recently rendered and
-//   self-destroys; with spawn cancelled, the lifespan-1800 fallback reaps it.
-// - pineconeSpawner_C: NOT a row (2026-07-10 reversal). Measured anchor =
-//   GetPlayerCameraManager->GetActorLocation (research/bp_reflection dump):
-//   forest drops land around the LOCAL player -> OWNER-EFFECT tier
-//   ([[feedback-owner-effect-rule]]). Each peer rolls its own; the ambient
-//   owner-mirror in coop/props/host_spawn_watcher makes them cross-visible.
-// - ticker_yellowWispSpawner_C: ReceiveTick; anchor is a navmesh RANDOM-WALK
-//   point (p = ProjectPointToNavigation(p + rotated random offset), measured
-//   2026-07-10 -- NOT player-anchored); killerwisp_C is host-mirrored
-//   (kNpcAllowlist), so the client must not run its own spawner.
-// - ticker_wispSpawner_C: ReceiveTick (1200-3600 s interval); spawns the sky
-//   wisps (wisp_C + 8 color variants) at ABSOLUTE map coords (+-60-70k X/Y,
-//   Z=80k -- measured 2026-07-10, REVERSING the earlier OWNER-EFFECT call).
-//   World-anchored -> host rolls, clients mirror via the EX-catch source row
-//   (npc_world_enum) + the variant allowlist rows.
-// - cockroachMaster_C (the roach infestation sim): summonRoach (called by
-//   ticker_roachSummoner via the gamemode ref) + the three timer entries
-//   (addRoachTimer / spawnNestTimer / CustomEvent re-armed by looping
-//   K2_SetTimerDelegate -- timers fire independently of actor tick, so the
-//   t1 park alone cannot silence them). Roaches are components on the ONE
-//   world-anchored master (nests near food, growth by eating) = shared world
-//   state; coop/creatures/roach_sync mirrors the host population.
-//
-// t1 park facts (gate read 2026-07-10, research/bp_reflection):
-// - ticker_insomniacSpawner_C / ticker_fossilhoundSpawner_C: rolls live INSIDE
-//   ReceiveTick (RandomBoolWithWeight per interval; SetActorTickInterval
-//   self-re-arm; NO Delay chains, NO destroy/reap duties -> pure spawn ->
-//   parking the tick stops roll AND product). Products insomniac_C /
-//   fossilhound_C are host-mirrored (kNpcAllowlist), so the park is a pure
-//   improvement: no content change, the divergent client roll stops.
-// - cockroachMaster_C / ticker_roachSummoner_C (roach lane, 2026-07-10): the
-//   master's ReceiveTick drives calc() = per-roach movement + the food-eat
-//   mutation (drains prop_food_C foodData, destroys depleted food) + crush
-//   traces -- a client running it DIVERGES the shared food/roach state.
-//   Parked; roach_sync drives the client population from host RoachState.
-//   Interaction EVENTS (steppedOn/actionOptionIndex/impactSquishCPP) are NOT
-//   tick-driven and stay live on the parked master -- the local eat/stomp
-//   runs natively and roach_sync forwards the consumption intent.
+// coop/world/spawn_authority.cpp -- see the header. The cancel rows rest on these bytecode
+// facts: the mushroom master arms one looping spawn timer at begin-play, and its spawn mints
+// spawner children with a lifespan, so cancelled children are reaped by the engine
+// independently of the cancelled event; the mushroom spawner's own looping timer
+// materialises the food cap and self-destroys, and with spawn cancelled the lifespan reaps
+// it; the yellow-wisp ticker spawns at a navmesh random-walk point, not around the player,
+// and its product is host-mirrored, so the client must not run its own spawner; the sky-wisp
+// ticker spawns the sky wisps at absolute map coordinates, so the host rolls and clients
+// mirror through the source-gated catch and the variant allowlist; the roach master's
+// summon and its three looping timer entries fire independently of actor tick, so the tick
+// park alone cannot silence them. The park rows: the insomniac and fossilhound tickers roll
+// inside their tick with no delay chains or reap duties, so parking the tick stops the roll
+// and the product, and the products are host-mirrored; the roach master's tick drives roach
+// movement, the food-eat mutation and crush traces, which a client running it would diverge,
+// so it and its summoner are parked while the roach sync drives the client population.
 
 #include "coop/world/spawn_authority.h"
 
@@ -75,18 +40,16 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Suppress/park only while an ACTIVE client session exists. running_ flips
-// true in Session::Start and false in Stop, which every disconnect path
-// reaches; a bare role() gate is the post-session SP-bleed defect class
-// ([[lesson-suppression-needs-paired-restore-or-running-gate]]).
+// Suppress and park only while an active client session exists: the running flag flips true
+// in the session start and false in the stop, which every disconnect path reaches; a bare
+// role gate would bleed the suppression into single player after the session.
 bool IsActiveClientSession() {
     auto* s = g_session.load(std::memory_order_acquire);
     return s && s->running() && s->role() == coop::net::Role::Client;
 }
 
-// ---- t3 CANCEL rows (migrated verbatim from ambient_spawner_suppress) ----
-// Callbacks are atomics + counter + throttled log ONLY (no engine calls, no
-// Post) -- safe for the parallel-anim-worker dispatch contract.
+// The cancel rows. Callbacks are atomics, a counter and a throttled log only (no engine
+// calls, no post), safe for the parallel-anim worker dispatch contract.
 #define MAKE_SPAWN_CANCEL(fn_name, log_tag)                                      \
 bool fn_name(void* self, void* /*params*/) {                                     \
     if (!IsActiveClientSession()) return false;                                   \
@@ -119,38 +82,37 @@ struct CancelTarget {
 CancelTarget g_cancelTargets[] = {
     {L"mushroomMaster_C",            L"Spawn",           &OnMushroomMasterSpawnPre,  false},
     {L"mushroomSpawner_C",           L"Spawn",           &OnMushroomSpawnerSpawnPre, false},
-    // Late-game class: resolves only once the yellow-wisp spawner loads; the
-    // all-done latch stays open until then (idempotent per-target retry).
+    // A late-game class: it resolves only once the yellow-wisp spawner loads, and the all-done
+    // latch stays open until then (an idempotent per-target retry).
     {L"ticker_yellowWispSpawner_C",  L"ReceiveTick",     &OnYellowWispTickPre,       false},
-    // Sky wisps: world-anchored (absolute map coords) -- host rolls, EX-catch
-    // source row + variant allowlist mirror the products (2026-07-10).
+    // Sky wisps: world-anchored, so the host rolls; the source-gated catch and the variant
+    // allowlist mirror the products.
     {L"ticker_wispSpawner_C",        L"ReceiveTick",     &OnSkyWispTickPre,          false},
-    // Roach sim entries: the ticker's cross-object call + the three looping
-    // timer delegates (timers bypass the t1 actor-tick park). The client
-    // population is driven by coop/creatures/roach_sync instead.
+    // Roach sim entries: the ticker's cross-object call and the three looping timer delegates
+    // (timers bypass the actor-tick park). The roach sync drives the client population instead.
     {L"cockroachMaster_C",           L"summonRoach",     &OnRoachSummonPre,          false},
     {L"cockroachMaster_C",           L"addRoachTimer",   &OnRoachAddTimerPre,        false},
     {L"cockroachMaster_C",           L"spawnNestTimer",  &OnRoachNestTimerPre,       false},
     {L"cockroachMaster_C",           L"CustomEvent",     &OnRoachCustomEventPre,     false},
 };
 
-// ---- t1 PARK rows ----
+// The park rows.
 constexpr const wchar_t* kParkClassNames[] = {
     L"ticker_insomniacSpawner_C",
     L"ticker_fossilhoundSpawner_C",
-    // Roach lane (2026-07-10): the master's tick runs calc() = movement +
-    // food-eat mutation + crush traces; the ticker's tick calls summonRoach.
-    // Both parked on an active client session (roach_sync drives the mirror).
+    // The roach master's tick runs movement, the food-eat mutation and crush traces, and the
+    // ticker's tick calls the summon; both are parked on an active client session (the roach
+    // sync drives the mirror).
     L"cockroachMaster_C",
     L"ticker_roachSummoner_C",
 };
 constexpr size_t kParkClassCount = std::size(kParkClassNames);
 
-// Resolved UClass* per park row. Written on the game thread (Install), read
-// by NoteClientSpawnPassThrough from parallel-anim worker threads -> atomics.
+// The resolved class per park row. Written on the game thread (Install), read by the spawn
+// pass-through from parallel-anim worker threads, so atomics.
 std::atomic<void*> g_parkClasses[kParkClassCount] = {};
 
-// Parked instances (game-thread only: built/re-asserted/restored in Tick).
+// The parked instances, game thread only: built, re-asserted and restored in Tick.
 struct ParkedInstance {
     void* obj;
     int32_t internalIdx;  // recycle-proof liveness via IsLiveByIndex
@@ -180,12 +142,10 @@ bool AlreadyParked(void* obj) {
     return false;
 }
 
-// One pass over GUObjectArray: park every live instance of a park class not
-// yet in the cache. Cheap class-POINTER compare per object (no NameOf --
-// [[lesson-full-array-walk-cheap-filter-before-nameof]]); CDOs are skipped by
-// ClassOf(cdo)!=cls never holding for CDOs?  No: a CDO's class IS the class,
-// so skip via the object's own name prefix ONLY for matched objects (matched
-// set is tiny: instance count of 2 spawner classes).
+// One pass over the object array: park every live instance of a park class not yet in the
+// cache. A cheap class-pointer compare per object, no name rendering; a CDO's class is the
+// class itself, so the CDO is skipped by its name prefix, and only for matched objects (a
+// tiny set, the instances of the park classes).
 int ParkWalk(const char* why) {
     int newlyParked = 0;
     const int n = R::NumObjects();
@@ -209,9 +169,9 @@ int ParkWalk(const char* why) {
     return newlyParked;
 }
 
-// Re-enable tick on every still-live parked instance + clear the cache. The
-// loan's structural repayment is the mandatory menu teardown (world reload
-// re-runs BeginPlay); this restore is belt for the teardown window itself.
+// Re-enable tick on every still-live parked instance and clear the cache. The loan's
+// structural repayment is the mandatory menu teardown (a world reload re-runs begin-play);
+// this restore covers the teardown window itself.
 void RestoreAll(const char* why) {
     int restored = 0;
     for (const auto& p : g_parked) {
@@ -238,10 +198,9 @@ std::atomic<bool> g_cancelInstalled{false};
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // FindClass walks GUObjectArray -- throttle resolve attempts to ~1 Hz of
-    // the 125 Hz pump. Shape rule (garbage_sync defect): the all-done latch is
-    // the ONLY early-out and sets only at full resolution; per-target flags
-    // make partial retries safe.
+    // FindClass walks the object array, so resolve attempts are throttled to about 1 Hz of the
+    // pump. The all-done latch is the only early-out and sets only at full resolution; the
+    // per-target flags make partial retries safe.
     static uint32_t sResolveN = 0;
     const bool cancelsDone = g_cancelInstalled.load(std::memory_order_acquire);
     if (cancelsDone && AllParkClassesResolved()) return;
@@ -249,9 +208,9 @@ void Install(coop::net::Session* session) {
 
     if (!cancelsDone) {
         int done = 0;
-        // Per-pass FindClass dedupe (audit 2026-07-10): the roach rows share one
-        // class 4x; each FindClass is a full GUObjectArray walk, so adjacent
-        // same-class rows reuse the previous resolve while the latch is open.
+        // The per-pass FindClass dedupe: the roach rows share one class four times, and each
+        // FindClass is a full object-array walk, so adjacent same-class rows reuse the previous
+        // resolve while the latch is open.
         const wchar_t* lastClsName = nullptr;
         void* lastCls = nullptr;
         for (auto& t : g_cancelTargets) {
@@ -295,8 +254,8 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     if (!IsActiveClientSession()) {
-        // Session over (any end path) or not a client: repay the loan even if
-        // the DisconnectAll fanout was missed, then stay cheap.
+        // The session is over (any end path) or this is not a client: repay the loan even if the
+        // disconnect fan-out was missed, then stay cheap.
         if (g_sessionLatch) {
             RestoreAll("session ended (tick gate)");
             g_sessionLatch = false;
@@ -308,9 +267,9 @@ void Tick() {
 
     const long long now = NowMs();
     if (!g_initialPassDone) {
-        // The initial pass runs on the first gameplay tick of the client
-        // session (the join window -- before the world starts progressing for
-        // the player), so the spawners never get a rolling window on join.
+        // The initial pass runs on the first gameplay tick of the client session (the join window,
+        // before the world starts progressing for the player), so the spawners never get a rolling
+        // window on join.
         const int parked = ParkWalk("initial join-window pass");
         g_initialPassDone = true;
         g_lastReparkMs = now;
@@ -321,9 +280,8 @@ void Tick() {
     }
     if (now - g_lastReparkMs >= kReparkPeriodMs) {
         g_lastReparkMs = now;
-        // Unconditional re-park of the cached set (idempotent setter; N is the
-        // instance count of 2 classes -> a handful of dispatches per second).
-        // Drop dead/recycled entries while at it.
+        // An unconditional re-park of the cached set (an idempotent setter over a handful of
+        // instances, a few dispatches per second), dropping dead or recycled entries as it goes.
         size_t w = 0;
         for (size_t r = 0; r < g_parked.size(); ++r) {
             if (!R::IsLiveByIndex(g_parked[r].obj, g_parked[r].internalIdx)) continue;
@@ -332,11 +290,10 @@ void Tick() {
         }
         g_parked.resize(w);
     }
-    // Late-instance reconcile. Measured (2026-07-10 smoke): the join-window
-    // "initial" pass runs before the save-loaded world has spawner instances
-    // (parked 0), so the FIRST instances are caught here -- walk at 1 Hz until
-    // something is parked (bounds the client's pre-park roll window to ~1 s),
-    // then relax to the 15 s steady-state cadence.
+    // The late-instance reconcile: the join-window initial pass runs before the save-loaded
+    // world has spawner instances, so the first instances are caught here. Walk at 1 Hz until
+    // something is parked (bounding the client's pre-park roll window to about a second), then
+    // relax to the 15 s steady cadence.
     const long long reconcilePeriod = g_parked.empty() ? kReparkPeriodMs : kReconcilePeriodMs;
     if (now - g_lastReconcileMs >= reconcilePeriod) {
         g_lastReconcileMs = now;
@@ -351,9 +308,9 @@ void OnDisconnect() {
 
 bool NoteClientSpawnPassThrough(void* actorClass) {
     if (!IsParkClassPtr(actorClass)) return false;
-    // A park-class spawner is being SPAWNED on a connected client -- the
-    // structural tripwire. Log-only (the reconcile walk parks the new instance
-    // within ~15 s); throttled, thread-safe (fires on parallel-anim workers).
+    // A park-class spawner is being spawned on a connected client, the structural tripwire.
+    // Log only (the reconcile walk parks the new instance within 15 s); throttled and
+    // thread-safe, since it fires on parallel-anim workers.
     static std::atomic<uint64_t> sCount{0};
     const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 || (n % 50) == 0) {
