@@ -5,8 +5,7 @@
 #include "coop/net/lobby_client.h"
 #include "coop/net/protocol.h"            // kProtocolVersion -- which side must update
 #include "coop/session/session_manager.h"
-#include "coop/text/utf8_codec.h"         // the ONE owner of text encoding: a server NAME
-                                          // and a status sentence both arrive as UTF-8
+#include "coop/text/utf8_codec.h"         // the one owner of text encoding; names and status sentences arrive as UTF-8
 #include "ui/native_screen.h"
 #include "ui/server_browser_actions.h"    // LastOutcome -- the sentence a click reached
 #include "ui/server_browser_rows.h"       // the selection, the count, the fetch clock
@@ -41,15 +40,14 @@ const FLinearColor kBlack  = NS::Black();
 
 constexpr float kBorderPx = 2.f;
 
-// ONE LINE OF EITHER PANE: the widget, and the string it last rendered.
-//
-// The cache is the whole performance story of this module (header). It is a value member
-// rather than a pointer into a table so that "did this change" cannot accidentally be asked
-// of a different line than the one being written.
+// One line of either pane: the widget, and the string it last rendered. The cache is the
+// whole performance story of this module (see the header); a value member rather than a
+// pointer into a table, so the did-this-change question cannot be asked of a different line
+// than the one being written.
 struct Line {
     void*       w = nullptr;
     std::string last;
-    // Written ONLY on a change; the return says whether the engine was touched, which the
+    // Written only on a change; the return says whether the engine was touched, which the
     // one-shot build log uses and nothing else does.
     bool Set(const std::string& utf8) {
         if (!w || utf8 == last) return false;
@@ -57,17 +55,16 @@ struct Line {
         last = utf8;
         const std::wstring wide = coop::text::FromUtf8Lossy(utf8.data(), utf8.size());
         E::SetWidgetText(w, wide.c_str());
-        // AN EMPTY LINE IS COLLAPSED, NOT BLANK. A UTextBlock with no text still reports its
-        // font's LINE HEIGHT as its desired size, so the four status lines that are silent
-        // most of the time (the alarm, the notice, the update line) each held ~20 px of
-        // nothing and the pane read as a box with holes punched in it. Written on the
-        // EMPTINESS EDGE only, so a line whose text merely changed costs no visibility
-        // dispatch. ESlateVisibility: Visible=0, Collapsed=1.
+        // An empty line is collapsed, not blank: a text block with no text still reports its font's
+        // line height as its desired size, so the status lines that are silent most of the time
+        // each held a strip of nothing and the pane read as a box with holes. Written on the
+        // emptiness edge only, so a line whose text merely changed costs no visibility dispatch.
+        // The visibility enum: visible 0, collapsed 1.
         if (wasEmpty != utf8.empty()) E::SetWidgetVisibility(w, utf8.empty() ? 1 : 0);
         return true;
     }
-    // The COLOUR changes on some lines (the version line goes red on a mismatch), and it is
-    // cached for the same reason the text is: SetTextBlockColorDispatch is a dispatch too.
+    // The colour changes on some lines (the version line goes red on a mismatch), and it is
+    // cached for the same reason the text is: the colour setter is a dispatch too.
     void SetColor(const FLinearColor& c) {
         if (!w) return;
         if (haveColor && c.R == color.R && c.G == color.G && c.B == color.B && c.A == color.A)
@@ -80,21 +77,13 @@ struct Line {
     bool         haveColor = false;
 };
 
-// ---- the details panel ---------------------------------------------------------------
-// One label line per fact, in the order the save browser reads: what it IS, then whether
-// you can join it, then how busy and how fresh.
+// The details panel: one label line per fact, in the order the save browser reads: what it
+// is, then whether you can join it, then how busy and how fresh.
 Line g_dName, g_dWorld, g_dVersion, g_dPlayers, g_dConn, g_dSeen;
 
-// ---- the status pane -------------------------------------------------------------------
-// THE NAME LINE READS "Your name: <nick>", and the wording is the point.
-//
-// It said "Playing as Host" and the user asked the right question of it -- "в чем прикол
-// везде показывает надпись Playing as Host в нижнем pane всегда в любом случае". Two
-// things were wrong and only one of them was the line existing. "Playing as" describes an
-// activity the player is not doing (they are looking at a list, not playing), and "Host"
-// looked like a role the browser had assigned rather than what it is -- the lab rig's own
-// `net.nick`. Read as "Your name: Host" the same pixels answer a question instead of
-// making a claim, and the user's call was to keep it in that form.
+// The status pane. The name line reads as a question answered (the player's own nick) rather
+// than an activity claim: the player is looking at a list, not playing, and the value is
+// their own configured nick, not a role the browser assigned.
 Line g_sCount, g_sFresh, g_sAlarm, g_sNotice, g_sUpdate, g_sNick;
 
 uint64_t g_noticeUntilMs = 0;
@@ -105,13 +94,12 @@ uint64_t g_lastPaintMs = 0;
 constexpr uint64_t kPaintEveryMs = 1000;
 constexpr uint64_t kNoticeMs     = 6000;
 
-// A titled section inside a framed box: the orange header, then the caller's lines.
-//
-// `fixedH > 0` wraps the box in a SizeBox. The details panel wants that and the status pane
-// does not: the details panel's line COUNT changes with the selection (two lines when
+// A titled section inside a framed box: the header, then the caller's lines. A positive
+// fixed height wraps the box in a size box. The details panel wants that and the status pane
+// does not: the details panel's line count changes with the selection (two lines when
 // nothing is chosen, seven when something is), and letting the box breathe would slide the
-// black pane under it up and down every time the player clicked a different row. A pane
-// that moves when you use it is harder to read than one with space in it.
+// black pane under it up and down every time the player clicked a different row; a pane that
+// moves when you use it is harder to read than one with space in it.
 void* SectionBody(void* parent, const FLinearColor& fill, const wchar_t* title,
                   float parentWeight, float fixedH) {
     void* holder = fixedH > 0.f ? NS::Spawn(L"SizeBox", parent) : parent;
@@ -136,17 +124,13 @@ void* SectionBody(void* parent, const FLinearColor& fill, const wchar_t* title,
     return col;
 }
 
-// One detail line. Auto-sized in a vertical box, so no weight.
-//
-// BORN COLLAPSED, because it is born EMPTY and `Line::Set` only toggles visibility on the
-// emptiness EDGE -- a line that starts blank and stays blank would never reach that edge and
-// would hold a line height of nothing forever.
-//
-// `wrap` decides which of the two failure modes a too-long line takes. A DETAIL is a
-// labelled value in a narrow pane and clips (a wrapped "World: some-very-long-name" would
-// push every line under it down and make the pane jump); a STATUS line is a SENTENCE and
-// wraps, because "Pick a server from the list fi" reads as a rendering fault rather than as
-// an instruction (user, 2026-08-31, with the pane circled).
+// One detail line, auto-sized in a vertical box, so no weight. Born collapsed, because it is
+// born empty and the setter only toggles visibility on the emptiness edge; a line that
+// starts blank and stays blank would never reach that edge and would hold a line height of
+// nothing forever. `wrap` decides which failure mode a too-long line takes: a detail is a
+// labelled value in a narrow pane and clips (a wrapped long world name would push every
+// line under it down and make the pane jump); a status line is a sentence and wraps, since a
+// clipped sentence reads as a rendering fault rather than an instruction.
 void* DetailLine(void* col, int32_t size, const FLinearColor& c, bool wrap = false) {
     void* t = NS::AddText(col, L"", size, c, NS::kJustLeft, 0.f);
     if (t) {
@@ -162,18 +146,15 @@ std::string Sec(int s) { return std::to_string(s) + "s ago"; }
 }  // namespace
 
 bool BuildDetails(void* parent) {
-    // EQUAL HALVES WITH THE STATUS PANE (user, 2026-08-31: "box server info меньше места
-    // занимает - сделаем поровну"). Both take Fill weight 1, so the column splits whatever
-    // is left after the Connect button between them and neither is sized by a constant.
-    //
-    // That also RETIRES the fixed height this used to carry. The fixed height existed
-    // because the panel's line COUNT changes with the selection -- two lines when nothing
-    // is chosen, seven when something is -- and an auto-sized box would have slid the pane
-    // below it up and down on every click. A Fill slot cannot do that: its height comes
-    // from the column, not from its content.
+    // Equal halves with the status pane: both take fill weight 1, so the column splits whatever
+    // is left after the Connect button between them and neither is sized by a constant. That
+    // also removes the fixed height this once carried, which existed because the panel's line
+    // count changes with the selection and an auto-sized box would have slid the pane below it
+    // on every click; a fill slot cannot do that, since its height comes from the column, not
+    // its content.
     void* col = SectionBody(parent, kPanel, L"Server info:", 1.f, 0.f);
     if (!col) return false;
-    // The NAME is the panel's own subject and gets the emphasis the row gives it.
+    // The name is the panel's own subject and gets the emphasis the row gives it.
     g_dName    = Line{DetailLine(col, 20, kText), {}};
     g_dWorld   = Line{DetailLine(col, 16, kDim), {}};
     g_dVersion = Line{DetailLine(col, 16, kDim), {}};
@@ -190,17 +171,16 @@ bool BuildDetails(void* parent) {
 }
 
 bool BuildStatus(void* parent) {
-    // NO TITLE. The save browser's black pane carries text and nothing else; a section
+    // No title: the save browser's black pane carries text and nothing else, and a section
     // header over four status lines would be labelling the obvious.
     void* col = SectionBody(parent, kBlack, nullptr, 1.f, 0.f);
     if (!col) return false;
     g_sCount  = Line{DetailLine(col, 16, kText), {}};
-    // ITS OWN LINE, not a clause on the count. "12 servers   -- updated just now" is 31
-    // monospace glyphs and the pane is ~350 px, so the tail clipped
-    // (browser_row_skin_a.png, 2026-08-31) -- and it would clip differently for every count
-    // and every elapsed value. Two facts, two lines, and neither can crowd the other out.
+    // Its own line, not a clause on the count: the count plus an updated-ago tail exceeds the
+    // pane's width in monospace glyphs and clipped, differently for every count and every
+    // elapsed value. Two facts, two lines, and neither can crowd the other out.
     g_sFresh  = Line{DetailLine(col, 16, kDim), {}};
-    // These three are SENTENCES and wrap; the two around them are short facts.
+    // These three are sentences and wrap; the two around them are short facts.
     g_sAlarm  = Line{DetailLine(col, 16, kBad,   true), {}};
     g_sNotice = Line{DetailLine(col, 16, kAmber, true), {}};
     g_sUpdate = Line{DetailLine(col, 16, kAmber, true), {}};
@@ -233,11 +213,11 @@ void Sync(bool force) {
     if (!force && now - g_lastPaintMs < kPaintEveryMs) return;
     g_lastPaintMs = now;
 
-    // ---- details -----------------------------------------------------------------
+    // The details.
     coop::net::lobby::LobbyRow r;
     if (!rows::Selected(r)) {
-        // EMPTY IS A STATE WITH ITS OWN SENTENCE, not five blank lines. A panel of empty
-        // labels reads as a panel that failed to load.
+        // Empty is a state with its own sentence, not five blank lines: a panel of empty labels
+        // reads as a panel that failed to load.
         g_dName.SetColor(kDim);
         g_dName.Set("Select a server");
         g_dWorld.Set("");
@@ -250,14 +230,12 @@ void Sync(bool force) {
         g_dName.Set(r.name);
         g_dWorld.Set("World: " + (r.world.empty() ? std::string("(unnamed)") : r.world));
 
-        // THE VERSION LINE SAYS WHICH SIDE MUST UPDATE, because "version mismatch" alone
-        // leaves the player with nothing to do about it. The pair is compared exactly (the
-        // join gate is byte-equality per lobby, CLAUDE.md's versioning section), so there
-        // are three distinct answers and they are not interchangeable:
-        //   * a different GAME COOK cannot be ordered -- neither side is "behind", they are
-        //     targeting different VOTV builds and one of them has the wrong mod release;
-        //   * a LOWER build number on the host means the HOST is behind;
-        //   * a HIGHER one means WE are.
+        // The version line says which side must update, because a bare mismatch leaves the player
+        // with nothing to do. The pair is compared exactly (the join gate is byte equality per
+        // lobby), so there are three distinct answers: a different game cook cannot be ordered
+        // (neither side is behind; they target different game builds and one has the wrong mod
+        // release); a lower build number on the host means the host is behind; a higher one means
+        // we are.
         const bool gameBad = !r.game.empty() && r.game != sm::GameTarget();
         const int ourProto = static_cast<int>(coop::net::kProtocolVersion);
         const bool protoBad = r.proto > 0 && r.proto != ourProto;
@@ -276,31 +254,29 @@ void Sync(bool force) {
 
         g_dPlayers.Set("Players: " + std::to_string(r.playersCur) + "/" +
                        std::to_string(r.playersMax));
-        // `direct` is already parsed off the wire (lobby_client.cpp) and had no reader on
-        // this screen: a direct host is port-forwarded UDP, an AUTO host is brokered P2P.
-        // It is the difference between "this may need my NAT to cooperate" and "this will
-        // not", which is worth one word.
+        // The direct flag is parsed off the wire and had no reader on this screen: a direct host is
+        // port-forwarded UDP, an automatic host is brokered peer-to-peer, the difference between a
+        // NAT that may need to cooperate and one that does not, worth one word.
         g_dConn.Set(std::string("Connection: ") + (r.direct ? "direct" : "p2p") +
                     (r.locked ? "   (locked)" : ""));
         g_dSeen.Set("Last seen: " + Sec(rows::AgeNowSec(r)));
     }
 
-    // ---- status ------------------------------------------------------------------
+    // The status.
     const int count = rows::Count();
     const uint64_t sinceMs = rows::MsSinceFetch();
     g_sCount.Set(std::to_string(count) + (count == 1 ? " server" : " servers"));
-    // ALWAYS SAY WHEN, and say "just now" for the sub-second case rather than dropping the
-    // clause. The first version wrote it only when `sinceMs > 0`, and both lab captures were
-    // taken in the same millisecond as a fetch -- so the line vanished entirely and the pane
-    // looked like it had lost half its sentence. A clause that appears and disappears is a
-    // worse instrument than one that is always there.
+    // Always say when, and say just now for the sub-second case rather than dropping the clause:
+    // written only for a positive elapsed time, the line vanished on a capture taken in the same
+    // millisecond as a fetch, and a clause that appears and disappears is a worse instrument
+    // than one that is always there.
     g_sFresh.Set(std::string("updated ") +
                  (sinceMs < 1000 ? "just now" : Sec(static_cast<int>(sinceMs / 1000u))));
 
-    // THE ALARM KEYS ON CONSECUTIVE FAILURES, NEVER ON A CLOCK. Two failed attempts is the
-    // master not answering either of the last two tries; "it has been 30 s since a success"
-    // is also true of a player who alt-tabbed, and telling them the master is down would be
-    // a claim the UI invented. See LobbyClient::ConsecutiveFailures.
+    // The alarm keys on consecutive failures, never on a clock: two failed attempts means the
+    // master did not answer either of the last two tries, whereas a long time since a success is
+    // also true of a player who alt-tabbed, and telling them the master is down would be a claim
+    // the UI invented. See the lobby client's consecutive-failure count.
     const int fails = sm::FetchFailures();
     g_sAlarm.Set(fails >= 2 ? "Cannot reach the server list. Check your connection."
                             : std::string());
@@ -312,9 +288,9 @@ void Sync(bool force) {
     const std::string latest = sm::LatestVersionLine(&outdated);
     g_sUpdate.Set(outdated ? latest : std::string());
 
-    // The name everyone else will see, phrased as an answer rather than as a claim about
-    // what the player is doing (see g_sNick's declaration). The Change name button edits
-    // exactly this value.
+    // The name everyone else will see, phrased as an answer rather than as a claim about what
+    // the player is doing (see the status pane's note). The Change name button edits exactly
+    // this value.
     g_sNick.Set("Your name: " + sm::Nickname());
 }
 
