@@ -19,8 +19,8 @@ loader into a copy once, verifying its hash and refusing on a mismatch
 
 ### The launcher
 
-`tools/mp.py` deploys and launches peers and runs the scenarios; the root `.bat` files are thin
-shims over it for a person hosting or joining by hand. Every step prints a line as it happens,
+`tools/mp.py` deploys and launches peers and runs the scenarios; its `host` and `client`
+subcommands are the entry points for a person hosting or joining by hand. Every step prints a line as it happens,
 and the game is launched detached so the launcher never holds its pipes.
 
 The smoke is the standing regression check:
@@ -56,7 +56,7 @@ The log is the report. Every copy writes a levelled, timestamped `multivoid.log`
 and a scenario's verdict is a line in it. Where a feature has invariants worth asserting across
 both peers' logs, a script does it: `tools/pile-test-assert.ps1` checks the pile carry and throw
 loop against thirteen log-truth invariants and prints a verdict table. Screenshots for a human's
-eye come from an external window capture (`tools/capture-window.ps1`); the game's own screenshot
+eye come from an external window capture (`tools/capture_window.ps1`); the game's own screenshot
 command is used only in autonomous runs, because its toast is distracting in play.
 
 ### What autonomy proves
@@ -96,7 +96,7 @@ checksum ([RELEASE.md](RELEASE.md)).
 
 | Concept | Files |
 |---|---|
-| the launcher and the rig | `tools/mp.py`, `tools/deploy-all.ps1`, `tools/deploy-mod.ps1`, `tools/install-ue4ss.ps1`, the root `.bat` shims |
+| the launcher and the rig | `tools/mp.py`, `tools/deploy-all.ps1`, `tools/deploy-mod.ps1`, `tools/install-ue4ss.ps1` |
 | the in-game harness | `harness/harness`, `harness/session_runtime`, `harness/autotest`, `harness/autotest_dispatch`, `harness/autotest/`, `harness/sdk_check`, `harness/screenshot` |
-| log assertions and captures | `tools/pile-test-assert.ps1`, `tools/capture-window.ps1` |
+| log assertions and captures | `tools/pile-test-assert.ps1`, `tools/capture_window.ps1` |
 | the gates | `tools/loader/abi_gate.py`, `tools/docs/public_prose_gate.py`, `tools/docs/public_leak_gate.py`, `tools/git/commit_msg_check.py`, `.github/workflows/build-core.yml`, `.github/workflows/repo-gates.yml`, `.github/workflows/release-core.yml` |

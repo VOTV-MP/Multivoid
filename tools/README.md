@@ -1,108 +1,115 @@
-# tools — PowerShell + Python helpers
+# tools
 
-Build, launch, deploy, and test helpers for the VOTV coop mod. All
-regenerable; nothing here is load-bearing game state.
+Build, deploy, test, release and repository helpers. Nothing here is load-bearing game state;
+everything is regenerable. Scripts that served one investigation or one operator's habits are
+not tracked, so what is listed here is what a contributor needs.
 
-## User-facing launchers (project-root .bat scripts)
+## Build and deploy
 
-These live at the **project root**, not in `tools/`, because the user
-runs them frequently:
+- `install-ue4ss.ps1 [-Win64Dir <path>] [-Quiet] [-Force] [-ZipPath <zip>]`: the one-time
+  install of the pinned UE4SS build into a game copy. UE4SS is the loader on every copy. It never
+  overwrites existing `Mods/mods.txt` or `UE4SS-settings.ini` state; `-Quiet` is the play profile
+  (GUI console off). It verifies `UE4SS.dll` and `dwmapi.dll` by SHA256 and fails closed on a
+  mismatch; a mismatch on an already-installed copy re-extracts, so moving the pin reaches
+  everyone. It refuses while the game is running. Source order: `-ZipPath`, then a mod manager's
+  package cache, then the download. The package version is one of four copies (here,
+  `release/ledger_lib.ps1`, `release/package_drill.ps1`, this file); they move together, and
+  nothing enforces it yet.
+- `deploy-mod.ps1 -GameWin64 <path> [-Remove]`: idempotent deploy of the built DLL into the mod
+  folder (`Mods\Multivoid\dlls\main.dll` plus `enabled.txt`), skipping when byte-identical, and a
+  one-time removal of the retired proxy files beside the exe. `-Remove` deletes the mod folder;
+  the UE4SS substrate stays.
+- `deploy-all.ps1`: the same into all four game copies at once. Run after `cmake --build`.
+- `maprva.py <rva>...`: maps a faulting address the game-thread firewall logs to its enclosing
+  function in the build's `.map` file.
 
-- **`mp_host_game.bat [port] [nick]`** — deploy + launch as coop HOST
-  (port default 47621, nick "Host"). Thin shim over `tools/mp.py host`
-  (which deploys via `deploy-all.ps1`, sets the per-launch env signals,
-  launches the shipping exe windowed from `Game_0.9.0n_HOST/`).
-- **`mp_client_connect.bat [peer-ip] [port] [nick]`** — same shape for
-  CLIENT, launching out of `Game_0.9.0n_CLIENT_1/` (the sibling game folder
-  for same-box testing — see `docs/RE_WORKFLOW.md`).
-- **`stop-coop.bat`** — removes the Multivoid mod folder from the host
-  copy (`deploy-mod.ps1 -Remove`); the UE4SS substrate stays.
-- **`play-coop.bat`** — legacy single-process play launcher (kept for
-  backward compatibility; `mp_host_game.bat` is the canonical entry).
-- **`shot.bat`** — quick wrapper around `tools/capture-window.ps1`
-  (external screenshot of the VOTV window; in-process F12 captures
-  black on the 3D swapchain).
+## The rig
 
-## Deploy scripts
+- `mp.py`: the launcher and the autonomous-scenario orchestrator; `docs/testing.md` is its manual.
+  `host`, `client`, `client2` and `client3` deploy and launch one peer each; `smoke` and `smoke4`
+  run the two- and four-peer LAN smokes; the scenario subcommands drive the in-game harness and
+  grade its logs.
+- `game_lock.py`: one game, one rig session at a time. `mp.py` takes the lock, because every
+  scenario begins by killing every game process on the box.
+- `capture_window.ps1 -ProcId <pid> -Out <png>`: grabs a game window from outside the process
+  (PrintWindow, with a screen BitBlt fallback); the in-process screenshot path captures black from
+  the 3D swap chain.
+- `pile-test-assert.ps1`: the log-truth harness for the pile carry and throw loop, one verdict
+  line per invariant.
+- `fake_master.py`: a local master serving a synthetic lobby list, the row source for the browser
+  scenarios.
+- `p2p_smoke.py`: the two-peer rendezvous smoke through the signaling relay, local by default,
+  against the live relay with `--signaling`.
+- `net/roster_shot.ps1`: photographs a client's roster screen in a four-peer run.
 
-- **`deploy-mod.ps1 -GameWin64 <path> [-Remove]`** — idempotent deploy
-  of the built DLL into the UE4SS mod folder
-  (`Mods\Multivoid\dlls\main.dll` + `enabled.txt`), SHA-skip when
-  byte-identical (a re-run while VOTV is loaded doesn't fail on the
-  locked DLL), plus one-time removal of the retired xinput-proxy files
-  beside the exe. `-Remove` deletes the mod folder; the UE4SS substrate
-  stays (`install-ue4ss.ps1` owns it).
-- **`deploy-all.ps1`** — multi-target deploy (HOST + CLIENT + CLIENT2 +
-  DEV in one). Run after `cmake --build`.
-- **`deploy-probe.ps1 -Name <ProbeName>`** — copy a UE4SS Lua probe
-  into the dev copy's `Mods/` dir + enable it in `mods.txt`. Source of
-  truth lives under `tools/probes/`. Only meaningful for the dev copy.
+## Gates in CI
 
-## Test runners
+Each refuses a class of defect the project has shipped once. `build-core.yml` and
+`repo-gates.yml` run them on every push; several carry a `_drill` sibling that proves the gate
+still fires on a known-bad fixture.
 
-- **`run-test.ps1 -Scenario <name>`** — single-process autonomous
-  scenario runner. Writes `scenario.txt`, launches the shipping exe.
-  Scenarios: `play`, `load:<slot>`, `none`,
-  `probe_terminals:<slot>`. See `docs/testing.md`.
-- **`lan-test.ps1`** — TWO-process LAN test (host + client in the dev
-  copy), per-PID log capture in `tools/test-runs/`. Found multiple
-  real handshake bugs single-process loopback hid. Flags: `-GrabTest`,
-  `-NameplateTest`, etc.
-- **`probe-terminals.ps1`** — one-shot Phase 5T terminal probe
-  launcher. Parks the Multivoid mod (renames `enabled.txt` →
-  `.probe-disabled`), deploys the UE4SS probe, sets the scenario,
-  launches the dev copy. `-Restore` unparks the mod after.
+- `loader/abi_gate.py`: the shipped DLL imports nothing from UE4SS.
+- `config/registry_gate.ps1`: the config registry's invariants, each job with a must-fire
+  control run.
+- `gc/gc_pin_gate.ps1`: a GC pin is owned by one object, never a hand-written flag pair.
+- `hooks/minhook_free_gate.ps1`: nothing frees a MinHook trampoline.
+- `net/reliablekind_gate.py`: every reliable message kind reaches a receiver, or names why not.
+- `net/peerconn_gate.ps1`: the per-slot occupancy-generation invariant.
+- `net/master_contact_gate.py`: a census, by operation, of everything that can tell an outside
+  server where a player is.
+- `text/atlas_regime_gate.ps1`: the glyph-atlas regime, checked positively.
+- `docs/public_prose_gate.py` and `docs/public_leak_gate.py`: the public tree measured against
+  `CONTRIBUTING.md` as a ratchet, and the leak classes that bit before.
+- `git/commit_msg_check.py`: the shape of a commit message, installed as the `commit-msg` hook
+  (`git config core.hooksPath tools/git/hooks`).
 
-## Probes + RE helpers
+## Gates run by hand
 
-- **`probes/`** — UE4SS Lua experiments (dev copy only). See
-  `tools/probes/README.md`.
-- **`install-ue4ss.ps1 [-Win64Dir <path>] [-Quiet] [-Force] [-ZipPath <zip>]`**
-  — one-time install of the pinned UE4SS build into a game copy — since
-  WP-2 UE4SS is the LOADER on every copy. Never overwrites existing
-  `Mods/mods.txt` / `UE4SS-settings.ini` state; `-Quiet` = play profile
-  (GUI console off). The committed source of truth for substrate setup.
-  Pins the Thunderstore package `Thunderstore-unreal_shimloader-1.1.7`,
-  which carries UE4SS `e31aaaa6` — measured **48 fps faster** than the
-  v3.0.1 release it replaced (`docs/UE4SS_ARC.md` §9). Verifies
-  **`UE4SS.dll` AND `dwmapi.dll` by SHA256** and FAILS CLOSED on a
-  mismatch. **A hash mismatch on an ALREADY-INSTALLED copy re-extracts**
-  rather than warning — otherwise moving the pin reaches nobody who
-  already has UE4SS (post-ship audit, 2026-09-01). Refuses while VotV is
-  running, since a half-written substrate is the failure the pin exists to
-  prevent. Source order: `-ZipPath`, then an r2modman/TSMM package cache,
-  then the download — use `-ZipPath` if `gcdn.thunderstore.io` is blocked
-  on your network. **The package version is one of FOUR copies** (here,
-  `release/ledger_lib.ps1`, `release/package_drill.ps1`, this file); they
-  must move together, and nothing enforces it yet.
-- **`sdk_diff.py <old.txt> <new.txt>`** — compare two
-  `multivoid-compat-report.txt` outputs (the boot health-check writes
-  one per launch); flags offset drift across recooks.
-- **`dead_api_census.py [--list]`** — finds DECLARED-BUT-NEVER-CALLED public
-  API: capabilities that are built, documented and switched off. Written
-  2026-09-02 after two such functions were found on the join path, both live
-  for three months (`SetPlayerCountFn` → every server read `1/4`;
-  `save_transfer::GetProgress` → a 17 s download reported nothing). Exits 1
-  if either self-test fails — it asserts a known-DEAD canary (recall) *and* a
-  known-LIVE one (precision), because an earlier version passed a recall-only
-  gate while reporting six live functions as dead. **Hand-validate every hit
-  before acting on it** (two references = dead, three+ = it has a caller the
-  scanner cannot see). Register: `docs/DEAD_CAPABILITY_REGISTER.md`.
+- `text/nick_gate.ps1`: no code path cuts a nickname mid-character; it polices the operation
+  kind, not a list of sites.
+- `ui/browser_parity_gate.py`: the native server browser still does everything the fallback
+  browser does.
+- `sig_gate.py`: the signaling relay refuses a name its caller cannot sign for; locally against a
+  built relay, or `--remote` against the live one.
+- `cert_check.py`: the off-box freshness check of the control plane's TLS certificate.
 
-## Other
+## Release
 
-- **`brightness.ps1`** — quick OS-side brightness toggle while
-  iterating on the in-game post-process pipeline.
-- **`capture-window.ps1`** — external Win32 PrintWindow grab of the
-  VOTV window (in-process F12 / GDI captures black from the 3D
-  swapchain).
-## Retired / removed
+`release/` is the release lane and `docs/RELEASE.md` the procedure. `package.ps1` assembles the
+one distributable zip; `publish.ps1` is the draft-first publish step; `judge.ps1` the
+refuse-to-publish predicate; `ledger_lint.ps1` the drift detector over `LEDGER.tsv`;
+`fingerprint.ps1` the proven-runnable toolchain gate; `tripwires.ps1` the UE4SS-pin trip-wires;
+`verify_latest.ps1` the closing check; `tag_regex_selftest.ps1` the tag-grammar fixtures;
+`notes/` the per-build release notes, with `notes_regen.ps1` to rebuild a live release body from
+them; `README_thunderstore.md` the package page.
 
-- **`inject.ps1`** — legacy DLL-injection script from the pre-
-  standalone-proxy era, and the standalone `xinput1_3.dll` proxy it
-  yielded to — both deleted at UE4SS_ARC WP-2 commit 3. UE4SS loads
-  the mod as `Mods\Multivoid\dlls\main.dll` (deploy: `deploy-mod.ps1`).
-- **`Game/coop-host.bat` / `Game/coop-client.bat`** — early prototype
-  launchers that lived inside the game folder. Superseded by
-  `mp_host_game.bat` / `mp_client_connect.bat` at the project root
-  (RULE 2 — no parallel launchers).
+## The master server
+
+`coop-server-rs/` is the master and the signaling relay, in Rust. Its README says how to build
+and run them; `docs/master-server.md` says what they are for.
+
+## The skin converter
+
+`client_model/` turns a GoldSrc model into a cooked skeletal mesh and a pak the mod loads as a
+player skin, without the Unreal editor. Its README is the pipeline and `SPEC.md` the byte-level
+cook spec.
+
+## Text tables
+
+`text/build_repertoire.py` mints the emoji donor font and the repertoire constant from one
+measurement; `text/case_fold.py` and `text/unicode_case_14_0_0.py` are the frozen
+simple-lowercase tables, restricted to what the build draws.
+
+## Reverse-engineering instruments
+
+None of these ship; `docs/RE_WORKFLOW.md` is the method.
+
+- `bp_cpp.py <BP>`: a whole Blueprint as readable pseudo-C++ (`--offsets` for the listing where
+  every line carries its bytecode offset).
+- `bp_cfg.py <BP> [--fn <Fn>]`: per-function control-flow graphs of a Blueprint, as text and as
+  rendered graphs.
+- `bp_reflect.py`: the raw bytecode of a Blueprint as JSON.
+- `sdk_diff.py <old_dump_dir> <new_dump_dir>`: diffs two UE4SS header-dump trees after a game
+  update; `docs/versioning.md` is the procedure.
+- `debug/ida_aob_derive.py`: derives a unique byte signature for a function in IDA, for the seams
+  reflection cannot name.

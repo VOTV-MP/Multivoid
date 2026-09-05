@@ -235,8 +235,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("post-load"); });
     }
     // NOTE: in-game HighResShot is BANNED -- it pops a "screenshot saved" toast
-    // (bottom-right) that distracts the human tester. For agent-side visual
-    // verification use the external tools/capture-window.ps1 (Windows GDI grab,
+    // (bottom-right) that distracts the human tester. For autonomous visual
+    // verification use the external tools/capture_window.ps1 (Windows GDI grab,
     // no in-game notification) instead.
 
     if (scenario == "orphan") {

@@ -16,8 +16,8 @@ beyond being the loader, UE4SS is the everyday reverse-engineering tool.
 | `Game_0.9.0n_CLIENT_3/` | development | autonomous runs (`tools/mp.py smoke`), Live View, Lua probes, Blueprint dumps |
 
 Each copy keeps its own saved games, logs and screenshots, so an autonomous run never collides
-with hands-on play. The development copy also carries UE4SS's bundled Lua mods, the project's own
-probe and the UE4SS log. `tools/deploy-all.ps1` deploys the built DLL to all four after a build.
+with hands-on play. The development copy also carries UE4SS's bundled Lua mods and the UE4SS
+log. `tools/deploy-all.ps1` deploys the built DLL to all four after a build.
 
 ## What UE4SS gives during development
 
@@ -37,9 +37,10 @@ given game state and to find the exact name of a class you suspect exists.
 `ue_wrap/core/sdk_profile.h` are derived from; re-dump it after a game update
 ([versioning.md](versioning.md)).
 
-**Lua probes** (`tools/probes/`), run inside UE4SS's Lua VM in the development copy: list every
-function matching a pattern, dump properties per tick, sanity-check an offset the header dump
-claims, and validate a new game build before the DLL is touched.
+**Lua probes**, run inside UE4SS's Lua VM in the development copy (a folder under its `Mods`,
+enabled in its mods list): list every function matching a pattern, dump properties per tick,
+sanity-check an offset the header dump claims, and validate a new game build before the DLL is
+touched. A probe is an experiment; nothing in this tree ships one.
 
 **Blueprint bytecode.** The game's logic is compiled Blueprint, and a function's signature tells
 you nothing about what it does. The project's own wrappers read the cooked assets out of the pak:

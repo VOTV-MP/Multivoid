@@ -432,7 +432,14 @@ tools/debug/parse_dump.py
 tools/debug/present_hook_census.py
 tools/net/departure_drill.ps1
 tools/net/replacement_drill.ps1
-tools/probes/atlas_probe/measure_donors.py
+tools/probes/
+tools/brightness.ps1
+tools/capture-window.ps1
+tools/capture-pile-shots.ps1
+tools/capture-showcase.ps1
+tools/probe-terminals.ps1
+tools/run-test.ps1
+tools/deploy-probe.ps1
 tools/reflection/islive_gate.ps1
 tools/release/compare_zips.ps1
 tools/release/mirror_pr.ps1

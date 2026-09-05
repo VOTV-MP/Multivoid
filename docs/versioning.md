@@ -103,4 +103,5 @@ plain recursive clone CI proves on every push.
 | the pair | `src/votv-coop/CMakeLists.txt`, `coop/net/protocol.h`, `coop/session/player_handshake_version.cpp` |
 | the version surface | `ue_wrap/core/sdk_profile.h`, `ue_wrap/core/sdk_profile_names.h` |
 | the checks | `ue_wrap/core/reflection` (the boot health check), `harness/sdk_check`, `tools/sdk_diff.py` |
+| the signatures | `tools/debug/ida_aob_derive.py` (derives a unique byte signature for a function in IDA, for the seams reflection cannot name) |
 | the loader | `tools/install-ue4ss.ps1`, `tools/loader/abi_gate.py`, `loader/cppmod_entry.cpp` |
