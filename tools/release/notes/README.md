@@ -26,6 +26,6 @@ Rules (enforced where noted):
   are status claims (`lesson_public_claim_surfaces_carry_verdict_discipline`).
   Write what the build DOES, anchored to the protocol.h consume comment and the
   git range; never credit a fix that landed after the tag. The notes text is
-  shown to the user at RELEASE.md step 0.5 before the tag is pushed.
+  shown to the maintainer at RELEASE.md's changelog step before the tag is pushed.
 - Missing notes file for the tagged N = the judge refuses (NOTES_OK), stateless:
   add the file on main, re-dispatch the same tag.

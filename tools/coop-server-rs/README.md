@@ -31,7 +31,7 @@ Two consequences worth knowing before touching the box:
 
 Rollback set on the box: `coop-master.bak-20260831`,
 `coop-signaling.bak-20260831`, `/etc/coop-master.env.bak-20260831`.
-Deploy recipe (CRLF trap, `ETXTBSY`, the differential): `docs/RELEASE.md` step 6c.
+The release gate that depends on this box is the relay gate in `docs/RELEASE.md`.
 
 `tools/coop_signaling_server.py` was **retired 2026-08-29** (RULE 2): the cutover
 was finished and its last job was to be the local fixture four rig scenarios
