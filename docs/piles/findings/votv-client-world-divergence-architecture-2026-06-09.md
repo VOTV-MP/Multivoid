@@ -89,7 +89,7 @@ SMOKE: metric fixed (host-vs-client FPS parity ratio>=0.6, NOT diverged-count). 
 NOTE on the 88/1383: the host's story-load re-issues `open untitled_1`, tearing down the boot-world's prop elements (linger "dying"); connecting mid-transition = degenerate. PRE-EXISTING, not P1. The dying-drain rate is the settle target.
 
 ### ★ P2 IMPLEMENTATION STATE (session 5 cont., 2026-06-10) -- code-complete, audited, build-clean ★
-DONE (all UNCOMMITTED):
+DONE (all UNCOMMITTED): [corr 2026-09-05: the UNCOMMITTED sub-state is stale -- this shipped in June; `IsWireSuppressedPropClass` is live at prop_lifecycle.cpp:185/218/541 and the claim-tracking API drives join_membership_sweep today]
 - **3 claim sites in `remote_prop_spawn.cpp` OnSpawn** (not 4): `RecordClaim(existing)` right after `if (existing) {` (covers exact-key main + the drive-skip early return), `RecordClaim(fuzzy)` right after `if (fuzzy) {` (same coverage), `RecordClaim(spawned)` right after the BeginDeferred null-check — **BEFORE FinishSpawningActor** (audit CRITICAL: a Finish-failure must leak one claimed half-spawned actor — the exact pre-P2 behavior — not leave an unclaimed half-CONSTRUCTED actor for the sweep to K2_DestroyActor mid-construction: no BeginPlay, unregistered PhysX body -> the kAtRest crash class). OnConvert routes through OnSpawn (remote_prop.cpp:787) -> convert-born piles claimed automatically.
 - **State**: anon-namespace `unordered_set<void*> g_claimedActors` + `bool g_claimTrackingActive` + `RecordClaim()` (1-bool-read no-op outside a join). Game-thread only (event_feed drain + net_pump disconnect edge) — no mutex. Pointers only ever compared, never dereferenced.
 - **Public API** (remote_prop_spawn.h): `BeginClaimTracking()` / `DestroyUnclaimedDivergentProps()` / `ResetClaimTracking()`. Sweep = two-phase (collect during ONE GUObjectArray walk — class gate FIRST, then Default__ CDO skip, then IsLive; destroy AFTER the walk so K2_DestroyActor's GUObjectArray mutations never invalidate iteration), gated on g_claimTrackingActive (a Complete without Begin must not sweep an empty claim set — WARN+skip), echo-suppressed destroys via the promoted `coop::prop_lifecycle::DestroyLocalProp(actor, deferred=false)` (public API now; MarkIncomingDestroy before K2_DestroyActor).
@@ -107,7 +107,7 @@ DONE (all UNCOMMITTED):
 
 ## ★★ IMPLEMENTATION-READY PLAN (3 code-verified workflows converged) — BUILD THIS ★★
 
-### Progress this session (all UNCOMMITTED)
+### Progress this session (all UNCOMMITTED) [corr 2026-09-05: committed long since]
 - VERIFIED: `Aprop_C.sleep @ 0x02DD` (UE4SS ObjectDump `prop_C:sleep [o:2DD]`); the test
   client uses the **play path** (`harness.cpp:643`, env net role), NOT the menu path :448.
 - BUILT + VALIDATED the autonomous test `tools/mp.py smoke_phystele` (+ registered in argparse).

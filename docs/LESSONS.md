@@ -37,6 +37,35 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A FORCE-PUSH CLEANS THE BRANCH, NOT THE REPOSITORY — a fork network shares one object store.**
+  `[V]` 2026-09-05: a third-party author asked for material about their mod to be withdrawn.
+  `git filter-repo` rewrote 2155 commits and every check passed — 0 commits carrying it, 0 commit
+  messages, 5 tags intact, the HEAD tree byte-identical — and the force-push succeeded. Then
+  `gh api repos/O/R/commits/6e8b6fbb` **still returned the sha**, as did three more pre-rewrite
+  commits, because the repo has **12 forks** and a GitHub fork network keeps ONE shared object store.
+  The rewrite verifies reachability FROM A REF, which is the only thing git models and the wrong
+  question; "can a person still fetch this" lives in GitHub's storage model. *Look FIRST:* the
+  acceptance test for any removal is FETCHING THE OLD SHA BACK, never the rewrite's own report; read
+  `forks_count` before promising anything, and say in the same breath as "pushed" that only GitHub
+  Support purging unreachable objects closes it. One layer up from
+  [[lesson-a-fix-in-the-tree-is-not-a-fix-in-the-field]].
+  [[lesson-a-force-push-does-not-delete-anything-in-a-fork-network]]
+
+- **A PINNED CONSTANT YOU DID NOT COMPUTE IS A FABRICATION — and the RED drill that catches it may
+  find a bigger hole than the pin.** `[V]` 2026-09-05: writing a selftest for a hash whose whole job
+  is that two MACHINES agree, I pinned three vectors and **two were plausible-looking hex I invented**
+  (`0x089be2ded10dc7f1` vs the computed `0x089be207b544f1e4`). A pin that was never computed asserts
+  only that the code still returns what it returned when the test was written. Then the RED arm — one
+  pin corrupted by one bit — logged `1 of 9 checks FAILED` on BOTH peers while `mp.py` printed
+  **PASS**: `_peer_log_health` matched the single literal `"selftest: FAIL"`, while this tree's
+  selftests emit `<module> selftest FAIL:` and `<module> selftest: N of M checks FAILED`. **16 shapes
+  escape that needle and five modules (`lobby_password`, `native_text_field`, `peer_admission`,
+  `peer_identity`, `portable_identity`) have no hand-added row either** — all five could fail on both
+  peers with every smoke green. *Look FIRST:* compute every pin with a SECOND implementation and
+  paste its output; run the RED arm even when you trust the assertion, because it is the only time
+  the REPORTING path is exercised; and census what the tree actually emits before trusting a
+  literal-matching detector. [[lesson-a-selftest-pin-you-did-not-compute-is-a-fabrication]]
+
 - **A GATE'S OWN PARSER CAN SHRINK THE CORPUS IT JUDGES AGAINST — and the symptom is the SUBJECT
   looking like a liar.** `[V]` 2026-09-04: `tools/qf/verify_proof.py` gates the `/qf` critic's
   proof-of-read against `docs/LESSONS.md`, and its row parser opened a row only when BOTH `**`
@@ -3548,6 +3577,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **A THREAD FILE THAT KEEPS THE AUDITOR'S WORDS AS THE AUDITED PARTY'S PARAPHRASE MEASURES THE AUDITED PARTY** (2026-09-02: 64 `/qf` thread files held the primary's titles of the critic's questions plus the primary's answers -- 341 of 850 `Q` records contain a question mark -- so "87 of 850 cite a file:line" measured the primary and the critic's rate was unmeasurable; after verbatim persistence the first real pass measured 20 of 20 anchors verified). *Look FIRST:* before measuring a second party, check its words are on disk verbatim under a heading naming the party. [[lesson-a-thread-file-that-keeps-the-auditors-words-as-the-audited-partys-paraphrase-measures-the-audited-party]]
 - **STATUS ROT LIVES UNDER TRUE LABELS AND IN UNSTAMPED POINT-IN-TIME DOCS** (2026-09-02, a 28-label sample checked against code and git: 4 of 8 true OPEN labels stale, all 2026-06/07 material never re-stamped; 0 of 12 DONE labels false; 8 of 28 lines rotted in a SUBORDINATE fact -- a line number, a count, a hash, "(commit pending)" -- carrying no status word; 29 % of the status-regex hits were not labels). *Look FIRST:* read the clause beside the label and the citations under it, and prioritise month-old point-in-time docs; a label grammar beats the raw regex several-fold, and `[V]`/`[A]`/`[RD]` are provenance, not status. [[lesson-status-rot-lives-under-true-labels-and-in-unstamped-point-in-time-docs]]
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
+
+- **A MAP-KEYED INDEX SILENTLY DROPS EVERY DUPLICATE, AND ITS SIZE IS THE ONLY SYMPTOM.** `[V]`
+  2026-09-05, b152 two-peer rig: `interactable_sync`'s door channel indexes into
+  `byKey_ : wstring -> {actor, idx}` on the game's instance Key. Re-keying the index to a derived
+  portable identity moved the count **50 -> 57**, and the new `[ident]` line proved why — **57 doors
+  carry only 50 distinct game Keys, and ONE key (`cINjJa7Yd_VZwzGaOAIm4Q`) is carried by EIGHT
+  doors.** `operator[]` overwrote seven of the eight, so seven doors had no addressable identity at
+  all — not a sync bug, an ADDRESSING bug, equally true in single-player. It hid because a duplicate
+  is an error nowhere (the map takes the write, every surviving entry is correct, per-entry probes
+  pass) and because the only observable is a NUMBER nobody had compared against the world; the
+  louder cross-peer mismatch was itself computed from the already-collapsed 50. The project already
+  knew VOTV's save ships clone families sharing one GUID — the host re-keys duplicate PROPS
+  (`prop_element_tracker.cpp:386`) and no equivalent exists for the interactable channels.
+  *Look FIRST:* any `map[key] = value` index over engine objects owes a COUNT RECONCILIATION against
+  the population it indexes, logged; and an index size that MOVES after a keying change is a
+  measurement about the old key, not noise. [[lesson-a-map-keyed-index-silently-drops-every-duplicate-key]]
 
 - **A PER-PROCESS MINTED IDENTITY IS PERFECTLY STABLE — UNTIL TWO PEERS COMPARE NOTES.** `[V]`
   2026-09-04, b151 two-peer rig: `lib_C::assignKey` mints `generateRandomKey`
