@@ -1,30 +1,13 @@
-// coop/player/movement_ledger.cpp -- see coop/player/movement_ledger.h for WHY this exists, what it
-// deliberately does not do, and the honest bound it buys. This file is the arithmetic.
-//
-// THE MODEL, in one paragraph. A peer earns the right to have moved by the passage of REAL time, at
-// no more than the speed the game itself can move a player. Two independent caps do two jobs: a bank
-// of real time (`kSkewBankMaxMs`) lets the sender's own clock supply the SHAPE of an interval, so a
-// network clump costs nothing; and a cap on the CARRY -- the credit left standing from earlier
-// samples -- bounds what can be spent as an unexplained jump (`kUnearnedJumpCm`). Neither cap
-// loosens the sustained rate, because credit is only ever created by elapsed time.
-//
-// WHICH QUANTITY THE JUMP CAP APPLIES TO IS THE WHOLE DESIGN, and the first version of this file got
-// it wrong. It capped `carry + earned` and only then subtracted the step, which makes the largest
-// step ANY sample may take `kUnearnedJumpCm` -- 50 cm -- no matter how much time elapsed. An honest
-// ATV rider at the game's own `speed_turbo` (3200 cm/s) covers 53 cm between two 60 Hz poses and was
-// therefore marked untrusted on his first sample; so was any sprinter across a single 100 ms packet
-// gap. The cap belongs on the CARRY, because the carry is the part that was not earned in this
-// interval. Caught by writing the selftest at the bottom of this file, before the build was deployed
-// and before the field run it would have poisoned -- the calibration transcript would have read
-// "untrusted" for ordinary play and been believed as "the bound is too tight".
-//
-// THERE IS EXACTLY ONE ACCOUNTING PATH, and that is the second correction. An unstamped pose used to
-// take an early return that set `trusted = false` and then MOVED THE ANCHOR anyway, leaving the
-// credit untouched -- so two packets bought an unlimited relocation: one unstamped to arrive, one
-// stamped at the same spot to be measured against a zero step and regain trust immediately. The
-// header called that path fail-CLOSED. It was fail-closed for one packet and fail-OPEN for the
-// anchor. Unstamped now means exactly what it says -- NO TIME INFORMATION, therefore no time earned
-// -- and the step is charged like any other. The special case is gone rather than patched.
+// coop/player/movement_ledger.cpp -- the arithmetic behind coop/player/movement_ledger.h. A peer
+// earns the right to have moved by the passage of real time, at no more than the game's own top
+// speed. Two caps do two jobs: a bank of real time (kSkewBankMaxMs) lets the sender's clock
+// supply the shape of an interval, so a network clump costs nothing; a cap on the carry, the
+// credit left standing from earlier samples (kUnearnedJumpCm), bounds what an unexplained jump
+// can spend. Neither loosens the sustained rate, since credit is only created by elapsed time.
+// The cap sits on the carry, not on carry plus earnings: this interval's own earnings are
+// spendable in full, or no sample could ever cover more than 50 cm and the ATV at speed_turbo
+// (53 cm between two 60 Hz poses) would read untrusted. One accounting path: an unstamped pose
+// earns no time and is charged its step like any other, so it cannot move the anchor for free.
 
 #include "coop/player/movement_ledger.h"
 
@@ -50,13 +33,12 @@ namespace {
 
 constexpr int      kSlots           = static_cast<int>(coop::players::kMaxPeers);
 constexpr float    kMaxDebtCm       = kMaxTravelSpeedCmS * kMaxDebtSeconds;
-// How often the unconditional summary prints. Frequent enough that a short act in the runbook still
-// produces a line, rare enough that it cannot be the thing that costs frames.
+// The summary period: frequent enough that a short act still produces a line, rare enough not
+// to cost frames.
 constexpr uint64_t kSummaryPeriodMs = 10000;
 
-// Monotonic milliseconds. The row keeps a COUNT rather than a `time_point` so that every input to
-// the arithmetic below -- including the receiver's own clock -- can be supplied explicitly by the
-// selftest. A branch only a real 8-second network gap can reach is a branch that ships undrilled.
+// Monotonic milliseconds. The row keeps a count rather than a time_point so the selftest can
+// supply every input to the arithmetic, the receiver's clock included.
 uint64_t NowMs() {
     static const std::chrono::steady_clock::time_point kEpoch = std::chrono::steady_clock::now();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -64,8 +46,8 @@ uint64_t NowMs() {
 }
 
 struct Row {
-    // Identity. The occupancy generation this row was anchored under; a change means the slot's
-    // occupant was REPLACED and everything below it belongs to somebody else.
+    // The occupancy generation the row was anchored under; a change means the slot's occupant was
+    // replaced and everything below belongs to somebody else.
     uint32_t gen = 0;
     bool     armed = false;
     uint64_t anchorAtMs = 0;      // when THIS occupant's record began; the summary prints its age
@@ -75,30 +57,23 @@ struct Row {
     float    creditCm = 0.f;      // ALWAYS within [-kMaxDebtCm, kUnearnedJumpCm]; see the cap note
     bool     trusted = false;
 
-    // Clocks. `lastStateMs` is the ORIGIN's 24-bit stamp; `lastRecvMs` is ours.
+    // Clocks: lastStateMs is the origin's 24-bit stamp, lastRecvMs is ours.
     uint32_t lastStateMs = 0;
     uint64_t lastRecvMs = 0;
     uint32_t skewBankMs = 0;      // real time earned and not yet spent as claimed elapsed
 
-    // Diagnosis latches -- a 60 Hz stream must never turn a condition into a log flood, and every
-    // condition below is AUTHORED BY THE PEER BEING JUDGED. `discReported` is per SUMMARY WINDOW,
-    // not per row: without it a peer alternating one 350 cm hop with one standing sample earns a
-    // trusted->untrusted edge every other pose, which is ~30 UE_LOGW per second per peer -- and
-    // `log.cpp:225` fflushes every non-INFO line synchronously, ON THE NET THREAD, the one that
-    // services every peer's pose relay and reliable ARQ. That hands the peer this module exists to
-    // bound a frame-rate knob. Nothing is lost: the window's full COUNT still rides `disc=` in the
-    // summary, so the detail line becomes a sample rather than a transcript.
+    // Diagnosis latches. Every condition below is authored by the peer being judged, and the logger
+    // flushes each non-info line synchronously on the net thread, so a 60 Hz stream must never
+    // turn a condition into a flood. discReported is per summary window: a peer alternating a hop
+    // with a standing sample would otherwise earn a trusted-to-untrusted edge every other pose.
+    // The window's full count still rides the summary's disc field.
     bool     unstampedReported = false;
     bool     nonFiniteReported = false;
     bool     discReported = false;
 
-    // Summary accumulators, reset when the summary prints AND on every re-anchor -- they are per
-    // OCCUPANT, not per slot. The COUNT is load-bearing: without it "this row saw no poses at all"
-    // and "it saw poses that did not move" print the same line, which is the ambiguity
-    // `docs/LESSONS.md` "A throttled log line is not an event count" was written about.
-    // (Cited by TITLE: this said `:1019`, which pointed at an unrelated row even before the
-    // 2026-08-26 insert that moved everything -- see
-    // [[lesson-a-comment-citing-a-dependency-line-number-rots-silently]].)
+    // Summary accumulators, reset when the summary prints and on every re-anchor; per occupant,
+    // not per slot. The count is load-bearing: without it a row that saw no poses and one that saw
+    // poses that did not move print the same line.
     uint64_t samples = 0;
     uint64_t discontinuities = 0;
     float    maxStepCm = 0.f;
@@ -115,12 +90,9 @@ struct Row {
 
 std::mutex g_mu;
 Row        g_rows[kSlots];
-// TWO threads touch this, which is why it is atomic and not a plain uint64_t: `Tick` reads and
-// re-arms it on the GAME thread, and `OnSessionStart` re-bases it on the harness BRINGUP thread
-// (`session_runtime.cpp` -- that function Posts to the game thread and Sleeps on the result, so it
-// demonstrably is not the game thread itself). On a Stop()/Start() cycle the two overlap. Relaxed is
-// the right ordering: it guards no other data, and the read-modify-write is game-thread-only, so
-// there is no cross-thread RMW to lose.
+// Two threads touch this: Tick reads and re-arms it on the game thread, and OnSessionStart
+// re-bases it on the harness bring-up thread; the two overlap on a stop/start cycle. Relaxed
+// is enough: it guards no other data, and the read-modify-write is game-thread-only.
 std::atomic<uint64_t> g_nextSummaryMs{0};
 
 float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -128,9 +100,8 @@ float Dist3(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// Start (or restart) a row at `pos` under `gen`, granting nothing. Used for the first sample and for
-// a slot whose occupant was replaced. The peer begins with an EMPTY credit rather than a full one:
-// arriving is not evidence of having travelled.
+// Start or restart a row at `pos` under `gen`, granting nothing: arriving is not evidence of
+// having travelled. A first pose has no predecessor and is admitted.
 void AnchorRow(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
                uint32_t stateMs, uint64_t nowMs) {
     r.gen = gen;
@@ -145,10 +116,9 @@ void AnchorRow(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
     r.unstampedReported = false;
     r.nonFiniteReported = false;
     r.discReported = false;
-    // The accumulators below are PER OCCUPANT, not per slot. Slots recycle lowest-free, so a slot
-    // goes person X -> person Y with no absence in between; leaving these standing makes Y's first
-    // summary window report X's worst step, X's discontinuity count and X's divergence sample under
-    // Y's slot number -- an attribution defect in the one artifact this build exists to produce.
+    // The accumulators are per occupant. Slots recycle lowest-free, so a slot goes from one person
+    // to the next with no absence between, and leaving these standing would report the old
+    // occupant's worst step under the new occupant's slot number.
     r.samples = 1;
     r.discontinuities = 0;
     r.maxStepCm = 0.f;
@@ -161,8 +131,8 @@ void AnchorRow(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
     r.lastWireVsActorCm = -1.f;
 }
 
-// What one accepted pose did to a row. Returned rather than logged in place so the logging happens
-// outside the lock, and so the selftest asserts on the arithmetic instead of on log text.
+// What one accepted pose did to a row, returned rather than logged in place so the logging
+// happens outside the lock and the selftest asserts on the arithmetic, not on log text.
 struct Outcome {
     bool     anchored = false;        // first pose on this row, or a replaced occupant
     bool     unstampedEdge = false;   // FIRST unstamped pose on this row (latched thereafter)
@@ -176,24 +146,17 @@ struct Outcome {
     uint32_t useMs = 0;
 };
 
-// THE ARITHMETIC, with every input the session supplies made explicit: the row, the occupancy
-// generation, the sender's stamp and the receiver's clock. `OnClientPose` is this plus the two
-// session reads and the logging; the selftest is this plus a table, over ITS OWN row -- so the test
-// is structurally incapable of touching production state, and still drives the shipped function
-// rather than a second copy of its arithmetic.
-//
-// THE CALLER OWNS THE LOCK. Production takes `g_mu` around it; the selftest runs on its own storage.
+// The arithmetic, with every input explicit: the row, the occupancy generation, the sender's
+// stamp and the receiver's clock. OnClientPose is this plus the session reads and the logging;
+// the selftest is this over its own row, so it drives the shipped function and cannot touch
+// production state. The caller owns the lock.
 Outcome ApplyPose(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
                   uint32_t stateTimeMs24, uint64_t nowMs) {
     Outcome o;
 
-    // PRECONDITION, defended rather than assumed. In production `coop::net::ValidatePose` has
-    // already rejected non-finite components and bounded |xyz| at 10 km, so this cannot fire -- but
-    // a NaN reaching the arithmetic below is unrecoverable and SILENT: `NaN >= 0.f` is false (so the
-    // row reads untrusted, which looks correct) and BOTH clamps are false too, so `creditCm` stores
-    // NaN and every later sample stays NaN for the rest of the session. A permanent loss with no
-    // diagnosis is worse than a named refusal, and the enforcing build gives this function callers
-    // that do not sit behind ValidatePose.
+    // Defended, not assumed: ValidatePose rejects non-finite components upstream, but a NaN
+    // reaching the arithmetic would be silent and permanent (every comparison is false, so creditCm
+    // stores NaN for the rest of the session). A named refusal instead.
     if (!std::isfinite(pos.X) || !std::isfinite(pos.Y) || !std::isfinite(pos.Z)) {
         r.trusted = false;
         if (!r.nonFiniteReported) { r.nonFiniteReported = true; o.nonFiniteEdge = true; }
@@ -208,9 +171,8 @@ Outcome ApplyPose(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
         return o;
     }
 
-    // NOT STAMPED means NO TIME INFORMATION, so no time is earned -- and then the pose goes down the
-    // SAME path as every other one. See the file header: the early return this replaced moved the
-    // anchor for free and made two packets a teleport.
+    // Unstamped means no time information, so no time is earned, and the pose then goes down the
+    // same path as every other; an early return here would move the anchor for free.
     const bool stamped = (stateTimeMs24 != 0);
     if (!stamped && !r.unstampedReported) { r.unstampedReported = true; o.unstampedEdge = true; }
 
@@ -219,13 +181,12 @@ Outcome ApplyPose(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
     uint32_t useMs = 0;
     if (stamped) {
         if (dtR >= kClockRebaseGapMs) {
-            // A gap long enough to make the 24-bit stamp ambiguous. Re-base the CLOCK ONLY -- the
-            // position anchor, the credit and the path all survive, so silence earns nothing and
-            // cannot be used as a free reset.
+            // A gap long enough to make the 24-bit stamp ambiguous. Only the clock re-bases: the
+            // anchor, the credit and the path survive, so silence earns nothing.
             r.skewBankMs = 0;
         } else {
-            // The sender supplies the SHAPE of the interval; real time supplies the CEILING. An
-            // inflated or rewound stamp can only ever claim what the bank actually holds.
+            // The sender's stamp supplies the shape of the interval; real time supplies the
+            // ceiling. An inflated or rewound stamp claims at most what the bank holds.
             const uint32_t dtS = coop::net::ElapsedMs24(r.lastStateMs, stateTimeMs24);
             uint64_t bank = static_cast<uint64_t>(r.skewBankMs) + dtR;
             if (bank > kSkewBankMaxMs) bank = kSkewBankMaxMs;
@@ -239,11 +200,9 @@ Outcome ApplyPose(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
 
     const float step = Dist3(r.lastPos, pos);
 
-    // The CARRY is what was not earned in this interval, so the carry is what the un-earned-jump cap
-    // bounds. THIS interval's own earnings are spendable in full -- otherwise no sample may ever
-    // cover more than 50 cm and the game's own vehicle outruns the instrument. `r.creditCm` is kept
-    // inside the cap on every store below, so this read is already bounded; the clamp stays as the
-    // one place the invariant is written down.
+    // The carry is what was not earned in this interval, so the carry is what the jump cap bounds;
+    // this interval's own earnings are spendable in full. Every store below keeps creditCm inside
+    // the cap, so this clamp is the invariant written down once.
     float carry = r.creditCm;
     if (carry > kUnearnedJumpCm) carry = kUnearnedJumpCm;
     const float earned = kMaxTravelSpeedCmS * (static_cast<float>(useMs) / 1000.f);
@@ -281,18 +240,15 @@ Outcome ApplyPose(Row& r, uint32_t gen, const ue_wrap::FVector& pos,
     return o;
 }
 
-// --- selftest ----------------------------------------------------------------
-// Runs on every session start, unconditionally, in microseconds, over ITS OWN row. It is NOT
-// env-gated on purpose: this is a security primitive whose failure mode is SILENT -- a wrong verdict
-// merely reads wrong -- and the branches below (an unstamped sender, a slot recycled to a new
-// occupant, a 24-bit clock wrap, an inflated clock, a drained receive queue, the debt floor) are
-// unreachable from a two-peer LAN smoke. `join_seed`'s selftest is the shape precedent; unlike that
-// one, this drives the PRODUCTION function rather than a second copy of its arithmetic, so the test
-// cannot pass while the shipped path is wrong.
+// The selftest: every session start, unconditionally, in microseconds, over its own row. Not
+// env-gated, because a wrong verdict here is silent, and the branches below (an unstamped
+// sender, a recycled slot, a 24-bit wrap, an inflated clock, a drained receive queue, the debt
+// floor) are unreachable from a two-peer LAN smoke. It drives the production function, not a
+// copy of its arithmetic.
 
-// Drive `n` samples of steady motion at `speedCmS` with `dtMs` between poses, from a fresh anchor.
-// Sender and receiver clocks advance together: this is the HONEST case, and every row of it must
-// stay trusted or the instrument is unusable for calibration.
+// Drive `n` samples of steady motion at `speedCmS` with `dtMs` between poses from a fresh
+// anchor, both clocks advancing together: the honest case, every row of which must stay
+// trusted.
 Outcome SimSteady(Row& r, float speedCmS, uint32_t dtMs, int n) {
     uint64_t now = 100000;                 // arbitrary; only differences matter
     uint32_t st = 12345;
@@ -319,24 +275,22 @@ bool RunSelfTest() {
     };
     auto fresh = [&r] { r = Row{}; };
 
-    // 1. The first pose of a peer never seen before is ADMITTED (principle 8: a joining peer has no
-    //    predecessor, and refusing it would make mid-activity join an unsupported edge case).
+    // 1. The first pose of a peer never seen before is admitted: a joining peer has no predecessor.
     fresh();
     {
         const Outcome o = ApplyPose(r, 7, ue_wrap::FVector{1000.f, 2000.f, 300.f}, 500, 1000);
         check("anchor-admits-first-pose", o.anchored && o.trusted, "a joining peer was not admitted");
     }
 
-    // 2. A slot RECYCLED to a new occupant re-anchors and is admitted even though the position moved
-    //    the width of the world -- the previous occupant's anchor is not this peer's history. Slots
-    //    recycle lowest-free, so a slot goes X->Y with NO absence in between.
+    // 2. A slot recycled to a new occupant re-anchors and is admitted however far the position
+    //    moved: the previous occupant's anchor is not this peer's history.
     {
         const Outcome o = ApplyPose(r, 8, ue_wrap::FVector{-400000.f, 400000.f, 0.f}, 600, 1016);
         check("recycle-reanchors", o.anchored && o.trusted,
               "a replaced occupant was judged against the previous occupant's anchor");
     }
 
-    // 3. An UNSTAMPED pose is refused trust, and the report LATCHES (a 60 Hz stream must not flood).
+    // 3. An unstamped pose is refused trust, and the report latches.
     {
         const Outcome a = ApplyPose(r, 8, ue_wrap::FVector{-400000.f, 400000.f, 0.f}, 0, 1032);
         const Outcome b = ApplyPose(r, 8, ue_wrap::FVector{-400000.f, 400000.f, 0.f}, 0, 1048);
@@ -345,11 +299,9 @@ bool RunSelfTest() {
               "the unstamped warning is not latched -- it would print once per packet");
     }
 
-    // 4. THE TWO-PACKET RELOCATION. An unstamped pose used to move the anchor for free, so a stamped
-    //    pose at the SAME spot then measured a zero step and restored trust immediately. The
-    //    unstamped hop must cost its full distance in debt, and the stamped follow-up must not clear
-    //    it. This is the row the earlier selftest could not have had: it asked only whether the
-    //    unstamped packets themselves were untrusted, which passes on the broken module.
+    // 4. The two-packet relocation: an unstamped hop must cost its full distance in debt, and a
+    //    stamped pose at the same spot must not clear it. Asking only whether the unstamped
+    //    packets are untrusted passes on a broken module.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -362,8 +314,8 @@ bool RunSelfTest() {
               "an unstamped pose relocated the anchor for free -- two packets teleport anywhere");
     }
 
-    // 5. ORDINARY MOTION STAYS TRUSTED. Every row here failed under the first version of this file,
-    //    which capped `carry + earned` and so allowed no sample to cover more than 50 cm.
+    // 5. Ordinary motion stays trusted at the game's own speeds: walk, sprint, the ATV's turbo, the
+    //    noclip diagonal.
     fresh(); check("walk-400-at-60hz", SimSteady(r, 400.f, 17, 40).trusted,
                    "walking at defSpeed was refused");
     fresh(); check("sprint-1000-at-60hz", SimSteady(r, 1000.f, 17, 40).trusted,
@@ -372,20 +324,20 @@ bool RunSelfTest() {
                    "the game's own ATV at speed_turbo was refused");
     fresh(); check("noclip-diag-8660-at-60hz", SimSteady(r, 8660.f, 17, 40).trusted,
                    "the game's own noclip diagonal was refused");
-    // ...and the same speeds at a sparse packet rate, which is what a lossy link looks like.
+    // The same speeds at a sparse packet rate, which is what a lossy link looks like.
     fresh(); check("sprint-1000-at-10hz", SimSteady(r, 1000.f, 100, 20).trusted,
                    "sprinting across a 100 ms packet gap was refused");
     fresh(); check("atv-turbo-3200-at-10hz", SimSteady(r, 3200.f, 100, 20).trusted,
                    "the ATV across a 100 ms packet gap was refused");
 
-    // 6. Sustained OVER-bound motion is caught, and caught quickly.
+    // 6. Sustained over-bound motion is caught, and caught quickly.
     fresh(); check("over-bound-15000-caught", !SimSteady(r, 15000.f, 17, 10).trusted,
                    "sustained motion above the speed bound was believed");
     fresh(); check("over-bound-11000-caught", !SimSteady(r, 11000.f, 17, 40).trusted,
                    "a ten-percent overspeed was believed indefinitely");
 
-    // 7. THE SUBDIVIDED FREE JUMP -- the attack that killed the first design of this module: hops
-    //    small enough to pass for jitter, repeated. 11 x 1999 cm is 220 m in 183 ms.
+    // 7. The subdivided jump: hops small enough to pass for jitter, repeated. 11 x 1999 cm is 220 m
+    //    in under 0.2 s.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -400,8 +352,8 @@ bool RunSelfTest() {
               "220 m in eleven sub-jitter hops passed as ordinary motion");
     }
 
-    // 8. A single long teleport is untrusted, and its debt clears at the speed bound -- not sooner
-    //    (it would be free) and not later (an honest teleport would be punished forever).
+    // 8. A single long teleport is untrusted, and its debt clears at the speed bound: not sooner
+    //    (it would be free) and not later (an honest teleport punished forever).
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -409,8 +361,8 @@ bool RunSelfTest() {
         now += 17; st += 17;
         const Outcome jump = ApplyPose(r, 1, ue_wrap::FVector{22000.f, 0.f, 0.f}, st, now);  // 220 m
         check("teleport-untrusted", !jump.trusted, "a 220 m single-packet jump was believed");
-        // Standing still afterwards: 220 m of debt at 10 000 cm/s is ~2.2 s, so trust must NOT
-        // return inside the first 1.7 s and must return inside 3.4 s.
+        // Standing still: 220 m of debt at 10 000 cm/s is 2.2 s, so trust must not return inside
+        // 1.7 s and must return inside 3.4 s.
         bool recoveredEarly = false, recovered = false;
         for (int i = 0; i < 200; ++i) {                        // 200 x 17 ms = 3.4 s
             now += 17; st += 17;
@@ -424,8 +376,8 @@ bool RunSelfTest() {
         check("teleport-debt-clears", recovered, "an honest teleport would never regain trust");
     }
 
-    // 9. SILENCE PAST THE REBASE GAP EARNS NOTHING. The clock re-bases; the position anchor and the
-    //    credit survive, so muting one's own stream for a long time is not a free teleport.
+    // 9. Silence past the rebase gap earns nothing: the clock re-bases, the anchor and the credit
+    //    survive.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -436,15 +388,12 @@ bool RunSelfTest() {
               "a peer bought a 220 m jump by muting its own pose stream past the rebase gap");
     }
 
-    // 10. SILENCE *UNDER* THE REBASE GAP EARNS BANKED TIME, and this row exists to PIN that number
-    //     rather than to assert it is safe. 7 s of silence banks kSkewBankMaxMs = 5 s, which at the
-    //     speed bound is 500 m spendable in ONE packet. That is INSIDE the sustained rate -- 7 s of
-    //     real time legitimately buys 700 m, so the bank cap tightens the bound rather than loosening
-    //     it -- but it is INVISIBLE, because trust never falls and no DISCONTINUITY line is logged.
-    //     The silence, not the rate, is the defect, and the discontinuity record IS this build's
-    //     product. Whether to add a per-packet earn cap is a FIELD question: the summary's new
-    //     dt/use/bank maxima are what answer it, and the header records the question rather than
-    //     guessing a constant. If this row ever flips, someone changed the model -- read the header.
+    // 10. Silence under the rebase gap earns banked time, and this row pins the number: 7 s of
+    //     silence banks kSkewBankMaxMs, 5 s, which at the bound is 500 m spendable in one packet.
+    //     Inside the sustained rate (7 s legitimately buys 700 m) but invisible, since trust never
+    //     falls and no discontinuity line is logged. Whether a per-packet earn cap is needed is a
+    //     field question the summary's dt/use/bank maxima answer. If this row flips, the model
+    //     changed.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -454,7 +403,7 @@ bool RunSelfTest() {
         check("sub-rebase-silence-banks-time", o.trusted && o.useMs == kSkewBankMaxMs,
               "the banked-time model changed -- re-read the header before trusting this build");
     }
-    // ...and one metre past what the bank holds is still refused, so the bound is a bound.
+    // One metre past what the bank holds is still refused, so the bound is a bound.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -465,7 +414,7 @@ bool RunSelfTest() {
               "banked time was not capped at kSkewBankMaxMs -- silence buys unbounded distance");
     }
 
-    // 11. A REWOUND or INFLATED sender clock buys nothing: the bank holds only real time.
+    // 11. A rewound or inflated sender clock buys nothing: the bank holds only real time.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -477,7 +426,8 @@ bool RunSelfTest() {
               "a peer minted credit by inflating its own clock");
     }
 
-    // 12. The 24-bit stamp WRAPS every 4h39m; the arithmetic must cross it without inventing time.
+    // 12. The 24-bit stamp wraps every 4 h 39 min; the arithmetic must cross it without inventing
+    //     time.
     fresh();
     {
         uint64_t now = 5000;
@@ -491,9 +441,9 @@ bool RunSelfTest() {
               "the 24-bit wrap read as a rewind or as 16 777 216 ms of elapsed time");
     }
 
-    // 13. A NETWORK CLUMP costs nothing. The receiver stalls 200 ms, then drains twelve poses whose
-    //     ARRIVAL intervals are zero but whose PRODUCTION intervals were 17 ms each. This is the one
-    //     thing the bank exists for, and without it an ordinary hiccup reads as motion.
+    // 13. A network clump costs nothing: the receiver stalls 200 ms, then drains twelve poses whose
+    //     arrival intervals are zero but whose production intervals were 17 ms each. The bank
+    //     exists for this.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -510,7 +460,7 @@ bool RunSelfTest() {
               "a drained receive queue read as motion -- the bank is not absorbing it");
     }
 
-    // 14. The debt FLOOR holds, so an absurd jump cannot buy exile beyond the stated policy.
+    // 14. The debt floor holds, so an absurd jump cannot buy exile beyond the stated policy.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -521,9 +471,7 @@ bool RunSelfTest() {
               "the debt floor did not hold -- recovery time is unbounded");
     }
 
-    // 15. A RECYCLED slot starts its measurements empty. The accumulators are per OCCUPANT: leaving
-    //     them standing makes the new person's first summary window report the old person's worst
-    //     step under the new person's slot number, in the one artifact this build exists to produce.
+    // 15. A recycled slot starts its measurements empty: the accumulators are per occupant.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -539,9 +487,7 @@ bool RunSelfTest() {
               "a recycled slot inherited the previous occupant's measurements");
     }
 
-    // 16. The discontinuity DETAIL line is latched per summary window while the COUNT is not. The
-    //     condition is authored by the peer being judged, and the detail line is a UE_LOGW, which
-    //     fflushes synchronously on the net thread.
+    // 16. The discontinuity detail line is latched per summary window while the count is not.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -560,10 +506,9 @@ bool RunSelfTest() {
               "the discontinuity COUNT was latched too -- the summary would under-report");
     }
 
-    // 17. A NON-FINITE position is refused and cannot poison the row. ValidatePose makes this
-    //     unreachable in production today; the point is that if it ever becomes reachable, the
-    //     failure is a named refusal rather than a row that reads untrusted forever with no
-    //     explanation and no way to recover.
+    // 17. A non-finite position is refused and cannot poison the row. ValidatePose makes it
+    //     unreachable today; if it ever becomes reachable, the failure is a named refusal, not a
+    //     row that reads untrusted forever.
     fresh();
     {
         uint64_t now = 5000; uint32_t st = 100;
@@ -596,7 +541,7 @@ void OnSessionStart() {
         for (Row& r : g_rows) r = Row{};
     }
     g_nextSummaryMs.store(NowMs() + kSummaryPeriodMs, std::memory_order_relaxed);
-    // Un-gated on purpose, and it drives its OWN row. See its comment.
+    // Un-gated on purpose, over its own row.
     RunSelfTest();
 }
 
@@ -605,8 +550,8 @@ void OnClientPose(coop::net::Session& session, int slot,
     if (slot <= 0 || slot >= kSlots) return;   // slot 0 is the host; it never validates itself
     if (session.role() != coop::net::Role::Host) return;   // client-scoped: a client validates none
 
-    // Read on THIS thread (the acquire load is documented "Any thread") so a recycled slot's very
-    // first pose is never judged against the previous occupant's anchor.
+    // Read on this thread (the acquire load is documented any-thread), so a recycled slot's first
+    // pose is never judged against the previous occupant's anchor.
     const uint32_t gen = session.peerGenerationForSlot(slot);
     const uint64_t now = NowMs();
 
@@ -616,8 +561,8 @@ void OnClientPose(coop::net::Session& session, int slot,
         o = ApplyPose(g_rows[slot], gen, pos, stateTimeMs24, now);
     }
 
-    // Logging OUTSIDE the lock, always. An instrument that can be off must say when it is ON, so the
-    // arm edge is announced once per row with the facts that identify it.
+    // Logging outside the lock. An instrument that can be off must say when it is on: the arm edge
+    // is announced once per row.
     if (o.anchored) {
         UE_LOGI("movement_ledger: ARMED slot=%d gen=%u anchor=(%.0f,%.0f,%.0f) -- measure-only, "
                 "nothing refuses on this build",
@@ -646,14 +591,13 @@ void OnClientPose(coop::net::Session& session, int slot,
     }
 }
 
-// BOTH readers take the session and check the occupancy generation, for the same reason the WRITE
-// path does: a slot recycles X->Y with no absence in between, `peerGenBySlot_` drops to 0 the moment
-// X disconnects, and the row keeps X's verdict at X's position until Y's first pose reaches the NET
-// thread. A read landing in that window -- and a joining peer can send a reliable before its first
-// pose -- would otherwise answer a question about Y with a fact about X. Fail-CLOSED: an unarmed
-// row, a stale generation, or a departed slot (generation 0) is not a body, and no body means no
-// reach. This is also why there is no OnSessionStop: staleness is refused at the READ, which is the
-// layer that can actually see it, rather than swept at a teardown hook this tree does not have.
+// Both readers check the occupancy generation, as the write path does: a slot recycles with no
+// absence between, the generation drops to 0 the moment the old occupant disconnects, and the
+// row keeps the old verdict until the new occupant's first pose reaches the net thread. A
+// joining peer can send a reliable before its first pose, and a read in that window would
+// answer about the new peer with a fact about the old. Fail closed: an unarmed row, a stale
+// generation or a departed slot is not a body. Staleness is refused at the read, which is why
+// there is no OnSessionStop.
 bool PositionTrusted(coop::net::Session& session, int slot) {
     if (slot <= 0 || slot >= kSlots) return false;
     const uint32_t gen = session.peerGenerationForSlot(slot);
@@ -682,18 +626,13 @@ void Tick(coop::net::Session& session) {
     if (now < g_nextSummaryMs.load(std::memory_order_relaxed)) return;
     g_nextSummaryMs.store(now + kSummaryPeriodMs, std::memory_order_relaxed);
 
-    // The wire-vs-actor divergence is sampled HERE -- inside the summary gate, once per window,
-    // immediately before the line that consumes it. It is an ENGINE read (a ParamFrame plus a
-    // ProcessEvent dispatch per slot), so doing it inside the net-thread write would break the
-    // game-thread-only rule outright; and doing it EVERY tick, as the first version of this file
-    // did, spends up to three UFunction dispatches per frame -- some 375 per second -- to produce a
-    // number that is read at 0.1 Hz. It measures the gap between the value the ledger validated and
-    // the value the intent authorizer currently consumes, which is the number that justifies (or
-    // refutes) moving authorization onto the ledger. (It named `SenderMayReach` until 2026-08-26,
-    // when that module-local check was promoted whole into `coop/element/intent_authority`; the
-    // authorizer now samples this same divergence at EVERY real intent, because this 0.1 Hz sampler
-    // had produced exactly ONE reading in the whole log corpus and that reading was taken on a
-    // stationary peer, where the divergence is trivially zero.)
+    // The wire-versus-actor divergence is sampled here, inside the summary gate, once per window,
+    // right before the line that consumes it. It is an engine read per slot, so it cannot run in
+    // the net-thread write, and per tick it would spend dispatches every frame for a number read
+    // at 0.1 Hz. It measures the gap between the value the ledger validated and the value the
+    // intent authorizer consumes; coop/element/intent_authority samples the same divergence at
+    // every real intent, since this sampler had produced one reading in the whole log corpus, on a
+    // stationary peer.
     for (int slot = 1; slot < kSlots; ++slot) {
         ue_wrap::FVector wire{};
         {
@@ -710,7 +649,7 @@ void Tick(coop::net::Session& session) {
         g_rows[slot].lastWireVsActorCm = d;
     }
 
-    // UNCONDITIONAL, so an empty log means the instrument is DEAD rather than the world being quiet.
+    // Unconditional, so an empty log means the instrument is dead rather than the world quiet.
     for (int slot = 1; slot < kSlots; ++slot) {
         Row snap;
         {
@@ -728,14 +667,13 @@ void Tick(coop::net::Session& session) {
             r.minCreditCm = r.creditCm;
             r.maxImpliedSpeed = 0.f;
             r.discReported = false;
-            // Back to "never taken this window". Without this, a window whose puppet read FAILED
-            // prints the previous window's divergence with nothing marking it stale; -1 says so.
+            // Back to never-taken: otherwise a window whose puppet read failed prints the previous
+            // window's divergence with nothing marking it stale.
             r.lastWireVsActorCm = -1.f;
         }
-        // dt / use / bank are CALIBRATION fields, not decoration. `dt` is the real receive-gap
-        // distribution and `use` is how much of one gap a single packet was credited for; together
-        // they decide whether a per-packet earn cap is affordable in the enforcing build -- the open
-        // question selftest row 10 pins and this build exists to answer rather than guess.
+        // dt, use and bank are calibration fields: dt is the real receive-gap distribution and use
+        // is how much of one gap a single packet was credited; together they decide whether a
+        // per-packet earn cap is affordable (selftest row 10).
         UE_LOGI("movement_ledger[slot %d]: n=%llu disc=%llu age=%.0fs maxStep=%.0f cm "
                 "dt=[%u..%u] ms use<=%u ms bank<=%u ms minCredit=%.0f cm (cap %.0f) "
                 "maxImplied=%.0f cm/s (bound %.0f) wireVsActor=%.0f cm trusted=%d",
