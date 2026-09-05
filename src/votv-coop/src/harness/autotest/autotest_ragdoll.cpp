@@ -1,32 +1,14 @@
-// harness/autotest_ragdoll.cpp -- the ragdoll/faint sync e2e autotest
-// (VOTVCOOP_RUN_RAGDOLL_TEST; ex-autotest_vitals.cpp, s27 dissolve: the
-// damage/dmghazard/playerdmg/puppetframe families live in their own TUs).
-//
-// Inc2b end-to-end ragdoll/faint sync test. Drives the FULL wire path:
-//
-//   CLIENT (driver): calls ragdollMode(true,true,false) on its LOCAL possessed
-//     mainPlayer_C (exactly what the C-key / exhaustion-faint do internally),
-//     waits, then forceGetUp() -- so its OWN isRagdoll flips 1 then 0.
-//   HOST (observer): polls its slot-1 puppet (the client's body) and confirms
-//     isRagdoll flips 0->1 then 1->0 -- driven PURELY by the client's pose
-//     stream carrying PoseSnapshot.stateBits bit 1 (kStateBitRagdoll) +
-//     RemotePlayer::SetTargetPose's reconcile applying ragdollMode/forceGetUp
-//     on the puppet.
-//
-// This SUPERSEDES the prior standalone #8 probe (host drove its OWN puppet
-// directly to prove ragdollMode works on an unpossessed orphan -- PASSED,
-// commit 4d52d40). The e2e test exercises that same receiver-apply path AND
-// the sender bit-pack AND the relay-free per-peer pose stream, so the
-// standalone probe is retired (RULE 2 -- no parallel old + new verification).
-//
-// Reads/drives go through the ue_wrap::engine ragdoll wrappers (the production
-// Inc2b code path), not raw reflection -- so the test validates the shipping
-// accessors too. Game-thread work is posted via GT::Post; a bounded WaitDone
-// guards every wait so a faulting call can't hang the smoke.
-//
-// Gated by env VOTVCOOP_RUN_RAGDOLL_TEST=1 (registered in autotest_dispatch.cpp;
-// the smoke inherits it via mp.py's os.environ.copy()). Role read from
-// VOTVCOOP_NET_ROLE: "client" => driver, anything else => host observer.
+// harness/autotest/autotest_ragdoll.cpp -- the ragdoll and faint sync end-to-end autotest
+// (VOTVCOOP_RUN_RAGDOLL_TEST). The client (the driver) calls the game's own ragdoll verb on
+// its local possessed player (exactly what the faint key and the exhaustion faint do), waits,
+// then the get-up verb, so its own ragdoll flag flips on and off; the host (the observer)
+// polls its puppet for the client and confirms the ragdoll display appears and then goes,
+// driven purely by the client's pose stream carrying the ragdoll state bit and the remote
+// player's reconcile applying the verbs on the puppet. Reads and drives go through the engine
+// wrappers (the shipping code path), so the test validates the accessors too. Game-thread
+// work is posted; a bounded wait guards every wait so a faulting call cannot hang the smoke.
+// Gated by the env var (registered in the dispatch; the smoke inherits it). The role is read
+// from VOTVCOOP_NET_ROLE: client is the driver, anything else the host observer.
 
 #include "harness/autotest.h"
 
@@ -56,30 +38,28 @@ namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 namespace cfg = coop::config;
 
-// Bounded spin-wait on a game-thread task's completion flag. Returns true if
-// the task signalled (set the flag non-zero), false if it never completed
-// within timeoutMs -- which would mean the posted task faulted (the SEH
-// firewall ate the AV and the flag was never set). A bound is mandatory:
-// driving ragdollMode on the local player COULD fault and an unbounded wait
-// would hang the whole smoke.
+// A bounded spin-wait on a game-thread task's completion flag. True if the task signalled,
+// false if it never completed within the timeout, which means the posted task faulted (the
+// SEH firewall ate the fault and the flag was never set). The bound is mandatory: driving the
+// ragdoll verb on the local player could fault, and an unbounded wait would hang the whole
+// smoke.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// Read whether the slot-1 puppet has a LIVE ragdoll display body whose mesh is
-// physically simulating (2026-06-01 xray-actor rework: the visible flop is a
-// SEPARATE playerRagdoll_C body, not the puppet's own mesh). IsAnyRigidBodyAwake on
-// the body's SkeletalMesh @0x0230 confirms it is actually flopping (true while
-// falling; goes false once it settles at rest). Returns false on a missing/dead body.
+// Whether the slot-1 puppet has a live ragdoll display body whose mesh is physically
+// simulating (the visible flop is a separate ragdoll body, not the puppet's own mesh). The
+// rigid-body-awake query on the body's mesh confirms it is actually flopping: true while
+// falling, false once settled. False on a missing or dead body.
 bool PuppetHasFloppingRagdollBody() {
     auto done = std::make_shared<std::atomic<int>>(0);
     auto ok = std::make_shared<int>(0);
     GT::Post([done, ok] {
         coop::RemotePlayer& rp = coop::puppet_drive::Puppet(1);
         void* body = rp.RagdollBody();
-        if (body && R::IsLiveByIndex(body, rp.RagdollBodyIdx())) {  // recycle-proof (audit 2026-06-01)
-            // Aragdoll_C::SkeletalMesh @0x0230 -- the body mesh component.
+        if (body && R::IsLiveByIndex(body, rp.RagdollBodyIdx())) {  // recycle-proof
+            // The ragdoll body's mesh component.
             void* mesh = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + 0x0230);
             if (mesh && R::IsLive(mesh)) {
                 if (void* awakeFn = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"IsAnyRigidBodyAwake")) {
@@ -94,12 +74,11 @@ bool PuppetHasFloppingRagdollBody() {
     return *ok != 0;
 }
 
-// Aim the HOST player's camera at the slot-1 puppet's body, so an autonomous
-// screenshot (mp.py ragdollshot) actually FRAMES the falling puppet. The puppet
-// converges right next to the host but often off to the side / behind, out of the
-// forward FOV. Computes the look-at from the host camera (actor + ~60 eye height)
-// to the puppet's MESH world location (the limp body during the flop) and writes
-// the host controller's ControlRotation. Game thread; bounded.
+// Aim the host player's camera at the slot-1 puppet's body, so an autonomous screenshot
+// frames the falling puppet. The puppet converges next to the host but often off to the side
+// or behind, out of the forward view. Computes the look-at from the host camera (the actor
+// plus eye height) to the puppet's mesh location (the limp body during the flop) and writes
+// the host controller's control rotation. Game thread; bounded.
 void AimHostAtPuppet() {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done] {
@@ -124,10 +103,10 @@ void AimHostAtPuppet() {
     WaitDone(done, 8000);
 }
 
-// Move the HOST ~280 units back from the puppet (same Z -> stays on the floor, no
-// fall) so the fallen body is AHEAD in the frame, not directly under the host's
-// own first-person legs (host + client spawn overlapping, so a straight-down view
-// is just the host's own feet occluding the body). One-shot at the rising edge.
+// Move the host back from the puppet (the same Z, so it stays on the floor) so the fallen
+// body is ahead in the frame, not directly under the host's own first-person legs (the host
+// and client spawn overlapping, so a straight-down view is just the host's own feet occluding
+// the body). One shot at the rising edge.
 void PositionHostForShot() {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done] {
@@ -148,13 +127,10 @@ void PositionHostForShot() {
     WaitDone(done, 8000);
 }
 
-// [probe ragdoll-geom] -- decisive welded-root-vs-real-fall diagnostic. RE
-// (wf_4f87bbb5) concluded the puppet kel body is VISIBLE-not-hidden during the
-// flop but DEGENERATE; the leading hypothesis is a WELDED ROOT (mesh_playerVisible
-// simulated without detaching from its parent -> the rig can't translate to the
-// floor). This samples whether the body's bounds + lowest bone actually DROP
-// toward the host's feet during the flop, or stay pinned at chest height.
-// Read-only (no leak on the tickless orphan). Game thread.
+// The geometry probe: samples whether the body's bounds and lowest bone actually drop toward
+// the host's feet during the flop (a real fall) or stay pinned at chest height (a welded
+// root: the visible mesh simulated without detaching from its parent, so the rig cannot
+// translate to the floor). Read-only. Game thread.
 void ProbePuppetRagdollGeometry(const char* tag) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done, tag] {
@@ -179,15 +155,15 @@ void ProbePuppetRagdollGeometry(const char* tag) {
     WaitDone(done, 8000);
 }
 
-// HOST side: observe the slot-1 puppet (the client's body). Confirm its
-// isRagdoll flips 0->1 (driven by the client over the wire) then 1->0.
+// The host side: observe the slot-1 puppet (the client's body) and confirm its ragdoll
+// appears (driven by the client over the wire) and then goes.
 void ObserveOnHost() {
     UE_LOGI("ragdoll_test[host]: observer armed -- polling slot-1 puppet for a "
             "wire-driven ragdoll (up to 120 s)");
 
-    // Phase machine: 0 = waiting for puppet to exist; 1 = puppet up, settle +
-    // frame the STANDING puppet (before-shot) then wait for the RISING edge
-    // (isRagdoll 0->1); 2 = waiting for the FALLING edge (1->0).
+    // The phase machine: 0 waiting for the puppet to exist; 1 the puppet up, settle and frame
+    // the standing puppet (the before shot), then wait for the rising edge; 2 waiting for the
+    // falling edge.
     int phase = 0;
     bool sawPuppet = false;
     bool sawFlop = false;
@@ -199,9 +175,8 @@ void ObserveOnHost() {
         GT::Post([done, isRag] {
             coop::RemotePlayer& rp = coop::puppet_drive::Puppet(1);
             if (!rp.valid()) { *isRag = -1; done->store(1); return; }
-            // The xray-actor rework state: a spawned playerRagdoll_C display body
-            // (IsRagdollDisplayed) is the authoritative "this puppet is ragdolled"
-            // signal -- the puppet's own isRagdoll field is no longer driven.
+            // A spawned ragdoll display body is the authoritative sign that this puppet is
+            // ragdolled; the puppet's own ragdoll field is not driven.
             *isRag = rp.IsRagdollDisplayed() ? 1 : 0;
             done->store(1);
         });
@@ -215,9 +190,9 @@ void ObserveOnHost() {
             }
             if (r >= 0) phase = 1;  // puppet readable -> start watching for the rising edge
         }
-        // phase 1: puppet is up. Settle (let it converge from the spawn placeholder),
-        // then move the host back + aim at the STANDING puppet and announce the
-        // before-shot is ready; then keep tracking until the ragdoll fires.
+        // Phase 1: the puppet is up. Settle (let it converge from the spawn placeholder), then move
+        // the host back and aim at the standing puppet and announce the before shot is ready; then
+        // keep tracking until the ragdoll fires.
         if (phase == 1 && !positioned) {
             if (++settle >= 4) {
                 PositionHostForShot();
@@ -229,9 +204,9 @@ void ObserveOnHost() {
         } else if (phase == 1 && positioned) {
             AimHostAtPuppet();  // keep the standing puppet framed until it flops
             if (r == 1) {
-                // Confirm the SEPARATE playerRagdoll_C display body is PHYSICALLY
-                // flopping (not just the display latch) -- IsAnyRigidBodyAwake on the
-                // body mesh @0x0230 (true while it falls, false once it settles).
+                // Confirm the separate ragdoll display body is physically flopping (not just the
+                // display latch): the rigid-body-awake query on the body mesh, true while it falls,
+                // false once it settles.
                 sawFlop = PuppetHasFloppingRagdollBody();
                 UE_LOGI("ragdoll_test[host]: observed RISING edge -- puppet ragdoll-displayed over the "
                         "wire; separate playerRagdoll_C body physically flopping=%d", sawFlop ? 1 : 0);
@@ -266,13 +241,13 @@ void ObserveOnHost() {
     UE_LOGI("ragdoll_test[host]: DONE");
 }
 
-// CLIENT side: drive the LOCAL possessed player into a ragdoll, then recover --
-// the same ragdollMode/forceGetUp calls the C-key / faint do. The local
-// isRagdoll flip rides the pose stream's kStateBitRagdoll to the host.
+// The client side: drive the local possessed player into a ragdoll, then recover, the same
+// verbs the faint key and the faint use. The local ragdoll flip rides the pose stream's
+// ragdoll state bit to the host.
 void DriveOnClient() {
     UE_LOGI("ragdoll_test[client]: driver armed -- waiting for the local player");
 
-    // Wait for a live local mainPlayer_C (post-possession). Poll up to 60 s.
+    // Wait for a live local player (post-possession). Poll up to 60 s.
     auto local = std::make_shared<void*>(nullptr);
     for (int attempt = 0; attempt < 60 && !*local; ++attempt) {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -289,27 +264,22 @@ void DriveOnClient() {
         return;
     }
 
-    // Let the host spawn the slot-1 puppet + arm its observer (the puppet
-    // appears a few seconds after our first pose). 12 s is comfortably past
-    // that on a LAN smoke.
+    // Let the host spawn the slot-1 puppet and arm its observer (the puppet appears a few
+    // seconds after our first pose). Twelve seconds is comfortably past that on a LAN smoke.
     UE_LOGI("ragdoll_test[client]: local player resolved -- waiting 12 s for the host puppet to spawn");
     ::Sleep(12000);
 
-    // Drive the local ragdoll (== what the C-key / exhaustion faint do). On the
-    // possessed local player this is the normal in-game path, so it's safe.
+    // Drive the local ragdoll (what the faint key and the exhaustion faint do). On the possessed
+    // local player this is the normal in-game path.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         void* mp = *local;
         GT::Post([mp, done] {
-            // FAITHFUL driver (2026-06-01): VOTV's REAL ragdollMode on the local
-            // possessed player -- exactly what the C-key faint does, so the CLIENT
-            // ragdolls LOCALLY too (the test now matches real play). The old direct
-            // isRagdoll write was a leak-era workaround; the +5GB was the prop
-            // re-snapshot leak (fixed 999708a), and the SP probe confirmed real
-            // ragdollMode is leak-free. The isRagdoll flip rides the wire's
-            // kStateBitRagdoll to the host, which pelvis-attaches its puppet to a
-            // playerRagdoll_C body. (true,false,false) = ragdoll, no faint screen,
-            // no death.
+            // The faithful driver: the game's real ragdoll verb on the local possessed player,
+            // exactly what the faint key does, so the client ragdolls locally too and the test
+            // matches real play. The flag rides the wire's ragdoll state bit to the host, which
+            // attaches its puppet to a ragdoll body at the pelvis. The arguments: ragdoll, no faint
+            // screen, no death.
             const bool ok = E::SetMainPlayerRagdollMode(mp, /*ragdoll=*/true, /*passOut=*/false, /*death=*/false);
             UE_LOGI("ragdoll_test[client]: ragdollMode(true,false,false) on the LOCAL player -> ok=%d "
                     "(real VOTV ragdoll -- client ragdolls locally; the flag rides the wire to the host puppet)", ok ? 1 : 0);
@@ -321,10 +291,10 @@ void DriveOnClient() {
         }
     }
 
-    // Hold the ragdoll. Default 5 s (enough for the host observer's rising-edge
-    // poll). VOTVCOOP_RAGDOLL_HOLD_MS overrides it -- the `mp.py ragdollshot`
-    // scenario sets a longer hold so the orchestrator can grab 2 host screenshots
-    // of the puppet WHILE it is flopped (proving it falls limp, not rigid).
+    // Hold the ragdoll. Five seconds by default (enough for the host observer's rising-edge
+    // poll); VOTVCOOP_RAGDOLL_HOLD_MS overrides it, and the screenshot scenario sets a longer
+    // hold so the orchestrator can capture the puppet while it is flopped (proving it falls
+    // limp, not rigid).
     int holdMs = 5000;
     {
         const std::string h = cfg::ReadEnv("VOTVCOOP_RAGDOLL_HOLD_MS");
@@ -336,8 +306,8 @@ void DriveOnClient() {
     UE_LOGI("ragdoll_test[client]: holding ragdoll for %d ms", holdMs);
     ::Sleep(holdMs);
 
-    // Recover (== wakeup / get-up). Clears the local isRagdoll AnimBP gate;
-    // the cleared bit rides the next pose so the host puppet gets up too.
+    // Recover (the wake-up and get-up). Clears the local ragdoll animation gate; the cleared bit
+    // rides the next pose so the host puppet gets up too.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         void* mp = *local;
