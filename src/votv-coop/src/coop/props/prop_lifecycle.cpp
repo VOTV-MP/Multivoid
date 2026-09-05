@@ -1,7 +1,7 @@
-// coop/prop_lifecycle.cpp -- Aprop_C spawn/destroy/extract wire observers.
-//
-// Extracted from harness/harness.cpp (2026-05-25 modular refactor).
-// See coop/prop_lifecycle.h for the public interface.
+// coop/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that expresses
+// a keyed prop's birth on the wire, the late-load catch for the trash and food classes, the
+// install of the destroy seam, and the class predicates. The destroy seam body lives in
+// prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
 
 #include "coop/props/prop_lifecycle.h"
 
@@ -12,17 +12,17 @@
 #include "coop/element/prop.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp (kerfur-conversion first refusal, take-8)
-#include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass (the first-refusal class gate)
-#include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm -- deterministic conversion-successor peek (2026-07-14 sole-express)
+#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp, the conversion successor's converge
+#include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass
+#include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm, the conversion-successor peek
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
-#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/session/world_load_episode.h"     // v107 host-wipe fix: suppress keyed-destroy broadcast during the client world-load
-#include "coop/props/prop_drop_intent.h"       // F2 Inc-1: park a client keyed-destroy key for a later host-auth re-place
+#include "coop/props/join_membership_sweep.h"  // the join claim
+#include "coop/session/world_load_episode.h"     // the client world-load window
+#include "coop/props/prop_drop_intent.h"       // a client keyed destroy parked for the host's re-place
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -32,7 +32,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
-#include "ue_wrap/core/ufunction_hook.h"  // v106 destroy seam: Func-patch on K2_DestroyActor
+#include "ue_wrap/core/ufunction_hook.h"  // the destroy seam's Func patch on K2_DestroyActor
 
 #include <atomic>
 #include <cstdint>
@@ -47,68 +47,35 @@ namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
 
-// Cached session pointer (set on Install/InstallInventory). Observers read
-// role()/connected()/SendProp*() through this. nullptr until first Install.
-//
-// Audit C2 (2026-05-27): atomic Session* (was plain pointer). Observers fire
-// from parallel-anim worker threads per game_thread.cpp's header comment; a
-// plain-pointer deref races with harness calling SetSession(nullptr) on
-// shutdown. item_activate.cpp + weather_sync.cpp already use atomic; this
-// file had diverged. Mirrors item_activate's pattern exactly: helper LoadSession
-// for the read-many sites, .store(memory_order_release) for the set sites.
-// (g_session_ptr definition moved to namespace scope below -- shared with
-// prop_destroy_seam.cpp via prop_lifecycle_detail.h; LoadSession is inline there.)
+// The session pointer observers read role() and Send*() through: an atomic, since observers fire
+// from parallel-anim worker threads while the harness may SetSession(nullptr) at shutdown.
+// Defined at namespace scope below, shared with prop_destroy_seam.cpp through
+// prop_lifecycle_detail.h.
 
 // Install idempotency.
 bool g_propInitScanDone = false;
 bool g_propDestroyObserverInstalled = false;
-// Late-load catch for the non-Aprop_C keyed garbage classes (chipPile/clump/
-// trashBits). The one-shot Aprop-lineage Init scan below latches g_propInitScanDone
-// on the FIRST keyed Init found (Aprop_C, which loads with the world), so garbage
-// BP classes that load a moment later are missed -> they never broadcast PropSpawn
-// -> trash-ball interaction never syncs (root-caused 2026-05-31). This latches
-// once all three garbage Init UFunctions are hooked; see RegisterExtraKeyedInitObservers.
+// The late-load catch: the one-shot Init scan latches on the first keyed Init found (Aprop_C
+// loads with the world), and the garbage classes load a moment later, so their Init observers
+// are registered by RegisterExtraKeyedInitObservers; this latches once all are hooked.
 bool g_extraKeyedInitDone = false;
 std::vector<void*> g_registeredPropInitFns;
 
-// The takeObj-in-flight bracket (g_takeObjInFlight) is defined in
-// prop_container_extract.cpp with the takeObj PRE/POST pair; shared via
-// prop_lifecycle_detail.h (the Init POST body below reads it, OnDisconnect
-// clears it).
-
-// Per-actor lifecycle bookkeeping (ProcessedInit dedupe set + KnownKeyedProps
-// maintained set + Prop Element shadow) extracted to
-// coop/prop_element_tracker.{h,cpp} (M-1, 2026-05-29). All references below
-// resolved via `coop::prop_element_tracker::*`.
-
-// Per-feature PropSpawn/PropDestroy retry queues retired 2026-05-27:
-// reliable_channel.cpp now buffers internally so Send() always succeeds.
-// The Enqueue*/DrainPending* helpers, the harness per-tick drain calls,
-// and the OnDisconnect "dropped" counters all went with them (RULE 2).
+// The takeObj-in-flight bracket is defined in prop_container_extract.cpp and shared through
+// prop_lifecycle_detail.h; the Init POST body reads it, OnDisconnect clears it.
 
 // Forward declarations for observer callbacks.
 void GrabObserver_Aprop_Init_POST(void* self, void* function, void* params);
 
-// Synth-key minting for non-Aprop_C keyed-interactables (chipPile/clump/
-// trashBits) extracted to coop/prop_synth_key.{h,cpp} (M-1, 2026-05-29).
-
-// DestroyLocalProp promoted to the public coop::prop_lifecycle API 2026-06-10
-// (P2 claim sweep in remote_prop_spawn calls it cross-TU). Definition lives
-// after the anon namespace closes; the anon-namespace callers below see the
-// declaration via prop_lifecycle.h.
-
-// Forward declaration so the GT-thread-defer wrapper can refer to the body.
+// Forward declaration so the game-thread-defer wrapper can refer to the body.
 void GrabObserver_Aprop_Init_POST_Body(void* self);
 
 void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
     auto* s = LoadSession();
     if (!self || !s) return;
-    // Audit Fix 3 (2026-05-27): the observer body invokes UFunctions
-    // (GetActorLocation/Rotation, GetKey on chipPile/clump). ProcessEvent
-    // is game-thread-only per project invariant. The observer can fire on
-    // a parallel-anim task-graph worker per ue_wrap/game_thread.h:118-120.
-    // Defer the body to GT when off-thread; the actor pointer is captured
-    // and re-validated via R::IsLive inside the deferred body.
+    // The body calls UFunctions (GetActorLocation, GetKey), which are game-thread only, and the
+    // observer can fire on a parallel-anim worker; off-thread it is posted to the game thread,
+    // where the body re-validates the actor with IsLive.
     if (!GT::IsGameThread()) {
         GT::Post([self] { GrabObserver_Aprop_Init_POST_Body(self); });
         return;
@@ -118,33 +85,21 @@ void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params
 
 void GrabObserver_Aprop_Init_POST_Body(void* self) {
     if (!self) return;
-    // H2-redux 2026-05-28: maintain the known-keyed-props set BEFORE the
-    // session/echo-suppress gates so the set is warm by the time a peer
-    // joins (e.g. populated during the pre-handshake save-load pass).
-    // IsLive + IsKeyedInteractable promoted ahead of the session-connected
-    // gate to filter non-keyed actors out of the set. The hot path
-    // (post-connect spawn broadcast) pays two extra reflection probes per
-    // Init event -- acceptable given Init firing rate is bursty (level
-    // load) not steady-state.
+    // The known-keyed set is maintained before the session and echo gates, so it is warm by the
+    // time a peer joins (it fills during the pre-handshake save load); the two reflection probes
+    // per Init are bursty (level load), not steady-state.
     if (!R::IsLive(self)) return;
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return;
-    // CDO filter (re-audit 2026-05-28): IsLive doesn't filter CDOs (they're
-    // persistent UObjects). A CDO whose Init fires (level streaming /
-    // hot-reload edge cases) would enter g_knownKeyedProps permanently --
-    // CDOs are never K2_DestroyActor'd, so UnmarkKnownKeyedProp never runs.
-    // This matches the seed scan's Default__ guard so the set never holds
-    // a CDO under any path. (Same filter justification cited in
-    // prop_snapshot.cpp:StartEnumerationFor for removing the snapshot-side
-    // CDO check.)
+    // IsLive does not filter CDOs (persistent objects): a CDO whose Init fires would enter the
+    // known set permanently, since a CDO is never destroyed; the seed scan carries the same
+    // Default__ guard.
     {
         const std::wstring nm = R::ToString(R::NameOf(self));
         if (nm.rfind(L"Default__", 0) == 0) return;
     }
-    // CHILD-ACTOR EXCLUSION (2026-07-12, take-7 floating-CCTV RCA; predicate + full rationale:
-    // ue_wrap::engine::IsChildActor + prop_element_tracker::MarkPropElement). A parent-owned
-    // sub-actor (kerfur eye cam) must neither enter the known-keyed set nor BROADCAST PropSpawn
-    // -- the parent's SCS re-creates it on every peer; broadcasting minted a standalone floating
-    // camera mirror on the joiner at every kerfur toggle (host log 13:59:44 waves).
+    // A child actor (a kerfur's eye camera) neither enters the known set nor broadcasts: the
+    // parent's construction script re-creates it on every peer, and a broadcast minted a floating
+    // camera mirror on the joiner at every kerfur toggle.
     if (ue_wrap::engine::IsChildActor(self)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: child actor %p cls='%ls' -- skip (parent-owned "
                 "sub-actor; no independent identity, no broadcast)",
@@ -168,18 +123,16 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     }
     PT::MarkProcessedInit(self);
 
-    // Storage-container spawn fix (2026-05-25): defer broadcast for actors
-    // spawned from inside a takeObj call. takeObj POST is the canonical
-    // broadcaster (sees the saved-Key-restored actor after loadData).
+    // An actor spawned inside a takeObj call is broadcast by the takeObj POST, which sees the saved
+    // Key restored by loadData.
     if (g_takeObjInFlight.load(std::memory_order_relaxed)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p spawned inside takeObj -- defer to takeObj POST (Key not yet restored by loadData)",
                 self);
         return;
     }
 
-    // v5 Phase 5N Stream B: host-authoritative intermediate-variant
-    // suppression. Client destroys local intermediate; mature variant
-    // will arrive via the wire.
+    // Host-authoritative intermediate variants: the client destroys its local one, and the mature
+    // variant arrives on the wire.
     const std::wstring cls = R::ClassNameOf(self);
     if (s->role() == coop::net::Role::Client) {
         if (IsWireSuppressedPropClass(cls)) {
@@ -188,20 +141,16 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
             DestroyLocalProp(self, /*deferred=*/true);
             return;
         }
-        // Aprop_C lineage stays host-authoritative (save-persisted; client's
-        // local save-load is its OWN copy, doesn't write to host). For non-
-        // Aprop_C interactables (chipPile/clump/trashBitsPile -- "transient
-        // world litter" per RE, no save lineage), client interactions
-        // (toClump morph spawn) MUST propagate to host so the peer sees
-        // what the player just made. Fall through to broadcast in that
-        // case; otherwise return.
+        // The Aprop_C lineage stays host-authoritative (save-persisted; a client's save load is its
+        // own copy). The non-Aprop_C interactables (chipPile, clump, trashBitsPile: transient
+        // litter with no save lineage) are the client's own creations (the toClump morph) and must
+        // reach the host, so they fall through to the broadcast.
         if (ue_wrap::prop::IsDescendantOfProp(self)) {
-            // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] A CLIENT-originated Aprop_C world
-            // spawn (R-drop/place = simulateDrop -> FinishSpawningActor -> a FRESH actor,
-            // save Key restored by loadData) is skipped here by the host-authoritative
-            // assumption -> the host never learns of a client-PLACED prop -> it is invisible
-            // until an E-grab expresses it. This return was SILENT; log the skip so a repro
-            // shows the smoking gun (key+eid to correlate with the host log's PropDestroy).
+            // A client-originated Aprop_C world spawn (a drop or a place: simulateDrop,
+            // FinishSpawningActor, a fresh actor with its save Key restored by loadData) is skipped
+            // by the host-authoritative rule, so the host does not learn of a client-placed prop
+            // until an E-grab expresses it; logged with key and eid so a repro correlates with the
+            // host log.
             const coop::element::ElementId dropEid = PT::GetPropElementIdForActor(self);
             const ue_wrap::FVector dloc = ue_wrap::engine::GetActorLocation(self);
             UE_LOGI("[ROCK-DROP] CLIENT Aprop spawn NOT authored (host-auth skip): cls='%ls' key='%ls' "
@@ -211,10 +160,10 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                     dloc.X, dloc.Y, dloc.Z);
             return;  // Aprop_C: host-authoritative world spawn, skip client broadcast
         }
-        // Non-Aprop_C interactable: fall through to broadcast.
+        // Non-Aprop_C interactable: fall through to the broadcast.
     }
 
-    // Host (always) + Client (for non-Aprop_C only) reach here.
+    // The host (always) and a client (non-Aprop_C only) reach here.
     if (IsWireSuppressedPropClass(cls)) {
         UE_LOGI("spawner-suppress[host.Init]: skipping broadcast for intermediate-variant '%ls' actor=%p (host-authoritative; will broadcast mature variant on transform)",
                 cls.c_str(), self);
@@ -225,34 +174,21 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 cls.c_str(), self);
         return;
     }
-    // KERFUR-CONVERSION FIRST REFUSAL (2026-07-12, take-8 host-own toggle dupe RCA). A fresh
-    // prop_kerfurOmega_C may be the turn_off verb's output: the kerfur layer owns kerfur-form
-    // expression (redesign 10.3 -- ONE entity, KerfurConvert is the sole conversion wire signal,
-    // never a generic PropSpawn). This body is the express funnel for the Init-POST observer AND
-    // ExpressSpawnedProp (the FinishSpawningActor seam drain) -- the exact lane that out-raced the
-    // 5 Hz death-watch poll and left the joiner with an NPC mirror + a generic prop mirror = the
-    // dupe. An ordinary kerfur prop spawn (hand-place / purchase) returns false and keeps the
-    // generic same-tick expression.
-    // KERFUR-CONVERSION SOLE EXPRESS (2026-07-14 -- REPLACES the take-8 racy dead-NPC suppression).
-    // The DETERMINISTIC test: is this prop the successor the form assembler captured IN-BRACKET
-    // (IsCapturedForm -- a NON-consuming peek; the deferred converge still consumes the slot)? If
-    // so the kerfur layer owns the wire expression (redesign 10.3: ONE entity, KerfurConvert is the
-    // SOLE conversion signal, never a generic PropSpawn) -> TRACK below (so host_spawn_watcher / M2
-    // defer via the tracked flag) but SKIP the SendPropSpawn broadcast (gate at line ~317).
-    // The OLD suppressor gated on "a dead kerfur NPC within 500cm" -- a PROXY that RACED the verb's
-    // spawn-vs-destroy order: when the source NPC was still alive at Init POST (SPAWN->Init POST->
-    // DESTROY) it DECLINED, the keyed express leaked, and the 2a-capture converge double-expressed =
-    // the 2026-07-14 host-own turn_off dupe. The capture is the fact itself (this prop IS B),
-    // race-free, and covers both the destroy-first and spawn-first orderings.
-    // [[lesson-new-generic-lane-must-inherit-owner-boundaries]]
+    // A kerfur conversion successor: the kerfur layer owns kerfur-form expression (one entity;
+    // KerfurConvert is the sole conversion wire signal, never a generic PropSpawn), and this body
+    // is the express funnel for both the Init POST observer and ExpressSpawnedProp. The
+    // deterministic test is whether the form assembler captured this prop in its bracket (a
+    // non-consuming peek), which covers both the destroy-first and the spawn-first orderings; a
+    // proximity test against a dead NPC raced the verb's order. An ordinary kerfur prop spawn keeps
+    // the generic expression.
     const bool kerfurConvSuccessor =
         coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(self)) &&
         coop::kerfur_form_assembler::IsCapturedForm(self);
     if (kerfurConvSuccessor) {
-        // Converge SYNCHRONOUSLY here if the source NPC already died (TryAdopt's dead-NPC match);
-        // otherwise it no-ops and the POLL death-watch converges later via the same captured-B.
-        // Gating TryAdopt behind the capture also kills its old false-positive (a hand-placed kerfur
-        // prop near a coincidentally-dead kerfur NPC). NO early return -- fall through to MarkPropElement.
+        // Converge synchronously if the source NPC already died; otherwise a no-op, and the
+        // death-watch poll converges later through the same captured form. Gating it on the capture
+        // removes the false positive of a hand-placed kerfur near a dead one. No early return:
+        // MarkPropElement follows.
         coop::kerfur_convert::TryAdoptFreshKerfurProp(self);
     }
 
@@ -262,28 +198,20 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         p.className.data[p.className.len++] = static_cast<char>(cls[i]);
     }
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(self);
-    // 2026-05-27: for non-Aprop_C interactables (chipPile/clump/trashBits)
-    // whose BP doesn't auto-mint a NewGuid Key, synthesize one before the
-    // None-skip guard. Probe confirmed clump.GetKey returns NAME_None on
-    // fresh-spawn -- the None-skip would otherwise drop every chipPile
-    // morph silently.
+    // A non-Aprop_C interactable whose BP mints no Key gets a synthetic one before the None guard
+    // (clump.GetKey returns NAME_None on a fresh spawn, and the guard would drop every chipPile
+    // morph).
     keyStr = coop::prop_synth_key::EnsureKeyForBroadcast(self, keyStr);
-    // UE4 FName(NAME_None) stringifies to "None" -- treat it as unkeyed.
-    // For Aprop_C this still defers (BP UCS will mint on a subsequent
-    // Init pass after loadData / setKey). For non-Aprop_C we just minted
-    // above; if STILL None here something went wrong with setKey.
+    // FName(NAME_None) stringifies to "None": unkeyed. An Aprop_C mints on a later Init pass after
+    // loadData or setKey; a non-Aprop_C was just minted, so None here means setKey failed.
     if (keyStr.empty() || keyStr == L"None") {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p (class '%ls') has unset key '%ls' -- skip (unkeyed = non-syncable)",
                 self, cls.c_str(), keyStr.c_str());
         return;
     }
-    // Tier 3 Props migration 2026-05-28: create the Prop Element shadow at
-    // the Init POST broadcast site so it has the resolved Key (m_name) +
-    // class (m_typeName). Idempotent w.r.t. the seed-scan creation path
-    // (early-out if g_actorToPropElementId already has this actor).
-    // KEY-UNIQUENESS (2026-07-11): Mark may RE-KEY a duplicate (host key
-    // authority) -- the payload below must carry the enrolled key, not the
-    // pre-rekey one.
+    // Create the Prop Element at the broadcast site, where the Key and class are resolved
+    // (idempotent against the seed-scan creation). Mark may re-key a duplicate (the host is the key
+    // authority), so the payload carries the enrolled key.
     keyStr = PT::MarkPropElement(self, keyStr, cls, PT::EnrollSource::kExpressSeam);
     p.key.len = 0;
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
@@ -295,10 +223,9 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    // v54: real scale + the list_props identity row + SP-parity bools (a
-    // fresh gameplay spawn IS actively simulating -- kSimulatePhysics stays
-    // unconditional per the P1 decision; the parity bits ride along so the
-    // mirror's init() resolves the true mesh/mass/collision, not CDO 'cube').
+    // The real scale, the identity row and the parity bools: a fresh gameplay spawn is simulating,
+    // and the parity bits let the mirror's init() resolve the true mesh, mass and collision, not
+    // the CDO cube.
     const auto scl = ue_wrap::engine::GetActorScale3D(self);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
@@ -315,8 +242,8 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
-        // v114 (L7): the save-scalar birth channel (reel Progress) -- identity-at-birth,
-        // shared reader with the snapshot/extract fills.
+        // The save scalar (a reel's Progress) at birth, the same reader the snapshot and extract
+        // fills use.
         float sc = 0.f;
         if (ue_wrap::prop::ReadSavedScalarForClass(self, sc)) {
             p.savedScalar = sc;
@@ -325,76 +252,44 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
-    // v12 (2026-05-28): populate elementId from the Prop Element shadow,
-    // translating kInvalidId -> 0 (wire sentinel per protocol.h contract).
-    // (v15 also stamped a senderContext byte; v16 PR-FOUNDATION-1b
-    // moved stale-gen defense to the header senderEpoch.)
+    // elementId from the Prop Element; kInvalidId travels as 0 (the wire sentinel).
     {
         const coop::element::ElementId eid = PT::GetPropElementIdForActor(self);
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
     }
-    // 2026-05-27 reliable-channel rewrite: Send always succeeds (FIFO queue
-    // internal to the channel). The previous EnqueuePropSpawnForRetry fallback
-    // path retired as RULE 2 baggage.
-    // SOLE-EXPRESS gate (2026-07-14): a kerfur conversion successor is TRACKED above (so
-    // host_spawn_watcher / M2 defer) but NOT broadcast here -- KerfurConvert is its only wire
-    // signal. Skip ONLY the SendPropSpawn; the self-claim below is unconditional (it keys on
-    // tracking, not on the broadcast, so snapshot-sweep safety is preserved).
+    // A kerfur conversion successor is tracked above (so the other broadcasters defer) but not
+    // broadcast: KerfurConvert is its only wire signal. Only the SendPropSpawn is skipped; the
+    // self-claim below is unconditional, since it keys on tracking.
     if (kerfurConvSuccessor) {
         UE_LOGI("grab_hook[Aprop.Init POST]: kerfur conversion successor %p key='%ls' -- generic "
                 "PropSpawn SUPPRESSED (KerfurConvert is the sole express; tracked so the other "
                 "broadcasters defer)", self, keyStr.c_str());
     } else {
-        // Log the broadcast ONLY where it actually happens (2026-07-14): the old site logged it
-        // unconditionally BEFORE the suppress gate, so a suppressed conversion still printed
-        // "broadcasting SPAWN" -- a lie that defeated the runbook's diff signal.
+        // Logged only where the broadcast happens, so a suppressed conversion never prints
+        // "broadcasting".
         UE_LOGI("grab_hook[Aprop.Init POST]: HOST broadcasting SPAWN cls='%ls' key='%ls' loc=(%.1f,%.1f,%.1f) heavy=%d frozen=%d",
                 cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,
                 (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
                 (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
         s->SendPropSpawn(p);
     }
-    // Fork B 2c: self-claim -- this peer just wire-expressed the spawn; an
-    // open snapshot bracket's sweep must not destroy it as "unclaimed".
+    // Self-claim: this peer just expressed the spawn, so an open snapshot bracket's sweep must not
+    // destroy it as unclaimed.
     coop::join_membership_sweep::RecordClaimIfTracking(self);
 }
 
-// The DESTROY SEAM -- bidirectional destroy broadcast (host + client), echo-suppressed
-// via the remote_prop incoming-destroy set. v106 (2026-07-07): fed by a UFunction::Func
-// patch on Actor.K2_DestroyActor (context = the dying actor), which fires for EVERY
-// dispatch route incl. the EX_CallMath destroys the old ProcessEvent PRE observer could
-// never see (the R-pickup putObjectInventory2 destroy, the pile/clump morph destroys).
-// Runs POST-native: K2_DestroyActor only marks PendingKill, so class/property reads on
-// `self` are still valid here (the element's cached key never needs the actor anyway).
-// (DestroySeamBody + OnK2DestroyFunc: EXTRACTED to prop_destroy_seam.cpp, 2026-07-10 soft-cap.)
+// The destroy seam (prop_destroy_seam.cpp): a UFunction::Func patch on Actor.K2_DestroyActor,
+// which fires for every dispatch route including the EX_CallMath destroys a ProcessEvent
+// observer never sees (the R-pickup destroy, the pile and clump morphs). Post-native:
+// K2_DestroyActor only marks PendingKill, so reads on the actor are still valid.
 
-// ---- propInventory takeObj PRE/POST pair + InstallInventory: EXTRACTED to
-// prop_container_extract.cpp (2026-07-10 soft-cap extraction, second slice).
-
-// Late-load catch for the non-Aprop_C keyed-interactable garbage/trash classes
-// (actorChipPile_C / prop_garbageClump_C / trashBitsPile_C -- the "мусорные
-// шарики"). These BP classes load LAZILY on first world encounter, frequently
-// AFTER the one-shot Aprop_C-lineage Init scan in Install() has already latched
-// g_propInitScanDone. That scan therefore never hooks their Init UFunction, so a
-// freshly spawned clump never fires GrabObserver_Aprop_Init_POST -> never
-// broadcasts PropSpawn -> the receiver has no entity to drive -> trash-ball
-// pickup/carry/throw does not sync at all (root-caused 2026-05-31).
-//
-// Fix (RULE 1): resolve each class by name and hook its OWN Init UFunction
-// directly, with a per-class sticky latch + an overall latch so the work stops
-// (O(1)) once all are hooked. This is NOT a per-tick full-GUObjectArray rescan
-// (which would re-arm the 19 GB wstring bomb the prop.cpp ResolveExtraBases
-// sticky atomics exist to prevent); it does at most 3 FindClass/FindFunction per
-// tick, and only between world-load and the moment all three classes are present
-// (a few seconds), mirroring the existing FindClass-until-loaded pattern Install
-// already uses for prop_C / Actor. Caller gates it on g_propInitScanDone so it
-// never churns at the menu (before any world prop has loaded).
-//
-// FindFunction(cls, "Init") returns the Init UFunction OWNED by cls (OuterOf ==
-// cls), exactly matching the Aprop-lineage scan's owning-class filter: a class
-// that overrides Init is hooked here; one that only inherits a base Init is
-// already covered by that base's registration (deduped against
-// g_registeredPropInitFns). Game thread only (called from Install via net_pump).
+// The late-load catch for the keyed litter classes (actorChipPile_C, prop_garbageClump_C,
+// trashBitsPile_C), which load lazily on first encounter, after the one-shot Init scan has
+// latched, so a fresh clump would never broadcast and trash-ball carry would not sync. Each class
+// is resolved by name and its own Init hooked, with a per-class latch and an overall latch, so
+// the work stops once all are hooked: at most one FindClass and FindFunction per class per call,
+// never a per-tick array rescan. FindFunction returns the Init the class owns, matching the
+// scan's owning-class filter; a class that only inherits Init is covered by its base. Game thread.
 bool RegisterExtraKeyedInitObservers() {
     if (g_extraKeyedInitDone) return true;
     struct Extra { const wchar_t* cls; bool* done; };
@@ -405,16 +300,9 @@ bool RegisterExtraKeyedInitObservers() {
         { L"trashBitsPile_C",     &sTrash },
         { L"prop_garbageClump_C", &sClump },
         { L"actorChipPile_C",     &sChip  },
-        // prop_food_C (2026-06-11 pinecone-scare RE): the food base OWNS an Init
-        // override and loads LATE (after the one-shot subclass scan latched), so
-        // its derived leaves -- prop_food_pinecone_C (the RNG pinecone scare),
-        // and every other food prop with no Init of its own -- dispatch THIS
-        // unhooked Init and never live-broadcast their spawn. Empirically proven:
-        // a force-spawned prop_food_pinecone_C produced no host Init-POST/SPAWN
-        // line; the client only saw it 30 s late + at rest via the snapshot drain
-        // (the scare drop/bounce lost). Registering prop_food_C::Init here closes
-        // it for the whole food lineage (the same late-load gap as the trash
-        // classes above).
+        // prop_food_C owns an Init override and loads late, so every food leaf with no Init of its
+        // own (the pinecone scare among them) dispatched an unhooked Init and reached the client
+        // only via the snapshot, 30 s late and at rest.
         { L"prop_food_C",         &sFood  },
     };
     constexpr int kExtraCount = static_cast<int>(std::size(extras));
@@ -426,9 +314,8 @@ bool RegisterExtraKeyedInitObservers() {
         if (!cls) continue;  // BP class not loaded yet -- retry next Install() tick
         void* initFn = R::FindFunction(cls, kInitName.c_str());
         if (!initFn) {
-            // Class loaded but owns no Init override -> it dispatches an inherited
-            // base Init, already coverable via that base. Nothing of our own to
-            // register; stop retrying this one.
+            // Loaded but without an Init of its own: it dispatches a base Init that is already
+            // covered.
             *e.done = true; ++done;
             UE_LOGI("grab_hook[extra]: %ls owns no Init UFunction (inherits base) -- nothing to hook", e.cls);
             continue;
@@ -442,9 +329,7 @@ bool RegisterExtraKeyedInitObservers() {
             UE_LOGI("grab_hook[extra]: registered POST observer for %ls::Init @ %p "
                     "(late-load catch -- trash-ball sync)", e.cls, initFn);
         } else {
-            // The observer table won't shrink, so retrying is futile -- mark done
-            // to keep Install() converging to O(1). kMaxObservers is 256, so this
-            // is a loud, unexpected WARN if it ever fires.
+            // The observer table will not shrink, so retrying is futile; a loud, unexpected WARN.
             UE_LOGW("grab_hook[extra]: RegisterPostObserver failed for %ls::Init (observer table full) -- skipping", e.cls);
             *e.done = true; ++done;
         }
@@ -455,12 +340,9 @@ bool RegisterExtraKeyedInitObservers() {
                 "food/pinecone Init catch) -- O(1) hereafter", kExtraCount);
         return true;
     }
-    // O(1)-safety bound (audit 2026-05-31): cap the retry so Install() reaches its
-    // O(1) steady state even if a garbage class never loads this session (a map/area
-    // with no chipPiles). These classes are hard-referenced by actorChipPile_C and
-    // load with the world, so all 3 normally resolve within ~1-2 s; the ~2 min budget
-    // (at the ~1 Hz call rate) covers any lazy load while GUARANTEEING the per-tick
-    // FindClass walk terminates rather than running for the whole session.
+    // The retry is capped so Install() reaches its O(1) steady state even if a class never loads
+    // this session (an area with no chipPiles); the classes normally resolve within seconds, and
+    // the ~2 min budget covers a lazy load.
     if (++sAttempts >= kMaxAttempts) {
         g_extraKeyedInitDone = true;
         UE_LOGW("grab_hook[extra]: gave up after %d attempts -- unresolved: %s%s%s%s; Init catch "
@@ -477,29 +359,23 @@ bool RegisterExtraKeyedInitObservers() {
 
 }  // namespace
 
-// Shared session cache (declared in prop_lifecycle_detail.h; the destroy seam
-// in prop_destroy_seam.cpp reads it through LoadSession too).
+// The shared session cache (prop_lifecycle_detail.h); the destroy seam reads it too.
 std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 
-// ---- public API --------------------------------------------------------
+// ---- public API ----
 
-// See prop_lifecycle.h. The sandbox Q-menu / toolgun spawn's own init() is
-// dispatched EX_LocalVirtualFunction from its UCS (BP-internal) so it never
-// fires our Aprop_C::Init POST observer; coop/host_spawn_watcher catches the
-// spawn at FinishSpawningActor POST (where init has already minted the Key) and
-// calls this to run the IDENTICAL keyed broadcast. Direct call (no GT::Post):
-// the caller guarantees the game thread (FinishSpawningActor POST is GT). The
-// shared HasProcessedInit latch dedupes vs an Init-POST that did fire.
+// The sandbox spawn menu's and the toolgun's own init() is dispatched EX_LocalVirtualFunction
+// from the construction script, invisible to the Init POST observer, so host_spawn_watcher
+// catches the spawn at FinishSpawningActor POST (the Key already minted) and calls this for the
+// same keyed broadcast. Game thread (the caller guarantees it); the HasProcessedInit latch
+// dedupes against an Init POST that did fire.
 void ExpressSpawnedProp(void* actor) {
     GrabObserver_Aprop_Init_POST_Body(actor);
 }
 
-// (SyncDestroyedTrackedProp: EXTRACTED to prop_destroy_seam.cpp.)
-
 coop::element::ElementId RegisterHostPropSilent(void* actor) {
-    // See prop_lifecycle.h. The MarkPropElement shadow alloc (host range) for a BP-internally-spawned
-    // prop, MINUS the wire PropSpawn the Init-POST / ExpressSpawnedProp path sends -- the kerfur
-    // conversion's only wire signal is KerfurConvert. Game thread (ProcessEvent-adjacent key read).
+    // The Prop Element for a BP-internally spawned prop, minus the wire PropSpawn: the kerfur
+    // conversion's only wire signal is KerfurConvert. Game thread.
     if (!actor) return coop::element::kInvalidId;
     const std::wstring cls = R::ClassNameOf(actor);
     const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(actor);
@@ -509,14 +385,10 @@ coop::element::ElementId RegisterHostPropSilent(void* actor) {
         return coop::element::kInvalidId;
     }
     PT::MarkPropElement(actor, keyStr, cls, PT::EnrollSource::kExpressSeam);
-    // R1-regression fix (2026-06-18, host turn-on/off kerfur dupe). ALSO mark it KNOWN.
-    // Without this the converged kerfur prop is absent from g_knownKeyedProps, so the R1
-    // steady-world re-seed's newness test (`g_knownKeyedProps.insert(obj).second`) sees it
-    // as NEW every ~4s and ExpressIncrementalSpawn re-broadcasts it with its REAL BP key --
-    // a 2nd PropSpawn conflicting with the kerfur's ONLY intended wire signal (KerfurConvert).
-    // On a client fuzzy-miss (skin variant / race) that 2nd PropSpawn fresh-spawns a duplicate
-    // kerfurOmega. Marking it known closes the echo at the source (the release path's
-    // UnmarkKnownKeyedProp is symmetric). The kerfur prop still needs NO PropSpawn here.
+    // Also mark it known: absent from the known set, the steady-world re-seed's newness test would
+    // re-express the converged kerfur prop every few seconds with its real BP key, a second
+    // PropSpawn beside KerfurConvert, and a client fuzzy miss would spawn a duplicate. The release
+    // path's Unmark is symmetric.
     PT::MarkKnownKeyedProp(actor);
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
     UE_LOGI("prop_lifecycle[silent register]: host prop %p class '%ls' key '%ls' -> eid=%u (no PropSpawn broadcast; marked known so the re-seed won't re-express it)",
@@ -526,86 +398,44 @@ coop::element::ElementId RegisterHostPropSilent(void* actor) {
 
 void SetSession(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
-    // Mirror to the element tracker so its in-lock role read sees the same
-    // session pointer (M-1 2026-05-29 extraction). Note: this is two stores
-    // to two atomic pointers; an observer reading both during the
-    // sub-microsecond window between them could see a torn pair. Benign in
-    // practice because (1) observer registration happens AFTER Install
-    // finishes its setup, and (2) SeedKnownKeyedProps runs INSIDE Install
-    // after both stores -- no concurrent reader exists during the window.
-    // If a future expansion adds concurrent readers, fold the tracker's
-    // pointer into prop_lifecycle's via a forwarding accessor instead.
+    // Mirrored to the element tracker for its in-lock role read. Two stores to two atomics; no
+    // reader exists in the window (observers register after Install's setup, and the seed runs
+    // inside Install after both stores).
     PT::SetSession(session);
 }
 
 bool IsWireSuppressedPropClass(const std::wstring& cls) {
-    // P2 design note (2026-06-10): the litter classes (chipPile/trashBits
-    // Pile) deliberately do NOT go here. This predicate is SYMMETRIC across
-    // its 3 call sites (client Init-destroy, host Init skip-broadcast,
-    // snapshot enumerate-skip) -- adding trashBitsPile would drop the 392
-    // level-PLACED deterministic-key piles from the connect snapshot (they
-    // would then be unclaimed -> the adoption sweep would destroy every one
-    // of them on the client), and adding chipPile would destroy a client's
-    // own v52 ball->pile convert-born piles at Init (same mechanism that
-    // vetoed garbageClump: clump Init fires on the client's legit grab
-    // morph). Connect-time divergence is handled by claim-tracking instead
-    // (remote_prop_spawn's deferred divergence sweep).
-    //
-    // Fork B 2e (2026-06-10): the adoption SWEEP intentionally does NOT
-    // consult this predicate -- mushroom7 is keyed (in-universe) but never
-    // expressed (enumerate-skip here) AND client-forbidden (the Init-destroy
-    // above + the wire-ingress drop): its authoritative client steady state
-    // is ZERO instances, so the sweep removing stragglers is parity, not a
-    // hole.
+    // The litter classes are deliberately not here. The predicate is symmetric across its three
+    // call sites (the client Init destroy, the host skip, the snapshot enumerate skip):
+    // trashBitsPile would drop the 392 level-placed piles from the connect snapshot and the
+    // adoption sweep would destroy every one on the client, and chipPile would destroy a client's
+    // own convert-born piles at Init. Connect-time divergence is handled by claim tracking instead.
+    // The adoption sweep does not consult this predicate: the growing mushroom is keyed but never
+    // expressed and client-forbidden, so zero client instances is parity.
     return cls == P::name::PropMushroomGrowingClass;
 }
 
 bool IsPerPlayerPropClass(const std::wstring& cls) {
-    // PER-PLAYER state actors, NOT shared world props (2026-06-10, the
-    // sweep-kills-inventory crash): each peer owns its own instance whose
-    // key differs per save BY DESIGN, so it can never claim-bind. The host
-    // must not snapshot-express it (a mirror of the host's personal
-    // inventory container is wrong on every peer), no peer live-broadcasts
-    // it, and the adoption sweep must never destroy the local one -- the
-    // 2026-06-10 smoke swept the client's prop_inventoryContainer_player_C
-    // as "unclaimed" and the client fataled at the next GC purge (engine
-    // references into the player's own inventory). Distinct from
-    // IsWireSuppressedPropClass: that predicate's client call site DESTROYS
-    // local instances (client-forbidden intermediates); a per-player class
-    // is the opposite -- the local instance is the player's own state and
-    // must live untouched.
+    // Per-player state actors, not shared world props: each peer owns its own instance, keyed per
+    // save by design, so it can never claim-bind. The host must not snapshot-express it, no peer
+    // broadcasts it, and the adoption sweep must never destroy the local one (a sweep of the
+    // client's own inventory container fataled the client at the next GC purge). The opposite of
+    // IsWireSuppressedPropClass, whose client site destroys the local instance.
     return cls == P::name::PropInventoryContainerPlayerClass;
 }
-
-// Destroy a local prop via K2_DestroyActor, echo-suppressed (MarkIncomingDestroy
-// BEFORE the call so OUR destroy seam skips the re-broadcast).
-// See prop_lifecycle.h for the deferred-vs-immediate contract.
-// (DestroyLocalProp: EXTRACTED to prop_destroy_seam.cpp.)
-
-// GetPropElementIdForActor moved to coop::prop_element_tracker (M-1, 2026-05-29).
-// SnapshotKnownKeyedProps retired 2026-05-29 (M-1, prior commit) -- zero callers
-// since prop_snapshot migrated to element::Registry::SnapshotByType<Prop>.
-
-// Enqueue*/DrainPending* functions retired 2026-05-27 -- the reliable
-// channel buffers internally now (see reliable_channel.cpp). Callers just
-// call Send* and always get true (unless payload-too-large / queue full
-// at 4096 backlog).
 
 void Install(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
     PT::SetSession(session);  // mirror; see SetSession comment above.
-    // Audit Fix 1 (2026-05-27): composite atomic latch. InstallGrabObservers
-    // runs at 125 Hz; until ALL inner flags resolve, every tick was calling
-    // R::FindClass (a full GUObjectArray walk with std::wstring alloc per
-    // entry -- the exact bomb that hit the retired non_prop_entity_sync
-    // path. Same fix pattern.
+    // A composite latch: this runs at 125 Hz, and until every inner flag resolves each tick called
+    // FindClass, a full GUObjectArray walk with a wstring per entry.
     static std::atomic<bool> g_allInstalled{false};
     if (g_allInstalled.load(std::memory_order_acquire)) return;
     if (!g_propInitScanDone) {
-        // Gate: wait for prop_C base class to load.
+        // Gate: wait for the prop_C base class to load.
         void* propBase = R::FindClass(P::name::PropClass);
         if (propBase) {
-            // One-shot GUObjectArray scan for Init UFunctions in prop_C lineage.
+            // The one-shot GUObjectArray scan for Init UFunctions in the prop_C lineage.
             const std::wstring kInitName(P::name::PropInitFn);
             const int32_t n = R::NumObjects();
             int registered = 0;
@@ -615,10 +445,8 @@ void Install(coop::net::Session* session) {
                 if (R::ClassNameOf(obj) != L"Function") continue;
                 if (R::ToString(R::NameOf(obj)) != kInitName) continue;
                 void* owningCls = R::OuterOf(obj);
-                // Cover Aprop_C lineage AND the non-Aprop "prop-shaped"
-                // garbage/trash bases (chipPile/clump/trashBitsPile) via the
-                // 2026-05-27 IsKeyedInteractable extension. Same Init UFunction
-                // protocol on all of them.
+                // The Aprop_C lineage and the prop-shaped litter bases (chipPile, clump,
+                // trashBitsPile), the same Init protocol on all.
                 if (!ue_wrap::prop::IsClassKeyedInteractable(owningCls)) continue;
                 bool already = false;
                 for (void* fn : g_registeredPropInitFns) {
@@ -641,38 +469,25 @@ void Install(coop::net::Session* session) {
                     registered, g_registeredPropInitFns.size());
             if (!g_registeredPropInitFns.empty()) {
                 g_propInitScanDone = true;
-                // H2-redux 2026-05-28: seed g_knownKeyedProps with every
-                // live keyed-interactable currently in the world. Done
-                // AFTER observer registration so any spawns racing the
-                // seed scan are also captured by the Init POST observer
-                // (duplicate inserts are no-ops on the set). Internally
-                // latched -- safe to call again on subsequent Install()
-                // ticks.
+                // Seed the known set with every live keyed interactable, after the observers are
+                // registered so a spawn racing the seed is caught by the Init POST (a duplicate
+                // insert is a no-op); latched internally.
                 PT::SeedKnownKeyedProps();
             }
         }
     }
-    // Catch the lazily-loaded garbage/trash keyed classes the one-shot Aprop scan
-    // above missed (chipPile/clump/trashBits -- trash-ball sync, 2026-05-31).
-    // Gated on g_propInitScanDone so it only runs once world props are loading
-    // (never churns FindClass at the menu); self-latches via g_extraKeyedInitDone.
-    // Throttled to ~1 Hz: each unresolved class costs one FindClass (a full
-    // GUObjectArray name walk). prop_garbageClump_C may not load until the first
-    // chipPile pickup (potentially minutes in), so at 125 Hz an unthrottled poll
-    // would burn a sustained ~6M wstring allocs/sec walk until then -- the throttle
-    // caps it at ~3 walks/sec, trivial, while keeping <=1 s catch latency.
+    // The late-load catch, gated on the first scan (never at the menu) and throttled to ~1 Hz: each
+    // unresolved class costs one FindClass, a full name walk, and prop_garbageClump_C may not load
+    // until the first chipPile pickup, minutes in.
     if (g_propInitScanDone && !g_extraKeyedInitDone) {
         static int sExtraThrottle = 0;
         if ((sExtraThrottle++ % 125) == 0) RegisterExtraKeyedInitObservers();
     }
     if (!g_propDestroyObserverInstalled) {
-        // v106 (2026-07-07): the destroy seam is a UFunction::Func patch, NOT a ProcessEvent
-        // observer. The R-pickup destroy (putObjectInventory2 @719 InputPin.K2_DestroyActor())
-        // and the pile/clump morph destroys are EX_CallMath-dispatched -- INVISIBLE to a PE
-        // observer (log-proven 2026-07-07 10:15: pickup vanish waited the 4s reap while this
-        // "continuous" observer never fired). Func funnels EVERY dispatch route (PE + EX_*),
-        // so the Func patch strictly supersedes the PE PRE registration (RULE 2: replaced).
-        // The callback receives the dying actor as the dispatch CONTEXT.
+        // The destroy seam is a UFunction::Func patch, not a ProcessEvent observer: the R-pickup
+        // destroy and the pile and clump morph destroys are EX_CallMath-dispatched, invisible to a
+        // PE observer, and Func funnels every route. The callback receives the dying actor as the
+        // context.
         if (void* actorCls = R::FindClass(P::name::ActorClassName)) {
             if (void* fn = R::FindFunction(actorCls, P::name::DestroyActorFn)) {
                 if (ue_wrap::ufunction_hook::InstallPostHook(fn, &OnK2DestroyFunc)) {
@@ -688,20 +503,13 @@ void Install(coop::net::Session* session) {
             }
         }
     }
-    // (v52: the clump re-grab dupe fix moved to trash_collect_sync's mirror-pile death-watch --
-    // identity-exact, fires for whoever grabs the shared pile, not just the grabber's aim edge.
-    // The old InpActEvt_use lookAtActor PRE observer here was retired; see PropConvert.)
-    // InstallInventory has its own atomic guard + early-out; not gated here.
-    // g_extraKeyedInitDone is part of the latch so Install keeps re-entering until
-    // the lazily-loaded garbage Init observers are hooked (else trash-ball sync
-    // silently never arms); once all latches are set, Install is an O(1) no-op.
+    // g_extraKeyedInitDone is part of the latch, so Install keeps re-entering until the late-load
+    // observers are hooked; then it is an O(1) no-op.
     if (g_propInitScanDone && g_extraKeyedInitDone && g_propDestroyObserverInstalled) {
         g_allInstalled.store(true, std::memory_order_release);
         UE_LOGI("prop_lifecycle: Install() complete -- subsequent calls are O(1) no-ops");
     }
 }
-
-// (InstallInventory: EXTRACTED to prop_container_extract.cpp.)
 
 DisconnectStats OnDisconnect() {
     DisconnectStats s;
