@@ -120,10 +120,9 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 
 | Limit | Evidence |
 |---|---|
-| The native screens' frames do not yet reproduce the game's bevelled, nested border material; the flat border was measured wrong | `[V]` the style doc's frame section |
-| The game's own toasts a client self-generates from diverged world state are not suppressed or mirrored; only the server state behind one family is driven | `[V]` the notification catalog |
-| The scoreboard and the connect dialogs are verified by screenshot and the rig, not by hand | `[V]` the capture scripts |
-| The old ImGui browser is kept as a fallback, a deliberate exception to retiring replaced code | `[V]` the surface chooser |
+| The native screens' frames do not yet reproduce the game's bevelled, nested border material; the flat border was measured wrong | `[V]` [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md), the frame section |
+| The game's own toasts a client self-generates from diverged world state are not suppressed or mirrored; only the server state behind one family is driven | `[V]` `coop/interactables/serverbox_sync` is the one family |
+| The old ImGui browser is kept as a fallback, a deliberate exception to retiring replaced code | `[V]` `ui/server_browser_surface` |
 
 ## Code map
 
@@ -135,4 +134,4 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | the overlay host | `ui/imgui_overlay`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
 | the F1 panels | `ui/dev_menu`, `ui/skins_panel`, `ui/voice_panel`, `ui/world_rules_panel`, `ui/net_stats_panel`, `ui/admin_panel`, `ui/config_review_panel` |
 | the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format` |
-| tests | `python tools/mp.py browser` (the browser lab run), `tools/net/roster_shot.ps1` (the four-peer scoreboard capture) |
+| tests | `python tools/mp.py browser` (the browser screenshot run), `tools/net/roster_shot.ps1` (the four-peer scoreboard capture) |
