@@ -27,8 +27,8 @@ pose through the game's own teleport. This is MTA's vehicle shape, and the one t
 not do is author collision damage: the seven hit delegates are intercepted on a peer that does
 not own the rig's tick and dispatched with a zeroed impulse, so the notification runs whole and
 only the damage dies (`coop/interactables/atv_hit_guard`). Cancelling the wheel delegates
-outright cost a mirror its rig shape, a sag of thirty to forty centimetres measured on every run
-until the cause was found.
+outright cost a mirror its rig shape, a sag of thirty to forty centimetres, until the cause was
+found.
 
 ### Two predicates
 
@@ -92,13 +92,11 @@ on its first packet.
 
 | Limit | Evidence |
 |---|---|
-| While driving, the mirror trails the author by two to three metres, and a wedged author leaves a static error the corrector does not close | `[V]` the driven runs; the measurement window still mixes the two |
-| At an authority handoff both peers own the rig for about a second | `[V]` both verification runs |
-| A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` by design, registered as a crutch |
-| The pose stream rides the reliable lane, a stopgap; the sequenced unreliable datagram is owed | `[V]` the lane's own note |
-| Not synced: the thirteen modules and every upgrade effect, lights, brake and turbo, honk, the radio, the map, repair, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` the gap list |
-| A mirror's wheels may not be where its body is | `[RD]` a defect candidate, not yet measured |
-| Nothing above has been verified by hand; every number comes from the autonomous rig | `[V]` the runs' archives |
+| While driving, the mirror trails the author: the correction is a bounded velocity bias, and the cut to the author's pose happens only past a speed-scaled error or when the error stops shrinking | `[V]` `coop/interactables/atv_corrector` |
+| At an authority handoff the host becomes the idle syncer on the tick after the release, so its stream and the new author's overlap until the new author's first packet lands | `[V]` `coop/interactables/atv_sync` |
+| A client's tyre eject is refused by the arbiter, so the host keeps the wheel and the peers disagree until the eject intent lane exists | `[V]` `coop/interactables/atv_condition_sync`, by design |
+| The pose stream rides the reliable lane; a sequenced unreliable stream is the intended shape | `[V]` `coop/interactables/atv_sync` sends it reliable |
+| Not synced: the thirteen modules and every upgrade effect, lights, brake and turbo, honk, the radio, the map, repair, the kerfur passenger, and a remote driver's body is not seated on the ATV | `[V]` nothing under `coop/interactables/atv_*` carries them |
 
 ## Code map
 
@@ -109,4 +107,4 @@ on its first packet.
 | condition | `coop/interactables/atv_condition_sync`, `ue_wrap/devices/atv_condition` |
 | the engine wrapper | `ue_wrap/devices/atv` |
 | the seat | `coop/interactables/device_occupancy` |
-| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `python tools/mp.py smoke` with the ATV arm |
+| tests and probes | `coop/dev/atv_probe` (the drive arm), `coop/dev/atv_tire_probe`, `coop/dev/atv_eject_drill`; `python tools/mp.py smoke` with the ATV scenario enabled |
