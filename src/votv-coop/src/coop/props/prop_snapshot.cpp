@@ -1,29 +1,25 @@
-// coop/prop_snapshot.cpp -- Phase 5S0 save snapshot bootstrap.
-//
-// Per-slot drain: snapshot replays to ONE peer slot at a time via
-// Session::SendReliableToSlot. Late-joiners get a full snapshot;
-// concurrent late-joiners don't race on a shared candidate index.
-// Serial drains: if a second peer connects mid-drain, it queues and
-// drains after the first completes.
-// See coop/prop_snapshot.h for the public interface.
+// coop/prop_snapshot.cpp -- the host's prop snapshot to a joining peer: one slot at a time through
+// Session::SendReliableToSlot (a second peer connecting mid-drain queues), chunked per tick,
+// bracketed by SnapshotBegin and SnapshotComplete; plus the bracket-free incremental express for a
+// prop adopted into tracking after the join. Interface: coop/prop_snapshot.h.
 
 #include "coop/props/prop_snapshot.h"
 
-#include "coop/config/config.h"  // ReadEnv (R-2b dedupe-bypass RED-calibration drill)
+#include "coop/config/config.h"  // ReadEnv, the dedupe-bypass drill
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/creatures/kerfur_convert.h" // TryAdoptFreshKerfurProp (kerfur-conversion first refusal at the one builder, take-8)
-#include "coop/creatures/kerfur_entity.h"  // IsKerfurActor -- exclude kerfurs from the incremental express (KerfurConvert is their only signal)
+#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp, the builder's kerfur first refusal
+#include "coop/creatures/kerfur_entity.h"  // IsKerfurActor; a kerfur's only signal is KerfurConvert
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
-#include "coop/save/save_transfer.h"  // v86 Path 1c: TryGetSaveTimePileXform -- stamp the join snapshot's pile match key
-#include "coop/props/snapshot_census.h"  // Phase 0: per-class completeness census appended to SnapshotComplete
-#include "coop/dev/eid_lifetime_trace.h"  // Phase 1 S8.2: read-only capture-eid vs wire-eid trace
-#include "coop/dev/force_overdestroy_test.h"  // dev-only: inject the over-destroy to PROVE the floor
+#include "coop/save/save_transfer.h"  // TryGetSaveTimePileXform, the join snapshot's pile match key
+#include "coop/props/snapshot_census.h"  // the per-class completeness census on SnapshotComplete
+#include "coop/dev/eid_lifetime_trace.h"  // read-only: capture-eid vs wire-eid
+#include "coop/dev/force_overdestroy_test.h"  // dev only: inject the over-destroy to prove the floor
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
@@ -44,39 +40,27 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace PT = coop::prop_element_tracker;
 
-// Atomic for symmetry with sibling subsystems (prop_lifecycle, item_activate,
-// weather_sync) per [[feedback-install-idempotent-o1-steady-state]]. SetSession
-// is called from a non-game-thread context at boot (loader thread), and
-// DrainChunk/TriggerForSlot run on the game thread. The current ordering
-// (SetSession before Start) makes the bare pointer accidentally safe, but
-// the design shouldn't depend on the boot sequence.
+// Atomic: SetSession runs off the game thread at boot (the loader thread), DrainChunk and
+// TriggerForSlot on it.
 std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 
-// Enumeration state for the currently-running drain. Game-thread access
-// only; no lock needed.
+// The running drain's enumeration, game thread only.
 std::vector<void*> g_snapshotCandidates;
 std::vector<coop::element::ElementId> g_snapshotEids;  // parallel; same idx as g_snapshotCandidates
-// Parallel to g_snapshotCandidates: each candidate's GUObjectArray InternalIndex
-// captured (in the Element) while the actor was live. DrainChunk re-validates
-// via R::IsLiveByIndex(actor, idx) so a candidate GC-purged between enumeration
-// and its per-tick drain is rejected WITHOUT dereferencing freed actor memory.
+// Each candidate's GUObjectArray index, captured while it was live: DrainChunk re-validates with
+// IsLiveByIndex, so a candidate purged between enumeration and its tick is rejected without a
+// dereference.
 std::vector<int32_t> g_snapshotInternalIdxs;
 size_t g_snapshotCandidateIdx = 0;
-// v34: running count of PropSpawn messages actually sent this drain (<= candidate count
-// after wire-suppress / unkeyed skips). Reported in SnapshotComplete for the joiner's
-// loading-screen diagnostic. Reset per drain in StartEnumerationFor.
+// PropSpawns actually sent this drain (skips excluded); reported in SnapshotComplete.
 uint32_t g_snapshotSentTotal = 0;
-// Which peer slot is being served by the current drain (-1 = no drain
-// in progress). Plus the queue of slots waiting their turn (e.g. peer 2
-// connecting while peer 1's drain is still in flight).
+// The slot being drained (-1 = none) and the slots waiting their turn.
 int g_currentTargetSlot = -1;
 std::vector<int> g_pendingSlots;
 
-// Fork A (2026-06-10): slots whose bracket was deferred because the registry
-// does not yet express the host's current world (mid world-transition). The
-// deferred-slot flush at the top of DrainChunk retries them on every seed-
-// generation bump; TriggerForSlot consumes (and possibly re-sets) the flag.
-// GT-only like the rest of the drain state.
+// Slots whose bracket was deferred because the registry does not yet express the host's current
+// world (mid world-transition). The flush at the top of DrainChunk retries them on every
+// seed-generation bump; TriggerForSlot consumes, and may re-set, the flag. Game thread.
 std::array<bool, coop::players::kMaxPeers> g_deferredSlots{};
 uint64_t g_deferredSeenGen = 0;  // SeedGeneration latched at defer; flush fires on the next bump
 uint64_t g_drainSeedGen    = 0;  // SeedGeneration captured when the current drain started
@@ -90,45 +74,26 @@ bool AnyDeferred_() {
 
 void ClearDrainState_();  // defined below (shared by completion/abort/backstop)
 
-// Per-tick drain size -- 100 candidates per frame keeps the per-tick cost
-// (~5-15 ms for GetActorLocation/Rotation x100) well under the 16.6 ms
-// frame budget. Total ~2000 props @ 100/tick = 20-30 ticks (~330-500 ms
-// wall-clock spread across frames, no single-frame stall).
+// 100 candidates per tick keeps the per-tick reflection cost well inside a frame; ~2,000 props
+// drain over 20-30 ticks with no single-frame stall.
 constexpr size_t kSnapshotChunkSize = 100;
 
-// Populate g_snapshotCandidates from prop_lifecycle's maintained
-// known-keyed-props set (seeded ONCE at Install via a single
-// GUObjectArray walk, then kept current via Init POST insert +
-// K2_DestroyActor PRE evict). Replaces the per-reconnect O(150k
-// GUObjectArray) walk with an O(~2000 pointer copy under mutex).
-// Sets g_currentTargetSlot = peerSlot. Caller (TriggerForSlot or
-// post-completion dequeue) ensures no drain is already in progress.
-//
-// Per-candidate re-validation runs in DrainChunk (IsLive recheck
-// covers the window between snapshot-copy and per-tick drain). The
-// maintained set is best-effort, not transactional -- a freshly
-// destroyed actor may briefly appear here until its K2_DestroyActor
-// PRE fires.
+// Enumerates the candidates from the element registry (a pointer copy under its mutex, not an
+// array walk), sets the target slot and opens the bracket. The caller ensures no drain is in
+// progress. Per-candidate liveness is re-checked in DrainChunk.
 void StartEnumerationFor(int peerSlot) {
     g_currentTargetSlot = peerSlot;
-    // Fork A: remember which registry generation this drain expresses -- the
-    // busy-branch guard in TriggerForSlot dedupes a re-trigger of the SAME
-    // slot for the SAME generation (the in-flight bracket already covers it).
+    // The generation this drain expresses: TriggerForSlot dedupes a re-trigger of the same slot for
+    // the same generation.
     g_drainSeedGen = PT::SeedGeneration();
     g_snapshotCandidates.clear();
     g_snapshotEids.clear();
     g_snapshotInternalIdxs.clear();
     g_snapshotCandidateIdx = 0;
     int skippedDying = 0, skippedDead = 0;
-    // Tier 3 Props migration 2026-05-28: enumerate via the unified Element
-    // Registry instead of prop_lifecycle's legacy g_knownKeyedProps set.
-    // SnapshotActorsByType extracts (actor*, id) pairs under the Registry
-    // mutex -- no Element* dereferences happen after the mutex releases,
-    // so no use-after-free if another thread frees an Element concurrently.
-    //
-    // Audit fix 2026-05-28: capture the eid alongside the actor pointer so
-    // DrainChunk doesn't re-lock any prop-tracker mutex per candidate
-    // (12,500 mutex acquisitions/sec during drain was the prior cost).
+    // SnapshotActorsByType copies (actor, id, index) under the registry mutex; no Element is
+    // dereferenced after it releases, and the eid travels with the actor so the drain takes no
+    // per-candidate lock.
     std::vector<coop::element::Registry::ActorIdPair> pairs;
     const size_t trackedCount =
         coop::element::Registry::Get().SnapshotActorsByType(
@@ -138,26 +103,18 @@ void StartEnumerationFor(int peerSlot) {
     g_snapshotInternalIdxs.reserve(trackedCount);
     for (const auto& pr : pairs) {
         if (!pr.actor) { ++skippedDead; continue; }
-        // IsLiveByIndex (NOT IsLive): pr.actor may have been GC-purged since the
-        // Element captured it (mass purge doesn't fire K2_DestroyActor, so dying
-        // props linger in the Registry). IsLive would deref the freed pointer and
-        // AV -- the connect-edge crash root-caused 2026-05-30. IsLiveByIndex reads
-        // only the GUObjectArray slot at pr.internalIdx, so a purged actor is
-        // rejected cleanly.
+        // IsLiveByIndex: a mass purge does not fire K2_DestroyActor, so dying props linger in the
+        // registry, and IsLive on the freed pointer faults. Only the GUObjectArray slot is read.
         if (!R::IsLiveByIndex(pr.actor, pr.internalIdx)) { ++skippedDying; continue; }
         g_snapshotCandidates.push_back(pr.actor);
         g_snapshotEids.push_back(pr.id);
         g_snapshotInternalIdxs.push_back(pr.internalIdx);
     }
-    // Enumerate-time coherence backstop (gate hardening, 2026-06-10): a
-    // registry whose DYING elements outnumber its LIVE ones objectively does
-    // not express a live world -- it is mid-purge. This closes the <=4s
-    // window where a peer connects after a world transition but BEFORE the
-    // reaper's next scan raises the purge-episode flag (the trigger gate's
-    // signals are all clear in that window). Not a tunable heuristic: in
-    // steady gameplay dying ~= 0 (normal destruction is K2-evicted inline),
-    // and a sublevel stream-out burst is small against the ~2-3k live world,
-    // so majority-dead can only mean a world transition.
+    // A registry whose dying elements outnumber its live ones is mid-purge, not a live world: this
+    // closes the window (up to 4 s) between a world transition and the reaper's next scan raising
+    // the purge-episode flag. In steady gameplay dying is ~0 (normal destruction is evicted inline)
+    // and a sublevel stream-out is small against the live world, so majority-dead only means a
+    // transition.
     if (skippedDying > static_cast<int>(g_snapshotCandidates.size())) {
         UE_LOGW("snapshot: registry is majority-dead (%d dying vs %zu live) -- mid world-transition; "
                 "DEFERRING slot %d instead of bracketing",
@@ -170,17 +127,9 @@ void StartEnumerationFor(int peerSlot) {
     UE_LOGI("snapshot: enumerated %zu live candidates for slot %d from element::Registry (%zu Prop Elements; %d dead, %d dying skipped); will drain %zu/tick",
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
 
-    // (The EAGER host chipPile death-watch enroll that used to live here was REMOVED 2026-06-17 with
-    // the pile death-watch retirement. The host no longer needs to pre-enroll piles: a host grab is
-    // now caught directly by the InpActEvt_use PRE observer reading lookAtActor=pile -> its eid (every
-    // snapshot candidate is already element-bound, so GetPropElementIdForActor resolves it on grab),
-    // so there is no drain-window race to pre-arm against. See trash_collect_sync.cpp.)
-
     g_snapshotSentTotal = 0;
-    // v34: OPEN the joiner's loading-screen bracket. Send the candidate count (the progress
-    // denominator) on Lane::Bulk BEFORE the first PropSpawn, so GNS in-lane ordering puts it
-    // strictly ahead of the prop stream it introduces. Host-only path (TriggerForSlot gated
-    // us to host + IsSlotReady).
+    // SnapshotBegin carries the candidate count (the progress denominator) on the bulk lane ahead
+    // of the first PropSpawn; in-lane ordering keeps it first. Host only.
     if (auto* s = g_session_ptr.load(std::memory_order_acquire)) {
         coop::net::SnapshotBeginPayload b{};
         b.propTotal = static_cast<uint32_t>(g_snapshotCandidates.size());
@@ -188,13 +137,8 @@ void StartEnumerationFor(int peerSlot) {
     }
 }
 
-// v34: finish the current drain -- CLOSE the joiner's loading-screen bracket, then clear
-// state + dequeue the next pending slot. SnapshotComplete is the LAST Lane::Bulk message
-// (after every PropSpawn) so the joiner hides its cover only once the whole stream landed.
-// Single completion authority: called from DrainChunk's normal finish AND its 0-candidate
-// early-out, so an empty world can't leave g_currentTargetSlot pinned (queue would stall).
-// Shared drain-state clear -- used by the normal completion AND the fork-A
-// mid-drain world-transition abort (which must NOT send SnapshotComplete).
+// The shared drain-state clear: the normal completion and the mid-drain world-transition abort
+// (which must not send SnapshotComplete).
 void ClearDrainState_() {
     g_snapshotCandidates.clear(); g_snapshotCandidates.shrink_to_fit();
     g_snapshotEids.clear(); g_snapshotEids.shrink_to_fit();
@@ -204,11 +148,9 @@ void ClearDrainState_() {
     g_snapshotSentTotal = 0;
 }
 
-// Fork A: drain the pending queue through TriggerForSlot (the single gated
-// entry point) until a drain starts or the queue empties. A not-ready slot
-// is dropped (TriggerForSlot logs it), an incoherent-registry one moves to
-// g_deferredSlots -- either way the LOOP continues, fixing the pre-existing
-// stall where one dead dequeued slot abandoned the rest of the queue.
+// Dequeues through TriggerForSlot until a drain starts or the queue empties: a not-ready slot is
+// dropped, an incoherent-registry one defers, and the loop goes on, so one dead slot cannot stall
+// the rest of the queue.
 void DequeuePending_() {
     while (g_currentTargetSlot == -1 && !g_pendingSlots.empty()) {
         const int next = g_pendingSlots.front();
@@ -221,11 +163,11 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
     if (s && g_currentTargetSlot >= 1) {
         coop::net::SnapshotEndPayload e{};
         e.propSent = g_snapshotSentTotal;
-        // Phase 0 (docs/COOP_STABLE_ID_SIDECAR.md S4 -- the docs/piles/10 over-destroy guard):
-        // append a per-class completeness census (an INDEPENDENT GUObjectArray count of live
-        // chipPiles, NOT the registry-driven snapshot enumeration) as a tail. The joiner's claim
-        // sweep KEEPs a class whose claimed count is below the host's count = an incomplete snapshot.
-        // No new ReliableKind (the receiver reads SnapshotEndPayload then the optional tail).
+        // SnapshotComplete closes the bracket as the last bulk-lane message, so the joiner lifts
+        // its cover only once the whole stream landed. Its tail is the per-class completeness
+        // census, an independent GUObjectArray count of live chipPiles (not the registry
+        // enumeration); the joiner's sweep keeps a class it claimed fewer of than the host
+        // reported. No new ReliableKind: the receiver reads the payload, then the optional tail.
         std::vector<uint8_t> buf(sizeof(e));
         std::memcpy(buf.data(), &e, sizeof(e));
         std::vector<uint8_t> tail;
@@ -237,60 +179,42 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
     }
     UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent)",
             g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal);
-    coop::dev::eid_lifetime_trace::EmitVerdict();  // S8.2: capture-eid vs wire-eid verdict (read-only)
+    coop::dev::eid_lifetime_trace::EmitVerdict();  // read-only: capture-eid vs wire-eid verdict
     ClearDrainState_();
-    // Dequeue the next pending slot(s) through the gated entry point (fresh
-    // enumeration -- the world may have changed since this drain started).
+    // The next pending slot re-enumerates: the world may have changed since this drain started.
     DequeuePending_();
 }
 
-// Build a PropSpawnPayload from a live actor + its eid/cached-index. THE single
-// per-prop payload builder, shared by the bracketed drain (DrainChunk) AND the
-// bracket-free incremental express (ExpressIncrementalSpawn) -- RULE 2: one
-// builder, not two parallel copies. Returns false (caller skips the actor) when
-// it is not expressible: null, dead, wire-suppressed, per-player, or
-// unkeyed-and-not-a-chipPile. internalIdx >= 0 -> liveness re-checked via
-// IsLiveByIndex (the drain's cached index, safe against a GC purge between
-// enumerate and drain); < 0 -> the caller has already confirmed liveness (the
-// incremental express). A keyless chipPile keeps key.len == 0 so the receiver
-// routes it down the eidOnly lane (its cross-peer identity is the ElementId, not
-// a key); anything else keyless is not expressible.
+// The one PropSpawnPayload builder, shared by the bracketed drain and the incremental express.
+// False when the actor is not expressible: null, dead, wire-suppressed, per-player, or keyless and
+// not a chipPile. internalIdx >= 0 re-checks liveness by index (the drain's cached index); < 0
+// means the caller confirmed it. A keyless chipPile keeps key.len 0, so the receiver takes the
+// eid-only lane.
 bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t internalIdx,
                             coop::net::PropSpawnPayload& p, int matchSlot) {
     if (!obj) return false;
-    // CHILD-ACTOR EXCLUSION (2026-07-12, take-7 floating-CCTV RCA; audit CRITICAL on the first
-    // cut: the steady re-seed incremental express reached this builder for a fresh kerfur eye
-    // cam WITHOUT MarkPropElement -- a keyed payload with elementId=0 -- re-creating the
-    // floating mirror, now PERMANENT because the gated destroy seam never tears it down).
-    // This is the ONE payload builder (RULE 2 doc above), so the gate here closes every
-    // outbound PropSpawn lane. Predicate + full rationale: ue_wrap::engine::IsChildActor.
+    // A child actor (a kerfur's eye cam) is never expressed: without MarkPropElement it would go
+    // out as a keyed payload with elementId 0 and re-create a floating mirror the gated destroy
+    // seam never tears down. Predicate and rationale: ue_wrap::engine::IsChildActor.
     if (ue_wrap::engine::IsChildActor(obj)) return false;
-    // Phase 0 PROOF (dev-only, ini-gated): inject the docs/piles/10 over-destroy by SKIPPING chipPile
-    // expression, so the joiner's seeded natives stay UNCLAIMED -> its claim sweep dooms them en masse
-    // (the floor binary KEEPs them; a no-floor baseline WIPES them). Host-only choke (this builder runs
-    // only on the expressing host). No-op in any shipped config (the ini key is absent).
+    // Dev only, ini-gated: skipping chipPile expression leaves the joiner's natives unclaimed, so
+    // its sweep would doom them en masse and the completeness floor must keep them. A no-op without
+    // the ini key.
     if (coop::dev::force_overdestroy_test::HostSkipChipPileExpression() && ue_wrap::prop::IsChipPile(obj)) {
         return false;
     }
-    // IsLiveByIndex (NOT IsLive) reads only the GUObjectArray slot, never obj's
-    // (possibly freed) memory -- so a candidate GC-purged since enumeration is
-    // rejected without faulting (the connect-edge crash root-caused 2026-05-30).
+    // By index: a candidate purged since enumeration is rejected without touching freed memory.
     if (internalIdx >= 0 && !R::IsLiveByIndex(obj, internalIdx)) return false;
     const std::wstring cls = R::ClassNameOf(obj);
-    // Same wire-suppress allowlist + per-player skip as the Init POST observer:
-    // intermediate-variant classes (mushroom7_C) and per-player props never
-    // cross the wire (host-authoritative / each peer owns its own).
+    // The same wire-suppress and per-player skips as the Init observer: an intermediate variant
+    // (mushroom7_C) and a per-player prop never cross the wire.
     if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return false;
     if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return false;
-    // KERFUR-CONVERSION FIRST REFUSAL (2026-07-12, take-8; twin gate of the prop_lifecycle
-    // express-body one -- see kerfur_convert::TryAdoptFreshKerfurProp). The incremental/census
-    // lane already routes kerfur actors away (ExpressIncrementalSpawn's IsKerfurActor skip +
-    // ExpressIncrementalKerfurOffProp -- the pre-existing OWNER BOUNDARY the drain lane was
-    // added WITHOUT, which is exactly how take-8 happened); this gate enforces the same
-    // invariant at THE one payload builder for any FUTURE lane that feeds it an untracked
-    // kerfur prop. Every actor the connect-snapshot drain offers here is Registry-fed =
-    // TRACKED, so it exits at TryAdopt's untracked-only guard (audit CRITICAL: without that
-    // guard this site could only ever steal a standing off-prop's identity).
+    // The kerfur first refusal, the twin of the one in prop_lifecycle's express: an untracked
+    // kerfur prop reaching this builder is adopted by KerfurConvert, which broadcasts instead.
+    // Every actor the drain offers is registry-fed and tracked, so it exits at TryAdopt's
+    // untracked-only guard; the gate covers any future lane that feeds an untracked kerfur prop
+    // here.
     if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(obj)) &&
         coop::kerfur_convert::TryAdoptFreshKerfurProp(obj)) {
         return false;  // converged: KerfurConvert broadcast, no generic payload
@@ -301,32 +225,28 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     }
     const std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(obj);
     if (keyStr.empty() || keyStr == L"None") {
-        // Fork B HALF 1: a keyless chipPile IS expressible -- its cross-peer
-        // identity is the ElementId (the receiver's eidOnly OnSpawn lane spawns +
-        // watches it). Anything ELSE keyless has no stable cross-peer identity ->
-        // not expressible (symmetric with the client sweep's universe test).
+        // A keyless chipPile is expressible: its cross-peer identity is the eid, and the receiver's
+        // eid-only lane spawns it. Anything else keyless has no stable identity, matching the
+        // client sweep's universe test.
         if (!ue_wrap::prop::IsChipPile(obj) ||
             eid == coop::element::kInvalidId || eid == 0) {
             return false;
         }
-        // p.key.len stays 0 -> the receiver routes down the eidOnly lane.
+        // key.len stays 0: the eid-only lane.
     } else {
         p.key.len = 0;
         for (size_t j = 0; j < keyStr.size() && j < 31; ++j) {
             p.key.data[p.key.len++] = static_cast<char>(keyStr[j]);
         }
     }
-    // S8.2 eid-lifetime trace (read-only, host): this is the wire-eid the host is about to send for `obj`;
-    // the trace compares it to the eid recorded for `obj` at save-capture (no-op unless [dev]
-    // eid_lifetime_trace=1 AND obj was captured). Proves capture-eid == wire-eid before the bind is built.
+    // Read-only trace: the wire eid against the eid recorded at save capture; a no-op unless
+    // enabled.
     coop::dev::eid_lifetime_trace::CheckWireEid(obj, static_cast<uint32_t>(eid));
     const auto loc = ue_wrap::engine::GetActorLocation(obj);
-    // chipPile/clump visual variety lives on the StaticMesh COMPONENT's relative rotation (random
-    // roll from UserConstructionScript), not the actor root (identity). For the trash family the
-    // mirror is a bare AStaticMeshActor proxy whose mesh sits on its own identity-relative root, so
-    // capture the visible mesh's WORLD rotation -- else GetActorRotation sends identity and every
-    // proxy pile renders identically oriented (the reported "rotation always the same"). A native
-    // (Aprop_C / keyed) prop keeps its actor rotation. [[lesson-chippile-saved-in-primitivesData-not-objectsData]]
+    // A chipPile's visual variety is the StaticMesh component's relative rotation (a random roll
+    // from the construction script), not the actor root, and the trash mirror is a bare
+    // AStaticMeshActor: the visible mesh's world rotation goes on the wire, or every proxy pile
+    // renders identically oriented. A native keyed prop keeps its actor rotation.
     const auto rot = ue_wrap::prop::IsChipPile(obj)
                          ? ue_wrap::engine::GetVisibleMeshWorldRotation(obj)
                          : ue_wrap::engine::GetActorRotation(obj);
@@ -334,17 +254,14 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    // v54: REAL scale -- part of the saved transform SP restores (loadData ->
-    // SetActorScale3D); the old 1,1,1 hardcode mis-sized any scaled host prop.
+    // The real scale, part of the saved transform single-player restores.
     const auto scl = ue_wrap::engine::GetActorScale3D(obj);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-    // SP-parity physics stamp (2026-06-09): kSimulatePhysics ONLY for an
-    // actively-simulating Aprop_C (positively awake -- IsActorRootBodyAtRest
-    // false -- so a settled-but-flag-awake prop mirrors kinematic at the host's
-    // resting transform). non-Aprop_C keyed interactables (chipPile/trashBits/
-    // clump) are kinematic by design -> physFlags=0. v54 also carries the raw
-    // Static/sleep/removeWOrespawn bools + the list_props `Name` so the receiver's
-    // init() builds the TRUE prop (mesh/mass/collision), not the CDO 'cube'.
+    // kSimulatePhysics only for an Aprop_C that is positively awake (not static, frozen or asleep,
+    // and its root body not at rest), so a settled prop mirrors kinematic at the host's resting
+    // transform; a non-Aprop_C interactable is kinematic by design. The raw Static, frozen, sleep
+    // and removeWOrespawn bits and the list_props Name go too, so the receiver's init builds the
+    // real prop (mesh, mass, collision), not the CDO cube.
     p.physFlags = 0;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(obj)) {
@@ -366,9 +283,8 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
         for (size_t j = 0; j < nm.size() && j < 31; ++j) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
         }
-        // v114 (L7): the save-scalar birth channel -- a join-window-ejected reel is NOT in
-        // the transferred save, so the snapshot row must carry its Progress (shared reader
-        // with the live-express fill).
+        // The saved scalar (a reel's Progress): a reel ejected in the join window is not in the
+        // transferred save, so the row carries it. The same reader as the live express.
         float sc = 0.f;
         if (ue_wrap::prop::ReadSavedScalarForClass(obj, sc)) {
             p.savedScalar = sc;
@@ -377,16 +293,13 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
-    // Fork B HALF 1: carry the trash VARIANT (GetChipType is reflection-gated --
-    // a no-op 0 for classes without a chipType property).
+    // The trash variant; GetChipType is 0 for a class without the property.
     p.chipType = ue_wrap::prop::GetChipType(obj);
     p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
-    // v86 Path 1c: for a chipPile in the JOIN snapshot (matchSlot = the target joiner), stamp its
-    // SAVE-TIME position from the host's blob map so the client twin-destroy matches the save-loaded
-    // native @old even if the host MOVED the pile @new in the join-load window (the two-channel DUP
-    // fix). Only the join drain passes a real matchSlot; the mid-game incremental express passes -1
-    // (no twin on the client -> no stamp). No map entry (unseeded/post-save pile) -> no stamp, the
-    // receiver falls back to the current pose `loc`.
+    // For a chipPile in a join snapshot (matchSlot is the joiner), the save-time position from the
+    // host's blob map, so the client's twin destroy matches the native loaded at the old spot even
+    // if the host moved the pile in the join-load window. The incremental express passes -1 (no
+    // twin on the client); no map entry, no stamp, and the receiver falls back to the live pose.
     p.hasMatchPos = 0;
     if (matchSlot >= 1 && p.elementId != 0 && ue_wrap::prop::IsChipPile(obj)) {
         ue_wrap::FVector sv;
@@ -416,48 +329,27 @@ void TriggerForSlot(int peerSlot) {
                 peerSlot, static_cast<unsigned>(coop::players::kMaxPeers));
         return;
     }
-    // Fork A: consume the deferred flag (single owner -- whichever of the
-    // net_pump re-seed retrigger / the DrainChunk flush runs first consumes
-    // it; the gate below re-sets it if the registry is still incoherent).
+    // The deferred flag is consumed here, by whichever of the re-seed retrigger and the DrainChunk
+    // flush runs first; the gates below re-set it.
     g_deferredSlots[peerSlot] = false;
-    // Gate on IsSlotReady (lanes configured) rather than IsSlotConnected
-    // (just has a connection handle). The Connecting status callback
-    // sets peerConns_[slot] on host accept; that flips IsSlotConnected
-    // true a few ms BEFORE the Connected callback runs
-    // ConfigureLanesForPeer. Triggering the snapshot drain in that
-    // window queues PropSpawn messages on the default lane 0 (HIGH)
-    // instead of the BULK lane 2 -- defeating PR-3's head-of-line-block
-    // mitigation for the worst case (initial ~1700-msg fan-out).
-    // IsSlotReady fires only after lanes are live on the connection.
+    // IsSlotReady, not IsSlotConnected: the connection handle exists a few ms before the lanes are
+    // configured, and a drain triggered in that window queues ~1,700 PropSpawns on the
+    // high-priority lane instead of the bulk lane.
     if (!s->IsSlotReady(peerSlot)) {
-        // Audit WARN-1 (2026-06-10): the deferred flag was consumed above --
-        // restore it so the generation flush retries this slot once lanes
-        // configure (the connect-edge retry is a rescue, not the contract).
+        // The flag goes back so the generation flush retries once the lanes configure.
         g_deferredSlots[peerSlot] = true;
         g_deferredSeenGen = PT::SeedGeneration();
         UE_LOGW("snapshot: slot %d not ready (lanes not yet configured) -- deferring TriggerForSlot", peerSlot);
         return;
     }
-    // Fork A gate (2026-06-10, HARDENED after the smoke falsified the
-    // stamp-only shape): a bracket is a DESTRUCTIVE contract -- the client
-    // arms a claim set at SnapshotBegin and at SnapshotComplete destroys
-    // every unclaimed in-universe local. It may only be built from a
-    // registry that expresses the host's CURRENT world. Three signals, any
-    // one defers:
-    //  - !HasSeededOnce: the boot seed never ran -- nothing is expressed.
-    //  - stamp dead: the stamped UWorld was GC-purged (a real world swap;
-    //    O(1), zero detection latency).
-    //  - InPurgeEpisode: the reaper detected a mass purge and the registry
-    //    is draining a dead world's elements until the episode-end re-seed.
-    //    REQUIRED in addition to the stamp: VOTV's boot/save-load flow can
-    //    leave the stamped UWorld ALIVE while the registry is majority-dead
-    //    (smoke 2026-06-10: stamp live, 1161 dying vs 88 live -> the
-    //    stamp-only gate passed and the client swept 3067 actors against an
-    //    88-prop bracket).
-    // (A fourth, enumerate-time backstop lives in StartEnumerationFor for
-    // the <=4s window before the reaper's next scan detects the purge.)
-    // MTA gets this invariant for free (synchronous entity tree,
-    // CMapManager::SendMapInformation); we restore it explicitly.
+    // A bracket is a destructive contract (the client destroys every unclaimed in-universe local at
+    // SnapshotComplete), so it may only be built from a registry that expresses the host's current
+    // world. Any of three signals defers: the boot seed never ran; the stamped UWorld was purged (a
+    // real world swap); the reaper detected a mass purge and the registry is draining a dead world.
+    // The third is needed beside the stamp: a save load can leave the stamped UWorld alive while
+    // the registry is majority-dead, and the stamp alone once let a client sweep its world against
+    // an 88-prop bracket. A fourth, enumerate-time backstop sits in StartEnumerationFor. MTA has
+    // this invariant for free from its synchronous entity tree (CMapManager::SendMapInformation).
     if (!PT::HasSeededOnce() || !PT::IsRegistrySeededForCurrentWorld() ||
         PT::InPurgeEpisode()) {
         g_deferredSlots[peerSlot] = true;
@@ -466,21 +358,16 @@ void TriggerForSlot(int peerSlot) {
         return;
     }
     if (g_currentTargetSlot != -1) {
-        // Fork A: a re-trigger of the slot being drained RIGHT NOW, for the
-        // SAME registry generation, is already covered by the in-flight
-        // bracket -- queueing it would produce a duplicate identical bracket.
-        // [drill] R-2b RED calibration: bypassing this dedupe MUST make the
-        // acceptance's zero-duplicate-brackets grep go red (a gate never shown
-        // red proves nothing). Never set outside a drill.
+        // A re-trigger of the slot being drained now, for the same generation, is covered by the
+        // in-flight bracket; queueing it would send a duplicate bracket. The env bypass is a drill:
+        // it must turn the zero-duplicate-brackets check red.
         static const bool sDedupBypass =
             !coop::config::ReadEnv("VOTVCOOP_SNAPSHOT_DEDUP_BYPASS").empty();
         if (!sDedupBypass &&
             peerSlot == g_currentTargetSlot && g_drainSeedGen == PT::SeedGeneration()) {
             return;
         }
-        // Another drain is in flight. Queue this slot for after it
-        // completes. Avoid duplicate queue entries (a slot reconnecting
-        // multiple times in rapid succession).
+        // Another drain is in flight: queue this slot, once.
         if (std::find(g_pendingSlots.begin(), g_pendingSlots.end(), peerSlot) ==
                 g_pendingSlots.end()) {
             g_pendingSlots.push_back(peerSlot);
@@ -493,12 +380,9 @@ void TriggerForSlot(int peerSlot) {
 }
 
 void DrainChunk() {
-    // Fork A deferred-slot flush: UNCONDITIONAL on coherence (independent of
-    // the net_pump re-seed retrigger's added>0 condition) -- a deferred slot
-    // retries on EVERY seed-generation bump. Level-triggered: TriggerForSlot
-    // re-defers (re-latching the gen) if a second travel raced in. Runs
-    // BEFORE the no-drain early-out (this is the only per-tick call site);
-    // idle cost is a 3-bool scan.
+    // The deferred-slot flush: every seed-generation bump retries each deferred slot, and
+    // TriggerForSlot re-defers if a second travel raced in. Before the no-drain early-out (the only
+    // per-tick call site); idle cost is a scan of the flags.
     if (AnyDeferred_()) {
         const uint64_t gen = PT::SeedGeneration();
         if (gen != g_deferredSeenGen) {
@@ -511,24 +395,19 @@ void DrainChunk() {
     if (g_currentTargetSlot == -1) return;
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     if (!s) return;
-    // Bail out early if the target peer disconnected mid-drain. Without
-    // this we'd iterate all remaining candidates calling SendReliableToSlot
-    // into a closed connection (Session silently no-ops but the GetActor
-    // Location/Rotation reflection calls add up to wasted ms/frame).
+    // A target that disconnected mid-drain aborts now, or every remaining candidate pays its
+    // reflection reads to send into a closed connection.
     if (!s->IsSlotConnected(g_currentTargetSlot)) {
         UE_LOGI("snapshot: target slot %d disconnected mid-drain -- aborting (sent %zu/%zu)",
                 g_currentTargetSlot, g_snapshotCandidateIdx, g_snapshotCandidates.size());
         CancelForSlot(g_currentTargetSlot);
         return;
     }
-    // Fork A mid-drain abort: the host travelled while this bracket was
-    // streaming. Every remaining candidate is dying and the per-candidate
-    // IsLiveByIndex below would rush the bracket to a SnapshotComplete with
-    // PARTIAL claims -> the client sweep would mass-destroy. Abort WITHOUT
-    // SnapshotComplete (the sweep only fires on Complete; the client's armed
-    // claim set is membership-only and the re-bracket's SnapshotBegin clears
-    // + re-arms it) and defer the slot for the post-re-seed re-bracket.
-    // (Episode check included: the reaper can detect the purge mid-drain.)
+    // The host travelled mid-drain: every remaining candidate is dying, and the per-candidate
+    // liveness check would rush the bracket to a SnapshotComplete with partial claims, a mass
+    // destroy on the client. Abort without SnapshotComplete (the sweep fires only on Complete; the
+    // re-bracket's Begin clears and re-arms the claim set) and defer the slot for the post-re-seed
+    // bracket.
     if (!PT::IsRegistrySeededForCurrentWorld() || PT::InPurgeEpisode()) {
         UE_LOGW("snapshot: world transition mid-drain (slot %d, %u sent) -- aborting WITHOUT SnapshotComplete; slot deferred",
                 g_currentTargetSlot, g_snapshotSentTotal);
@@ -538,50 +417,35 @@ void DrainChunk() {
         DequeuePending_();
         return;
     }
-    // v34: nothing to drain (0 candidates, or already drained) -> complete now so the
-    // SnapshotComplete bracket closes + the pending queue advances. A 0-candidate world
-    // previously bare-returned here and pinned g_currentTargetSlot forever.
+    // Nothing left (or nothing at all) completes now, so the bracket closes and the queue advances;
+    // an empty world once pinned the target slot forever.
     if (g_snapshotCandidateIdx >= g_snapshotCandidates.size()) {
         CompleteDrainForCurrentSlot(s);
         return;
     }
-    // (std::min) parenthesized to defeat windows.h's `min` macro.
+    // (std::min) parenthesised against windows.h's macro.
     const size_t limit = (std::min)(g_snapshotCandidateIdx + kSnapshotChunkSize,
                                     g_snapshotCandidates.size());
-    // (v15 hoisted a paired LocalPlayerIdentity read above the loop to
-    // stamp p.senderContext on every snapshot packet; v16 PR-FOUNDATION-1b
-    // moved per-peer stale-gen defense to the packet header senderEpoch,
-    // stamped uniformly by Session::SendReliableToSlot via WriteHeader.
-    // No per-packet sender state needed at the gameplay layer.)
     int sent = 0;
     for (; g_snapshotCandidateIdx < limit; ++g_snapshotCandidateIdx) {
         void* obj = g_snapshotCandidates[g_snapshotCandidateIdx];
-        // Re-validate liveness: an actor live at enumeration may have been
-        // GC-purged across the intervening ticks. IsLiveByIndex with the cached
-        // index reads only the GUObjectArray slot, never obj's (possibly freed)
-        // memory -- so a purged candidate is skipped without faulting. Once it
-        // passes, obj is live and the subsequent UFunction reads below are safe
-        // (UE4 GC purge runs on the game thread and cannot interleave mid-tick).
+        // Liveness re-validated by the cached index (a purge since enumeration); once it passes,
+        // the UFunction reads below are safe, since the GC purge runs on the game thread and cannot
+        // interleave mid-tick.
         const int32_t cachedIdx = g_snapshotCandidateIdx < g_snapshotInternalIdxs.size()
                                       ? g_snapshotInternalIdxs[g_snapshotCandidateIdx]
                                       : -1;
         if (!obj || !R::IsLiveByIndex(obj, cachedIdx)) continue;
-        // Cached eid from StartEnumerationFor (no per-candidate prop-tracker
-        // mutex; audit fix 2026-05-28).
+        // The eid cached at enumeration.
         const coop::element::ElementId eid =
             g_snapshotCandidateIdx < g_snapshotEids.size()
                 ? g_snapshotEids[g_snapshotCandidateIdx]
                 : coop::element::kInvalidId;
         coop::net::PropSpawnPayload p{};
-        // Build via the shared per-prop builder (keyed vs keyless/eid-only pile
-        // handling, wire-suppress + per-player skips, v54 physics + identity). A
-        // non-expressible candidate returns false -> skip. cachedIdx already
-        // re-validated liveness above, so pass -1 (don't repeat IsLiveByIndex).
-        // v86 Path 1c: this is the JOIN drain -- pass the target joiner slot so a pile gets its
-        // save-time match key stamped (g_currentTargetSlot is this drain's single target).
+        // -1: liveness was just re-validated. The target slot makes this the join drain, so a pile
+        // gets its save-time match key.
         if (!BuildPropSpawnPayload_(obj, eid, -1, p, g_currentTargetSlot)) continue;
-        // Send to ONE slot only. Other peers (already-connected) already
-        // have these props from their own connect-edge drain.
+        // To the one slot: the other peers got these props from their own drain.
         s->SendReliableToSlot(g_currentTargetSlot,
                               coop::net::ReliableKind::PropSpawn,
                               &p, sizeof(p));
@@ -589,29 +453,24 @@ void DrainChunk() {
     }
     g_snapshotSentTotal += static_cast<uint32_t>(sent);
     if (g_snapshotCandidateIdx >= g_snapshotCandidates.size()) {
-        CompleteDrainForCurrentSlot(s);  // sends SnapshotComplete + clears + dequeues next
+        CompleteDrainForCurrentSlot(s);  // SnapshotComplete, clear, dequeue the next
     } else {
         UE_LOGI("snapshot: drained chunk for slot %d -- this tick=%d, processed %zu/%zu",
                 g_currentTargetSlot, sent, g_snapshotCandidateIdx, g_snapshotCandidates.size());
     }
 }
 
-// Build + broadcast ONE additive PropSpawn for `actor` to all ready peers (MTA CEntityAddPacket;
-// the SAME s->SendPropSpawn the Init-POST observer uses). NO SnapshotBegin/Complete bracket -> the
-// client's destructive divergence sweep is NOT re-armed (the entire point of R1). A peer that also
-// enumerates this prop in its own in-flight connect drain just dedupes it via RegisterPropMirror.
-// `s` host-validated + `actor` liveness-confirmed by the caller. RULE 2: ONE builder, shared by the
-// generic incremental express and the kerfur-off deliver-missing owner (no parallel copy). `kindTag`
-// is a log-only prefix ("" generic / "kerfur-off ").
+// One additive PropSpawn for `actor` to every ready peer, with no bracket, so the client's
+// divergence sweep is not re-armed (MTA's CEntityAddPacket shape). A peer that also enumerates
+// this prop in its own in-flight drain dedupes it in RegisterPropMirror. `s` is host-validated and
+// `actor` live, by the caller. kindTag is a log prefix.
 static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, const char* kindTag) {
-    // eid was minted by the seed walk that yielded this actor (phase 2 of SeedWalk_, before it
-    // returned), so this resolves.
+    // The eid was minted by the seed walk that yielded this actor.
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
     coop::net::PropSpawnPayload p{};
-    // internalIdx -1: liveness just confirmed by the caller (IsLive); the builder's idx guard is only
-    // for the drain's cached-index path. matchSlot -1: mid-game incremental express (NOT a join), no
-    // save-time stamp (a runtime-spawned form reaching a peer has no save-loaded native twin).
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible -- skip silently
+    // -1 and -1: liveness confirmed by the caller, and a mid-game express has no save-loaded twin
+    // to stamp a match key for.
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible
     s->SendPropSpawn(p);
     UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted %sprop %p (eid=%u, key='%.*s') "
             "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
@@ -625,19 +484,14 @@ bool ExpressWouldBroadcast() {
 
 void ExpressIncrementalSpawn(void* actor) {
     auto* s = g_session_ptr.load(std::memory_order_acquire);
-    // Host-authoritative: only the host broadcasts world spawns. The steady-world
-    // re-seed still runs on a client (keyed -> key-index only since v122 no-passive-mint;
-    // keyless chipPile elements still mint) but
-    // never broadcasts -- a client's runtime spawns route through the host (phase 2).
+    // Only the host broadcasts world spawns; a client's re-seed still runs but never broadcasts,
+    // and its runtime spawns route through the host.
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!actor || !R::IsLive(actor)) return;
-    // Kerfur exclusion (2026-06-18 backstop to the MarkKnownKeyedProp close in
-    // RegisterHostPropSilent): a kerfur's ONLY steady-state wire signal is KerfurConvert -- never the
-    // generic incremental PropSpawn. Re-expressing a CONVERTED kerfur prop here with its real BP key
-    // dupes it on a client fuzzy-miss (the host turn-on/off dupe). The connect snapshot's drain handles
-    // a kerfur prop differently (the client adopts it); only THIS generic express must skip it. A kerfur
-    // off-prop that NO convert delivered (the join-window registration race) is delivered instead by
-    // ExpressIncrementalKerfurOffProp -- routed from the same re-seed loop via DeliverLateRegisteredProps.
+    // A kerfur's only steady-state wire signal is KerfurConvert: re-expressing a converted kerfur
+    // prop here with its real key dupes it on a client fuzzy miss. A kerfur off-prop no convert
+    // delivered (the join-window registration race) goes through ExpressIncrementalKerfurOffProp
+    // instead, from the same re-seed loop.
     if (coop::kerfur_entity::IsKerfurActor(actor)) return;
     BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"");
 }
@@ -646,16 +500,13 @@ void ExpressIncrementalKerfurOffProp(void* actor) {
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!actor || !R::IsLive(actor)) return;
-    // DeliverLateRegisteredProps routes ONLY kerfur actors here; a non-kerfur would be a routing bug.
-    // A re-seed-NEW kerfur is always the OFF-prop form (the re-seed adopts keyed PROPS, never the
-    // active NPC).
+    // Only kerfur actors are routed here, and a re-seed-new kerfur is always the off-prop form (the
+    // re-seed adopts keyed props, never the active NPC).
     if (!coop::kerfur_entity::IsKerfurActor(actor)) return;
-    // BOUNDARY ENFORCEMENT (runtime, every session). The owner delivers ONLY an UN-converted off-prop.
-    // A CONVERTED off-prop has a stable KerfurId bound to its eid by BindFormActor -- KerfurConvert owns
-    // its delivery, the owner must never touch it. The MarkKnownKeyedProp discriminator (prop_lifecycle.cpp:646)
-    // keeps a converted off-prop OUT of the re-seed-NEW set, so reaching here with a KerfurId-bound eid is
-    // a boundary REGRESSION. Skip + WARN (Arm would dedup by eid anyway, but the invariant is that the owner
-    // never re-delivers a convert-owned kerfur). The kerfur-delivery autotest greps this WARN (must be 0).
+    // Only an un-converted off-prop is delivered here. A converted one has a KerfurId bound to its
+    // eid and KerfurConvert owns it; the MarkKnownKeyedProp discriminator keeps it out of the
+    // re-seed-new set, so a KerfurId-bound eid here is a regression. The kerfur-delivery autotest
+    // requires zero of this WARN.
     {
         const coop::element::ElementId checkEid = PT::GetPropElementIdForActor(actor);
         if (coop::kerfur_entity::GetKerfurIdForEid(checkEid) != coop::element::kInvalidId) {
@@ -666,43 +517,26 @@ void ExpressIncrementalKerfurOffProp(void* actor) {
             return;
         }
     }
-    // DELIVER-MISSING OWNER (join-window; N=3 of the snapshot-before-state-ready class
-    // [[feedback-snapshot-before-state-ready]]). A kerfur off-prop created by a host turn-off DURING a
-    // client's join window has NO delivery channel: it post-dates the join snapshot, the generic
-    // incremental express above SKIPS it (:568), and the death-watch poll never fired a KerfurConvert
-    // (its source NPC was never a watched live Npc Element -- the host registers world NPCs once at
-    // join, and the turn-off can race that scan). Because a CONVERTED off-prop is marked known BEFORE
-    // it can surface as a re-seed-NEW prop (prop_lifecycle.cpp:646), a re-seed-NEW kerfur off-prop is
-    // BY DEFINITION un-converted -> delivering it here never double-delivers a converted one. Dupe-safe
-    // across all orderings: the client receives this via OnSpawn(deferKerfur=true) ->
-    // kerfur_prop_adoption::Arm, which no-ops an already-bound eid (kerfur_prop_adoption.cpp:198) and
-    // refreshes an already-pending eid; the off-prop's wire eid is the host Prop Element eid (idempotent
-    // per actor -- MarkPropElement), so even if a KerfurConvert later arrives for the same actor the
-    // client dedups by that shared eid. A client with no local twin fresh-spawns it exactly once at
-    // load-tail quiescence (ResolvePending).
-    //
-    // OWNER BOUNDARY -- JOIN-EDGE ONLY. This owner exists because the join-window registration race can
-    // drop the KerfurConvert. In STEADY STATE the death-watch is reliable (the NPC is long-registered,
-    // no race), so KerfurConvert stays PRIMARY for kerfur transitions and a converted off-prop never
-    // reaches this path (it is marked known). Do NOT generalize "channels are accelerators" into steady
-    // state or demote KerfurConvert to an accelerator without FIRST adding a periodic steady-state
-    // reconcile -- that would open a steady-state delivery hole. The boundary is asserted by the
-    // kerfur-delivery autotest. See docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md.
+    // The join-edge deliver-missing owner. A kerfur off-prop created by a host turn-off during a
+    // client's join window has no other channel: it post-dates the snapshot, the generic express
+    // skips kerfurs, and the death-watch never fired a KerfurConvert (its NPC was not yet a watched
+    // element; the host registers world NPCs once at join, and the turn-off can race that scan). A
+    // converted off-prop is marked known before it can surface as re-seed-new, so what arrives here
+    // is un-converted and never double-delivered. Dupe-safe in every ordering: the client applies
+    // it through kerfur_prop_adoption::Arm, which no-ops an already-bound eid, and the wire eid is
+    // the host's Prop element eid, so a later KerfurConvert for the same actor dedupes by it. Join
+    // edge only: in steady state the death-watch is reliable and KerfurConvert stays primary; this
+    // owner must not become a steady-state channel without a periodic reconcile behind it.
     BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"kerfur-off ");
 }
 
 void DeliverLateRegisteredProps(const std::vector<void*>& lateProps) {
-    // THE host-side LATE-REGISTRATION deliver-missing owner (the join-edge backstop half of "deliver the
-    // host's authoritative set to every peer"; the connect snapshot is the at-join full-state half).
-    // The steady-world re-seed (net_pump) hands us every prop it newly adopted into tracking -- i.e. a
-    // prop NO fast channel (connect snapshot / Init-POST express / KerfurConvert) had delivered yet
-    // (a converted/organically-spawned prop is already `known` and never reaches here). We deliver each
-    // exactly once; the client's idempotent apply absorbs any overlap. This is what demotes the per-
-    // mutation channels to accelerators on the JOIN edge: correctness no longer depends on which channel
-    // caught a window mutation -- this owner reconciles to the host's authoritative registered set.
-    // A generic prop broadcasts an incremental PropSpawn; a kerfur OFF-prop (skipped by the generic
-    // express) takes the convert-safe deferred-adoption path. See ExpressIncrementalKerfurOffProp for
-    // the dupe-safety + OWNER BOUNDARY (join-edge only; steady-state stays KerfurConvert-primary).
+    // The host-side late-registration owner: the steady-world re-seed hands over every prop it
+    // newly adopted into tracking, one no fast channel (the snapshot, the Init express,
+    // KerfurConvert) had delivered; each goes out once, and the client's idempotent apply absorbs
+    // any overlap. So on the join edge correctness no longer depends on which channel caught a
+    // window mutation. A generic prop takes the incremental PropSpawn; a kerfur off-prop the
+    // deferred-adoption path.
     for (void* a : lateProps) {
         if (coop::kerfur_entity::IsKerfurActor(a)) ExpressIncrementalKerfurOffProp(a);
         else                                       ExpressIncrementalSpawn(a);
@@ -710,18 +544,15 @@ void DeliverLateRegisteredProps(const std::vector<void*>& lateProps) {
 }
 
 void CancelForSlot(int peerSlot) {
-    // Fork A: a slot that disconnects while deferred must not be retried by
-    // the flush. Clear BEFORE the in-progress check (the flag is independent
-    // of whether this slot was draining).
+    // A slot that disconnects while deferred is not retried; cleared before the in-progress check.
     if (peerSlot >= 1 && peerSlot < coop::players::kMaxPeers) {
         g_deferredSlots[peerSlot] = false;
     }
-    // Remove `peerSlot` from the pending queue (may have queued + then
-    // disconnected before its turn came up).
+    // Out of the pending queue (queued, then disconnected before its turn).
     g_pendingSlots.erase(
         std::remove(g_pendingSlots.begin(), g_pendingSlots.end(), peerSlot),
         g_pendingSlots.end());
-    // If `peerSlot` was the in-progress drain target, abort + dequeue next.
+    // The in-progress target aborts and the next slot dequeues.
     if (g_currentTargetSlot != peerSlot) return;
     ClearDrainState_();
     DequeuePending_();
@@ -735,7 +566,7 @@ size_t OnDisconnect() {
     ClearDrainState_();
     g_pendingSlots.clear();
     g_pendingSlots.shrink_to_fit();
-    // Fork A: no deferred slot may survive into the next session.
+    // No deferred slot survives into the next session.
     g_deferredSlots.fill(false);
     g_deferredSeenGen = 0;
     g_drainSeedGen = 0;
