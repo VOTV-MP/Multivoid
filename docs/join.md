@@ -75,8 +75,8 @@ world (`coop/items/player_inventory_sync`).
 
 The game's loader destroys and respawns the world's props as it reads the save. Those destroys
 are the client's own rebuild churn, and broadcasting them would destroy the host's copies by key
-(measured on the rig: a bare client join drove the host from thousands of keyed props to a third
-of them), so the destroy seam runs inside a world-load episode that suppresses the broadcast
+(a bare client join would strip the host of most of its keyed props), so the destroy seam runs
+inside a world-load episode that suppresses the broadcast
 (`coop/session/world_load_episode`). The same module runs the quiescence probe: five times a
 second it counts the load-tail population, and the load is settled when the count holds across
 consecutive scans. Two deadlines bound a pathological load, one on no progress and one absolute;
@@ -208,15 +208,14 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 
 | Limit | Evidence |
 |---|---|
-| The transfer runs at the transport's minimum send rate, about one megabyte per second, with no bandwidth estimation, so a large world is a long download | `[V]` measured on an internet link; two field joiners quit inside the first seconds before the byte counter existed |
-| The world load takes thirty to sixty seconds and is capped by the probe's deadlines; a load past them announces into a world that may still be churning | `[V]` the probe logs the deadline mode |
-| Keyless save-loaded objects are matched by position; the index-to-id sidecar is built, transferred and bound in the rig, but the bind is behind a developer flag until it is verified by hand | `[V]` rig runs bind every entry; not hands-on |
-| A host change inside the window that post-dates the snapshot (a kerfur turned off) materialises at quiescence, after the curtain has lifted, as a visible pop-in | `[V]` measured; delivery is correct, the order is cosmetic |
-| A local save-loaded actor repositioned after the curtain lifts is visible; the short curtain is chosen over a blank screen | `[?]` rare, not quantified |
-| The trash-pile mirror stands in a bare proxy for the engine's own actor instead of driving it; it is queued for a rebuild | `[V]` [ROADMAP.md](ROADMAP.md) |
-| The stale fallback streams the on-disk slot, which may be older than the live world | `[V]` logged when it happens |
-| The true mid-event join of the walking pyramid is still the open hands-on acceptance test | `[?]` autonomous packet flow only |
-| The divergence sweep can abort at its half-of-the-world valve and leave the joiner's excess keyed props in place, unbound | `[V]` a field log: about a thousand element-less keyed props after an aborted sweep |
+| The transfer runs at a fixed send rate the mod configures, about one megabyte per second on an internet link, with no bandwidth estimation, so a large world is a long download | `[V]` `coop/net/session_start`, `coop/net/session_status` |
+| The world load is capped by the probe's two deadlines, one on no progress and one absolute; a load past either announces into a world that may still be churning, logged as degraded | `[V]` `coop/session/world_load_episode` |
+| Keyless save-loaded objects are matched by position; the index-to-id sidecar is built and transferred, and its bind is off by default, behind the `save_identity_bind` developer flag | `[V]` `coop/config/config_registry_rows.inc`, `coop/props/save_identity_bind` |
+| A host change inside the window that post-dates the snapshot (a kerfur turned off) materialises at quiescence, after the curtain has lifted, as a visible pop-in | `[V]` `coop/element/mirror_defer` holds it until quiescence |
+| A local save-loaded actor repositioned after the curtain lifts is visible: the curtain lifts at the end marker, before quiescence, a short curtain being chosen over a blank screen | `[V]` `ui/join_curtain` |
+| The trash-pile mirror stands in a bare proxy for the engine's own actor instead of driving it; it is queued for a rebuild | `[V]` `coop/props/trash_proxy`, [ROADMAP.md](ROADMAP.md) |
+| The stale fallback streams the on-disk slot, which may be older than the live world | `[V]` `coop/save/save_transfer` logs it |
+| The divergence sweep aborts at its half-of-the-world valve and leaves the joiner's excess keyed props in place, unbound | `[V]` `coop/props/join_membership_sweep` |
 
 ## Code map
 
