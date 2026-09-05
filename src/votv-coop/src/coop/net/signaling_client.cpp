@@ -1,13 +1,10 @@
-// coop/net/signaling_client.cpp -- see signaling_client.h.
-//
-// Ported from third_party/GameNetworkingSockets/examples/trivial_signaling_client.cpp
-// (BSD-3, Valve). Adaptations: namespaced into coop::net; raw Winsock only
-// (Windows build); asserts replaced with logging + graceful failure (RULE 1 --
-// a malformed signal must never crash the game); self-contained WSAStartup so the
-// transport does not depend on GNS having initialized Winsock first.
+// coop/net/signaling_client.cpp -- see signaling_client.h. Ported from GameNetworkingSockets'
+// trivial_signaling_client example (BSD-3, Valve): namespaced, raw Winsock only, asserts
+// replaced with logging and graceful failure (a malformed signal must never crash the game),
+// and a self-contained WSAStartup, so the transport does not depend on GNS having initialised
+// Winsock.
 
-// Winsock MUST be included before any header that may pull in <windows.h>
-// (steamnetworkingtypes.h does). winsock2.h first; windows.h after.
+// Winsock before any header that may pull in windows.h (steamnetworkingtypes.h does).
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -25,8 +22,8 @@
 #include <steam/isteamnetworkingutils.h>
 #pragma warning(pop)
 
-// Our DLL calls socket/recv/send/WSAStartup directly; ensure ws2_32 is linked
-// regardless of CMake link-dep propagation from the static GNS lib.
+// The DLL calls Winsock directly, so ws2_32 is linked here regardless of link-dep propagation
+// from the static GNS lib.
 #pragma comment(lib, "ws2_32.lib")
 
 namespace coop::net {
@@ -46,54 +43,41 @@ inline bool IgnoreSockErr(int e) {
 
 constexpr std::uintptr_t kInvalidSock = static_cast<std::uintptr_t>(INVALID_SOCKET);
 
-// Trust boundary: the inbound TCP stream is remote/attacker-influenceable. Cap
-// the accumulation buffer so a server (or on-path attacker) that streams bytes
-// with no newline cannot grow inBuf_ unboundedly and OOM the net thread. A
-// legitimate ICE rendezvous blob (hex-encoded) is a few KB; 64 KiB is far above
-// any real line. On overflow we drop the connection (and reconnect).
+// The inbound TCP stream is attacker-influenceable: the accumulation buffer is capped so a
+// server or on-path attacker streaming bytes with no newline cannot grow it without bound. A
+// legitimate ICE blob is a few KB; on overflow the connection is dropped and reconnected.
 constexpr size_t kMaxInboundBuffer = 64 * 1024;
 
-// Reconnect backoff: minimum wall-clock spacing between connect attempts on the
-// net thread after a drop. Without it a down signaling server triggers a connect
-// attempt every Poll (~200 Hz) -- pointless socket churn.
+// The reconnect backoff: without it a down signaling server triggers a connect attempt every
+// Poll.
 constexpr auto kReconnectBackoff = std::chrono::seconds(5);
 
-// How long we wait for the server's registration challenge after our greeting
-// leaves the socket. Generous on purpose: this deadline is not policing latency,
-// it exists to turn "this relay predates the challenge" into ONE named error
-// line instead of a silent hang. Matches the server's own pre-auth budget.
+// How long to wait for the server's registration challenge after the greeting leaves the
+// socket. Generous: it turns a relay that predates the challenge into one named error line
+// instead of a silent hang. Matches the server's pre-auth budget.
 constexpr auto kChallengeTimeout = std::chrono::seconds(15);
 
-// MUST equal `REGISTER_TAG` in tools/coop-server-rs/src/bin/signaling.rs.
-//
-// An earlier version of this comment said `tools/sig_gate.py` keeps the two
-// honest. It does NOT, and a post-ship audit was right to call that a false
-// reassurance: sig_gate carries its own THIRD copy of the tag and never runs this
-// client, so changing the constant here leaves it at 14/14. The instrument that
-// actually covers this leg is `p2p_smoke`, whose two peers sign with this code and
-// register against the real relay -- if these bytes drift, both peers fail to
-// register and the smoke's verdict goes red.
+// Must equal REGISTER_TAG in tools/coop-server-rs/src/bin/signaling.rs. The instrument that
+// covers the pair is the p2p_smoke scenario, whose two peers sign with this code and register
+// against the real relay: if the bytes drift, both fail to register and the verdict goes red.
+// sig_gate.py carries its own copy of the tag and never runs this client.
 constexpr char kRegisterTag[] = "multivoid-signaling-register-v1";
 constexpr char kChallengePrefix[] = "nonce ";
 constexpr size_t kNonceHexLen = 64;
-// `gen:` + 64 hex. The relay's `identity_shape_ok` accepts exactly this width, and
-// it is what makes the un-delimited blob unambiguous.
+// gen: plus 64 hex; the relay accepts exactly this width, which is what makes the un-delimited
+// blob unambiguous.
 constexpr size_t kIdentityLen = 4 + 64;
 
 const char kHexDigit[] = "0123456789abcdef";
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
-// Per-connection signaling object handed to GNS. SendSignal hex-encodes the
-// opaque ICE blob, prefixes the destination identity, and enqueues a line.
-// GNS owns this object and calls Release() (self-delete) when the connection no
-// longer needs to signal.
-// ---------------------------------------------------------------------------
+// The per-connection signaling object handed to GNS: SendSignal hex-encodes the opaque ICE
+// blob, prefixes the destination identity and enqueues a line. GNS owns the object and calls
+// Release when the connection no longer needs to signal.
 struct SignalingClient::ConnectionSignaling : ISteamNetworkingConnectionSignaling {
-    // shared_ptr (not raw) so this object keeps the transport alive while GNS
-    // still owns us -- prevents a use-after-free if Stop() runs before GNS has
-    // Release()d every per-connection object.
+    // A shared_ptr, so this object keeps the transport alive while GNS still owns it: Stop may run
+    // before GNS has released every per-connection object.
     const std::shared_ptr<SignalingClient> owner_;
     const std::string peerIdentity_;  // string-rendered identity of the peer
 
@@ -120,9 +104,7 @@ struct SignalingClient::ConnectionSignaling : ISteamNetworkingConnectionSignalin
     void Release() override { delete this; }
 };
 
-// ---------------------------------------------------------------------------
-// Construction / teardown
-// ---------------------------------------------------------------------------
+// Construction and teardown.
 std::shared_ptr<SignalingClient> SignalingClient::Create(const std::string& serverAddr,
                                                          const std::string& token,
                                                          ISteamNetworkingSockets* sockets) {
@@ -132,8 +114,8 @@ std::shared_ptr<SignalingClient> SignalingClient::Create(const std::string& serv
     }
     std::string host = serverAddr;
     std::string service;
-    // rfind(':') so a bracketed IPv6 literal's port colon is taken, not an
-    // address colon. Bare-IPv6 signaling URLs are not supported (use host:port).
+    // rfind, so a bracketed IPv6 literal's port colon is taken rather than an address colon; a
+    // bare IPv6 address is not supported.
     const size_t colon = host.rfind(':');
     if (colon == std::string::npos) {
         service = "10000";  // default trivial-signaling port
@@ -145,14 +127,11 @@ std::shared_ptr<SignalingClient> SignalingClient::Create(const std::string& serv
         UE_LOGE("signaling: bad server address '%s'", serverAddr.c_str());
         return nullptr;
     }
-    // Private ctor reachable here (static member). shared_ptr wraps the raw
-    // pointer, wiring up enable_shared_from_this's weak ref so later
-    // shared_from_this() calls are valid.
+    // The private constructor is reachable here; the shared_ptr wires enable_shared_from_this.
     auto client = std::shared_ptr<SignalingClient>(
         new SignalingClient(std::move(host), std::move(service), token, sockets));
-    // Reject a partially-initialized transport: without Winsock or a resolved
-    // address it can never connect, so fail Start() cleanly rather than hand back
-    // an object that loops forever on a dead socket.
+    // A partially initialised transport is rejected: without Winsock or a resolved address it can
+    // never connect, so Start fails cleanly instead of looping on a dead socket.
     if (!client->wsaStarted_) {
         UE_LOGE("signaling: WSAStartup failed -- P2P transport unavailable");
         return nullptr;
@@ -179,9 +158,8 @@ SignalingClient::SignalingClient(std::string host, std::string service, std::str
         return;  // Create() sees wsaStarted_==false and returns nullptr
     }
 
-    // Greeting = our own identity (set via ResetIdentity before Create()). The
-    // server registers us under this exact string; the peer must address it
-    // identically (both derive it from the same SetGenericString value).
+    // The greeting is our own identity, set by ResetIdentity before Create; the server registers us
+    // under this exact string, and a peer addresses it identically.
     SteamNetworkingIdentity self;
     self.Clear();
     sockets_->GetIdentity(&self);
@@ -198,24 +176,21 @@ SignalingClient::SignalingClient(std::string host, std::string service, std::str
         identityOk_ = false;  // a spaced identity silently corrupts the wire protocol -> fail
     }
     if (token_.find_first_of(" \t") != std::string::npos) {
-        // A whitespace token breaks the "<token> <identity>" greeting framing ->
-        // the server drops every greeting -> the client would reconnect forever
-        // with no clear diagnostic. Fail loudly instead (Create returns nullptr).
+        // A whitespace token breaks the greeting framing, the server drops every greeting, and the
+        // client would reconnect forever with no diagnostic; fail loudly instead.
         UE_LOGE("signaling: signaling token contains whitespace -- forbidden "
                 "(check VOTVCOOP_NET_SIGNALING_TOKEN / net.signaling_token)");
         identityOk_ = false;
     }
-    // Greeting = "<token> <identity>\n". The server constant-time-compares the
-    // token before registering us; an empty token is rejected (StartP2P refuses
-    // to create us without one).
+    // The greeting: token, space, identity, newline. The server constant-time-compares the token
+    // before registering us; an empty token is refused upstream.
     greeting_ = token_;
     greeting_.push_back(' ');
     greeting_.append(selfIdentity_);
     greeting_.push_back('\n');
 
-    // Resolve the server address ONCE here (constructing thread, before the net
-    // thread spawns). Reconnects in Poll() reuse the cached address so the
-    // blocking getaddrinfo never runs on the 200 Hz net thread.
+    // The server address is resolved once here, on the constructing thread; reconnects reuse it,
+    // so the blocking getaddrinfo never runs on the net thread.
     ResolveServerAddr();
     if (!resolved_) return;  // Create() sees resolved_==false and returns nullptr
 
@@ -231,24 +206,19 @@ SignalingClient::~SignalingClient() {
     if (wsaStarted_) WSACleanup();
 }
 
-// ---------------------------------------------------------------------------
-// Socket lifecycle (caller holds sockMutex_)
-// ---------------------------------------------------------------------------
+// The socket lifecycle; the caller holds sockMutex_.
 void SignalingClient::CloseSocketLocked() {
     if (sock_ != kInvalidSock) {
         closesocket(static_cast<SOCKET>(sock_));
         sock_ = kInvalidSock;
     }
     inBuf_.clear();
-    // sendQueue_ is deliberately NOT cleared. Pending GNS signals (which
-    // SendSignal already reported as best-effort delivered) are preserved across
-    // a reconnect so a transient TCP blip mid-ICE-handshake doesn't silently drop
-    // them; ConnectLocked re-inserts the greeting at the front so identity
-    // re-registers first. The Enqueue() cap bounds the queue meanwhile.
+    // sendQueue_ is deliberately kept: pending GNS signals survive a reconnect, so a TCP blip
+    // mid-handshake does not drop them; ConnectLocked re-inserts the greeting at the front, and
+    // the Enqueue cap bounds the queue meanwhile.
 }
 
-// getaddrinfo ONCE, on the constructing thread (may block on DNS). The result is
-// cached so reconnects never resolve on the net thread.
+// getaddrinfo once, on the constructing thread; the result is cached for reconnects.
 void SignalingClient::ResolveServerAddr() {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -293,35 +263,30 @@ void SignalingClient::ConnectLocked() {
         return;
     }
 
-    // Nonblocking connect returns WSAEWOULDBLOCK and completes asynchronously;
-    // queued lines flush in Poll() once writable.
+    // A nonblocking connect returns would-block and completes asynchronously; queued lines flush
+    // in Poll once writable.
     connect(s, reinterpret_cast<const sockaddr*>(resolvedAddr_), resolvedLen_);
     sock_ = static_cast<std::uintptr_t>(s);
 
-    // The greeting (identity registration) must be the FIRST line on every fresh
-    // socket. Insert at the front unless it's already there -- across repeated
-    // reconnects this avoids piling up duplicate greetings ahead of the pending
-    // signals CloseSocketLocked preserved.
+    // The greeting must be the first line on every fresh socket; inserted at the front unless
+    // already there, so repeated reconnects do not pile up duplicates ahead of the preserved
+    // signals.
     if (sendQueue_.empty() || sendQueue_.front() != greeting_) {
         sendQueue_.push_front(greeting_);
     }
 
-    // A reconnect re-greets, so the server will issue a FRESH nonce and we owe a
-    // fresh proof: carrying ProofSent across a drop would make us skip a
-    // challenge we are about to be sent. The deadline is left UNARMED here and
-    // armed only once the greeting actually leaves the socket -- arming it now
-    // would time out an unreachable server and blame it for "not challenging us",
-    // which is a different fault with a different fix.
+    // A reconnect re-greets, so the server issues a fresh nonce and a fresh proof is owed;
+    // carrying the proof-sent state across a drop would skip a challenge about to arrive. The
+    // deadline stays unarmed until the greeting leaves the socket: arming it now would time out an
+    // unreachable server and blame it for not challenging.
     regState_ = RegState::AwaitingChallenge;
     greetingSent_ = false;
     challengeDeadline_ = std::chrono::steady_clock::time_point{};
 
-    // Drop any proof left over from the PREVIOUS socket. It answers a nonce this
-    // server never issued, so the relay refuses it -- with the same words a SQUAT
-    // produces ("does not hold the key this identity names"), which would make an
-    // own-goal indistinguishable from an attack in the one log that is supposed to
-    // tell them apart. The queue is deliberately preserved across a drop (see
-    // CloseSocketLocked), so this is the one line that must NOT survive.
+    // A proof left over from the previous socket answers a nonce this server never issued, and the
+    // relay refuses it with the same words a squat produces, which would make an own goal
+    // indistinguishable from an attack in the one log meant to tell them apart. The queue is
+    // preserved across a drop, so this is the one line that must not survive.
     for (auto it = sendQueue_.begin(); it != sendQueue_.end();) {
         it = (it->rfind("auth ", 0) == 0) ? sendQueue_.erase(it) : it + 1;
     }
@@ -331,8 +296,8 @@ void SignalingClient::ConnectLocked() {
 
 void SignalingClient::Enqueue(const std::string& line) {
     std::lock_guard<std::recursive_mutex> lk(sockMutex_);
-    // Best-effort delivery: if the queue backs up (server unreachable), drop the
-    // OLDEST signals -- they are the most stale and GNS will retry current ones.
+    // Best-effort delivery: a backed-up queue drops the oldest signals, which are the most stale;
+    // GNS retries current ones.
     bool dropped = false;
     while (sendQueue_.size() > 32) {
         sendQueue_.pop_front();
@@ -346,32 +311,26 @@ void SignalingClient::Enqueue(const std::string& line) {
 
 void SignalingClient::EnqueueFront(const std::string& line) {
     std::lock_guard<std::recursive_mutex> lk(sockMutex_);
-    // No cap trim here: the only caller is the registration proof, exactly one
-    // line per socket, and dropping IT to make room for an ICE signal would be
-    // the wrong way round -- without the proof no signal is deliverable at all.
+    // No cap trim: the only caller is the registration proof, one line per socket, and dropping it
+    // for an ICE signal would be backwards, since without the proof no signal is deliverable.
     sendQueue_.push_front(line);
 }
 
-// ---------------------------------------------------------------------------
-// Per-connection signaling factory
-// ---------------------------------------------------------------------------
+// The per-connection signaling factory.
 ISteamNetworkingConnectionSignaling* SignalingClient::CreateSignalingForConnection(
     const SteamNetworkingIdentity& peer) {
     SteamNetworkingIdentityRender peerRender(peer);
     UE_LOGI("signaling: creating signaling session for peer '%s'", peerRender.c_str());
-    // shared_from_this() co-owns the transport from the per-connection object
-    // (valid: the object is always managed by the shared_ptr returned by Create).
+    // shared_from_this co-owns the transport from the per-connection object; valid because the
+    // object is always managed by the shared_ptr from Create.
     return new ConnectionSignaling(shared_from_this(), peerRender.c_str());
 }
 
-// ---------------------------------------------------------------------------
-// Registration proof (security A59): sign the server's nonce with the key our
-// identity NAMES. See the header for why this is load-bearing rather than a
-// ceremony.
-// ---------------------------------------------------------------------------
+// The registration proof: sign the server's nonce with the key our identity names. See the
+// header for why it is load-bearing.
 bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
-    // Tolerate a trailing CR so a relay behind a line-ending-normalising proxy
-    // does not read as a protocol violation.
+    // A trailing CR is tolerated, so a relay behind a line-ending-normalising proxy is not a
+    // protocol violation.
     while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == ' ')) --len;
 
     constexpr size_t kPrefixLen = sizeof(kChallengePrefix) - 1;
@@ -385,8 +344,8 @@ bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
     const char* nonce = line + kPrefixLen;
     for (size_t i = 0; i < kNonceHexLen; ++i) {
         const char c = nonce[i];
-        // Lowercase-only, matching the server's own alphabet: a proof must not be
-        // laxer about its inputs than the name it proves.
+        // Lowercase only, matching the server's alphabet: a proof must not be laxer about its
+        // inputs than the name it proves.
         if (!(('0' <= c && c <= '9') || ('a' <= c && c <= 'f'))) {
             UE_LOGE("signaling: the registration challenge is not 64 lowercase "
                     "hex digits -- refusing to sign it");
@@ -394,15 +353,10 @@ bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
         }
     }
 
-    // blob = tag || identity || nonce, no separators: every field is fixed width
-    // by construction (the tag is a literal, our identity is `gen:` + 64 hex, the
-    // nonce is 64 and checked above), so the concatenation cannot be ambiguous.
-    //
-    // ASSERTED, not assumed. Nothing upstream checks our own identity's WIDTH --
-    // `Create()` only rejects a spaced one -- so "fixed width by construction" was
-    // being enforced solely at the far end (post-ship audit). If it is ever not 68
-    // characters, signing would produce a blob the relay cannot reconstruct, and
-    // the honest failure is here rather than an unexplained refusal there.
+    // The blob is tag, identity, nonce with no separators: every field is fixed width, so the
+    // concatenation is unambiguous. The identity's width is asserted, not assumed: nothing
+    // upstream checks it (Create only rejects a spaced one), and signing an off-width identity
+    // would produce a blob the relay cannot rebuild, so the honest failure is here.
     if (selfIdentity_.size() != kIdentityLen) {
         UE_LOGE("signaling: our identity is %zu chars, not %zu -- refusing to sign "
                 "a blob the relay cannot rebuild", selfIdentity_.size(), kIdentityLen);
@@ -425,30 +379,25 @@ bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
         out.push_back(kHexDigit[b & 0xf]);
     }
     out.push_back('\n');
-    // FRONT, not back: the relay reads the line after its challenge as the proof,
-    // and by now the queue may already hold ICE signals GNS produced while we were
-    // waiting. Appending would put one of them where the proof belongs.
+    // At the front: the relay reads the line after its challenge as the proof, and the queue may
+    // already hold ICE signals GNS produced meanwhile.
     EnqueueFront(out);
     regState_ = RegState::ProofSent;
-    // "answered", not "accepted": the relay's verdict is not observable from
-    // here. A rejected proof simply closes the socket, which arrives as the
-    // ordinary "server closed connection" path -- the REASON lives in the relay's
-    // log, which is where a refusal decision belongs.
+    // Answered, not accepted: the relay's verdict is not observable here. A rejected proof closes
+    // the socket, which arrives as the ordinary closed-connection path; the reason lives in the
+    // relay's log.
     UE_LOGI("signaling: answered the relay's registration challenge as '%s'",
             selfIdentity_.c_str());
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Poll (net thread): drain inbound -> dispatch, flush outbound, reconnect.
-// ---------------------------------------------------------------------------
+// Poll, on the net thread: drain inbound and dispatch, flush outbound, reconnect.
 void SignalingClient::Poll() {
     {
         std::lock_guard<std::recursive_mutex> lk(sockMutex_);
 
         if (sock_ == kInvalidSock) {
-            // Reconnect, backoff-gated. ConnectLocked does no DNS (cached addr),
-            // so this is just socket()+connect() at most once per kReconnectBackoff.
+            // Reconnect, backoff-gated; ConnectLocked does no DNS.
             const auto now = std::chrono::steady_clock::now();
             if (now >= nextConnectAttempt_) {
                 ConnectLocked();
@@ -482,19 +431,16 @@ void SignalingClient::Poll() {
             }
         }
 
-        // Flush the send queue (nonblocking; stop on would-block, retry next Poll).
+        // Flush the send queue: nonblocking, stop on would-block, retry next Poll.
         if (sock_ != kInvalidSock) {
             const SOCKET s = static_cast<SOCKET>(sock_);
             while (!sendQueue_.empty()) {
-                // THE PROOF MUST BE THE SECOND LINE ON THE WIRE. Once the greeting
-                // is out we send NOTHING until the challenge is answered, because
-                // the relay reads whatever comes next as the `auth` line: a queued
-                // ICE signal overtaking it is read as a malformed proof and the
-                // connection is REFUSED. GNS can enqueue one before the nonce
-                // round-trips -- `Create()` and `ConnectP2PCustomSignaling` run
-                // back to back on the same thread -- and on loopback the nonce
-                // always wins that race, which is why every smoke here is blind to
-                // it and only a real-RTT relay would show it. (post-ship audit H1)
+                // The proof must be the second line on the wire. Once the greeting is out nothing
+                // is sent until the challenge is answered: the relay reads whatever comes next as
+                // the proof, and a queued ICE signal overtaking it is a malformed proof and a
+                // refused connection. GNS can enqueue one before the nonce round-trips (Create and
+                // the P2P connect run back to back on one thread), and on loopback the nonce always
+                // wins that race, so only a real-RTT relay shows it.
                 if (regState_ == RegState::AwaitingChallenge && greetingSent_) break;
                 const std::string& line = sendQueue_.front();
                 const int l = static_cast<int>(line.size());
@@ -502,10 +448,10 @@ void SignalingClient::Poll() {
                 if (r < 0 && IgnoreSockErr(WSAGetLastError())) break;  // would block
                 if (r == l) {
                     sendQueue_.pop_front();
-                    // The greeting is always the first line on a fresh socket, so
-                    // the first successful send IS "our greeting reached the
-                    // server" -- the moment from which a missing challenge means
-                    // the RELAY is old, rather than that we never got through.
+                    // The greeting is always the first line on a fresh socket, so the first
+                    // successful send is the moment our greeting reached the server, from which a
+                    // missing challenge means the relay is old rather than that we never got
+                    // through.
                     if (!greetingSent_) {
                         greetingSent_ = true;
                         challengeDeadline_ = std::chrono::steady_clock::now() + kChallengeTimeout;
@@ -519,11 +465,9 @@ void SignalingClient::Poll() {
             }
         }
 
-        // Fail CLOSED on a relay that never challenges us. Registering unproved
-        // would reopen exactly what the challenge closes (A59), so we drop the
-        // socket instead -- the backoff retries, and each attempt prints the one
-        // line an operator needs. Only P2P is affected; LAN and direct-IP never
-        // reach a relay.
+        // Fail closed on a relay that never challenges: registering unproved would reopen what the
+        // challenge closes, so the socket is dropped, the backoff retries, and each attempt prints
+        // the one line an operator needs. Only P2P is affected.
         if (sock_ != kInvalidSock && regState_ == RegState::AwaitingChallenge &&
             challengeDeadline_ != std::chrono::steady_clock::time_point{} &&
             std::chrono::steady_clock::now() > challengeDeadline_) {
@@ -535,24 +479,19 @@ void SignalingClient::Poll() {
                     host_.c_str(), service_.c_str());
             CloseSocketLocked();
         }
-    }  // release sockMutex_ BEFORE dispatch -- ReceivedP2PCustomSignal takes a GNS
-       // lock that a GNS thread may hold while calling our SendSignal; holding
-       // sockMutex_ across it would invert lock order and can deadlock.
+    }  // released before dispatch: ReceivedP2PCustomSignal takes a GNS lock a GNS thread may hold while calling SendSignal
 
-    // Dispatch complete lines directly from inBuf_, OUTSIDE the lock. inBuf_ is
-    // touched only on this (net) thread and Poll() is not re-entrant, so reading
-    // it unlocked is safe; SendSignal (from GNS threads) touches sendQueue_, not
-    // inBuf_. No scratch buffer -> no per-Poll heap allocation on the idle path.
+    // Complete lines are dispatched from inBuf_ outside the lock: it is touched only on this
+    // thread and Poll is not re-entrant, while SendSignal on GNS threads touches sendQueue_ only.
+    // No scratch buffer, so the idle path allocates nothing.
     size_t cursor = 0;
     for (;;) {
         const size_t nl = inBuf_.find('\n', cursor);
         if (nl == std::string::npos) break;
 
-        // BEFORE REGISTRATION the only line the server may send is its challenge,
-        // and no peer line can arrive at all: the relay routes by looking us up in
-        // its map, and we are not in it until the proof lands. So this branch
-        // needs no disambiguation against a relayed line -- a peer cannot forge a
-        // challenge here because a peer cannot reach us here.
+        // Before registration the only line the server may send is its challenge, and no peer line
+        // can arrive: the relay routes by looking us up in its map, which we are not in until the
+        // proof lands, so a peer cannot forge a challenge here.
         if (regState_ == RegState::AwaitingChallenge) {
             if (!AnswerChallenge(inBuf_.data() + cursor, nl - cursor)) {
                 std::lock_guard<std::recursive_mutex> lk(sockMutex_);
@@ -563,7 +502,7 @@ void SignalingClient::Poll() {
             continue;
         }
 
-        // Line is [cursor, nl). Format: "<from-identity> <hexpayload>".
+        // The line is [cursor, nl): from-identity, space, hex payload.
         const size_t spc = inBuf_.find(' ', cursor);
         if (spc != std::string::npos && spc < nl) {
             const size_t hexLen = nl - (spc + 1);
@@ -577,8 +516,7 @@ void SignalingClient::Poll() {
                     const int dh = HexDigitVal(inBuf_[i]);
                     const int dl = HexDigitVal(inBuf_[i + 1]);
                     if ((dh | dl) & ~0xf) {
-                        // Malformed hex from the signaling server: drop this line
-                        // (do NOT crash -- the trivial example asserted here).
+                        // Malformed hex from the server: drop the line, never crash.
                         UE_LOGW("signaling: bad hex in signal -- dropping line");
                         ok = false;
                         break;
@@ -586,11 +524,10 @@ void SignalingClient::Poll() {
                     data.push_back(static_cast<char>((dh << 4) | dl));
                 }
                 if (ok && !data.empty()) {
-                    // Recv context: an inbound connect request is handled through
-                    // the normal listen-socket state machine
-                    // (CreateSignalingForConnection returns the reply channel).
-                    // Rejections are silently ignored (returning failure lets an
-                    // attacker scrape who is online).
+                    // The receive context: an inbound connect request goes through the normal
+                    // listen-socket state machine, with CreateSignalingForConnection as the reply
+                    // channel. Rejections are silently ignored, since returning a failure lets an
+                    // attacker scrape who is online.
                     struct Context : ISteamNetworkingSignalingRecvContext {
                         SignalingClient* owner = nullptr;
                         ISteamNetworkingConnectionSignaling* OnConnectRequest(
@@ -617,8 +554,8 @@ void SignalingClient::Poll() {
         cursor = nl + 1;
     }
 
-    // Drop consumed lines; keep any trailing partial line for the next Poll.
-    // inBuf_ is net-thread-only, so no lock needed.
+    // Consumed lines are dropped and a trailing partial line kept for the next Poll; inBuf_ is
+    // net-thread-only.
     if (cursor > 0) inBuf_.erase(0, cursor);
 }
 
