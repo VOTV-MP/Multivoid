@@ -114,7 +114,7 @@
   "stale save → reconcile".** The client loaded the host's stale `.sav` (so it had its own
   copy of every pile), the host streamed a keyless eid per pile, and a **reconcile**
   (adopt-by-position at the snapshot bracket + a divergence sweep for residue) bound the
-  client's OWN pile actor onto the host eid — one actor, no dupe. See [01-HISTORY.md](01-HISTORY.md).
+  client's OWN pile actor onto the host eid — one actor, no dupe.
 - **What broke it:** a long chain of "improvements" (live-save switch → position-bind seed →
   death-watch → reaper → thin-client doom → save-strip) progressively replaced the
   adopt-by-position reconcile with fresh-spawn-mirror + destroy-the-original mechanisms that
@@ -167,7 +167,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 
 ## Folder contents
 
-- **[01-HISTORY.md](01-HISTORY.md)** — the full per-stage evolution of pile sync (every
+- **The history** (kept outside the repository) — the full per-stage evolution of pile sync (every
   scheme, when it worked, what each change did and why), incl. the June-12/13 working
   "stale save → reconcile" the user remembers, and the exact regression chain.
 - **[02-CURRENT-DIAGNOSIS.md](02-CURRENT-DIAGNOSIS.md)** — the two bugs' root causes, from the

@@ -1,26 +1,17 @@
 # Multivoid documentation
 
-Multivoid adds co-op multiplayer to *Voices of the Void* — a single-player Unreal Engine 4.27 game —
-**without modifying a single original game file**. These docs are the engineering record of how.
-
-They are written by the people building it, so they are dense and they argue with themselves in
-public: a claim is tagged with how it was established, and a doc that turned out wrong says so
-instead of being quietly edited. Pick a lane below rather than reading top-to-bottom.
-
----
+Multivoid adds co-op multiplayer to *Voices of the Void*, a single-player Unreal Engine 4.27 game,
+without modifying a single original game file. These pages describe what the mod is, what it syncs,
+how it works, and how to work on it. Pick a lane; nobody reads this tree top to bottom.
 
 ## I just want to play it
 
 | | |
 |---|---|
-| **[INSTALL.md](INSTALL.md)** | Install, update, uninstall. The single owner of that prose — the README and every release body just link here |
-| **[../SECURITY.md](../SECURITY.md)** | What the mod does and does not protect, and how to report a vulnerability. **Read the "what does not hold" part before hosting for strangers** |
-| **[../README.md](../README.md)** | The project front page: what works today, field reports from testers, where to get builds |
-| **[CREDITS.md](CREDITS.md)** | The full credit ledger — every outside **code** contribution, **report** and **review** that changed the mod, what each turned out to be, and what shipped. The README and the site carry a one-line-per-person summary of this (renamed from `FIELD_REPORTS.md` on 2026-08-30, when contributors and testers merged into one list) |
-
-Everything below this line is for people who want to know how it works. You do not need it to play.
-
----
+| [INSTALL.md](INSTALL.md) | Install, update, uninstall. The single owner of that text; the README and every release only link here |
+| [../SECURITY.md](../SECURITY.md) | What the mod does and does not protect, and how to report a vulnerability. Read the "what does not hold" part before hosting for strangers |
+| [../README.md](../README.md) | The front page: what works today, where to get builds, who contributed |
+| [CREDITS.md](CREDITS.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it |
 
 ## I want to understand it, or help
 
@@ -28,123 +19,63 @@ Start here, in this order:
 
 | | |
 |---|---|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | The shape of the mod in one read: the loader, the engine-wrapper layer, the co-op layer, and why they are separate |
-| **[COOP_SCOPE.md](COOP_SCOPE.md)** | What is and is not replicated. This one is *law* — anything not listed is deliberately not synced |
-| **[DEVS_GAUNTLET.md](DEVS_GAUNTLET.md)** | The VOTV developers' public statement on why multiplayer mods fail, kept verbatim. It is the bar this project builds to |
-| **[FEASIBILITY.md](FEASIBILITY.md)** | Whether this is even possible, answered with measurements rather than optimism |
-| **[ROADMAP.md](ROADMAP.md)** | Where it is going — the phased plan, with the dated decision entries that changed it |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The shape of the mod in one read: the loader, the engine-wrapper layer, the co-op layer, and why they are separate |
+| [COOP_SCOPE.md](COOP_SCOPE.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
+| [DEVS_GAUNTLET.md](DEVS_GAUNTLET.md) | The VOTV developers' public statement on why multiplayer mods fail. It is the bar this project builds to |
+| [FEASIBILITY.md](FEASIBILITY.md) | Whether this is possible at all, answered with measurements |
+| [ROADMAP.md](ROADMAP.md) | Where it is going: the phases and where we are in them |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | The rules a change must respect, and the shape a commit and a doc must have |
 
 Then, if you are going to touch code:
 
 | | |
 |---|---|
-| **[RE_WORKFLOW.md](RE_WORKFLOW.md)** | How this project reverse-engineers the game: reflection first, then IDA, then UE4SS as a probe. None of those ship |
-| **[AUTONOMOUS_TESTING.md](AUTONOMOUS_TESTING.md)** | The two-instance LAN harness — how a change gets smoke-tested without a human in the loop |
-| **[RELEASE.md](RELEASE.md)** | How a build becomes a release, and the gates it must pass |
-| **[VERSION_MIGRATION.md](VERSION_MIGRATION.md)** | What happens when VOTV updates: the measured version surface and the port runbook |
-| **[MULTIPLAYER_UI.md](MULTIPLAYER_UI.md)** | The menus, the server browser, the master/signaling servers behind them |
-| **[VOTV_UI_STYLE.md](VOTV_UI_STYLE.md)** | The game's own widget style, measured — binding for anything we draw in VOTV's UI |
-| **[CROSS_SESSION.md](CROSS_SESSION.md)** | Two Claude sessions, one game rig: the lock and the working protocol |
+| [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then IDA, then UE4SS as a probe. None of those ship |
+| [AUTONOMOUS_TESTING.md](AUTONOMOUS_TESTING.md) | The two-instance LAN harness: how a change is smoke-tested without a human in the loop |
+| [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
+| [VERSION_MIGRATION.md](VERSION_MIGRATION.md) | What happens when VOTV updates: the measured version surface and the port runbook |
+| [MULTIPLAYER_UI.md](MULTIPLAYER_UI.md) | The menus, the server browser, the master and signaling servers behind them |
+| [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md) | The game's own widget style, measured; binding for anything drawn inside VOTV's UI |
 
-**Before writing any entity-sync, hook or spawn-catch code, read these three first.** The first is
-the whole method in one doc; the other two exist because not knowing them cost a three-iteration
-rework and two review agents giving opposite answers:
+Before writing any entity-sync, hook or spawn-catch code, read these three:
 
-- **[COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md)** — how a system gets synced here, distilled:
-  foundation-first, authority table, the dispatch-seam ladder, brain parking, identity, the
-  mandatory late-join row, and the forbidden-crutch list. Start every new lane from this.
-- **[COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md)** — will my hook even fire? Visible vs
-  invisible Blueprint dispatch, and the trap that `init()` is BP-internal.
-- **[COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md)** — how each entity gets identity,
+- [COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md), how a system gets synced here: foundation first,
+  the authority table, the dispatch-seam ladder, brain parking, identity, the mandatory late-join
+  answer, and the forbidden-crutch list.
+- [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md), will my hook even fire? Visible versus
+  invisible Blueprint dispatch, and the trap that `init()` is Blueprint-internal.
+- [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md), how each entity gets identity,
   expression and destruction, plus the duplication matrix.
-
----
 
 ## I maintain this
 
-**Models — how authority and state are supposed to work**
+**Models, how authority and state are meant to work**
 
 [COOP_METHODOLOGY.md](COOP_METHODOLOGY.md) (the architecture doctrine, adapted from MTA:SA) ·
 [COOP_SYNCER_MODEL.md](COOP_SYNCER_MODEL.md) (per-element authority: assigned, never asserted) ·
-[COOP_SERVER_MODEL.md](COOP_SERVER_MODEL.md) (what "our server" is; embedded == dedicated) ·
-[COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) · [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md)
-(who rolls shared-world randomness) · [COOP_EVENT_JOIN.md](COOP_EVENT_JOIN.md) (joining
-mid-event — every sync lane owes a late-join answer)
+[COOP_SERVER_MODEL.md](COOP_SERVER_MODEL.md) (what "our server" is; embedded equals dedicated) ·
+[COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) · [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md) (who
+rolls shared-world randomness) · [COOP_EVENT_JOIN.md](COOP_EVENT_JOIN.md) (joining mid-event; every
+sync lane owes a late-join answer)
 
-**Maps — where a thing lives, and what state it is in**
+**Maps, where a thing lives and what state it is in**
 
 [COOP_SYNC_MAP.md](COOP_SYNC_MAP.md) (which file owns which sync) ·
-[COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md) (per-system status: what works *inside* X, with the
-evidence for each claim) · [MODULARIZATION_PLAN.md](MODULARIZATION_PLAN.md)
+[COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md) (per-system status: what works inside each system,
+with the evidence for each claim)
 
 **Known-hard problems, each with its own file**
 
 [COOP_STABLE_ID_SIDECAR.md](COOP_STABLE_ID_SIDECAR.md) (entity identity across a join) ·
 [COOP_WORLD_PROP_DIVERGENCE.md](COOP_WORLD_PROP_DIVERGENCE.md) (props that mutate themselves over
 time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.md) ·
-[COOP_INSTANT_WORLD_TWO_LAYER.md](COOP_INSTANT_WORLD_TWO_LAYER.md) ·
-[COOP_VM_DISPATCH_PLAN.md](COOP_VM_DISPATCH_PLAN.md) ·
-[AUTHORITATIVE_INTERACTABLE_MIGRATION.md](AUTHORITATIVE_INTERACTABLE_MIGRATION.md)
+[COOP_INSTANT_WORLD_TWO_LAYER.md](COOP_INSTANT_WORLD_TWO_LAYER.md)
 
-**Per-domain trees** — one folder per game system, each with its own README
+**Per-domain trees**, one folder per game system, each with its own README
 
 [events/](events/) · [items/](items/) · [signals/](signals/) (the signal-processing pipeline) ·
 [upgrades/](upgrades/) · [notifications/](notifications/) · [kerfur/](kerfur/) ·
-[piles/](piles/) (trash piles — the longest-running sync problem in the project, 53 files)
-
-**Live arcs** — work in flight, each tracking its own work packages
-
-[UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
-[PERF_ARC.md](PERF_ARC.md) (performance: the four-census cost map, the zero-imports verdict, and
-the ranked fix queue — the field 20-fps root is named) ·
-[OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
-[QF_ARC.md](QF_ARC.md) (revising the `/qf` critic ritual on its own measured output) ·
-the local-only relay-arc note (what we adopt from studying another VOTV networking mod) ·
-the local-only documentize-arc note (the same, for the session-close ritual) ·
-the local-only docs-arc note (this documentation audit)
-
-**Left this repo**
-
-[VotvIO](https://github.com/pelmentor/VotvIO) — the Blender addon that imports a VotV save into a
-full scene. It grew here (`tools/blender/votvio/`, 28 commits, 2026-08-29 to 08-30) and moved to
-its own repository on 2026-09-02 with its history and its arc doc. Nothing in Multivoid depends
-on it; the lessons it taught stay in [LESSONS.md](LESSONS.md) §6.
-
-**The ledger**
-
-**[LESSONS.md](LESSONS.md)** — every hard-won lesson, categorized, each with a "look here first next
-time" pointer. It is long on purpose: it exists so the same hole is not dug twice. If you are about
-to spend a day on something, grep it first.
-
-**`docs/CRUTCHES.md` (local-only)** — the standing register of subsystems we shipped in a crutch shape,
-with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
-the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
-
-**`docs/THUNDERSTORE.md` (local-only)** — how a release becomes a Thunderstore package: the manifest
-field by field, the upload, and the four rules that cannot be undone (a published version is
-immutable; a changed name or team silently creates a second package; an author cannot delete one;
-a package rejected from a review queue is invisible rather than erroring).
-
-**[DEAD_CAPABILITY_REGISTER.md](DEAD_CAPABILITY_REGISTER.md)** — capabilities that are built,
-documented, and never called. A build, a review and a doc comment prove a feature was *written*;
-none proves it *runs*. Created 2026-09-02 after two such functions were found on one code path,
-both live for three months — one made every server in the browser read `1/4`, the other made the
-longest stage of a join report nothing. Carries the census instrument
-(`tools/dead_api_census.py`), the fixed entries, and the ~12 still confirmed dead. Where
-`CRUTCHES.md` records what we shipped in the wrong shape, this records what we shipped switched
-off.
-
-**[vehicles/](vehicles/README.md)** — the per-vehicle knowledge base, one doc per driveable
-occupant-carrying multi-body actor. Same discipline as `items/` and `events/`: native behaviour from
-the bytecode, the sync-axis table, and the honest as-built status live in that vehicle's own file.
-Currently one entry, [vehicles/ATV.md](vehicles/ATV.md), whose §13 carries the runtime baseline that
-`CRUTCHES.md` C1 rests on.
-
-[OPUS_48_DISCIPLINE.md](OPUS_48_DISCIPLINE.md) — the working agreement for AI-assisted sessions on
-this codebase. Multivoid is built by one maintainer with Claude, which the project states openly
-rather than hides.
-
----
+[piles/](piles/) (trash piles) · [vehicles/](vehicles/) (the ATV)
 
 ## How to read a claim in these docs
 
@@ -152,26 +83,19 @@ Status and evidence are tagged, and the tags are load-bearing:
 
 | Tag | Means |
 |---|---|
-| `[V]` / **VERIFIED** | measured personally, with a citation — a log line, a disassembly, a file:line |
+| `[V]` | measured, with a citation: a log line, a disassembly, a file and line |
 | `[RD]` | derived from reverse engineering, not directly observed running |
-| `[A]` | reported by a read-only audit pass, **not** personally re-verified |
-| `[?]` | unverified — a hypothesis wearing a claim's clothes |
-| **DESIGN** vs **AS-BUILT** | what was planned vs what actually shipped. These drift, and the docs say when they did |
+| `[A]` | reported by a read-only review pass, not personally re-verified |
+| `[?]` | unverified: a hypothesis wearing a claim's clothes |
+| DESIGN vs AS-BUILT | what was planned vs what shipped. These drift, and the docs say when they did |
 
-**Nothing is marked working on the strength of an automated smoke test alone** — that gets called a
-smoke pass, and it says so. A doc that says "PROVEN" without naming its evidence is a bug in the doc.
+Nothing is marked working on the strength of an automated smoke test alone; that gets called a smoke
+pass, and it says so. A doc that says something works without naming its evidence is a bug in the
+doc.
 
-Two conventions worth knowing: files ending in `-RE-<date>` are durable reverse-engineering records
-and files ending in `-DESIGN-<date>` are point-in-time plans that are **deliberately never rewritten**
-— read them as "what was believed that day", not as current instructions. Anything superseded moves
-to an `_archive/` folder rather than being deleted, so an abandoned approach can never be mistaken
-for the live one.
+## What is not here
 
-Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`,
-`docs/CRUTCHES.md`, `docs/THUNDERSTORE.md` or `.claude/skills/`. Those resolve
-in the maintainer's working tree and not on GitHub — all are kept unpublished on purpose (the
-local-only docs-arc note says why). That is not a broken link, and a plain backticked path to one of
-them is the deliberate form: an unpublished target behind a live markdown link would be a 404.
-The publishing runbook and the rival-study adoption queue joined that set on 2026-09-04 — operator
-knowledge and reasoning about another author's closed-source internals, neither addressed to a
-reader of this repo.
+The maintainer's working notes, reverse-engineering logs, design drafts, session records and the
+review tooling that produced them are kept outside the repository. They serve one development
+workflow; a contributor brings their own. What the repository carries is the current state of the
+mod and the rules for changing it ([../CONTRIBUTING.md](../CONTRIBUTING.md)).

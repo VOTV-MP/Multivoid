@@ -2,36 +2,10 @@
 
 *[↑ docs index](../README.md)*
 
-> **READ [`ARC.md`](ARC.md) FIRST (NEW 2026-09-04, USER MACRO-GOAL).** It is the LIVING doc for the
-> whole kerfur family: the goal stated so it can be closed, the measured capability census of BOTH
-> robots, the gap table, the foundation-first blocks, and the plan. **It also corrects the premise
-> this README was written on:** there are TWO robots, not one. The regular one is spelled **`kerfus`**
-> (`Ap_kerfus_C`, a CORDED PROP, 3 radial actions) — four months of work here searched for `kerfur*`
-> and never saw it, and it has no sync of any kind. `kerfurOmega_C` (a CHARACTER, 10 actions) is what
-> everything below is about. The files under this folder stay valid as point-in-time June-2026
-> diagnoses of the conversion/identity bugs; the capability census and the plan live in `ARC.md`.
->
-> **PUSH STATUS (2026-06-28): every commit at/below origin/main `63aa4c01` is now PUSHED.** Any "push HELD" /
-> "N ahead of origin" status below referencing a 2026-06-23..28 commit is STALE (the whole sync arc shipped to
-> origin on 2026-06-28).
->
-> **LATEST (hands-on 10:30, 2026-06-29): the hang fix `150da133` did NOT resolve kerfurs.** The physics
-> re-enable was a correct sub-fix, but the 10:30 test (deployed `E3E6BEAB`) exposed TWO deeper roots:
-> **(ROOT 1) turn-off creates a DOUBLE** — `kerfur_convert.cpp:338` passes `deferKerfur=false` into the
-> `fromConvert` arg slot (default `deferKerfur=true` survives) → arms the join-window fuzzy adopter →
-> fresh-spawns a 2nd prop (the IDENTICAL OBS-2 arg-slot bug already fixed at `kerfur_prop_adoption.cpp:178`,
-> never fixed here). **(ROOT 2) 5-of-6 on join** — a mid-join `SendReliable(KerfurConvert)` FAILED with no
-> retry → permanent divergence (kerfur form is not in the join snapshot). #1 turn-on twitch = STILL CLEARED.
-> Full design (kerfur live-fix + the `coop/sync`-as-authority refactor + the strict reorg taxonomy):
-> **`research/findings/kerfur/kerfur-identity-authority-and-module-refactor-DESIGN-2026-06-29.md`**. Status: DESIGN,
-> no code written yet. See [[project-kerfur-identity-authority-refactor-2026-06-29]].
->
-> Single source of truth for the **kerfur** multiplayer sync problem, mirroring `docs/piles/`.
-> Created 2026-06-24 when the user opened the **OFF-state non-replication** track. Living KB:
-> every kerfur design / diagnosis / as-built updates a doc here; mark each claim **DESIGN** /
-> **AS-BUILT** / **VERIFIED** (never "VERIFIED" from a smoke alone — only a real hands-on or a
-> matching real log). Durable RE lives in `research/findings/votv-kerfur-*.md`; this folder holds
-> the living design/diagnosis/as-built + the index into those findings.
+> There are TWO robots. The regular one is `kerfus` (`Ap_kerfus_C`, a corded prop with three radial
+> actions) and it has no sync of any kind yet; `kerfurOmega_C` (a character with ten actions) is what
+> everything below is about. This README states the sync as it is; the diagnosis records it grew from
+> are kept outside the repository.
 
 ## TL;DR — what a kerfur IS (the two forms)
 
@@ -70,22 +44,13 @@ game just converted it.* See [[lesson-ex-callmath-invisible-to-processevent]].
 `KerfurConvert{oldEid, newEid, toForm, class, pose}`. The client `OnKerfurConvert` destroys the old-form
 mirror + materializes the new form (adopting its own parked conversion-ghost if it initiated).
 
-## Index
+## Where the design came from
 
-| doc | what | status |
-|---|---|---|
-| [02-window-activation-three-symptoms-2026-06-24.md](02-window-activation-three-symptoms-2026-06-24.md) | **THE BUG**: host ACTIVATES kerfurs IN THE JOIN WINDOW -> 3 symptoms (dup object+active / camera-no-body / identity-collision). Same window two-channel class as the L1 pile dup; kerfur NOT covered by the L1 save-time reconcile; binding is 30cm position-fuzzy (collision). | **CONFIRMED by log+code (repro 2026-06-24)** |
-| [03-fix-design-symptoms-1and3-savetime-key-2026-06-24.md](03-fix-design-symptoms-1and3-savetime-key-2026-06-24.md) | scope A (forward off->active dup RETIRE): host captures each off-kerfur's blob-instant save-time pos (`g_blobKerfurXforms`), carries it on the **npc EntitySpawn** (v1 pivot -- the KerfurConvert SendReliable FAILS mid-join), client RETIRES its stale local off-prop at the 1cm save-time key (`kerfur_reconcile`, quiescence sweep, NO ratio valve). | **VERIFIED hands-on 17:23 (v1.1, MD5 `39455EC6`, proto v88) -- off-from-save kerfur disappeared, sweep-retire 1 of 1, 6/6** |
-| [05-reverse-active-at-blob-turnoff-window-2026-06-24.md](05-reverse-active-at-blob-turnoff-window-2026-06-24.md) | **REVERSE follow-ghost: CLOSED.** The client async-load spawns a DUPLICATE active kerfur; `npc_adoption`'s one-shot ghost sweep was gated only on `g_pending.empty()` NOT `HasLoadTailQuiesced()` -> fired before the late twin spawned (12:30:17 vs tail 12:30:23) -> latched -> twin = follow-ghost. turn_off retire was a RED HERRING. FIX: gate the sweep on `HasLoadTailQuiesced` (reuse the proven signal). | **FIX VERIFIED hands-on (13:15) + COMMITTED `91948b83` (push held); MD5 `239b231c`** |
-| [06-obs2-missing-object-fresh-spawn-no-register-2026-06-24.md](06-obs2-missing-object-fresh-spawn-no-register-2026-06-24.md) | **OBS-2: a save kerfur OBJECT missing on the client (4 of 5). ROOT PINNED:** an arg-slot bug -- `OnSpawn(e.payload, 0, localPlayer, /*deferKerfur=*/false)` binds `false` to `fromConvert`, leaving `deferKerfur` at its DEFAULT `true` -> the deferred-kerfur "fresh-spawn" re-enters the K-6 defer, `Arm`s the already-pending eid (silent refresh+return), spawns nothing, ResolvePending pops it -> dropped forever. s1l33p was the only one deferred (index-seed race; the other 4 bound by exact-key). Confirmed DIFFERENT from symptom-2 camera (npc path). | **ROOT PINNED (log+code proven); one fix-shape edge (twin-present?) to settle in-build; NOT built; ready on greenlight** |
-| [07-active-at-blob-off-collision-and-fuzzygate-2026-06-24.md](07-active-at-blob-off-collision-and-fuzzygate-2026-06-24.md) | **The 14:05 5-vs-4 = active-at-blob -> OFF collision** (NOT scope A, NOT OBS-2): a runtime-turned-off kerfur (fresh key, no own off-twin) class+pose fuzzy-grabbed a NEIGHBOR's actor (2 eids -> 1 actor -> 4 visible). FIX#1 = anti-collision **fuzzy-gate** (a candidate with its own real key != the pending key exact-belongs elsewhere -> never steal; kerfur_prop_adoption 500cm + OnSpawn Gap-I-1 30cm kerfur-gated). FIX#2 nuance = body-via-convert vs fresh-spawn+sweep (backlog, non-blocking). | **FIX#1 + OBS-2 arg-fix VERIFIED (clean-bracket 14:59-15:00: 5-off/1-active both peers; 5 distinct actors; ghost sweep 1 orphan; body at quiescence) -> COMMITTED. Probe removed, MD5 `F419F594`, push HELD. FIX#2 nuance = backlog** |
-| [08-client-off-twin-in-air-RE-2026-06-24.md](08-client-off-twin-in-air-RE-2026-06-24.md) | **CLIENT-side turn-OFF spawns a twin-in-air** (18:24/18:30): the convert-ghost claim parks the client's local off-prop but the prop-adoption fuzzy-gate fresh-spawns a SECOND mirror at the NPC's elevated pos instead of adopting the parked ghost -> dup (self-deletes ~4s). **PRE-EXISTING (extract EXONERATED, 3 proofs); cosmetic.** Fixed (visually) by the deferred-spawn upper layer (`docs/COOP_INSTANT_WORLD_TWO_LAYER.md`, AS-BUILT, deployed `f155181d`); deeper convert-ghost<->adoption handoff CORRECTNESS fix = separate backlog. | **ROOT RE'd; instant-world layer BUILT (hides it); visual hands-on pending** |
-| 04 (pending) | FIX DESIGN for symptom 2 (camera): fresh-spawn vs adopt floating-camera cascade. Separate from 1+3; build AFTER 1+3 | **not written yet** |
-| [01-off-state-host-turnoff-replication-diagnosis-2026-06-24.md](01-off-state-host-turnoff-replication-diagnosis-2026-06-24.md) | turn_off on a CONNECTED client (out of window) -- NOT the bug (clean out of window). Static proof the convert channel is built + correct -> WHY 02 concludes "window-timing, not the channel" | **SUPERSEDED as bug hypothesis; static analysis still valid** |
-
-**The fix split: TWO fixes, not three.** 1+3 share a root (kerfur object identity falls to position-fuzzy +
-no save-time reconcile) -> ONE save-time-exact-key fix (doc 03). Symptom 2 (camera) is independent (doc 04).
-Order: 1+3 first (kills dup + collision), then 2 (gives the hopeless kerfur a body).
+The window-activation bug (a host activating kerfurs inside the join window: a duplicate object, a
+camera with no body, an identity collision) was diagnosed and fixed in June 2026 through one
+save-time exact-key reconcile for the duplicate and the collision, a load-tail gate on the client's
+ghost sweep, an argument-slot fix in the deferred spawn path, and an anti-collision fuzzy gate in
+prop adoption. The dated records of that work are kept outside the repository.
 
 ## Durable RE findings (research/findings/) — the kismet/disassembly ground truth
 
