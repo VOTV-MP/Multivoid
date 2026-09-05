@@ -1,15 +1,9 @@
-// coop/config/config_ini_write.cpp -- the guarded multivoid.ini MUTATION
-// engine: the T1 skeleton seeder, the T3/T3b single-key writer, the T1b
-// owner reformat and the keep-line dedup. Extracted from config.cpp
-// (ini rework arc 2 C6 -- the file crossed the 800-LOC soft cap; reading and
-// mutating the ini are two concepts). Shares the reader core's primitives
-// via config_internal.h; every public entry holds the one ini mutex.
-//
-// DESTRUCTION GUARDS heritage (born 2026-07-02: the HOST's ini lost its whole
-// head after a locked-file write rebuilt it from an empty line list): never
-// rebuild from a file that exists but cannot be read CLEANLY (lock OR
-// mid-stream error, tri-state F37/F38); all rebuilds go .new -> checked
-// writes -> atomic MoveFileExW.
+// coop/config/config_ini_write.cpp -- the guarded multivoid.ini mutation engine: the skeleton
+// seeder, the single-key writer, the owner reformat and the keep-line dedup. Shares the reader
+// core's primitives through config_internal.h; every public entry holds the one ini mutex.
+// The destruction guards: never rebuild from a file that exists but cannot be read cleanly (a
+// lock, or a mid-stream error), and every rebuild goes .new, checked writes, then an atomic
+// move; a locked-file write once rebuilt the host's ini from an empty line list.
 
 #include "coop/config/config.h"
 
@@ -32,9 +26,9 @@ using IniScan = internal::IniScan;
 
 namespace {
 
-// Is `line` the section header `[name]` (edge-trimmed, ci)? Sections are
-// decorative to the PARSER (F3) but drive the T3 write PLACEMENT in a file
-// that carries our headers (a fresh skeleton, or one the owner reformatted).
+// Is `line` the section header `[name]`, edge-trimmed, case-insensitive? Sections are
+// decorative to the parser but drive the write placement in a file that carries our headers
+// (a fresh skeleton, or one the owner reformatted).
 bool IsSectionHeader(const std::string& line, std::string& nameOut) {
     const std::string t = internal::TrimEdgesStr(line);
     if (t.size() < 2 || t.front() != '[' || t.back() != ']') return false;
@@ -42,20 +36,16 @@ bool IsSectionHeader(const std::string& line, std::string& nameOut) {
     return true;
 }
 
-// The checked ".new then atomic swap" tail shared by every file rebuild
-// (single-key write, T1b reformat, keep-line dedup). Every write is checked
-// BEFORE the swap: a disk-full .new must never replace the good ini (the one
-// data-loss path this exists to close -- audit 2026-07-02).
+// The checked .new-then-atomic-swap tail shared by every file rebuild (the single-key write,
+// the reformat, the keep-line dedup). Every write is checked before the swap: a disk-full .new
+// must never replace the good ini.
 bool AtomicWriteLines(const std::wstring& path, const std::vector<std::string>& lines,
                       const char* what) {
     const std::wstring tmp = path + L".new";
     FILE* f = nullptr;
-    // BINARY mode (arc-4 audit): the primitive writes EXACTLY the bytes given.
-    // Text mode silently translated every '\n' to CRLF on disk, which made the
-    // catalog's byte compare-first ("identical -> skip") permanently false --
-    // every boot re-swapped and logged "regenerated". Enumerated consequence:
-    // ini rebuilds now emit LF endings (the lexer reads both; the text-mode
-    // scan already normalized CRLF away, so scanned content is unchanged).
+    // Binary mode: the primitive writes exactly the bytes given. Text mode translated every '\n'
+    // to CRLF on disk, which made the catalog's byte compare permanently false, so every boot
+    // re-swapped. Rebuilds emit LF endings; the lexer reads both.
     if (_wfopen_s(&f, tmp.c_str(), L"wb") != 0 || !f) {
         UE_LOGW("config: %s could not open multivoid.ini.new for write", what);
         return false;
@@ -80,12 +70,11 @@ bool AtomicWriteLines(const std::wstring& path, const std::vector<std::string>& 
     return true;
 }
 
-// The ini section a key belongs to, for write placement and the reformat: a
-// literal row's section, or "ui" for the composed ui.font.<role> family
-// (audit IMP-3: the writer and the reformat MUST share this resolution --
-// FindRow alone is blind to composed keys, so a font write on a headered file
-// fell back to EOF-append while the reformat placed the same key under [ui]).
-// nullptr = unknown key (never placed; today's append behavior).
+// The ini section a key belongs to, for write placement and the reformat: a literal row's
+// section, or "ui" for the composed font family. The writer and the reformat must share this
+// resolution: the row lookup alone is blind to composed keys, so a font write on a headered
+// file fell back to an EOF append while the reformat placed the same key under [ui]. Null
+// means an unknown key, never placed.
 const char* SectionForKey(const char* key) {
     if (const config_registry::Row* row = config_registry::FindRow(key))
         return row->section;
@@ -93,13 +82,12 @@ const char* SectionForKey(const char* key) {
     return nullptr;
 }
 
-// Path-parameterized writer core (no lock -- the public wrapper holds it; the
-// selftest drives COPIES of corpus files, never the live ini).
+// The path-parameterised writer core, no lock: the public wrapper holds it, and the selftest
+// drives copies of corpus files, never the live ini.
 bool WriteIniValueAt(const std::wstring& path, const char* key, const char* value) {
-    // Scrub CR/LF from the value (an embedded newline -- e.g. pasted into a text field --
-    // would split the "key=value" line and corrupt the NEXT key on read-back), then
-    // edge-trim. Interior spaces are part of the value (device names) and round-trip
-    // verbatim through ReadIniValue's parse.
+    // Scrub CR and LF from the value (an embedded newline, pasted into a text field, would split
+    // the key line and corrupt the next key on read-back), then edge-trim. Interior spaces are
+    // part of the value (device names) and round-trip unchanged.
     std::string safe;
     for (const char* p = value; *p; ++p)
         if (*p != '\n' && *p != '\r') safe.push_back(*p);
@@ -112,21 +100,15 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
         return false;
     }
     const std::string newLine = std::string(key) + "=" + safe + "\n";
-    // Read existing lines, replacing the key's line IN PLACE if present.
-    //
-    // TARGETING = the unified occurrence rule (T3): the authoritative line is
-    // the FIRST case-INSENSITIVE key occurrence, edited in place with the
-    // canonical spelling (safe: zero ci collisions between distinct keys,
-    // F40). The old case-sensitive writer MISSED `Enabled=1` when writing
-    // `enabled`, appended a second occurrence, and the two readers then
-    // disagreed from one write. At N>1 only the authoritative line is edited
-    // -- moving past a duplicate would hand victory to the un-written line.
-    // All other bytes verbatim; the rewritten line's inline comment is
-    // deleted (today's behavior, F36 -- it described the old value).
-    //
-    // PLACEMENT (T3b, arc 2): a MOVE exists only in a file that CARRIES the
-    // key's registry section header; headerless files keep the old behavior
-    // (append at EOF, no relocation).
+    // Read the existing lines, replacing the key's line in place if present. The authoritative
+    // line is the first case-insensitive key occurrence, edited in place with the canonical
+    // spelling (distinct keys never collide case-insensitively). A case-sensitive writer missed
+    // `Enabled=1` when writing `enabled`, appended a second occurrence, and the two readers then
+    // disagreed from one write. At more than one occurrence only the authoritative line is
+    // edited; moving past a duplicate would hand victory to the un-written line. All other bytes
+    // are untouched; the rewritten line's inline comment is deleted, since it described the old
+    // value. Placement: a move exists only in a file that carries the key's registry section
+    // header; headerless files keep the EOF append.
     std::vector<std::string> lines;
     bool found = false;
     int foundIdx = -1;            // index of the rewritten authoritative line
@@ -169,25 +151,22 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
         ::Sleep(20);
     }
     if (st == IniScan::Unreadable) {
-        // Exists-but-locked, or a mid-stream read error: either way the
-        // collected line list is not the whole file -- rebuilding from it is
-        // the 2026-07-02 loss shape. Refuse.
+        // Exists but locked, or a mid-stream read error: either way the collected line list is not
+        // the whole file, and rebuilding from it is the loss shape. Refuse.
         UE_LOGW("config: WriteIniValue('%s') SKIPPED -- multivoid.ini locked or failing "
                 "mid-read; refusing to rebuild the file from a partial view", key);
         return false;
     }
-    // Only the file's LAST line can lack a trailing newline; EVERY insertion
-    // below lands after an existing line, so normalize once HERE -- an insert
-    // after a newline-less final line would splice two lines into one
-    // ("[dev]devkeys=1"), breaking both on the next parse (audit CRIT-1; the
-    // old fix lived only in the EOF-append branch and missed the section
-    // inserts). Parse-neutral: '\n' at EOF changes no verdict.
+    // Only the file's last line can lack a trailing newline, and every insertion below lands after
+    // an existing line, so normalise once here: an insert after a newline-less final line would
+    // splice two lines into one, breaking both on the next parse. Parse-neutral, since a newline
+    // at EOF changes no verdict.
     if (!lines.empty() && !lines.back().empty() && lines.back().back() != '\n')
         lines.back() += "\n";
     if (found) {
-        // The MOVE: only at N==1 and only when the line sits OUTSIDE its
-        // section in a headered file (e.g. pasted at EOF). The rewritten line
-        // relocates to the END of its section block.
+        // The move: only at one occurrence, and only when the line sits outside its section in a
+        // headered file (pasted at EOF, say). The rewritten line relocates to the end of its
+        // section block.
         if (occurrences == 1 && sectionEndIdx >= 0 && !foundInSection) {
             const std::string moved = lines[static_cast<size_t>(foundIdx)];
             lines.erase(lines.begin() + foundIdx);
@@ -196,8 +175,8 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
             lines.insert(lines.begin() + (ins + 1), moved);
         }
     } else if (sectionEndIdx >= 0) {
-        // New key in a headered file: insert at the end of its section block
-        // instead of the EOF append.
+        // A new key in a headered file: insert at the end of its section block instead of the EOF
+        // append.
         lines.insert(lines.begin() + (sectionEndIdx + 1), newLine);
     } else {
         lines.push_back(newLine);  // headerless/unknown key: today's EOF append
@@ -212,9 +191,9 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
 bool EnsureIniSkeleton() {
     std::lock_guard<std::mutex> lk(internal::IniMutex());
     const std::wstring path = internal::LiveIniPath();
-    // Seed ONLY on authoritative ABSENT (ENOENT). An existing file -- readable
-    // or not -- is never touched: seeding over a locked-but-present ini is the
-    // same destruction class the F7 writer guards close (design T1/F37).
+    // Seed only on an authoritative absent (ENOENT). An existing file, readable or not, is never
+    // touched: seeding over a locked-but-present ini is the same destruction class the writer
+    // guards close.
     {
         FILE* probe = nullptr;
         const errno_t rc = _wfopen_s(&probe, path.c_str(), L"r");
@@ -225,11 +204,10 @@ bool EnsureIniSkeleton() {
             return false;
         }
     }
-    // The skeleton: ordered section headers from the registry ([net] first,
-    // [dev] last) and ZERO default values (F4: a seeded key silently OVERRIDES
-    // the code default) -- with exactly ONE user-ruled exception per the
-    // seeded-active column: a visible, deliberately-editable net.nick line
-    // (the joke is meant to be SEEN and replaced; design T1 "seeded-active").
+    // The skeleton: ordered section headers from the registry ([net] first, [dev] last) and no
+    // default values, since a seeded key silently overrides the code default, with exactly one
+    // exception per the seeded-active column: a visible, deliberately editable nick line, meant to
+    // be seen and replaced.
     std::string content = "; multivoid.ini -- Multivoid configuration. Created on first launch.\n";
     size_t rowCount = 0;
     const config_registry::Row* rows = config_registry::Rows(rowCount);
@@ -243,8 +221,8 @@ bool EnsureIniSkeleton() {
                 content += std::string(rows[r].key) + "=" +
                            config_registry::kMyNameDefault + "\n";
     }
-    // Atomic create: .new then MoveFileExW WITHOUT REPLACE_EXISTING -- if the
-    // file appeared concurrently the seeder loses the race gracefully.
+    // Atomic create: .new, then a move without replace-existing, so if the file appeared
+    // concurrently the seeder loses the race gracefully.
     const std::wstring tmp = path + L".new";
     FILE* f = nullptr;
     if (_wfopen_s(&f, tmp.c_str(), L"w") != 0 || !f) {
@@ -270,9 +248,9 @@ bool EnsureIniSkeleton() {
     return true;
 }
 
-// The internal seam for the T8 catalog generator (arc 4): the SAME atomic-swap
-// primitive every ini rebuild uses, path-parameterized (the .example is never
-// the live ini; no lock needed -- single writer at boot).
+// The internal seam for the catalog generator: the same atomic-swap primitive every ini
+// rebuild uses, path-parameterised (the .example is never the live ini; a single writer at
+// boot, so no lock).
 namespace internal {
 bool AtomicWriteAllLines(const std::wstring& path, const std::vector<std::string>& lines,
                          const char* what) {
@@ -280,8 +258,8 @@ bool AtomicWriteAllLines(const std::wstring& path, const std::vector<std::string
 }
 }  // namespace internal
 
-// The one locked live-ini write behind every typed overload (C3b): the handle
-// carries the canonical key; everything below it is the string engine.
+// The one locked live-ini write behind every typed overload: the handle carries the canonical
+// key; everything below it is the string engine.
 static bool WriteIniValueRow(const config_registry::Row* row, const char* value) {
     std::lock_guard<std::mutex> lk(internal::IniMutex());
     return WriteIniValueAt(internal::LiveIniPath(), row->key, value);
@@ -306,13 +284,11 @@ bool WriteIniValue(const config_registry::IdentityRow& row, const char* value) {
     return WriteIniValueRow(row.row, value);
 }
 
-// Correlates by VALUE, never by line number (audit CRIT-2): the panel's
-// snapshot ages while it sits on screen, and an unrelated write elsewhere
-// shifts every line index -- a stale index could delete BOTH copies of a
-// duplicate identity key. The kept line = the FIRST ci-key line whose
-// comment-stripped value equals what the user clicked; if NO current line
-// carries that value the file changed underneath -> refuse, the caller
-// re-sweeps and the panel shows fresh state.
+// Correlates by value, never by line number: the panel's snapshot ages while it sits on
+// screen, and an unrelated write elsewhere shifts every line index, so a stale index could
+// delete both copies of a duplicate identity key. The kept line is the first case-insensitive
+// key line whose comment-stripped value equals what the player clicked; if no current line
+// carries that value the file changed underneath, so refuse, and the caller re-sweeps.
 static bool RemoveDuplicateKeyLinesAt(const std::wstring& path, const char* key,
                                       const char* keepValue) {
     std::vector<std::string> lines;
@@ -339,8 +315,8 @@ static bool RemoveDuplicateKeyLinesAt(const std::wstring& path, const char* key,
                 "value (the file changed since the report); re-sweeping instead", key);
         return false;
     }
-    // Pass 2: keep the FIRST line with the chosen value; drop every other
-    // ci-occurrence of the key.
+    // Pass 2: keep the first line with the chosen value; drop every other case-insensitive
+    // occurrence of the key.
     std::vector<std::string> out;
     out.reserve(lines.size());
     int removed = 0;
@@ -401,10 +377,10 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             cls[i].keyLower = k;
             cls[i].value = internal::TrimEdgesStr(v);
         } else {
-            cls[i].isComment = true;  // '='-less junk line: keep verbatim in the residue
+            cls[i].isComment = true;  // a junk line without '=': kept as-is in the residue
         }
     }
-    // ci occurrence groups.
+    // Case-insensitive occurrence groups.
     auto buildGroups = [&](std::vector<std::pair<std::string, std::vector<size_t>>>& out2) {
         out2.clear();
         for (size_t i = 0; i < n; ++i) {
@@ -417,14 +393,12 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
     };
     std::vector<std::pair<std::string, std::vector<size_t>>> groups;
     buildGroups(groups);
-    // RETIRE the review panel's fixable complaints (2026-07-26): an unknown key
-    // (every occurrence) and a SINGLE-occurrence known key whose authoritative
-    // value fails typed validation become comments -- the data stays readable
-    // in the file, the next sweep sees no live line, the complaint resolves.
-    // The classifiers are the sweep's own authorities (config_registry::
-    // IsKnownKey + ValueValidForKey), never a second opinion. Differing
-    // duplicate groups are untouched here (keep-line buttons adjudicate them;
-    // commenting their first line would silently flip the winner).
+    // Retire the review panel's fixable complaints: an unknown key (every occurrence) and a
+    // single-occurrence known key whose value fails typed validation become comments, so the data
+    // stays readable in the file, the next sweep sees no live line, and the complaint resolves.
+    // The classifiers are the sweep's own, never a second opinion. Differing duplicate groups are
+    // untouched here; the keep-line buttons adjudicate them, and commenting their first line would
+    // silently flip the winner.
     {
         bool anyRetired = false;
         for (const auto& g : groups) {
@@ -432,12 +406,9 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             if (known && g.second.size() > 1) continue;  // dup group: panel buttons own it
             const char* tag = nullptr;
             if (!known) {
-                // A key WE retired says so, and says which build. The line stays
-                // in the player's file either way; the difference is whether the
-                // comment they find next year reads as a typo they made or as a
-                // setting that moved. Upgrading a b133 ini is the case this is
-                // for -- measured 2026-08-29, exactly two keys changed hands
-                // between b133 and b144, and both are in the retired table.
+                // A key we retired says so: the line stays in the player's file either way, and the
+                // difference is whether the comment they find later reads as a typo they made or as
+                // a setting that moved.
                 tag = config_registry::RetiredKeyNote(cls[g.second[0]].keySpelling.c_str())
                           ? "; retired setting (tidy): "
                           : "; unknown key (tidy): ";
@@ -458,8 +429,8 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
         }
         if (anyRetired) buildGroups(groups);  // the retired lines left the key universe
     }
-    // Collapse value-identical duplicates (keep the FIRST line -- behavior-
-    // preserving under the unified occurrence rule); differing groups FREEZE.
+    // Collapse value-identical duplicates, keeping the first line (behaviour-preserving under the
+    // occurrence rule); differing groups freeze.
     std::vector<char> deleted(n, 0);
     for (auto& g : groups) {
         if (g.second.size() < 2) continue;
@@ -476,9 +447,9 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             ++stats.frozen;
         }
     }
-    // Attach a contiguous comment run directly above a key line to that line
-    // (the user's annotation travels with its key). A blank or header breaks
-    // the run; the file-leading banner stays a banner by that rule.
+    // Attach a contiguous comment run directly above a key line to that line, so the player's
+    // annotation travels with its key. A blank or a header breaks the run; the file-leading banner
+    // stays a banner by that rule.
     std::vector<int> attachedTo(n, -1);
     {
         std::vector<size_t> pending;
@@ -489,16 +460,15 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             pending.clear();
         }
     }
-    // Emit. A moved/emitted line is normalized to end with '\n' (the original
-    // last line may not); all bytes otherwise verbatim.
+    // Emit. A moved or emitted line is normalised to end with a newline (the original last line
+    // may not); all other bytes unchanged.
     auto withNl = [](std::string s) {
         if (s.empty() || s.back() != '\n') s += "\n";
         return s;
     };
     std::vector<char> consumed(n, 0);
     std::vector<std::string> out;
-    // Banner: everything before the first header/keyline that isn't an
-    // attached comment.
+    // The banner: everything before the first header or key line that is not an attached comment.
     for (size_t i = 0; i < n; ++i) {
         if (cls[i].isHeader || cls[i].isKey) break;
         if (attachedTo[i] >= 0) break;
@@ -527,12 +497,10 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             ++stats.placed;
         }
     }
-    // Residue: whatever remains, in ORIGINAL order -- frozen differing
-    // duplicates ("never repositioned, never adjudicated"; relative order of
-    // an un-collapsed pair is invariant), unknown keys, loose mid-file
-    // comments. Old section header lines and collapsed duplicates are dropped
-    // (the canonical headers above replace them); blank separators of moved
-    // content are dropped too.
+    // The residue: whatever remains, in original order: frozen differing duplicates (never
+    // repositioned, never adjudicated; the relative order of an un-collapsed pair is invariant),
+    // unknown keys, loose mid-file comments. Old section header lines and collapsed duplicates are
+    // dropped (the canonical headers above replace them); blank separators of moved content too.
     std::vector<std::string> residue;
     for (size_t i = 0; i < n; ++i) {
         if (consumed[i] || deleted[i] || cls[i].isHeader || cls[i].isBlank) continue;
