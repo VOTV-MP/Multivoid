@@ -1,30 +1,18 @@
-// coop/kerfur_entity.h -- the stable-identity layer for the kerfur (redesign 2026-06-16).
-//
-// THE kerfur root-cause fix. A kerfur is the only VOTV entity that is BOTH a host-authoritative AI
-// NPC (kerfurOmega_C / ACharacter) AND a grabbable prop (prop_kerfurOmega_C / Aprop), flipped by a
-// player turn_off (NPC->prop) / turn_on (prop->NPC) conversion. The game gives a kerfur NO stable
-// cross-peer identity (AkerfurOmega_C::loadData mints a RANDOM key per peer per load; the conversion
-// verbs copy no id), so the old design re-derived identity from scratch (class + nearest pose) on
-// every conversion across two disjoint eid spaces -> the dupe-and-drop loop (7 failures, 1 root).
-//
-// FIX (MTA CElementRPCs SetElementModel shape): ONE host-allocated, host-range KerfurId per LOGICAL
-// kerfur, spanning BOTH forms. See research/findings/kerfur/votv-kerfur-sync-REDESIGN-2026-06-16.md, esp.
-// the CORRECTED design in section 10 (post-RE: the radial-menu conversion is PE-invisible, so the
-// client's local conversion is UNAVOIDABLE -> claim/adopt STAYS, anchored to this stable id; clients
-// NEVER mint a kerfur eid).
-//
-// REGISTRY MODEL (section 10.2): a KerfurEntity is a HOST-ONLY authority element
-// (ElementType::Kerfur, AllocHostId reserves the stable KerfurId K), held in a host-only table --
-// NOT in MirrorManager<Npc/Prop>. The kerfur's RENDERED form is a normal Npc mirror (NPC form, eid
-// N) or Prop mirror (prop form, eid P) at its own per-form host-range eid, in the existing managers,
-// so the pose/physics pipelines are UNCHANGED. K is the durable handle; N/P are the per-form wire
-// eids (at any instant only K + the current-form eid are live). The client tracks the kerfur with
-// plain K<->eid maps (no Registry element -- the client is not the authority).
-//
-// PHASE: K-3 lands this table + its population/queries (no wire change; the conversion still runs the
-// old path -- the table is built but not yet DRIVING). K-4 adds BindFormActor + the KerfurConvert
-// broadcast. K-5 adds the client-mint class-gate + the CLIENT held-pose eid map (below) -- NO new
-// packet: a held kerfur prop streams its host-range mirror eid in the ordinary PropPose.
+// coop/creatures/kerfur_entity.h -- the stable-identity layer for the kerfur. A kerfur is the
+// only entity that is both a host-authoritative NPC (a character) and a grabbable prop,
+// flipped by a player's turn-off and turn-on conversion, and the game gives it no stable
+// cross-peer identity (its load mints a random key per peer per load, and the conversion
+// verbs copy no id), so re-deriving identity from class and nearest pose on every conversion
+// across two eid spaces produced the duplicate-and-drop loop. The fix, the MTA set-model
+// shape: one host-allocated, host-range kerfur id per logical kerfur, spanning both forms.
+// The radial-menu conversion is invisible to the dispatch detour, so the client's local
+// conversion is unavoidable and claim-and-adopt stays, anchored to this stable id; clients
+// never mint a kerfur eid. The registry model: a kerfur entity is a host-only authority
+// element (its id reserved through the host allocator), held in a host-only table and not
+// in the NPC or prop mirror managers; the rendered form is a normal NPC or prop mirror at its
+// own per-form host-range eid in the existing managers, so the pose and physics pipelines
+// are unchanged. The kerfur id is the durable handle; the per-form eids are the wire eids,
+// and at any instant only the id and the current-form eid are live.
 
 #pragma once
 
@@ -37,9 +25,10 @@ namespace coop::net { class Session; }
 
 namespace coop::element {
 
-// The host-side authority record reserving one stable host-range KerfurId per logical kerfur. NOT in
-// MirrorManager<Npc/Prop> -- see the file header. Construction registers nothing by itself; the host
-// table AllocHostId's it to reserve K, and frees K via ~Element when the record is erased.
+// The host-side authority record reserving one stable host-range kerfur id per logical
+// kerfur; not in the mirror managers (see the header). Construction registers nothing by
+// itself: the host table allocates it to reserve the id, and the element destructor frees
+// the id when the record is erased.
 class KerfurEntity : public Element {
 public:
     KerfurEntity() : Element(ElementType::Kerfur) {}
@@ -49,117 +38,120 @@ public:
 
 namespace coop::kerfur_entity {
 
-// 0 = NPC form (kerfurOmega_C), 1 = prop form (prop_kerfurOmega_C).
+// 0 is the NPC form, 1 the prop form.
 enum class Form : uint8_t { Npc = 0, Prop = 1 };
 
-// Cache the session pointer. Called from the coop subsystem Install fan-out (same point as
-// kerfur_convert). AllocKerfurId reads role() through it; K-4's BindFormActor broadcasts through it.
+// Cache the session pointer, from the subsystem install fan-out (the same point as the
+// conversion module). The id allocation reads the role through it; the form bind broadcasts
+// through it.
 void SetSession(coop::net::Session* session);
 
-// Cache the resolved kerfur class UClass* pointers (kerfur_convert resolves them at its Install and
-// calls this once they bind). Lets IsKerfurClass / IsKerfurActor answer via a subclass-aware walk
-// without re-resolving. Safe to call repeatedly (idempotent on the same pointers).
+// Cache the resolved kerfur class pointers (the conversion module resolves them at its
+// install and calls this once they bind), so the class tests answer via a subclass-aware
+// walk without re-resolving. Idempotent on the same pointers.
 void SetKerfurClasses(void* npcClass, void* propClass);
 
-// True iff `cls` (a UClass*) derives from the kerfur NPC or prop base. False until SetKerfurClasses
-// has bound the bases. Subclass-aware (kerfurOmega_col_C, prop_kerfurOmega_C skins, etc).
+// True iff `cls` derives from the kerfur NPC or prop base. False until the classes are bound.
+// Subclass-aware (the collar variants, the prop skins).
 bool IsKerfurClass(void* cls);
-// True iff `actor`'s class is a kerfur class. nullptr-safe.
+// True iff `actor`'s class is a kerfur class. Null-safe.
 bool IsKerfurActor(void* actor);
-// True iff `cls` derives specifically from the kerfur PROP base (prop_kerfurOmega_C + skins), NOT the
-// NPC base. Used by kerfur_prop_adoption to collect prop-form candidates only (the NPC form is
-// npc_adoption's job). False until SetKerfurClasses bound the prop base.
+// True iff `cls` derives specifically from the kerfur prop base (and its skins), not the NPC
+// base; the prop adoption collects prop-form candidates only (the NPC form is the NPC
+// adoption's job). False until the prop base is bound.
 bool IsKerfurPropClass(void* cls);
 
-// HOST only: reserve (or return the existing) stable KerfurId for a kerfur `actor` first seen in
-// `form`, whose current-form wire eid is `currentEid`. Idempotent per actor (returns the existing K
-// if already tracked). Records actor->K and currentEid->K. Returns K, or kInvalidId on
-// non-host / null actor / Registry exhaustion. Game thread.
+// Host only: reserve (or return the existing) stable kerfur id for a kerfur `actor` first
+// seen in `form`, whose current-form wire eid is `currentEid`. Idempotent per actor. Records
+// actor-to-id and eid-to-id. Returns the id, or invalid on a non-host, a null actor or
+// registry exhaustion. Game thread.
 coop::element::ElementId AllocKerfurId(void* actor, coop::element::ElementId currentEid,
                                        Form form, const std::wstring& className);
 
-// HOST only: O(1) lookups (kInvalidId / default if not a tracked kerfur).
+// Host only: constant-time lookups (invalid or default if not a tracked kerfur).
 coop::element::ElementId GetKerfurIdForActor(void* actor);
 coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid);
 coop::element::ElementId GetCurrentEidForKerfurId(coop::element::ElementId kerfurId);
 Form                     GetFormForKerfurId(coop::element::ElementId kerfurId);
 
-// HOST only: is this wire eid the CURRENT-form eid of a tracked kerfur? Used by the K-5 class-gate +
-// the conversion routing. (The CLIENT is eid-based and does NOT track KerfurIds -- K-4b simplification
-// per redesign section 11: it applies KerfurConvert by oldEid/newEid + IsKerfurClass, never by a
-// KerfurId, so the client K<->eid maps + RegisterClientKerfur of the K-3 scaffolding were removed.)
+// Host only: is this wire eid the current-form eid of a tracked kerfur? Used by the
+// client-mint class gate and the conversion routing. The client is eid-based and does not
+// track kerfur ids: it applies a conversion by the old and new eids plus the class test,
+// never by a kerfur id.
 bool IsKerfurEid(coop::element::ElementId currentEid);
 
-// HOST only: the host EID of the OFF-prop that the kerfur currently at `currentEid` replaced (the npc
-// EntitySpawn builders read it to carry the off->active dup RETIRE key to a joiner). Returns the off-prop
-// eid IFF this kerfur was OFF at the blob instant and the host turned it ON in the join window (so
-// BindFormActor captured rec.originOffEid = the off-prop's save eid). Returns kInvalidId for an
-// always-active kerfur or a non-kerfur eid -> the builder leaves retireOffEid=0 (no client off-prop to
-// retire). The joiner retires the off-prop MIRROR bound at this exact eid -- deterministic, no fuzzy
-// position match (v91; replaces GetSaveTimePosForEid). Game thread.
+// Host only: the host eid of the off-prop that the kerfur currently at `currentEid`
+// replaced; the NPC spawn builders read it to carry the off-to-active duplicate retire key
+// to a joiner. Returns the off-prop eid iff this kerfur was off at the blob instant and the
+// host turned it on in the join window (the form bind captured the origin eid); invalid for
+// an always-active kerfur or a non-kerfur eid, and the builder then sends no retire. The
+// joiner retires the off-prop mirror bound at this exact eid, no fuzzy position match. Game
+// thread.
 coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentEid);
 
-// HOST only: the host eid the kerfur currently at `currentEid` most recently converted FROM (the BindFormActor
-// oldEid). The mid-session-turn-on npc EntitySpawn builder carries it as convertFromEid so the INITIATING
-// client adopts its parked conversion ghost by EXACT eid (npc_mirror::OnEntitySpawn -> TakeParkedGhostByEid),
-// replacing FindParkedGhostNpcNear's 500cm position match. kInvalidId for a never-converted (save-active)
-// kerfur -> the builder leaves convertFromEid=0. Game thread.
+// Host only: the host eid the kerfur currently at `currentEid` most recently converted from
+// (the form bind's old eid). The mid-session turn-on NPC spawn builder carries it, so the
+// initiating client adopts its parked conversion ghost by exact eid instead of a position
+// match. Invalid for a never-converted kerfur, and the builder sends nothing. Game thread.
 coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid);
 
-// ---- K-5 CLIENT held-pose eid map ------------------------------------------------------------------
-// A kerfur prop on a CLIENT is a host-owned MIRROR (m_mirror=true, host-range eid) -- NOT in
-// prop_element_tracker's local g_actorToPropElementId map, so GetPropElementIdForActor returns
-// kInvalidId for it. But a client carrying a kerfur prop must STREAM that mirror's host-range eid in
-// its PropPose (the kerfur's BP key is random per peer -> only the eid identifies it cross-peer; the
-// host's remote_prop receiver resolves the authoritative kerfur prop by that eid + drives it -- no new
-// packet needed). This client-only actor->eid map gives local_streams that eid in O(1).
-//
-// Populated by NotifyKerfurPropMirrorBound from remote_prop::RegisterPropMirror (the single choke-point
-// every kerfur prop mirror bind funnels through -- convert materialize, join-snapshot, fuzzy-adopt).
-// Queried by GetKerfurMirrorEidForActor (self-healing: a stale entry whose eid no longer binds the
-// actor is evicted on read, so a GC address-recycle can't mis-resolve). Cleared on OnDisconnect.
-// Game-thread only. HOST is a no-op (the host owns the kerfur as a LOCAL, never mirrors it).
+// The client held-pose eid map. A kerfur prop on a client is a host-owned mirror at a
+// host-range eid, not in the prop tracker's local map, so the local element lookup returns
+// invalid for it; but a client carrying a kerfur prop must stream that mirror's host-range
+// eid in its pose (the kerfur's blueprint key is random per peer, so only the eid identifies
+// it cross-peer, and the host's receiver resolves the authoritative kerfur prop by that eid
+// and drives it; no new packet). This client-only actor-to-eid map gives the local streams
+// that eid in constant time. Populated by the mirror-bound notification from the prop mirror
+// registration, the single chokepoint every kerfur prop mirror bind funnels through (the
+// convert materialisation, the join snapshot, the fuzzy adopt); queried by the eid lookup,
+// self-healing (a stale entry whose eid no longer binds the actor is evicted on read, so an
+// address recycle cannot mis-resolve); cleared on disconnect. Game thread only; a no-op on
+// the host, which owns the kerfur as a local and never mirrors it.
 
-// CLIENT: record that a kerfur prop mirror actor was bound at host-range `eid`. Self-filters: no-op on
-// the host / for a non-kerfur actor. Idempotent.
+// Client: record that a kerfur prop mirror actor was bound at host-range `eid`. Self-filters:
+// a no-op on the host or for a non-kerfur actor. Idempotent.
 void NotifyKerfurPropMirrorBound(void* actor, coop::element::ElementId eid);
 
-// CLIENT: O(1) host-range eid for a locally-held kerfur prop mirror actor (for the held-pose stream).
-// kInvalidId if not tracked. Self-heals stale entries (verifies the eid still binds this actor).
+// Client: the host-range eid for a locally held kerfur prop mirror actor (for the held-pose
+// stream), in constant time. Invalid if not tracked. Self-heals stale entries.
 coop::element::ElementId GetKerfurMirrorEidForActor(void* actor);
 
-// CLIENT: evict an actor from the held-pose map (called on a kerfur mirror teardown). No-op if absent.
+// Client: evict an actor from the held-pose map (on a kerfur mirror teardown). A no-op if
+// absent.
 void ForgetKerfurPropMirror(void* actor);
 
-// HOST only: the conversion mutation -- the MTA SetElementModel equivalent (redesign 10.3). The host
-// ran the BP verb (its own radial menu OR a client KerfurConvertRequest) and registered the new-form
-// actor SILENTLY via the normal Npc/Prop pipeline at host-range `newEid`. This rebinds the stable
-// KerfurId (resolved from `oldEid`, or freshly allocated if the dying form was untracked) onto the
-// new form IN PLACE -- K is PRESERVED across the conversion, never re-minted -- then broadcasts the
-// SOLE conversion-transition packet KerfurConvert(K, oldEid, newEid, toForm, transform, className) to
-// all peers. Returns K (kInvalidId on non-host / null actor / Registry exhaustion). The caller reads
-// the new actor's transform + class and passes them (keeps this module's engine surface minimal).
-// Game thread.
+// Host only: the conversion mutation, the MTA set-model equivalent. The host ran the
+// blueprint verb (its own radial menu, or a client request) and registered the new-form
+// actor silently via the normal NPC or prop pipeline at host-range `newEid`. This rebinds
+// the stable kerfur id (resolved from `oldEid`, or freshly allocated if the dying form was
+// untracked) onto the new form in place, the id preserved across the conversion and never
+// re-minted, then broadcasts the sole conversion-transition packet (the id, the old and new
+// eids, the form, the transform, the class) to all peers. Returns the id (invalid on a
+// non-host, a null actor or registry exhaustion). The caller reads the new actor's
+// transform and class and passes them, keeping this module's engine surface minimal. Game
+// thread.
 coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* newActor,
                                        int32_t newIdx, coop::element::ElementId newEid, Form newForm,
                                        const std::wstring& className,
                                        float locX, float locY, float locZ,
                                        float rotPitch, float rotYaw, float rotRoll);
 
-// HOST only: the verb was REFUSED (sentient/kill -- the old-form actor is still live, no new form
-// spawned). Broadcast KerfurConvert(rejected=1) carrying the OLD form + transform so a client that
-// optimistically converted its own mirror locally can RESTORE it (fixes Failure #7). The host table is
-// unchanged (the kerfur did not convert). Game thread.
+// Host only: the verb was refused (a sentient or kill-flagged kerfur; the old-form actor is
+// still live and no new form spawned). Broadcast a rejected conversion carrying the old form
+// and transform, so a client that optimistically converted its own mirror locally can
+// restore it. The host table is unchanged. Game thread.
 void BroadcastConvertRejected(coop::element::ElementId oldEid, Form oldForm,
                               float locX, float locY, float locZ,
                               float rotPitch, float rotYaw, float rotRoll,
                               const std::wstring& className);
 
-// Drop a kerfur record (its actor died for good -- destroyed, not converted). HOST frees K. No-op on
-// an untracked id. Game thread. (K-4 BindFormActor handles the CONVERSION case -- reuse, not drop.)
+// Drop a kerfur record (its actor died for good: destroyed, not converted). The host frees
+// the id. A no-op on an untracked id. Game thread. The form bind handles the conversion
+// case: reuse, not drop.
 void ReleaseKerfurId(coop::element::ElementId kerfurId);
 
-// Clear all per-session state (host table + client maps). Net disconnect. Game thread.
+// Clear all per-session state (the host table and the client maps). The net disconnect. Game
+// thread.
 void OnDisconnect();
 
 }  // namespace coop::kerfur_entity
