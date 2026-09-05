@@ -1,71 +1,21 @@
-// coop/creatures/kerfur_form_assembler.cpp -- see kerfur_form_assembler.h.
-//
-// Increment 1 (observe-only) of docs/COOP_VM_DISPATCH_PLAN.md S3. Registers the two
-// conversion verbs (dropKerfurProp / spawnKerfuro) with the EX_Local* substrate and,
-// on each caught 0x45 dispatch, LOGS the Context class -- proving the PERMANENT
-// substrate delivers the catch end-to-end through the registration API and turning
-// the inferred kerfur variant family into a MEASURED set.
-//
-// It ALSO carries the CONTAINMENT COUNTER the /qf pass (2026-07-13, user's 8 Qs + 3
-// escalation rounds) forced into this increment: the 2a capture design rests on
-// "FinishSpawningActor + K2_DestroyActor fire SYNCHRONOUSLY inside the 0x45 bracket"
-// -- currently INFERRED from the 2026-06-12 kismet disasm, NOT measured through the
-// live bracket. Rather than build 2a on that inference, this increment MEASURES it
-// for free: the substrate publishes the active-verb window (ue_wrap::vm_dispatch::
-// CurrentThreadVerb), and this module registers its OWN post-hooks on the two natives
-// and counts each kerfur-relevant spawn/destroy as IN-window vs OUT-of-window. 2a is
-// HALT-gated on the verdict (all form spawns + self-destroys land in-window).
-//
-// Attribution is deterministic, per the /qf convergence:
-//   - SPAWN: class-filter the finished *Result -- a kerfur-form successor
-//     (kerfurOmega_C / prop_kerfurOmega_C family) is B; the floppy (prop_floppyDisc_C)
-//     is distinguished by class, NOT conflated. "in-window AND form-successor", not
-//     "in-window".
-//   - DESTROY: the invariant is IDENTITY, not class -- a conversion verb destroys
-//     ITSELF, so the K2_DestroyActor whose dying actor == the bracket's Context is the
-//     verb's own victim (the seam 2b suppresses), told apart from unrelated kerfur
-//     churn by pointer identity.
-// Both seams are pinned INDEPENDENTLY (spawn does not imply destroy).
-//
-// On top of the containment counter, this increment carries the 2a-OBSERVE GATE
-// instrumentation the /qf convergence (2026-07-13 nite) named as the HALT-gate the
-// repoint-at-birth capture design must clear on ONE deliberate hands-on run, counted
-// deliberately -- all measured by READS only (registry lookup / index check), NO
-// capture, NO repoint, NO converge:
-//   - GATE 1 (one-capture-per-A-eid): resolve A's eid at verb ENTRY (Registry::
-//     EidForActor -- a map read the mid-verb lesson explicitly permits). eidUnbound>0
-//     means the repoint would have no source; reentrySameEid>0 is the contested/
-//     re-entrant double-capture hazard.
-//   - GATE 2 (class separation): the floppy is class-distinguished from the form (the
-//     existing floppyIn counter). A RUN CONDITION, not code: the 18/18 floppyIn=0 was
-//     a NULL result -- a floppy-carrying toggle is needed to turn it into a pass.
-//   - GATE 3b (per-bracket seam ORDER -- LOAD-BEARING): a thread-local per-bracket flag
-//     proves B's form-spawn fires BEFORE A's self-destroy WITHIN one bracket (not just
-//     as global totals). destroyNoSpawn>0 = the eid would strand on the dying A = HALT.
-//   - GATE 3c (B-index live at capture): B is a real, index-assigned, live object at
-//     FinishSpawningActor (the repoint target is valid). bIndexDead>0 = HALT.
-// The client LOCAL forced-prediction verb-death husk falls out of the SAME counters
-// under the [CLIENT] role tag (SetEnabled is both roles); the pending-eid pose-tick
-// misroute is NOT observable without the pending flag and is deferred to 2a-capture's
-// own verification (documented in docs/COOP_VM_DISPATCH_PLAN.md, not faked here).
-//
-// The COUNTERS accrue whenever the session is active, independent of the verbose log
-// -- and BOTH summary lines (containment + 2a-OBSERVE GATES) are ALWAYS dumped at
-// OnDisconnect -- so a run can never end having measured nothing. Only the per-catch
-// VERBOSE lines are gated behind [dev] vm_dispatch_log (+ a cap). Every line is
-// role-tagged [HOST]/[CLIENT] so the gate set is not authority-blind.
-//
-// 2a-CAPTURE (2026-07-14): on top of the counters, an in-bracket / in-req-scope
-// kerfur-form successor spawn now STORES the finished actor B in a one-shot
-// thread-local slot (tls_captured*), published via ConsumeCapturedForm for the convert
-// layer to consume at the paired A-destroy edge. This module still does NO suppress /
-// converge / authority routing (2b/2c) -- the verb bodies run unchanged; it only makes
-// the deterministic which-B available so kerfur_convert can stop guessing by proximity.
+// coop/creatures/kerfur_form_assembler.cpp -- see kerfur_form_assembler.h. Registers the two
+// conversion verbs (dropKerfurProp, spawnKerfuro) with the EX_Local dispatch substrate and,
+// with its own post-hooks on FinishSpawningActor and K2_DestroyActor, measures whether a
+// kerfur-form spawn or self-destroy lands inside the verb's bracket. The counters accrue
+// whenever the session is active and both summary lines are dumped at disconnect, so a run
+// never ends having measured nothing; the per-catch verbose lines sit behind the
+// vm_dispatch_log row with a cap, and every line carries the role. Attribution is
+// deterministic: a spawn is the successor when its class is a kerfur form (the floppy is told
+// apart by class), and a destroy is the verb's own victim when the dying actor is the
+// bracket's context. On top of the counters, an in-bracket or in-request-scope successor
+// spawn stores the finished actor in a one-shot thread-local slot that kerfur_convert consumes
+// at the paired destroy edge, so it no longer guesses the successor by proximity. This module
+// suppresses and converges nothing; the verb bodies run unchanged.
 
 #include "coop/creatures/kerfur_form_assembler.h"
 
 #include "coop/config/config.h"
-#include "coop/creatures/kerfur_convert_host.h"  // OBSERVE (2026-07-14 G1): ActiveRequestVerbEid -- the CallFunction route scope
+#include "coop/creatures/kerfur_convert_host.h"  // ActiveRequestVerbEid, the request-route scope
 #include "coop/element/element.h"    // ElementId, kInvalidId (gate 1 per-eid read)
 #include "coop/element/registry.h"   // Registry::EidForActor (gate 1 per-eid read)
 #include "coop/net/session.h"
@@ -91,32 +41,22 @@ namespace vm = ue_wrap::vm_dispatch;
 namespace P  = ue_wrap::profile;
 namespace E  = coop::element;
 
-// Verb ids echoed back in the substrate Bracket (also the window's verbId).
+// The verb ids echoed back in the substrate's bracket.
 constexpr int kVerbTurnOff = 1;  // dropKerfurProp -- NPC -> prop (destroys the NPC self)
 constexpr int kVerbTurnOn  = 2;  // spawnKerfuro   -- prop -> NPC (destroys the prop self)
 
-// The two BP function names we register. These literals ARE the identity the ambient
-// window publishes (vm_dispatch.h: "gate on verbName, never on verbId"), so the same
-// pointers are what InKerfurVerb() compares.
+// The two blueprint function names registered. The literals are the identity the ambient
+// window publishes (gate on the verb name, never on the id), so the same pointers are what
+// InKerfurVerb compares.
 constexpr const wchar_t* kVerbNameTurnOff = L"dropKerfurProp";
 constexpr const wchar_t* kVerbNameTurnOn  = L"spawnKerfuro";
 
-// Is the calling thread inside one of OUR OWN two verbs?
-//
-// THIS PREDICATE IS THE FIX FOR A REAL DEFECT (2026-08-24, /qf rounds 46-47). Every gate
-// below used to test `av.active` ALONE, which is true for ANY registered 0x45 verb on this
-// thread -- and three shipped modules (container_contents_sync's kVerbDirty, meadow_db_sync's
-// kVerbMark, drive_sync's kVerbPutDriveIn) publish verbId 1, the value we call kVerbTurnOff,
-// while drive_sync's kVerbPulledOut=2 is our kVerbTurnOn. So testing the id would not have
-// helped either. Under a FOREIGN verb's bracket the old gates inverted twice over: an
-// unrelated spawn counted as ours (`formIn`), and `reqScope = !av.active && InReqScope()`
-// went FALSE, blinding the CallFunction route G1 exists to cover.
-//
-// MEASURED SEVERITY, so this is not overstated: the 2026-08-24 field run's session-end
-// CONTAINMENT SUMMARY reads `catch{off=0 on=0}` on BOTH peers -- zero kerfur conversions
-// occurred -- so the inversion was LATENT, not observed. It is reachable (the coin gun
-// destroying a prop_kerfur nests our destroy inside its bracket), and it becomes reachable
-// far more often the moment another verb is registered on a common path.
+// Is the calling thread inside one of our own two verbs? The gates below must not test the
+// active flag alone: it is true for any registered verb on this thread, and other modules
+// publish verb ids 1 and 2 for their own verbs (the container's addObject, the meadow's mark,
+// the drive's put-in and pulled-out), so the id would not help either. Under a foreign verb's
+// bracket an unrelated spawn would count as ours and the request-scope test would go false.
+// Reachable: the coin gun destroying a kerfur prop nests our destroy inside its bracket.
 bool InKerfurVerb(const vm::ActiveVerb& av) {
     if (!av.active || !av.verbName) return false;
     return av.verbName == kVerbNameTurnOff || av.verbName == kVerbNameTurnOn ||
@@ -126,77 +66,74 @@ bool InKerfurVerb(const vm::ActiveVerb& av) {
 
 coop::net::Session* g_session = nullptr;
 
-// Kerfur-form + floppy class pointers (resolved lazily on the GT for the spawn
-// class-filter). Null until resolved -> a spawn never mis-attributes.
+// The form and floppy class pointers, resolved lazily on the game thread for the spawn filter;
+// null until resolved, so a spawn never mis-attributes.
 std::atomic<void*> g_npcClass{nullptr};     // kerfurOmega_C     (turn-ON successor + turn-OFF victim)
 std::atomic<void*> g_propClass{nullptr};    // prop_kerfurOmega_C (turn-OFF successor + turn-ON victim)
 std::atomic<void*> g_floppyClass{nullptr};  // prop_floppyDisc_C  (the incidental floppy spawn)
 std::atomic<bool>  g_classesResolved{false};
 
-// The two native seams (Func-patched once, process-lifetime). Own hooks -- idempotent
-// + multi-patch, so no collision with host_spawn_watcher's FinishSpawningActor patch.
+// The two native seams, patched once for the process. Own hooks, idempotent and multi-patch, so
+// they coexist with host_spawn_watcher's FinishSpawningActor patch.
 void* g_finishSpawnFn = nullptr;
 void* g_destroyFn     = nullptr;
 std::atomic<bool> g_seamsInstalled{false};
 
-// ---- containment counters (accrue whenever the session is enabled) ----
+// The containment counters, accruing whenever the session is enabled.
 std::atomic<std::uint64_t> g_spawnFormInWindow{0};   // kerfur-form successor spawned INSIDE a bracket
 std::atomic<std::uint64_t> g_spawnFormOutWindow{0};  // kerfur-form successor spawned OUTSIDE any bracket
 std::atomic<std::uint64_t> g_spawnFloppyInWindow{0}; // the floppy spawned inside a bracket (class-distinguished)
-std::atomic<std::uint64_t> g_spawnOtherInWindow{0};  // GATE 2 reject side: an in-window spawn that is NEITHER form NOR floppy (loot/explosion_C/etc.) -- the filter MUST reject it as a repoint target
+std::atomic<std::uint64_t> g_spawnOtherInWindow{0};  // an in-window spawn that is neither form nor floppy; the filter must reject it
 std::atomic<std::uint64_t> g_destroySelfInWindow{0}; // dying actor == bracket Context (the verb's self-destroy)
 std::atomic<std::uint64_t> g_destroyOtherInWindow{0};// a kerfur-class actor != Context destroyed inside a bracket (anomaly)
 std::atomic<std::uint64_t> g_destroyKerfurOutWindow{0}; // a kerfur-class actor destroyed OUTSIDE any bracket
 std::atomic<std::uint64_t> g_catchTurnOff{0};        // 0x45 dropKerfurProp entries caught
 std::atomic<std::uint64_t> g_catchTurnOn{0};         // 0x45 spawnKerfuro entries caught
-// G1 (2026-07-14): the CallFunction route (OnConvertRequest host-exec-client-request) is 0x45-BLIND
-// (CallFunction != EX_Local, so no OnVerbEntry / CurrentThreadVerb window). kerfur_convert publishes the
-// request eid it is executing (ActiveRequestVerbEid) as a SECOND capture scope. These count the form-spawn
-// + kerfur self-destroy that fire while a request is executing -- proving the CallFunction-route B/destroy
-// are capturable via the request eid (currently they land in formOut/kerfurOut, mixed with world spawns).
+// The CallFunction route (the host executing a client's convert request) is invisible to the
+// EX_Local bracket, so kerfur_convert publishes the request eid it is executing as a second
+// capture scope; these count the form spawn and the self-destroy that fire while a request
+// executes.
 std::atomic<std::uint64_t> g_spawnFormInReqScope{0};   // kerfur-form successor spawned during a CallFunction request
 std::atomic<std::uint64_t> g_destroySelfInReqScope{0}; // a kerfur-class actor destroyed during a CallFunction request
 
-// ---- 2a-observe gate instrumentation (measures what the repoint-at-birth design rests on) ----
-// GATE 1 (one-capture-per-A-eid): does the verb's Context actor A carry an eid at ENTRY?
-// The repoint has NO source unless A is registry-bound here. Also the re-entry tripwire:
-// a same-eid bracket opened while one is already open on this thread = double-capture hazard.
+// The observe gates, measuring what the repoint-at-birth design rests on. Gate 1: does the
+// verb's context actor carry an eid at entry? The repoint has no source otherwise. Also the
+// re-entry tripwire: a same-eid bracket opened while one is open on this thread is the
+// double-capture hazard.
 std::atomic<std::uint64_t> g_entryEidBound{0};       // A had a live eid at verb entry (repoint has a source)
 std::atomic<std::uint64_t> g_entryEidUnbound{0};     // A had NO eid at verb entry (nothing to repoint -- HALT-relevant)
 std::atomic<std::uint64_t> g_entrySameEidReentry{0}; // nested bracket on the SAME eid (contested/re-entrant -- HALT)
-// GATE 3b (per-bracket seam ORDER -- LOAD-BEARING): within ONE bracket, did B's form-spawn
-// fire BEFORE A's self-destroy? The repoint migrates identity at B's birth, so a self-destroy
-// with no preceding in-bracket form-spawn would leave the eid stranded on the dying A.
+// Gate 3b, the per-bracket seam order: within one bracket, did the successor's spawn fire
+// before the self-destroy? The repoint migrates identity at the successor's birth, so a
+// self-destroy with no preceding in-bracket spawn would strand the eid on the dying actor.
 std::atomic<std::uint64_t> g_orderSpawnBeforeDestroy{0}; // GOOD: form-spawn preceded self-destroy in-bracket
 std::atomic<std::uint64_t> g_orderDestroyNoSpawn{0};     // VIOLATION: self-destroy, no in-bracket form-spawn (HALT)
-// GATE 3c (B-index live at capture): is the finished successor B a real, index-assigned, live
-// GUObjectArray object at FinishSpawningActor time? The repoint target must be valid here.
+// Gate 3c: is the finished successor a real, index-assigned, live object at
+// FinishSpawningActor? The repoint target must be valid there.
 std::atomic<std::uint64_t> g_spawnBIndexLive{0};     // B had a live internal index at spawn (repoint target valid)
 std::atomic<std::uint64_t> g_spawnBIndexDead{0};     // B's index not live at spawn (HALT -- repoint would dangle)
 
-// Per-bracket seam-order record (thread-local: the verb runs synchronously on the GT, so a
-// single-slot TLS tracks the innermost depth-1 bracket; nested depth is counted as an anomaly
-// via the substrate's Bracket.depth, not tracked here). Reset at each depth-1 verb ENTRY.
+// The per-bracket order record, thread-local: the verb runs synchronously on the game thread,
+// so one slot tracks the outermost bracket, and nested depth is counted as an anomaly through
+// the substrate's depth. Reset at each outermost verb entry.
 thread_local bool     tls_spawnFormFiredThisBracket = false;
 thread_local void*    tls_bracketCtx = nullptr;       // the Context whose bracket owns the TLS record
 thread_local E::ElementId tls_bracketEntryEid = E::kInvalidId; // A's eid captured at entry (for re-entry check)
 
-// ---- 2a-capture: the DETERMINISTIC successor B, captured in-bracket, consumed once at the
-// paired A-destroy edge by kerfur_convert. Thread-local: the verb + both native seams run
-// synchronously on the GT, so a single-slot TLS is race-free and lock-free. Cleared at each
-// depth-1 verb ENTRY (0x45) and at the OnConvertRequest CallFunction entry (via
-// ClearCapturedForm), plus a freshness backstop, so a capture never outlives its bracket.
+// The deterministic successor, captured in-bracket and consumed once by kerfur_convert at the
+// paired destroy edge. Thread-local: the verb and both seams run synchronously on the game
+// thread. Cleared at each outermost verb entry and at the request entry (ClearCapturedForm),
+// plus a freshness backstop, so a capture never outlives its bracket.
 thread_local void*   tls_capturedForm    = nullptr;   // B's actor pointer (nullptr = slot empty)
 thread_local int32_t tls_capturedFormIdx = -1;        // B's GUObjectArray internal index (for liveness)
 thread_local bool    tls_capturedIsNpc   = false;     // true = kerfurOmega_C (turn-ON B); false = prop (turn-OFF B)
 thread_local std::chrono::steady_clock::time_point tls_capturedAt{};  // capture instant (freshness backstop)
 
-// Verbose per-catch log cap (the measurement counters above are UNCAPPED + always on).
+// The verbose per-catch log cap; the counters are uncapped and always on.
 constexpr int kLogCap = 128;
 std::atomic<int> g_logged{0};
 
-// T11 (ini rework arc 2): latched -- the old per-call read opened + scanned
-// the ini file on EVERY verbose-log check (F34, a hot ProcessEvent path).
+// Latched: the row is read once, not on every check of a hot path.
 bool LogVerbose() {
     static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::vm_dispatch_log);
     return s;
@@ -204,7 +141,7 @@ bool LogVerbose() {
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
 const char* RoleTag() { return IsHostRole() ? "HOST" : "CLIENT"; }
 
-// Is `cls` a kerfur-form class (either the NPC or prop family)?
+// Is `cls` a kerfur form, the NPC or the prop family?
 bool IsKerfurFormClass(void* cls) {
     void* bases[2] = {g_npcClass.load(std::memory_order_relaxed),
                       g_propClass.load(std::memory_order_relaxed)};
@@ -215,41 +152,38 @@ bool IsFloppyClass(void* cls) {
     void* fb = g_floppyClass.load(std::memory_order_relaxed);
     return fb && R::IsDescendantOfAny(cls, &fb, 1);
 }
-// Is `cls` the NPC form (kerfurOmega_C), as opposed to the prop form? Called only after
-// IsKerfurFormClass(cls) is already true, to tag the captured B's direction.
+// Is `cls` the NPC form rather than the prop form? Called only after the form test, to tag the
+// captured successor's direction.
 bool IsKerfurNpcClass(void* cls) {
     void* nb = g_npcClass.load(std::memory_order_relaxed);
     return nb && R::IsDescendantOfAny(cls, &nb, 1);
 }
-// Record the freshly-finished successor B in the one-shot slot (2a-capture). Called from
-// OnFinishSpawn on both the 0x45 (InKerfurVerb) and the CallFunction (reqScope) form branch,
-// only when B has a live index. Overwrites any prior slot (this bracket's B supersedes).
+// Record the freshly finished successor in the one-shot slot, from both the bracket and the
+// request-scope branch, only when it has a live index. Overwrites any prior slot.
 void StoreCapturedForm(void* b, int32_t idx, void* cls) {
     tls_capturedForm    = b;
     tls_capturedFormIdx = idx;
     tls_capturedIsNpc   = IsKerfurNpcClass(cls);
     tls_capturedAt      = std::chrono::steady_clock::now();
 }
-// G1: is the host currently executing a client's convert-request via CallFunction (the 0x45-blind route)?
+// Is the host executing a client's convert request through CallFunction?
 bool InReqScope() {
     return coop::kerfur_convert_host::ActiveRequestVerbEid() != E::kInvalidId;
 }
 
-// ---- the substrate ENTRY callback (observe-only) -------------------------------
+// The substrate entry callback, observe-only.
 void OnVerbEntry(const vm::Bracket& b) {
     if (b.verbId == kVerbTurnOff) g_catchTurnOff.fetch_add(1, std::memory_order_relaxed);
     else                          g_catchTurnOn.fetch_add(1, std::memory_order_relaxed);
 
-    // GATE 1 -- resolve A's eid at entry (a pure Registry map READ, not an engine call; the
-    // mid-verb lesson explicitly permits "resolve an eid off a still-live actor by lookup").
+    // Gate 1: the context's eid at entry, a registry map read, not an engine call.
     const E::ElementId entryEid = E::Registry::Get().EidForActor(b.ctx);
     const bool bound = (entryEid != E::kInvalidId);
     if (bound) g_entryEidBound.fetch_add(1, std::memory_order_relaxed);
     else       g_entryEidUnbound.fetch_add(1, std::memory_order_relaxed);
 
-    // GATE 3b -- reset the per-bracket seam-order record on the OUTERMOST (depth-1) entry.
-    // A nested (depth>1) bracket on the SAME eid is the double-capture hazard; count it and
-    // do NOT clobber the outer record.
+    // Gate 3b: the per-bracket order record resets on the outermost entry. A nested bracket on the
+    // same eid is the double-capture hazard: counted, and the outer record is kept.
     if (b.depth <= 1) {
         tls_spawnFormFiredThisBracket = false;
         tls_bracketCtx = b.ctx;
@@ -269,8 +203,7 @@ void OnVerbEntry(const vm::Bracket& b) {
             bound ? "" : "UNBOUND:", bound ? entryEid : 0u);
 }
 
-// ---- the SPAWN seam (FinishSpawningActor post-hook) ----------------------------
-// spawnedResult = *Result = the finished actor (ufunction_hook contract).
+// The spawn seam, a FinishSpawningActor post-hook; the result is the finished actor.
 void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResult) {
     if (!vm::IsEnabled() || !spawnedResult) return;  // no cost in solo SP
     void* cls = R::ClassOf(spawnedResult);
@@ -278,13 +211,11 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     const bool isForm   = IsKerfurFormClass(cls);
     const bool isFloppy = !isForm && IsFloppyClass(cls);
     if (!isForm && !isFloppy) {
-        // GATE 2, REJECT SIDE: an in-window spawn that is NEITHER a kerfur-form successor NOR the
-        // floppy = loot / explosion_C / anything else the conversion ubergraph can BeginDeferred inside
-        // the bracket. The class filter (IsKerfurFormClass) MUST reject it as a repoint target. Counting
-        // it in-window proves the filter REJECTS non-B -- a DIFFERENT claim than the 45/45 descent census
-        // (which only proved it CATCHES every true B). Without this the loot-carrying run would be another
-        // floppyIn=0-style NULL result. Out-of-window neither = an ordinary world spawn (the vast
-        // majority) -> ignored (CurrentThreadVerb is the cheap gate).
+        // Gate 2's reject side: an in-window spawn that is neither a form successor nor the floppy
+        // (loot, an explosion, anything the conversion graph spawns inside the bracket) must be
+        // rejected as a repoint target. Counting it proves the filter rejects a non-successor, a
+        // different claim from catching every true successor. Out of window, neither is an ordinary
+        // world spawn and is ignored.
         const vm::ActiveVerb av = vm::CurrentThreadVerb();
         if (InKerfurVerb(av)) {
             g_spawnOtherInWindow.fetch_add(1, std::memory_order_relaxed);
@@ -306,19 +237,18 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     if (isForm) {
         if (inVerb) {
             g_spawnFormInWindow.fetch_add(1, std::memory_order_relaxed);
-            // GATE 3b -- mark that the form-spawn fired in THIS bracket, so the later
-            // self-destroy can prove spawn-before-destroy ordering.
+            // Gate 3b: the form spawn fired in this bracket, so the later self-destroy can prove
+            // the order.
             tls_spawnFormFiredThisBracket = true;
-            // GATE 3c -- is B a real, index-assigned, live object at FinishSpawningActor?
+            // Gate 3c: a live index at FinishSpawningActor?
             bIdx = R::InternalIndexOf(spawnedResult);
             bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
             if (bIndexLive) { g_spawnBIndexLive.fetch_add(1, std::memory_order_relaxed);
                               StoreCapturedForm(spawnedResult, bIdx, cls); }  // 2a-capture (0x45 route)
             else            g_spawnBIndexDead.fetch_add(1, std::memory_order_relaxed);
         } else if (reqScope) {
-            // G1: the host is executing a client's convert-request via CallFunction (0x45-blind route) --
-            // this form-spawn IS the conversion successor B, capturable via the request eid instead of a
-            // 0x45 bracket. Proving formInReqScope>0 closes the CallFunction-route capture gap.
+            // The request route: this form spawn is the conversion's successor, capturable through
+            // the request eid instead of a bracket.
             g_spawnFormInReqScope.fetch_add(1, std::memory_order_relaxed);
             bIdx = R::InternalIndexOf(spawnedResult);
             bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
@@ -339,8 +269,7 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     }
 }
 
-// ---- the DESTROY seam (K2_DestroyActor post-hook) ------------------------------
-// context = the dying actor (ufunction_hook contract).
+// The destroy seam, a K2_DestroyActor post-hook; the context is the dying actor.
 void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     if (!vm::IsEnabled() || !context) return;  // no cost in solo SP
     void* cls = R::ClassOf(context);
@@ -351,9 +280,8 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     bool orderGood = false;
     if (!InKerfurVerb(av)) {
         if (InReqScope()) {
-            // G1: the host is executing a client's convert-request via CallFunction (0x45-blind route);
-            // a kerfur destroy here is the conversion's own self-destroy. Captures the CallFunction-route
-            // destroy the prop_destroy_seam relay (bug1) fires on -- see prop_destroy_seam:118 provenance.
+            // The request route: a kerfur destroy while a request executes is the conversion's own
+            // self-destroy.
             g_destroySelfInReqScope.fetch_add(1, std::memory_order_relaxed);
             kind = "IN-WINDOW(req-scope) self";
         } else {
@@ -362,8 +290,8 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
         }
     } else if (context == av.ctx) {  // IDENTITY invariant: the verb's own self-destroy
         g_destroySelfInWindow.fetch_add(1, std::memory_order_relaxed);
-        // GATE 3b -- did B's form-spawn already fire in THIS bracket (spawn-before-destroy)?
-        // A self-destroy with no preceding in-bracket form-spawn strands the eid (2a-HALT).
+        // Gate 3b: did the form spawn already fire in this bracket? A self-destroy with none
+        // strands the eid.
         if (tls_spawnFormFiredThisBracket && context == tls_bracketCtx) {
             g_orderSpawnBeforeDestroy.fetch_add(1, std::memory_order_relaxed);
             orderGood = true;
@@ -384,8 +312,8 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     }
 }
 
-// Resolve the classes + Func-patch the two seams. GT-only (FindClass/FindFunction +
-// InstallPostHook). Retries until everything binds; latches once installed.
+// Resolve the classes and patch the two seams; game thread only, retried until everything
+// binds, latched once installed.
 void EnsureSeamsInstalled() {
     if (g_seamsInstalled.load(std::memory_order_acquire)) return;
     if (!GT::IsGameThread()) return;
@@ -397,8 +325,8 @@ void EnsureSeamsInstalled() {
             g_propClass.store(R::FindClass(L"prop_kerfurOmega_C"), std::memory_order_relaxed);
         if (!g_floppyClass.load(std::memory_order_relaxed))
             g_floppyClass.store(R::FindClass(L"prop_floppyDisc_C"), std::memory_order_relaxed);
-        // Need the two form bases before the spawn/destroy filters are meaningful; the
-        // floppy is non-fatal (a null floppy class just leaves floppy spawns uncounted).
+        // The two form bases must resolve before the filters mean anything; the floppy is
+        // non-fatal, since a null class just leaves floppy spawns uncounted.
         if (!g_npcClass.load(std::memory_order_relaxed) ||
             !g_propClass.load(std::memory_order_relaxed))
             return;  // retry next tick
@@ -443,8 +371,8 @@ void DumpSummary(const char* when) {
             (unsigned long long)g_destroySelfInReqScope.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyKerfurOutWindow.load(std::memory_order_relaxed));
-    // 2a-observe GATES: the repoint-at-birth design is GREEN only if eidUnbound=0,
-    // sameEidReentry=0, orderNoSpawn=0, and bIndexDead=0 (all HALT signals at zero).
+    // The observe gates are green only when every halt signal is zero: unbound, same-eid
+    // re-entry, destroy without spawn, dead index.
     UE_LOGI("[kerfur_asm][%s] 2a-OBSERVE GATES (%s): g1_entry{bound=%llu UNBOUND=%llu reentrySameEid=%llu} "
             "g3b_order{spawn<destroy=%llu DESTROY_NO_SPAWN=%llu} g3c_Bindex{live=%llu DEAD=%llu} "
             "-- GREEN iff UNBOUND=0 & reentrySameEid=0 & DESTROY_NO_SPAWN=0 & DEAD=0",
@@ -460,13 +388,13 @@ void DumpSummary(const char* when) {
 
 }  // namespace
 
-// ---- 2a-capture public accessors (consumed by coop::kerfur_convert) ----------------
+// The capture accessors, consumed by kerfur_convert.
 CapturedForm ConsumeCapturedForm(bool wantNpc) {
     CapturedForm out{nullptr, -1};
     if (!tls_capturedForm) return out;                       // slot empty
-    // Freshness backstop: the store is one-shot + cleared at each bracket entry, but a
-    // conversion that spawned NO matching B and then consumes could otherwise pull a prior
-    // bracket's B. A capture is only valid within its own (sub-second) verb window.
+    // The freshness backstop: the store is one-shot and cleared at each bracket entry, but a
+    // conversion that spawned no matching successor and then consumes could otherwise pull a
+    // prior bracket's; a capture is valid only within its own sub-second verb window.
     if (std::chrono::steady_clock::now() - tls_capturedAt > std::chrono::seconds(2)) {
         tls_capturedForm = nullptr; tls_capturedFormIdx = -1;
         return out;
@@ -488,11 +416,10 @@ void ClearCapturedForm() {
 }
 
 bool IsCapturedForm(void* actor) {
-    // NON-CONSUMING peek (2a-capture suppression, 2026-07-14): is `actor` the successor currently
-    // in the capture slot? The Init POST keyed-express suppressor (prop_lifecycle) reads this to
-    // decide "this prop IS the conversion successor -> KerfurConvert owns the express, skip the
-    // generic PropSpawn". It MUST NOT consume -- the deferred converge (ConsumeCapturedForm, on the
-    // POLL death-watch / destroy seam) still needs the slot; a destructive peek here starves it.
+    // A non-consuming peek: is `actor` the successor in the capture slot? The keyed-express
+    // suppressor in prop_lifecycle reads it to decide that this prop is the conversion's
+    // successor, whose express KerfurConvert owns, and skips the generic spawn. It must not
+    // consume: the deferred converge still needs the slot.
     if (!actor || actor != tls_capturedForm) return false;
     if (std::chrono::steady_clock::now() - tls_capturedAt > std::chrono::seconds(2)) return false;
     return R::IsLiveByIndex(tls_capturedForm, tls_capturedFormIdx);
@@ -502,8 +429,7 @@ void Install(coop::net::Session* session) {
     g_session = session;
     vm::RegisterVirtualVerb(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry);
     vm::RegisterVirtualVerb(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry);
-    vm::SetEnabled(true);  // gate ACTIVITY on session-active (both roles -- the client
-                           // needs the bracket to observe its OWN conversion; plan R9).
+    vm::SetEnabled(true);  // both roles: the client needs the bracket to observe its own conversion
 }
 
 void Tick() {
