@@ -1,4 +1,4 @@
-// coop/player_inventory_sync.cpp -- see coop/player_inventory_sync.h.
+// coop/items/player_inventory_sync.cpp -- see coop/items/player_inventory_sync.h.
 
 #include "coop/items/player_inventory_sync.h"
 
@@ -11,8 +11,8 @@
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/save/save_transfer.h"
-#include "ue_wrap/actors/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
-#include "ue_wrap/engine/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point
+#include "ue_wrap/actors/begin_equipment.h"  // GiveFromClass, the starter-kit probe
+#include "ue_wrap/engine/engine.h"      // SetSaveObjectReadyHook, the pre-materialise apply point
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/core/log.h"
 
@@ -37,13 +37,11 @@ using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- HOST: per-slot received-blob state + the reassembler ----
+// Host: the per-slot received-blob state and the reassembler.
 coop::blob_chunks::Assembler g_assembler;
 struct HostEntry {
     std::string          guid;
-    std::string          nick;                // SNAPSHOT at receive (game thread); FlushSlot must
-                                              // NOT call the GT-only NicknameForSlot, because
-                                              // FlushAllToDisk runs on the WINDOW thread at shutdown
+    std::string          nick;                // a snapshot at receive (game thread): the shutdown flush runs off the game thread
     std::vector<uint8_t> blob;
     uint64_t             hash = 0;
     bool                 dirty = false;       // received, not yet flushed to disk
@@ -51,7 +49,7 @@ struct HostEntry {
 };
 std::array<HostEntry, coop::net::kMaxPeers> g_hostBySlot;
 
-// ---- CLIENT: send-dedup state ----
+// Client: the send-dedup state.
 uint64_t          g_lastSentHash = 0;
 uint32_t          g_sendSeq = 0;
 Clock::time_point g_lastPoll{};
@@ -61,39 +59,36 @@ constexpr auto kClientPoll  = std::chrono::seconds(1);
 constexpr auto kWriteRate   = std::chrono::seconds(15);
 constexpr auto kAsmTtl      = std::chrono::seconds(30);
 
-// ---- The live per-player apply on join (host->client push + the SaveObjectReadyHook) ----
-// The host pushes each joiner its persisted inventory (coop_players/<slot>/<guid>.json); the client
-// buffers it (g_pendingApply) and the pre-materialize SaveObjectReadyHook substitutes it into the
-// freshly-loaded save object BEFORE the native loadObjects() builds the live world from it -- so the
-// joiner gets THEIR OWN per-player items, not the host's save inventory. This IS the inventory
-// behaviour now (no rollout flag -- RULE 2: a flag that kept the old v56 host-save inheritance as a
-// parallel path was migration baggage, retired once the apply was verified end-to-end). The only
-// fallback is the SaveObjectReadyHook no-op below, for the degenerate case where the apply blob
-// genuinely never arrived -- it KEEPS the loaded inventory rather than wiping.
+// The live per-player apply on join. The host pushes each joiner its persisted inventory
+// (coop_players/<slot>/<guid>.json); the client buffers it and the pre-materialise save-object
+// hook substitutes it into the freshly loaded save object before the native load builds the
+// live world from it, so the joiner gets their own items, not the host's save inventory. The
+// only fallback is the hook's no-op for a blob that never arrived, which keeps the loaded
+// inventory rather than wiping.
 
-// CLIENT: the host's on-join apply blob, reassembled here (separate Assembler from the host's
-// receive path -- host->client is a distinct stream direction). Deserialized into g_pendingApply.
+// Client: the host's on-join apply blob, reassembled here (a separate assembler from the
+// host's receive path, since host-to-client is a distinct stream direction).
 coop::blob_chunks::Assembler g_clientAssembler;
 ue_wrap::inventory::PlayerInventory g_pendingApply;
 std::atomic<bool> g_hasPendingApply{false};
 
-// HOST: per-slot send sequence for the on-join inventory push (independent of the client stream's
-// g_sendSeq space; assembler keys are per-(sender,seq) so they never collide cross-direction).
+// Host: the per-slot send sequence for the on-join push (independent of the client stream's
+// sequence space; assembler keys are per sender and sequence, so they never collide).
 std::array<uint32_t, coop::net::kMaxPeers> g_hostSendSeq{};
-// HOST: per-slot "apply blob already pushed this connection" latch. The push must land in the
-// joiner's PRE-WORLD window (the ConnectReplayForSlot edge fires at world-ready, too late), so it
-// is driven from the host tick the instant the slot is connected AND its Join GUID has arrived --
-// which is well before the client finishes its save transfer + loads. Reset on disconnect.
+// Host: the per-slot pushed-this-connection latch. The push must land in the joiner's
+// pre-world window (the connect-replay edge fires at world-ready, too late), so it is driven
+// from the host tick the instant the slot is connected and its join GUID has arrived, well
+// before the client finishes its save transfer and load. Reset on disconnect.
 std::array<bool, coop::net::kMaxPeers> g_applySentToSlot{};
 
-// Build <gameDir>/coop_players/<hostSlot>/<guid>.json. Empty path if any piece is missing.
-// User request (2026-06-15): store in the GAME folder (next to the payload DLL / multivoid.ini/.log), NOT in
-// AppData -- so the per-player inventory jsons are easy to find + hand-edit. Still keyed per host
-// SAVE SLOT (a subfolder under coop_players) so different worlds keep separate inventories.
+// Build <gameDir>/coop_players/<hostSlot>/<guid>.json, empty if any piece is missing. Stored
+// in the game folder beside the ini and the log rather than in AppData, so the per-player
+// files are easy to find and hand-edit; keyed per host save slot, so different worlds keep
+// separate inventories.
 fs::path PlayerFilePath(const std::string& guid) {
-    // Defense in depth (the wire boundary already validates): a GUID that is not exactly 32 hex
-    // chars must NEVER become a path component -- return empty so every write path no-ops cleanly,
-    // foreclosing path traversal even if a non-hex guid ever reaches here. (Adversarial-verify HIGH.)
+    // Defence in depth (the wire boundary already validates): a GUID that is not exactly 32 hex
+    // characters never becomes a path component; an empty path makes every write no-op, so a
+    // non-hex GUID cannot traverse.
     if (!coop::player_handshake::IsValidGuid(guid)) return {};
     const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
@@ -110,12 +105,10 @@ std::string Hex(const std::vector<uint8_t>& b) {
     return s;
 }
 
-// The nick goes into a JSON string field below. ENCODING is the codec's job
-// (until 2026-07-28 this dropped every non-ASCII byte, so a Cyrillic player's
-// record carried an empty name); ESCAPING is this site's, because the container
-// is JSON. Raw UTF-8 is valid inside a JSON string -- only the two structural
-// metacharacters have to go, and they cannot appear inside a multi-byte sequence
-// (continuation bytes are all >= 0x80), so dropping them cannot corrupt one.
+// The nick goes into a JSON string field below. Encoding is the codec's job; escaping is this
+// site's, because the container is JSON. Raw UTF-8 is valid inside a JSON string, only the
+// two structural metacharacters have to go, and they cannot appear inside a multi-byte
+// sequence (continuation bytes are all above 0x7F), so dropping them cannot corrupt one.
 std::string NickForJson(const std::wstring& w) {
     std::string s = coop::text::CapUtf8Bytes(coop::text::ToUtf8(w), coop::text::kNickMaxBytes);
     s.erase(std::remove_if(s.begin(), s.end(),
@@ -124,9 +117,9 @@ std::string NickForJson(const std::wstring& w) {
     return s;
 }
 
-// Persist `blob` to `file` ROBUSTLY: magic + FNV integrity + a readable nick/lastSeen, written
-// atomically (tmp + rename) and keeping a .bak of the last-good file so a corrupt edit can be
-// recovered (the user-tinkering case). Returns false on I/O failure (logged).
+// Persist `blob` to `file`: a magic, an FNV integrity hash and a readable nick and last-seen,
+// written atomically (a temp file and a rename) and keeping a .bak of the last good file so a
+// corrupt hand edit can be recovered. False on I/O failure, logged.
 bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const std::string& nick) {
     if (file.empty()) return false;
     std::error_code ec;
@@ -136,7 +129,7 @@ bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const
                 file.parent_path().c_str(), ec.message().c_str());
         return false;
     }
-    // Keep the last-good file as <file>.bak before overwriting (corruption recovery).
+    // Keep the last good file as .bak before overwriting.
     if (fs::exists(file, ec))
         fs::copy_file(file, fs::path(file).concat(L".bak"), fs::copy_options::overwrite_existing, ec);
     const uint64_t fnv = coop::blob_chunks::Fnv64(blob);
@@ -169,7 +162,7 @@ bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const
     return true;
 }
 
-// Decode a lowercase/upper hex string to bytes. False on an odd length or a non-hex digit.
+// Decode a hex string of either case to bytes. False on an odd length or a non-hex digit.
 bool UnHex(const std::string& s, std::vector<uint8_t>& out) {
     if (s.size() & 1) return false;
     auto nib = [](char c) -> int {
@@ -188,7 +181,7 @@ bool UnHex(const std::string& s, std::vector<uint8_t>& out) {
     return true;
 }
 
-// Extract the value of a "key":"..." string field from our flat JSON (no nesting/escapes used).
+// Extract the value of a string field from our flat JSON (no nesting or escapes are used).
 bool JsonStr(const std::string& doc, const char* key, std::string& out) {
     std::string needle = std::string("\"") + key + "\":\"";
     const size_t k = doc.find(needle);
@@ -200,10 +193,9 @@ bool JsonStr(const std::string& doc, const char* key, std::string& out) {
     return true;
 }
 
-// Parse one persisted inventory file at `file` into `outBlob`. Defensive against host tinkering
-// (the user-edit case): requires magic "VCPI", a parseable hex blob, and a matching FNV (the
-// blob's stored integrity hash). False (caller tries .bak, then EMPTY) on any failure -- never
-// throws, never returns unverified bytes.
+// Parse one persisted inventory file into `outBlob`. Defensive against a hand edit: requires
+// the magic, a parseable hex blob and a matching FNV. False on any failure (the caller tries
+// the .bak, then empty); never throws, never returns unverified bytes.
 bool ParseBlobFile(const fs::path& file, std::vector<uint8_t>& outBlob) {
     std::error_code ec;
     if (file.empty() || !fs::exists(file, ec)) return false;
@@ -234,10 +226,9 @@ bool ParseBlobFile(const fs::path& file, std::vector<uint8_t>& outBlob) {
     return true;
 }
 
-// Read peer GUID `guid`'s persisted inventory blob, FNV-verified, with a .bak fallback. Returns
-// false (caller uses an EMPTY inventory) when neither the file nor its .bak is valid -- the
-// fail-safe that guarantees a corrupt/missing file can NEVER leak another player's inventory or
-// crash; the player just starts empty.
+// Read a peer GUID's persisted inventory blob, FNV-verified, with the .bak fallback. False
+// when neither file is valid, and the caller uses an empty inventory: a corrupt or missing
+// file can never leak another player's inventory or crash; the player starts empty.
 bool ReadBlobFile(const std::string& guid, std::vector<uint8_t>& outBlob) {
     const fs::path file = PlayerFilePath(guid);
     if (file.empty()) return false;
@@ -251,15 +242,15 @@ bool ReadBlobFile(const std::string& guid, std::vector<uint8_t>& outBlob) {
     return false;
 }
 
-// Flush one host slot's pending blob to its <guid>.json (ignores the rate-limit -- used on
-// disconnect/shutdown). Clears dirty.
+// Flush one host slot's pending blob to its file, ignoring the rate limit (disconnect and
+// shutdown). Clears dirty.
 void FlushSlot(int slot) {
     if (slot < 0 || slot >= coop::net::kMaxPeers) return;
     HostEntry& e = g_hostBySlot[slot];
     if (!e.dirty || e.guid.empty()) return;
-    // Use the nick SNAPSHOT captured in OnReliable (game thread). FlushSlot is reachable from the
-    // window-thread shutdown flush (FlushAllToDisk), so it must touch NO game-thread-only state
-    // (NicknameForSlot reads a GT-only side table -- a torn-wstring race on host exit otherwise).
+    // The nick snapshot captured at receive, on the game thread: this is reachable from the
+    // shutdown flush off the game thread, so it must touch no game-thread-only state (the
+    // nickname table is one).
     if (WriteBlobFile(PlayerFilePath(e.guid), e.blob, e.nick)) {
         e.dirty = false;
         e.lastWrite = Clock::now();
@@ -268,7 +259,7 @@ void FlushSlot(int slot) {
     }
 }
 
-// CLIENT: poll the live inventory, serialize, and stream to the host ON CHANGE (~1 Hz).
+// Client: poll the live inventory at 1 Hz, serialise, and stream it to the host on change.
 void ClientStreamTick(coop::net::Session* s) {
     const Clock::time_point now = Clock::now();
     if (now - g_lastPoll < kClientPoll) return;
@@ -285,8 +276,8 @@ void ClientStreamTick(coop::net::Session* s) {
     }  // else: channel busy -> retry next poll under a fresh seq (the blob unchanged)
 }
 
-// HOST: sweep stale half-assemblies + flush rate-limited dirty blobs + push each newly-connected
-// joiner its per-player apply blob ONCE (the pre-world connect edge -- see g_applySentToSlot).
+// Host: sweep stale half-assemblies, flush the rate-limited dirty blobs, and push each newly
+// connected joiner its per-player apply blob once (the pre-world connect edge).
 void HostPersistTick(coop::net::Session* s) {
     const Clock::time_point now = Clock::now();
     if (now - g_lastSweep < std::chrono::seconds(1)) return;
@@ -295,15 +286,11 @@ void HostPersistTick(coop::net::Session* s) {
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         HostEntry& e = g_hostBySlot[slot];
         if (e.dirty && now - e.lastWrite >= kWriteRate) FlushSlot(slot);
-        // Connect-edge apply push: once a slot is connected AND its GUID has arrived (carried in the
-        // Join), send it its persisted per-player inventory ONCE, latching on a successful enqueue.
-        // SendInventoryToSlot returns false on a channel-busy refusal (or a not-yet-arrived GUID), so
-        // an un-latched failure simply retries on the next 1 Hz tick until it goes out -- the original
-        // "latch even on refusal" bug ("no inventory blob") is fixed by latching on TRUE only. GNS
-        // reliable delivery guarantees the single enqueued blob reaches the joiner during its pre-world
-        // wait, where the (now PRE-WORLD-installed) receiver buffers it for OnSaveObjectReady. No spray
-        // is needed: the earlier "never arrived" symptom was the receiver's g_session being null during
-        // the wait (the world-gated Install bug, now fixed at StartCoopSession), not lossy delivery.
+        // The connect-edge push: once a slot is connected and its GUID has arrived (carried in the
+        // join), send it its persisted inventory once, latching on a successful enqueue only, so a
+        // channel-busy refusal or a not-yet-arrived GUID retries on the next 1 Hz tick. Reliable
+        // delivery carries the single blob to the joiner during its pre-world wait, where the
+        // receiver, installed before any world, buffers it for the save-object hook.
         if (!g_applySentToSlot[slot] && s->IsSlotConnected(slot) &&
             !coop::player_handshake::GuidForSlot(slot).empty()) {
             if (SendInventoryToSlot(slot)) g_applySentToSlot[slot] = true;
@@ -311,11 +298,11 @@ void HostPersistTick(coop::net::Session* s) {
     }
 }
 
-// CLIENT: the engine's pre-materialize hook (registered in Install). Fires on the game thread
-// with the freshly loaded/created save object, BEFORE the native loadObjects() builds the world
-// from it -- the one window to substitute this client's per-player inventory. Self-gates: only a
-// CLIENT, only with a pending blob (the join boot waits for it). On a miss it SKIPS (leaves the
-// loaded inventory) rather than wiping -- never destroys data it can't replace.
+// Client: the engine's pre-materialise hook, registered in Install. Fires on the game thread
+// with the freshly loaded save object, before the native load builds the world from it, the
+// one window to substitute this client's inventory. Self-gates: only a client, only with a
+// pending blob (the join boot waits for it). On a miss it leaves the loaded inventory rather
+// than wiping; it never destroys data it cannot replace.
 void OnSaveObjectReady(void* saveSlotObject) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Client) return;  // only a joining client applies
@@ -339,8 +326,8 @@ void OnSaveObjectReady(void* saveSlotObject) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // Inc 4: arm the engine's pre-materialize apply point (no-op until a client join with the
-    // apply gate on + a pending blob). Idempotent re-arm across Stop()/Start() is harmless.
+    // Arm the engine's pre-materialise apply point (a no-op until a client join has a pending
+    // blob). Re-arming across stop and start is harmless.
     ue_wrap::engine::SetSaveObjectReadyHook(&OnSaveObjectReady);
 }
 
@@ -351,7 +338,7 @@ void Tick() {
         else                                      HostPersistTick(s);
     }
 
-    // INCREMENT 2 read-verify self-test (ini inventory_selftest=1). One-shot; dev diagnostic.
+    // The read-verify selftest (ini inventory_selftest=1). One-shot; a dev diagnostic.
     static const bool s_selftest = ::coop::config::ResolveFlag(::coop::config_registry::rows::inventory_selftest);
     if (!s_selftest) return;
     static bool s_done = false;
@@ -386,10 +373,9 @@ void Tick() {
             blob1.size(), de ? 1 : 0, roundtrip ? "OK" : "MISMATCH",
             inv2.inventory.size(), inv2.equipment.size(), inv2.hold.size());
 
-    // RULE-1 proper-fix PROBE (ini starterkit_test=1, dev-only): equip the 3 SP starters via the
-    // game's OWN AddEquipment (begin_equipment::GiveFromClass) + re-read, confirming the canonical
-    // equip path adds the items BEFORE it's wired to the first-join edge. One-shot (rides this
-    // one-shot selftest). Removed once first-join uses it.
+    // A dev probe (ini starterkit_test=1): equip the three starters through the game's own
+    // add-equipment path and re-read, confirming the canonical equip path adds them. One-shot,
+    // riding the selftest.
     if (::coop::config::ResolveFlag(::coop::config_registry::rows::starterkit_test)) {
         for (const wchar_t* c : {L"prop_equipment_flashlight_C", L"prop_equipment_glasses_C",
                                  L"prop_equipment_compass_C"})
@@ -406,7 +392,7 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
 
-    // CLIENT direction (Inc 4): the host (slot 0) pushed this client its per-player apply blob.
+    // The client direction: the host pushed this client its per-player apply blob.
     if (s->role() == coop::net::Role::Client) {
         if (senderPeerSlot != 0) return;  // only the host pushes the apply blob
         std::vector<uint8_t> blob;
@@ -425,7 +411,7 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
         return;
     }
 
-    // HOST direction (Inc 3): a CLIENT slot streamed its live inventory to persist.
+    // The host direction: a client slot streamed its live inventory to persist.
     if (s->role() != coop::net::Role::Host) return;
     if (senderPeerSlot < 1 || senderPeerSlot >= coop::net::kMaxPeers) return;  // a CLIENT slot
     std::vector<uint8_t> blob;
@@ -444,13 +430,12 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     e.hash = hash;
     e.nick = NickForJson(coop::player_handshake::NicknameForSlot(senderPeerSlot));  // GT snapshot
     e.dirty = true;
-    // Write now if the rate-limit window has passed; else HostPersistTick flushes it.
+    // Write now if the rate-limit window has passed; else the host tick flushes it.
     if (Clock::now() - e.lastWrite >= kWriteRate) FlushSlot(senderPeerSlot);
 }
 
-// The SP New-Game starter items (RE 2026-06-16: a New Game gives the player exactly these three --
-// glasses rides the MAIN inventory, flashlight + compass ride the worn-equipment slot array; the
-// game's `beginEquipment` logic adds them at New Game and the host save retains them across play).
+// The single-player starter items: the game's begin-equipment logic gives exactly these three
+// at New Game, and the host save retains them across play.
 int StarterIndex(const std::wstring& className) {
     if (className == L"prop_equipment_flashlight_C") return 0;
     if (className == L"prop_equipment_glasses_C")    return 1;
@@ -458,15 +443,15 @@ int StarterIndex(const std::wstring& className) {
     return -1;
 }
 
-// Build the first-join STARTER KIT (flashlight + glasses + compass) by reading the host's OWN live
-// inventory and keeping only those three (one per class) -- valid, complete save records with no
-// hardcoded struct layout and no inheriting the host's other items. The 8-slot worn-equipment array
-// shape is preserved (non-starter / duplicate slots cleared) so the kit keeps the New-Game layout.
-// Returns false if no starter item is present (host dropped them / saveSlot unresolvable) -> caller
-// sends EMPTY. Game thread (ReadAll).
-// NOTE: the copied records carry the host's item KEYS -- benign while the items are held/worn
-// inventory DATA (not world actors); only a simultaneous DROP of the same starter item by multiple
-// peers would collide on the world-prop key. Follow-up (regenerate keys) only if that's observed.
+// Build the first-join starter kit (flashlight, glasses, compass) by reading the host's own
+// live inventory and keeping only those three, one per class: valid, complete save records
+// with no hardcoded struct layout and none of the host's other items. The worn-equipment
+// array shape is preserved (non-starter and duplicate slots cleared) so the kit keeps the
+// New Game layout. False if no starter item is present (the host dropped them, or the save
+// slot is unresolvable), and the caller sends empty. Game thread. The copied records carry
+// the host's item keys, benign while the items are held or worn inventory data rather than
+// world actors; only a simultaneous drop of the same starter item by several peers would
+// collide on the world-prop key.
 bool BuildFirstJoinStarterKit(ue_wrap::inventory::PlayerInventory& out) {
     ue_wrap::inventory::PlayerInventory host;
     if (!ue_wrap::inventory::ReadAll(host)) return false;
@@ -502,11 +487,11 @@ bool SendInventoryToSlot(int peerSlot) {
     }
     std::vector<uint8_t> blob;
     if (!ReadBlobFile(guid, blob)) {
-        // First join (no persisted file / corrupt + no .bak): seed the SP starter kit (flashlight +
-        // glasses + compass) so the player isn't dropped into the host's world empty-handed (it is
-        // confirmed empty otherwise -- a loaded coop save runs no begin-equipment). Read off the
-        // host's own live inventory, filtered to the 3 starter classes. On failure / kit absent,
-        // degrade to EMPTY (fail-safe -- never inherit the host's other or another player's items).
+        // First join (no persisted file, or corrupt with no .bak): seed the starter kit so the
+        // player is not dropped into the host's world empty-handed (a loaded coop save runs no
+        // begin-equipment, so they would be). Read off the host's own live inventory, filtered to
+        // the three starter classes; if the kit is absent, degrade to empty, never to the host's
+        // other items or another player's.
         ue_wrap::inventory::PlayerInventory kit;
         if (BuildFirstJoinStarterKit(kit)) {
             blob = coop::inventory_wire::Serialize(kit);
@@ -547,9 +532,9 @@ void OnDisconnect() {
     if (s && s->role() == coop::net::Role::Host) {
         for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlot(slot);
     }
-    // Client: reset the send-dedup so a reconnect re-streams, and drop any pending apply blob +
-    // its assembler so a rejoin waits for a FRESH host push (never applies a stale inventory to
-    // a new world).
+    // Client: reset the send dedup so a reconnect re-streams, and drop any pending apply blob and
+    // its assembler, so a rejoin waits for a fresh host push and never applies a stale inventory
+    // to a new world.
     g_lastSentHash = 0;
     g_lastPoll = Clock::time_point{};
     g_hasPendingApply.store(false, std::memory_order_release);
@@ -584,9 +569,9 @@ void EnsurePlayerFile(int peerSlot) {
                 peerSlot, guid.c_str(), file.c_str());
         return;
     }
-    // First join for this GUID on this save -> write an EMPTY-inventory file in the real
-    // magic+FNV format (NOT a raw placeholder), so the on-disk format is uniform. The client's
-    // inventory stream overwrites it ~1 s later if it has items.
+    // First join for this GUID on this save: write an empty-inventory file in the real magic and
+    // FNV format, so the on-disk format is uniform. The client's inventory stream overwrites it a
+    // second later if it has items.
     const std::vector<uint8_t> empty = coop::inventory_wire::Serialize(ue_wrap::inventory::PlayerInventory{});
     const std::string nick = NickForJson(coop::player_handshake::NicknameForSlot(peerSlot));
     if (WriteBlobFile(file, empty, nick))
