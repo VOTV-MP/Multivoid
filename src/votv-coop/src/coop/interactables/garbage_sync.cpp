@@ -1,21 +1,14 @@
-// coop/garbage_sync.cpp -- Phase 5G Inc 1: stop the open-container per-tick
-// AV when picking up a garbage pile on the client.
-//
-// Root cause (research/findings/piles-trash/votv-garbage-trash-interaction-RE-2026-05-27.md):
-// Aprop_openContainer_C::ReceiveTick + checkPickup walk a TArray<AActor*>
-// itemsInside at +0x378 every tick. On the client, after a save-load + the
-// per-peer-divergent undergroundGarbageSpawner has run, the array holds
-// AActor* pointers to entities the host spawned but the client never did
-// (or vice versa). Walking those derefs a freed/GC'd actor -> AV reading
-// at offset 0x0F (an AActor flag byte on a stale pointer). Local-only
-// pickup mechanics (the GarbageContainer's mesh + collision + PHC grab)
-// don't need that BP body; cancelling it via PRE-interceptor on the
-// client removes the AV without affecting the held-pose stream or the
-// PropPose/PropRelease shell sync that already works for these actors.
-//
-// The cancel is GATED on class name -- only Aprop_garbageContainer_C (and
-// any future garbage-only subclass of openContainer) cancels. Storage
-// suitcases / drawers / other open containers tick normally.
+// coop/interactables/garbage_sync.cpp -- stop the open-container per-tick crash when picking
+// up a garbage pile on the client. The open container's tick and pickup check walk an array
+// of contained actors every tick; on the client, after a save load and a per-peer divergent
+// underground spawner, the array holds pointers to entities the host spawned but the client
+// never did (or the reverse), and walking them dereferences a freed actor. Local-only pickup
+// mechanics (the container's mesh, collision and physics-handle grab) do not need that
+// blueprint body; cancelling it on the client removes the crash without touching the
+// held-pose stream or the prop pose and release sync that already works for these actors.
+// The cancel is gated on class: only the garbage container (and any future garbage-only
+// subclass of the open container) cancels; storage suitcases, drawers and other open
+// containers tick normally.
 
 #include "coop/interactables/garbage_sync.h"
 
@@ -35,32 +28,24 @@ namespace GT = ue_wrap::game_thread;
 
 namespace {
 
-// Session pointer (atomic for the parallel-anim-worker ProcessEvent shape).
+// The session pointer (atomic for the parallel-anim worker dispatch shape).
 std::atomic<coop::net::Session*> g_session_ptr{nullptr};
 
 coop::net::Session* LoadSession() {
     return g_session_ptr.load(std::memory_order_acquire);
 }
 
-// Installer state -- one-shot per process. Retries on Install() until the
-// open-container UClass is loaded (BP classes load on-demand at first
-// world enter).
+// Installer state, one-shot per process; Install retries until the open-container class is
+// loaded (blueprint classes load on demand at the first world enter).
 std::atomic<bool> g_installed{false};
 
-// Garbage-container UClass cache, resolved ONCE at Install() time and
-// reused per-tick for a pointer-compare class filter. Replaces an earlier
-// `R::ClassNameOf(self).find(L"garbage")` per-call test that allocated a
-// fresh std::wstring on every dispatch (audit I1, 2026-05-27): heap alloc
-// per frame per open-container instance, on the BP-VM dispatch hot path.
-// With kMaxObservers fan-out and N open containers in the world that was
-// N heap allocs/frame. Single pointer compare is O(1) zero-alloc.
-//
-// Today only `Aprop_garbageContainer_C` is the openContainer subclass we
-// care about (Aprop_garbageBag_C derives from Aprop_C directly,
-// Aprop_garbageBin_C derives from Aprop_container_C -- neither is on the
-// openContainer interceptor target). If a future patch adds another
-// garbage-only openContainer subclass, walk the SuperStruct chain in
-// IsGarbageInstance to cover it (~3 ptr loads, still no alloc).
+// The garbage-container class, resolved once at install and reused per tick for a
+// pointer-compare class filter. A per-call class-name search allocated a fresh string on
+// every dispatch, on the blueprint dispatch hot path, one heap allocation per frame per open
+// container; a pointer compare allocates nothing. Only the garbage container is the
+// open-container subclass that matters (the garbage bag derives from the prop base and the
+// bin from the container class, neither on the intercepted target); a future garbage-only
+// subclass would need the superclass walk here.
 void* g_garbageContainerCls = nullptr;
 
 bool IsGarbageInstance(void* self) {
@@ -68,19 +53,18 @@ bool IsGarbageInstance(void* self) {
     return R::ClassOf(self) == g_garbageContainerCls;
 }
 
-// PRE-interceptor: client + garbage-class -> return true (cancel BP body).
-// Host + any other open-container subclass -> return false (run normally).
+// The interceptor: a client and the garbage class returns true (cancel the blueprint body);
+// the host, or any other open-container subclass, returns false (run normally).
 bool OnOpenContainerReceiveTickPre(void* self, void* /*params*/) {
     auto* s = LoadSession();
-    // running()-gated, NOT bare role(): role() reads cfg_.role which Stop never resets -- a bare
-    // role gate keeps cancelling in SOLO play after a client session ends (the post-session
-    // SP-bleed class; the serverbox breaker instance was fixed db6ecd0b, this one found by the
-    // same-class census 2026-07-10). fn-body PRE-cancels SELF-restore once gated on running().
+    // Gated on running, not a bare role: the role is the config's, and the stop never resets it,
+    // so a bare role gate keeps cancelling in solo play after a client session ends. A
+    // function-body cancel self-restores once gated on running.
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return false;
     if (!IsGarbageInstance(self)) return false;
-    // Throttled cancel-log so we can prove the path fires the first few
-    // times but a 60-Hz tick over many garbage containers doesn't drown
-    // the log. Same throttle policy as grab_observer's per-tick logs.
+    // A throttled cancel log, so the path proves it fires the first few times while a 60 Hz
+    // tick over many garbage containers does not drown the log. The same throttle policy as the
+    // grab observer's per-tick logs.
     static std::atomic<uint64_t> sCount{0};
     const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 || (n % 300) == 0) {
@@ -92,10 +76,9 @@ bool OnOpenContainerReceiveTickPre(void* self, void* /*params*/) {
 
 bool OnOpenContainerCheckPickupPre(void* self, void* /*params*/) {
     auto* s = LoadSession();
-    // running()-gated, NOT bare role(): role() reads cfg_.role which Stop never resets -- a bare
-    // role gate keeps cancelling in SOLO play after a client session ends (the post-session
-    // SP-bleed class; the serverbox breaker instance was fixed db6ecd0b, this one found by the
-    // same-class census 2026-07-10). fn-body PRE-cancels SELF-restore once gated on running().
+    // Gated on running, not a bare role: the role is the config's, and the stop never resets it,
+    // so a bare role gate keeps cancelling in solo play after a client session ends. A
+    // function-body cancel self-restores once gated on running.
     if (!s || !s->running() || s->role() != coop::net::Role::Client) return false;
     if (!IsGarbageInstance(self)) return false;
     UE_LOGI("garbage_sync[checkPickup PRE]: cancelling BP body on client garbage container %p",
@@ -103,32 +86,21 @@ bool OnOpenContainerCheckPickupPre(void* self, void* /*params*/) {
     return true;
 }
 
-// ---- Inc 3: host-authoritative spawner suppression ---------------------
-//
-// Three spawners whose output is in the trash/keyed sync universe cancel on
-// the client so only the host rolls those spawns; their output rides the
-// prop pipeline back to the client. Tool_garbageSpawner_C is INTENTIONALLY
-// not suppressed -- toolgun fire is a per-shot local player action
-// (principle 6: augment SP, route per-player inside SP systems), and its
-// spawn output is captured by the Init POST observer on the firing peer +
-// broadcast from there.
-//
-// undergroundGarbageSpawner_C deliberately UN-suppressed (Fork C
-// 2026-06-10): bytecode-proven to mint ONLY dirthole_item_C buried-item
-// mounds (NOT chip piles -- the old row's "output rides the broadcast"
-// rationale was falsified: dirthole_item is outside the snapshot +
-// broadcast universe entirely), so suppressing it just deleted the client's
-// per-peer loot mounds with no host replacement. Dirtholes are per-peer
-// LOCAL by doctrine (COOP_SCOPE).
-//
-// All 3 use RegisterInterceptor with the same shared callback that role-
-// gates on client + returns true. Cancel-throttled per-class to keep the
-// log readable while still proving the path fires.
+// Host-authoritative spawner suppression. Three spawners whose output is in the trash and
+// keyed sync universe cancel on the client, so only the host rolls those spawns and their
+// output rides the prop pipeline back to the client. The toolgun spawner is deliberately not
+// suppressed: toolgun fire is a per-shot local player action (augment single player, route
+// per player inside its systems), and its spawn output is captured by the init observer on
+// the firing peer and broadcast from there. The underground garbage spawner is deliberately
+// unsuppressed too: it mints only buried-item mounds, not chip piles, outside the snapshot
+// and broadcast universe entirely, so suppressing it deleted the client's per-peer loot
+// mounds with no host replacement; dirt holes are per-peer local by design. All three use
+// one shared callback that role-gates on the client and returns true, cancel-throttled per
+// class to keep the log readable while still proving the path fires.
 
-// Generic role-gated PRE-cancel for a periodic / event spawner. The
-// callback uses a static atomic counter per call site (via the
-// MAKE_SPAWNER_CANCEL macro) so each spawner's first 3 + every 60th
-// log lines are distinguishable in the log.
+// The generic role-gated cancel for a periodic or event spawner. The callback uses a static
+// counter per call site (the macro), so each spawner's first three and every sixtieth log
+// lines are distinguishable.
 #define MAKE_SPAWNER_CANCEL(fn_name, log_tag)                                       \
 bool fn_name(void* self, void* /*params*/) {                                        \
     auto* s = LoadSession();                                                        \
@@ -152,8 +124,8 @@ MAKE_SPAWNER_CANCEL(OnBaseCleanerTrashBitsBeginPlayPre,
 
 #undef MAKE_SPAWNER_CANCEL
 
-// State for Inc 3 spawner installs. Independent of g_installed so an
-// Inc 1 success doesn't preempt the Inc 3 retry loop (and vice versa).
+// State for the spawner installs, independent of the container latch so one success does
+// not pre-empt the other's retry loop.
 std::atomic<bool> g_spawnersInstalled{false};
 
 bool InstallSpawnerSuppressors() {
@@ -165,14 +137,12 @@ bool InstallSpawnerSuppressors() {
         UFunctionInterceptor cb;
         const char* tag;
     };
-    // The BndEvt name for Aevent_trashPiles_C is the full canonical
-    // delegate signature per the CXX dump. Long names are routine in BP
-    // overlap handlers; FindFunction returns the UFunction by name match.
-    // baseCleaner_trashBits_C has no methods of its own; the inherited
-    // ReceiveBeginPlay is on the BASE baseCleaner_C class. We register on
-    // the leaf so a future override picks up; if the BP author hasn't
-    // overridden, FindFunction walks up the SuperStruct chain and returns
-    // the parent's UFunction -- same dispatch object.
+    // The bound-event name for the trash-piles event is the full canonical delegate signature
+    // from the header dump; long names are routine in blueprint overlap handlers, and the
+    // function lookup matches by name. The trash-bits cleaner has no methods of its own and
+    // inherits its begin-play from the base cleaner class; registering on the leaf picks up a
+    // future override, and otherwise the lookup walks up the superclass chain and returns the
+    // parent's UFunction, the same dispatch object.
     const Target targets[] = {
         {L"event_trashPiles_C",
             L"BndEvt__event_funnyGascans_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
@@ -204,9 +174,9 @@ bool InstallSpawnerSuppressors() {
         UE_LOGI("garbage_sync[spawner]: PRE-interceptor installed -- %ls::%ls (%s)",
                 t.cls, t.fn, t.tag);
     }
-    // Latch as installed only when ALL targets resolved + registered.
-    // A partial install leaves some spawners ungated -> per-peer divergence
-    // bug remains. Retry next Install() call until everything's loaded.
+    // Latch as installed only when all targets resolved and registered: a partial install
+    // leaves some spawners ungated and the per-peer divergence remains. Retry on the next
+    // Install call until everything is loaded.
     const int total = static_cast<int>(sizeof(targets) / sizeof(targets[0]));
     if (registered == total) {
         g_spawnersInstalled.store(true, std::memory_order_release);
@@ -227,21 +197,18 @@ void Install() {
     if (g_installed.load(std::memory_order_acquire)) return;
     void* cls = R::FindClass(L"prop_openContainer_C");
     if (!cls) {
-        // BP class not loaded yet -- retry on the next Install() call from
-        // harness. No noise: the BP class loads on first world enter so
-        // this is expected for the first few seconds after boot.
+        // The class is not loaded yet; retry on the next Install call. No noise: the class loads on
+        // the first world enter, so this is expected for the first seconds after boot.
         return;
     }
-    // Resolve + cache the garbage container UClass for the per-tick filter.
-    // Gating Install() on BOTH classes being loaded avoids the case where
-    // the interceptors fire while g_garbageContainerCls is null -- which
-    // would let the BP body run on a garbage container (since the filter
-    // false-negatives) and re-trigger the AV that this whole module exists
-    // to prevent. Both BP classes load at world enter from the same .uasset
-    // tree, so they typically resolve together.
+    // Resolve and cache the garbage-container class for the per-tick filter. Gating the install
+    // on both classes being loaded avoids the interceptors firing while the class is null, which
+    // would let the body run on a garbage container (the filter false-negative) and re-trigger
+    // the crash this module exists to prevent. Both classes load at world enter from the same
+    // asset tree, so they typically resolve together.
     void* garbageCls = R::FindClass(L"prop_garbageContainer_C");
     if (!garbageCls) {
-        // Same retry-quietly behaviour as the openContainer case above.
+        // The same quiet retry as the open-container case above.
         return;
     }
     g_garbageContainerCls = garbageCls;
@@ -262,8 +229,8 @@ void Install() {
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("garbage_sync: Inc 1 installed -- prop_openContainer_C::ReceiveTick + checkPickup PRE-interceptors (client-side, garbageContainer UClass=%p)",
             g_garbageContainerCls);
-    // Try Inc 3 (spawner suppressors) in the same call; independent retry
-    // path if any spawner class hasn't loaded yet.
+    // Try the spawner suppressors in the same call; an independent retry path if any spawner
+    // class has not loaded yet.
     InstallSpawnerSuppressors();
 }
 
