@@ -108,7 +108,7 @@ emails, console, alarm). Two framings:
   health + catchedSignals) so the client neither runs `ticker_serverBreaker` NOR self-authors any server
   notification, and its console/emails read the TRUE host state. Larger, but the faithful coop shape.
 The design /qf pressures which increment is the least-crutches first step. Server-state sync may be its own
-lane (docs/COOP_SCOPE amendment) — flag for the user before the big build.
+lane (docs/SCOPE amendment) — flag for the user before the big build.
 
 ## Flagged guesses / not byte-verified
 - addHint + addEmail type-byte legends are **inferred from usage**, not decoded enums. **[?]**

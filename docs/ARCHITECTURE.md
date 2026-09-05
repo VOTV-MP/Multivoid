@@ -174,7 +174,7 @@ Mirrors MTA's `CClientPed::m_pPlayerPed -> CPlayerPed*`.
 2. Engine-extension paradigm.
 3. Parallel class hierarchy mirroring engine structures.
 4. Targeted crash fixes, not broad suppression.
-5. Minimum viable subset (`COOP_SCOPE.md` is law).
+5. Minimum viable subset (`SCOPE.md` is law).
 6. Augment SP, never replace it.
 7. Engine-wrapper layer vs gameplay/network layer.
 

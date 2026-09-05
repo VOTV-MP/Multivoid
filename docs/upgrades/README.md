@@ -89,7 +89,7 @@ Upgrades split by AUTHORITY along the same line as everything else (principle 6 
   resource).
 
 None of this is built. It is **OPEN-3** in `docs/signals/TRACKER.md` and a scope item in
-`docs/COOP_SCOPE.md`. When designed, follow the syncer model (`docs/COOP_SYNCER_MODEL.md`) + the
+`docs/SCOPE.md`. When designed, follow the syncer model (`docs/COOP_SYNCER_MODEL.md`) + the
 mid-activity-join rule (principle 8: a peer joining mid-upgrade / mid-purchase has a defined answer).
 
 ---
@@ -101,7 +101,7 @@ mid-activity-join rule (principle 8: a peer joining mid-upgrade / mid-purchase h
    the 18-level `Fstruct_upgrades` storage, the 20 laptop-shop slots, the effect fields, and the
    host-authoritative mirror design. Read this before any workstation upgrade-sync work.
 4. Per-family RE docs for ATV / base (added as excavated).
-5. Cross-refs: `docs/signals/TRACKER.md` OPEN-3, `docs/COOP_SCOPE.md`, `docs/COOP_RNG_AUTHORITY.md`
+5. Cross-refs: `docs/signals/TRACKER.md` OPEN-3, `docs/SCOPE.md`, `docs/COOP_RNG_AUTHORITY.md`
    (if an upgrade gates RNG), `docs/COOP_SYNCER_MODEL.md` (the authority model), `docs/CODE_MAP.md`.
 
 ## 5. NEXT (the RE work this folder will hold)

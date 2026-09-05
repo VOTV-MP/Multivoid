@@ -143,7 +143,7 @@ support make VOTV a **good fit** per the methodology's fit criteria
 (single-player 3D game, protagonist + AI NPCs, hookable engine, a story/
 world to share). The main risk is not feasibility but **scope** — VOTV is
 a large simulation-heavy game (signal processing, base management, day
-cycle). `docs/COOP_SCOPE.md` must be disciplined.
+cycle). `docs/SCOPE.md` must be disciplined.
 
 ## Open verification items (carry into Phase 1) — ALL RESOLVED
 

@@ -28,7 +28,7 @@ death.
 
 **Remaining.** Hands-on verification breadth (much of the synced world is verified by the
 autonomous rig and not yet by people playing), the tail of game systems still unsynced
-([COOP_SCOPE.md](COOP_SCOPE.md) says which), and the subsystems shipped in a shape the project
+([SCOPE.md](SCOPE.md) says which), and the subsystems shipped in a shape the project
 does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
 actor instead of driving it, and both are queued for a proper rebuild. The per-system status with
 its evidence is [COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md).

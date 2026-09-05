@@ -20,7 +20,7 @@ Start here, in this order:
 | | |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The shape of the mod in one read: the loader, the engine-wrapper layer, the co-op layer, and why they are separate |
-| [COOP_SCOPE.md](COOP_SCOPE.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
+| [SCOPE.md](SCOPE.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
 | [DEVS_GAUNTLET.md](DEVS_GAUNTLET.md) | The VOTV developers' public statement on why multiplayer mods fail. It is the bar this project builds to |
 | [FEASIBILITY.md](FEASIBILITY.md) | Whether this is possible at all, answered with measurements |
 | [ROADMAP.md](ROADMAP.md) | Where it is going: the phases and where we are in them |

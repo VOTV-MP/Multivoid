@@ -33,7 +33,7 @@ And eight architectural principles; the reasoning behind them is in
 | 2 | The mod is an engine-extension layer on top of UE4 + VOTV, not a set of hooks. |
 | 3 | A parallel class hierarchy: our `RemotePlayer` owns network state; the engine's `APawn` and `APlayerController` own rendering, animation and physics. |
 | 4 | Targeted crash fixes, never broad suppression. |
-| 5 | Minimum viable subset: [docs/COOP_SCOPE.md](docs/COOP_SCOPE.md) is the law of what is synced. |
+| 5 | Minimum viable subset: [docs/SCOPE.md](docs/SCOPE.md) is the law of what is synced. |
 | 6 | Augment single-player, never replace it: route per player inside the game's own systems. |
 | 7 | Two layers, two subtrees: `ue_wrap/` (engine wrapper, no gameplay or network logic) and `coop/` (gameplay and network, reaching the engine only through `ue_wrap/`). |
 | 8 | Mid-activity join is always handled: every sync lane defines what a peer joining mid-event, mid-download or mid-drive sees. |

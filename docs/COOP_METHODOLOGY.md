@@ -129,7 +129,7 @@ executed within a small number of sessions, not "eventually".
 
 ### 5. Minimum viable subset
 
-Define coop scope explicitly. Write a `COOP_SCOPE.md`. Anything not in
+Define coop scope explicitly. Write a `SCOPE.md`. Anything not in
 that doc is NOT replicated.
 
 Without this discipline, every new feature triggers "should we
@@ -256,7 +256,7 @@ Create this structure at the repo root:
 ├── docs/                           # Stable design documentation
 │   ├── ARCHITECTURE.md             # System architecture overview
 │   ├── ROADMAP.md                  # Phase plan + milestones
-│   ├── COOP_SCOPE.md               # In-scope / out-of-scope (Living)
+│   ├── SCOPE.md               # In-scope / out-of-scope (Living)
 │   ├── COOP_METHODOLOGY.md         # This file (drop in from MTR repo)
 │   ├── FEASIBILITY.md              # Phase 0 deliverable
 │   └── AUTONOMOUS_TESTING.md       # Test harness usage
@@ -319,7 +319,7 @@ artifact it is:
 |---|---|---|
 | RE finding (single function / single struct / single discovery) | `research/findings/<topic>-<date>.md` | Snapshot — frozen at write time, supersede with new dated file |
 | Design / architecture doc | `docs/<TOPIC>.md` | Living — kept in sync with reality |
-| Scope decision (in / out of scope for coop) | `docs/COOP_SCOPE.md` | Living — append to existing sections |
+| Scope decision (in / out of scope for coop) | `docs/SCOPE.md` | Living — append to existing sections |
 | Phase plan (what comes next) | `docs/ROADMAP.md` | Living — re-arranged as priorities shift |
 | Project rule (always-on guidance) | `CLAUDE.md` | Living — add only after a real incident teaches the rule |
 | Code (header) | `src/<mod>/include/<mod>/<subsystem>/X.h` | Living |
@@ -517,7 +517,7 @@ the bracketed parts:
 3. CLAUDE.md (this file).
 4. docs/COOP_METHODOLOGY.md for architecture decisions.
 5. reference/mtasa-blue/ for precedent.
-6. docs/COOP_SCOPE.md for scope decisions.
+6. docs/SCOPE.md for scope decisions.
 ```
 
 The CLAUDE.md is read on every conversation start (Claude Code
@@ -533,7 +533,7 @@ Create these as skeletons at bootstrap:
   7 principles in summary form. Will grow as you go.
 - **`docs/ROADMAP.md`**: ordered list of phases (Phase 0 ..
   Phase N). Each phase has: goal, deliverable, status, dates.
-- **`docs/COOP_SCOPE.md`**: skeleton with empty "In scope" and "Out
+- **`docs/SCOPE.md`**: skeleton with empty "In scope" and "Out
   of scope" sections. Populate as scope is decided. Add a header
   block: *"Anything not listed here is NOT in scope and should not
   drive code or replication decisions."*
@@ -575,7 +575,7 @@ The first commit should contain ONLY the skeleton:
 git init
 # Create the layout above with empty / skeleton files
 git add CLAUDE.md README.md .gitignore .gitmodules \
-        docs/ARCHITECTURE.md docs/ROADMAP.md docs/COOP_SCOPE.md \
+        docs/ARCHITECTURE.md docs/ROADMAP.md docs/SCOPE.md \
         docs/COOP_METHODOLOGY.md docs/FEASIBILITY.md \
         src/<mod>/CMakeLists.txt src/<mod>/README.md \
         tools/README.md
@@ -620,7 +620,7 @@ Don't proceed past Phase 0.1 until ALL of these are TRUE:
       pinned.
 - [ ] `CLAUDE.md` has the 2 rules + 7 principles + reading order.
 - [ ] `docs/COOP_METHODOLOGY.md` copied from MTR repo (this file).
-- [ ] `docs/COOP_SCOPE.md` exists as skeleton.
+- [ ] `docs/SCOPE.md` exists as skeleton.
 - [ ] `docs/FEASIBILITY.md` exists (will fill in below).
 - [ ] First commit pushed: skeleton + submodule pointers.
 - [ ] Memory system set up (`MEMORY.md` index in
@@ -1138,7 +1138,7 @@ has already pre-committed by writing the rule.
 **Examples**:
 - "Should I add a filter to make this crash go away?" — NO,
   principle 4. Don't ask.
-- "Should I replicate this field?" — check `COOP_SCOPE.md`. If
+- "Should I replicate this field?" — check `SCOPE.md`. If
   unclear, spawn a research agent. Don't ask the user.
 - "Should I write migration glue for the old API?" — NO, RULE №2.
   Don't ask.
@@ -1147,7 +1147,7 @@ has already pre-committed by writing the rule.
 - Irreversible actions (delete, force-push, dependency removal).
 - Ambiguity in the user's own message that you can't resolve from
   context.
-- Scope decisions that would extend `COOP_SCOPE.md` (these are
+- Scope decisions that would extend `SCOPE.md` (these are
   user-owned).
 - UX / aesthetic decisions where the user's preference is
   decisive.
@@ -1487,7 +1487,7 @@ are committed.
 ## Decision tree: should we replicate X?
 
 ```
-Q1: Is X in COOP_SCOPE.md "in scope"?
+Q1: Is X in SCOPE.md "in scope"?
 ├── YES → REPLICATE.
 └── NO  → CONTINUE
     │
@@ -1607,7 +1607,7 @@ If you're starting a coop project from zero:
    > `docs/COOP_METHODOLOGY.md` AND
    > `reference/mtasa-blue/`. After any non-trivial coop work,
    > spawn an MTA-fidelity audit agent (WP2).
-6. Read the MTR project's `docs/COOP_SCOPE.md` for an example of a
+6. Read the MTR project's `docs/SCOPE.md` for an example of a
    completed scope doc.
 7. Read the MTR project's `research/findings/coop-*` files for
    examples of phase deliverables.

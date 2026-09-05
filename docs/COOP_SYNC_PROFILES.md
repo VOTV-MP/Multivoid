@@ -911,7 +911,7 @@ fully-unsynced system exercises two things neither prior control did — (a) doe
 third, different-shaped control (round-5 Q1: convergence is a control that changes nothing), and
 (b) can the form even EXPRESS "we sync nothing here, and that is correct"?
 
-`AlampPost_C` — outdoor lamp posts, `NOT synced` per `COOP_SCOPE.md` (§ Out of scope): the game's
+`AlampPost_C` — outdoor lamp posts, `NOT synced` per `SCOPE.md` (§ Out of scope): the game's
 day/night cycle (`mainGamemode` tracks `allLampPosts`) runs identically on both peers, so lamps
 toggle in lockstep with no wire traffic. RE-confirmed in the Phase 5D doors+lights pass 2026-05-25.
 
