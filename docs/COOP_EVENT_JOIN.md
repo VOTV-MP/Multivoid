@@ -270,7 +270,7 @@ own tick, which npc_mirror parked; user after a full event run: «засасыв
 рассинхронится» remained) then v104 auxTargetEid `d0d3af1f` (the wispTarget IDENTITY
 streams per tick, so the mirror runs the native CHASE look-at branch during the
 walk-to-wisp phase — the residue's root). Wire is now **v105** (the 2026-07-06 hand-item
-display axis, HandItem=89 — unrelated to events; see COOP_SYNC_MAP).
+display axis, HandItem=89 — unrelated to events; see CODE_MAP).
 **The bar itself is still OPEN**: the TRUE mid-join run (client joins while the pyramid
 is already walking) has not happened since — that run, with correct
 size/motion/facing/head, is what closes Phase 1 verification (runbook 0y-v104 covers the

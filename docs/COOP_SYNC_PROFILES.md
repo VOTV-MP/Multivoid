@@ -875,7 +875,7 @@ would have flattened to one green.
 | 2 | red sky | **WORKS** (wire leg) | `log` | `host-authored` | **REROOTED 2026-08-29 (`4304e04e`, the arigalit red-mist report):** the organic trigger is daynightCycle newDay's 1% roll via `EX_LocalVirtualFunction` — PE-invisible, so the old POST observers NEVER fired organically (zero broadcast lines in every log on disk; this row's old "lane exists / UNKNOWN" was measuring an INERT lane). Now: host FIELD POLL (`HostPollEdge`, gm.redSky+isred) + client birth-catch (`weather_event_births`, uncommanded `redSkyEvent_C` births destroyed at FinishSpawn) + per-joiner ON seed. Evidence = matching 2-peer logs 2026-08-29 01:37: host `field-poll edge` state=1/0 → client `red-sky Apply set(true)` / `set(false)+destroyed`, same-second, both directions. NOT hands-on (nobody looked at both screens); the ORGANIC-roll suppression leg is `code`-tier (the birth-catch installed both peers; a real 1% roll has not been observed since) |
 | 3 | lightning strike | **UNKNOWN** | `code` | `host-authored` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
 | 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `host-authored` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §3 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
-| 5 | wind | **BROKEN** | `log` | `host-authored` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
+| 5 | wind | **BROKEN** | `log` | `host-authored` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `CODE_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
 | — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **0 facets found by RUNNING** — but (b) **weather was NEVER exercised under concurrency**; the wind bug came from a live SINGLE-flow probe, not an interleaving. So this 0 is `UNKNOWN completeness`, NOT "nothing missed" — reading it as complete would be the marker-filter's false-negative. weather's RNG knob jitter (`COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, deliberately not a row |
 
 **Count (updated 2026-08-29):** 5 facets — **2 `WORKS`, 1 `BROKEN`, 2 `UNKNOWN`**; by evidence,
@@ -885,7 +885,7 @@ saw the organic EX_Local caller, the 3 s reconcile was the real cleanup, and the
 kills a client fog roll at spawn.)
 
 **THE CORRECTION IS THE FINDING (round 4).** The first draft of this table read "4 `WORKS`, 1
-`BROKEN`" — I had assigned `WORKS/log` to facets 1-4 from `COOP_SYNC_MAP.md`'s `[V]` markers, which
+`BROKEN`" — I had assigned `WORKS/log` to facets 1-4 from `CODE_MAP.md`'s `[V]` markers, which
 are MAP verdicts, exactly the doc-status source the readiness pass measured as unreliable in both
 directions. Applying the EVIDENCE axis STRICTLY — demand a real matching log line, not a map marker —
 collapsed THREE false greens: only facet 1 has an actual client apply line; redsky/lightning/fog have

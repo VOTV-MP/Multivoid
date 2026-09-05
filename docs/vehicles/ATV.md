@@ -633,7 +633,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
    stale-open.)*
 2. **[?] Where is `hasGuns` consumed?** Not in `ATV.json`. Candidates: `prop_funGun_atv`, `mainPlayer`.
 3. **[?] Is `tiresTypes[3]` genuinely never applied?** `setWheelsType` reads indices 0, 1, 2 only.
-4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/COOP_SYNC_MAP.md:139`
+4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/CODE_MAP.md`
    records the shipped lane's build+smoke as *"keysHash equal cross-peer"*. So the save-placed ATV's
    key IS stable across peers and the key-index path is sound.
    ~~**[?] Does any ATV ever appear at RUNTIME?**~~ **ANSWERED [V] 2026-08-29 — YES, and the answer

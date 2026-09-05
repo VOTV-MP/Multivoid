@@ -637,5 +637,5 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
 ---
 
 Related: `reference/mtasa-blue/` (the precedent itself) · `docs/ROADMAP.md` phase 2 (the arbiter) ·
-`docs/COOP_ENTITY_EXPRESSION_MAP.md` (identity per entity) · `docs/COOP_SYNC_MAP.md` (which file owns
+`docs/COOP_ENTITY_EXPRESSION_MAP.md` (identity per entity) · `docs/CODE_MAP.md` (which file owns
 a lane).

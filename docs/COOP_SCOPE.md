@@ -61,7 +61,7 @@ items.
   with an F1 browser like gmod; "любой пир может выключить свой nameplate"
   synced). STATUS 2026-07-02: **AS-BUILT** (v93 skins `bfee8f62`, v94
   nameplate pref `23f2ca51`, builtin kerfur bodies `98678bf1`; docs/
-  COOP_CLIENT_MODEL.md §3 + COOP_SYNC_MAP rows) — hands-on verdict pending
+  COOP_CLIENT_MODEL.md §3 + CODE_MAP rows) — hands-on verdict pending
   (runbook 2026-07-02 take-4). NOT in scope: asset replication (a peer
   missing a skin pak sees kel; by design), ragdoll-body reskin (documented
   gap).

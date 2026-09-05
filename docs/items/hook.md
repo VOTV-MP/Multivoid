@@ -224,6 +224,6 @@ hook meeting a puppet self-destructs natively (no player-hooking exploit to clos
   throwSpeed/scroll magnitudes (CDO defaults not read), and the exact feel of the pull
   are unverified in-game.
 - Sync: NOT BUILT. Next per THE METHOD: (a) read CDO defaults for the tunables,
-  (b) wire-design review vs COOP_SYNC_MAP (which snapshot carries the per-player hook
+  (b) wire-design review vs CODE_MAP (which snapshot carries the per-player hook
   state), (c) build phase-1 mirror (fire/fly/climb display), (d) anchored handoff,
   (e) e2e + hands-on.

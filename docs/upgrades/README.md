@@ -102,7 +102,7 @@ mid-activity-join rule (principle 8: a peer joining mid-upgrade / mid-purchase h
    host-authoritative mirror design. Read this before any workstation upgrade-sync work.
 4. Per-family RE docs for ATV / base (added as excavated).
 5. Cross-refs: `docs/signals/TRACKER.md` OPEN-3, `docs/COOP_SCOPE.md`, `docs/COOP_RNG_AUTHORITY.md`
-   (if an upgrade gates RNG), `docs/COOP_SYNCER_MODEL.md` (the authority model), `docs/COOP_SYNC_MAP.md`.
+   (if an upgrade gates RNG), `docs/COOP_SYNCER_MODEL.md` (the authority model), `docs/CODE_MAP.md`.
 
 ## 5. NEXT (the RE work this folder will hold)
 

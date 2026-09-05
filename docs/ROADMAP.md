@@ -10,7 +10,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done.
 **GameNetworkingSockets v1.5.1** (3 lanes, `kMaxPeers=4`). The protocol is at
 **v95** (EventFire=84: the scheduled/story-event replay channel — host observes
 settime fires via passEvents growth, clients replay per the per-row dupe-matrix
-policy; COOP_SYNC_MAP `EventFire` block is canonical). Shipped surface: the MTA
+policy; CODE_MAP `EventFire` block is canonical). Shipped surface: the MTA
 Element/Registry/Mirror foundation; NPC /
 WorldActor / save-snapshot-on-connect / terminals / doors+lights+keypads /
 kerfur (prop⇄NPC) / events / voice / inventory / sleep / effects sync; the
@@ -398,7 +398,7 @@ LAN (two-machine + same-box-two-instance both confirmed).
        eid-less) + BIRTH-ORPHAN express + wholesale GHOST-RETIRE (the
        E-press per-ghost retire RETIRED, RULE 2). **VERIFIED hands-on
        2026-07-07 (0ae): grab lane PASS + Q-menu spawns INSTANT on
-       clients.** See COOP_SYNC_MAP.)
+       clients.** See CODE_MAP.)
        Smart-ITEM behavior sync (hook/nailgun/wallbuilder/...) = RE done,
        docs/items/ pattern ratified, implementation queued.
 - ◐ 4.3 Entity manifest + per-entity state — IN PROGRESS, see live

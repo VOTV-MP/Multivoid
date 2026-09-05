@@ -14,7 +14,7 @@ Cross-cutting contracts stay where they are (link, don't restate):
 
 - `docs/COOP_ENTITY_EXPRESSION_MAP.md` — how an entity class gets identity/expression/
   destroy; the dupe matrix. An item doc that ships a sync adds/updates its class row there.
-- `docs/COOP_SYNC_MAP.md` — where every wire-sync feature lives. A shipped item sync adds
+- `docs/CODE_MAP.md` — where every wire-sync feature lives. A shipped item sync adds
   its row.
 - `docs/COOP_EVENT_JOIN.md` — late-join contract. Deployed item actors that persist in the
   world need a join answer like any lane.

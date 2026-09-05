@@ -17,7 +17,7 @@ these docs LINK to them, never restate them (RULE 2):
   its row **T2-5b** (AS-BUILT **v112** `desk_sim_sync` + `desk_input_sync` — the BUGS-v111 fix,
   same day; smoke PASS, awaiting hands-on; + the T2-5c signal-chain RNG census). Signal
   RNG-authority PROGRESS is tracked THERE; this folder tracks subsystem COMPLETENESS.
-- **`docs/COOP_SYNC_MAP.md`** — where each wire lane lives (rows: `console_state_sync`,
+- **`docs/CODE_MAP.md`** — where each wire lane lives (rows: `console_state_sync`,
   `signal_sync`/`signal_catch_sync`/`signal_wire`, `desk_cursor_sync`, `comp_sync`). Find the file
   that owns a lane there; find the element's STATUS here.
 - **`src/votv-coop/src/coop/interactables/`** + **`coop/world/`** — the shipped lanes

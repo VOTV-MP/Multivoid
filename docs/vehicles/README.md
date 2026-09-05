@@ -20,7 +20,7 @@ Cross-cutting contracts stay where they are (link, don't restate):
 
 - `docs/COOP_DISPATCH_VISIBILITY.md` — will my ProcessEvent hook fire on this verb?
 - `docs/COOP_ENTITY_EXPRESSION_MAP.md` — identity / expression / destroy per class.
-- `docs/COOP_SYNC_MAP.md` — where each shipped wire-sync lives.
+- `docs/CODE_MAP.md` — where each shipped wire-sync lives.
 - `docs/COOP_SYNCER_MODEL.md` — per-element authority + the act-as-host intent rule (§2b).
 - `docs/COOP_EVENT_JOIN.md` — the per-lane late-join answer table (principle 8).
 - `docs/upgrades/` — the upgrade subsystem hub. The ATV's **physical module** family is

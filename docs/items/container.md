@@ -245,7 +245,7 @@ and remains **[?]**.
   (prop_destroy_seam.cpp:40-130; subsystems via prop_lifecycle Install).
 - **Late-join contents cross once**, inside the v56 whole-save blob (§1.2).
 - **The lid-named wire lane is someone else's**: `ReliableKind::ContainerState` = prop_swinger lids
-  (interactable_sync.cpp:98-107, `docs/COOP_SYNC_MAP.md:114`).
+  (interactable_sync.cpp:98-107, `docs/CODE_MAP.md`).
 - **prop_openContainer**: the contained actors individually ride the normal prop lanes
   (pose/destroy); the `itemsInside` MEMBERSHIP does not cross. The stale-pointer AV this causes on
   clients is PRE-cancelled for `Aprop_garbageContainer_C` only (garbage_sync.cpp:73-104, class-gated,
@@ -297,7 +297,7 @@ self-simulating world-prop state = divergence class).
 | lid state | N/A — prop_container has NO lid (open = UI); swinger lids are a different class | — | swinger lids already ride ReliableKind::ContainerState [V, interactable_sync.cpp] |
 | open/locked deny (openContainer) | per-player local UI (openPropInv) | nothing (UI is per-player); Locked is a static default | local only — fine as-is unless an unlock verb is found [?] |
 | late-join contents | HOST (save author) | the full GObjStack at join | v56 whole-save blob [V at join; diverges after] |
-| container actor itself (pose/grab/destroy) | prop lane (already owned there) | — | existing keyed-prop lanes [V, COOP_SYNC_MAP:86] |
+| container actor itself (pose/grab/destroy) | prop lane (already owned there) | — | existing keyed-prop lanes [V, CODE_MAP:86] |
 | prop_openContainer itemsInside membership | TBD (member actors already ride prop lanes) | consistent membership OR proven-safe divergence | NOT CARRIED; garbage subclass tick cancelled client-side (garbage_sync.cpp) |
 
 ## 3. Coop design (/qf-converged 2026-07-15 — DESIGN, not built, no code)
@@ -365,7 +365,7 @@ what killed the build-then-swap/generation-counter idea — no reader holds the 
 **Build order (when the probe greenlights):** (1) population mirror + birth-gate + single-task
 overwrite (fully specced); (2) the take gate (mechanism per the probe result); (3) put-in (symmetric
 request); (4) burp/spill fall out of host-authority. `coop/props/container_contents_sync.{h,cpp}`,
-backpack-excluded, + a `COOP_RNG_AUTHORITY.md` addLoot row + a `COOP_SYNC_MAP.md` row on build.
+backpack-excluded, + a `COOP_RNG_AUTHORITY.md` addLoot row + a `CODE_MAP.md` row on build.
 
 ## 4. Caveats / known quirks
 

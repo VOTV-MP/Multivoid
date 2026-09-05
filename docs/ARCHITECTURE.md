@@ -152,7 +152,7 @@ scan calls, and imports nothing back.
     and dispatches, chaining five family routers
     (`event_dispatch_{entity,state,signal,intent,world}.cpp`), each of which
     returns true iff it owns the kind. The checklist for adding one is in
-    `docs/COOP_SYNC_MAP.md`.
+    `docs/CODE_MAP.md`.
 - **Replicate authoritative state; re-derive the rest locally.** The
   receiving UE engine plays the streamed pose onto the puppet (a
   `mainPlayer_C` orphan with AutoPossess disabled) so anim, IK, weapon,

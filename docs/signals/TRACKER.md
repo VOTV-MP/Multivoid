@@ -6,7 +6,7 @@ owns it, the wire lane, and the honest status. STATUS legend (docs-piles discipl
 (designed, not built) · **OPEN** (gap, no design) · **N/A** (deliberately per-player).
 
 The RNG-authority PROGRESS of the download machine lives in `COOP_RNG_AUTHORITY.md` T2-5b — this
-tracker points there. Wire-lane discoverability lives in `COOP_SYNC_MAP.md`. Neither is restated here.
+tracker points there. Wire-lane discoverability lives in `CODE_MAP.md`. Neither is restated here.
 
 ---
 
@@ -420,7 +420,7 @@ pile): image bytes, wire-delete playback-stop.
   host-auth sim-migration to a small fix; audit READY (0 CRITICAL). NOT hands-on. Surfaced OPEN-3
   (upgrade-sync, its own workstream). coordLog (OPEN-2) kept separate.
 - **2026-07-15** — folder created; the signal-processing saga given a home (was scattered across
-  `research/findings/computers-devices/` + `COOP_RNG_AUTHORITY` T2-5b + `COOP_SYNC_MAP`). Status
+  `research/findings/computers-devices/` + `COOP_RNG_AUTHORITY` T2-5b + `CODE_MAP`). Status
   reconciled to code: transport elements AS-BUILT/VERIFIED (cursor v109 SMOOTH, clock v110); the
   freq/pol + download SIM is the open gap (RE'd, divergence MEASURED, fix UNBUILT). Next: the
   download-machine host-authoritative `/qf`.

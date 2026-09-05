@@ -60,7 +60,7 @@ sync lane owes a late-join answer)
 
 **Maps, where a thing lives and what state it is in**
 
-[COOP_SYNC_MAP.md](COOP_SYNC_MAP.md) (which file owns which sync) ·
+[CODE_MAP.md](CODE_MAP.md) (where every concept lives: one folder each, and the files in it) ·
 [COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md) (per-system status: what works inside each system,
 with the evidence for each claim)
 
