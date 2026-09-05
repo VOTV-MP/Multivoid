@@ -22,29 +22,22 @@ namespace {
 
 using ui::scale::S;
 
-// The feed's bottom edge: 0.5 = vertical middle (user 2026-06-08). ui/chat_input.cpp
-// places the input bar just under this same line.
+// The feed's bottom edge, the vertical middle; the input bar sits just under this same line.
 constexpr float kBottomFrac = 0.5f;
 
-// A row's INK is drawn once its composed alpha clears this. It is NOT a membership
-// predicate and must never become one again (2026-07-31): it used to decide whether
-// a row occupied a line, which conflated "not visible yet" with "no longer exists"
-// and made a just-sent message drop out of the layout for a frame. Membership is the
-// TIER (see the row-build below); this is only about ink.
+// A row's ink is drawn once its composed alpha clears this. Not a membership predicate: as one
+// it conflated not-visible-yet with no-longer-exists, and a just-sent message dropped out of
+// the layout for a frame. Membership is the tier (see the row build); this is only about ink.
 constexpr float kAlphaFloor = 1.f / 255.f;
 
-// ---- the reveal ramp.
-//
-// It owns its own clock rather than integrating io.DeltaTime, because DeltaTime here
-// is whatever elapsed since the last PRESENTED overlay frame -- and the overlay only
-// renders when a surface is up. The first frame after a quiet lobby therefore carries
-// the entire quiet period as one delta, and a dt-integrated ramp would saturate in a
-// single frame. As an absolute function of (now, transitionStart) it also survives
-// the pause menu, which suppresses this whole draw for as long as it is up.
-//
-// 220 ms = chat_feed::kRevealMs = the store's existing arrival-fade constant, already
-// tuned for this surface. The store publishes the retained tier for exactly the same
-// window after a close, so the fade-out always has rows to draw.
+// The reveal ramp owns its own clock rather than integrating the frame delta, because that
+// delta is whatever elapsed since the last presented overlay frame, and the overlay only
+// renders when a surface is up: the first frame after a quiet lobby carries the whole quiet
+// period as one delta, which would saturate a delta-integrated ramp in one frame. As an
+// absolute function of the transition start it also survives the pause menu, which
+// suppresses this draw while it is up. The ramp time is the store's reveal constant, and the
+// store publishes the retained tier for exactly that window after a close, so the fade-out
+// always has rows to draw.
 using Clock = std::chrono::steady_clock;
 
 float   g_revealValue = 0.f;   // last computed value (the ramp's start on a reversal)
@@ -77,13 +70,10 @@ float Ramp(float target) {
     return std::clamp(g_revealValue, 0.f, 1.f);
 }
 
-// ---- the scroll anchor.
-//
-// (sort key, row within that entry) -- never an index, which shifts under every push
-// and every retirement. Paging moves it by whole ROWS, not entries: hud's row height
-// is one constant for every wrapped row, so row-paging is exactly invertible and
-// PgUp-then-PgDn lands where it started. Paging by a measured pixel viewport over
-// variable-height entries is not.
+// The scroll anchor: a sort key and a row within that entry, never an index, which shifts
+// under every push and retirement. Paging moves it by whole rows, not entries: the row height
+// is one constant for every wrapped row, so row paging is exactly invertible and a page up
+// then down lands where it started.
 bool     g_pinned = false;
 uint64_t g_anchorKey = 0;
 int      g_anchorSub = 0;
@@ -92,9 +82,9 @@ bool     g_frozenPublished = false;
 void SetPinned(bool pinned) {
     g_pinned = pinned;
     if (pinned != g_frozenPublished) {
-        // Edge-only, so this is a handful of lines per session, not per frame -- and
-        // it is the only observable the scroll has. Without it a drill can press
-        // PgUp and see nothing, which is also what a BROKEN pager looks like.
+        // Edge-only, a handful of lines per session, and the only observable the scroll has:
+        // without it a drill can press page-up and see nothing, which is also what a broken pager
+        // looks like.
         UE_LOGI("chat_view: %s", pinned ? "PINNED (paged back; retention frozen)"
                                         : "FOLLOW (retention live)");
         coop::chat_feed::SetRetentionFrozen(pinned);
@@ -104,12 +94,9 @@ void SetPinned(bool pinned) {
 
 constexpr int kEntryRowCap = 16;   // most a single entry may wrap into
 
-// DERIVED, not chosen (2026-07-29). This was a hand-written 512 with the comment
-// "~106 entries * up to 4 wrapped rows, with headroom" -- a FIFTH expression of the
-// retained capacity, and the one nobody counted. Once the store can publish
-// kMaxSnapshotLines = 206 entries, a 512 ceiling stops the build loop after ~128 of
-// them, so paging back could never reach the oldest history: the rows exist, are
-// published, and are unreachable. The bound now moves with the store by construction.
+// Derived, not chosen: a hand-written ceiling below what the store can publish stopped the
+// build loop early, so paging back could never reach the oldest history although the rows
+// existed. The bound moves with the store by construction.
 constexpr int kRowCap = coop::chat_feed::kMaxSnapshotLines * kEntryRowCap;
 
 struct Row {
@@ -119,20 +106,14 @@ struct Row {
     const char* e = nullptr;
 };
 
-// ---- the wrap memo (defect #10).
-//
-// forEachRow runs strlen + CalcWordWrapPositionA over EVERY published entry EVERY
-// frame, to draw the ~18 rows that fit on screen. The full set is genuinely needed --
-// PgUp pages through it -- so the fix is not a smaller bound but not recomputing an
-// answer that did not change. The wrap depends on exactly four things: WHICH rows are
-// published (the snapshot's gen), the wrap width, the font pixel size, and the FACE --
-// a family swap from the F1 menu at the SAME px changes glyph advances without moving
-// any other key term.
-//
-// Holding `const char*` into the snapshot across frames is safe because the snapshot is
-// the function-local static below and is only refilled when its gen changes -- the same
-// gen this memo keys on, so a refill always invalidates the pointers that came from it.
-// Render thread only, like everything else in this file.
+// The wrap memo. Wrapping runs a length and a word-wrap measure over every published entry to
+// draw the handful of rows that fit, and the full set is needed since page-up pages through
+// it, so the fix is not recomputing an answer that did not change. The wrap depends on
+// exactly four things: which rows are published (the snapshot's generation), the wrap width,
+// the font pixel size and the face, since a family swap at the same size changes glyph
+// advances. Holding pointers into the snapshot across frames is safe because the snapshot is
+// the function-local static below, refilled only when its generation changes, the same
+// generation this memo keys on. Render thread only.
 Row  g_rows[kRowCap];
 int  g_rowsFirst = kRowCap;   // rows live in [g_rowsFirst, kRowCap)
 uint32_t g_rowsGen     = 0xFFFFFFFFu;
@@ -145,9 +126,8 @@ bool     g_rowsValid   = false;
 }  // namespace
 
 void Draw() {
-    // The snapshot is re-copied only when the store republished. With chat closed it
-    // is the same <= 6 rows it has always been; while the reveal is up it also carries
-    // the history, which the store rewrites only when it actually changes.
+    // The snapshot is re-copied only when the store republished: with chat closed the same
+    // handful of live rows, and while the reveal is up the history too.
     static coop::chat_feed::Snapshot s;
     static uint32_t gen = 0;
     coop::chat_feed::GetSnapshotIfNewer(s, gen);
@@ -157,21 +137,18 @@ void Draw() {
     if (!open) {
         SetPinned(false);   // reopening always starts at the newest line
         if (g_openLogged) {
-            // The CLOSE marker. It bounds the window a drill asserts over -- "while
-            // the reveal was up, nothing expired" is only checkable against a window
-            // with two ends, and the TTL resumes the instant this fires.
+            // The close marker bounds the window a drill asserts over: nothing-expired-while-open
+            // is only checkable against a window with two ends, and the TTL resumes the instant
+            // this fires.
             UE_LOGI("chat_view: reveal closed -- held %lld ms",
                     static_cast<long long>(NowMs() - g_openedAtMs));
         }
         g_openLogged = false;
     }
-    // The OPEN marker, and the window's other end. Both are emitted from the SURFACE
-    // state, ABOVE the empty-store early return below, and report only store facts.
-    // They were once emitted at the end of the draw, and an injected run caught it:
-    // with nothing to show, Draw returned before reaching them, so the marker did not
-    // fire until the next message arrived -- and that message then fell OUTSIDE the
-    // window it was supposed to be inside. An instrument whose window moves with the
-    // thing it measures is not an instrument.
+    // The open marker, the window's other end. Both are emitted from the surface state, above the
+    // empty-store early return, and report only store facts: emitted at the end of the draw, an
+    // empty store returned before reaching them, so the marker fired only when the next message
+    // arrived, outside the window it was supposed to be inside.
     if (open && reveal >= 1.f && !g_openLogged) {
         g_openLogged = true;
         g_openedAtMs = NowMs();
@@ -184,30 +161,29 @@ void Draw() {
     const float pad = S(14.f);
     const float anchorBottomY = io.DisplaySize.y * kBottomFrac;
 
-    // 2026-07-04 chat-imgui-samp: bold chat font (Cyrillic-capable), per-slot colored
-    // nick prefix, 4-way outline (reads over any scene), word-wrap at a fixed width.
+    // The chat font, a per-slot coloured nick prefix, a four-way outline that reads over any scene,
+    // word wrap at a fixed width.
     ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Chat);
     if (!font) font = ImGui::GetFont();
     if (!font) return;
-    // PxFor(Chat) = the px the chat font was BAKED at (scaled): drawing at exactly that
-    // size renders the crisp 1:1 rasterization, no bitmap resample.
+    // The pixel size the chat font was baked at: drawing at exactly that size renders the crisp
+    // one-to-one rasterisation with no resample.
     const float px = ui::fonts::PxFor(ui::fonts::Role::Chat);
     const float wrapW = std::min(io.DisplaySize.x * 0.42f, S(640.f));
     const float rowH = px + S(2.f);
     const float o = std::max(1.f, S(1.f));  // outline offset
 
-    // How tall the reveal may grow. The bottom edge is fixed at the feed's anchor and
-    // it grows UPWARD, so this is what decides where the top of the history sits.
-    // A third is cut off the available run to the top of the screen (user 2026-07-29:
-    // "the history box is too high") -- a block reaching the top edge reads as taking
-    // the screen over rather than as a panel you opened.
+    // How tall the reveal may grow: the bottom edge is fixed at the feed's anchor and it grows
+    // upward, so this decides where the top of the history sits. A third is cut off the run to
+    // the top of the screen; a block reaching the top edge reads as taking the screen over rather
+    // than as a panel you opened.
     constexpr float kRevealHeightFrac = 2.f / 3.f;
     const float budget = (anchorBottomY - pad) * kRevealHeightFrac;
     const float topLimit = anchorBottomY - budget;
     const int maxRows = std::max(1, static_cast<int>(budget / rowH));
 
-    // Visual-row iterator: invokes fn(rowStart, rowEnd) once per wrapped row of `text`.
-    // The SAME split feeds the measure pass and the draw pass so they never disagree.
+    // The visual-row iterator, once per wrapped row of the text; the same split feeds the measure
+    // pass and the draw pass, so they never disagree.
     auto forEachRow = [&](const char* text, auto&& fn) {
         const char* p   = text;
         const char* end = text + std::strlen(text);
@@ -220,40 +196,24 @@ void Draw() {
         }
     };
 
-    // The composed alpha: the store's TTL curve, floored by the reveal. One expression
-    // for both tiers -- a retained row's store alpha is 0, so it IS the reveal; a live
-    // row goes opaque while the surface is up and falls back to its own fade on close.
+    // The composed alpha: the store's TTL curve, floored by the reveal. One expression for both
+    // tiers: a retained row's store alpha is 0, so it is the reveal; a live row goes opaque while
+    // the surface is up and falls back to its own fade on close.
     auto drawnAlpha = [&](int i) {
         return std::clamp(std::max(s.lines[i].alpha, reveal), 0.f, 1.f);
     };
 
-    // Build the visible rows NEWEST-first into the back of a fixed array, so running
-    // out of room drops the OLDEST history rather than the messages just sent.
-    //
-    // MEMOIZED on (gen, wrapW, px, face, showHistory) -- see g_rows above. The alpha floor is deliberately
-    // NOT part of the key: alpha changes every frame as lines fade, but a row dropping
-    // below the floor does not change where any OTHER row wraps, and the draw pass
-    // re-reads alpha per row anyway. Keying on it would defeat the memo entirely while
-    // buying nothing.
-    // MEMBERSHIP IS THE TIER, NOT THE ALPHA (2026-07-31).
-    //
-    // This loop used to drop any entry whose composed alpha rounded below 1/255, and
-    // call that a membership predicate. It is not one: it conflates "not visible YET"
-    // with "no longer exists". A line you had just sent was momentarily at alpha 0 --
-    // its arrival ramp and the closing reveal hit zero in the same frame -- so it was
-    // dropped from the LAYOUT, every row below jumped, and it then faded back in. That
-    // is the second half of the flicker the user reported; the first half (the ramp
-    // running on the wrong clock) is fixed in chat_feed's ComposeAlpha.
-    //
-    // What actually decides whether a row occupies a line is which TIER it is in. Live
-    // rows always do -- they leave the layout when the STORE retires them, which is the
-    // one authority on a line's existence. History rows do only while the reveal is
-    // showing them, which is what keeps a faded-out history block from pushing the live
-    // lines out of the viewport (the real concern the alpha filter was standing in for).
-    //
-    // MTA is the same shape: `Client/core/CChat.cpp:342-359` gates only the DRAW on
-    // `fLineAlpha > 0.f` and advances `vecPosition.fY` OUTSIDE that test, so a line
-    // never loses its place by being briefly transparent.
+    // The visible rows are built newest-first into the back of a fixed array, so running out of
+    // room drops the oldest history rather than the messages just sent. Memoised on the
+    // generation, the wrap width, the size, the face and whether history shows; the alpha floor
+    // is not part of the key, since a row dropping below it does not change where any other row
+    // wraps, and the draw re-reads alpha per row. Membership is the tier, not the alpha: a line
+    // you had just sent could sit at alpha 0 for a frame (its arrival ramp and the closing reveal
+    // hitting zero together), and dropping it from the layout jumped every row below it. Live
+    // rows always occupy a line and leave when the store retires them; history rows do only
+    // while the reveal shows them, which keeps a faded-out history from pushing the live lines
+    // out of the viewport. MTA's chat has the same shape: it gates only the draw on the alpha
+    // and advances the position outside that test.
     const bool showHistory = reveal > 0.f;
     const int  firstLive   = s.count - s.liveCount;
     if (!g_rowsValid || g_rowsGen != s.gen || g_rowsWrapW != wrapW ||
@@ -266,9 +226,9 @@ void Draw() {
             forEachRow(s.lines[i].text, [&](const char* b, const char* e) {
                 if (nt < kEntryRowCap) { tmp[nt] = Row{i, nt, b, e}; ++nt; }
             });
-            // `continue`, NOT `break` (defect #11): an entry that produced no rows means
-            // an empty text, and stopping there would silently drop every OLDER row
-            // behind it. Only running out of room is a reason to stop.
+            // Continue, not break: an entry that produced no rows is an empty text, and stopping
+            // there would silently drop every older row behind it. Only running out of room is a
+            // reason to stop.
             if (nt == 0) continue;
             if (nt > first) break;  // whole entries only; oldest drops off
             first -= nt;
@@ -280,20 +240,19 @@ void Draw() {
         g_rowsPx      = px;
         g_rowsFont    = font;
         g_rowsHistory = showHistory;
-        // Every build is reusable now: the row set depends only on the memo key, with
-        // no per-frame alpha term left to invalidate it.
+        // Every build is reusable: the row set depends only on the memo key.
         g_rowsValid = true;
     }
     const int nRows = kRowCap - g_rowsFirst;
     if (nRows <= 0) return;
     const Row* row = &g_rows[g_rowsFirst];
 
-    // ---- where the bottom of the view sits, in ROWS.
+    // Where the bottom of the view sits, in rows.
     int bottom = nRows - 1;
     if (g_pinned) {
-        // The anchor is a sort key, so a live line retiring into history keeps it in
-        // the ordered set: only an eviction can remove it. If that happens, clamp to
-        // the oldest row still present rather than silently jumping to the newest.
+        // The anchor is a sort key, so a live line retiring into history keeps it in the ordered
+        // set; only an eviction can remove it, and then the view clamps to the oldest row still
+        // present rather than jumping to the newest.
         int found = -1;
         for (int i = 0; i < nRows; ++i) {
             if (s.lines[row[i].line].key == g_anchorKey && row[i].sub == g_anchorSub) {
@@ -309,12 +268,10 @@ void Draw() {
         bottom = (found >= 0) ? found : nRows - 1;
     }
 
-    // The pin is DECIDED ONCE, after the clamps -- a key press only states an intent.
-    // Committing it inside the key handler pinned a view that never moved: with fewer
-    // rows than the viewport holds, PgUp's overshoot clamps straight back to the
-    // newest line, so the pin was set and then immediately cleared, and both edges
-    // were announced. Caught by the injected drill run, where an emptied history left
-    // exactly one row on screen and the pager still claimed to have paged.
+    // The pin is decided once, after the clamps; a key press only states an intent. Committed
+    // inside the key handler, it pinned a view that never moved: with fewer rows than the
+    // viewport holds, the page-up overshoot clamps straight back to the newest line, so the pin
+    // was set, immediately cleared, and both edges announced.
     bool wantPin = g_pinned;
     if (open) {
         const int page = std::max(1, maxRows - 1);  // one row of carried context
@@ -326,8 +283,8 @@ void Draw() {
             bottom += page;
         }
     }
-    // Clamp to the OLDEST full viewport first; then, at (or past) the newest row,
-    // there is nothing to be pinned TO.
+    // Clamp to the oldest full viewport first; at or past the newest row there is nothing to be
+    // pinned to.
     const int floorBottom = std::min(nRows - 1, maxRows - 1);
     if (bottom < floorBottom) bottom = floorBottom;
     if (bottom >= nRows - 1) {
@@ -340,13 +297,13 @@ void Draw() {
         g_anchorSub = row[bottom].sub;
     }
 
-    // One extra row above the budget, clipped, so a pageable history reads as
-    // continuing rather than as a clean edge that looks like the end of it.
+    // One extra row above the budget, clipped, so a pageable history reads as continuing rather
+    // than as a clean edge that looks like the end of it.
     const int top = std::max(0, bottom - maxRows);
     const int shown = bottom - top + 1;
 
-    // BACKGROUND draw list: over the scene, under real windows (menus/scoreboard) --
-    // the same layer the nameplates use. Drawn after them so chat wins on overlap.
+    // The background draw list: over the scene, under real windows, the layer the nameplates use;
+    // drawn after them, so chat wins on overlap.
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->PushClipRect(ImVec2(0.f, topLimit), ImVec2(io.DisplaySize.x, anchorBottomY + rowH), true);
     float y = anchorBottomY - rowH * static_cast<float>(shown);
@@ -354,19 +311,19 @@ void Draw() {
     for (int r = top; r <= bottom; ++r) {
         const auto& l = s.lines[row[r].line];
         const float a = drawnAlpha(row[r].line);
-        // Skip the INK, never the slot -- `y` advances at the bottom of this loop
-        // whatever happens here (MTA CChat.cpp:342/357). A row that is momentarily
-        // transparent keeps its place, so nothing below it jumps.
+        // Skip the ink, never the slot: the row's y advances at the bottom of the loop whatever
+        // happens here, so a momentarily transparent row keeps its place and nothing below it
+        // jumps.
         if (a < kAlphaFloor) { y += rowH; continue; }
         const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 200.f));
-        // Peer-action lines ("<nick> deleted an email: X") draw their predicate in
-        // yellow (user 2026-07-11) so world-state actions read apart from typed chat.
+        // A peer-action line draws its predicate in yellow, so a world-state action reads apart
+        // from typed chat.
         const ImU32 body = l.action
             ? IM_COL32(255, 214,  80, static_cast<int>(a * 245.f))
             : IM_COL32(236, 236, 236, static_cast<int>(a * 245.f));
         ImU32 nickCol = body;
         if (l.nickLen > 0) {
-            // Frozen at compose time (coop::chat_nick_color), stored ARGB; ImU32 is ABGR.
+            // Frozen at compose time, stored ARGB; the ImGui colour is ABGR.
             nickCol = IM_COL32((l.nickArgb >> 16) & 0xFFu, (l.nickArgb >> 8) & 0xFFu,
                                l.nickArgb & 0xFFu, static_cast<int>(a * 255.f));
         }
@@ -376,7 +333,7 @@ void Draw() {
         float x = pad;
         const char* seg = row[r].b;
         while (seg < row[r].e) {
-            // Split the row at the nick boundary when it falls inside this row.
+            // The row splits at the nick boundary when it falls inside this row.
             const char* segEnd = (seg < nickEnd && nickEnd < row[r].e) ? nickEnd : row[r].e;
             const ImU32 col = (seg < nickEnd) ? nickCol : body;
             dl->AddText(font, px, ImVec2(x - o, y), outline, seg, segEnd);
