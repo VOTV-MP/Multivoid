@@ -1,28 +1,10 @@
-// ue_wrap/engine_mainplayer.cpp -- AmainPlayer_C accessors (grab state + flashlight).
-//
-// Extracted from ue_wrap/engine.cpp (2026-05-29 modular refactor, M-1).
-// Public API lives in ue_wrap/engine.h; this TU implements the
-// AmainPlayer_C-scoped Read/Write/Set wrappers in `namespace ue_wrap::engine`.
-//
-// Scope: every function here reads or writes a field of AmainPlayer_C (or
-// dispatches on its directly-owned components -- the PhysicsHandle for grab
-// release, the Light_R + spot-light component for flashlight/cone setters).
-// Per Principle 7 these are the canonical engine-substrate accessors; gameplay
-// /coop code uses them in place of inline `*reinterpret_cast<T*>(self + off)`
-// derefs.
-//
-// Used by:
-//   - coop/item_activate.cpp (flashlight Read/Write + light/cone setters)
-//   - coop/grab_observer.cpp (grab state reads + PHC release)
-//   - coop/net_pump.cpp (grab state read for held-prop replication)
-//   - coop/remote_prop.cpp (ReleaseMainPlayerGrabIfHolding on destroy)
-//   - harness/autotest/autotest_grab.cpp (grab-pair writes + component-ptr reads)
-//
-// Anon-namespace caches in this TU are file-private per the engine_pawn
-// precedent (independent FindClass per TU, no header-level shared cache).
-// All cached globals are plain void* -- no std::atomic / std::mutex moves,
-// so the MSVC incremental-link DLL corruption rule (RULE 2026-05-29) does
-// not structurally trigger.
+// ue_wrap/engine/engine_mainplayer.cpp -- the player pawn accessors (grab state, flashlight,
+// ragdoll, damage). The public API lives in ue_wrap/engine/engine.h; this TU implements the
+// wrappers scoped to the player class: every function reads or writes a field of it or
+// dispatches on its directly owned components (the physics handle for grab release, the
+// light and spot-light components for the flashlight setters). These are the canonical
+// engine-substrate accessors; gameplay code uses them in place of inline offset
+// dereferences. The caches here are file-private plain pointers, resolved once per process.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -41,12 +23,10 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Cached PHC class + ReleaseComponent UFunction for the release-before-destroy
-// path. Eager-resolved (audit fix #1, 2026-05-25) so the first cross-peer
-// PropDestroy doesn't hit a not-yet-resolved class on a peer that just
-// connected. The PhysicsHandleComponent UClass is engine-stable and loads
-// with the world; by the time any session connects it is resolvable.
-ue_wrap::CachedObjRef g_phcClsCache;  // islive-zeroav row :53
+// The cached physics-handle class and its release UFunction for the release-before-destroy
+// path, eager-resolved so the first cross-peer destroy does not hit an unresolved class on a
+// peer that just connected. The class is engine-stable and loads with the world.
+ue_wrap::CachedObjRef g_phcClsCache;  // a slot-validated cache
 void* g_phcReleaseFnCache = nullptr;
 
 bool ResolvePhcReleaseCached() {
@@ -57,11 +37,8 @@ bool ResolvePhcReleaseCached() {
     return g_phcReleaseFnCache != nullptr;
 }
 
-// Cached UFunctions for the light/cone setters below. Resolved on first
-// successful call. Pre-A-1 (2026-05-29) these were duplicated across
-// coop/item_activate.cpp's ApplyToPuppet + DebugForceToggle as static
-// locals; Principle-7 wrapper extraction folds the cache here (one
-// resolve per process) and lets gameplay code stay reflection-free.
+// The cached UFunctions for the light and cone setters below, resolved on the first
+// successful call: one resolve per process, and gameplay code stays reflection-free.
 void* g_setLightIntensityFn      = nullptr;
 void* g_setSceneVisibilityFn     = nullptr;
 void* g_setSpotOuterConeAngleFn  = nullptr;
@@ -89,9 +66,9 @@ void ResolveSpotConeFns() {
     if (!g_setSpotInnerConeAngleFn) g_setSpotInnerConeAngleFn = R::FindFunction(cls, P::name::SetInnerConeAngleFn);
 }
 
-// Cached ragdoll UFunctions (Inc2b). Both owned by mainPlayer_C. Resolved on
-// first successful call; mainPlayer_C loads with gameplay so by the time any
-// puppet exists these resolve.
+// The cached ragdoll UFunctions, both owned by the player class. Resolved on the first
+// successful call; the class loads with gameplay, so by the time any puppet exists they
+// resolve.
 void* g_ragdollModeFn  = nullptr;
 void* g_forceGetUpFn   = nullptr;
 void* g_forceWakeupFn  = nullptr;
@@ -105,8 +82,8 @@ void ResolveRagdollFns() {
     if (!g_forceWakeupFn)  g_forceWakeupFn  = R::FindFunction(cls, P::name::MainPlayerForceWakeupFn);
 }
 
-// vitals Inc3-WIRE: cached "Add Player Damage" UFunction (resolves once mainPlayer_C
-// is loaded, like the ragdoll fns above).
+// The cached add-player-damage UFunction (resolves once the player class is loaded, like the
+// ragdoll ones).
 void* g_addPlayerDamageFn = nullptr;
 
 void ResolveAddPlayerDamageFn() {
@@ -117,9 +94,9 @@ void ResolveAddPlayerDamageFn() {
 }
 
 
-// Inc3 damage body-pulse: cached solid-red material + the UPrimitiveComponent
-// material UFunctions (GetNumMaterials / GetMaterial / SetMaterial).
-ue_wrap::CachedObjRef g_hurtMat;  // islive-zeroav row :124
+// The damage body pulse: the cached solid-red material and the primitive component's
+// material UFunctions (count, get, set).
+ue_wrap::CachedObjRef g_hurtMat;  // a slot-validated cache
 void* g_getNumMatFn = nullptr, *g_getMatFn = nullptr, *g_setMatFn = nullptr;
 
 void* ResolveHurtMat() {
@@ -136,8 +113,8 @@ void ResolveMatFns() {
     if (!g_setMatFn)    g_setMatFn    = R::FindFunction(c, L"SetMaterial");
 }
 
-// Swap EVERY material slot on ONE component `comp` to `mat`, APPENDING each
-// (comp, index, original) into `saved` (caller-owned) for RestoreHurtFlashMaterial.
+// Swap every material slot on one component to `mat`, appending each (component, index,
+// original) into `saved`, caller-owned, for the restore.
 void SwapComponentMaterials(void* comp, void* mat, std::vector<SavedMaterial>& saved) {
     if (!comp || !R::IsLive(comp) || !mat) return;
     ResolveMatFns();
@@ -156,8 +133,8 @@ void SwapComponentMaterials(void* comp, void* mat, std::vector<SavedMaterial>& s
     }
 }
 
-// The puppet's two visible body meshes (the native ACharacter slot @0x280 AND
-// mesh_playerVisible @0x4F8 -- both render, both carry the kel4 skin).
+// The puppet's two visible body meshes (the native character mesh and the player-visible
+// mesh): both render, and both carry the skin.
 void* PuppetVisibleMesh(void* puppet, size_t off) {
     if (!puppet || !R::IsLive(puppet)) return nullptr;
     void* c = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(puppet) + off);
@@ -168,8 +145,8 @@ void* PuppetVisibleMesh(void* puppet, size_t off) {
 
 void* ResolveMaterialByName(const wchar_t* name) {
     if (!name) return nullptr;
-    // MaterialInstanceConstant first (most pak materials), then a base Material
-    // (e.g. EmissiveMeshMaterial), then any-class fallback.
+    // A material instance constant first (most pak materials), then a base material, then an
+    // any-class fallback.
     void* m = R::FindObject(name, P::name::MaterialInstanceConstantClassName);
     if (m && R::IsLive(m)) return m;
     m = R::FindObject(name, L"Material");
@@ -179,10 +156,9 @@ void* ResolveMaterialByName(const wchar_t* name) {
 }
 
 bool ApplyHurtFlashMaterial(void* puppet, std::vector<SavedMaterial>& saved) {
-    // Self-protecting: if `saved` is non-empty a flash is ALREADY applied. A second
-    // apply without an intervening restore would re-read the gore material as the
-    // "original" and stick it permanently. The caller (RemotePlayer flash edge) is
-    // edge-gated, but guarding here makes the ue_wrap API safe for any caller.
+    // Self-protecting: a non-empty `saved` means a flash is already applied, and a second apply
+    // without a restore in between would re-read the hurt material as the original and stick it
+    // permanently. The caller is edge-gated, but the guard makes the API safe for any caller.
     if (!saved.empty()) return false;
     void* hurtMat = ResolveHurtMat();
     if (!hurtMat || !puppet || !R::IsLive(puppet)) return false;
@@ -197,9 +173,9 @@ bool RestoreHurtFlashMaterial(void* /*puppet*/, std::vector<SavedMaterial>& save
         for (const auto& s : saved) {
             void* comp = s.component.Get();  // slot-validated
             if (!comp) continue;  // component GC'd
-            // If the cached original material was GC'd during the ~0.5 s window,
-            // restore nullptr -- SetMaterial(null) reverts the slot to the
-            // SkeletalMesh asset's default (the kel skin), the correct outcome.
+            // If the cached original material was collected during the flash window, restore null:
+            // a null material reverts the slot to the mesh asset's default, the skin, the correct
+            // outcome.
             void* orig = s.original.Get();  // null -> revert to the asset default (correct)
             ParamFrame f(g_setMatFn);
             f.Set<int32_t>(L"ElementIndex", s.index);
@@ -211,11 +187,10 @@ bool RestoreHurtFlashMaterial(void* /*puppet*/, std::vector<SavedMaterial>& save
     return true;
 }
 
-// Eager-resolve the hurt material + the UPrimitiveComponent material UFunctions so
-// the first damage flash does zero GUObjectArray name walks. Called once per puppet
-// spawn (cached forever on success). If the gore material isn't loaded yet it's a
-// no-op and the first flash resolves lazily -- but it is resident base content, so
-// the warmup succeeds and steady-state flashes never re-walk the object array.
+// Eager-resolve the hurt material and the material UFunctions, so the first damage flash
+// does no object-array name walks. Called once per puppet spawn, cached forever on success;
+// if the material is not loaded yet the warm-up is a no-op and the first flash resolves
+// lazily, but it is resident base content, so steady-state flashes never re-walk the array.
 void WarmupHurtFlashCache() {
     ResolveHurtMat();
     ResolveMatFns();
@@ -233,11 +208,10 @@ bool WarmupPhcReleaseCache() {
 }
 
 bool IsMainPlayerGrabbing(void* localPlayer, void* actor) {
-    // Read-only twin of ReleaseMainPlayerGrabIfHolding (same grabbing_actor
-    // slot, no mutation). Fork B 2d: the snapshot bind paths skip the
-    // physics-reconcile + teleport-converge on a prop the LOCAL player is
-    // holding -- forcing SimulatePhysics off mid-hold breaks the
-    // PhysicsHandle grab at a re-bracket.
+    // The read-only twin of ReleaseMainPlayerGrabIfHolding (the same grabbing-actor slot, no
+    // mutation): the snapshot bind paths skip the physics reconcile and teleport converge on a
+    // prop the local player is holding, since forcing physics off mid-hold breaks the
+    // physics-handle grab at a re-bracket.
     if (!localPlayer || !actor) return false;
     if (!R::IsLive(localPlayer)) return false;
     void* const* grabbingSlot = reinterpret_cast<void* const*>(
@@ -248,19 +222,17 @@ bool IsMainPlayerGrabbing(void* localPlayer, void* actor) {
 
 bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
     if (!localPlayer || !actor) return false;
-    // 2026-05-25 audit fix #2: validate localPlayer liveness before any field
-    // dereference. mainPlayer_C is normally persistent across the session
-    // but a level unload mid-disconnect could leave the cached pointer
-    // dangling -- IsLive catches it via the FUObjectItem.Flags read.
+    // Validate the player's liveness before any field dereference: the pawn is normally
+    // persistent across the session, but a level unload mid-disconnect could leave the cached
+    // pointer dangling.
     if (!R::IsLive(localPlayer)) return false;
     void** grabbingSlot = reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(localPlayer) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
     if (*grabbingSlot != actor) return false;
     if (!ResolvePhcReleaseCached()) {
-        // PHC class still not loaded somehow (defensive). Clear the slot
-        // anyway so subsequent reads don't see a doomed pointer; the BP
-        // destGrabbed delegate will run the PHC teardown via the actor's
-        // OnDestroyed broadcast (less ideal timing but functional).
+        // The physics-handle class is still not loaded (defensive). Clear the slot anyway so later
+        // reads do not see a doomed pointer; the blueprint's grab-destroyed delegate runs the
+        // handle teardown from the actor's destroyed broadcast (later, but functional).
         UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent unresolved -- clearing grabbing_actor only; destGrabbed delegate path will run PHC teardown");
         *grabbingSlot = nullptr;
         return false;
@@ -275,8 +247,8 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
         UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC pointer null/dead on localPlayer=%p -- only clearing grabbing_actor",
                 localPlayer);
     }
-    // Mirror destGrabbed delegate cleanup so subsequent state reads
-    // (other observers in same frame) don't see the dangling pointer.
+    // Mirror the grab-destroyed delegate's cleanup, so state reads later in the same frame do
+    // not see the dangling pointer.
     *grabbingSlot = nullptr;
     return true;
 }
@@ -293,9 +265,8 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
     out.grabbingActor = *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
-    // holding_actor: chipPile / clump morph carry slot. Added in a later VOTV
-    // recook; if reflected_offset returns -1 we leave the field null rather
-    // than dereffing a negative offset.
+    // The holding actor: the chip-pile and clump carry slot, added in a later game recook; a
+    // missing offset leaves the field null rather than dereferencing a negative offset.
     const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
     if (holdingOff >= 0) {
         out.holdingActor = *reinterpret_cast<void**>(base + holdingOff);
@@ -317,12 +288,11 @@ bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     const int32_t off = ue_wrap::reflected_offset::MainPlayer_lookAtActor();
     if (off < 0) return false;
-    // lookAtActor is the cached interaction-trace result the game re-derives every tick (NOT a
-    // UFunction-setter-managed field with side-effect setup), so a direct write is safe and is the
-    // established in-tree pattern -- device_screen.cpp ClearAimForDispatch nulls + restores it
-    // around an InpActEvt_use dispatch. Setting it to the aimed actor for the single dispatch that
-    // immediately follows lets the BP's icast(lookAtActor) resolve to it (the next tick's trace
-    // overwrites it). Game thread only.
+    // The look-at actor is the cached interaction-trace result the game re-derives every tick,
+    // not a setter-managed field with side-effect setup, so a direct write is safe and is the
+    // established in-tree pattern (the device screen nulls and restores it around a use
+    // dispatch). Setting it to the aimed actor for the single dispatch that follows lets the
+    // blueprint's cast resolve to it; the next tick's trace overwrites it. Game thread only.
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off) = actor;
     return true;
 }
@@ -479,18 +449,16 @@ bool ForceMainPlayerWakeup(void* mainPlayer) {
 }
 
 namespace {
-// canRagdoll @0x0D10 (mainPlayer.hpp:278) -- ragdollMode()'s own pre-condition
-// early-out, and the single choke point for every ragdoll cause on a pawn,
-// DEATH INCLUDED: `dead := true` (uber @37412) is reachable only via
-// `fallen(true)`, reachable only from `ragdollMode`, whose first instruction is
-// `IFNOT(canRagdoll) POP`. Two lanes hold it shut -- the Killer Wisp false-grab
-// belt (the drop notify fires an unconditional `ragdollMode(true,false,true)`
-// from bytecode we cannot intercept; an HP pin cannot stop a ragdoll-DEATH, this
-// flag can) and the KO-respawn death gate. Plain BP bool with no setter (inline
-// EX_LetBool writes) and ZERO write sites in mainPlayer_C's own bytecode
-// (measured 2026-08-31), so nothing in the game fights our value. Byte+mask
-// cached once: property LAYOUT is stable for a game build (only class POINTERS
-// go stale across level travel; none is cached here).
+// The can-ragdoll flag: the ragdoll verb's own pre-condition early-out, and the single choke
+// point for every ragdoll cause on a pawn, death included, since the dead flag is set only
+// through the fallen path, reachable only from the ragdoll verb, whose first instruction
+// checks this flag. Two lanes hold it shut: the killer-wisp false-grab belt (the drop notify
+// fires an unconditional ragdoll death from bytecode we cannot intercept, and a health pin
+// cannot stop a ragdoll death while this flag can) and the knockout-respawn death gate. A
+// plain blueprint bool with no setter and no write sites in the player's own bytecode, so
+// nothing in the game fights our value. The byte and mask are cached once: property layout
+// is stable for a game build (only class pointers go stale across level travel, and none is
+// cached here).
 bool ResolveCanRagdoll(void* mainPlayer, uint8_t*& byteOut, uint8_t& maskOut) {
     static int32_t sCanRagByte = -1;
     static uint8_t sCanRagMask = 0;
@@ -531,17 +499,17 @@ bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood) {
     if (!g_addPlayerDamageFn) return false;
     ParamFrame f(g_addPlayerDamageFn);
     f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/Source zero-init
-    // `[V]` @2784 `IFNOT(blood) POP` guards the block ending in `lib_C::addEffect('bloodLoss',
-    // ...)`. Leaving it false makes a synthetic hit unlike any hit the game produces.
+    // The blood parameter guards the block that adds the blood-loss effect; leaving it false
+    // makes a synthetic hit unlike any hit the game produces.
     if (blood) f.Set<bool>(L"blood", true);
     return Call(mainPlayer, f);
 }
 
 void* AddPlayerDamageFunctionPtr() {
-    // Resolve (idempotent) + return the mainPlayer_C "Add Player Damage" UFunction so a coop
-    // module can install a ProcessEvent PRE-interceptor on it (the Killer Wisp host-neutralize:
-    // zero the wisp's limb-tear damage to the HOST while it false-grabs a client). null until
-    // mainPlayer_C is loaded. Game thread.
+    // Resolve, idempotently, and return the player's add-player-damage UFunction so a coop
+    // module can install a pre-interceptor on it (the killer-wisp host neutralise: zero the
+    // wisp's limb-tear damage to the host while it false-grabs a client). Null until the player
+    // class is loaded. Game thread.
     ResolveAddPlayerDamageFn();
     return g_addPlayerDamageFn;
 }
