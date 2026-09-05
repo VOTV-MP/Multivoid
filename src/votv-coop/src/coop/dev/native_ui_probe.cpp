@@ -1,4 +1,8 @@
-// coop/dev/native_ui_probe.cpp -- see coop/dev/native_ui_probe.h.
+// coop/dev/native_ui_probe.cpp -- the native UMG probe behind the server browser's design: a
+// read-only census of the menu (the classes and UFunctions the browser needs, the switcher's
+// child map, the style donors, the brush and delegate layouts) and, when armed to write, a
+// throwaway widget held in the menu's switcher to measure layout, hover and GC survival. See
+// coop/dev/native_ui_probe.h.
 
 #include "coop/dev/native_ui_probe.h"
 
@@ -41,18 +45,15 @@ bool WriteArmed() {
     return s && Armed();
 }
 
-// =====================================================================================
-// Small helpers (this TU only).
-// =====================================================================================
+// Small helpers.
 
 inline void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off)
                               : nullptr;
 }
 
-// Resolve one UFunction on the class that OWNS it and log the verdict. R::FindFunction
-// matches `OuterOf(fn) == owningClass` with NO super-walk (reflection.cpp:493), so the
-// owning class IS the question here -- this is O1.
+// Resolve one UFunction on the class that owns it and log the verdict; FindFunction does no
+// super-walk, so the owning class is the question.
 void* ResolveFnOn(const wchar_t* className, const wchar_t* fnName, int* okCount, int* missCount) {
     void* cls = R::FindClass(className);
     if (!cls) {
@@ -72,19 +73,14 @@ void* ResolveFnOn(const wchar_t* className, const wchar_t* fnName, int* okCount,
     return fn;
 }
 
-// =====================================================================================
-// STAGE A -- the read-only census. Runs once per menu instance.
-// =====================================================================================
+// Stage A: the read-only census, once per menu instance.
 
-// Every class the browser instantiates and every UFunction it calls, paired with the
-// class that OWNS the function. Kept as data rather than code so a recook diff is a
-// table diff.
+// Every class the browser instantiates and every UFunction it calls, with the owning class.
+// Data, so a recook diff is a table diff.
 struct FnRow { const wchar_t* cls; const wchar_t* fn; };
 constexpr FnRow kFnTable[] = {
-    // The panel API -- ONE resolve on UPanelWidget serves ScrollBox, Overlay,
-    // HorizontalBox, CanvasPanel and the WidgetSwitcher alike. `AddChild` is resolved
-    // NOWHERE in the tree today, and UWidgetSwitcher has no typed AddChildToX, so this
-    // row is the most load-bearing line in the table.
+    // The panel API: one resolve on UPanelWidget serves every panel type, and UWidgetSwitcher has
+    // no typed add of its own.
     {L"PanelWidget",        L"AddChild"},
     {L"PanelWidget",        L"RemoveChild"},
     {L"PanelWidget",        L"GetChildrenCount"},
@@ -119,25 +115,22 @@ constexpr FnRow kFnTable[] = {
     {L"HorizontalBoxSlot",  L"SetPadding"},
     {L"HorizontalBoxSlot",  L"SetHorizontalAlignment"},
     {L"WidgetSwitcherSlot", L"SetHorizontalAlignment"},
-    // UWidget-owned reads the hover/geometry path needs. GetDesiredSize and
-    // GetCachedGeometry are also RUNG 1's non-visual instruments.
+    // UWidget reads the hover and geometry path needs.
     {L"Widget",             L"IsHovered"},
     {L"Widget",             L"GetDesiredSize"},
     {L"Widget",             L"GetCachedGeometry"},
     {L"Widget",             L"SetVisibility"},
 };
 
-// Classes we only need to INSTANTIATE (no function of their own to resolve).
+// Classes only instantiated (no function of their own to resolve).
 constexpr const wchar_t* kClassOnly[] = {
     L"ScrollBox", L"Overlay", L"SizeBox", L"Image", L"HorizontalBox", L"EditableTextBox",
     L"CanvasPanel", L"WidgetSwitcher", L"UserWidget", L"WidgetTree", L"TextBlock",
 };
 
-// The style donors section 8's table names, with the class each is expected on. The
-// point is not that they resolve -- it is whether they are RESIDENT and NON-NULL at
-// MAIN-MENU time, because the styling rule is FAIL-CLOSED: a null donor must mean
-// "retry", never "fall back to a default style" (that fallback is the Roboto / centred /
-// white bug).
+// The style donors, with the class each is expected on. The question is whether they are
+// resident and non-null at main-menu time: the styling rule is fail-closed, so a null donor
+// means retry, never a default style.
 struct DonorRow { const wchar_t* cls; const wchar_t* field; const char* role; };
 constexpr DonorRow kDonorTable[] = {
     {L"ui_menu_C",      L"button_start",   "button, 3 states + both sounds -- the shipped inject's own donor"},
@@ -150,19 +143,17 @@ constexpr DonorRow kDonorTable[] = {
     {L"ui_saveSlots_C", L"ScrollBox_list", "scroll container (unstyled -- ui_settings owns the bar style)"},
     {L"ui_settings_C",  L"scrollboxRoot",  "scrollbar (WidgetBarStyle / inst_uiScroll)"},
     {L"ui_settings_C",  L"rtb_desc",       "description pane"},
-    // Named by the section-8 donor table but NOT a field on ui_saveSlots_C in this
-    // build's header dump -- listed so the log says so out loud instead of the doc
-    // continuing to name a donor nothing can read.
+    // Not a field on ui_saveSlots_C in this build's header dump; listed so the log says so.
     {L"ui_saveSlots_C", L"image_border",   "section-8 'image_border_*' -- expected ABSENT, confirming the doc row is wrong"},
 };
 
-// FScriptDelegate: TWeakObjectPtr {int32 index, int32 serial} + FName {int32, int32}.
+// FScriptDelegate: a TWeakObjectPtr {int32 index, int32 serial} and an FName {int32, int32}.
 struct ScriptDelegate {
     int32_t objectIndex;
     int32_t objectSerial;
     R::FName functionName;
 };
-// A multicast delegate property is a TArray<FScriptDelegate> -- {ptr, num, max}.
+// A multicast delegate property is a TArray<FScriptDelegate>: {ptr, num, max}.
 struct MulticastDelegate {
     ScriptDelegate* data;
     int32_t num;
@@ -195,12 +186,10 @@ ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     return v;
 }
 
-// O5 -- the FSlateResourceHandle question. FSlateBrush is 0x88: reflected fields end at
-// ImageType @0x6F and the bitfield bools resume @0x80, so the 16 bytes at +0x70 are an
-// unreflected FSlateResourceHandle (a TSharedPtr). InjectCanvasButton memcpys the whole
-// 0x278 FButtonStyle, which spans four brushes at 0x08 / 0x90 / 0x118 / 0x1A0
-// (SlateCore.hpp:12-15) -- so if this handle is populated we shallow-alias a refcounted
-// pointer with no AddRef, exactly as the FSlateSound tail once did.
+// The FSlateResourceHandle question. FSlateBrush is 0x88 bytes: the reflected fields end at 0x6F
+// and the bitfield bools resume at 0x80, so the 16 bytes at 0x70 are an unreflected handle (a
+// shared pointer). The button inject copies the whole 0x278 FButtonStyle, four brushes, so a
+// populated handle would be aliased with no reference added.
 void MeasureBrushHandles(void* donorButton, const wchar_t* label) {
     if (!donorButton) {
         UE_LOGW("[native_ui_probe] O5 SKIPPED (%ls) -- no donor button", label);
@@ -218,8 +207,8 @@ void MeasureBrushHandles(void* donorButton, const wchar_t* label) {
         std::memcpy(&hi, h + 8, 8);
         const bool live = (lo != 0) || (hi != 0);
         if (live) ++populated;
-        // ResourceObject is printed beside it: a brush with no resource at all cannot
-        // have a handle, which would make a zero here uninformative rather than an answer.
+        // ResourceObject is printed beside it: a brush with no resource cannot have a handle, so a
+        // zero there would be uninformative.
         void* res = *reinterpret_cast<void**>(style + kBrushOff[i] + kResourceObjOff);
         if (res) ++withArt;
         UE_LOGI("[native_ui_probe] O5 %ls brush %-8s ResourceObject=%p  handle@+0x%zX = %016llX "
@@ -227,12 +216,9 @@ void MeasureBrushHandles(void* donorButton, const wchar_t* label) {
                 label, kName[i], res, kHandleOff, static_cast<unsigned long long>(lo),
                 static_cast<unsigned long long>(hi), live ? "POPULATED" : "null");
     }
-    // THE VERDICT MAY NOT BE STRONGER THAN THE EVIDENCE, and this probe's own first run
-    // proved why the guard is needed: ui_menu_C.button_start's four brushes carry NO
-    // ResourceObject at all, so all four handles read zero -- and a handle is a CACHE OF A
-    // RESOURCE. Zero from a brush with no resource says nothing about whether a brush WITH
-    // one caches a handle, which is the actual question. The block already carried that
-    // caveat as a comment; the verdict now obeys it instead of contradicting it.
+    // The verdict may not be stronger than the evidence: ui_menu_C.button_start's brushes carry no
+    // ResourceObject, so their zero handles say nothing about a brush that has one; a handle caches
+    // a resource.
     if (populated > 0)
         UE_LOGW("[native_ui_probe] O5 VERDICT (%ls): %d/4 handles POPULATED -- P0 is ARMED (the "
                 "0x278 memcpy shallow-aliases a refcounted TSharedPtr with no AddRef)",
@@ -249,10 +235,8 @@ void MeasureBrushHandles(void* donorButton, const wchar_t* label) {
                 label, withArt);
 }
 
-// O8 -- read-only proof of the delegate layout. Nothing is written: reading the GAME's
-// OWN bound button confirms UButton::OnClicked @ +0x3C8 (UMG.hpp:294) AND confirms there
-// is a delegate -> ProcessEvent path to point at, which is the whole of the evidence the
-// v2 "retire the poll" decision needs. v1 polls either way.
+// Read-only proof of the delegate layout: the game's own bound button confirms UButton::OnClicked
+// at 0x3C8 and that a delegate-to-ProcessEvent path exists.
 void MeasureDelegate(void* donorButton, const wchar_t* label) {
     if (!donorButton) return;
     static constexpr size_t kOnClickedOff = 0x3C8;
@@ -273,15 +257,10 @@ void MeasureDelegate(void* donorButton, const wchar_t* label) {
     }
 }
 
-// A5 -- the switcher CHILD MAP. Nobody has measured which sub-screen sits at which index,
-// and P2's placement is stated in indices ("our screen is the 12th child, index 11"). It
-// is also the live half of the placement's safety argument: appending cannot renumber
-// what is already there.
-// The live sub-screen instances, captured off the switcher's own child list so there is
-// no ambiguity about WHICH instance was read. Both are also looked up by
-// R::FindObjectByClass in the donor pass, and the two answers are printed side by side --
-// because "the donor is null" and "I read a different object than the one on screen" have
-// the same shape in a log and only one of them is a finding.
+// The switcher's child map: which sub-screen sits at which index, and the live half of the
+// placement argument (appending cannot renumber what is there). The live sub-screen instances
+// are captured off the switcher's own child list, since FindObjectByClass can answer with a
+// different instance, and the two are printed side by side.
 void* g_childSaveSlots = nullptr;
 void* g_childSettings  = nullptr;
 int32_t g_idxSaveSlots = -1;
@@ -313,26 +292,12 @@ void MeasureSwitcher(void* menu) {
     }
 }
 
-// O7 -- donor residency.
-//
-// The ui_menu_C rows read the LIVE menu we were handed. For a sub-screen class the owner
-// is taken from the SWITCHER'S OWN CHILD LIST (captured in A5) and falls back to
-// R::FindObjectByClass; both pointers are printed, because "the donor is null" and "I read
-// a different instance than the one in the tree" look identical in a log and only one of
-// them is a finding.
-//
-// THAT COMPARISON IS NOT DECORATION -- it caught a wrong conclusion on this probe's first
-// run. Reading through FindObjectByClass alone reported EVERY widget field on
-// ui_saveSlots_C and ui_settings_C as null, which read as "sub-screen donors do not exist
-// until the screen is shown" and would have forced section 8 to redesign its donor table
-// around a precondition. Measured with both pointers: FindObjectByClass returns a
-// DIFFERENT non-CDO instance than the one in the switcher (a WidgetBlueprint carries a
-// tree template that is not named `Default__`, so the CDO skip does not exclude it), and
-// the live child's donors are all RESIDENT at menu time. `FindObjectByClass` answers
-// "the first instance", which is not "the live one".
-//
-// The FindObjectByClass fallback is MEMOISED per class name, not per row: it walks all
-// ~237k GUObjectArray entries and the table names ui_saveSlots_C six times.
+// Donor residency. The ui_menu_C rows read the live menu; a sub-screen's owner is the switcher's
+// own child from the map above, falling back to FindObjectByClass, and both pointers are
+// printed: on this probe's first run FindObjectByClass returned a different non-CDO instance (a
+// WidgetBlueprint carries a template tree not named Default__) and reported every sub-screen
+// donor as null, while the live child's donors were all resident. The fallback is memoised per
+// class name: it walks the whole GUObjectArray, and the table names one class six times.
 void MeasureDonors(void* menu, const char* phase) {
     const wchar_t* lastCls = nullptr;
     void* lastFound = nullptr;
@@ -380,7 +345,7 @@ void RunStageA(void* menu) {
     UE_LOGI("[native_ui_probe] ===== STAGE A on menu=%p (class %ls) =====", menu,
             R::ClassNameOf(menu).c_str());
 
-    // O1 -- the resolve census.
+    // The resolve census.
     int ok = 0, miss = 0;
     for (const wchar_t* c : kClassOnly) {
         void* cls = R::FindClass(c);
@@ -392,7 +357,7 @@ void RunStageA(void* menu) {
             static_cast<int>(sizeof(kClassOnly) / sizeof(kClassOnly[0]) +
                              sizeof(kFnTable) / sizeof(kFnTable[0])));
 
-    // Keep the handful RUNG 1 needs.
+    // The handful the write rung needs.
     if (void* pw = R::FindClass(L"PanelWidget")) {
         g_fnAddChild    = R::FindFunction(pw, L"AddChild");
         g_fnRemoveChild = R::FindFunction(pw, L"RemoveChild");
@@ -408,23 +373,18 @@ void RunStageA(void* menu) {
         g_fnIsHovered   = R::FindFunction(w, P::name::WidgetIsHoveredFn);
     }
 
-    // A5 FIRST: it captures the live sub-screen children the donor pass prefers to read.
+    // The child map first: it captures the live sub-screen children the donor pass reads.
     MeasureSwitcher(menu);
     MeasureDonors(menu, "menu");
 
-    // O5 + O8 on the one donor the shipped inject already uses.
+    // The brush and delegate reads on the donor the shipped inject uses.
     const int32_t bsOff = R::FindPropertyOffset(R::ClassOf(menu), P::name::UiMenuButtonStartProp);
     void* buttonStart   = ReadPtr(menu, bsOff);
     MeasureBrushHandles(buttonStart, L"ui_menu_C.button_start");
     MeasureDelegate(buttonStart, L"ui_menu_C.button_start");
 
-    // A SECOND O5 DONOR, and it is the one that can actually answer the question. The
-    // first run of this probe found ui_menu_C.button_start's four brushes carrying NO
-    // ResourceObject, which makes its four zero handles uninformative -- a handle CACHES a
-    // resource. ui_saveSlots_C's buttons are the ones section 7b measured onto
-    // inst_uiButton, and the same run proved that sub-screen's widgets are RESIDENT at
-    // menu time. So the art-bearing donor is readable right here, with no write at all --
-    // which is what retired the rung that was going to show the screen to get at it.
+    // A second brush donor, the one that can answer: ui_saveSlots_C's buttons carry art, and that
+    // sub-screen's widgets are resident at menu time, so it is readable here with no write.
     if (g_childSaveSlots) {
         const int32_t off = R::FindPropertyOffset(R::ClassOf(g_childSaveSlots), L"button_back");
         void* back = ReadPtr(g_childSaveSlots, off);
@@ -436,60 +396,27 @@ void RunStageA(void* menu) {
             WriteArmed() ? "ARMED -- it WRITES" : "not armed");
 }
 
-// =====================================================================================
-// RUNG 1 -- the one WRITE. Does a hand-wired UUserWidget render inside the switcher?
-// =====================================================================================
-//
-// THE EXPERIMENT HAS EXACTLY ONE VARIABLE. The widget built here is the SAME shape
-// engine_widget's BuildTextWidget makes and pos_hud already ships through AddToViewport
-// -- UUserWidget -> UWidgetTree -> UTextBlock root, from bare SpawnObject, never
-// Initialize()d. That shape is PROVEN to render in the viewport. So if it does not render
-// here, the difference is the switcher and nothing else. Composing an Overlay + UImage
-// would have confounded the answer with our own tree.
-//
-// THE HOLD IS NOT OPTIONAL, and it is a deliberate deviation from the design text.
-// Section 8 says restore "in the same tick". Measured against what an instrument can see:
-// Slate lays out and paints AFTER our observer returns, so a same-tick restore presents no
-// frame with our widget active and leaves GetDesiredSize reading the same zero it read
-// before -- an instrument blind to the phenomenon always passes. The hold is therefore
-// bounded by a deadline the PROBE owns (nothing the user must do), and the restore runs on
-// every exit path below. That matters because at our index ESC is a no-op (section 8's
-// OnKeyDown finding) and a throwaway has no button_back: a probe that could outlive its own
-// deadline could strand the player in a menu with no way out.
+// Rung 1, the one write: does a hand-wired UUserWidget render inside the switcher? One
+// variable: the widget is the shape engine_widget's BuildTextWidget makes and the HUD ships
+// through AddToViewport (UUserWidget, UWidgetTree, a root widget, from bare SpawnObject, never
+// Initialize()d), proven to render in the viewport, so a failure here is the switcher and
+// nothing else. The hold is not optional: Slate lays out and paints after our observer
+// returns, so a same-tick restore would present no frame and read the same zero size. The hold
+// is bounded by a deadline the probe owns, and the restore runs on every exit path: at our
+// index ESC is a no-op and a throwaway has no back button, so an outlived hold could strand the
+// player.
 enum class Rung1 : uint8_t { Idle, Held, Done, Failed };
 Rung1 g_rung1 = Rung1::Idle;
 
-// RUNG 2 (2026-08-26) rides the SAME hold. RUNG 1 asked "does a hand-wired UUserWidget
-// render inside the switcher" and answered RENDERS; that is banked, so the throwaway is
-// now allowed to be a DEEPER tree and to answer the two questions section 8a left open --
-// both of which gate the browser's ~520 LOC and neither of which has a plan B:
-//
-//   HOVER  does a bare `UImage` with Visibility=Visible answer `IsHovered()`? That single
-//          bit is the hit-test authority for every row, every chrome button, and the
-//          scrim's click absorption. RUNG 1 reported rootHovered=1 on every sample, which
-//          is suspicious rather than confirming: a full-bleed widget under an unmoved
-//          cursor cannot distinguish "hit-testing works" from "always true". So RUNG 2
-//          uses a BOUNDED target and tests BOTH directions -- cursor ON it, cursor OFF it.
-//   GC     does the subtree survive a purge? The UPROPERTY chain (UUserWidget::WidgetTree
-//          @0x1D8 -> UWidgetTree::RootWidget @0x28 -> UPanelWidget::Slots @0x108 ->
-//          UPanelSlot::Content @0x30, all reflected) says it is reachable from the live
-//          switcher, so AddToRoot would be WRONG here -- but RUNG 1 lived about one tick
-//          and never met a collection. `ForceGarbageCollection()` already ships, so the
-//          reachability argument becomes a measurement for one line of code.
-//
-// The hold is longer because it is now a PHASE MACHINE, and every phase still exits
-// through the same single restore path.
-// THE MOVE AND THE SAMPLE ARE SEPARATE PHASES, and the first version of this file got
-// that wrong -- measured on the 2026-08-26 run. Sampling `IsHovered()` in the SAME tick
-// that moved the cursor read the PREVIOUS position every time: hover-ON sampled 0 while
-// the five following periodic samples all read 1, and hover-OFF sampled 1 while the five
-// following all read 0. Slate processes the mouse move later in the frame than our
-// observer runs, so the answer is always one tick stale.
-//
-// That is the SAME fact section 8 reasoned its way to for the WndProc ("our detour runs
-// before the engine sees the message, so IsHovered() still answers for the previous
-// position") -- and I reproduced the mistake in the instrument built to check it. The
-// design's "evaluate hover on the next game-thread tick" is now MEASURED, not argued.
+// Rung 2 rides the same hold and answers the two questions the browser's hit-test and lifetime
+// rest on. Hover: does a bare UImage with Visibility=Visible answer IsHovered? Rung 1's root
+// read hovered on every sample, which a full-bleed widget under an unmoved cursor cannot
+// distinguish from always-true, so rung 2 uses a bounded target and tests both directions. GC:
+// does the subtree survive a purge? The UPROPERTY chain from the live switcher (WidgetTree,
+// RootWidget, Slots, Content) says it is reachable, so AddToRoot would be wrong, but rung 1
+// lived one tick and never met a collection. The move and the sample are separate phases:
+// Slate processes the mouse move later in the frame than our observer runs, so a sample in the
+// move's tick reads the previous position.
 constexpr unsigned long long kHoldMs   = 5800;  // phases below + slack, then restore
 constexpr unsigned long long kShotAtMs = 700;
 constexpr unsigned long long kSampleMs = 250;
@@ -499,14 +426,12 @@ constexpr unsigned long long kHoverOffMoveMs   = 2800;  // cursor -> client cent
 constexpr unsigned long long kHoverOffSampleMs = 3400;
 constexpr unsigned long long kGcAtMs     = 4200;  // ForceGarbageCollection, then re-assert
 constexpr unsigned long long kGcCheckMs  = 5000;
-// The bounded hit-test target, in Slate units at the switcher's top-left. Bounded ON
-// PURPOSE: a full-bleed target makes a true reading unfalsifiable.
+// The bounded hit-test target, in Slate units at the switcher's top-left; a full-bleed target
+// makes a true reading unfalsifiable.
 constexpr float kProbeImgW = 400.f;
-constexpr float kProbeImgH = 64.f;   // the native row height (section 7b), so this is the real case
-// SETTLE before the write. At boot the menu opens on the content-warning screen -- itself
-// one of the switcher's children -- and the sub-screens are still being constructed. A
-// rung that fired on the very first main-menu tick would be measuring a half-built menu
-// and would take its screenshot over the warning rather than over the menu.
+constexpr float kProbeImgH = 64.f;   // the native row height
+// Settle before the write: at boot the menu opens on the content-warning screen, itself a
+// switcher child, while the sub-screens are still being constructed.
 constexpr unsigned long long kSettleMs = 3000;
 unsigned long long g_firstMainTickMs = 0;  // stamped on the first isPause==false tick
 
@@ -521,10 +446,8 @@ int32_t g_ourIndex   = -1;
 unsigned long long g_holdStartMs  = 0;
 unsigned long long g_lastSampleMs = 0;
 bool g_shotTaken = false;
-// RUNG 2 phase latches + results. `-1` = not sampled, so an UNRUN phase can never be
-// read as a negative answer (the section-8a trap: an instrument blind to the phenomenon
-// always passes, and its mirror -- a phase that never ran reported as "false" -- would
-// kill a correct design).
+// The phase latches and results. -1 is not sampled, so an unrun phase can never read as a
+// negative answer.
 int  g_hoverOnImg = -1, g_hoverOnText = -1, g_hoverOnRoot = -1;
 int  g_hoverOffImg = -1, g_hoverOffRoot = -1;
 int  g_hoverFgOn = -1, g_hoverFgOff = -1;   // was OUR window foreground at each sample
@@ -533,11 +456,9 @@ bool g_didHoverOn = false, g_didHoverOff = false, g_didGc = false, g_didGcCheck 
 int  g_gcChildCount = -1;
 ue_wrap::FVector2D g_gcRootSize{0.f, 0.f}, g_gcImgSize{0.f, 0.f};
 
-// The game's own top-level window, found from the GAME THREAD (which created it, and
-// which is also where WndProcDetour runs -- measured 2026-07-31). EnumThreadWindows is
-// deterministic here in a way that "the foreground window" is not: an unattended lab run
-// can legitimately have another window focused, and we must be able to tell that apart
-// from a hit-test failure.
+// The game's own top-level window, found from the game thread that created it. Deterministic
+// where the foreground window is not: an unattended run can have another window focused, and
+// that must be told apart from a hit-test failure.
 BOOL CALLBACK PickThreadWindow(HWND h, LPARAM lp) {
     if (!::IsWindowVisible(h)) return TRUE;
     RECT rc{};
@@ -552,10 +473,9 @@ HWND GameWindow() {
     return found;
 }
 
-// Move the OS cursor to a CLIENT-space point and verify it landed. Write-then-verify for
-// the same reason overlay_cursor.cpp does it: SetCursorPos is silently clamped by whatever
-// ClipCursor rect is live, and we do not own that rect -- an unverified move would turn a
-// clamp into a false "not hovered".
+// Move the OS cursor to a client-space point and verify it landed: SetCursorPos is silently
+// clamped by whatever ClipCursor rect is live, and an unverified move would turn a clamp into a
+// false "not hovered".
 bool MoveCursorClient(HWND hwnd, int cx, int cy, const char* why) {
     if (!hwnd) return false;
     POINT p{cx, cy};
@@ -578,9 +498,8 @@ bool HoveredOf(void* w) {
 
 void Rung1Restore(const char* why) {
     if (!g_heldSwitcher) return;
-    // Put the index back ONLY if it is still ours. The game's own sibling screens write
-    // this field to navigate (ui_stats and ui_settings both do -- measured in their
-    // ubergraphs), so restoring blindly would stomp a navigation the player just made.
+    // The index goes back only if it is still ours: the game's sibling screens write it to
+    // navigate, and a blind restore would stomp a navigation the player just made.
     const int32_t now = CallIntNoArg(g_heldSwitcher, g_fnGetActiveIdx);
     if (now == g_ourIndex && g_fnSetActiveIdx) {
         ue_wrap::ParamFrame f(g_fnSetActiveIdx);
@@ -615,15 +534,12 @@ void Rung1Begin(void* menu) {
         g_rung1 = Rung1::Failed;
         return;
     }
-    // Outer the widget to the switcher. The Outer does not root it -- what keeps a UMG
-    // widget alive is the panel's `Slots` UPROPERTY array -- but it keeps the lifetime
-    // question in one obvious place while it is attached.
+    // Outered to the switcher. The Outer does not root it (the panel's Slots array does); it keeps
+    // the lifetime question in one place.
     void* root = E::SpawnUObject(R::FindClass(P::name::UserWidgetClass), g_switcher);
     void* tree = root ? E::SpawnUObject(R::FindClass(P::name::WidgetTreeClass), root) : nullptr;
-    // RUNG 2: the root widget is a UOverlay, not the bare UTextBlock RUNG 1 used. The
-    // browser's real tree is Overlay -> [scrim UImage, content], so if a DEEPER hand-built
-    // tree fails to lay out, that is itself the finding -- and RUNG 1's answer is already
-    // banked, so the extra structure confounds nothing.
+    // The root is a UOverlay, the browser's real shape (a scrim image and content), so a deeper
+    // hand-built tree failing to lay out is itself the finding.
     void* ovl  = tree ? E::SpawnUObject(R::FindClass(L"Overlay"), tree) : nullptr;
     void* sbox = ovl ? E::SpawnUObject(R::FindClass(L"SizeBox"), ovl) : nullptr;
     void* img  = sbox ? E::SpawnUObject(R::FindClass(L"Image"), sbox) : nullptr;
@@ -641,21 +557,16 @@ void Rung1Begin(void* menu) {
     E::SetWidgetText(txt, L"MULTIVOID NATIVE UMG PROBE -- RUNG 1/2");
     E::SetTextBlockColor(txt, ue_wrap::FLinearColor{1.f, 0.f, 1.f, 1.f});  // magenta: unmistakable
 
-    // ---- RUNG 2's hit-test subject -------------------------------------------------
-    // A UImage with NO ResourceObject and only a tint DRAWS A SOLID RECT -- measured on
-    // the game's own screen: ui_saveSlots_C's first child `Image_302` is exactly that
-    // (full-screen, tint (0,0,0,0.5)) and it visibly dims the menu. So this needs no
-    // donor and no texture, which is also why the browser's scrim needs neither.
+    // The hit-test subject. A UImage with no ResourceObject and only a tint draws a solid rect (the
+    // game's own save-slot scrim is exactly that), so this needs no donor and no texture.
     {
         auto* b = reinterpret_cast<uint8_t*>(img) + P::off::UImage_Brush;
         *reinterpret_cast<ue_wrap::FLinearColor*>(b + P::off::FSlateBrush_TintColor) =
             ue_wrap::FLinearColor{0.f, 0.9f, 0.9f, 0.85f};  // cyan, clearly ours
         *(b + P::off::FSlateBrush_TintColor + P::off::FSlateColor_ColorUseRule) = 0;  // Specified
     }
-    // BOUND it. A full-bleed target cannot falsify a hover reading -- that is precisely
-    // why RUNG 1's rootHovered=1 said nothing. SetHeightOverride/SetWidthOverride are
-    // driven as UFUNCTIONS on purpose: the values live at +0x134/+0x130 but the
-    // bOverride_* bits are a BITFIELD at +0x150, so a raw write would silently do nothing.
+    // Bounded through the SizeBox's UFunctions: the override values are plain fields, but the
+    // bOverride bits are a bitfield, and a raw write would silently do nothing.
     if (void* sbCls = R::FindClass(L"SizeBox")) {
         if (void* fnH = R::FindFunction(sbCls, L"SetHeightOverride")) {
             ue_wrap::ParamFrame f(fnH); f.Set<float>(L"InHeightOverride", kProbeImgH); Call(sbox, f);
@@ -669,9 +580,8 @@ void Rung1Begin(void* menu) {
             ue_wrap::ParamFrame f(fnSet); f.Set<void*>(L"Content", img); Call(sbox, f);
         }
     }
-    // Both overlay children are pinned TOP-LEFT / BOTTOM-LEFT so the image occupies a
-    // known rect and the text cannot sit on top of it. EHorizontalAlignment Left=1;
-    // EVerticalAlignment Top=1, Bottom=3.
+    // Both children pinned top-left and bottom-left, so the image occupies a known rect and the
+    // text cannot sit on it. Left is 1; Top 1, Bottom 3.
     if (void* ovlCls = R::FindClass(L"Overlay")) {
         if (void* fnAdd = R::FindFunction(ovlCls, L"AddChildToOverlay")) {
             auto place = [&](void* child, uint8_t h, uint8_t v) {
@@ -688,14 +598,12 @@ void Rung1Begin(void* menu) {
             place(txt,  1, 3);  // Left / Bottom-- the visual proof, clear of the target
         }
     }
-    // Visibility::Visible (0) is REQUIRED for the image to answer IsHovered(): a
-    // SelfHitTestInvisible image reads false, which would look exactly like a failure of
-    // the whole approach. Stated as a probe input, not assumed.
+    // Visible (0) is required for the image to answer IsHovered; a self-hit-test-invisible image
+    // reads false.
     E::SetWidgetVisibility(img, 0);
 
-    // Baseline BEFORE attachment: a widget Slate has never taken has DesiredSize (0,0),
-    // because UWidget::GetDesiredSize reads the underlying SWidget and answers zero when
-    // there is none. That zero is what makes the post-hold read mean something.
+    // The baseline before attachment: a widget Slate has never taken has DesiredSize (0,0), which
+    // is what makes the post-hold read mean something.
     const ue_wrap::FVector2D pre = DesiredSizeOf(root);
     const int32_t nBefore = CallIntNoArg(g_switcher, g_fnChildCount);
     g_priorIndex = CallIntNoArg(g_switcher, g_fnGetActiveIdx);
@@ -723,8 +631,8 @@ void Rung1Begin(void* menu) {
     g_heldSwitcher = g_switcher;
     g_throwRoot    = root;
     g_throwText    = txt;
-    // Published only AFTER a successful attach, so a failed add cannot leave the RUNG 2
-    // phase machine holding pointers to a tree the restore path will never see.
+    // Published only after a successful attach, so a failed add leaves the phase machine no
+    // pointers the restore would never see.
     g_throwOverlay = ovl;
     g_throwImage   = img;
     g_throwSizeBox = sbox;
@@ -745,7 +653,7 @@ void Rung1Begin(void* menu) {
 void Rung1Tick() {
     const unsigned long long now  = ::GetTickCount64();
     const unsigned long long held = now - g_holdStartMs;
-    // Bail out if anything about the object we are writing into changed under us.
+    // Bail out if the object being written into changed under us.
     if (g_switcher != g_heldSwitcher) {
         Rung1Restore("switcher changed");
         UE_LOGW("[native_ui_probe] RUNG1 ABORTED -- the menu's switcher pointer moved mid-hold");
@@ -771,18 +679,14 @@ void Rung1Tick() {
                 coop::input::input_owner::IsForeground() ? 1 : 0);
     }
 
-    // ---- RUNG 2 phases -------------------------------------------------------------
-    // Each fires ONCE, in order, and none of them can end the hold early -- the single
-    // restore at the deadline below stays the only exit, so a phase that throws off the
-    // timing can never strand the throwaway on screen.
+    // The rung 2 phases. Each fires once, in order, and none ends the hold early; the restore at
+    // the deadline is the only exit.
     if (held >= kHoverOnMoveMs && !g_didHoverOnMove) {
         g_didHoverOnMove = true;
         HWND hwnd = GameWindow();
         if (hwnd) {
-            // Inside the bounded image: its rect is the switcher's top-left corner, and
-            // the switcher fills the screen (measured from ui_menu's CanvasPanelSlot:
-            // Anchors (0,0)-(1,1), offsets 0). Aim a quarter into it so a DPI scale other
-            // than 1.0 still lands inside.
+            // Inside the bounded image: its rect is the switcher's top-left corner (the switcher
+            // fills the screen), aimed a quarter in so a DPI scale other than 1 still lands inside.
             ::SetForegroundWindow(hwnd);
             MoveCursorClient(hwnd, static_cast<int>(kProbeImgW / 4),
                              static_cast<int>(kProbeImgH / 4), "ON the image");
@@ -823,9 +727,8 @@ void Rung1Tick() {
     }
     if (held >= kGcAtMs && !g_didGc) {
         g_didGc = true;
-        // The subtree is reachable ONLY through UPROPERTYs from the live switcher (no
-        // AddToRoot -- see the RUNG 2 header). This is where that argument stops being an
-        // argument. A 40 s lab run can otherwise miss UE's ~61 s periodic purge entirely.
+        // The subtree is reachable only through UPROPERTYs from the live switcher, with no
+        // AddToRoot; a forced collection is where that argument becomes a measurement.
         const bool ran = E::ForceGarbageCollection();
         UE_LOGW("[native_ui_probe] RUNG2 GC: ForceGarbageCollection ran=%d -- re-asserting in %llums",
                 ran ? 1 : 0, kGcCheckMs - kGcAtMs);
@@ -865,12 +768,8 @@ void Rung1Tick() {
                 "is DEAD; the browser falls back to AddToViewport like every other surface we ship.",
                 kHoldMs);
 
-    // ---- RUNG 2's hover verdict, THREE-VALUED on purpose ---------------------------
-    // A phase that never ran, or a sample taken while another application owned the
-    // foreground, is INCONCLUSIVE -- never a negative. ImGui's own cursor probe learned
-    // this the expensive way (tools/cursor_probe.py:8-12: an unattended run "shows no
-    // cursor whether or not the bug exists"), and reporting UNRUN as false here would
-    // kill a correct design on no evidence at all.
+    // The hover verdict, three-valued: a phase that never ran, or a sample taken while another
+    // application owned the foreground, is inconclusive, never a negative.
     if (g_hoverOnImg < 0 || g_hoverOffImg < 0) {
         UE_LOGE("[native_ui_probe] RUNG2 HOVER VERDICT: INCONCLUSIVE -- a phase did not run "
                 "(on=%d off=%d). The browser's hit-test design is UNMEASURED; do not build on it.",
@@ -901,11 +800,8 @@ void Rung1Tick() {
     g_rung1 = Rung1::Done;
 }
 
-// =====================================================================================
-// The anchor -- our OWN post observer on ui_menu_C::Tick (the same anchor the shipped
-// inject uses, so a null reading is attributable to a menu instance rather than to
-// there being no menu at all).
-// =====================================================================================
+// The anchor: our own post observer on ui_menu_C::Tick, the shipped inject's anchor too, so a
+// null reading is attributable to a menu instance rather than to no menu at all.
 
 std::atomic<bool> g_installed{false};
 std::atomic<bool> g_retrying{false};
@@ -917,13 +813,10 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     const bool isPause =
         (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0);
 
-    // THE RESTORE OUTRANKS EVERY GATE BELOW IT. ui_menu_C is ONE instance -- the pause
-    // menu is the same widget with isPause=true, sharing this same switcher_widgets. So a
-    // hold that is still open when the player leaves for gameplay would put our throwaway
-    // on screen the next time they press ESC, mid-game, with no button_back and with ESC
-    // a no-op at our index (section 8's OnKeyDown finding). Restoring only from the MAIN
-    // menu would leave that window open for exactly as long as the player stayed in the
-    // world. So the hold is torn down on this very tick instead.
+    // The restore outranks every gate below. ui_menu_C is one instance, and the pause menu is the
+    // same widget with isPause set, sharing the switcher; a hold still open when the player leaves
+    // for gameplay would put the throwaway on screen at the next ESC, with no back button and ESC
+    // a no-op at our index. So the hold is torn down on this tick.
     if (g_rung1 == Rung1::Held && isPause) {
         Rung1Restore("pause menu opened mid-hold");
         UE_LOGW("[native_ui_probe] RUNG1 ABORTED -- the menu went to isPause during the hold; the "
@@ -931,7 +824,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         g_rung1 = Rung1::Failed;
         return;
     }
-    // MAIN menu only from here on.
+    // The main menu only from here on.
     if (isPause) return;
 
     if (!g_stageADone || self != g_stageAMenu) {
@@ -939,8 +832,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         g_stageAMenu = self;
         RunStageA(self);
     } else {
-        // Keep the switcher pointer fresh for RUNG 1's abort check, without re-running the
-        // census (this is a per-tick path).
+        // The switcher pointer kept fresh for the abort check, without re-running the census.
         g_switcher = ReadPtr(self, g_switcherOff);
     }
 
