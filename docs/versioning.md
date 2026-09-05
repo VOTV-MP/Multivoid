@@ -77,7 +77,7 @@ reports, or two SDK dumps, and names the constant each change belongs to.
 6. Update the identity: the game target, the expected executable size, the build number, and
    the game target named on [INSTALL.md](INSTALL.md), which a lint checks in CI.
 7. Run the gates in order: the health check all green, the config self-test, the two-peer smoke,
-   the launcher's scenarios for the systems the diff said moved, and a hands-on run by a person.
+   the launcher's scenarios for the systems the diff said moved, and a play session by a person.
 8. Write down what it cost. Nothing here has been done for real yet: the mod has only ever run
    against one game version, so every duration is unknown, not small.
 
