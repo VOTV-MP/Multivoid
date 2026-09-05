@@ -1,4 +1,4 @@
-// ue_wrap/console_desk.cpp -- see ue_wrap/console_desk.h.
+// ue_wrap/desk/console_desk.cpp -- see ue_wrap/desk/console_desk.h.
 
 #include "ue_wrap/desk/console_desk.h"
 
@@ -24,11 +24,9 @@ void* g_cls = nullptr;
 void* g_instance = nullptr;
 int32_t g_instanceIdx = -1;
 
-// Field offsets, FindPropertyOffset-resolved (recook-robust). NAMED variables
-// self-bound to their wire name by the resolve rows below (2026-07-19: the
-// positional g_fields table + magic indices were retired -- a removed row
-// could silently shift every later index; a named deref is lexically checked
-// by the correspondence script and cannot shift).
+// Field offsets, resolved by property name (recook-robust). Named variables, each bound to
+// its wire name by the resolve rows below: a positional table with magic indices would let a
+// removed row silently shift every later index, while a named dereference cannot shift.
 int32_t g_offDlPoFilterOffset = -1;     // float
 int32_t g_offDlFrFilterOffset = -1;     // float
 int32_t g_offDlPoFilterSpeed = -1;      // float
@@ -47,10 +45,9 @@ int32_t g_offActiveDownload = -1;       // bool
 int32_t g_offActiveCoords = -1;         // bool
 int32_t g_offActiveComp = -1;           // bool
 int32_t g_offCoordIsPing = -1;          // bool
-// (canDL left the set in v70 -- DERIVED state, see the Scalars header note.
-// The comp-pane fields -- comp_progress/comp_data_0/comp_downloading/
-// comp_isDecodeActive -- moved to ue_wrap/desk/comp_pane, 2026-07-19 split;
-// comp_maxLevel stays: it rides the DeskState marshal.)
+// The derived download-allowed flag is not a field here (see the header), and the comp-pane
+// fields live in ue_wrap/desk/comp_pane; the comp max level stays, since it rides the
+// desk-state marshal.
 int32_t g_offCoordCoordLog2Text = -1;   // FString -- the LIVE log (coord_coordLogText is dead)
 
 struct FieldSlot { const wchar_t* name; int32_t* off; };
@@ -76,11 +73,10 @@ FieldSlot g_fields[] = {
     { L"coord_coordLog2Text", &g_offCoordCoordLog2Text },
 };
 
-// The parameterless screen-refresh verbs WriteScalars runs after the raw
-// writes -- the same upd* family setData's own apply chain uses, so a mirror
-// repaint goes through the BP's own painters (LEDs, toggles, text panes).
-// All 15 upd*/refresh verbs were audited side-effect CLEAN (phase-2 impl RE);
-// updComp takes a bool Condition and is dispatched separately below.
+// The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the same
+// update family the game's own apply chain uses, so a mirror repaint goes through the
+// blueprint's own painters (LEDs, toggles, text panes). Audited side-effect clean; the comp
+// repaint takes a condition and is dispatched separately.
 struct RefreshSlot { const wchar_t* name; void* fn; };
 RefreshSlot g_refresh[] = {
     { L"updText",            nullptr },
@@ -95,10 +91,9 @@ RefreshSlot g_refresh[] = {
 };
 void* g_writeToCoordLogFn = nullptr;  // writeToCoordLog_2 (the LIVE log writer)
 
-// ---- v70 signal-catch consume surface ----
-// Fstruct_signal_spawn member offsets (struct_signal_spawn.hpp; GUID-mangled
-// member names, dump offsets authoritative -- the space_renderer.cpp kRow_*
-// twin; coord_signalData is the same struct on the desk).
+// The signal-catch consume surface. The signal-spawn struct's member offsets come from the
+// struct dump (GUID-mangled member names, so the dump offsets are authoritative); the desk's
+// coordinate signal is the same struct.
 constexpr int32_t kSig_coordinates = 0x00;  // FVector
 constexpr int32_t kSig_type        = 0x0C;  // int32
 constexpr int32_t kSig_strength    = 0x10;  // float
@@ -108,36 +103,34 @@ constexpr int32_t kSig_polarity    = 0x1C;  // float
 constexpr int32_t kSig_polSpread   = 0x20;  // float
 constexpr int32_t kSig_objectName  = 0x24;  // FName (8)
 
-int32_t g_offCoordSignalData = -1;   // desk.coord_signalData (@0x0A38, Fstruct_signal_spawn)
+int32_t g_offCoordSignalData = -1;   // desk.coord_signalData (the signal-spawn struct)
 int32_t g_offDLRow = -1;             // desk.DL_signalDownloadData (struct_signal_data row)
 int32_t g_offDLData = -1;            // desk.DL_SignalDownloadDLData (Fstruct_signalDataDynamic)
 int32_t g_offDLFrData = -1;          // desk.DL_frData (needle)
 int32_t g_offDLPoData = -1;          // desk.DL_poData (needle)
-// struct_signal_data MEMBER offsets (GUID-mangled -> prefix-resolved on the
-// live UserDefinedStruct; see FindPropertyOffsetByPrefix).
+// The signal-data row's member offsets, GUID-mangled and prefix-resolved on the live
+// user-defined struct.
 int32_t g_offRowSignalName = -1;     // signalName_50_... (FName)
 int32_t g_offRowMesh = -1;           // mesh_9_... (UStaticMesh*)
 void* g_formDownloadFn = nullptr;        // formDownload(decoded, polarity)
 void* g_initDownloadSignalFn = nullptr;  // initDownloadSignal(signalLocation, decoded, polarity)
 void* g_playPingSoundFn = nullptr;       // playPingSound(NewSound)
 
-// ---- the desk.Widget -> atlas chain (desk-half seams) ----
-// (The comp-pane texts/cues/sounds/updComp moved to ue_wrap/desk/comp_pane,
-// 2026-07-19 split. SetText/SetSound/Activate/SetActive/SetVisibility/
-// SetVolumeMultiplier + CallParamless live in ue_wrap/core/component_calls.)
+// The desk widget to atlas chain, the desk-half seams. The comp-pane texts, cues and sounds
+// live in ue_wrap/desk/comp_pane; the component calls (set text, set sound, activate,
+// visibility, volume, parameterless call) in ue_wrap/core/component_calls.
 int32_t g_offWidget = -1;            // desk.Widget (Uui_consolesAtlas_C*)
 void* g_atlasCls = nullptr;
-int32_t g_offAtlasUiCoords = -1;     // atlas.ui_coordinates (Uui_coordinates_C* @0x0588)
+int32_t g_offAtlasUiCoords = -1;     // atlas.ui_coordinates
 
-// (The ui_coordinates coords-panel widget surface moved to
-// ue_wrap/desk/coords_panel, 2026-07-19 one-class-per-file split; the desk
-// half of its instance chain is AtlasUiCoordsSlot below.)
-void* g_intComsUnfocusedFn = nullptr;   // v109: desk intComs_unfocused -- reset-on-release target
+// The coordinates-panel widget surface lives in ue_wrap/desk/coords_panel; the desk half of
+// its instance chain is AtlasUiCoordsSlot below.
+void* g_intComsUnfocusedFn = nullptr;   // the desk's unfocus verb, the reset-on-release target
 
-// ---- v112 desk-INPUT apply surface (coop/desk_input_sync) ----
-// The active_* setter-event side effects (uber [1113-1156]) replicated per
-// field: hum + light components, the per-unit extra verbs, the scan effects.
-int32_t g_offMaxCooldown = -1;       // coord_maxCooldown @0x0C08 (scan-charge target)
+// The desk-input apply surface (the desk input sync). The active-toggle setter events' side
+// effects replicated per field: the hum and light components, the per-unit extra verbs, the
+// scan effects.
+int32_t g_offMaxCooldown = -1;       // coord_maxCooldown (the scan-charge target)
 int32_t g_offActiveConsole = -1;     // active_console (bool; the comp setter mirrors active_comp)
 int32_t g_offHumPlay = -1;           // computerHum_play   (UAudioComponent*)
 int32_t g_offHumDownl = -1;          // computerHum_downl
@@ -148,8 +141,8 @@ int32_t g_offLightCoord = -1;        // light_coord
 int32_t g_offLightComp = -1;         // light_comp
 int32_t g_offSignalSound = -1;       // signalSound (UAudioComponent* -- playback volume)
 void* g_stopSoundFn = nullptr;           // desk stopSound() (the active_play setter runs it)
-void* g_playSignalFn = nullptr;          // desk playSignal() (L6 deck-playback mirror replay)
-void* g_finFn = nullptr;                 // desk fin() (OnAudioFinished delegate cb -- L6 PE bracket)
+void* g_playSignalFn = nullptr;          // desk playSignal (the deck-playback mirror replay)
+void* g_finFn = nullptr;                 // desk fin (the audio-finished delegate callback)
 void* g_downloadPlaySignallFn = nullptr; // desk download_playSignall() (the active_download setter)
 void* g_setMatsFn = nullptr;             // desk setMats() (screen materials -- the comp setter)
 void* g_spawnDirsFn = nullptr;           // desk spawnDirs() (the scan arrows)
@@ -186,11 +179,9 @@ void ResolvePass() {
         g_initDownloadSignalFn = R::FindFunction(g_cls, L"initDownloadSignal");
     if (!g_playPingSoundFn) g_playPingSoundFn = R::FindFunction(g_cls, L"playPingSound");
     if (g_offRowSignalName < 0 || g_offRowMesh < 0) {
-        // The list_objects DataTable row type (struct_signal_data), reached
-        // through the property's OWN FStructProperty::Struct pointer -- a
-        // global FindObject by name+class returned null on the live build
-        // (2026-06-12 smoke: rowName/mesh=-1); the property chain is
-        // deterministic. Members are GUID-mangled -> prefix resolve.
+        // The objects table's row type, reached through the property's own struct pointer: a global
+        // find by name and class returns null on the live build, while the property chain is
+        // deterministic. Members are GUID-mangled, so prefix-resolved.
         if (void* rowStruct = R::PropertyInnerStruct(g_cls, L"DL_signalDownloadData")) {
             if (g_offRowSignalName < 0)
                 g_offRowSignalName = R::FindPropertyOffsetByPrefix(rowStruct, L"signalName_");
@@ -206,7 +197,7 @@ void ResolvePass() {
             g_offAtlasUiCoords = R::FindPropertyOffset(g_atlasCls, L"ui_coordinates");
     }
 
-    // ---- v112 desk-INPUT apply surface ----
+    // The desk-input apply surface.
     if (g_offMaxCooldown < 0) g_offMaxCooldown = R::FindPropertyOffset(g_cls, L"coord_maxCooldown");
     if (g_offActiveConsole < 0) g_offActiveConsole = R::FindPropertyOffset(g_cls, L"active_console");
     if (g_offHumPlay < 0)    g_offHumPlay = R::FindPropertyOffset(g_cls, L"computerHum_play");
@@ -227,8 +218,8 @@ void ResolvePass() {
 
     if (all && !g_coreResolved) {
         g_coreResolved = true;
-        // One-shot name:offset dump (conversion acceptance: diffable against
-        // the offsets the previous build logged + the header reference values).
+        // A one-shot name-to-offset dump, diffable against the previous build's log and the header
+        // reference values.
         char dump[900]; size_t dp = 0; int di = 0;
         for (auto& f : g_fields) {
             dp += snprintf(dump + dp, sizeof(dump) - dp, "%ls=0x%X ", f.name, *f.off);
@@ -251,15 +242,14 @@ void ResolvePass() {
     }
 }
 
-// Typed field deref. NO validity check -- every call site is behind its
-// function's g_coreResolved gate or an explicit off<0 check (R2 census,
-// /qf 2026-07-19).
+// A typed field dereference with no validity check: every call site is behind its function's
+// resolved gate or an explicit offset check.
 template <class T>
 T* OffPtr(void* obj, int32_t off) {
     return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
-// Engine FString view: {wchar_t* data; int32 num (incl. NUL); int32 max}.
+// The engine string view: data, count including the terminator, capacity.
 struct FStringView { wchar_t* data; int32_t num; int32_t max; };
 
 }  // namespace
@@ -273,8 +263,8 @@ void* Instance() {
     if (g_instance && R::IsLiveByIndex(g_instance, g_instanceIdx)) return g_instance;
     g_instance = nullptr;
     if (!g_cls) return nullptr;
-    // Singleton placed actor (gamemode.analogPanels resolves it the same way:
-    // GetActorOfClass). One-shot walk per loss; cached + liveness-revalidated.
+    // A singleton placed actor (the gamemode resolves it the same way, by class). One walk per
+    // loss; cached and liveness-revalidated.
     for (void* obj : R::FindObjectsByClass(L"analogDScreenTest_C")) {
         if (obj && R::IsLive(obj)) {
             g_instance = obj;
@@ -338,10 +328,9 @@ bool WriteScalars(const Scalars& in) {
     *OffPtr<bool>(d, g_offActiveCoords)     = in.activeCoords;
     *OffPtr<bool>(d, g_offActiveComp)       = in.activeComp;
     *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
-    // Repaint through the BP's own painters. Each is a cheap widget/material
-    // refresh, audited side-effect clean (human-rate call site: wire applies).
-    // (The comp-pane repaint -- updComp(hasData) -- lives in ue_wrap/desk/
-    // comp_pane; v64 passed activeComp here, the wrong condition.)
+    // Repaint through the blueprint's own painters. Each is a cheap widget or material refresh,
+    // side-effect clean, at a human-rate call site (wire applies). The comp-pane repaint lives in
+    // ue_wrap/desk/comp_pane.
     for (auto& r : g_refresh) {
         if (!r.fn) continue;
         ue_wrap::ParamFrame f(r.fn);
@@ -376,10 +365,9 @@ bool CoordLogTailEquals(const std::wstring& expected, size_t maxChars) {
 bool AppendCoordLog(const std::wstring& suffix) {
     void* d = Instance();
     if (!d || !g_writeToCoordLogFn || suffix.empty()) return false;
-    // writeToCoordLog_2(FString B): the param-frame FString may point at OUR
-    // buffer for the call's duration -- the BP assignment copies the data
-    // into the engine-side field with the engine allocator (the economy
-    // order-struct precedent). The BP self-caps the log at 1000 chars.
+    // The coordinate-log writer: the frame's string may point at our buffer for the call's
+    // duration, since the blueprint assignment copies the data into the engine-side field with
+    // the engine allocator. The blueprint caps the log at 1000 characters itself.
     ue_wrap::ParamFrame f(g_writeToCoordLogFn);
     if (!f.valid()) return false;
     FStringView v{ const_cast<wchar_t*>(suffix.c_str()),
@@ -389,9 +377,8 @@ bool AppendCoordLog(const std::wstring& suffix) {
     return ue_wrap::Call(d, f);
 }
 
-// ---- the desk.Widget -> atlas chain (desk-half seams) ----
-// (The refiner (comp) pane surface -- CompScalars/paints/cues/UpdComp --
-// moved to ue_wrap/desk/comp_pane, 2026-07-19 split.)
+// The desk widget to atlas chain, the desk-half seams. The refiner pane surface lives in
+// ue_wrap/desk/comp_pane.
 
 namespace {
 
@@ -404,9 +391,8 @@ void* DeskAudioComponent(int32_t off) {
 
 }  // namespace
 
-// Atlas widget instance (desk.Widget; atlas IsLive-checked). PUBLIC as the
-// desk-half seam for comp_pane's text-block chain (the AtlasUiCoordsSlot
-// precedent) -- the desk owns its own field chain.
+// The atlas widget instance (the desk's widget, liveness-checked). Public as the desk-half
+// seam for the comp pane's text-block chain; the desk owns its own field chain.
 void* AtlasWidget() {
     void* d = Instance();
     if (!d || g_offWidget < 0) return nullptr;
@@ -414,19 +400,18 @@ void* AtlasWidget() {
     return (w && R::IsLive(w)) ? w : nullptr;
 }
 
-// The desk half of the coords_panel instance chain (2026-07-19 split): the raw
-// desk.Widget -> atlas.ui_coordinates slot value, atlas liveness-checked, the
-// widget itself UNVALIDATED -- ue_wrap::coords_panel does the class-validate +
-// cache half (widget-concept logic).
+// The desk half of the coordinates-panel instance chain: the raw slot value from the atlas,
+// the atlas liveness-checked and the widget itself unvalidated; ue_wrap::coords_panel does
+// the class validation and caching half.
 void* AtlasUiCoordsSlot() {
     void* atlas = AtlasWidget();
     if (!atlas || g_offAtlasUiCoords < 0) return nullptr;
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(atlas) + g_offAtlasUiCoords);
 }
 
-// The desk's az/alt text repaint verb, dispatched for coords_panel's committed
-// apply (the desk owns its verb table). Declines silently on an unresolved
-// desk/verb -- the pre-split WriteDishCommitted tail's exact guard order.
+// The desk's azimuth and altitude text repaint verb, dispatched for the coordinates panel's
+// committed apply (the desk owns its verb table). Declines silently on an unresolved desk or
+// verb.
 bool CallUpdateCoordCoords() {
     void* desk = Instance();
     if (!desk || !g_refresh[8].fn) return false;  // [8] = updateCoordCoords
@@ -435,11 +420,10 @@ bool CallUpdateCoordCoords() {
     return ue_wrap::Call(desk, f);
 }
 
-// v109: replay the desk's native UNFOCUS verb -- the reset-on-release target.
-// Measured: setCursorOpacity dims to 0.25 (never hides), so the correct reset is
-// the game's OWN intComs_unfocused, NOT an invented hide/center. The mirror calls
-// it when the desk claim releases so the cursor reverts to exactly the native
-// unoccupied look.
+// Replay the desk's native unfocus verb, the reset-on-release target. The cursor-opacity
+// setter dims to a quarter and never hides, so the correct reset is the game's own unfocus,
+// not an invented hide or centre; the mirror calls it when the desk claim releases so the
+// cursor reverts to exactly the native unoccupied look.
 bool CallIntComsUnfocused() {
     void* desk = Instance();
     if (!desk || !g_intComsUnfocusedFn) return false;
@@ -449,7 +433,7 @@ bool CallIntComsUnfocused() {
     return true;
 }
 
-// ---- The v70 signal-catch consume surface ----
+// The signal-catch consume surface.
 
 namespace {
 
@@ -504,8 +488,9 @@ bool WriteCoordSignal(const CoordSignal& in) {
 }
 
 bool ClearCoordSignal() {
-    // The @34134 reset literal: struct{vec(0), 0, +0f, +0f, 0.5f, +0f, 0.5f,
-    // name'None'}. FName zero == None (POD, no heap).
+    // The blueprint's own reset literal: a zero vector, type 0, zero strength and frequency, half
+    // spread, zero polarity, half polarity spread, name None. A zero FName is None (plain data,
+    // no heap).
     uint8_t* p = CoordSignalPtr();
     if (!p) return false;
     SigWrite<float>(p, kSig_coordinates + 0, 0.f);
@@ -528,17 +513,17 @@ bool ResetDownloadMachine() {
         g_offDLFrData < 0 || g_offDLPoData < 0 || !g_initDownloadSignalFn)
         return false;
     auto* row = reinterpret_cast<uint8_t*>(d) + g_offDLRow;
-    // The two load-bearing members (see the header note): mesh validity gates
-    // the accrual + the playSignall screen; signalName gates the next
-    // initDownloadSignal rebuild. FName/pointer writes are POD-safe.
+    // The two load-bearing members (see the header): mesh validity gates the accrual and the
+    // playback screen; the signal name gates the next download-signal rebuild. FName and pointer
+    // writes are plain data.
     SigWrite<R::FName>(row, g_offRowSignalName, R::FName{0, 0});
     SigWrite<void*>(row, g_offRowMesh, nullptr);
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = 0.f;
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = 0.f;
-    *OffPtr<float>(d, g_offDlResDetecPercent) = 0.f;  // (@33982)
-    // initDownloadSignal({0,0}, 0, -1): with signalName None this is the
-    // native @34005 path -- rebuilds DL_SignalDownloadDLData empty (engine-
-    // side struct assignment, no leaked FStrings) + downloadTexts repaint.
+    *OffPtr<float>(d, g_offDlResDetecPercent) = 0.f;
+    // The download-signal init with a zero location, zero decoded and polarity -1: with the
+    // signal name None this is the native reset path, which rebuilds the dynamic download data
+    // empty (an engine-side struct assignment, no leaked strings) and repaints the download texts.
     ue_wrap::ParamFrame f(g_initDownloadSignalFn);
     if (!f.valid()) return false;
     struct { float X, Y; } loc{ 0.f, 0.f };
@@ -562,15 +547,15 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
     void* d = Instance();
     if (!d || g_offDLData < 0) return false;
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
-    // Fstruct_signalDataDynamic member offsets (ue_wrap/signal_dynamic.h).
+    // The dynamic signal-data member offsets (ue_wrap/desk/signal_dynamic.h).
     decoded = SigRead<float>(dld, ue_wrap::signal_dynamic::kOff_decoded);
     polarity = SigRead<int32_t>(dld, ue_wrap::signal_dynamic::kOff_polarity);
     return true;
 }
 
 bool DeleteSignalActor() {
-    // objectRenderer_C is a per-world singleton; resolve lazily + call the
-    // reflected deleteSignalActor() (Public|BlueprintCallable -- impl-RE SS7).
+    // The object renderer is a per-world singleton; resolve lazily and call its reflected
+    // delete-signal-actor verb.
     static void* sCls = nullptr;
     static void* sFn = nullptr;
     if (!sCls) sCls = R::FindClass(L"objectRenderer_C");
@@ -616,7 +601,7 @@ bool ReadSimOutputs(SimOutputs& out) {
     out.frOffset  = *OffPtr<float>(d, g_offDlFrFilterOffset);
     out.rate      = *OffPtr<float>(d, g_offDlDownloading);
     out.resDetec  = *OffPtr<float>(d, g_offDlResDetecPercent);
-    // (v112: coord_cooldown left the sim vector -- desk_input_sync owns it.)
+    // The coordinate cooldown is not part of the sim vector; the desk input sync owns it.
     out.frData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData);
     out.poData = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData);
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
@@ -632,15 +617,15 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     *OffPtr<float>(d, g_offDlFrFilterOffset) = in.frOffset;
     *OffPtr<float>(d, g_offDlDownloading) = in.rate;
     *OffPtr<float>(d, g_offDlResDetecPercent) = in.resDetec;
-    // (v112: coord_cooldown is NOT written here -- the 10 Hz overwrite erased a
-    // client presser's charge (BUGS-v111 bug 1); desk_input_sync owns it.)
+    // The coordinate cooldown is not written here: a 10 Hz overwrite erased a client presser's
+    // charge. The desk input sync owns it.
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = in.frData;
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = in.poData;
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
     *reinterpret_cast<float*>(dld + ue_wrap::signal_dynamic::kOff_decoded) = in.decoded;
-    // Repaint only on the throttled pulse (never per-Tick): the interp stream
-    // raw-writes every 60 Hz for smoothness and the widget's own Tick repaints
-    // the self-painting screens; this pulse (~3 Hz) covers the upd*-only fields.
+    // Repaint only on the throttled pulse, never per tick: the interpolation stream raw-writes
+    // at 60 Hz for smoothness and the widget's own tick repaints the self-painting screens; this
+    // pulse (about 3 Hz) covers the fields only the update verbs paint.
     if (repaint) {
         for (auto& r : g_refresh) {
             if (!r.fn) continue;
@@ -651,7 +636,7 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     return true;
 }
 
-// ---- v112 desk-INPUT apply surface ----
+// The desk-input apply surface.
 
 bool ReadMaxCooldown(float& out) {
     void* d = Instance();
@@ -663,9 +648,9 @@ bool ReadMaxCooldown(float& out) {
 bool ApplyActiveToggleEffects(int unit, bool value) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
-    // The native setter events' side-effect blocks, replicated per field (uber
-    // [1113-1156]). The fused native setter (powerChanged) runs ALL FIVE units'
-    // blocks incl. an unconditional stopSound -- too broad for one field.
+    // The native setter events' side-effect blocks, replicated per field. The fused native
+    // setter runs all five units' blocks including an unconditional stop-sound, too broad for
+    // one field.
     switch (unit) {
     case 0: {  // active_play: stopSound() + light_play + computerHum_play
         ue_wrap::component_calls::CallParamless(d, g_stopSoundFn);
@@ -689,8 +674,8 @@ bool ApplyActiveToggleEffects(int unit, bool value) {
         if (g_offActiveConsole >= 0)
             *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(d) + g_offActiveConsole) = value;
         ue_wrap::component_calls::CallParamless(d, g_setMatsFn);
-        // (The computerWorking cue transitions stay owned by coop/comp_sync --
-        // its CompCueStart/Stop edges; not duplicated here.)
+        // The computer-working cue transitions stay owned by the comp sync's cue edges; not
+        // duplicated here.
         return true;
     }
     default:
@@ -699,8 +684,8 @@ bool ApplyActiveToggleEffects(int unit, bool value) {
 }
 
 bool ApplyPlayVolumeEffects(int32_t value) {
-    // The atlas setSignalVolume live-apply half: signalSound.SetVolumeMultiplier
-    // (FClamp(v/10, 0.1, 5)) -- the raw play_volume field write is the caller's.
+    // The atlas volume setter's live-apply half: the signal sound's volume multiplier, the value
+    // over ten clamped to a tenth and five. The raw field write is the caller's.
     void* comp = DeskAudioComponent(g_offSignalSound);
     if (!comp) return false;
     float mult = static_cast<float>(value) / 10.0f;
@@ -712,12 +697,11 @@ bool ApplyPlayVolumeEffects(int32_t value) {
 bool PlayScanEffects() {
     void* d = Instance();
     if (!d || !g_spawnDirsFn) return false;
-    // Null-guard: spawnDirs derefs ui_coordinates.CanvasPanel_245 -- skip the
-    // replay while the desk's screen widget isn't live yet (the caller logs once).
+    // A null guard: the scan-arrows verb dereferences the coordinates widget's canvas, so skip
+    // the replay while the desk's screen widget is not live yet (the caller logs once).
     if (!ue_wrap::coords_panel::Instance()) return false;
-    // v115 (RULE 2): the beepLong1 no longer plays here -- the presser's
-    // organic playPingSound rides the DeskSndFx audio-seam lane; this replay
-    // keeps only the VISUAL (the ui_coordArrow widgets).
+    // The beep no longer plays here: the presser's organic ping sound rides the desk
+    // sound-effect audio lane, and this replay keeps only the visual (the arrow widgets).
     return ue_wrap::component_calls::CallParamless(d, g_spawnDirsFn);
 }
 
