@@ -1,22 +1,14 @@
-// coop/dev/death_write_diff.cpp -- see coop/dev/death_write_diff.h.
-//
-// STORAGE SHAPE, and why it is not the obvious one (post-ship audit, 2026-08-31).
-//
-// The first version stored a `Cell` of four std::wstring plus a std::vector<uint8_t>, one per
-// (object, field). MEASURED on the real drill log: 285 bytes/cell x 1.22M cells = **+344 MB
-// retained for the rest of the process**, ~3.6M heap blocks, and a 468/625 ms single-frame
-// stall (the host's own `[HITCH]` line; fps 73 -> 35 in that second). That is bad anywhere,
-// but here it was actively CORRUPTING THE DRILL IT SERVES: the death test grades a memory
-// balloon (D6) by differencing the alive and dead window slopes, and the allocator settling
-// after the snapshot burst showed up as -3.21 MB/s of alive slope -- 16% of D6's own 20 MB/s
-// headroom, spent on the instrument rather than the death.
-//
-// So: object names, class names and field names are INTERNED (60k objects and ~5k classes
-// against 1.22M cells -- an object's name was being stored ~20 times over), the captured bytes
-// live in ONE arena, and a cell is five 32-bit fields. Per-class field lists are resolved ONCE
-// per UClass instead of once per object per class hop, which also removes ~1.7M engine
-// `FName::ToString` renders per snapshot -- the exact pattern behind this project's 19 GB
-// RAM-balloon incident (`reflection.h`'s own "wstring bomb" note).
+// coop/dev/death_write_diff.cpp -- see coop/dev/death_write_diff.h. The storage shape, and
+// why it is not the obvious one. A cell of four strings and a byte vector per object and
+// field, over a million cells, retained hundreds of megabytes for the rest of the process,
+// millions of heap blocks and a half-second single-frame stall; worse, it corrupted the drill
+// it serves, since the death test grades a memory balloon by differencing the alive and dead
+// window slopes, and the allocator settling after the snapshot burst showed up as alive-window
+// slope spent on the instrument rather than the death. So object, class and field names are
+// interned (an object's name was being stored about twenty times over), the captured bytes
+// live in one arena, and a cell is five 32-bit fields. Per-class field lists are resolved once
+// per class instead of once per object per class hop, which also removes millions of engine
+// name renders per snapshot, the pattern behind this project's worst memory-balloon incident.
 
 #include "coop/dev/death_write_diff.h"
 
@@ -42,12 +34,12 @@ namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 namespace WID = ue_wrap::world_identity;
 
-// A field wider than this is captured TRUNCATED. Nothing in the known census is anywhere
-// near it; the cap exists so one pathological inline array cannot make a snapshot huge.
+// A field wider than this is captured truncated. Nothing in the known census is anywhere near
+// it; the cap exists so one pathological inline array cannot make a snapshot huge.
 constexpr int32_t kMaxCellBytes = 256;
 
-// Outer-expansion depth from each root. A leaf UWidget sits at UserWidget -> WidgetTree ->
-// widget, so 2 reaches every authored widget and 3 leaves headroom for a nested tree.
+// The Outer-expansion depth from each root. A leaf widget sits at the user widget, its tree,
+// then the widget, so 2 reaches every authored widget and 3 leaves headroom for a nested tree.
 constexpr int kOuterDepth = 3;
 
 struct FieldRec {
@@ -58,7 +50,7 @@ struct FieldRec {
     uint8_t      boolMask;  // non-zero => compare ONLY this bit of the byte at `offset`
 };
 
-// One UClass resolved once: its name and its own instance fields with bool masks already
+// One class resolved once: its name and its own instance fields, with the bool masks already
 // attributed. Built on first encounter per snapshot and reused for every object of that class.
 struct ClassRec {
     std::wstring          name;
@@ -72,7 +64,7 @@ struct ObjRec {
     std::wstring outerName;    // qualifies the noise key -- see NoiseKey()
 };
 
-// 20 bytes. Everything wide is an index.
+// 20 bytes; everything wide is an index.
 struct Cell {
     uint32_t objId;
     uint32_t classId;
@@ -94,74 +86,61 @@ struct Snap {
 
 Snap g_snap;
 
-// Per-snapshot class resolution. CLEARED at the top of every Snapshot(): the key is a raw
-// UClass pointer, and this repo's own class cache revalidates for exactly that reason
-// (`reflection.cpp`: a cached class must still be live AND still carry the expected name
-// before a walk trusts it) -- a BP UClass dies on world unload and its address can be
-// recycled, which would hand us a {byte, mask} belonging to a different class. That is the
-// very mis-attribution the mask exists to prevent. Rebuilding per snapshot is free: the
-// MEASURED cold snapshot (empty cache) was CHEAPER than the warm one, so this was never the
-// cost driver -- the allocations were.
+// The per-snapshot class resolution, cleared at the top of every snapshot: the key is a raw
+// class pointer, and a blueprint class dies on world unload and its address can be recycled,
+// which would hand back a byte and mask belonging to a different class, the very
+// mis-attribution the mask exists to prevent (the repo's own class cache revalidates for the
+// same reason). Rebuilding per snapshot is free: the measured cold snapshot was cheaper than
+// the warm one, so this was never the cost driver; the allocations were.
 std::unordered_map<void*, uint32_t> g_classId;
 
-// The noise floor. The key is the object's OWN NAME with any trailing `_<digits>` instance
-// suffix stripped, plus the field.
-//
-// The first version keyed on DECLARING CLASS + field, and that was a latent instrument
-// defect: `Visibility` is declared on `UWidget`, so the single key `Widget.Visibility` covers
-// EVERY widget in the game. One flickering clock colon in the control window would have
-// suppressed `dmg_full.Visibility` -- the one cell this whole module exists to find. It
-// survived the first run only because no widget's visibility happened to move in that
-// window, which is luck, not design (`[[lesson-an-instrument-that-shares-the-defect-cancels-
-// it]]`, and `[[lesson-a-sentinel-guards-the-failure-you-imagined-not-the-one-you-get]]`).
-//
-// Stripping the numeric suffix collapses pooled or runtime-created objects
-// (`CanvasPanelSlot_2147457267`, `DebugMod_..._LogElement_C_2147457198`) onto one key so they
-// match across windows despite being a different instance each time. It does NOT by itself
-// keep authored widgets distinct -- that claim was made here and is FALSE, because a UMG
-// designer-default name is itself `<Type>_<digits>`. See NoiseKey() for the Outer qualifier
-// that actually restores distinctness.
+// The noise floor. The key is the object's own name with any trailing numeric instance suffix
+// stripped, plus the field. Keyed on the declaring class and field it was a latent defect:
+// visibility is declared on the base widget, so one key covered every widget in the game, and
+// one flickering clock colon in the control window would have suppressed the one cell this
+// module exists to find; it survived only because no widget's visibility happened to move in
+// that window. Stripping the suffix collapses pooled or runtime-created objects onto one key
+// so they match across windows despite being a different instance each time. It does not by
+// itself keep authored widgets distinct, since a designer-default name is itself
+// type-plus-digits; see NoiseKey for the Outer qualifier that restores distinctness.
 std::unordered_set<std::wstring> g_noise;
 
 std::wstring StripInstanceSuffix(const std::wstring& in) {
     std::wstring n = in;
     size_t i = n.size();
     while (i > 0 && n[i - 1] >= L'0' && n[i - 1] <= L'9') --i;
-    // `i > 0` also refuses an all-digit name, where stripping would leave nothing.
+    // The bound also refuses an all-digit name, where stripping would leave nothing.
     if (i > 0 && i < n.size() && n[i - 1] == L'_') n.resize(i - 1);
     return n;
 }
 
-// The key is OUTER/OBJECT.field, both names stripped of their instance suffix.
-//
-// The OUTER qualifier is not decoration, and leaving it out was the SECOND time this key was
-// too coarse. Stripping `_<digits>` was introduced to collapse pooled objects, on the claim
-// that "authored widgets have stable names and stay DISTINCT". That claim is false for UMG:
-// a designer-default widget name IS `<Type>_<digits>`, so the strip eats it -- `Image_6` alone
-// appears in ten different widget blueprints in this game (ui_console, ui_radar, ui_stats,
-// ui_menu, ui_playerInventory, ...). Unqualified, `Image.Visibility` would again be ONE key
-// across the whole game, and any `Image_N` flickering in a control stretch would suppress
-// every death-authored write to every other `Image_N`. Qualifying by Outer restores
-// `ui_radar/Image` vs `ui_stats/Image` for free -- the Outer is already walked.
+// The key is outer, object and field, both names stripped of their instance suffix. The Outer
+// qualifier is not decoration, and leaving it out was the second time this key was too
+// coarse: the suffix strip was introduced to collapse pooled objects on the claim that
+// authored widgets have stable, distinct names, which is false for the UI framework, since a
+// designer-default name is itself type-plus-digits and the strip eats it (one such name
+// appears in ten different widget blueprints in this game). Unqualified, one key would again
+// span the whole game, and any flicker in a control stretch would suppress every
+// death-authored write to every other widget of that name. The Outer restores the
+// distinction for free, since it is already walked.
 std::wstring NoiseKey(const Cell& c) {
     const ObjRec& o = g_snap.objects[c.objId];
     return StripInstanceSuffix(o.outerName) + L"/" + StripInstanceSuffix(o.name) + L"." +
            g_snap.classes[c.classId].fields[c.fieldIdx].name;
 }
 
-// ---------------------------------------------------------------------------------------
-// One GUObjectArray walk that answers three questions at once: the Outer->children map (so
-// we never pay ChildObjectsOf's per-call linear walk), the per-class live count (the
-// "appeared object" axis), and the set of live UUserWidget descendants (the widget scope, as
-// a class-chain census rather than a name list).
+// One object-array walk that answers three questions at once: the Outer-to-children map (so
+// the per-call linear child walk is never paid), the per-class live count (the
+// appeared-object axis), and the set of live user-widget descendants (the widget scope, a
+// class-chain census rather than a name list).
 struct WorldIndex {
     std::unordered_map<void*, std::vector<void*>> childrenOf;
     std::unordered_map<void*, int32_t>            classCount;
     std::vector<void*>                            userWidgets;
 };
 
-// `countOnly` skips the two outputs the diff never reads -- most of its measured ~60 ms was
-// 237k push_backs into a children map nobody consulted.
+// `countOnly` skips the two outputs the diff never reads; most of the walk's measured cost
+// was hundreds of thousands of pushes into a children map nobody consulted.
 bool BuildIndex(WorldIndex& out, bool countOnly = false) {
     void* userWidgetCls = countOnly ? nullptr : R::FindClass(P::name::UserWidgetClass);
     if (!countOnly && !userWidgetCls) {
@@ -180,14 +159,14 @@ bool BuildIndex(WorldIndex& out, bool countOnly = false) {
         if (countOnly) continue;
         void* outer = R::OuterOf(o);
         if (outer) out.childrenOf[outer].push_back(o);
-        // Cheap chain test; no name rendering, no allocation (the wstring-bomb lesson).
+        // A cheap chain test; no name rendering, no allocation.
         if (R::IsDescendantOfAny(cls, bases, 1)) out.userWidgets.push_back(o);
     }
     return true;
 }
 
-// Resolve a UClass ONCE per snapshot: its name, its own fields, and each field's real bool
-// {byte, mask}. Returns an index into g_snap.classes.
+// Resolve a class once per snapshot: its name, its own fields, and each field's real bool
+// byte and mask. Returns an index into the snapshot's classes.
 uint32_t ClassIdFor(void* cls) {
     auto it = g_classId.find(cls);
     if (it != g_classId.end()) return it->second;
@@ -206,27 +185,26 @@ uint32_t ClassIdFor(void* cls) {
         fr.declared = f.size;
         fr.size     = f.size > kMaxCellBytes ? kMaxCellBytes : f.size;
         fr.boolMask = 0;
-        // Only a 1-byte field can BE a packed bool, and FindBoolProperty is a linear walk
-        // with a name render per compare -- so this guard removes ~90% of those calls.
+        // Only a one-byte field can be a packed bool, and the bool lookup is a linear walk with a
+        // name render per compare, so this guard removes most of those calls.
         if (f.size == 1) {
             int32_t byteOff = 0;
             uint8_t mask = 0;
             if (R::FindBoolProperty(cls, f.name.c_str(), byteOff, mask) && mask != 0 &&
                 byteOff == f.offset)
                 fr.boolMask = mask;
-            // A bool whose FBoolProperty ByteOffset is NOT the field offset (a native
-            // bitfield spanning more than one byte) deliberately falls through to a
-            // byte-wise compare: it can still mis-attribute, and that is a KNOWN residual
-            // rather than a handled case.
+            // A bool whose byte offset is not the field offset (a native bitfield spanning more
+            // than one byte) deliberately falls through to a byte-wise compare: it can still
+            // mis-attribute, a known residual rather than a handled case.
         }
         rec.fields.push_back(std::move(fr));
     }
     return id;
 }
 
-// Capture every instance field of `obj`, climbing the whole class chain (EnumerateStructFields
-// returns OWN members only, so the climb is the caller's job -- and `Visibility` lives on
-// UWidget, not on the UImage that latched).
+// Capture every instance field of `obj`, climbing the whole class chain: the field enumeration
+// returns own members only, so the climb is the caller's job, and visibility lives on the base
+// widget, not on the image that latched.
 void CaptureObject(void* obj) {
     if (!obj || !R::IsLive(obj)) return;
     void* cls = R::ClassOf(obj);
@@ -258,8 +236,8 @@ void CaptureObject(void* obj) {
     }
 }
 
-// The scope roots, per the header: the three non-widget owners the known census touches,
-// plus every live UUserWidget descendant.
+// The scope roots, per the header: the three non-widget owners the known census touches, plus
+// every live user-widget descendant.
 void CollectRoots(const WorldIndex& idx, std::vector<void*>& roots) {
     if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) roots.push_back(gi);
     if (void* gm = R::FindObjectByClass(P::name::GamemodeClass)) roots.push_back(gm);
@@ -301,8 +279,8 @@ int Snapshot() {
 
     g_snap = Snap{};
     g_classId.clear();
-    // Reserve at the MEASURED size rather than growing from 16k: the growth alone moved up to
-    // 1.2M cells through ~11 reallocations.
+    // Reserve at the measured size rather than growing from small: the growth alone moved over a
+    // million cells through about eleven reallocations.
     g_snap.cells.reserve(1300000);
     g_snap.arena.reserve(24u << 20);
     g_snap.objects.reserve(scope.size());
@@ -334,14 +312,13 @@ int DiffAndLog(const char* label, bool learnNoise) {
         UE_LOGW("death_diff: DIFF(%s) -- no snapshot to compare against", label ? label : "?");
         return -1;
     }
-    // REFUSE ACROSS A WORLD CHANGE, rather than produce a reading that looks like a reading.
-    // `mp.py death` WITHOUT `--session` is a mandatory arm whose acceptance term is that the
-    // travel DOES run (D3, single-player untouched) -- so there the snapshot's objects belong
-    // to a world that was destroyed seconds ago. Worse than useless: a dying world's actors are
-    // NOT kill-flagged until GC purge (world_identity.h), so liveness would read TRUE for a
-    // while and the diff would attribute findings to a world that no longer exists.
-    // This is a gate that decides WHETHER TO ACT ON THE WORLD, so per that header's stated
-    // exception it fails CLOSED.
+    // Refuse across a world change, rather than produce a reading that looks like a reading. The
+    // sessionless death arm's acceptance term is that the travel does run, so there the
+    // snapshot's objects belong to a world destroyed seconds ago; worse than useless, since a
+    // dying world's actors are not kill-flagged until the GC purge (world_identity.h), so
+    // liveness would read true for a while and the diff would attribute findings to a world that
+    // no longer exists. A gate that decides whether to act on the world, so per that header's
+    // exception it fails closed.
     if (WID::Generation() != g_snap.worldGen) {
         UE_LOGW("death_diff: DIFF(%s) REFUSED -- the world changed since the snapshot "
                 "(generation %u -> %u). A travel ran, so every cached object belongs to a dead "
@@ -354,15 +331,14 @@ int DiffAndLog(const char* label, bool learnNoise) {
     WorldIndex idx;
     const bool haveIdx = !learnNoise && BuildIndex(idx, /*countOnly=*/true);
 
-    // LIVENESS ONCE PER OBJECT, BY SLOT INDEX -- not per cell, and never bare `IsLive`.
-    //
-    // `ue_wrap/core/cached_obj_ref.h` is explicit: a pointer cached across ticks must never be
-    // probed with bare IsLive, because IsLive DEREFERENCES a possibly-GC-freed object and a
-    // co-resident VEH crash reporter sees the first-chance AV before our SEH absorbs it. These
-    // pointers are held 10-22 seconds. `IsLiveByIndex` is slot-reads-only, and its `*item ==
-    // obj` compare also rejects the case IsLive structurally cannot see: an address RECYCLED by
-    // a different, smaller object, where the following memcmp would read at an offset valid for
-    // the old class and abort the whole diff mid-loop through RunTaskSEH.
+    // Liveness once per object, by slot index, not per cell and never the bare check: a pointer
+    // cached across ticks must never be probed with the bare check, which dereferences a possibly
+    // freed object, and a co-resident crash reporter sees the first-chance fault before our
+    // handler absorbs it (cached_obj_ref.h). These pointers are held for tens of seconds. The
+    // index check reads slots only, and its identity compare also rejects the case the bare check
+    // structurally cannot see: an address recycled by a different, smaller object, where the
+    // following byte compare would read at an offset valid for the old class and abort the whole
+    // diff mid-loop.
     std::vector<uint8_t> live(g_snap.objects.size(), 0);
     int died = 0;
     for (size_t i = 0; i < g_snap.objects.size(); ++i) {
@@ -371,9 +347,8 @@ int DiffAndLog(const char* label, bool learnNoise) {
         if (!live[i]) ++died;
     }
 
-    // How many changed lines we are willing to print. The point of the first reading is to
-    // see the RAW delta, so this is generous; it exists only so a pathological run cannot
-    // bury the log.
+    // How many changed lines to print. The point of the first reading is to see the raw delta, so
+    // this is generous; it exists only so a pathological run cannot bury the log.
     constexpr int kMaxLines = 400;
 
     int changed = 0, printed = 0, truncatedCells = 0;
@@ -388,8 +363,8 @@ int DiffAndLog(const char* label, bool learnNoise) {
         const uint8_t* was = g_snap.arena.data() + c.arenaOff;
 
         if (f.boolMask) {
-            // A packed flag: compare ONLY its own bit, or every bool sharing the byte reports
-            // its neighbour's change as its own.
+            // A packed flag: compare only its own bit, or every bool sharing the byte reports its
+            // neighbour's change as its own.
             if (((base[f.offset] ^ was[0]) & f.boolMask) == 0) continue;
         } else if (std::memcmp(base + f.offset, was, static_cast<size_t>(c.size)) == 0) {
             continue;
@@ -414,9 +389,9 @@ int DiffAndLog(const char* label, bool learnNoise) {
                         objName, f.name.c_str(), clsName, f.offset, f.boolMask,
                         (was[0] & f.boolMask) ? 1 : 0, (base[f.offset] & f.boolMask) ? 1 : 0);
             } else {
-                // Print from the FIRST DIFFERING byte, not from byte 0. A 136-byte struct
-                // whose change is in the tail rendered as `906C... -> 906C...` -- two
-                // identical-looking values on a line that exists only because they differ.
+                // Print from the first differing byte, not from byte 0: a wide struct whose change
+                // is in the tail rendered as two identical-looking values on a line that exists
+                // only because they differ.
                 int d0 = 0;
                 while (d0 < c.size && base[f.offset + d0] == was[d0]) ++d0;
                 wchar_t a[24] = {0}, b[24] = {0};
