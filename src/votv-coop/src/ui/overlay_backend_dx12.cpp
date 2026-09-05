@@ -1,16 +1,9 @@
-// ui/overlay_backend_dx12.cpp -- the D3D12 RENDERER half of
-// ui/overlay_backend.h. The presenting-queue capture (and the stage-1
-// measurement behind it) lives in overlay_backend_dx12_capture.cpp; this TU
-// takes the confirmed queue and draws.
-//
-// Frame sync is the vendored example_win32_directx12 FrameContext shape (a
-// per-context fence value; WAIT before the allocator Reset, Signal after
-// Execute) -- lifted rather than re-derived. Every wait is BOUNDED and checks
-// GetDeviceRemovedReason on timeout: a TDR must never hang the render thread
-// or shutdown.
-//
-// Design of record:
-// research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md
+// ui/overlay_backend_dx12.cpp -- the D3D12 renderer half of ui/overlay_backend.h. The
+// presenting-queue capture lives in overlay_backend_dx12_capture.cpp; this TU takes the
+// confirmed queue and draws. Frame sync is the vendored example_win32_directx12 shape: a
+// per-context fence value, a wait before the allocator reset, a signal after execute. Every
+// wait is bounded and checks the device-removed reason on timeout, so a TDR never hangs the
+// render thread or shutdown.
 
 #include "ui/overlay_backend.h"
 
@@ -34,7 +27,7 @@ namespace {
 
 constexpr UINT kMaxBackBuffers   = 8;
 constexpr UINT kTextureSlots     = 256;   // SRV heap: index 0 reserved (see g_tex), 1..N allocatable
-constexpr DWORD kFenceWaitMs     = 2000;  // the house bound (see the design doc)
+constexpr DWORD kFenceWaitMs     = 2000;  // the bound on every wait
 
 ID3D12CommandQueue* g_queue = nullptr;     // the CONFIRMED presenting queue (AddRef'd)
 IDXGISwapChain*     g_boundSc = nullptr;   // the swapchain our state belongs to (identity only)
@@ -68,23 +61,16 @@ bool g_disabled = false;    // device-removed: stop drawing for the rest of the 
 bool g_firstFrameLogged = false;
 ID3D12Device* g_device = nullptr;  // borrowed from dx12_capture (it owns the ref)
 
-// SRV slots. ONE POOL, shared by our preview textures and by ImGui's own
-// atlas textures -- the hard-coded "slot 0 = the ImGui font" reservation is
-// gone. It could only ever describe ONE ImGui texture, and 1.92's atlas keeps up
-// to two alive at a time (ImFontAtlasTextureAdd creates the new one before the
-// old is destroyed, imgui_draw.cpp:4085-4113), so a privileged single slot is
-// not a thing the new backend can be given. ImGui now asks for descriptors
-// through SrvAlloc/SrvFree below, out of the same free list as everything else.
-//
-// Index 0 is deliberately NOT allocatable: it stays the "no slot" sentinel that
-// QueuePendingRelease uses for staging buffers, AND it is the descriptor handed
-// out if the pool is ever exhausted -- see SrvAlloc. Allocatable range is
-// 1..kTextureSlots either way, so no capacity is lost.
+// SRV slots: one pool shared by our preview textures and by ImGui's atlas textures, which
+// ImGui allocates through SrvAlloc and SrvFree below. A single privileged font slot cannot
+// describe ImGui's atlas, which keeps up to two textures alive across a repack. Index 0 is not
+// allocatable: it is the no-slot sentinel QueuePendingRelease uses for staging buffers, and
+// the descriptor handed out when the pool is exhausted (see SrvAlloc). The allocatable range
+// is 1..kTextureSlots.
 struct TexSlot {
-    // Owner is explicit rather than inferred from (res, gpuPtr). It used to be:
-    // both clear = free, res set = live, res clear + gpuPtr set = awaiting a
-    // fence. That encoding has no room for a fourth state, and ImGui-owned slots
-    // are exactly that -- occupied, but with a resource WE must never release.
+    // The owner is explicit rather than inferred from the resource and pointer fields: an
+    // ImGui-owned slot is occupied with a resource we must never release, a state those two
+    // fields cannot encode.
     enum class Owner : uint8_t { Free, Ours, Imgui, Pending };
     ID3D12Resource* res = nullptr;   // OUR resources only; ImGui owns its own
     UINT64 gpuPtr = 0;
@@ -92,42 +78,28 @@ struct TexSlot {
 };
 TexSlot g_tex[kTextureSlots + 1];
 
-// ImGui's DX12 texture uploads run on their own queue, as they did before: the
-// legacy ImGui_ImplDX12_Init we are replacing called CreateCommandQueue itself
-// (imgui_impl_dx12.cpp:973) and set commandQueueOwned. Handing it g_queue -- the
-// game's PRESENTING queue -- would newly serialize its uploads behind the game's
-// frame work, and ImGui_ImplDX12_UpdateTexture ends in
-// WaitForSingleObject(..., INFINITE) (imgui_impl_dx12.cpp:~565), which is not a
-// wait this codebase permits anywhere else (kFenceWaitMs bounds every one of
-// ours). Keeping it on a separate queue preserves today's behaviour exactly;
-// removing the unbounded wait needs ImDrawData::Textures = nullptr and our own
-// servicing, which belongs with the flag flip, not here.
+// ImGui's texture uploads run on their own queue. The game's presenting queue would serialise
+// them behind the game's frame work, and ImGui's UpdateTexture ends in an unbounded fence
+// wait, the one wait this file cannot bound (the probe below measures it); a separate queue
+// keeps the upload off the game's frame. Removing the wait itself needs our own servicing.
 ID3D12CommandQueue* g_imguiTexQueue = nullptr;
 
-// Deferred release: a resource may still be read by a submitted list, so it is
-// freed only once the fence passes its recorded value. Slots recycle then too.
+// Deferred release: a resource may still be read by a submitted list, so it is freed once the
+// fence passes its recorded value; slots recycle then too.
 struct Pending {
     ID3D12Resource* res = nullptr;
     UINT slot = 0;          // 0 = nothing to recycle (staging buffers)
     UINT64 fenceValue = 0;
 };
 
-// THIS QUEUE HAS NO FIXED SIZE, ON PURPOSE. It used to be Pending[64], justified
-// by a comment ("never seen: 64 entries vs a ~10-preview UI") that priced the
-// wrong producer: a texture SLOT is bounded by kTextureSlots, but every
-// CreateTexture also queues its STAGING buffer with slot = 0, and staging
-// entries are not bounded by slot count at all -- N creates inside one fence
-// window are N entries whatever N is. So the same set was bounded twice, in two
-// different units, in two places, and the overflow path Release()d immediately
-// while the GPU could still be reading: a live latent use-after-free whose own
-// comment named the risk. [[lesson-one-capacity-expressed-in-three-places-will-disagree]]
-//
-// Picking a bigger number would restate the bug. Removing the bound deletes it:
-// the only remaining bound is how many resources one fence window can produce,
-// which is exactly the quantity the queue is FOR. Growth is self-limiting --
-// ProcessPendingReleases compacts every frame, and a fence that stops advancing
-// stops production too (the WaitFence in CreateTexture takes the device-removed
-// path and returns nullptr before anything is queued).
+// The queue has no fixed size on purpose: a texture slot is bounded by kTextureSlots, but every
+// CreateTexture also queues its staging buffer with slot 0, and N creates inside one fence
+// window are N entries whatever N is; a fixed array bounds the same set twice in two units, and
+// its overflow path would release a resource the GPU could still be reading. The only bound is
+// how many resources one fence window produces, which is what the queue is for. Growth is
+// self-limiting: ProcessPendingReleases compacts every frame, and a fence that stops advancing
+// stops production too (the wait in CreateTexture takes the device-removed path before
+// anything is queued).
 std::vector<Pending> g_pending;   // live entries only; compacted as fences pass
 
 void QueuePendingRelease(ID3D12Resource* res, UINT slot, UINT64 fenceValue) {
@@ -136,8 +108,8 @@ void QueuePendingRelease(ID3D12Resource* res, UINT slot, UINT64 fenceValue) {
     g_pending.push_back(Pending{ res, slot, fenceValue });
 }
 
-// Descriptor arithmetic for a slot. One place, so our textures and ImGui's
-// cannot disagree about where a slot lives.
+// Descriptor arithmetic for a slot, in one place, so our textures and ImGui's agree about where
+// a slot lives.
 UINT SrvStride() {
     return g_device ? g_device->GetDescriptorHandleIncrementSize(
                           D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) : 0;
@@ -153,9 +125,9 @@ D3D12_GPU_DESCRIPTOR_HANDLE SlotGpu(UINT slot) {
     return h;
 }
 
-// 0 = pool exhausted. A slot is reusable only once ProcessPendingReleases has
-// cleared it, never while it is Pending -- recycling a descriptor under an
-// in-flight draw is correctness audit C-1 (2026-07-26).
+// 0 means the pool is exhausted. A slot is reusable only once ProcessPendingReleases has
+// cleared it, never while pending: recycling a descriptor under an in-flight draw is a
+// correctness fault.
 UINT AllocSlot() {
     for (UINT i = 1; i <= kTextureSlots; ++i)
         if (g_tex[i].owner == TexSlot::Owner::Free) return i;
@@ -170,8 +142,8 @@ void ProcessPendingReleases() {
         const Pending p = g_pending[i];   // by value: the compaction writes behind i
         if (p.fenceValue > done) { g_pending[keep++] = p; continue; }
         if (p.res) p.res->Release();
-        // Only clear a slot still marked Pending -- never stomp a live entry that
-        // was reallocated in the meantime.
+        // Only a slot still marked Pending is cleared, never a live entry reallocated in the
+        // meantime.
         if (p.slot && p.slot <= kTextureSlots &&
             g_tex[p.slot].owner == TexSlot::Owner::Pending)
             g_tex[p.slot] = TexSlot{};
@@ -179,16 +151,15 @@ void ProcessPendingReleases() {
     g_pending.resize(keep);
 }
 
-// ImGui's descriptor allocator. Called from ImGui_ImplDX12_UpdateTexture on
-// WantCreate, and its Free counterpart on destroy.
+// ImGui's descriptor allocator, called from its UpdateTexture on create, and its Free
+// counterpart on destroy.
 void SrvAlloc(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
               D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
     const UINT slot = AllocSlot();
     if (!slot) {
-        // ImGui's callback signature has no failure channel, and it WILL write an
-        // SRV to whatever we return. Index 0 exists for exactly this: a real
-        // descriptor inside our own heap, so an exhausted pool aliases a texture
-        // (visibly wrong) instead of scribbling outside the heap (a GPU fault).
+        // ImGui's callback has no failure channel and will write an SRV to whatever is returned.
+        // Index 0 exists for this: a real descriptor inside our heap, so an exhausted pool aliases
+        // a texture (visibly wrong) instead of scribbling outside the heap (a GPU fault).
         UE_LOGE("imgui_overlay: dx12 SRV pool exhausted (%u slots) -- ImGui texture "
                 "aliases the reserve descriptor; some UI image will draw wrong",
                 kTextureSlots);
@@ -207,29 +178,18 @@ void SrvFree(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE,
              D3D12_GPU_DESCRIPTOR_HANDLE gpu) {
     for (UINT i = 1; i <= kTextureSlots; ++i)
         if (g_tex[i].owner == TexSlot::Owner::Imgui && g_tex[i].gpuPtr == gpu.ptr) {
-            // Fence-deferred like ours: the descriptor may still be referenced by
-            // a submitted draw. res = nullptr because the resource is ImGui's.
+            // Fence-deferred like ours: the descriptor may still be referenced by a submitted draw.
+            // No resource, since it is ImGui's.
             QueuePendingRelease(nullptr, i, g_lastSignaled);
             return;
         }
 }
 
-// ONE place that builds the InitInfo, because InitRenderer and the desc-change
-// re-init must agree exactly. Replaces the legacy 6-argument
-// ImGui_ImplDX12_Init, whose whole contract was "here is ONE descriptor for the
-// font" -- it cannot describe 1.92's atlas, which keeps up to two textures alive
-// across a repack, and it is also what STRIPPED
-// ImGuiBackendFlags_RendererHasTextures (imgui_impl_dx12.cpp:987), i.e. what
-// forced DX12 to a different drawable repertoire than DX11.
+// One place builds the InitInfo, so InitRenderer and the desc-change re-init agree. The struct
+// form of ImGui_ImplDX12_Init is what can describe the atlas with two live textures, and it
+// leaves the renderer's has-textures flag set.
 bool InitImguiBackend() {
-    // Its own queue, exactly as the legacy path had: that overload called
-    // CreateCommandQueue itself (imgui_impl_dx12.cpp:973). Handing it g_queue
-    // would newly serialize ImGui's texture uploads behind the game's frame work
-    // AND put ImGui_ImplDX12_UpdateTexture's WaitForSingleObject(..., INFINITE)
-    // on the presenting queue. Keeping the queue separate preserves today's
-    // behaviour byte for byte; the unbounded wait itself is only reachable once
-    // the dynamic atlas is on, and removing it needs ImDrawData::Textures =
-    // nullptr plus our own bounded servicing -- that belongs with the flag flip.
+    // Its own queue, for the reasons at g_imguiTexQueue.
     if (!g_imguiTexQueue) {
         D3D12_COMMAND_QUEUE_DESC qd{};
         qd.Type     = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -250,21 +210,13 @@ bool InitImguiBackend() {
     info.SrvDescriptorAllocFn = &SrvAlloc;
     info.SrvDescriptorFreeFn  = &SrvFree;
     if (!ImGui_ImplDX12_Init(&info)) return false;
-    // THE FLAG STAYS ON (2026-07-30, the flip), and this is where the
-    // transitional clear used to be. ImGui_ImplDX12_Init(InitInfo) leaves
-    // ImGuiBackendFlags_RendererHasTextures set -- the whole point of the struct
-    // is that the backend CAN service multiple textures -- and now that it does,
-    // that is the regime we want. The clear is deleted, not conditioned (RULE 2);
-    // it only ever existed to keep DX12 and DX11 in the SAME regime for one
-    // build, because one binary with two drawable repertoires chosen by the
-    // player's GPU API means two peers agree about who collided (the fold is a
-    // build constant) while disagreeing about what the names look like.
-    //
-    // The DX12-specific risk this leaves is upload cost, not correctness: the
-    // atlas now grows during play instead of once at boot, and every growth goes
-    // through ImGui_ImplDX12_UpdateTexture's INFINITE fence wait. That is what
-    // the probe below measures, and it is why TexMaxWidth/Height is pinned at
-    // 2048 in ui/fonts.cpp.
+    // The has-textures flag stays set: the backend services multiple textures, so the atlas grows
+    // during play instead of once at boot. One binary must not have two drawable repertoires
+    // chosen by the player's GPU API, since the name fold is a build constant: two peers would
+    // agree about who collided while disagreeing about what the names look like. The
+    // DX12-specific cost is upload, not correctness: every growth goes through UpdateTexture's
+    // unbounded fence wait, which the probe below measures, and which is why the atlas ceiling is
+    // pinned at 2048 in ui/fonts.cpp.
     return true;
 }
 
@@ -277,7 +229,7 @@ void NoteDeviceRemoved(const char* where) {
     ue_wrap::log::Flush();
 }
 
-// Bounded fence wait. false = timed out (device-removed path taken).
+// A bounded fence wait; false means it timed out and the device-removed path was taken.
 bool WaitFence(UINT64 value, const char* where) {
     if (!g_fence || value == 0) return true;
     if (g_fence->GetCompletedValue() >= value) return true;
@@ -286,9 +238,9 @@ bool WaitFence(UINT64 value, const char* where) {
         NoteDeviceRemoved(where);
         return false;
     }
-    // No event (or it could not be armed): SPIN with the same bound rather than
-    // claiming success -- a false success resets allocators under live GPU work
-    // (audit I-4). ~1 ms granularity; this path is not the steady state.
+    // No event, or it could not be armed: spin with the same bound rather than claim success, since
+    // a false success resets allocators under live GPU work. About 1 ms granularity; not the
+    // steady state.
     for (DWORD waited = 0; waited < kFenceWaitMs; waited += 1) {
         if (g_fence->GetCompletedValue() >= value) return true;
         ::Sleep(1);
@@ -306,10 +258,9 @@ void ReleaseSwapchainDerived() {
     if (g_sc3) { g_sc3->Release(); g_sc3 = nullptr; }
 }
 
-// (Re)derive everything that depends on THIS swapchain's desc: the sc3
-// interface, the RTV heap + per-buffer RTVs, the buffer count and the RTV
-// format. false = the swapchain could not be read; the caller leaves the state
-// null and the next present retries.
+// Re-derive everything that depends on this swapchain's desc: the sc3 interface, the RTV heap
+// and per-buffer RTVs, the buffer count and the RTV format. False when the swapchain could not
+// be read; the caller leaves the state null and the next present retries.
 bool CreateSwapchainDerived(IDXGISwapChain* sc) {
     DXGI_SWAP_CHAIN_DESC desc{};
     if (!g_device || FAILED(sc->GetDesc(&desc))) return false;
@@ -344,11 +295,9 @@ bool CreateSwapchainDerived(IDXGISwapChain* sc) {
 
 namespace {
 
-// Free every renderer-owned object (NOT the capture-owned device/queue). Used
-// by Shutdown and by every InitRenderer failure path -- imgui_overlay's
-// bring-up contract is "on ANY failure it releases whatever it acquired this
-// call", and the DX12 half was leaking a heap+RTVs+allocators+fence per retry
-// (correctness audit I-1, 2026-07-26).
+// Free every renderer-owned object, not the capture-owned device and queue. Used by Shutdown
+// and by every InitRenderer failure path: on any failure the bring-up releases whatever it
+// acquired this call.
 void ReleaseRendererState() {
     ReleaseSwapchainDerived();
     for (auto& f : g_frames)
@@ -359,16 +308,14 @@ void ReleaseRendererState() {
     if (g_srvHeap) { g_srvHeap->Release(); g_srvHeap = nullptr; }
     if (g_fence) { g_fence->Release(); g_fence = nullptr; }
     if (g_fenceEvent) { ::CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
-    // Released AFTER ImGui_ImplDX12_Shutdown has run (Shutdown() calls it before
-    // us), so the backend is done submitting on it. The legacy path owned this
-    // queue itself and released it in its own Shutdown; now we own it, so we must.
+    // Released after ImGui_ImplDX12_Shutdown has run (Shutdown calls it first), so the backend is
+    // done submitting on it.
     if (g_imguiTexQueue) { g_imguiTexQueue->Release(); g_imguiTexQueue = nullptr; }
 }
 
-// The backend's PSO bakes the RTV format and the frames-in-flight count at
-// Init, so a real format/count change needs a backend re-init (the ImGui
-// context and the Win32 backend survive). Shared by the resize bracket and the
-// swapchain-recreation branch (audit I-2: only one of them had it).
+// The backend's pipeline state bakes the RTV format and the frames-in-flight count at init, so
+// a real change needs a backend re-init; the ImGui context and the Win32 backend survive.
+// Shared by the resize bracket and the swapchain-recreation branch.
 void ReinitBackendIfDescChanged(UINT oldCount, DXGI_FORMAT oldFormat) {
     if (g_bufferCount == oldCount && g_rtvFormat == oldFormat) return;
     UE_LOGI("imgui_overlay: dx12: swapchain desc changed (buffers %u->%u, format %d->%d) -- "
@@ -409,18 +356,17 @@ bool InitRenderer(IDXGISwapChain* sc) {
     }
     D3D12_DESCRIPTOR_HEAP_DESC sd{};
     sd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    sd.NumDescriptors = kTextureSlots + 1;  // slot 0 = font
+    sd.NumDescriptors = kTextureSlots + 1;  // slot 0 is the reserve
     sd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     if (FAILED(g_device->CreateDescriptorHeap(&sd, IID_PPV_ARGS(&g_srvHeap))) || !g_srvHeap) {
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- SRV heap");
         ReleaseRendererState();
         return false;
     }
-    // ALL kMaxBackBuffers allocators, not just the current g_bufferCount: a
-    // later swapchain recreation can come back with MORE buffers (up to the
-    // cap) and RenderDrawData indexes g_frames by the CURRENT count. Sizing to
-    // the boot-time count left the extra slots null -> a null deref on the
-    // render thread (perf audit CRIT-1, 2026-07-26). Allocators are cheap.
+    // All kMaxBackBuffers allocators, not just the current count: a later swapchain recreation can
+    // come back with more buffers, and RenderDrawData indexes the frames by the current count, so
+    // a boot-time sizing leaves null slots and a null deref on the render thread. Allocators are
+    // cheap.
     for (UINT i = 0; i < kMaxBackBuffers; ++i)
         if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                     IID_PPV_ARGS(&g_frames[i].allocator)))) {
@@ -452,8 +398,8 @@ bool InitRenderer(IDXGISwapChain* sc) {
     }
     g_fenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!g_fenceEvent) {
-        // Without the event every WaitFence would fake success and we would
-        // Reset allocators under live GPU work (audit I-4).
+        // Without the event every WaitFence would fake success and reset allocators under live GPU
+        // work.
         UE_LOGE("imgui_overlay: dx12 bring-up failed -- fence event");
         ReleaseRendererState();
         return false;
@@ -475,24 +421,21 @@ void NewFrame() {
 }
 
 void InvalidateDeviceObjects() {
-    // The font texture may still be referenced by in-flight lists (DX11 hid
-    // this behind driver refcounting; D3D12 does not).
+    // The font texture may still be referenced by in-flight lists; D3D12 has no driver refcounting
+    // to hide that.
     WaitGpuIdle("InvalidateDeviceObjects");
     ImGui_ImplDX12_InvalidateDeviceObjects();
 }
 
 void EnsureTarget(IDXGISwapChain* sc) {
     if (!g_live) return;
-    ProcessPendingReleases();  // RenderDrawData may not run for many frames (audit MINOR-7)
+    ProcessPendingReleases();  // RenderDrawData may not run for many frames
     if (g_disabled) return;
     if (sc != g_boundSc) {
-        // A swapchain RECREATION never passes through our ResizeBuffers hook.
-        // Two things must happen, and the first one is NOT optional: the new
-        // chain may be presented by a DIFFERENT queue, and submitting our list
-        // on the wrong queue is a cross-queue race on the backbuffer -- not "a
-        // stale frame" as an earlier comment claimed (correctness audit I-2).
-        // So: stop drawing, RE-ARM the capture seeded with the queue we know,
-        // and only draw again once it is re-confirmed.
+        // A swapchain recreation never passes through our ResizeBuffers hook. The new chain may be
+        // presented by a different queue, and submitting our list on the wrong queue is a
+        // cross-queue race on the backbuffer, so: stop drawing, re-arm the capture seeded with the
+        // queue we know, and draw again only once it is re-confirmed.
         UE_LOGI("imgui_overlay: dx12: swapchain changed (%p -> %p) -- rebuilding targets and "
                 "re-confirming the presenting queue",
                 static_cast<void*>(g_boundSc), static_cast<void*>(sc));
@@ -517,32 +460,16 @@ void EnsureTarget(IDXGISwapChain* sc) {
     }
 }
 
-// THE UPLOAD PROBE, and it measures a path that ALREADY RUNS -- it is not new
-// work introduced by the flip.
-//
-// ImGui assigns draw_data->Textures unconditionally (imgui.cpp, in Render) and
-// ImGui_ImplDX12_RenderDrawData services that list ungated by the capability
-// flag, so upstream's upload path has been executing at boot and twice per
-// rescale in every build since the 1.92 upgrade, and had never been timed. What
-// the flip changes is FREQUENCY: the atlas now grows and repacks during play.
-//
-// Two properties make it worth a permanent probe rather than a one-off:
-//
-//   THE WAIT IS UNBOUNDED. ImGui_ImplDX12_UpdateTexture ends in a
-//   WaitForSingleObject(.., INFINITE) on the render thread. DX11's
-//   UpdateSubresource has no fence and no wait, so this is a DX12-only exposure.
-//
-//   THE BOX ACCUMULATES. ImGui::Render() runs unconditionally while THIS
-//   function early-outs on six conditions above (facade disabled, swapchain
-//   rebind, queue re-confirmation in flight). During such a window glyphs keep
-//   baking and the texture's dirty UpdateRect keeps growing, and the first
-//   serviced frame pays for the whole window at once. So the probe logs the
-//   accumulated box, not only the elapsed time.
-//
-// It then NULLS draw_data->Textures so the backend does not repeat the work --
-// the servicing has happened, and this is exactly the seam our own servicing
-// would replace if the numbers ever demand one. Nulling here is DX12-only and
-// cannot starve DX11: that backend reads the same field from its own frame.
+// The upload probe measures a path that already runs: ImGui assigns the draw data's texture
+// list unconditionally and the backend services it ungated by the capability flag, so the
+// upload path has executed at boot and on every rescale since the ImGui 1.92 upgrade; the
+// dynamic atlas changes the frequency, since it grows and repacks during play. Two properties
+// make it a permanent probe. The wait is unbounded: UpdateTexture ends in an infinite fence
+// wait on the render thread, a DX12-only exposure, since DX11's UpdateSubresource has no fence.
+// And the dirty box accumulates: ImGui::Render runs while this function early-outs (the facade
+// disabled, a swapchain rebind, a queue re-confirmation), and the first serviced frame pays for
+// the whole window, so the probe logs the box, not only the time. It then nulls the list so the
+// backend does not repeat the work; DX11 reads the field from its own frame.
 void ServiceTexturesTimed(ImDrawData* dd) {
     if (!dd || !dd->Textures) return;
     static double s_lastLog = 0.0;
@@ -566,8 +493,8 @@ void ServiceTexturesTimed(ImDrawData* dd) {
     }
     dd->Textures = nullptr;   // serviced above; do not let the backend redo it
     if (serviced == 0) return;
-    // Log the first upload of a run, then only a new worst case, then a heartbeat
-    // -- enough to price the path without a per-frame line.
+    // The first upload of a run, then only a new worst case, then a heartbeat: enough to price the
+    // path without a per-frame line.
     const double now = ImGui::GetTime();
     const bool worse = totalMs > s_worstMs + 0.5;
     if (worse) s_worstMs = totalMs;
@@ -583,16 +510,15 @@ void RenderDrawData(IDXGISwapChain* sc) {
     if (!g_live || g_disabled || !g_rtvHeap || !g_sc3 || !g_queue || sc != g_boundSc) return;
     FrameContext& fc = g_frames[g_frameIndex % g_bufferCount];
     ++g_frameIndex;
-    if (!fc.allocator) return;  // belt to CRIT-1's braces (all slots are created up front)
+    if (!fc.allocator) return;  // every slot is created up front
     if (!WaitFence(fc.fenceValue, "frame-context")) return;
     fc.fenceValue = 0;
     if (FAILED(fc.allocator->Reset())) return;
     if (FAILED(g_list->Reset(fc.allocator, nullptr))) return;
 
     const UINT idx = g_sc3->GetCurrentBackBufferIndex();
-    // Past this point the list is RECORDING: every early return must Close it,
-    // or the next frame resets an allocator whose list is still open (invalid
-    // D3D12 usage -- audit LOW-12).
+    // Past this point the list is recording: every early return must close it, or the next frame
+    // resets an allocator whose list is still open.
     if (idx >= g_bufferCount || !g_backBuffers[idx]) { g_list->Close(); return; }
 
     D3D12_RESOURCE_BARRIER barrier{};
@@ -650,11 +576,10 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     unsigned w = 0, h = 0;
     if (!detail::DecodeImageFileBgra(path, px, w, h)) return nullptr;
 
-    // A slot whose release is still PENDING must not be handed out again: that
-    // would overwrite a shader-visible SRV descriptor under an in-flight draw and
-    // then get wiped by ProcessPendingReleases (correctness audit C-1,
-    // 2026-07-26). AllocSlot answers Free only, and it is now the SAME free list
-    // ImGui draws from.
+    // A slot whose release is still pending must not be handed out: that would overwrite a
+    // shader-visible descriptor under an in-flight draw and then be wiped by
+    // ProcessPendingReleases. AllocSlot answers Free only, from the same free list ImGui draws
+    // from.
     const UINT slot = AllocSlot();
     if (!slot) {
         UE_LOGW("imgui_overlay: dx12 preview slots exhausted (%u) -- this image renders blank",
@@ -705,8 +630,8 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
                     px.data() + static_cast<size_t>(w) * 4 * y, static_cast<size_t>(w) * 4);
     upload->Unmap(0, nullptr);
 
-    // Queue-ordered upload: this list goes to the SAME queue BEFORE the frame's
-    // draw list, so no CPU wait is needed for the copy to become visible.
+    // Queue-ordered upload: this list goes to the same queue before the frame's draw list, so no
+    // CPU wait is needed for the copy to become visible.
     if (!WaitFence(g_uploadFence, "texture-upload")) {
         upload->Release(); tex->Release();
         return nullptr;
@@ -760,8 +685,8 @@ void DestroyTexture(void* id) {
     const UINT64 ptr = static_cast<UINT64>(reinterpret_cast<uintptr_t>(id));
     for (UINT i = 1; i <= kTextureSlots; ++i)
         if (g_tex[i].owner == TexSlot::Owner::Ours && g_tex[i].gpuPtr == ptr) {
-            // The GPU may still be reading it this frame: release + recycle the
-            // slot only once the current work has passed the fence.
+            // The GPU may still be reading it this frame: release and recycle the slot once the
+            // current work has passed the fence.
             QueuePendingRelease(g_tex[i].res, i, g_lastSignaled);
             g_tex[i].res = nullptr;  // the slot is freed by ProcessPendingReleases
             return;
