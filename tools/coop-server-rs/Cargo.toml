@@ -1,7 +1,6 @@
-# VOTV coop master + signaling server (Rust port of tools/coop_master_server.py +
-# tools/coop_signaling_server.py). RULE 3: VPS infra, never ships in the mod.
-# Wire-compatible with the Python services (same JSON endpoints + signaling line
-# protocol) so old + new can run in parallel during cutover.
+# VOTV coop master + signaling server. RULE 3: VPS infra, never ships in the mod.
+# The JSON endpoints and the signaling line protocol are the wire contract the
+# mod's client code (coop/net/lobby_client, coop/net/signaling_client) speaks.
 [package]
 name = "coop-server"
 version = "0.1.0"

@@ -1,11 +1,8 @@
 //! Production async P2P signaling server for VOTV coop.
 //!
-//! Originally a Rust port of `tools/coop_signaling_server.py`, kept wire-compatible
-//! with it so both could run during the cutover. That Python relay was RETIRED
-//! 2026-08-29 (RULE 2): the cutover was long finished and its only remaining job
-//! was to be the local fixture four rig scenarios launched -- so the rig was
-//! proving changes against a copy that never ships. `tools/mp.py:signaling_exe()`
-//! now builds and launches THIS binary instead. RULE 3: VPS infra, never ships in
+//! The rig launches this same binary for its scenarios (`tools/mp.py` builds it), so a
+//! line-protocol change is always proven against the copy that ships.
+//! RULE 3: VPS infra, never ships in
 //! the mod.
 //!
 //! Wire protocol (line-oriented, '\n'-terminated, identities are space-free):

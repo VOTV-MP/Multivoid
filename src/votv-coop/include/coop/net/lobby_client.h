@@ -5,7 +5,7 @@
 // CServerList.h. We diverge from MTA's ASE-UDP per-server query (ping is measured
 // post-connect via GNS, not pre-listed) and render in ImGui, not CEGUI.
 //
-// Talks to tools/coop_master_server.py over http_client:
+// Talks to the master server (tools/coop-server-rs, the master binary) over http_client:
 //   GET  /v1/lobbies?version=  -> the row list (async, coalesced)
 //   POST /v1/join {lobbyId}     -> JoinInfo (the creds + identities to dial the host)
 //

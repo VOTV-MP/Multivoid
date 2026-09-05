@@ -51,7 +51,7 @@ std::string ReadEnv(const char* name) {
 
 std::string ReadScenario() {
     // The TEST-launch signal is the PROCESS-SCOPED env var VOTVCOOP_SCENARIO
-    // (set by mp.py / play-coop.bat / lan-test). A NATIVE launch (double-click /
+    // (set by tools/mp.py). A NATIVE launch (double-click /
     // Steam) inherits no such env -> it falls through to "menu": boot to VOTV's
     // own main menu, where the MULTIPLAYER button (server browser + Host-Game
     // save picker) drives coop. NO auto-load into gameplay on a native launch.

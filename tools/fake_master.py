@@ -8,15 +8,14 @@ source for step T0. An earlier draft of 8c.-1 rejected "a local test master" as
 DUPLICATING the harness seeder; that was wrong and is retracted in the doc. They
 are the same artifact: the harness needs a synthetic row source, and this is it.
 
-WHY NOT tools/coop_master_server.py, which already serves /v1/lobbies and is
-already wired to the game by master_fetch_probe.py:77. That one is a master
-EMULATOR and carries the production DoS semantics on purpose -- MAX_LOBBIES_PER_IP
-= 8 (:103) and RL_CREATE 10 per 60 s (:108) -- while every seed here arrives from
-127.0.0.1. Eight rows against a viewport of roughly seven reproduces the very
-problem this exists to escape, and relaxing those caps would degrade the fidelity
-that is the emulator's whole point. A FIXTURE (return N rows, mutate instantly,
-deterministic per seed) and an EMULATOR (lobby lifecycle, heartbeats, TTL, rate
-limits) are different concepts.
+WHY NOT the real master (tools/coop-server-rs), which already serves /v1/lobbies.
+It carries the production DoS semantics on purpose -- a per-IP lobby cap and a
+create rate limit -- while every seed here arrives from 127.0.0.1. A handful of
+rows against a viewport of roughly seven reproduces the very problem this exists
+to escape, and relaxing those caps would degrade the fidelity that is the real
+thing's whole point. A FIXTURE (return N rows, mutate instantly, deterministic per
+seed) and the SERVER (lobby lifecycle, heartbeats, TTL, rate limits) are different
+concepts.
 
 WHY IT IS NEEDED AT ALL. The browser has never rendered more than the live
 master's ~2 lobbies, so every cost number in section 8c.-1 is arithmetic over

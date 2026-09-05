@@ -78,15 +78,11 @@ def log(msg: str) -> None:
     sys.stdout.flush()
 
 
-# --- The signaling relay the rig runs (2026-08-29) --------------------------
-# Scenarios launch the PRODUCTION binary, not a lookalike. There used to be a
-# second implementation -- `tools/coop_signaling_server.py`, 198 LOC of asyncio
-# that four scenarios started -- kept from the Python->Rust cutover so a probe
-# could run a relay without cargo. Measured 2026-08-29: `cargo build --release
-# --bin coop-signaling` finishes on this box in 9.86 s, so the reason it existed
-# was gone, while its cost was not: a change to the line protocol would have had
-# to land in both, and the rig would have kept proving that change against the
-# copy that never ships. RULE 2 -- it was retired whole.
+# --- The signaling relay the rig runs ----------------------------------------
+# Scenarios launch the PRODUCTION binary, not a lookalike: `cargo build --release
+# --bin coop-signaling` takes about ten seconds, and a second implementation would
+# mean a line-protocol change landing twice, with the rig proving it against the
+# copy that never ships.
 SERVER_CRATE = ROOT / "tools" / "coop-server-rs"
 SIGNALING_EXE = SERVER_CRATE / "target" / "release" / "coop-signaling.exe"
 

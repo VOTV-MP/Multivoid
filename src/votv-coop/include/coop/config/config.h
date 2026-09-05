@@ -6,7 +6,7 @@
 // instances, so per-file configs would alias).
 //
 // Precedence (highest first):
-//   1. Environment variable (lan-test framework)
+//   1. Environment variable (set by the launcher, tools/mp.py)
 //   2. multivoid.ini value
 //   3. Hard-coded default
 

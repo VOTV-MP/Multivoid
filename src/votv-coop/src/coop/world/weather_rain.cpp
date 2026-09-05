@@ -1,7 +1,6 @@
-// coop/weather_rain.cpp -- Phase 5W rain+snow cycle-side sub-lane. See
-// coop/world/weather_rain.h. Bodies extracted VERBATIM from weather_sync.cpp
-// (2026-07-19 modularization cut); the log lines keep the "weather:" prefix
-// (tools/lan-test.ps1 greps the literals).
+// coop/weather_rain.cpp -- rain and snow, the cycle-side sub-lane of weather sync. See
+// coop/world/weather_rain.h. The log lines keep the "weather:" prefix so log-driven
+// tests can grep them.
 
 #include "coop/world/weather_rain.h"
 

@@ -1,11 +1,8 @@
 //! Production async HTTP master / lobby server for VOTV coop (zero-open-ports MP).
 //!
-//! Rust port of `tools/coop_master_server.py`, WIRE-COMPATIBLE with it (identical
-//! JSON endpoints, field names, and the byte-exact coturn TURN credential) so the
-//! Python and Rust masters can run in parallel on different ports during cutover.
-//! RULE 3: VPS infra, never ships in the mod. See the Python file's module docstring
-//! + research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md
-//! for the endpoint list, the security design, and the careful spots.
+//! RULE 3: VPS infra, never ships in the mod. The endpoint list, the security posture
+//! and the careful spots are in the README beside this crate; the byte-exact spot (the
+//! coturn TURN credential) is called out inline and unit-tested.
 //!
 //! Concurrency model: a single `Mutex<MasterState>` guards the lobby maps + rate
 //! buckets + the /v1/lobbies cache. Handlers are SYNCHRONOUS (pure CPU) and run

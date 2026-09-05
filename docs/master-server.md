@@ -99,7 +99,6 @@ most until its heartbeats lapse.
 | The signaling leg is plaintext, so an on-path attacker can relay the registration challenge and hold a victim's name; encrypting it is the next transport item | `[V]` the relay's own header |
 | One master, no redundancy | `[V]` the announcer's header |
 | The `http://` downgrade grammar still ships and is queued for removal | `[V]` the master section's note |
-| The rig's master fixture is still the Python script the Rust master replaced | `[V]` the tools tree |
 
 ## Code map
 
@@ -108,4 +107,4 @@ most until its heartbeats lapse.
 | the services | `tools/coop-server-rs/src/bin/master.rs`, `tools/coop-server-rs/src/bin/signaling.rs`, `tools/coop-server-rs/src/tls.rs`, `tools/coop-server-rs/src/common.rs`, `tools/coop-server-rs/README.md` |
 | the mod's master client | `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/session/host_mode` |
-| the drills | `tools/sig_gate.py`, `tools/coop_master_server.py` (the rig's fixture) |
+| the drills and fixtures | `tools/sig_gate.py`, `tools/fake_master.py` (a synthetic lobby list for the browser rig), `tools/cert_check.py` (the off-box certificate check) |
