@@ -45,7 +45,7 @@ User rule anchor (2026-07-05): «alarm это по сути тоже своег�
 - **`runTrigger(owner, index)`** [uber @939→]: IDEMPOTENT — `IntToBool(index) == active`
   → return, no side effects. On a real toggle: `active = index`; basementGrate prop →
   `setPropProps(false, false, !active, false)`; `lib_C::setEvent(active, false, self)`
-  → the native activeEvents refcount (docs/COOP_EVENT_JOIN.md registry); each
+  → the native activeEvents refcount (the active-event registry in docs/join.md); each
   `alarms[i]->setActive(active)`; `Audio1->SetActive(active, reset=true)` (klaxon);
   if active → every `ceilingLamp_C` → `solar()` (emergency flicker).
 - **`alarmLamp_C::setActive(v)`**: glow sprites + point light visibility + emissive
@@ -82,7 +82,7 @@ cached instance revalidated IsLiveByIndex) at 1 Hz on BOTH peers.
   redundant applies free and breaks every echo loop.
 - Both peers replay natively → lamps/klaxon/grate/ceiling/`setEvent` all converge,
   including the client's OWN activeEvents refcount (no-save gate + tension behave).
-- **Late-join answer (COOP_EVENT_JOIN.md 3.4 row)**: host
+- **Late-join answer (join.md)**: host
   `QueueConnectBroadcastForSlot(slot)` sends the CURRENT state unconditionally at the
   world-ready edge — a mid-alarm joiner starts its klaxon on arrival; idempotent if the
   transferred save already carried it.

@@ -7,9 +7,8 @@ coop sync design, and its caveats live in that event's own file here. This folde
 "what exactly happens during event X and how does coop deliver it to every peer" — the
 cross-cutting CONTRACTS stay where they are:
 
-- `docs/COOP_EVENT_JOIN.md` — the join-during-event contract (EventSnapshot AS-BUILT v98,
-  the per-lane late-join table, phases). Per-event docs LINK to it; they do not restate
-  it. A new event's registrant class also gets an `event_active_sync::kClassRowMap` entry
+- `docs/join.md` — the join and the late-join rule; the per-lane answers are the late-join
+  column of `docs/STATUS.md`. Per-event docs LINK to them; they do not restate them. A new event's registrant class also gets an `event_active_sync::kClassRowMap` entry
   (unmapped classes WARN LOUD on a joiner — that log line is the fill signal).
 - `src/votv-coop/src/coop/world/event_fire_sync.cpp` — the replay/no-replay dupe matrix
   is AUTHORITY in code (kReplayRows/kNoReplayRows). A per-event doc cites its row's
@@ -32,7 +31,7 @@ cross-cutting CONTRACTS stay where they are:
    | axis | deterministic-from-start / host-random / per-viewer | carried by (lane/wire) |
 ## 3. Coop design
    What is mirrored, by which lane; what replays natively; what is host-local. Cite the
-   dupe-matrix verdict + the late-join answer (COOP_EVENT_JOIN.md 3.4 row).
+   dupe-matrix verdict + the late-join answer (`docs/STATUS.md`, late-join column).
 ## 4. Caveats / known quirks
    Native bugs, save/reload interactions, timing races, what autonomy can't verify.
 ## 5. Verification
@@ -52,8 +51,8 @@ No event is "covered" by a blanket mechanism claim; each one gets its own granul
 2. **Verify** its dupe-matrix verdict against the RE (the piramid pass PROVED this step
    earns its keep: `piramid` sat in kReplayRows, but replay = a divergent client-local
    pyramid — the verdict was WRONG and only the granular dig caught it).
-3. **Design + build** the sync where a gap exists; extend the COOP_EVENT_JOIN.md 3.4
-   late-join row.
+3. **Design + build** the sync where a gap exists; extend the late-join column of
+   `docs/STATUS.md`.
 4. **Verify** live (autonomy for flow, hands-on for visuals) and stamp the doc's status.
 
 An event counts as DONE only when its doc says VERIFIED with the evidence named.
@@ -72,7 +71,7 @@ and the wiki taxonomy (Story Mode / Ariral-reputation / signal-triggered / rando
 | alarm (`trigger_alarm_C`) — the 07-05 user join-pass ask | [alarm.md](alarm.md) | AS-BUILT v101 (2026-07-05, same day as the ask): the BASE siren + red lamps (distinct from the local per-terminal radar beep -- user rule 07-05). Full static RE (ON census exhaustive: analogD radar scan on an important comp_radarPoint -- the indirection events use -- + the snuskLoaf prank; OFF = panel_radar "b/Stop alarm"; runTrigger natively idempotent) -> `alarm_sync` lane (1 Hz active-bit poll both peers — runTrigger is EX_VirtualFunction, PE-invisible — host broadcasts transitions, client forwards local ones, apply = reflected runTrigger full-native-fanout) + join answer (unconditional connect snapshot) + the unmapped-WARN hole closed via kLaneOwnedClasses. **Autonomous e2e PASS 2026-07-05 13:50 incl. the MID-ALARM JOIN case** (ON landed pre-world-ready -> connect snapshot delivered it; live OFF same-second). Pending: hands-on for siren/lamps + a client-originated stop |
 | obelisk (`obelisk_C`) — Phase 0 registry-probe exemplar | (todo) | BEGIN/END proven live; doc pending |
 | wisps (`wisp_C` swarm) + killerwisp — creature lanes shipped 07-03 | (todo) | AS-BUILT in code; doc = record the verdicts |
-| starRain (`skyFallingEvent`) — event_cue lane | (todo) | late-join gap CLOSED 2026-07-05 (event_cue join re-send, e2e PASS -- COOP_EVENT_JOIN.md 3.4); doc pending |
+| starRain (`skyFallingEvent`) — event_cue lane | (todo) | late-join gap CLOSED 2026-07-05 (event_cue join re-send, e2e PASS -- join.md); doc pending |
 | everything else (65 rows + non-row registrants) | — | queue below |
 
 Non-event sibling doc: [radar-terminal-alert.md](radar-terminal-alert.md) — the computer's

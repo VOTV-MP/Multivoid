@@ -22,7 +22,7 @@ Cross-cutting contracts stay where they are (link, don't restate):
 - `docs/COOP_ENTITY_EXPRESSION_MAP.md` — identity / expression / destroy per class.
 - `docs/CODE_MAP.md` — where each shipped wire-sync lives.
 - `docs/ARCHITECTURE.md` — per-element authority + the act-as-host intent rule.
-- `docs/COOP_EVENT_JOIN.md` — the per-lane late-join answer table (principle 8).
+- `docs/join.md` — the per-lane late-join answer table (principle 8).
 - `docs/upgrades/` — the upgrade subsystem hub. The ATV's **physical module** family is
   documented in full inside [ATV.md](ATV.md) §4; `docs/upgrades/TRACKER.md` carries its status row.
 

@@ -89,7 +89,7 @@
 > -> the client's save-loaded native@old never reconciles (its `TryDestroyTwin` matches @new, misses @old,
 > and `isSaveTimeKey=false` skips the sweep) -> `[PILE-DELTA] eid=5283 ... nearestNative_d=NONE` -> dup.
 > NOT L1 (L1 = a pile PRESENT at blob the host moves; the save-time key matches). It is the MOVE-scenario
-> the class doc anticipated (`docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md:79-87` -- identity changes mid-window).
+> the class doc anticipated (`docs/join.md`, the join window: identity changes mid-window).
 > **FIX direction (NOT built):** close the eid-0-at-grab gap (self-seed the eid at the grab edge, take-4
 > pattern) so the existing save-time-stamp machinery carries the PRE-GRAB position as the key -- unchanged.
 > One open point needs a hands-on probe (was the pile truly untracked at grab). The older "native-destroy

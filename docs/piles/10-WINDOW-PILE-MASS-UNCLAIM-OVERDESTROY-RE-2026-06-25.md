@@ -53,7 +53,7 @@ NOT a regression (the docs/piles/09 fix was NOT deployed). This is WORSE than th
 not a duplicate. (The "FIX NOT built" line is now SUPERSEDED -- see FIX PROVEN above.)**
 
 > **PLAN (2026-06-25, DESIGN on-review): the catastrophe guard is specified in
-> `docs/COOP_STABLE_ID_SIDECAR.md` §4 — a per-class COMPLETENESS FLOOR (a positive host->client
+> `docs/join.md` (the reconcile bounds) — a per-class COMPLETENESS FLOOR (a positive host->client
 > per-class census manifest; the claim sweep may doom class C only when `claimedCount[C] >=
 > manifest[C]`, else KEEP as incomplete). Ships as Phase 0, INDEPENDENT of the stable-ID work and FIRST.
 > NOT a crude `>N%` threshold (that would block a legitimate mass-clear). A stable ID does NOT fix this
@@ -190,4 +190,4 @@ fix, the sweep landed in the trough where host-skip is moot (no live natives to 
 keyless-skip tripwire, 1117 GLOBAL >50% valve, 1132 destroy) · the 11:16 client log
 `Game_0.9.0n_copy/.../votv-coop.log` (870->0 keyless, 953 destroyed, no PILE-1C, kerfur retire ran) ·
 `docs/piles/09` (the move-dup, distinct) · `pile_reconcile.cpp` (SweepReconcileSaveTimeTwins + its own
->50% valve — did NOT run this join) · `docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md` (the class).
+>50% valve — did NOT run this join) · `docs/join.md` (the join window, the class).

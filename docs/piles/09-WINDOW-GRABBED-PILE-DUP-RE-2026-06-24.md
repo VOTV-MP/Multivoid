@@ -108,12 +108,12 @@ nearestNative_d=NONE (no live native in the index)`.
   @old (>30cm) anyway.
 
 ## Mirror-identity verdict -- the 4TH instance, and the MOVE-scenario the class doc anticipated
-It IS the same class (`docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md`): two channels (the transferred save =
+It IS the same class (`docs/join.md`, the join window): two channels (the transferred save =
 native@old; the host's connect-window broadcast = proxy@new) with no stable cross-peer key, mutated in
 the window. The twist the other 3 don't have: **the entity's identity (eid) CHANGES mid-window** (grab
 destroys the old native, re-pile mints a new eid), so neither eid NOR the frozen save-time position of
 *this* eid can tie the two channels. This is exactly the MOVE-scenario headroom at
-`COOP_MIRROR_IDENTITY_WINDOW_RACE.md:79-87`: "the identity key must survive a position change in-window
+`docs/join.md` (the join window): "the identity key must survive a position change in-window
 -- a form that moves post-blob needs a re-capture or an identity that isn't its current position."
 
 ## Fix direction (NOT built -- RULE 1, root-first)

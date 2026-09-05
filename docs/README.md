@@ -53,9 +53,13 @@ Before writing any entity-sync, hook or spawn-catch code, read these three:
 
 The authority model, the server model behind the roadmap, the transport, identity and the join are
 all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md)
-(who rolls shared-world randomness) · [COOP_EVENT_JOIN.md](COOP_EVENT_JOIN.md) (joining mid-event;
-every sync lane owes a late-join answer) · [COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) (the custom
-client body: the model and texture pipeline)
+(who rolls shared-world randomness) · [COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) (the custom client
+body: the model and texture pipeline)
+
+**Subsystems**, one page each on the same skeleton
+
+[join.md](join.md) (joining a game: admission, the save transfer, the connect replay, the join
+window, and the late-join rule every lane answers)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -64,10 +68,8 @@ client body: the model and texture pipeline)
 
 **Known-hard problems, each with its own file**
 
-[COOP_STABLE_ID_SIDECAR.md](COOP_STABLE_ID_SIDECAR.md) (entity identity across a join) ·
 [COOP_WORLD_PROP_DIVERGENCE.md](COOP_WORLD_PROP_DIVERGENCE.md) (props that mutate themselves over
-time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.md) ·
-[COOP_INSTANT_WORLD_TWO_LAYER.md](COOP_INSTANT_WORLD_TWO_LAYER.md)
+time)
 
 **Per-domain trees**, one folder per game system, each with its own README
 

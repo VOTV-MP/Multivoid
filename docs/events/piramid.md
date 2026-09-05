@@ -1,6 +1,6 @@
 # piramid — the walking three-leg pyramid (Rozital tripod)   (STATUS: AS-BUILT v104 2026-07-05 late; walk/scale/suck [V live by user]; head v102+v104 re-verdict + true mid-join pending)
 
-The devs'-gauntlet acceptance case (docs/DEVS_GAUNTLET.md; docs/COOP_EVENT_JOIN.md Phase 1
+The devs'-gauntlet acceptance case (docs/DEVS_GAUNTLET.md; docs/join.md
 names "pyramid mid-join" as the acceptance test). Ground truth:
 `research/findings/props-lifecycle/votv-piramid2-RE-2026-07-04.md` (bytecode, 113 exports decoded) + the
 wiki sweep (voicesofthevoid.wiki.gg /Events/Story_Mode + eternitydev.wiki.gg /Pyramid_Tripod,
@@ -118,21 +118,21 @@ Original design points (all shipped as described unless noted above):
    PRE-cancel its `ReceiveTick` + the five timer entrypoints per-self (the npc-lane
    interceptor shape), keep BeginPlay itself (setEvent(true) runs -> the client's own
    activeEvents registry stays honest, closing the counter-parity asymmetry of
-   COOP_EVENT_JOIN.md 3.3 for this event). `del`-notify's wisp destroy is part of the
+   join.md for this event). `del`-notify's wisp destroy is part of the
    suppressed graph; the wisp dies via the npc lane instead.
 4. **Gather relay**: host observes the gather commit (montage start / wispTarget set — the
    exact VISIBLE seam is in the RE doc; if the montage call is EX-dispatch-invisible,
    observe `wispTarget` by 1 Hz poll on the host actor) -> reliable
    `PyramidGather{pyramidEid, wispEid}` -> client plays the montage on the mirror; beams +
    footwork follow from notifies.
-5. **Late-join answer** (extends COOP_EVENT_JOIN.md 3.4): lane-owned — the WorldActor
+5. **Late-join answer** (the late-join rule in join.md): lane-owned — the WorldActor
    join snapshot delivers the in-flight pyramid at its current transform; killerwisps
    arrive via the npc join snapshot; registry parity comes from the mirror's own
    BeginPlay setEvent. **This answer was FALSE until 2026-07-05 `ff338d87` for the
    canonical case (pyramid spawned while the host was ALONE): the enroll seams were
    connected()-gated, so nothing was tracked and the join snapshots were empty — the
    user's live 0s repro ("joiner sees nothing"). Fixed as a class (hosting-gated
-   tracking, COOP_EVENT_JOIN 3.4 rule); re-test pending (runbook 0s-FIX).** The v98 EventSnapshot carries 'piramid' to the joiner but the
+   tracking, join.md); re-test pending (runbook 0s-FIX).** The v98 EventSnapshot carries 'piramid' to the joiner but the
    verdict table skips it as lane-owned — the correct answer, not a gap. No
    replay-from-t0 (host-random path makes replay divergent by construction). v98 also
    closed the gather sub-gap: `piramid_sync::QueueConnectBroadcastForSlot` re-sends an

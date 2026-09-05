@@ -16,7 +16,7 @@ Cross-cutting contracts stay where they are (link, don't restate):
   destroy; the dupe matrix. An item doc that ships a sync adds/updates its class row there.
 - `docs/CODE_MAP.md` — where every wire-sync feature lives. A shipped item sync adds
   its row.
-- `docs/COOP_EVENT_JOIN.md` — late-join contract. Deployed item actors that persist in the
+- `docs/join.md` — late-join contract. Deployed item actors that persist in the
   world need a join answer like any lane.
 
 ## Doc skeleton (copy for a new item)

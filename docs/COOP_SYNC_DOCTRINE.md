@@ -7,7 +7,7 @@
 > This doc ORDERS the existing canon; it does not replace it. Deep truth lives in:
 > `ARCHITECTURE.md` (the authority model and the intent rule), `COOP_DISPATCH_VISIBILITY.md` (will my hook
 > fire), `COOP_ENTITY_EXPRESSION_MAP.md` (identity/expression/destroy), `COOP_WORLD_PROP_DIVERGENCE.md`
-> (the brain-on trap), `COOP_EVENT_JOIN.md` (late-join rows), `CODE_MAP.md` (where lanes live),
+> (the brain-on trap), `join.md` (the join and its late-join rule), `CODE_MAP.md` (where lanes live),
 > `STATUS.md` (per-facet status), CLAUDE.md (the rules this doc applies).
 
 ## The doctrine in one paragraph
@@ -116,7 +116,7 @@ shipping, not after the first dupe.
 ## Step 6 — The late-join row is part of the lane (principle 8)
 
 A lane is not DONE until its mid-activity join answer exists in writing: snapshot / seed / park /
-replay / unlatch — chosen, implemented, and listed in the lane's doc (`COOP_EVENT_JOIN.md` table
+replay / unlatch — chosen, implemented, and listed in the lane's doc (`STATUS.md`'s late-join column
 pattern). "Don't join during X" is a crutch. The join order itself is structured: identity → save
 transfer → pre-world per-player state → world load → connect replay → per-lane seeds → ready gate;
 a new lane picks its slot in that order explicitly.
@@ -162,4 +162,4 @@ follows the sender; trust is a separate ledger).
 - Host-authoritative world family with echo interception: `coop/world/weather_rain.cpp`.
 - Assigned-syncer vehicle direction (in progress, read the failures too): `docs/vehicles/ATV.md` §17.
 - Identity across destroy/create: `coop/props/prop_drop_intent.{h,cpp}`.
-- The join spine: `docs/COOP_EVENT_JOIN.md` + `coop/save/save_transfer.cpp`.
+- The join spine: `docs/join.md` + `coop/save/save_transfer.cpp`.

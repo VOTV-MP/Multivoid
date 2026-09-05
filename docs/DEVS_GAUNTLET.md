@@ -66,7 +66,7 @@ can never be "just send the save": it is save blob (the stable base world)
 **plus** an active-event snapshot lane that tells the joiner which events are
 in flight and how to converge.
 
-Design + as-built status: `docs/COOP_EVENT_JOIN.md` (the join-during-event
+Design + as-built status: `docs/join.md` (the join-during-event
 contract — every lane must answer "what does a late joiner receive?").
 
 ## Timeline commitment

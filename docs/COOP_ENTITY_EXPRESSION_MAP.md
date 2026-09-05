@@ -212,7 +212,7 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
 > -- was `identity_reconcile`, consolidated 2026-06-30; VERIFIED real log 16:06 2026-06-28 — `RE-BIND by position` x242 on the valve-abort
 > path, world ended clean) re-binds them at quiescence by an authoritative host-sent save-position (1cm,
 > ambiguous-skip) — the bind seam can't supply the position itself (BeginDeferred POST = `(0,0,0)`, below). See
-> `research/findings/join-identity/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/COOP_STABLE_ID_SIDECAR.md`.
+> `research/findings/join-identity/coop-purge-timing-reconcile-race-DESIGN-2026-06-27.md` + `docs/join.md`.
 >
 > **IDENTITY UPDATE 2026-07-03 [AS-BUILT `2ab718d5`, smoke-V] — identity survives actor churn (the re-bind
 > thread; docs/piles/12 status block is canonical).** (1) The chip entry's savePos is IMMUTABLE (a purge
