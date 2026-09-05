@@ -1,4 +1,6 @@
-// coop/session_manager.cpp -- see coop/session_manager.h.
+// coop/session_manager.cpp -- the session actions behind the menus: host (listed, direct,
+// hidden), join by lobby, direct and P2P connect, the listing transitions, the update check and
+// the pending-start hand-off to the harness. Master-server HTTP runs on detached workers.
 
 #include "coop/session/session_manager.h"
 
@@ -28,42 +30,24 @@ namespace {
 namespace net = coop::net;
 namespace lobby = coop::net::lobby;
 
-// Pre-Configure seed only: the harness calls Configure() at boot with
-// cfg::ReadMasterUrl() (the canonical source -> the built-in VPS endpoint or the
-// net.master.custom gate), which overwrites g_masterUrl before any host/join. This
-// VPS default just makes a read before Configure() (shouldn't happen) reach the right
-// place instead of localhost. Aliases the ONE definition in protocol.h (was a
-// duplicated string literal with a "keep in sync" comment -- retired 2026-07-16).
+// The pre-Configure seed: the harness calls Configure() at boot with the resolved master URL, so
+// this only makes an earlier read reach the official endpoint instead of localhost. The one
+// definition is protocol.h's.
 constexpr const char* kDefaultMaster = coop::net::kOfficialMasterUrl;
 
 
-// LEAKED process-lifetime singletons (never destroyed): (a) no thread-join runs at
-// static destruction / DLL unload -- the project forbids join-from-teardown (loader-
-// lock deadlock; coop/shutdown.h), and a member-thread dtor join would do exactly
-// that; (b) the detached HTTP workers' captures of these stay valid for the whole
-// process life. The OS reclaims the memory at exit.
+// Leaked process-lifetime singletons: no thread join runs at static destruction or DLL unload
+// (coop/shutdown.h forbids join-from-teardown, a loader-lock deadlock), and the detached HTTP
+// workers' captures stay valid for the process life.
 lobby::LobbyClient& Client() { static auto* c = new lobby::LobbyClient(); return *c; }
 lobby::LobbyAnnouncer& Announcer() { static auto* a = new lobby::LobbyAnnouncer(); return *a; }
 
-// ---- The announce a HIDDEN lobby does NOT make -------------------------------
-//
-// "Hidden" was implemented as ANNOUNCE-THEN-UNLIST: POST /v1/host with the name,
-// world, lock flag, player cap, listen port and identity -- against which the
-// master records the source IP it resolved -- and only THEN POST /v1/visibility
-// to clear the list bit, with the heartbeat refreshing the record every 30 s for
-// the lobby's life. So "unlisted" was implemented and "the master never hears of
-// you" was not, while a player ticking a box labelled "Hide from server browser"
-// reasonably reads the second.
-//
-// The fix is not to un-list harder. For a DIRECT lobby the announce buys nothing
-// else: the returned signaling/STUN/TURN credentials are consumed only on the
-// P2P branch, and the Direct branch builds its Config from the listen port
-// alone. The whole round trip existed to make a LATER un-hide instant. That is
-// what this state keeps instead -- the announce is DEFERRED, and the scoreboard's
-// "Show in server browser" performs it the moment the player asks.
-//
-// P2P/AUTO is deliberately NOT covered: there the master IS the rendezvous, so a
-// lobby that never announces is unjoinable. Hiding one stays a visibility flag.
+// ---- the announce a hidden lobby does not make ----
+// A hidden DIRECT lobby is never announced: the announce would hand the master the name, world,
+// lock flag, cap, listen port, identity and source address, and a DIRECT Config is built from
+// the listen port alone, so the round trip bought nothing but an instant un-hide. The announce
+// is deferred here instead, and the scoreboard's "Show in server browser" performs it when the
+// player asks. P2P is not covered: there the master is the rendezvous, so hiding stays a flag.
 struct DeferredAnnounce {
     bool armed = false;       // a DIRECT lobby is live that the master has not been told of
     std::string masterUrl;
@@ -76,9 +60,8 @@ struct DeferredAnnounce {
 std::mutex g_deferredMu;
 DeferredAnnounce g_deferred;
 
-// True while the live lobby is DIRECT. Read by SetListed to decide whether
-// un-ticking can honestly RETRACT the lobby (/v1/leave) or must settle for the
-// visibility flag because the master is this lobby's only rendezvous.
+// True while the live lobby is DIRECT: SetListed can then retract the lobby (/v1/leave) on an
+// un-tick instead of settling for the visibility flag.
 std::atomic<bool> g_hostIsDirect{false};
 
 void ArmDeferredAnnounce(const std::string& masterUrl, const std::string& name,
@@ -100,16 +83,15 @@ bool PeekDeferredAnnounce(DeferredAnnounce& out) {
     return true;
 }
 
-// Config pushed from the harness at boot (Configure): the master URL + the host
-// fallback Config (used when the master announce fails). g_hostStatus is the last
-// host-action result the browser surfaces. All under g_cfgMu (low contention --
-// a boot write, then occasional worker-set / UI-read).
+// Config pushed from the harness at boot: the master URL and the host fallback Config (used when
+// the announce fails); g_hostStatus is the last host-action result the UI shows. All under
+// g_cfgMu.
 std::mutex g_cfgMu;
 std::string g_masterUrl = kDefaultMaster;  // overwritten by Configure
 net::Config g_fallbackHostCfg;
 std::string g_hostStatus;
 std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
-// T7 (ini rework): MY-NAME default from the shared registry constant.
+// The nickname default comes from the shared registry constant.
 std::string g_nickname = coop::config_registry::kMyNameDefault;  // local display nickname (seeded from config; browser overwrites)
 
 // One queued session start (last action wins until the harness consumes it).
@@ -117,42 +99,29 @@ std::mutex g_pendMu;
 bool g_hasPending = false;
 net::Config g_pending;
 
-// One queued HOST-WITH-SAVE (the Host-Game save picker): a {Config, SaveChoice} the
-// harness drains, LOADS A WORLD for, then starts. Separate from g_pending (which starts
-// immediately on the already-loaded world); host-with-save must load the chosen save (or
-// create the new one) FIRST, so the harness needs the save choice alongside the Config.
+// One queued host-with-save: a {Config, SaveChoice} the harness drains, loads the world for, then
+// starts. Separate from g_pending, which starts on the already loaded world.
 std::mutex g_pendHostMu;
 bool g_hasPendingHost = false;
 PendingHost g_pendingHost;
 
-// Serialize the session-start actions (Host/Join/ConnectDirect): only one in flight
-// at a time (you can't start two sessions at once). Refresh is NOT gated.
+// Serialises the session-start actions (host, join, direct connect): one in flight at a time.
+// Refresh is not gated.
 std::atomic<bool> g_actionBusy{false};
 
-// THE PASSWORD FOR THE JOIN THE PLAYER IS ABOUT TO MAKE. Set by the prompt window
-// just before Connect and consumed by whichever lane starts; it is NOT a config
-// row, on purpose -- writing someone else's lobby password into our ini would
-// persist a secret the player was lent, and the ini is what people paste into bug
-// reports. It lives exactly as long as one join attempt.
+// The password for the join the player is about to make, set by the prompt just before Connect
+// and consumed by whichever lane starts. Not a config row: writing someone else's lobby password
+// into our ini would persist a secret the player was lent, and the ini is what people paste into
+// bug reports.
 std::mutex  g_joinPwMu;
 std::string g_joinPassword;
 
-// THE ONE PLACE A JOINER'S PASSWORD IS RESOLVED, and it TAKES -- the transient is
-// consumed, not merely read.
-//
-// The PROMPT wins: it is what the player typed for the server in front of them, and it is
-// cleared here so it can never ride along into the NEXT connection they make. Leaving it
-// set was a real leak, not a tidiness point: connect to locked lobby A with password P,
-// then Direct-connect to server B, and B (if locked, and if we bound to it) received a tag
-// over P -- carrying the right secret to the wrong host, which is not something the
-// binding gate was ever meant to cover.
-//
-// THE FALLBACK IS `net.join_password` AND NOT `net.lobby_password`, and that distinction
-// is the other half of the same finding. `net.lobby_password` is what the player's OWN
-// hosted sessions require; falling back to it meant anyone who had ever hosted a locked
-// lobby offered their own lobby's secret to every locked host they reached. Two secrets,
-// two rows. The fallback exists for the client with no prompt -- scripted, LAN, dedicated.
-// (Both found by the post-ship audit, 2026-08-31.)
+// The one place a joiner's password is resolved, and it takes: the prompt's value wins and is
+// cleared, so it can never ride into the next connection (connect to locked lobby A, then
+// direct-connect to B, and B would receive a tag over A's secret). The fallback is
+// net.join_password, never net.lobby_password: that is what the player's own hosted sessions
+// require, and offering it to every locked host reached is a leak. The fallback serves the
+// client with no prompt (scripted, LAN, dedicated).
 std::string TakeJoinPassword() {
     {
         std::lock_guard<std::mutex> lk(g_joinPwMu);
@@ -171,8 +140,8 @@ void QueueStart(const net::Config& cfg) {
     g_hasPending = true;
 }
 
-// "host" or "host:port" -> host + port (default kDefaultPort if no port). IPv4 /
-// hostname only (matches the existing LanDirect path; bracketed IPv6 is not parsed).
+// "host" or "host:port" to host + port (kDefaultPort without one). IPv4 or a hostname; bracketed
+// IPv6 is not parsed.
 bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
     std::string s = in;
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
@@ -188,28 +157,11 @@ bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
     return true;
 }
 
-// User-visible form of a master URL: the OFFICIAL server prints as "DEFAULT"
-// -- the connect console / browser status / boot log never advertise the raw
-// VPS address (user 2026-06-10). A genuinely custom master prints verbatim
-// (its operator needs to see it for debugging).
-// WHAT AN UNLISTED DIRECT HOST CAN HONESTLY PROMISE.
-//
-// THIS SENTENCE WAS WRITTEN TWICE IN ONE DAY AND WAS WRONG BOTH TIMES, in opposite
-// directions, which is worth recording rather than quietly fixing. It first promised
-// "friends use Direct Connect with your IP" unconditionally, which was false for a LOCKED
-// lobby -- the joiner had no identity to bind to and the password proof was refused. So a
-// locked arm was added telling the host to dig `dial=` out of the log. Forty-five minutes
-// later the same session DELETED that refusal (a typed address is now a self-addressed
-// lane and may carry a password), and the new arm became the false one: it sends a host to
-// a config row that no UI writes, for a problem that no longer exists.
-//
-// One arm again, and it is the true one: an address is enough, and a password if there is
-// one, which is exactly what the joiner's window now asks for. (Post-ship audits,
-// 2026-09-01, both halves.)
-// `why` is a parameter because the three callers are unlisted for two DIFFERENT reasons --
-// two because the master could not be reached, one because the host chose it -- and a
-// builder that hardcoded "master unreachable" told the deliberate one something false about
-// its own network.
+// What an unlisted DIRECT host can honestly promise: an address is enough, and a password if
+// there is one, which is exactly what the joiner's window asks for. `why` is a parameter because
+// the three callers are unlisted for two different reasons (the master could not be reached, or
+// the host chose it), and a builder that hardcoded one told the other something false about its
+// own network.
 std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked) {
     std::string s(lead);
     s += " -- ";
@@ -219,6 +171,8 @@ std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked)
     return s;
 }
 
+// The user-visible form of a master URL: the official server prints as "DEFAULT"; a custom
+// master prints as typed, since its operator needs to see it.
 std::string DisplayMaster(const std::string& url) {
     return url == coop::net::kOfficialMasterUrl ? std::string("DEFAULT") : url;
 }
@@ -234,39 +188,18 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
                 DisplayMaster(g_masterUrl).c_str(),
                 g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1);
     }
-    // NO /v1/latest HERE ANY MORE (2026-08-30).
-    //
-    // This used to kick the first update check at boot config time, and
-    // multiplayer_menu re-polled it on every main-menu entrance. Neither is
-    // something the player asked for, and between them they meant the master
-    // learned every player's source IP AT GAME LAUNCH -- before any multiplayer
-    // decision existed. That made a promise we ship in player-facing text false
-    // at the moment it is displayed: the host window's third row used to read
-    // "Never contacts any Multivoid server". (That row is retired -- the promise now
-    // belongs to DIRECT + Hidden, `coop::session::IsMasterFree`.)
-    //
-    // The check now fires from ui::server_browser_surface::Open(), because
-    // opening the browser IS a request to talk to the master -- the same trigger
-    // /v1/lobbies already has. Everything else the mod sends is a consequence of
-    // an action the player took (Host, the visibility tick, clicking a server).
-    //
-    // Measured cost, not assumed: `multiplayer_menu.cpp:117-123` falls back to
-    // DisplayVersion() when no check has landed, so the label is never empty --
-    // a player who never opens the browser sees their own version with no update
-    // verdict. The update check is documented informational-only, never a gate.
-    //
-    // Reported by an external source review of the public tree; the reviewer's
-    // question was literally "can I run a server without sending my IP to the
-    // master server".
+    // No update check here: one at boot config time would tell the master every player's source
+    // address at game launch, before any multiplayer decision exists. The check fires from
+    // ui::server_browser_surface::Open(), because opening the browser is a request to talk to the
+    // master, the same trigger the lobby list has; everything else the mod sends follows an action
+    // the player took. The main-menu label falls back to DisplayVersion() when no check has landed,
+    // so it is never empty, and the check is informational, never a gate.
 }
 
 std::string MasterUrl() {
-    // All 6 callers are internal post-boot actions (host/join/refresh workers)
-    // and the harness Configure()s at boot before any of them can run; the
-    // static init already aliases the official endpoint, so a hypothetical
-    // pre-Configure read still reaches the right place. The old !configured
-    // env-fallback branch was a SECOND resolver of VOTVCOOP_MASTER_URL beside
-    // config.cpp's registry row -- the F21 duplicate class (arc 3 T2b).
+    // Every caller is a post-boot action and the harness Configure()s at boot before any can run;
+    // the static init already aliases the official endpoint, so a pre-Configure read still reaches
+    // the right place. The env override is resolved once, in config.cpp's registry row.
     std::lock_guard<std::mutex> lk(g_cfgMu);
     return g_masterUrl;
 }
@@ -293,9 +226,8 @@ void SetNickname(const std::string& nick) {
 
 void SetJoinPassword(const std::string& password) {
     std::lock_guard<std::mutex> lk(g_joinPwMu);
-    // AN EMPTY VALUE IS A CLEAR, not an "ignore" -- the opposite of SetNickname
-    // above, and deliberately so: a player who backs out of the password prompt
-    // must not carry the last lobby's secret into the next connection.
+    // An empty value is a clear, not an ignore (the opposite of SetNickname): a player who backs
+    // out of the password prompt must not carry the last lobby's secret into the next connection.
     g_joinPassword = password;
 }
 
@@ -314,12 +246,10 @@ void SetOwnLobbyId(const std::string& id) {
 const char* GameTarget() { return coop::version::kGameTarget; }
 
 std::string DisplayVersion() {
-    // Paper-Minecraft PAIR (user decision 2026-07-19, "Paper 1.20.4 #496" shape):
-    // the identity is (game target, build number) -- no separate mod semver. The
-    // build number IS kProtocolVersion: it moves exactly when compatibility moves
-    // (the standing wire rule) and every release bumps it (release checklist).
-    // Function-static: inputs are compile-time constants and the browser header
-    // calls this every frame while open (perf audit LOW-2).
+    // The version identity is the pair (game target, build number), with no separate mod semver;
+    // the build number is kProtocolVersion, which moves exactly when compatibility moves.
+    // Function-static: the inputs are compile-time constants and the browser header calls this
+    // every frame.
     static const std::string kLabel =
         std::string("Multivoid ") + coop::version::kGameTarget +
         " b" + std::to_string(static_cast<int>(net::kProtocolVersion));
@@ -327,11 +257,9 @@ std::string DisplayVersion() {
 }
 
 namespace {
-// Version-line state: the native main-menu label (coop::multiplayer_menu) polls the line.
-// RE-POLLED on each main-menu entrance; the two guards below make that safe (no DoS):
-//   g_latestInFlight -- at most ONE fetch worker alive at a time.
-//   g_latestFetchMs  -- min interval floor between fetch STARTS (a burst of entrances
-//                       within the floor is coalesced to one fetch).
+// Version-line state; the main-menu label polls the line. Re-polled on each main-menu entrance,
+// made safe by two guards: at most one fetch worker alive, and a minimum interval between fetch
+// starts (a burst of entrances coalesces to one fetch).
 std::mutex g_latestMu;
 std::string g_latestLine;          // empty until a check completes WITH a verdict
 bool g_latestOutdated = false;     // amber tint when true
@@ -352,30 +280,24 @@ void RefreshLatestVersion() {
         try {
             if (coop::shutdown::IsShuttingDown()) { g_latestInFlight.store(false, std::memory_order_release); return; }
             const lobby::LatestInfo info = lobby::LobbyClient::FetchLatest(masterUrl, 8000);
-            // proto<=0 = the master has no released-version record yet (no latest.json;
-            // pre-release world) -- NO VERDICT, keep the plain identity label. Never
-            // fabricate a "latest v0" line from an absent record.
-            if (info.ok && info.proto > 0) {  // unreachable / pre-v59 master: keep the last known line
+            // proto <= 0: the master has no released-version record, so no verdict; the plain
+            // identity label stays rather than a fabricated "latest" line.
+            if (info.ok && info.proto > 0) {  // an unreachable master keeps the last known line
                 const int ours = static_cast<int>(net::kProtocolVersion);
                 std::string line;
                 bool outdated = false;
                 if (info.proto == ours) {
-                    // Current build IS the latest release -> compact "(latest)" tag.
+                    // The current build is the latest release: the compact "(latest)" tag.
                     line = DisplayVersion() + " (latest)";
                 } else if (info.proto > ours) {
                     outdated = true;
-                    // NO URL (user 2026-08-31: "url не надо показывать, это длинно,
-                    // достаточно лаконичного текста что обнова доступна"). It used to
-                    // append the release page, which cost ~37 characters on a ONE-LINE
-                    // main-menu label to deliver a string nobody can act on: the label is
-                    // a UTextBlock, not a hyperlink, so the address was only ever
-                    // retypeable, never clickable. What stays is the part that IS
-                    // actionable -- WHICH build supersedes yours; a player who knows they
-                    // are behind already knows where they got the mod.
+                    // No URL: the label is a one-line UTextBlock, not a hyperlink, so an address
+                    // would cost ~37 characters to deliver a string nobody can act on. What stays
+                    // is which build supersedes yours.
                     line = DisplayVersion() + " -- UPDATE AVAILABLE: " +
                            (info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod);
                 } else {
-                    // We are NEWER than the master's latest (a dev build) -- informational.
+                    // We are newer than the master's latest (a dev build); informational.
                     line = DisplayVersion() + " (dev; latest released b" +
                            std::to_string(info.proto) + ")";
                 }
@@ -413,8 +335,8 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Host ignored"); return; }
     const std::string masterUrl = MasterUrl();
     std::thread([masterUrl, name, world, locked, playersMax] {
-        // try/catch: an exception escaping a detached thread is std::terminate. The
-        // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
+        // An exception escaping a detached thread is std::terminate; the store(false) is outside
+        // the try so g_actionBusy clears on every path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
@@ -429,7 +351,7 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
                 cfg.turnList = info.turnUri;
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
-                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
+                SetOwnLobbyId(info.lobbyId);  // never list or join our own lobby
                 QueueStart(cfg);
                 UE_LOGI("session_manager: HOST ready -- lobby=%s identity=%s (session boot = harness Tier 2)",
                         info.lobbyId.c_str(), info.hostIdentity.c_str());
@@ -449,18 +371,18 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- env announce skipped"); return; }
     const std::string masterUrl = MasterUrl();
     std::thread([masterUrl, name, world] {
-        // try/catch: an exception escaping a detached thread is std::terminate. The
-        // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
+        // An exception escaping a detached thread is std::terminate; the store(false) is outside
+        // the try so g_actionBusy clears on every path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, world,
                                  /*locked=*/false, /*playersMax=*/4, 8000);
             if (info.ok) {
-                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
+                SetOwnLobbyId(info.lobbyId);  // never list or join our own lobby
                 Announcer().SetListed(false); // the hide-from-list flag, immediately
-                // seed the UI mirror too (same shape as HostWithSave) -- else the
-                // scoreboard "Show in server browser" checkbox shows ON while hidden
+                // Seed the UI mirror too, or the scoreboard's "Show in server browser" tick reads
+                // on while hidden.
                 g_listedState.store(false, std::memory_order_relaxed);
                 SetHostStatus("Hosting '" + name + "' -- announced (hidden from list)");
                 UE_LOGI("session_manager: env host announced HIDDEN -- lobby=%s world='%s'",
@@ -480,25 +402,15 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                   const std::string& password, int playersMax,
                   coop::session::HostMode mode) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
-    // THE SECRET THIS SESSION WILL REQUIRE, resolved ONCE and carried into whichever
-    // of the three host paths runs. Empty unless `locked`, so the bool the caller
-    // passes is the single thing that decides whether the lock has teeth -- an
-    // announced `locked` with no password behind it is precisely the badge this
-    // work exists to retire (security A2).
-    //
-    // It is read HERE rather than in `peer_admission` because the config layer opens
-    // and line-scans the ini under a global mutex, and that is file I/O on the net
-    // thread otherwise.
-    // THE CALLER'S STRING, not a re-read of the row it wrote. See the header.
+    // The secret this session will require, resolved once and carried into whichever host path
+    // runs: empty unless `locked`, so the caller's bool alone decides whether the lock has teeth.
+    // The caller's string, not a re-read of the row it wrote (the config layer line-scans the ini
+    // under a global mutex, file I/O the net thread must not do).
     std::string lobbyPw = locked ? password : std::string();
-    // A LOCK WITH NO SECRET IS DOWNGRADED, NOT ANNOUNCED. The padlock in the browser is
-    // a promise, and announcing one we cannot keep is precisely the badge-with-no-gate
-    // this lane exists to retire -- so if there is nothing to check, the session is
-    // honestly OPEN and the player is told.
-    //
-    // The native hosting flow cannot reach this state (its lock refuses to turn on
-    // without a password). What can is the ImGui fallback's `locked` checkbox, which
-    // predates the password entirely, and a hand-edited ini.
+    // A lock with no secret is downgraded, not announced: the padlock in the browser is a promise,
+    // so with nothing to check the session is honestly open and the player is told. The native flow
+    // cannot reach this (its lock refuses to turn on without a password); the ImGui fallback's
+    // checkbox and a hand-edited ini can.
     if (locked && lobbyPw.empty()) {
         UE_LOGW("session_manager: asked to host LOCKED with an EMPTY password -- hosting "
                 "OPEN instead. A padlock nothing enforces is worse than no padlock: it "
@@ -508,30 +420,17 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         locked = false;
     }
     using coop::session::Reachability;
-    // FORCED, NOT TRUSTED. An unlisted brokered lobby is unreachable by anyone, so a caller
-    // that asked for one asked for a world nobody can join. The header promises this is
-    // enforced here rather than assumed of every caller.
+    // Forced, not trusted: an unlisted brokered lobby is unreachable by anyone, so it is enforced
+    // here rather than assumed of every caller.
     if (mode.reach == Reachability::Brokered) mode.listed = true;
     const bool directConnection = (mode.reach == Reachability::Direct);
     const bool hideFromBrowser  = !mode.listed;
 
-    // A DIRECT SESSION THE MASTER IS NEVER TOLD ABOUT -- nothing leaves the machine.
-    //
-    // THIS BRANCH ABSORBED "LAN ONLY" (2026-09-01). That mode was this branch plus an
-    // accept filter refusing non-private remotes, and the filter was deleted whole: it did
-    // the ROUTER's job, and if the port is not forwarded then local-only is what NAT
-    // already gives you for free. What was left of LAN ONLY -- a Direct listen that never
-    // contacts the master -- is exactly what this is, so the two are one and there is no
-    // third connection type. See coop/session/host_mode.h.
-    //
-    // The old path announced FIRST (name, world, lock flag, cap, listen
-    // port, identity, and the source IP the master resolves) and only then asked
-    // to be un-listed, so a player who chose "hide" was registered for the lobby's
-    // life with a heartbeat keeping the record warm. The announce is stashed
-    // instead; the scoreboard's "Show in server browser" performs it if and when
-    // they ask. No worker thread and no HTTP, exactly like LAN ONLY -- a DIRECT
-    // Config is built from the listen port alone, so there is nothing in the
-    // announce's reply this branch would have used.
+    // A DIRECT session the master is never told about: nothing leaves the machine. This is also
+    // what "LAN only" was, minus an accept filter that did the router's job (an unforwarded port is
+    // local-only already), so there is no third connection type (coop/session/host_mode.h). The
+    // announce is stashed; the scoreboard's "Show in server browser" performs it if the host asks.
+    // No worker and no HTTP: a DIRECT Config is built from the listen port alone.
     if (directConnection && hideFromBrowser) {
         net::Config fallbackCfg;
         { std::lock_guard<std::mutex> lk(g_cfgMu); fallbackCfg = g_fallbackHostCfg; }
@@ -552,10 +451,8 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_hostIsDirect.store(true, std::memory_order_relaxed);
         ArmDeferredAnnounce(MasterUrl(), name, choice.newGame ? choice.newName : choice.slot,
                             locked, playersMax, static_cast<int>(directPort));
-        // THROUGH THE SAME BUILDER as the two fallback lines. This was the one
-        // configuration a player DELIBERATELY chooses unlisted, and it was the one whose
-        // sentence never mentioned the password -- so the audit fold that "fixed" the
-        // wording fixed two of three sites and left the intentional one behind.
+        // Through the same builder as the two fallback lines, so the deliberately unlisted
+        // configuration gets the same password wording.
         SetHostStatus(UnlistedDirectStatus(("Hosting '" + name + "' DIRECT").c_str(),
                                            "hidden by your choice, NOT listed", locked));
         UE_LOGI("session_manager: hosting DIRECT/HIDDEN '%s' port=%u -- NOT announced (the "
@@ -567,29 +464,24 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     const std::string masterUrl = MasterUrl();
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
-    // `hideFromBrowser` is deliberately NOT captured: the only branch that reads it
-    // (directConnection && hideFromBrowser) returns above without ever creating this
-    // worker, so carrying it in was a value the thread could not act on.
+    // `hideFromBrowser` is not captured: the only branch that reads it returned above, before this
+    // worker exists.
     std::thread([masterUrl, fallback, choice, name, locked, playersMax,
                  directConnection, lobbyPw] {
-        // try/catch: an exception escaping a detached thread is std::terminate. The
-        // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
+        // An exception escaping a detached thread is std::terminate; the store(false) is outside
+        // the try so g_actionBusy clears on every path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
-            // RULE 1 -- hosting must NOT depend on a reachable master. We announce
-            // (best-effort) to LIST the lobby + collect master-issued signaling/TURN,
-            // but EITHER WAY we queue the boot: announce-ok -> the master's P2P Config
-            // (listed); announce-fail -> the LOCAL fallback Config (the deployed ini
-            // -> the VPS signaling, identity "votvhost"), UNLISTED but still in-game
-            // (never a silent dead-end). MTA precedent: the server runs regardless of
-            // the master list. The harness then loads the world THEN StartCoopSession.
+            // Hosting never depends on a reachable master: the announce lists the lobby and
+            // collects the master-issued signaling and TURN, but the boot is queued either way
+            // (announce ok: the master's P2P Config, listed; announce failed: the local fallback,
+            // unlisted but in-game). MTA precedent: the server runs regardless of the master list.
+            // The harness loads the world, then starts.
             const std::string world = choice.newGame ? choice.newName : choice.slot;
-            // DIRECT hosts a plain LanDirect UDP listen and announces it WITH the
-            // listen port: the master records conn="direct" + the announce's
-            // source ip, the browser lists it, /v1/join hands joiners "ip:port".
-            // AUTO announces the normal P2P lobby. RULE 1 either way: an
-            // unreachable master never blocks hosting (DIRECT falls back to
-            // share-your-IP; AUTO to the local signaling fallback Config).
+            // DIRECT hosts a plain LanDirect UDP listen and announces it with the listen port (the
+            // master records conn="direct" and the announce's source address, and /v1/join hands
+            // joiners "ip:port"); AUTO announces the P2P lobby. An unreachable master blocks
+            // neither.
             const uint16_t directPort =
                 fallback.port ? fallback.port : net::kDefaultPort;
             const lobby::HostInfo info =
@@ -613,26 +505,12 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
             } else {
-                // AUTO, AND THE MASTER DID NOT ANSWER. This used to keep P2P and dial
-                // the fallback signaling server, which produced a world NOBODY COULD
-                // REACH while the status line below told the player to use "LAN/direct"
-                // -- the two things that configuration does not have. Start() is
-                // either/or (`session_start.cpp`: P2P ? StartP2P : StartLanDirect), so
-                // choosing P2P means no UDP listen socket exists at all.
-                //
-                // The reason it cannot work is DIRECTORY, not transport, and that is
-                // what makes this unconditional rather than a signaling-reachability
-                // test: a joiner needs the host's `gen:` identity to dial it, that
-                // identity is published by /v1/join alone, and `net.host_identity` has
-                // no UI that writes it. So an UNLISTED P2P host is unreachable even
-                // when its signaling server is perfectly healthy -- and the official
-                // signaling shares a BOX with the master anyway (protocol.h:1138-1139),
-                // so it is usually down too.
-                //
-                // LanDirect is the one shape that stays reachable with no master alive:
-                // a LAN friend finds it, a port-forwarded friend finds it, and both do
-                // it through the Direct Connect box that already ships. RULE 1: pick
-                // the configuration that can actually be joined, and say so honestly.
+                // AUTO with no answer from the master falls back to a LanDirect listen,
+                // unconditionally: a joiner needs the host's `gen:` identity to dial a P2P host,
+                // that identity is published by /v1/join alone, and nothing else writes
+                // net.host_identity, so an unlisted P2P host is unreachable even with a healthy
+                // signaling server. LanDirect stays reachable with no master alive, through the
+                // Direct Connect box that ships.
                 cfg = fallback;
                 cfg.role = net::Role::Host;        // belt-and-suspenders (fallback is already host)
                 cfg.topology = net::Topology::LanDirect;
@@ -646,32 +524,19 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 g_pendingHost.listed = listed;
                 g_hasPendingHost = true;
             }
-            // Seed the scoreboard mirror. No hidden term any more: a hidden DIRECT
-            // lobby never reaches this worker (it returns above without announcing).
+            // Seed the scoreboard mirror; a hidden DIRECT lobby never reaches this worker.
             g_listedState.store(listed, std::memory_order_relaxed);
-            // DERIVED FROM THE TRANSPORT WE ACTUALLY CONFIGURED, not from what the
-            // player picked: an AUTO host whose master was unreachable falls back to a
-            // DIRECT listen just above, and this flag chooses the hide SEMANTICS
-            // (retract via /v1/leave vs merely clearing the visibility flag). Keying it
-            // on the player's choice would have made a genuinely-direct session take
-            // the P2P branch. The three assignments to cfg.topology are the only
-            // producers, so this reads exactly one of them.
+            // Derived from the transport actually configured, not from the player's pick: an AUTO
+            // host whose master was unreachable fell back to a DIRECT listen just above, and this
+            // flag chooses the hide semantics (retract via /v1/leave, or clear the visibility
+            // flag). The three assignments to cfg.topology are the only producers.
             g_hostIsDirect.store(cfg.topology == net::Topology::LanDirect,
                                  std::memory_order_relaxed);
             if (listed) {
-                SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
-                // The announce-then-unlist branch that used to live here is GONE
-                // (RULE 2). A hidden DIRECT lobby returns from HostWithSave before
-                // this worker exists, so there is no longer any path that tells the
-                // master about a lobby the player asked to hide. AUTO stays
-                // un-hideable at host time for the reason it always was: the master
-                // is a relay game's only rendezvous, so a hidden one is unjoinable
-                // (user design call 2026-06-11).
-                // ARM THE DEFERRAL EVEN THOUGH WE JUST ANNOUNCED. Hiding a DIRECT
-                // lobby now RETRACTS it (/v1/leave) rather than clearing a flag, so
-                // without this a Hide->Show cycle would have nothing to re-announce
-                // from and the second tick would silently do nothing. Found by
-                // re-reading my own Show path, not by a test.
+                SetOwnLobbyId(info.lobbyId);  // never list or join our own lobby
+                // Arm the deferral even though we just announced: hiding a DIRECT lobby retracts it
+                // (/v1/leave), so a Hide then Show cycle needs something to re-announce from. AUTO
+                // stays un-hideable at host time: the master is a relay game's only rendezvous.
                 if (directConnection)
                     ArmDeferredAnnounce(masterUrl, name, world, locked, playersMax,
                                         static_cast<int>(directPort));
@@ -687,8 +552,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
-                // The line now describes what actually happened. It used to promise
-                // "LAN/direct only" for a P2P session that had neither.
+                // The line describes what happened: a DIRECT listen, joinable by address.
                 SetHostStatus(UnlistedDirectStatus("Hosting",
                                                    "master unreachable, NOT listed", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
@@ -698,11 +562,9 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());
             SetHostStatus(std::string("Host failed: ") + e.what());
-            // Drop the host-boot cover the picker raised (audit F3): without
-            // this the spinner hangs until the harness "world didn't load"
-            // timeout (~30 s), which is the wrong message for an HTTP throw.
-            // Reset() re-shows the menu; the harness re-surfaces the browser on
-            // the next idle tick (it owns ui::server_browser).
+            // Drop the host-boot cover the picker raised, or the spinner hangs until the harness's
+            // world-load timeout (~30 s), the wrong message for an HTTP throw; Reset() re-shows the
+            // menu and the harness re-surfaces the browser.
             if (!coop::shutdown::IsShuttingDown()) {
                 EndHostedLobby();            // /leave + stop heartbeat (worker-safe)
                 coop::join_progress::Reset();
@@ -715,20 +577,18 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
 
 namespace {
 
-// The Minecraft-shape mismatch verdict (2026-07-19, user decision: the Paper
-// PAIR -- game target + build number, no mod semver). Per-lobby EQUALITY gate,
-// tier order game -> build; every tier hard-refuses; the popup names the FIRST
-// mismatching axis and WHO updates (build direction is numeric). Empty/0 remote
-// fields (old host / no row context) skip their tier -- the Join wire gate +
-// header backstop cover. Returns empty = compatible.
+// The version verdict: per-lobby equality on the pair, game target then build, each tier a hard
+// refusal; the popup names the first mismatching axis and who updates. Empty or zero remote
+// fields skip their tier (the Join wire gate and the header backstop cover them). Empty =
+// compatible.
 std::string VersionMismatchVerdict(const std::string& hostGame, int hostProto) {
-    // Tier 1 -- GAME cook. Reachable with an equal build by construction (a
-    // new-cook adaptation need not change the wire), hence its own hard tier.
+    // Tier 1, the game cook: reachable with an equal build (a recook adaptation need not change the
+    // wire), hence its own tier.
     if (!hostGame.empty() && hostGame != coop::version::kGameTarget) {
         return std::string("Host plays VOTV ") + hostGame + ", you have VOTV " +
                coop::version::kGameTarget + " -- game version mismatch.";
     }
-    // Tier 2 -- BUILD (the wire revision; MC gates on the protocol number).
+    // Tier 2, the build (the wire revision).
     if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion)) {
         const bool hostNewer = hostProto > static_cast<int>(net::kProtocolVersion);
         return std::string("Mod build mismatch: host runs b") + std::to_string(hostProto) +
@@ -743,18 +603,16 @@ std::string VersionMismatchVerdict(const std::string& hostGame, int hostProto) {
 
 bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto,
                const std::string& hostGame) {
-    // FIX 3 -- never connect to our OWN lobby (the 2026-06-08 repro: the host clicked its
-    // own listed server + self-joined). Reject before raising any loading state.
+    // Never connect to our own lobby (the host clicking its own listed server); rejected before any
+    // loading state is raised.
     if (!lobbyId.empty() && lobbyId == OwnLobbyId()) {
         UE_LOGW("session_manager: refusing to join our OWN lobby '%s' -- you are the host", lobbyId.c_str());
         SetHostStatus("That's your own server -- you're already hosting it.");
         return false;
     }
-    // VERSION GATE (v59 proto-only -> v122 game+build pair, 2026-07-19 Minecraft
-    // shape; "show normally, reject on Join" browser policy). Pre-flight from the
-    // browser row; the Join wire gate re-validates live and the header close stays
-    // the final backstop. Reject via the connect-failed POPUP (RefuseJoin), not
-    // the footer -- the user asked for a dialog that says the version is wrong.
+    // The version gate, pre-flight from the browser row ("show normally, reject on Join"); the Join
+    // wire gate re-validates live and the header close is the final backstop. Rejected through the
+    // connect-failed popup, not the footer.
     {
         const std::string verdict = VersionMismatchVerdict(hostGame, hostProto);
         if (!verdict.empty()) {
@@ -766,16 +624,15 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
         }
     }
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Join ignored"); return false; }
-    // Raise the BROWSER-ONLY loading state NOW (before the master round-trip) so the user
-    // gets immediate "Connecting to <name>" feedback while the worker talks to the master.
-    // On a master/HTTP failure the worker Fails it (drops the cover + reopens the browser).
+    // Raise the browser-only loading state before the master round trip, so "Connecting to <name>"
+    // shows at once; on a master failure the worker Fails it (drops the cover, reopens the
+    // browser).
     coop::join_progress::BeginConnect(displayName.empty() ? std::string("the server") : displayName);
     const std::string masterUrl = MasterUrl();
     std::thread([masterUrl, lobbyId] {
         try {
-            // Shutdown race: BeginConnect raised the loading cover on the render
-            // thread before this worker spawned; bailing without Fail() would
-            // strand it (audit F1). Drop it on every exit.
+            // Shutdown race: BeginConnect raised the cover before this worker spawned, so every
+            // exit drops it.
             if (coop::shutdown::IsShuttingDown()) {
                 coop::join_progress::Fail("shutting down");
                 g_actionBusy.store(false);
@@ -786,9 +643,8 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                 net::Config cfg;
                 cfg.role = net::Role::Client;
                 if (info.direct) {
-                    // Direct lobby (2026-06-11): the master handed us the host's
-                    // forwarded ip:port -- a plain LanDirect dial, same shape as
-                    // the browser's manual Direct Connect.
+                    // A direct lobby: the master handed us the host's forwarded ip:port, a plain
+                    // LanDirect dial, the browser's manual Direct Connect shape.
                     std::string host;
                     uint16_t port = 0;
                     if (!ParseHostPort(info.addr, host, port)) {
@@ -802,30 +658,10 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     cfg.peerIp = host;
                     cfg.port = port;
                     cfg.lobbyPassword = TakeJoinPassword();
-                    // WHICH HOST IS AT THAT ADDRESS, when the master tells us.
-                    //
-                    // THIS COMMENT USED TO CITE `lobby_client.cpp:284` AS PROOF THE VALUE
-                    // WAS "guaranteed present here". It is not, and the citation was from
-                    // the wrong branch: the direct path returns ~20 lines ABOVE that line
-                    // and never reached the parse, and the master's direct response did not
-                    // carry the field at all. So this assignment was a no-op writing an
-                    // empty string, and the defect it claimed to fix -- a locked DIRECT
-                    // lobby being unjoinable from the browser -- was still 100% live.
-                    // Found by the audit of the commit that added it (2026-08-31); the real
-                    // fix took a master change AND a client parse change, neither of which
-                    // was in it.
-                    //
-                    // STILL EMPTY AGAINST AN OLD MASTER, deliberately -- see the parse
-                    // site. Empty means unbound: open direct lobbies join fine, locked ones
+                    // Which host is at that address, when the master says: the binding a locked
+                    // DIRECT lobby needs before the joiner may send a password proof. Empty against
+                    // an old master, deliberately: open direct lobbies join fine, locked ones
                     // refuse with a sentence.
-                    //
-                    // Without it a joiner is unbound, and an unbound joiner may not send a
-                    // password proof -- so a LOCKED lobby hosted in DIRECT mode refused
-                    // every browser join even with the correct password typed. That is the
-                    // exact defect the commit before this one claimed to have fixed: the
-                    // fix landed in `ConnectDirect` and `ReadNetConfig` and missed the one
-                    // path that never needed a fallback because it had the value in hand
-                    // (post-ship audit, 2026-08-31).
                     cfg.hostIdentity = info.hostIdentity;
                     QueueStart(cfg);
                     UE_LOGI("session_manager: JOIN ready -- DIRECT lobby (LanDirect dial; session boot = harness Tier 2)");
@@ -847,8 +683,8 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                 UE_LOGW("session_manager: JoinLobby '%s' failed", lobbyId.c_str());
                 coop::join_progress::Fail("could not reach the server (master unavailable?)");
             } else {
-                // info.ok but shutdown raced true between the check above and here:
-                // neither branch ran, so drop the cover explicitly (audit F2).
+                // info.ok but shutdown raced true between the check and here: neither branch ran,
+                // so drop the cover explicitly.
                 coop::join_progress::Fail("shutting down");
             }
         } catch (const std::exception& e) {
@@ -872,26 +708,17 @@ bool ConnectDirect(const std::string& hostPort) {
         cfg.peerIp = host;
         cfg.port = port;
         cfg.lobbyPassword = TakeJoinPassword();
-        // WHICH HOST WE EXPECT TO FIND AT THAT ADDRESS, if the player was told.
-        //
-        // A direct connect names a PLACE, and until now that was all it named -- so the
-        // joiner had nothing to bind the answering key to, and a LOCKED host was
-        // unjoinable on this lane because the password proof refuses to be sent to an
-        // unbound host (A65 + A2). Reading the row here is what gives a friend who was
-        // given the host's `gen:` line the same binding an AUTO joiner gets from the
-        // master, on the lane where there is no master to ask.
-        //
-        // Empty stays empty and that is a true statement, not a fallback: a player who
-        // was given only an address is unbound, can still join any OPEN server, and is
-        // refused by a locked one with a sentence saying why.
+        // Which host we expect at that address, if the player was told: a direct connect names a
+        // place, and the row gives a friend who was given the host's `gen:` line the binding an
+        // AUTO joiner gets from the master. Empty stays empty and is true: an unbound joiner can
+        // join any open server and is refused by a locked one with a sentence.
         cfg.hostIdentity =
             ::coop::config::ResolveString(::coop::config_registry::rows::net_host_identity);
-        // THIS MACHINE NAMED THIS ADDRESS -- a typed box or its own configuration; see
-        // `net::Config::selfAddressed` for why the wider wording is the accurate one. This
-        // is the only place in the tree that sets it.
+        // This machine named this address (a typed box or its own configuration;
+        // net::Config::selfAddressed). The only place in the tree that sets it.
         cfg.selfAddressed = true;
-        // Browser-only loading state. A dead address fails async (GNS never reaches
-        // Connected) -> net_pump's connect-fail detector drops the cover + reopens the browser.
+        // The browser-only loading state; a dead address fails asynchronously (GNS never reaches
+        // Connected) and net_pump's connect-fail detector drops the cover.
         coop::join_progress::BeginConnect(host);
         QueueStart(cfg);
         UE_LOGI("session_manager: DIRECT connect queued -> %s:%u (session boot = harness Tier 2)",
@@ -904,17 +731,10 @@ bool ConnectDirect(const std::string& hostPort) {
 }
 
 bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallback) {
-    // The P2P twin of ConnectDirect: dial a host BY IDENTITY through a signaling
-    // server, with NO master in the loop. Two callers want exactly this and
-    // neither can use JoinLobby -- the env test client (p2p_smoke, which had no
-    // P2P path at all: `[V]` since 77225106, 2026-06-10, the env client has gone
-    // through ConnectDirect regardless of net.topology, so the P2P CLIENT lane has
-    // been unreachable from the rig for three months) and a dev dialling a host
-    // whose `gen:` line they copied out of its log.
-    //
-    // The signaling/ICE half comes from the ALREADY-RESOLVED config the caller
-    // holds, not from a second read: FillP2PFields is the one place those fields
-    // are assembled, and re-deriving them here is how two paths drift.
+    // The P2P twin of ConnectDirect: dial a host by identity through a signaling server with no
+    // master in the loop, for the env test client and for a dev dialling a `gen:` line copied from
+    // a log. The signaling and ICE half comes from the caller's already resolved config:
+    // FillP2PFields is the one place those fields are assembled.
     if (g_actionBusy.exchange(true)) {
         UE_LOGW("session_manager: action busy -- P2P connect ignored");
         return false;
@@ -941,35 +761,26 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
     return ok;
 }
 
-// Mirror of the lobby's current listed state for the UI (the scoreboard's
-// Hide-from-browser toggle renders it; HostWithSave seeds it, SetListed flips
-// it). True when no lobby exists (harmless default).
+// The lobby's listed state, mirrored for the UI (the scoreboard's toggle renders it; HostWithSave
+// seeds it, SetListed flips it). True with no lobby.
 std::atomic<bool> g_listedState{true};
 
-// Serialises listing TRANSITIONS. Every branch below either blocks (Announcer::Host
-// is an 8 s round trip; Announcer::Stop joins the heartbeat thread and POSTs
-// /v1/leave) or depends on `Announcer().active()`, so they must not interleave.
-//
-// The first version of this decided the branch on the CALLING thread and dispatched
-// the work asynchronously -- which meant an untick followed quickly by a re-tick read
-// `active()` as still true, because the retract had not run yet, and took the
-// visibility-flag branch against a lobby that was about to be retracted out from
-// under it. Deciding INSIDE the worker, under this mutex, is what removes that: each
-// transition sees the state the previous one actually left.
+// Serialises listing transitions: every branch either blocks (Announcer::Host is an 8 s round
+// trip; Stop joins the heartbeat thread and POSTs /v1/leave) or depends on Announcer().active().
+// The branch is decided inside the worker under this mutex, so an un-tick followed by a re-tick
+// sees the state the retract actually left.
 std::mutex g_listingMu;
 
 void SetListed(bool listed) {
     g_listedState.store(listed, std::memory_order_relaxed);  // the UI mirror, immediately
-    // Everything else on a worker: the scoreboard calls this from its click handler on
-    // the game thread, and `lobby_announcer.h` says Stop() must not run there.
+    // Everything else on a worker: the scoreboard calls this on the game thread, and
+    // lobby_announcer.h says Stop() must not run there.
     std::thread([listed] {
         if (coop::shutdown::IsShuttingDown()) return;
         std::lock_guard<std::mutex> lk(g_listingMu);
         try {
-            // SHOW. If nothing was ever announced (a hidden DIRECT host), the tick IS
-            // the announce -- there is no listing to flip, because there is no record
-            // at all, and /v1/visibility would post against a lobby the master has
-            // never heard of.
+            // Show: if nothing was ever announced (a hidden DIRECT host), the tick is the announce;
+            // there is no record for /v1/visibility to flip.
             if (listed && !Announcer().active()) {
                 DeferredAnnounce d;
                 if (!PeekDeferredAnnounce(d)) {
@@ -987,9 +798,7 @@ void SetListed(bool listed) {
                                   "Friends can still Direct Connect by IP.");
                     return;
                 }
-                // A re-announce mints a FRESH sessionId/token/lobbyId, so the self-join
-                // guard has to be re-pointed at the new one or it would still be
-                // guarding the retracted lobby's id (FIX 3 would silently regress).
+                // A re-announce mints a fresh lobbyId, so the self-join guard is re-pointed at it.
                 SetOwnLobbyId(info.lobbyId);
                 UE_LOGI("session_manager: deferred announce done -- lobby=%s is now listed "
                         "(the master learns this host's address at THIS moment, not at host "
@@ -997,14 +806,10 @@ void SetListed(bool listed) {
                 return;
             }
 
-            // HIDE. Which endpoint tells the truth depends on the topology, and choosing
-            // wrong is what made this tick a ONE-WAY DOOR for the host's address:
-            // /v1/visibility clears a flag while the heartbeat keeps the record -- and
-            // the IP in it -- alive and refreshed every 30 s. A DIRECT lobby can be
-            // properly RETRACTED instead, and re-armed so a later tick announces afresh.
-            // A P2P lobby cannot: the master is its only rendezvous, so leaving would
-            // cut it off from every future joiner, and the flag is the honest limit of
-            // what "hide" can mean there.
+            // Hide: /v1/visibility clears a flag while the heartbeat keeps the record, address
+            // included, refreshed every 30 s. A DIRECT lobby is retracted instead and re-armed for
+            // a later Show; a P2P lobby cannot be, since the master is its only rendezvous, and the
+            // flag is the honest limit there.
             if (!listed && g_hostIsDirect.load(std::memory_order_relaxed) &&
                 Announcer().active()) {
                 DeferredAnnounce d;
@@ -1034,17 +839,14 @@ uint16_t HostListenPort() {
 }
 
 void SetPlayerCountSource(int (*fn)()) {
-    // Announcer() is the leaked process-lifetime singleton; the setter only stores
-    // the pointer, so installing it before any lobby exists is correct and the
-    // count is live from the first heartbeat of every lobby this process hosts.
+    // Announcer() lives for the process and the setter only stores the pointer, so installing it
+    // before any lobby exists is correct.
     Announcer().SetPlayerCountFn(fn);
 }
 
 void EndHostedLobby() {
-    // Clear the host-side lobby state BEFORE the blocking delist: Announcer().Stop()
-    // blocks (heartbeat join up to ~8s + /leave POST up to 5s), and a re-host landing
-    // inside that window writes FRESH pending/own-lobby state -- a post-Stop() clear
-    // would silently wipe the new host request (audit on c8aec14c, item 2).
+    // Clear the host-side lobby state before the blocking delist: Stop() blocks up to ~13 s, and a
+    // re-host landing inside that window writes fresh pending state a post-Stop clear would wipe.
     {
         std::lock_guard<std::mutex> lk(g_pendHostMu);
         g_hasPendingHost = false;
