@@ -1,25 +1,9 @@
-// ue_wrap/engine/umg_build.h -- the UMG primitives more than one feature needs.
-//
-// PRINCIPLE 7: this is engine-wrapper territory. Nothing here knows about lobbies, peers,
-// or coop state; it wraps UMG panels, slots and Slate style structs and nothing else. The
-// gameplay/network side lives under coop/ and the browser's own composition lives in
-// ui/server_browser_native.cpp.
-//
-// WHY A NEW TU AND NOT engine_widget.cpp. That file is 612 LOC and owns a different
-// concept -- the world-space nameplate and the two shipped MENU INJECTS, each a specific
-// feature. These are generic panel/style operations with no feature attached, and adding
-// them there would push it past the 800-LOC soft cap while mixing two concepts. It also
-// carries its OWN header rather than growing `engine.h` (1117 LOC and already flagged);
-// "one header per engine_*.cpp TU" is the extraction that file is waiting for anyway.
-//
-// WHY THIS IS NOT THE "REUSABLE WIDGET LAYER" section 8 REJECTED. That rejection was
-// `OPUS_48_DISCIPLINE.md:196-197` -- no new framework before N>=3 working cases -- and it
-// still stands: there is no builder, no retained model, no abstraction over "a screen".
-// Every function here already has at least two callers the day it lands (the shipped
-// InjectCanvasButton, the native browser, and coop/dev/native_ui_probe), which is the bar
-// that was actually being applied.
-//
-// Game thread only, all of it: every call reaches the engine through ProcessEvent.
+// ue_wrap/engine/umg_build.h -- the UMG primitives more than one feature needs: panels and
+// slots, Slate style cloning, widget setters, the scroll box, geometry. Engine-wrapper territory:
+// nothing here knows about lobbies or peers; the browser's own composition lives in
+// ui/server_browser_native.cpp. Not a widget framework: no builder, no retained model, no
+// abstraction over a screen. Game thread only; every call reaches the engine through
+// ProcessEvent.
 
 #pragma once
 
@@ -30,233 +14,144 @@
 
 namespace ue_wrap::umg {
 
-// ---- panels ---------------------------------------------------------------------
-// UPanelWidget::AddChild is the ONE add that serves ScrollBox, Overlay, HorizontalBox,
-// CanvasPanel and WidgetSwitcher alike -- `R::FindFunction` matches the OWNING class with
-// no super-walk (reflection.cpp:493), so resolving it once on UPanelWidget is what makes
-// every panel type work. Returns the created UPanelSlot, or nullptr.
+// Panels. UPanelWidget::AddChild is the one add that serves ScrollBox, Overlay, HorizontalBox,
+// CanvasPanel and WidgetSwitcher alike; FindFunction matches the owning class with no
+// super-walk, so it is resolved once on UPanelWidget. Returns the created slot, or nullptr.
 void*   AddChild(void* panel, void* child);
 bool    RemoveChild(void* panel, void* child);
 int32_t ChildCount(void* panel);
 
-// UPanelWidget::GetChildIndex -- WHERE IS THIS WIDGET, asked of the panel rather than
-// inferred. -1 if the child is not in the panel (or the call does not resolve), and that
-// answer is the point: a screen that adds itself to a shared container must ACTIVATE the
-// index of its own widget, never `ChildCount - 1`. Two screens got that wrong -- the count
-// is the right answer only if the add SUCCEEDED and nothing was appended after it, and when
-// it is wrong it silently names one of the GAME's screens (measured 2026-08-30: clicking
-// MULTIPLAYER opened VOTV's Stats panel).
-//
-// The implementation predates this declaration by months; it was written, left undeclared,
-// and therefore unreachable, while both callers hand-rolled the count arithmetic instead.
+// UPanelWidget::GetChildIndex: where this widget is, asked of the panel rather than inferred; -1
+// when the child is not in the panel. A screen that adds itself to a shared container activates
+// the index of its own widget, never the child count minus one, which is right only if the add
+// succeeded and nothing was appended after it, and wrong it silently names one of the game's
+// screens.
 int32_t IndexOfChild(void* panel, void* child);
 void*   ChildAt(void* panel, int32_t index);
 int32_t IndexOfChild(void* panel, void* child);
 
-// UContentWidget::SetContent -- a SizeBox/Button/Border's single child.
-//
-// LATCHED, which is the whole reason it is here rather than open-coded at each call site.
-// It was seven copies of an unlatched `FindFunction` resolve, two of them per-row, and
-// `FindFunction` walks the entire GUObjectArray -- so a 64-row list cost 64 full walks in
-// one frame. False (and logs once) if the class or function cannot be resolved.
+// UContentWidget::SetContent, a SizeBox's, Button's or Border's single child. Latched, which is
+// why it is here rather than open-coded: FindFunction walks the whole GUObjectArray, and seven
+// unlatched copies, two of them per row, cost a full walk per row. False, logged once, if the
+// class or function does not resolve.
 bool    SetContent(void* contentWidget, void* child);
 
-// ---- widget switcher ------------------------------------------------------------
+// The widget switcher.
 bool    SwitcherSetIndex(void* switcher, int32_t index);
 int32_t SwitcherIndex(void* switcher);
 
-// ---- Slate style cloning --------------------------------------------------------
-// THE ONE BRUSH CLONE IN THE TREE, and the reason it takes a TABLE.
-//
-// `FSlateBrush` is 0x88 and carries an UNREFLECTED `FSlateResourceHandle` -- a TSharedPtr
-// -- at +0x70 (its reflected members end at ImageType @0x6F; the bitfield bools resume at
-// 0x80). Any raw copy therefore shallow-aliases a refcounted pointer with no AddRef, the
-// same hazard the FSlateSound cache had. Slate rebuilds the handle lazily from
-// ResourceObject, so zeroing it is free and always correct.
-//
-// A single "handle offset" parameter would not have survived contact: FButtonStyle embeds
-// FOUR brushes, FScrollBarStyle NINE, and FEditableTextBoxStyle THIRTEEN (four of its own
-// plus a nested FScrollBarStyle at +0x328). The caller passes the brush-offset table from
-// sdk_profile.h; every table there is measured from the CXXHeaderDump.
-//
-// MEASURED 2026-08-25: 0/4 handles were populated on `ui_saveSlots_C.button_back`, 3 of
-// whose 4 brushes DO carry a ResourceObject -- so there is no live bug on this build. The
-// zeroing is structural correctness applied uniformly, NOT a fix gated on a measurement
-// that covers one donor.
+// Slate style cloning. FSlateBrush is 0x88 bytes and carries an unreflected shared-pointer
+// resource handle at 0x70 (the reflected members end at 0x6F, the bitfield bools resume at
+// 0x80), so a raw copy aliases a refcounted pointer with no reference added; Slate rebuilds the
+// handle lazily from the resource object, so zeroing it is free and always correct. A table of
+// brush offsets rather than one offset: FButtonStyle embeds four brushes, FScrollBarStyle nine,
+// FEditableTextBoxStyle thirteen (a nested scrollbar style included), all measured from the
+// header dump into sdk_profile.h. The zeroing is structural, not gated on any one donor's
+// measurement.
 bool CloneStyle(void* dst, size_t dstOff, void* src, size_t srcOff, size_t styleSize,
                 const size_t* brushOffsets, int brushCount);
 
-// Zero the unreflected resource handles of `brushCount` brushes inside an already-copied
-// style blob. Exposed because InjectCanvasButton clones a style that ALSO carries two
-// FSlateSound caches it must zero separately.
+// Zero the unreflected handles of `brushCount` brushes in an already-copied style blob; exposed
+// because the button inject clones a style that also carries two sound caches to zero.
 void ZeroBrushHandles(void* styleBase, const size_t* brushOffsets, int brushCount);
 
-// A WHOLE UButton's look, from one donor UButton to another: the four-brush FButtonStyle,
-// both FSlateSound ResourceObjects, and the two tint colours.
-//
-// THE SOUNDS ARE THE POINT, not a detail. FButtonStyle's two FSlateSound members each hold
-// an unreflected TSharedPtr cache past the ResourceObject, so a raw copy shallow-aliases a
-// refcounted pointer with no AddRef. Keeping the ResourceObject and zeroing ONLY the cache
-// is what makes a cloned button PLAY the native press and hover sounds -- Slate rebuilds
-// the cache lazily. Get that wrong in either direction and the button either silently
-// aliases a refcount or goes mute.
-//
-// ONE OWNER. This was inline in engine_widget.cpp's InjectCanvasButton, the shipped
-// hands-on-verified menu inject. The native server browser needs the identical operation
-// for its own chrome, and two copies of a clone whose correctness turns on which trailing
-// bytes to zero is precisely the shape that goes wrong on the second edit (RULE 2).
+// A whole UButton's look from one donor to another: the four-brush style, both sound resource
+// objects and the two tints. The sounds are the point: each FSlateSound holds an unreflected
+// shared-pointer cache past its resource object, and keeping the object while zeroing only the
+// cache is what makes a cloned button play the native press and hover sounds. One owner; a
+// second copy of a clone whose correctness turns on which trailing bytes to zero is what goes
+// wrong on the next edit.
 void CloneButtonStyle(void* dstButton, void* srcButton);
 
-// ---- widget setters -------------------------------------------------------------
-// UImage's brush TINT, via the SetBrushTintColor UFunction rather than a raw write: the
-// image may already be attached to Slate, and a raw property write would not repaint (the
-// 2026-07-16 "no cyan" trap that SetTextBlockColorDispatch exists for).
+// Widget setters. The image tint through the SetBrushTintColor UFunction rather than a raw
+// write: an image already attached to Slate would not repaint.
 bool SetImageTint(void* image, const FLinearColor& tint);
 
-// A UImage with NO ResourceObject and only a tint DRAWS A SOLID RECT. That is not a
-// guess: the game's own `ui_saveSlots_C.Image_302` is exactly that -- full-screen,
-// TintColor (0,0,0,0.5), no texture -- and it visibly dims the menu behind every native
-// sub-screen. So a scrim needs no donor and no art. Raw write; call BEFORE attaching.
+// A UImage with no resource object and only a tint draws a solid rect (the game's own save-slot
+// scrim is exactly that), so a scrim needs no donor and no art. A raw write; call before
+// attaching.
 bool SetImageTintRaw(void* image, const FLinearColor& tint);
 
-// USizeBox height/width. MUST go through the UFunctions: the values live at +0x134/+0x130
-// but the `bOverride_*` bits are a BITFIELD at +0x150, so a raw write silently does
-// nothing at all.
+// USizeBox height and width, through the UFunctions: the values are plain fields, but the
+// override bits are a bitfield, and a raw write silently does nothing.
 bool SetSizeBoxHeight(void* sizeBox, float height);
 bool SetSizeBoxWidth(void* sizeBox, float width);
 
-// Style a freshly-spawned UTextBlock as one of VOTV's own menu labels: font_ui at the
-// given size, the colour with FSlateColor's rule forced to UseColor_Specified, no outline,
-// and the native (2,2) opaque-black drop shadow (measured from ui_menu's tex_btnStart --
-// see InjectCanvasButton, which sets exactly these constants and does NOT clone a donor
-// text style, because that donor is null at some inject timings and the fallback is the
-// Roboto/centred/white bug). `justify` is ETextJustify: Left=0 Center=1 Right=2.
-// Raw writes -- call BEFORE the block is attached, or follow with a dispatch setter.
+// Style a freshly spawned UTextBlock as one of the game's own menu labels: its UI font at the
+// given size, the colour with the slate colour rule forced to specified, no outline, and the
+// native drop shadow (the constants the button inject sets, which clones no donor text style,
+// since that donor is null at some inject timings). `justify` is ETextJustify: Left 0, Center
+// 1, Right 2. Raw writes: before the block is attached, or follow with a dispatch setter.
 bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
                     uint8_t justify);
 
-// RETIRED 2026-08-30 (RULE 2): `SetTextColor` lived here and was a RAW write to
-// UTextBlock::ColorAndOpacity -- mechanically identical to `engine::SetTextBlockColor`,
-// which is a second implementation of one concept compiled beside it. Its documented
-// purpose made the duplication worse rather than harmless: it existed to recolour an
-// ALREADY-STYLED, already-attached block on hover, which is exactly the case a raw write
-// cannot serve. UMG bakes properties into the Slate widget at attach, so every one of its
-// five call sites in the hosting window wrote a field nothing read, and that window's
-// hover highlight had never drawn. Use `engine::SetTextBlockColorDispatch` (the setter
-// UFunction) for anything already in a constructed tree; `StyleTextBlock` below still owns
-// the BUILD-time styling, where a raw write does land.
+// A raw colour write cannot recolour an already-attached block: UMG bakes properties into the
+// Slate widget at attach. engine::SetTextBlockColorDispatch (the setter UFunction) is for
+// anything in a constructed tree; StyleTextBlock owns build-time styling.
 
-// UTextBlock::SetAutoWrapText -- WRAP A LINE INSTEAD OF CUTTING IT OFF.
-//
-// Clipping is the right answer for a table CELL, where a long value must not paint over
-// its neighbour and the column is the point. It is the wrong answer for PROSE: a status
-// pane's sentences are the whole content, and "Pick a server from the list fi" tells the
-// player less than the sentence and also less than nothing, because it looks like a
-// rendering fault. Through the UFunction, so it lands on a constructed tree too.
+// UTextBlock::SetAutoWrapText: wrap a line instead of cutting it off. Clipping is right for a
+// table cell, wrong for prose, where a truncated sentence reads as a rendering fault. Through
+// the UFunction, so it lands on a constructed tree too.
 bool SetAutoWrapText(void* textBlock, bool wrap);
 
-// UWidget::SetClipping. EWidgetClipping: Inherit=0, ClipToBounds=1. A text block in a
-// weighted HorizontalBox slot OVERFLOWS its column by default -- the slot bounds the
-// LAYOUT, not the painting -- so a long world name paints straight over the next column.
+// UWidget::SetClipping (Inherit 0, ClipToBounds 1). A text block in a weighted HorizontalBox
+// slot overflows its column by default, since the slot bounds the layout, not the painting.
 bool SetClipping(void* widget, uint8_t clipping);
 
-// ---- scroll box -----------------------------------------------------------------
-// UScrollBox's offset, through the UFunctions (UMG.hpp:1198,1211,1212).
-//
-// THREE CALLS, NOT TWO, AND THE THIRD IS THE ONE THAT DISCRIMINATES. `ScrollOffsetOfEnd`
-// is the maximum scrollable offset, i.e. content extent minus viewport extent -- so it
-// answers "is there anything here to scroll at all" DIRECTLY, rather than by inferring it
-// from a row count against an assumed viewport height. A T0 that reads only the current
-// offset cannot tell "the wheel did nothing" from "there was nowhere to go".
-//
-// EACH RETURNS bool AND WRITES THROUGH A REFERENCE, deliberately: 0.f is a LEGITIMATE
-// answer to both getters (a list at the top; a list that does not overflow), so folding
-// a failed call into a sentinel float would make an unresolved UFunction indistinguishable
-// from a measurement. This module's whole job at T0 is to be an instrument that can fail
-// visibly -- see docs/LESSONS.md section 7.
+// The scroll box, through the UFunctions. Three calls: ScrollOffsetOfEnd is the maximum
+// scrollable offset (content minus viewport), so it answers "is there anything to scroll"
+// directly. Each returns a bool and writes through a reference, since 0 is a legitimate answer
+// to both getters and a sentinel would make an unresolved UFunction indistinguishable from a
+// measurement.
 bool SetScrollOffset(void* scrollBox, float offset);
 bool ScrollOffset(void* scrollBox, float& out);
 bool ScrollOffsetOfEnd(void* scrollBox, float& out);
 
-// WHERE THE VIEW ACTUALLY IS, 0..1 (UMG.hpp:1211). READ THIS, NOT ScrollOffset, WHENEVER
-// THE QUESTION IS "DID IT MOVE".
-//
-// MEASURED 2026-08-26, twice: `GetScrollOffset` ECHOES THE REQUEST. Asked for 1000000 it
-// returns 1000000 -- on an empty box AND on one holding 30 rows with 1391 units of real
-// overflow. It reports Slate's DesiredScrollOffset, i.e. what was last ASKED FOR, and no
-// clamp is applied to it. So a Set/Get round-trip through it is a tautology and can never
-// fail, which is the one property an instrument must not have.
-//
-// GetViewOffsetFraction reads the scrollbar's own distance-from-top, which is physical
-// post-layout state. The pair is what makes a verdict possible: ScrollOffset says what was
-// requested, this says what happened, and OffsetOfEnd (also real geometry -- 1391.0 against
-// 30x64 rows in a ~529 px viewport) says whether there was anywhere to go.
+// Where the view is, 0 to 1. Read this, not ScrollOffset, whenever the question is "did it
+// move": GetScrollOffset echoes the request (asked for a million it returns a million, on an
+// empty box too), since it reports the desired offset with no clamp, so a set-then-get through
+// it is a tautology. This reads the scrollbar's own distance from the top, post-layout state;
+// with ScrollOffsetOfEnd it makes a verdict possible.
 bool ViewOffsetFraction(void* scrollBox, float& out);
 
-// ---- geometry -------------------------------------------------------------------
-// WHERE A WIDGET ACTUALLY IS ON SCREEN, in desktop pixels, and how big it actually is.
-//
-// This is the answer to "point the cursor at that button", and it replaces arithmetic.
-// The browser's self-check used to reconstruct the X's position from the window's design
-// constants -- half the window width, minus the padding, plus the border -- which is a
-// SECOND implementation of the layout the engine had already performed, kept in step by
-// hand. It went stale in the commit after the one that proved it, and the failure it then
-// reported ("the click missed") was indistinguishable from the failure it was built to
-// find ("the button is dead"). Slate knows the answer; ask it.
-//
-// `outTopLeft` is in the same space as GetCursorPos/SetCursorPos, so it needs no scaling:
-// Slate's absolute space for a game window IS desktop pixels, which is why the DPI /
-// UI-scale factor never has to appear here. `outSize` is the ALLOTTED size -- what the
-// parent gave the widget -- not GetDesiredSize's "what it asked for".
-//
-// False (and logs) if any link is unresolved; both outs are then untouched. A widget that
-// has never been painted has no cached geometry and legitimately reports a zero rect --
-// that is a real answer, not a failure, and callers must treat it as one.
+// Geometry: where a widget is on screen, in desktop pixels, and how big it is. The answer to
+// "point the cursor at that button", replacing arithmetic: a self-check that reconstructed a
+// button's position from the window's design constants was a second implementation of the
+// layout the engine had performed, went stale one commit later, and its failure was
+// indistinguishable from the one it was built to find. `outTopLeft` is in the same space as
+// the OS cursor calls (Slate's absolute space for a game window is desktop pixels, so no DPI
+// factor appears); `outSize` is the allotted size, not the desired one. False, logged, if any
+// link is unresolved, both outs untouched; a widget never painted has no cached geometry and
+// legitimately reports a zero rect.
 bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize);
 
 
-// The OS cursor, converted into the SAME space WidgetScreenRect reports in, by
-// Slate's own inverse transform rather than by arithmetic here. `screenPos` is
-// VIEWPORT/client pixels (ScreenToClient first). False = unavailable, `out`
-// untouched. See the .cpp for why this is not a subtraction: two hand-derived
-// corrections in one day produced two wrong answers in opposite directions.
+// The OS cursor converted into the space WidgetScreenRect reports in, by Slate's own inverse
+// transform rather than arithmetic here. `screenPos` is client pixels. False when unavailable,
+// `out` untouched.
 bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out);
 
-// WHY A WIDGET TAKES NO HITS: walk it up to the root, logging each link's LIVE visibility.
-//
-// `UWidget::GetVisibility` reads the built SWidget when there is one, so this reports what
-// Slate is actually using rather than what our field says. One HitTestInvisible anywhere
-// in the chain removes the whole subtree below it from the hit grid while leaving it
-// perfectly visible, which is a defect that no screenshot and no click can localise -- the
-// value is one step from SelfHitTestInvisible in the same enum, and only the container's
-// own link tells them apart. Diagnostic; call it from a dev path, not per frame.
+// Why a widget takes no hits: the chain to the root, each link's live visibility logged
+// (GetVisibility reads the built SWidget). One HitTestInvisible anywhere removes the whole
+// subtree from the hit grid while leaving it visible, which no screenshot or click can
+// localise. Diagnostic; not per frame.
 void LogVisibilityChain(const char* tag, void* widget);
 
-// Slot alignment, written raw at the offsets in sdk_profile.h. EHorizontalAlignment:
-// Fill=0 Left=1 Center=2 Right=3; EVerticalAlignment: Fill=0 Top=1 Center=2 Bottom=3.
+// Slot alignment, written raw at the offsets in sdk_profile.h. Horizontal: Fill 0, Left 1,
+// Center 2, Right 3; vertical: Fill 0, Top 1, Center 2, Bottom 3.
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v);
 
-// THE SAME ALIGNMENT, BUT AFTER THE TREE IS LIVE -- through the slot's own
-// `SetHorizontalAlignment` UFunction rather than the raw field.
-//
-// The raw write above is correct at BUILD time and a no-op afterwards, for the reason
-// `SetTextBlockColorDispatch` exists: UMG copies slot properties into the Slate slot when
-// the panel constructs, so a later property write changes a value nothing reads. Every
-// slot type declares its own `SetHorizontalAlignment` (UOverlaySlot, UHorizontalBoxSlot,
-// ...), and `R::FindFunction` matches the OWNING class with no super-walk, so this resolves
-// against the slot's RUNTIME class and caches per class.
-//
-// The consumer is the text field's overflow fix: a value wider than its box is windowed by
-// flipping its slot to Right, which makes Slate clip the HEAD and leaves the tail -- and
-// the caret -- visible. That flip has to happen while the player types.
+// The same alignment after the tree is live, through the slot's own SetHorizontalAlignment: the
+// raw write is a no-op once the panel has constructed (UMG copies slot properties into the
+// Slate slot then). Every slot type declares its own setter, and FindFunction does no
+// super-walk, so this resolves against the slot's runtime class and caches per class. The
+// consumer is the text field's overflow fix, which flips a slot to Right while the player
+// types, so Slate clips the head and keeps the tail and the caret visible.
 bool SetSlotHAlignLive(void* slot, uint8_t h);
 
-// UWidget::GetDesiredSize -- WHAT THE WIDGET ASKED FOR, as opposed to WidgetScreenRect's
-// "what the parent gave it". The pair is what makes "does this text fit in its box"
-// answerable: desired > allotted IS the overflow.
-//
-// Zero is a legitimate answer (a widget Slate has never laid out), which is why this
-// returns bool and writes through a reference rather than folding failure into a sentinel.
+// UWidget::GetDesiredSize, what the widget asked for, as opposed to what the parent gave it;
+// desired over allotted is the overflow. Zero is a legitimate answer (never laid out), hence
+// the bool and the reference.
 bool WidgetDesiredSize(void* widget, FVector2D& out);
 
 }  // namespace ue_wrap::umg
