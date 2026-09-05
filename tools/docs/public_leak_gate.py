@@ -184,7 +184,7 @@ def unpublished_lines(repo=REPO):
         os.path.expanduser("~"), ".claude", "projects", "D--Projects-Programming-VOTV-MP", "memory")
     if not os.path.isdir(mem):
         return None
-    out = set()
+    out = {}                     # normalised line -> the first unpublished file it was read from
     # DERIVED FROM TRACKING, not listed. This was `CLAUDE.md` + `docs/security/*.md` + the memory
     # directory -- a hand list, and therefore wrong the moment anything else went local. `[V]`
     # 2026-09-04: `docs/DOCUMENTIZE_ARC.md` and `.claude/skills/*/SKILL.md` became unpublished the
@@ -208,11 +208,31 @@ def unpublished_lines(repo=REPO):
     for p in srcs:
         if not os.path.isfile(p):
             continue
+        # the memory directory may sit on another drive, where relpath has no answer
+        label = ("memory/" + os.path.basename(p)) if os.path.dirname(p) == mem             else os.path.relpath(p, repo).replace(os.sep, "/")
         for line in io.open(p, encoding="utf-8", errors="replace").read().split(chr(10)):
             n = _norm(line)
             if len(n) >= OVERLAP_MIN:
-                out.add(n)
+                out.setdefault(n, label)
     return out
+
+
+def overlap_lines(repo=REPO):
+    """-> [(tracked path, normalised line, unpublished source)] -- the coordinates behind the
+    count, so a GREW verdict names what moved and from where instead of only how many."""
+    src = unpublished_lines(repo) or {}
+    hits = []
+    for rel in tracked_docs(repo):
+        if rel.startswith(OVERLAP_SKIP):
+            continue
+        full = os.path.join(repo, rel)
+        if not os.path.isfile(full):
+            continue
+        for line in io.open(full, encoding="utf-8", errors="replace").read().split(chr(10)):
+            n = _norm(line)
+            if len(n) >= OVERLAP_MIN and n in src:
+                hits.append((rel, n, src[n]))
+    return hits
 
 
 def overlap_count(repo=REPO):
@@ -244,6 +264,8 @@ def main(argv=None):
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--ack", default=ACK)
     ap.add_argument("--list", action="store_true", help="print every hit, acknowledged or not")
+    ap.add_argument("--overlap", action="store_true",
+                    help="print every verbatim-overlap line with the unpublished file it also lives in")
     args = ap.parse_args(argv)
 
     ack = load_ack(args.ack)
@@ -254,6 +276,9 @@ def main(argv=None):
             print("  [{}] {:<8} {}:{}  {}".format(
                 "ack" if (rel, needle) in ack else "NEW", sig, rel, n, needle))
     n_over, per_over = overlap_count(args.repo)
+    if args.overlap:
+        for rel, n, src in overlap_lines(args.repo):
+            print("  overlap  {}: \"{}\"  <- {}".format(rel, n[:90], src))
     over_bad = n_over is not None and n_over > OVERLAP_BASELINE
     print("public_leak_gate: {} hit(s), {} acknowledged, {} NEW; verbatim overlap with the "
           "unpublished trees: {}".format(
