@@ -414,6 +414,8 @@ tools/docs/status_census*.py
 tools/docs/status_grammar.py
 tools/docs/trailer_schema.py
 tools/*_probe.py
+# the critic ledger, its proof gate, its prior-art ranker and their drill: the same test
+tools/qf/
 tools/*_probe_drill.py
 tools/atv_probe_report_drill.py
 tools/atv_probe_report.py
