@@ -10,7 +10,7 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 |---|---|---|---|
 | gameplay and network | `coop/` | elements, sync lanes, sessions, players, the wire protocol | reflection or engine-memory access (it goes through `ue_wrap/`) |
 | what the player sees | `ui/` | the menus, the server browser, the HUD, the F1 overlay | network state |
-| boot glue and tests | `harness/` | the scenario runner and the autonomous test scenarios | gameplay logic |
+| boot glue and tests | `harness/` | the scenario runner and the scripted test scenarios | gameplay logic |
 | engine wrapper | `ue_wrap/` | reflection, signatures, hooks, the game-thread pump, one wrapper per engine or game class | network, gameplay or co-op state |
 | the loader contract | `loader/`, `bootstrap/` | `start_mod()` as UE4SS calls it, `DllMain`, the refuse dialog | everything else |
 
@@ -35,7 +35,7 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 | `coop/text/` | text encoding and names | `utf8_codec` (the one owner of decoding), `repertoire` + `repertoire_ranges` (what this build can draw), `case_fold`, `mark_ranges`, `ignorable_ranges`, `exclude_ranges`, `novelty_ledger` |
 | `coop/config/` | the ini | `config`, `config_registry` + `config_registry_rows` (every key is a registered row with a description), `config_ini_write`, `config_review`, `config_selftest` |
 | `coop/input/` | who owns the keyboard | `input_owner` (the game, a text field, or the overlay) |
-| `coop/dev/` | developer features and probes, ini-gated, off by default | `freecam`, `pos_hud`, `set_clock`, `spawn_npc`, `force_weather`, `event_force`, `event_trigger`, the `*_probe` and `*_selftest` instruments, `perf_probe`; `dev/director/` is the autonomous director that drives a player through a test scenario |
+| `coop/dev/` | developer features and probes, ini-gated, off by default | `freecam`, `pos_hud`, `set_clock`, `spawn_npc`, `force_weather`, `event_force`, `event_trigger`, the `*_probe` and `*_selftest` instruments, `perf_probe`; `dev/director/` drives a player through a test scenario |
 
 ## `ui/` — what the player sees
 
@@ -48,7 +48,7 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 | the F1 overlay | `imgui_overlay`, `overlay_backend` with `overlay_backend_dx11`, `overlay_backend_dx12`, `overlay_backend_dx12_capture`, `overlay_cursor`, `overlay_diag`, `overlay_test_arm`, `fonts`, `atlas_watch`, `input_focus` |
 | overlay panels | `dev_menu`, `admin_panel`, `skins_panel`, `voice_panel`, `world_rules_panel`, `config_review_panel`, `net_stats_panel`, `console` |
 
-## `harness/` — boot glue and autonomous tests
+## `harness/` — boot glue and scripted tests
 
 `harness` (the scenario runner), `session_runtime`, `autotest` + `autotest_dispatch` and `harness/autotest/`
 (one file per scenario: join churn, grab, ragdoll, weather, events, death, damage, pause guard, save UI,
