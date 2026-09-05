@@ -33,7 +33,7 @@ Then, if you are going to touch code:
 | | |
 |---|---|
 | [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then a disassembler, then UE4SS as a probe. None of those ship |
-| [testing.md](testing.md) | The rig, the launcher and its scenarios, the in-game harness, what autonomy proves, and the gates a push runs |
+| [testing.md](testing.md) | The test rig, the launcher and its scenarios, the in-game harness, and the gates a push runs |
 | [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
 | [versioning.md](versioning.md) | The version pair two peers must match, the files a game update touches, how a broken build says so, and the port runbook |
 | [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md) | The game's own widget style, measured; binding for anything drawn inside the game's UI |
@@ -61,7 +61,7 @@ messages, the late-join answer, the known limits with their evidence, and the co
 | [events-and-weather.md](events-and-weather.md) | The clock, the weather, who rolls, the story events and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task |
 | [signals.md](signals.md) | The signal workstation: occupancy, the desk, the download simulation, the catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades |
 | [devices.md](devices.md) | Doors, keypads, lights, the power panel, the turbine, windows and grime, the drone, and the economy: the balance, shop orders, the coin gun |
-| [vehicles.md](vehicles.md) | The ATV: a mirror that runs the rig natively and is corrected, the two authority predicates, the condition that travels |
+| [vehicles.md](vehicles.md) | The ATV: a mirror that runs the vehicle's physics natively and is corrected, the two authority predicates, the condition that travels |
 | [ui.md](ui.md) | The native screens, the F1 overlay, the HUD, and the game's notifications |
 | [master-server.md](master-server.md) | The lobby list, the join brokering, the signaling relay and TURN, self-hosting |
 | [voice-and-chat.md](voice-and-chat.md) | Host-authored chat and its history, proximity voice over the same connection |
@@ -71,7 +71,7 @@ And the two maps:
 | | |
 |---|---|
 | [CODE_MAP.md](CODE_MAP.md) | Where every concept lives: one folder each, and the files in it |
-| [STATUS.md](STATUS.md) | What is synced, system by system, who owns it, and how well each claim is established |
+| [STATUS.md](STATUS.md) | What is synced, system by system, who owns it, and how far each one is |
 
 ## How to read a claim in these docs
 
@@ -81,10 +81,7 @@ Status and evidence are tagged, and the tags are load-bearing:
 |---|---|
 | `[V]` | measured, with a citation: a log line, a disassembly, a file and line |
 | `[RD]` | derived from reverse engineering, not directly observed running |
-| `[A]` | reported by a read-only review pass, not personally re-verified |
 | `[?]` | unverified: a hypothesis wearing a claim's clothes |
 | DESIGN vs AS-BUILT | what was planned vs what shipped. These drift, and the docs say when they did |
 
-Nothing is marked working on the strength of an automated smoke test alone; that gets called a
-smoke pass, and it says so. A doc that says something works without naming its evidence is a bug
-in the doc.
+A doc that says something works without naming its evidence is a bug in the doc.
