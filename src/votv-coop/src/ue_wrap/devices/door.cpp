@@ -1,9 +1,7 @@
-// ue_wrap/door.cpp -- see ue_wrap/door.h. Engine access for VOTV base doors.
-//
-// All field offsets are resolved from the live class via reflection
-// (FindPropertyOffset) rather than hardcoded, so they stay correct across game
-// builds (version-tagging rule). The known Alpha 0.9.0-n offsets are kept only as
-// a logged fallback if the reflected walk ever fails to find the property.
+// ue_wrap/devices/door.cpp -- see ue_wrap/devices/door.h; engine access for the base doors.
+// All field offsets are resolved from the live class by reflection rather than hardcoded, so
+// they stay correct across game builds; the known offsets are kept only as a logged fallback
+// if the reflected walk ever fails to find a property.
 
 #include "ue_wrap/devices/door.h"
 
@@ -23,39 +21,38 @@ namespace {
 
 namespace R = reflection;
 
-// Resolved once at EnsureResolved, then read-only. Published via the g_resolved
-// release-store / acquire-load so any thread that sees g_resolved==true also sees
-// the fully-written caches below. Game-thread writes; observer reads.
+// Resolved once at EnsureResolved, then read-only. Published via the resolved flag's release
+// store and acquire load, so any thread that sees it set also sees the fully written caches.
+// Game-thread writes; observer reads.
 std::atomic<bool> g_resolved{false};
 
 void*   g_doorCls      = nullptr;  // door_C UClass
-int32_t g_keyOff       = -1;       // AtriggerBase_C::Key  (Alpha 0.9.0-n: 0x0260)
-int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened    (Alpha 0.9.0-n: 0x0350)
-int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving    (Alpha 0.9.0-n: 0x0351) -- swing in progress
+int32_t g_keyOff       = -1;       // AtriggerBase_C::Key
+int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened
+int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
 void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
 void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
 void*   g_moveUpdateFn = nullptr;  // Adoor_C::move__UpdateFunc()  -- lerps the door MESH from move_a (the visual)
-// The `move` timeline output value + direction live at fixed offsets (the reflected property
-// names carry a per-asset GUID suffix -- "move_a_<guid>" / "move__Direction_<guid>" -- so they
-// are not name-resolvable; the layout is stable for this build, verified by the door probe).
+// The move timeline's output value and direction live at fixed offsets (the reflected
+// property names carry a per-asset GUID suffix, so they are not name-resolvable; the layout
+// is stable for this build, verified by the door probe).
 constexpr int32_t kMoveAlphaOff = 0x0340;  // float  move_a_<guid>        (0=closed .. 1=open)
 constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=Forward/open, 1=Backward/close)
-int32_t g_autocloseOff = -1;       // Adoor_C::autoclose  (Alpha 0.9.0-n: 0x0353)
-int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*) (Alpha 0.9.0-n: 0x0308)
+int32_t g_autocloseOff = -1;       // Adoor_C::autoclose
+int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*)
 void*   g_setGenOverlapFn = nullptr; // UPrimitiveComponent::SetGenerateOverlapEvents(bool) (lazy)
-// Manual-open gate (CanOpen). BYTE-EXACT from the door BP disassembly (2026-06-06): a player's
-// E-press reaches the toggle only past an `Active` (power) check at ubergraph offset 3533, and
-// the toggle's doorOpen needs `!jammed && !superClosed`. So a door opens on E iff
-// `Active && !jammed && !superClosed`. These are all the door's OWN fields (NOT the keypad's --
-// the old IsLocked read the passlock's isAcc, a crosshair-hover flag, and mis-locked powered
-// doors). `Active` is driven by the gamemode power trigger (runTrigger 2/3) + the keypad's
-// setActive (door.Active = keypad.Active) + the save.
-int32_t g_activeOff      = -1;     // Adoor_C::Active (power) (Alpha 0.9.0-n: 0x0352)
-int32_t g_superClosedOff = -1;     // Adoor_C::superClosed    (Alpha 0.9.0-n: 0x0378)
-int32_t g_jammedOff      = -1;     // Adoor_C::jammed         (Alpha 0.9.0-n: 0x03B0)
+// The manual-open gate, byte-exact from the door blueprint: a player's use press reaches the
+// toggle only past the door's own power check, and the toggle's open needs neither jammed
+// nor super-closed, so a door opens on the press iff powered, not jammed and not
+// super-closed. All the door's own fields, not the keypad's (a read of the keypad's accept
+// flag, a crosshair-hover flag, mis-locked powered doors). The power is driven by the
+// gamemode's power trigger, the keypad's set-active and the save.
+int32_t g_activeOff      = -1;     // Adoor_C::Active (power)
+int32_t g_superClosedOff = -1;     // Adoor_C::superClosed
+int32_t g_jammedOff      = -1;     // Adoor_C::jammed
 
-// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/door.hpp + triggerBase.hpp).
+// The documented fallbacks from the header dump.
 constexpr int32_t kKeyOffFallback         = 0x0260;
 constexpr int32_t kIsOpenedOffFallback    = 0x0350;
 constexpr int32_t kIsMovingOffFallback    = 0x0351;
@@ -65,31 +62,30 @@ constexpr int32_t kActiveOffFallback      = 0x0352;
 constexpr int32_t kSuperClosedOffFallback = 0x0378;
 constexpr int32_t kJammedOffFallback      = 0x03B0;
 
-// Per-door cache so Restore*Autonomy can undo a suppression. Two distinct maps: the
-// CLIENT suppresses every synced door (render-only); the HOST suppresses only the doors a
-// remote client is currently holding open. A given process is one role, so the maps never
-// alias, but keeping them separate makes the two lifecycles independent + auditable.
-// Game-thread only in practice, but guarded for safety.
+// A per-door cache so the restore can undo a suppression. Two distinct maps: the client
+// suppresses every synced door (render-only); the host suppresses only the doors a remote
+// client is holding open. A process is one role, so the maps never alias, but separate maps
+// keep the two lifecycles independent. Game thread in practice, guarded anyway.
 struct SavedAutonomy { bool autoclose; };
 std::mutex g_autoMtx;
 std::unordered_map<void*, SavedAutonomy> g_saved;      // CLIENT-side render-only suppression
 std::unordered_map<void*, SavedAutonomy> g_hostHeld;   // HOST-side per-held-door suppression
 
-// SmartApply verify list: a door we just tried to ANIMATE; if it hasn't reached the target by
-// the deadline (the swing froze = beyond tick range / invisible) we force-snap it. GT-only,
-// bounded (entries clear within ~700ms), so no growth. Drained by TickSmartApply.
+// The smart-apply verify list: a door we just tried to animate; if it has not reached the
+// target by the deadline (the swing froze, beyond tick range) it is force-snapped. Game
+// thread only, bounded (entries clear within a second), drained by the tick.
 struct VerifyEntry {
     bool target;
     std::chrono::steady_clock::time_point deadline;
-    ue_wrap::CachedObjRef ref;  // slot-validated door (the map KEY is compare-only; islive-zeroav row :342)
+    ue_wrap::CachedObjRef ref;  // the slot-validated door (the map key is compare-only)
 };
 std::unordered_map<void*, VerifyEntry> g_verify;
 
-// Toggle a door's sensor overlap events. false on the client KILLS checkSensor at its
-// source (no BeginOverlap/EndOverlap -> no local auto open/close), so an applied host
-// state cannot be reverted by local door logic. Resolves the UFunction lazily off the
-// live sensor component's class (a UBoxComponent : UPrimitiveComponent). Best-effort:
-// if the param name differs, a bool defaults to false (= the disable we want).
+// Toggle a door's sensor overlap events. False on the client kills the sensor check at its
+// source (no overlap events, so no local auto open or close), so an applied host state
+// cannot be reverted by local door logic. Resolves the UFunction lazily off the live sensor
+// component's class. Best effort: if the parameter name differs, a bool defaults to false,
+// the disable we want.
 void SetSensorOverlap(void* door, bool enable) {
     if (!door || g_sensorOff < 0) return;
     void* sensor = *reinterpret_cast<void**>(reinterpret_cast<char*>(door) + g_sensorOff);
@@ -119,8 +115,8 @@ bool EnsureResolved() {
     void* doorCls = R::FindClass(L"door_C");
     if (!doorCls) return false;  // BP class not loaded yet -- caller retries
 
-    // Key is declared on AtriggerBase_C; FindPropertyOffset does NOT climb to
-    // super, so query the declaring class. isOpened is declared on door_C.
+    // The key is declared on the trigger base; the property lookup does not climb to the
+    // superclass, so query the declaring class. The opened flag is declared on the door.
     int32_t keyOff = -1;
     if (void* trigCls = R::FindClass(L"triggerBase_C")) {
         keyOff = R::FindPropertyOffset(trigCls, L"Key");
@@ -149,7 +145,7 @@ bool EnsureResolved() {
         UE_LOGW("door: reflected sensor offset not found -- using fallback 0x%04X", kSensorOffFallback);
         sensorOff = kSensorOffFallback;
     }
-    // CanOpen gate fields -- the door's OWN power/jam/superClosed (door BP disassembly 2026-06-06).
+    // The open-gate fields: the door's own power, jam and super-closed flags.
     int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
     if (activeOff < 0) activeOff = kActiveOffFallback;
     int32_t superClosedOff = R::FindPropertyOffset(doorCls, L"superClosed");
@@ -221,15 +217,12 @@ bool TryReadOpenIntent(void* door, bool& open) {
     if (!door || g_isOpenedOff < 0) return false;
     const char* base = reinterpret_cast<const char*>(door);
     const bool isOpened = *reinterpret_cast<const bool*>(base + g_isOpenedOff);
-    // While the door is mid-swing, report the DESTINATION (move__Direction, set
-    // at swing-START: 0=Forward/open, 1=Backward/close) instead of isOpened (set
-    // ~0.5 s later at swing-END). The host poll thus broadcasts an open/close the
-    // instant it begins -- frame-symmetric with the client's input-edge request.
-    // A settled door (isMoving=false) reads isOpened; move__Direction then holds
-    // the last completed swing's value, which agrees, but isOpened is the
-    // authoritative settled state so we prefer it. doorOpen/doorClose set isMoving
-    // + the direction synchronously within the press dispatch, so the very next
-    // poll tick (same/next frame) catches the intent.
+    // While the door is mid-swing, report the destination (the direction, set at swing start;
+    // forward is opening) instead of the opened flag (set at swing end, half a second later), so
+    // the host poll broadcasts an open or close the instant it begins, frame-symmetric with the
+    // client's input-edge request. A settled door reads the opened flag, the authoritative
+    // settled state. The open and close verbs set moving and the direction synchronously within
+    // the press dispatch, so the very next poll tick catches the intent.
     const bool moving = (g_isMovingOff >= 0) &&
         *reinterpret_cast<const bool*>(base + g_isMovingOff);
     if (moving) {
@@ -242,15 +235,12 @@ bool TryReadOpenIntent(void* door, bool& open) {
 }
 
 bool CanOpen(void* door) {
-    // BYTE-EXACT door BP gate (disassembly 2026-06-06, research/findings/votv-keypad-door-BP-
-    // disassembly-2026-06-06.md): a player's E-press opens the door iff its OWN power is on
-    // (`Active`, gate at ubergraph offset 3533) AND it is neither jammed nor superClosed (the
-    // doorOpen open-condition). fail-OPEN on null / unresolved so a resolve failure never locks
-    // every door. Reads three bools, no UFunction dispatch -- cheap, call per open-request.
-    // Guard on g_resolved (acquire): once it is set, EnsureResolved has written all three
-    // offsets (reflected or fallback -- never -1), so the reads below are valid. Before it is
-    // set, fail-OPEN. (The caller OnRequest already gates on EnsureResolved; this is belt-and-
-    // suspenders for any other call site.)
+    // The byte-exact door gate: a player's press opens the door iff its own power is on and it
+    // is neither jammed nor super-closed. Fail-open on null or unresolved, so a resolve failure
+    // never locks every door. Three bool reads, no dispatch; cheap, called per open request.
+    // Guarded on the resolved flag (acquire): once set, every offset is written (reflected or
+    // fallback, never -1), so the reads are valid; before it, fail-open. The request handler
+    // already gates on the resolve; this covers any other call site.
     if (!door || !g_resolved.load(std::memory_order_acquire)) return true;
     auto rb = [door](int32_t off) -> bool {
         return off >= 0 && *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + off);
@@ -284,16 +274,16 @@ bool GetActive(void* door) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_activeOff);
 }
 
-// Snap a door fully to a state, mesh AND flag, proximity-independent. Set the timeline alpha
-// (move_a) to the end + the direction, then call move__UpdateFunc (which LERPS THE DOOR MESH
-// from move_a -> the visual snap -- this was the missing piece: move__FinishedFunc only sets
-// isOpened + stops the timeline, it does NOT move the mesh) then move__FinishedFunc (state).
+// Snap a door fully to a state, mesh and flag, proximity-independent: set the timeline alpha
+// to the end and the direction, call the update function (which lerps the mesh from the
+// alpha, the visual snap; the finished function only sets the flag and stops the timeline,
+// never moving the mesh), then the finished function for the state.
 static void ForceTo(void* door, bool open) {
-    // IDEMPOTENT: if isOpened already matches the target, do nothing. move__FinishedFunc re-fires the
-    // open/close sound + the doorOpened delegate, so a second force on an already-open door double-
-    // sounds. Two callers can reach the same open door in one/adjacent tick (the keypad accept's
-    // ForceOpen + the door's OWN native chain from the replayed inputNumber); this guard makes both
-    // safe. (The door-channel SmartApply already checks cur!=target; this covers direct callers.)
+    // Idempotent: if the opened flag already matches, do nothing. The finished function re-fires
+    // the open or close sound and the opened delegate, so a second force on an already-open door
+    // double-sounds; two callers can reach the same open door in adjacent ticks (the keypad
+    // accept's force open and the door's own native chain from the replayed digit), and this
+    // guard makes both safe.
     if (g_isOpenedOff >= 0 &&
         *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
         return;
@@ -308,34 +298,30 @@ void ForceClose(void* door) { if (door) ForceTo(door, false); }
 
 void SmartApply(void* door, bool open) {
     if (!door) return;
-    // If the door is ALREADY swinging toward this target, do NOTHING -- this is the opener's
-    // own player_use animation (already played its sound) receiving the echo of its own request;
-    // re-triggering it (or registering a verify that later force-snaps it) plays the open/close
-    // sound a SECOND time. Let the in-progress swing finish on its own.
+    // If the door is already swinging toward this target, do nothing: this is the opener's own
+    // use animation (its sound already played) receiving the echo of its own request, and
+    // re-triggering it, or registering a verify that later force-snaps it, plays the sound a
+    // second time. Let the swing finish.
     const bool moving = *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + 0x0351);  // isMoving
     const uint8_t dir = *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + kMoveDirOff);  // 0=Forward/open
     if (moving && ((open && dir == 0) || (!open && dir == 1))) return;  // already going the right way -> no re-trigger, no double sound
-    // IDEMPOTENT: a SETTLED door already at the target is left alone. Re-running the BP
-    // chain on a matching door is DESTRUCTIVE, not just wasteful: doorOpen's swing is
-    // ADDITIVE (target = current pose + delta), so re-opening an already-open door drives
-    // it PAST its frame into the wall -- the user-reported join-time clipping (every
-    // connect-snapshot re-applied ON to saved-open doors, pushing them further each join,
-    // 2026-06-12 round 2). The mid-swing case stays NON-idempotent on purpose: isOpened
-    // lags the animation, so cur==target while moving the WRONG way means the authority
-    // wants the swing reversed -- fall through and re-command it. (The old HostAuth
-    // always-apply existed for the client's native-press echo race; the use-input PRE
-    // observer's Active-gate killed that race at its source -- the client door no longer
-    // moves from local presses at all.)
+    // Idempotent: a settled door already at the target is left alone. Re-running the blueprint
+    // chain on a matching door is destructive, not just wasteful: the open swing is additive
+    // (the target is the current pose plus a delta), so re-opening an already-open door drives
+    // it past its frame into the wall, the join-time clipping every connect snapshot once
+    // produced on saved-open doors. The mid-swing case stays non-idempotent on purpose: the
+    // opened flag lags the animation, so a match while moving the wrong way means the authority
+    // wants the swing reversed; fall through and re-command it.
     if (!moving && g_isOpenedOff >= 0 &&
         *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
         return;
-    // Play the native animated swing (smooth wherever the door ticks -- any distance up to its
+    // Play the native animated swing (smooth wherever the door ticks, any distance up to its
     // real tick range, no magic radius).
     if (open) CallDoorOpen(door, true); else CallDoorClose(door, true);
-    // The swing FREEZES beyond tick range (far, invisible). Verify shortly: a near door reaches
-    // the target before the deadline (removed, no snap); a far frozen door gets FORCE-SNAPPED so
-    // its state stays correct. Deadline > the longest swing so a slow-but-completing animation
-    // is never double-finished by the snap.
+    // The swing freezes beyond tick range (far, invisible). Verify shortly: a near door reaches
+    // the target before the deadline (removed, no snap); a far frozen door is force-snapped so
+    // its state stays correct. The deadline exceeds the longest swing, so a slow but completing
+    // animation is never double-finished.
     VerifyEntry ve{ open, std::chrono::steady_clock::now() + std::chrono::milliseconds(1500), {} };
     ve.ref.Set(door);  // fresh at the apply seam
     g_verify[door] = ve;
@@ -369,9 +355,9 @@ void SuppressClientAutonomy(void* door) {
             firstTime = true;
         }
     }
-    // Client door = render-only: autoclose=false + sensor overlaps off so local
-    // checkSensor can't auto-revert an applied host state. player_use stays interactive
-    // (optimistic local open is fine -- the host's authoritative DoorState lands right after).
+    // A client door is render-only: no autoclose and no sensor overlaps, so the local sensor
+    // check cannot auto-revert an applied host state. The use press stays interactive (an
+    // optimistic local open is fine; the host's authoritative state lands right after).
     if (autoclose) *autoclose = false;
     SetSensorOverlap(door, false);
     if (firstTime) UE_LOGI("door: client autonomy suppressed (sensor off + autoclose=0) for %p", door);
@@ -388,10 +374,10 @@ void SuppressHostHeldDoor(void* door) {
             firstTime = true;
         }
     }
-    // While a remote client holds this door open, the host treats it render-only too: the
-    // same proven recipe as the client (autoclose=false + sensor overlap events off) so the
-    // host's own checkSensor can't autoclose the door it opened for the client. Lazy + once
-    // per door (never per-tick/bulk -- the black-screen lesson).
+    // While a remote client holds this door open, the host treats it render-only too, the same
+    // recipe as the client (no autoclose, no sensor overlaps), so the host's own sensor check
+    // cannot autoclose the door it opened for the client. Lazy and once per door, never per tick
+    // or in bulk.
     if (autoclose) *autoclose = false;
     SetSensorOverlap(door, false);
     if (firstTime) UE_LOGI("door: host held-door suppressed (sensor off + autoclose=0) for %p", door);
@@ -407,13 +393,12 @@ void ReleaseHostHeldDoor(void* door) {
         saved = it->second;
         g_hostHeld.erase(it);
     }
-    // The client released its hold: restore the authored autoclose + re-enable the sensor so
-    // the host's native door autonomy resumes, then close the door honoring the real guards
-    // (exactly one close edge -- the host poll broadcasts the resulting OFF).
-    // Close with the SAME near/far visual as every other apply (SmartApply: animate the swing
-    // if the local camera is near, snap if far) -- ForceClose here was an unconditional SNAP, so
-    // opens animated but closes snapped = the "ugly snapping close" the user saw. Close BEFORE
-    // restoring the sensor so the host's own proximity logic can't fight the close mid-swing.
+    // The client released its hold: restore the authored autoclose and re-enable the sensor so
+    // the host's native door autonomy resumes, then close the door honouring the real guards
+    // (exactly one close edge; the host poll broadcasts the resulting off). Close with the same
+    // near-or-far visual as every other apply (an unconditional snap made opens animate and
+    // closes snap), and close before restoring the sensor so the host's own proximity logic
+    // cannot fight the close mid-swing.
     SmartApply(door, false);
     if (g_autocloseOff >= 0)
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_autocloseOff) = saved.autoclose;
