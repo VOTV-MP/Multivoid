@@ -2,7 +2,9 @@
 #
 # Three gates, each with the drill that shows it RED first (a gate nothing can
 # show failing is a gate nobody can trust):
-#   - public-leak: a leaked security coordinate in the public tree
+#   - public-leak: a leaked security coordinate in the public tree (its verbatim-overlap
+#     ratchet needs the maintainer's local trees and reports n/a here; the three line
+#     signals run everywhere)
 #   - commit messages: the shape CONTRIBUTING.md asks for, over every commit
 #     since the checker was added (tools/git/commit_msg_check.py, the same
 #     script the commit-msg hook runs)
@@ -19,6 +21,9 @@ on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   gates:

@@ -78,8 +78,8 @@ A change is not done when it compiles. Before a pull request:
    path, no allocation in the pose tick, engine functions only on the game thread.
 
 CI runs the same gates on every push (`.github/workflows/`): the build, the zero-import ABI
-gate, the config-registry gate, the atlas gate, the package drill, and the commit-message and
-public-prose checks described below.
+gate, the config-registry gate, the atlas gate, the package drill, the public-leak gate, and the
+commit-message and public-prose checks described below.
 
 ## Commits
 
@@ -95,10 +95,16 @@ Co-Authored-By: ...
 ```
 
 - `[scope]` is the subsystem or area: `[coop]`, `[net]`, `[ui]`, `[tools]`, `[docs]`,
-  `[release]`, `[lights]`, `[atv]`. Lowercase, one word.
-- English only. No quoted conversations, no session narrative, no references to the
-  maintainer's private notes or tooling. The long story of a change belongs in the subsystem's
-  doc if it is still current, and nowhere if it is history: `git log -p` keeps the diff.
+  `[release]`, `[lights]`, `[atv]`. Lowercase, one word. Git's own `Merge branch ...` and
+  `Revert "..."` subjects are exempt; `[docs] close:` belongs to the maintainer's session-close
+  script.
+- The body is at most 12 non-empty lines; the attribution trailers at the end are not counted.
+- English only (no Cyrillic), valid UTF-8, no byte-order mark.
+- No quoted conversations, no session narrative, no references to the maintainer's private
+  notes or tooling. The checker refuses these words and paths: `/qf`, `documentize`, `agent`,
+  `verbatim`, `USER` (all caps), `Docs-Census`, `memory/`, `research/`, `CLAUDE.md`, `.claude/`,
+  `docs/security/`. The long story of a change belongs in the subsystem's doc if it is still
+  current, and nowhere if it is history: `git log -p` keeps the diff.
 - A doc that describes a subsystem changes in the same commit as the subsystem.
 
 `tools/git/commit_msg_check.py` is the checker. Install it as a hook once per clone:
@@ -130,7 +136,10 @@ A doc that says something works without naming its evidence is a bug in the doc.
 
 Working notes, reverse-engineering logs, design drafts and session records are kept by the
 maintainer outside the repository. `tools/docs/public_prose_gate.py` measures the public tree
-against these rules, and CI refuses a push that makes any measure worse.
+against these rules: the working-notes words and paths above, dead links and paths, docs over
+the hard cap, dated lines, and in the source the comment blocks over 15 lines and the files that
+are more than half comment. CI refuses a push that makes any of those measures worse; the plain
+volume of prose is reported, not gated.
 
 ## Code comments
 
