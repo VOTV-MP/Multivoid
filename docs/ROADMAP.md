@@ -7,7 +7,7 @@ Phase 1 is where the work is today.
 
 | # | Phase | Gate | Status |
 |--|--|--|--|
-| 1 | **Functional co-op** | the game's systems are synced one by one on the mod's own substrate; hands-on verified breadth | **current** |
+| 1 | **Functional co-op** | the game's systems are synced one by one on the mod's own substrate, and play-tested | **current** |
 | 2 | **The arbiter** | per-element authority lives in a separate, engine-free process; the host's game is an ordinary client of it | planned |
 | 3 | **Sandbox mode** | VOTV's sandbox rules run as an explicit, portable "mode" layer | planned; independent of 2 |
 | 4 | **Scripting substrate** | a sandboxed runtime over the engine and co-op APIs | planned; independent of 2 |
@@ -26,12 +26,12 @@ voice, and the synced world listed on the front page: props, piles, NPCs and the
 events, weather, the keyed devices, the signal-processing pipeline, the ATV, sleep, damage and
 death.
 
-**Remaining.** Hands-on verification breadth (much of the synced world is verified by the
-autonomous rig and not yet by people playing), the tail of game systems still unsynced
+**Remaining.** Play-testing breadth (much of the synced world has been exercised by scripted
+runs and not yet by people playing), the tail of game systems still unsynced
 ([SCOPE.md](SCOPE.md) says which), and the subsystems shipped in a shape the project
 does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
-actor instead of driving it, and both are queued for a proper rebuild. The per-system status with
-its evidence is [STATUS.md](STATUS.md).
+actor instead of driving it, and both are queued for a proper rebuild. The per-system status is
+[STATUS.md](STATUS.md).
 
 **Right now.** The repository itself: the public tree is being rewritten for people, one document
 per subsystem, with the rules in [../CONTRIBUTING.md](../CONTRIBUTING.md) enforced by a commit hook
