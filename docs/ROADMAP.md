@@ -1,638 +1,90 @@
-# ROADMAP — VOTV coop mod
+# Roadmap
 
-**Living document.** Re-arrange as priorities shift. Phases follow
-`docs/COOP_METHODOLOGY.md`, adapted for UE4.27. Each phase has a hard
-gate — don't proceed until met.
+Multivoid follows the arc that MTA:SA and Garry's Mod took: functional co-op first, then the
+authority moves out of the host's game into its own process, then modes, scripting, resources,
+and finally dedicated public servers. Each phase gates the next unless stated otherwise.
+Phase 1 is where the work is today.
 
-Legend: ☐ not started · ◐ in progress · ☑ done.
+| # | Phase | Gate | Status |
+|--|--|--|--|
+| 1 | **Functional co-op** | the game's systems are synced one by one on the mod's own substrate; hands-on verified breadth | **current** |
+| 2 | **The arbiter** | per-element authority lives in a separate, engine-free process; the host's game is an ordinary client of it | planned |
+| 3 | **Sandbox mode** | VOTV's sandbox rules run as an explicit, portable "mode" layer | planned; independent of 2 |
+| 4 | **Scripting substrate** | a sandboxed runtime over the engine and co-op APIs | planned; independent of 2 |
+| 5 | **Mode rules in script** | the co-op and sandbox rule sets are the first two reference resources; the C++ core stays native | planned |
+| 6 | **Resource system** | custom modes and plugins are one mechanism: manifest, server and client scripts, events, start and stop | planned |
+| 7 | **Dedicated server** | the phase-2 process launched by hand, 24/7, with zero players | planned; gated by 2 |
+| 8 | **Resource infrastructure** | client-side resource download, sandboxing of untrusted server code, a public server browser | planned |
 
-**Quick status (updated 2026-07-03):** Phases 0-5 done. Transport is
-**GameNetworkingSockets v1.5.1** (3 lanes, `kMaxPeers=4`). The protocol is at
-**v95** (EventFire=84: the scheduled/story-event replay channel — host observes
-settime fires via passEvents growth, clients replay per the per-row dupe-matrix
-policy; CODE_MAP `EventFire` block is canonical). Shipped surface: the MTA
-Element/Registry/Mirror foundation; NPC /
-WorldActor / save-snapshot-on-connect / terminals / doors+lights+keypads /
-kerfur (prop⇄NPC) / events / voice / inventory / sleep / effects sync; the
-host-authoritative pile/trash channel incl. client grab/carry/throw and the
-pile NATIVIZATION arc — the whole pile narrative that used to be logged HERE
-(2026-06-20..23 point-in-time, incl. several since-superseded claims like
-"level-pile dup fix NOT built" and "proxy scale hands-on PENDING") is canonical
-in the LIVING pile KB [docs/piles/](piles/) (08→12) + `research/findings/`
-(RULE 2: one home); the v93 per-player SKINS system + the measured-fit offline
-model converter ([COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md)); v94 synced
-per-peer nameplate visibility + builtin kerfur skins + the join-window pose
-gate (runbook 2026-07-02 take-4 — verdict pending hands-on).
-**The day-to-day live state is
-in the auto-memory (`MEMORY.md` index + the top `project_*` entry), NOT this
-file** — this roadmap is the phase-gate structure; the memory is the running log.
-For cross-cutting architecture truth see the new
-[COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md) +
-[COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md). The "Live workstreams"
-section at the bottom of this file is stale (≤2026-05-29) — defer to memory.
+## Phase 1 — functional co-op (current)
 
-**Foundation audit v2 (2026-05-29):** see
-`research/findings/architecture-audits/votv-architecture-audit-2026-05-29.md` for the full
-14-dimension audit + PR-FOUNDATION-1..5 priorities. Key gap: cross-peer
-relay topology is still 2-player-shaped; 4-peer LAN smoke missing.
+**Built.** The multiplayer foundation: the transport (GameNetworkingSockets, LAN and Internet with
+NAT traversal), sessions of up to four peers with a mutual key-based admission and an optional
+password, the master server and the server browser, the join pipeline (the host's world streamed
+to the joiner, then a connect snapshot), remote players with skins, ragdolls, nameplates, chat and
+voice, and the synced world listed on the front page: props, piles, NPCs and the kerfur cycle,
+events, weather, the keyed devices, the signal-processing pipeline, the ATV, sleep, damage and
+death.
 
----
+**Remaining.** Hands-on verification breadth (much of the synced world is verified by the
+autonomous rig and not yet by people playing), the tail of game systems still unsynced
+([COOP_SCOPE.md](COOP_SCOPE.md) says which), and the subsystems shipped in a shape the project
+does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
+actor instead of driving it, and both are queued for a proper rebuild. The per-system status with
+its evidence is [COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md).
 
-## Project phases — the long-term arc (RESTRUCTURED 2026-07-20, user-approved)
+**Right now.** The repository itself: the public tree is being rewritten for people, one document
+per subsystem, with the rules in [../CONTRIBUTING.md](../CONTRIBUTING.md) enforced by a commit hook
+and CI gates.
 
-The MTA/gmod trajectory. Everything below "Phase 0 — Feasibility" in this
-document is the DETAIL of project phase 1. Each later phase gets its own
-phase-gate breakdown when it opens.
+## Phase 2 — the arbiter
 
-> **TWO numbering systems exist in this tree — do not conflate them.**
-> **Project phases** = the arc in THIS section (1-8: coop, arbiter, sandbox,
-> Lua, resources, dedicated, resource infra). **Methodology phases** = the
-> work phases in `docs/COOP_METHODOLOGY.md` (0-5: feasibility, engine
-> archaeology, foundation, transport, replication, validation), which are
-> also the "Phase 0/1/2..." headings further down THIS file — all of them
-> detail of project phase 1.
->
-> **Never write a numbered FORWARD reference to a project phase** ("deferred
-> to Phase 7+"). The arc renumbers — it did on 2026-07-20 — and every such
-> reference silently shifts by one. Name the phase instead ("deferred to the
-> public-server phase"). Eight such references were repaired on 2026-07-20;
-> see `[[lesson-cite-sections-not-lines-in-files-you-also-edit]]`.
+Today the host's game process holds the authority: it validates every inbound write and performs
+every client intent. Phase 2 moves that arbiter into its own process, spawned as a child when
+hosting from in-game and launched by hand for a dedicated box, so that the two deployments are
+physically the same binary. The arbiter never reads the engine: it holds values and anchors, and
+the engine holds only what has a world-dependent rate. The host's game becomes an ordinary client
+of it and loses its privileged in-process path.
 
-**Restructured 2026-07-20 (user directive).** The prior 8-phase arc (fixed
-2026-07-19) put the authority work last, as a "native standalone server"
-endgame. Two measurements dissolved that shape — see
-`docs/COOP_SERVER_MODEL.md`:
+The measured work is inverting the lanes that today derive their canonical state by reading the
+engine into lanes that remember it. Intent production (reading the local player) stays; handle
+validation disappears, because the arbiter holds ids rather than pointers; outcome capture stays,
+because the engine's own machines still decide and the arbiter records.
 
-- the arbiter is a **child process from day one** (measured MTA `CServer.cpp`
-  precedent), so there is nothing to "extract later" and no inversion EVENT;
-- the arbiter's authority **grows monotonically** as each sync lane moves its
-  canon into it, so the endgame is a gradient, not a milestone.
+This phase also closes the authority-shaped security findings, which are the absence of this
+architecture rather than bugs to patch. Ordering is deliberate: the architecture first, the
+findings after.
 
-So the old phase 8 is **gone as a phase**, and the authority work moves to
-**phase 2** — it is simultaneously the MTA architecture, the fix for the
-authority-shaped security findings (A3/A4/A5), and what the dedicated server
-needed all along. The user's ordering stands: MTA architecture first,
-security findings after.
+## Phases 3 to 6 — modes, scripting, resources
 
-**The chain is not strictly linear.** Phase 2 gates phase 7 (dedicated) and
-the authority-shaped security work. Phases 3-6 (sandbox, Lua, resources) are
-independent of it and may interleave.
+Sandbox mode produces the first "rules of a mode" as an explicit layer. The scripting substrate is
+a sandboxed runtime over the mod's engine and co-op APIs; which runtime is an implementation
+detail, and the modder-facing lean is an engine-level bridge, because VOTV's own modding ecosystem
+is Blueprint- and table-shaped. The C++ core (transport, sync, identity, interpolation) stays
+native, as MTA keeps its core native. Custom modes and plugins share one resource mechanism; there
+is no separate plugin API.
 
-1. **votv-coop** — the current work: functional coop on the standalone
-   substrate (this whole document).
-2. **The arbiter** — **NEW, pulled forward from the old phase 8.** Move
-   per-element authority into an arbiter that runs as a child process and
-   never reads the engine (`docs/COOP_SYNCER_MODEL.md` = who may write what;
-   `docs/COOP_SERVER_MODEL.md` = deployment + state). The host's game becomes
-   an ordinary client of it and loses its privileged in-process authority
-   path. Absorbs the A3/A4/A5 security findings, which are the ABSENCE of
-   this architecture rather than bugs to patch.
-   - **The measured work:** 32 canon-derivation read sites in 9 lanes must be
-     inverted to write-only — today e.g. `meadow_db_sync` builds the
-     "canonical" DB by reading the engine's widget arrays instead of
-     remembering it (`COOP_SERVER_MODEL.md` §7; the figure is an order of
-     magnitude from a name-shape grep, not a verified list).
-   - **What is NOT work:** intent production (reading the local player) stays;
-     handle validation disappears (the arbiter holds ids, not pointers);
-     outcome capture stays (the engine's machines decide, the arbiter records).
-   - **THE RULE:** the arbiter holds values and anchors; the engine holds only
-     what has a world-dependent rate.
-   - Gate: the host's game is a client of the arbiter, and the 9 lanes' canon
-     lives in the arbiter's record rather than in an engine read.
-3. **Sandbox mode** — support VOTV's sandbox game mode with its own rules
-   (coop currently targets the story/normal mode). Produces the "rules of a
-   mode" as an explicit, portable layer — the thing phase 5 will port.
-4. **LuaJIT embedding** — vendor LuaJIT + bindings over the `ue_wrap`/`coop`
-   APIs. The scripting SUBSTRATE only; nothing moves to Lua yet.
-   > **SUPERSEDED-IN-DESIGN 2026-08-21** (the UE4SS-arc decision): the
-   > vendored-LuaJIT-as-THE-modder-substrate plan dies; the modder-facing lean
-   > is the ENGINE-LEVEL BRIDGE (the VOTV ecosystem is BP/table-shaped), and
-   > server-distributed resources get a sandboxed runtime whose choice is an
-   > implementation detail. Phases 4-6 get rewritten when the arc ships. See
-   > `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`
-   > (WP-5) — this text is kept un-rewritten until then per the arc parking.
-5. **Lua API** — the C++ core STAYS (transport, sync, identity,
-   interpolation — MTA keeps its core native for a reason); the coop and
-   sandbox mode RULES move to Lua as the first two reference resources.
-   Not a rewrite — an API layer plus two ported rule sets.
-6. **Resource system** — custom modes AND plugins as ONE mechanism (the MTA
-   shape: manifest, server+client scripts, events, start/stop). A
-   gamemode-resource and a utility-resource live in the same system — no
-   separate "plugin API".
-7. **Dedicated server** — 24/7 hosting with zero players (the gmod shape:
-   host from in-game OR run dedicated). **Much smaller than it was**, because
-   phase 2 delivers the binary: hosting from in-game already spawns the same
-   arbiter as a child process, so "dedicated" is that binary launched by hand
-   instead. What remains:
-   - **Ghost host** — the architecture assumes the host is a live player with
-     a pawn; a zero-player host needs its local pawn parked/excluded (not a
-     slot, not an event target). THE design question of this phase.
-   - **A Linux build of the arbiter** — it is engine-free C++, so this is
-     ordinary cross-compilation. Launch-of-child must sit behind an
-     abstraction: MTA's job objects + `CreatePipe` are Windows-only.
-   - **No Wine carrier for a zero-player server** (2026-07-20, superseding
-     the 2026-07-19 commitment): the empty world FREEZES, and the two
-     mechanisms in play are each freeze-compatible on their own — time-linear
-     accumulators are recomputed at unfreeze, gated random rolls simply do
-     not fire. Wine returns ONLY if a world-rate-dependent progression turns
-     up that no anchor can express (`COOP_WORLD_PROP_DIVERGENCE.md` owns that
-     measurement; rule-of-three is NOT met — exactly one accumulator is
-     confirmed).
-   - **No redistribution** — the server package = our DLL + launcher + config
-     dropped onto the OPERATOR'S OWN game copy (itch.io). No SteamCMD analog;
-     we never ship game files.
-   - **Native game server binary = only via the devs** (UE4.27 LinuxServer
-     target needs the game project). If that ever lands, our DLL needs its own
-     port (ELF loading, new AOB signatures).
-   - Wine spike parameters, if ever needed: `-nullrhi`, Xvfb if required,
-     `WINEDLLOVERRIDES="dwmapi=n,b"` (the UE4SS loader proxy — was
-     `xinput1_3` in the retired standalone lane); expectation NOT measured
-     (0-10% CPU overhead on a CPU-bound headless load with fsync/ntsync).
-8. **Resource infrastructure** — client-side resource download from the
-   server (no manual mod-pack installs), Lua sandboxing/security (clients
-   execute untrusted server code — mandatory layer), and the server browser
-   (the VPS signaling service grows into the master list).
-   Trust note (2026-07-19): once servers are public, client-side cheating
-   returns as a threat — MTA's answer is a client AC + server-side validation
-   hooks, NOT authority architecture (MTA is client-simulated with per-element
-   syncers; verified in the vendored source,
-   `CUnoccupiedVehicleSync::FindPlayerCloseToVehicle` assigns the nearest
-   player as an element's simulator). In our current model only the HOST is
-   trusted (host == admin, acceptable); a public-server future needs its own
-   AC layer decision here.
+## Phase 7 — dedicated server
 
-### RETIRED as a phase: "Native standalone server" (the old phase 8)
+Phase 2 delivers the binary, so this phase is much smaller than its name: the same arbiter launched
+by hand instead of spawned. What remains is the ghost host (the architecture assumes the host is a
+live player with a pawn; a zero-player host needs its local pawn parked and excluded), a Linux
+build of the engine-free arbiter behind a launch-of-child abstraction, and the rule that an empty
+world freezes: time-linear accumulators are recomputed on unfreeze and gated random rolls simply do
+not fire. The server package is the mod plus a launcher and a config dropped onto the operator's
+own copy of the game; no game files are ever shipped.
 
-**Not a milestone — a gradient.** The old entry described an authority
-INVERSION performed after phases 5-7: the server would come to hold state +
-Lua rules + arbitration while clients simulate. That destination is unchanged
-and still correct; what was wrong was modelling it as an EVENT.
+## Phase 8 — resource infrastructure
 
-The arbiter binary exists from phase 2, and the boundary between "the
-arbiter's canon" and "the opaque save blob shipped at bootstrap" is exactly
-what crosses the wire today. **Every new sync lane extends the server's
-authority**, so the MTA shape arrives by accumulation. There is no rewrite
-moment to schedule.
+Clients download resources from the server instead of installing mod packs; server-provided code
+runs sandboxed on clients; the signaling service grows into the public master list. Once servers
+are public, client-side cheating returns as a threat. Today only the host is trusted, and the host
+is the admin; a public-server future needs its own anti-cheat decision here, which MTA answers with
+a client-side layer plus server-side validation hooks rather than with authority architecture.
 
-Two things from the old entry survive as standing notes:
+## What this roadmap is not
 
-- **NOT "rewrite VOTV in C++".** Server-side authoritative physics without the
-  engine is a decade-class trap. The inversion is about rules and state
-  machines, which phases 5-6 already produce as Lua resources. The accumulated
-  RE corpus (`docs/events/`, `docs/signals/`, `docs/items/`,
-  `COOP_RNG_AUTHORITY`, the entity-expression map) IS the rules specification.
-- **Research branch:** executing the game's own cooked BP bytecode in our VM
-  (we already parse it; native-call stubs are the wall).
-
----
-
-## Phase 0 — Feasibility + bootstrap ☑
-
-**Gate met:** `docs/FEASIBILITY.md` documents 0.2-0.8; viable verdict;
-skeleton committed; UE4SS verified injecting into VOTV 0.9.0-n.
-
-## Phase 1 — Engine archaeology (reflection-driven) ☑
-
-**Gate met:** core engine entry points documented in `research/findings/`.
-
-- ☑ 1.1 Entity factory — `UWorld::SpawnActor` via
-       `UGameplayStatics::BeginDeferredActorSpawnFromClass` /
-       `FinishSpawningActor` (deferred-spawn pair).
-- ☑ 1.2 Player class layout — `AmainPlayer_C : ACharacter` (camera,
-       grab/hold, stats, inventory). GameMode `AmainGamemode_C`
-       (world/save hub).
-- ☑ 1.3 Input dispatch — stock `APlayerController`; VOTV input = pawn
-       `InpActEvt_*` BP events. Full vocabulary mapped (see
-       `research/findings/phase0-bootstrap/coop-phase-1-input-map-and-spawn-probe-2026-05-21.md`).
-- ☑ 1.4 Tick / save / level-load / UI / Blueprint VM — covered piecewise
-       across the 2026-05-22..2026-05-25 findings (autonomous harness
-       skip-to-gameplay, save-load entry, UMG widget construction, BP
-       UFunction invocation via ProcessEvent). The reflection substrate
-       turned out to give us everything we need without per-system
-       findings; outstanding spelunking lives in workstream-specific
-       RE docs (terminals, doors+lights, NPCs, events).
-
-## Phase 2 — Foundation infrastructure ☑
-
-**Gate met:** standalone DLL injects, reflection works, game-thread
-context proven, RemotePlayer puppet visible + driven on LAN.
-
-### Standalone shipping vehicle (RULE №3) — DONE, then SUPERSEDED
-
-> **SUPERSEDED 2026-08-28 (UE4SS_ARC WP-2 commit 3):** the standalone proxy
-> lane below retired whole — the mod now ships as the UE4SS mod folder
-> `Mods\Multivoid\dlls\main.dll` (still zero UE4SS imports; the substrate
-> stays our own). This block stays as the historical record of what Phase 2
-> shipped at the time.
-
-- ☑ C++ toolchain + build: the mod DLL (CMake + VS2019, x64, static CRT);
-       since 2026-07-19 (b122) the artifact is the Paper-pair-versioned
-       `multivoid-<game>-<build>.dll` (was `votv-coop.dll`; since WP-2
-       commit 3 the pair lives in VERSIONINFO, not the filename).
-- ☑ Standalone proxy loader: **`xinput1_3.dll`** scans + auto-loads the
-       highest-build `multivoid-*.dll` on game start (duplicate installs ->
-       in-game popup); UE4SS absent. ~~`tools/deploy-loader.ps1` installs it.~~
-       **Re-cited 2026-08-25: that script does not exist — `tools/deploy-mod.ps1`
-       (via `deploy-all.ps1`) superseded it. The proxy lane itself retired whole at
-       WP-2 commit 3; see `docs/UE4SS_ARC.md` §6 item 4.**
-- ☑ Standalone reflection (no UE4SS): AOB-resolved `GUObjectArray` +
-       `FName::ToString` + `ProcessEvent`. Health check on boot:
-       reflection-resolves every primitive, FUNCTIONALLY validates them,
-       prints PASS/FAIL with the game version + exe fingerprint.
-- ☑ Generic UFunction call infrastructure (`ParamFrame` walks the live
-       UFunction's FProperty chain — no hardcoded offsets per call).
-- ☑ Game-thread context: `ProcessEvent` detour drains a posted-task pump
-       so worker threads can dispatch onto the game thread safely.
-- ☑ MinHook integrated as a static-linked C library (third-party submodule).
-
-### Phase 2 puppet path — DONE
-
-- ☑ 2.1 Orphan spawn: `SpawnActor<mainPlayer_C>` (deferred-spawn pair).
-- ☑ 2.2a Local-player HIJACK prevention: `inertPawn=true` zeroes
-       `AutoPossessPlayer` / `AutoPossessAI` / `AutoReceiveInput`
-       + sets `bBlockInput` in the deferred-spawn window. No control or
-       gamma stomp.
-- ☑ 2.2b Remote BODY POSE: kerfurOmega AnimBP plays on the puppet's
-       SkeletalMeshComponent. Anim state-machine driven by satellite
-       ACharacter (BUA-pattern fix 2026-05-23). Animations + IK
-       working (IK confirmed user-visible 2026-05-25).
-- ☑ 2.2c Remote FACING: yaw + control rotation independent of local
-       player; head-leads-body cone shipped.
-
-## Phase 3 — Networking transport ☑
-
-**Gate met:** both players see each other's pawn moving in real time on
-LAN (two-machine + same-box-two-instance both confirmed).
-
-- ☑ 3.1 **GameNetworkingSockets (Valve, MIT, v1.5.1)** vendored as a
-       submodule + `/WHOLEARCHIVE` linked into `votv-coop.dll`.
-       host-authoritative, LAN-first. `coop/net/session.{h,cpp}` drives
-       GNS end-to-end (CreateListenSocketIP / ConnectByIPAddress /
-       SendMessageToConnection / ReceiveMessagesOnConnection /
-       SteamNetConnectionStatusChangedCallback). The hand-rolled Winsock
-       UDP + Hello/HelloAck + stop-and-wait ARQ + Ping/Pong RTT layer was
-       fully RETIRED in PR-2 (2026-05-28).
-- ☑ 3.2 Sessions, not connections. `kMaxPeers=4` via GNS PollGroup
-       (PR-4); per-slot OnDisconnect contract (PR-4.7); senderPeerSlot
-       narrow-cast guarded; bounded drain; NaN/AABB validate; RFC1982
-       sequence numbering.
-- ☑ 3.3 Pure I/O at bottom; 3-layer split (transport ↔ serialization ↔
-       application). Principle 7 applied to network.
-- ☑ 3.4 Position-only pose sync at 60 Hz + receiver-side interpolation
-       (50 ms LERP window, MTA-shape `SetTargetPose` on new packet +
-       per-tick interp pump). See
-       `research/findings/mta/mta-pose-interpolation-2026-05-23.md`.
-- ☑ 3.5 Auto-spawn the remote on first packet.
-
-### Priority lanes ☑
-
-- ☑ **Three GNS lanes** wired via `ConfigureConnectionLanes(3, [0,1,2],
-       weights=[4,2,1])` (PR-3, 2026-05-28). Lane assignment:
-  - **High** — TeleportClient, RestoreVitals, ItemActivate, Join.
-  - **Normal** — PoseSnapshot, PropPose, Chat, default-unspecified events.
-  - **Bulk** — PropSpawn, PropDestroy, EntityDestroy, EntitySpawn,
-    snapshot fan-out.
-  Snapshot fan-out no longer head-of-line-blocks interactive events.
-  **GNS guarantees order WITHIN a lane, not across** — receivers that
-  need to compare a Bulk event against Normal state (e.g. PropSpawn vs
-  Join) must gate on identity establishment, not lane order. See
-  E-2 / C-1 finding in
-  `research/findings/architecture-audits/votv-architecture-audit-2026-05-29.md`.
-
-### Reliable channel ☑
-
-- ☑ GNS reliable messages (per-lane). Carries Join / Bye / Chat /
-       RestoreVitals / TeleportClient / PropSpawn / PropDestroy /
-       EntityDestroy / EntitySpawn / ItemActivate / WeatherState /
-       LightningStrike. The internal FIFO queue + per-feature retry
-       crutches were RETIRED 2026-05-27.
-- ☑ Coop chat + session event log (joins / leaves / errors) — DONE
-       2026-05-23. Top-right UMG feed; reliable.
-
-### Multiplayer menu — SHIPPED ☑
-
-- ☑ AS-BUILT (commit 43e2a843, 2026-06-05; refined f32ed1b0): a native UMG
-       "MULTIPLAYER" UButton is injected above NEW GAME in VOTV's `ui_menu_C`
-       main menu (`coop/multiplayer_menu.cpp:78` via
-       `engine::InjectCanvasButton`); clicking it opens an in-process ImGui
-       server browser (`ui/server_browser.cpp`) with Host Game (save picker
-       -> `HostWithSave`), direct-IP Connect, the master-lobby server list
-       + double-click join, and nickname editing. Backends in
-       `coop/session_manager.cpp` (HostWithSave / JoinLobby / ConnectDirect).
-       Wired via `engine::InjectCanvasButton` (`ue_wrap/engine/engine_widget.cpp`); rendered from `imgui_overlay.cpp`'s `RenderFrameGuarded` (`ui::dev_menu::Render`). *(Line citations corrected 2026-07-30: `harness.cpp` moved to `src/harness/` and was split in s27, and `:356` now points at `MaybeRescale`'s tail. Cite the SYMBOL -- see docs/LESSONS.md, "a comment citing a dependency line number rots silently".)*
-       Matches `docs/MULTIPLAYER_UI.md` (marked BUILT 2026-06-20). The browser
-       panel itself renders in ImGui (in-process overlay), not pure UMG. The
-       `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
-       the autonomous-test entry points.
-       **THE NATIVE-UMG BROWSER IS THE DEFAULT, PERMANENTLY (USER 2026-08-30,
-       `b90b261d`: *"делаем нативный браузер дефолтом вечным"*).** The paragraph
-       above describes what the MULTIPLAYER button used to open; it now opens the
-       native UMG screen, and the ImGui panel is the FALLBACK, reachable by
-       setting `browser_native=0` in `multivoid.ini` (a restart-scoped `ui`
-       setting, no longer a dev flag). `ui::server_browser_surface` is the one
-       owner of which surface a session uses -- five places decided it
-       independently the moment the default flipped. **The ImGui browser is NOT
-       deleted and nothing was retargeted**: `tools/cursor_probe.py` and
-       `tools/master_fetch_probe.py` keep working unchanged. As-built:
-       `docs/MULTIPLAYER_UI.md` section 8b, plus the T-table in section 8c.-1
-       (T0/T1/T1b/T1c/T4a/T6/T8 are DONE rows carrying their evidence).
-       **What is PROVEN, all by the autonomous `mp.py browser --fake-master N`
-       scenario and NOT hands-on:** the screen builds with nothing set (which is
-       the flip's proof), the wheel scrolls it, the scrim absorbs a stray click,
-       ESC and the X close it, a row can be hovered and selected by a real
-       cursor, HOST opens the hosting window, REFRESH and CONNECT reach their
-       handlers, the order survives a shuffle the client provably re-fetched, and
-       the scroll position survives a row-count change.
-       **STILL OPEN, verified against the code this sweep:** CONNECT's ACCEPT
-       branch is not driven by any test (one line, calling the shared
-       `session_manager::JoinLobby`); `Close()` HAS callers since `9f8140b3`
-       (`ui/server_browser_actions.cpp:56` calls it, `:79` calls `CloseNow()`)
-       but its own BODY has never run in a test and both callers are on the game
-       thread, so "safe from any thread" stays an unexercised claim; and
-       `src/ui/server_browser_selftest.cpp` is 932 LOC, past the soft cap, with
-       the cut proposed by two audits.
-       **PERFORMANCE: the design is `MULTIPLAYER_UI.md` section 8c.-1 and its
-       ROOT FINDING IS NOW FIXED, not pending.** That section's headline was an
-       uncached `R::FindFunction` per row per sync walking the whole
-       `GUObjectArray`; it is latched (`ui/server_browser_rows.cpp:147`), and the
-       surplus-row branch no longer derives seven widget parts to collapse one.
-       So the old "raising `kMaxRows` costs 110-320 ms" figure is WITHDRAWN; the
-       replacement is ~21 ProcessEvent dispatches per PAINTED row (~4,200 at 200
-       rows), which is arithmetic and not a measurement -- T2a's instrument and
-       T2c's baseline have not run, and raising the cap still waits on them.
-       Of the two defects that were never about speed: the list HAD no stable
-       order and now has one, imposed at the single producer
-       (`coop/net/lobby_client.cpp`, key `name` then `lobbyId`; `playersCur` is
-       explicitly refused because a mutable key reorders rows under a reading
-       hand), watched by a same-set/different-sequence detector shown RED before
-       it was trusted; and `kMaxRows = 64` still truncates, but no longer
-       SILENTLY. Step T0 -- *does the wheel scroll this widget* -- was answered
-       YES on 2026-08-26 and is re-asserted every run.
-       Two results from that pass still bind other phases: a hand-wired
-       `UUserWidget` RENDERS inside `ui_menu_C`'s live `UWidgetSwitcher` (so the
-       placement holds), and **the ImGui overlay substrate is NOT retirable** --
-       at every launch the game presents ~540 frames over ~11.4 s in which no
-       world exists and our game-thread task pump does not advance, so a UMG
-       surface cannot be created or attached there. Two substrates is the
-       measured end state, not a transition.
-
-## Phase 4 — Replication layers (the bulk) ◐
-
-- ◐ 4.1 Input replication — partial. Pose stream (loc + yaw + speed +
-       head-yaw) is "replay-by-state" rather than full keysync, sufficient
-       for current scope. Per-action input replication (E-press, hotbar,
-       drop, etc.) lands as needed per feature.
-- ◐ 4.2 Equipment / held-item / tool state — **physics-prop pickup
-       SHIPPED** 2026-05-24 (PropGrab / PropPose-piggyback / PropRelease
-       + throw impulse). See
-       `research/findings/physics-grab/physics-object-pickup-coop-plan-2026-05-23.md`
-       and the Aprop lifecycle RE doc. **HOTBAR hand item SHIPPED
-       2026-07-06 (v105 hand_item display axis** — player expression, out
-       of the prop pipeline; **+ v105b same day**: view-anchored mirror
-       (USER-APPROVED live), census hand-exclusion (dupe root), edge-instant
-       stow; **+ v106 2026-07-07 (`29dfd079`)**: SEAM-DRIVEN world-prop
-       coherence (K2_DestroyActor Func seam + hand-edge express +
-       FinishSpawningActor Func drain — replaces the v105b forced reconcile,
-       RULE 2) + pile birth-certificate/carry-termination; **+ v106b same
-       day (`4a280375`)**: MIGRATION-FIRST identity (a morph husk dies
-       eid-less) + BIRTH-ORPHAN express + wholesale GHOST-RETIRE (the
-       E-press per-ghost retire RETIRED, RULE 2). **VERIFIED hands-on
-       2026-07-07 (0ae): grab lane PASS + Q-menu spawns INSTANT on
-       clients.** See CODE_MAP.)
-       Smart-ITEM behavior sync (hook/nailgun/wallbuilder/...) = RE done,
-       docs/items/ pattern ratified, implementation queued.
-- ◐ 4.3 Entity manifest + per-entity state — IN PROGRESS, see live
-       workstreams below.
-- ☐ 4.4 Cutscenes / scripted events — events RE done (~80 events,
-       unified EntityEventPacket design); implementation queued.
-- ◐ 4.5 Save / world-state sync — host-authoritative DECIDED 2026-05-24.
-       Snapshot-on-connect (5S0) Inc1 + Inc2 shipped: world props
-       enumerated + PropSpawn'd at session start; PropDestroy lifecycle
-       wire-synced.
-- ☐ 4.6 Inventory / progression — inventory CONTENTS are per-peer
-       private (decision 2026-05-24). World ↔ inventory transitions
-       (pickup / drop) replicate as world events; bag contents don't.
-
-## Phase 5 — Validation infrastructure ☑
-
-- ☑ 5.1 Autonomous test harness — `tools/run-test.ps1` writes
-       `scenario.txt`, harness reads it from inside the DLL and drives the
-       engine from a worker thread (`harness::autotest`). Scenarios:
-       `play`, `load:<slot>`, `none`, plus the per-feature
-       grab / probe-terminals scenarios.
-- ☑ 5.2 LAN test framework — `tools/lan-test.ps1` launches host + client
-       same-box two-process, env-var config (`VOTVCOOP_*`), per-PID
-       log capture. Found and fixed multiple real handshake bugs that
-       loopback hid.
-- ☑ 5.3 Live testing — `mp_host_game.bat` (host) + `mp_client_connect.bat`
-       (client). Two physical game-copy directories (`Game_0.9.0n/` for
-       host, `Game_0.9.0n_copy/` for client) so same-box xinput1_3 loading
-       doesn't collide.
-- ☑ 5.4 Multi-agent audits — every non-trivial coop change goes through
-       a `feature-dev:code-reviewer` audit pass per the CLAUDE.md
-       post-ship-audit rule. File-size / modularity check baked into the
-       audit prompt template (RULE 2026-05-25 post-`harness.cpp`-bloat).
-
----
-
-## Live workstreams (where the iteration happens)
-
-Each item below is a feature increment series. Cross-referenced in
-`memory/MEMORY.md` for session-resume context.
-
-### 5N — NPC + entity sync ◐
-- ☑ Phase 5N stream B: host-authoritative mushroom suppression
-       (mushroom7_C is the growing-state class; suppress on client).
-- ☑ Phase 5N1 Inc1: NPC suppressor (host-only mandatory).
-- ☑ Phase 5N1 Inc2: wire layer detection-only (gated on
-       `VOTVCOOP_NPC_SYNC=1`).
-- ◐ Phase 5N1 Inc3: NPC client-mirror + EntitySpawn + EntityDestroy
-       PARTIALLY SHIPPED. A1 receiver (NPC client mirror via
-       `MirrorManager<Npc>`) + EntitySpawn / EntityDestroy reliable
-       packets landed 2026-05-28 (Tier-3 MTA Element migration). Still
-       OUT OF SCOPE today: continuous NPC pose stream (EntityPoseBatch
-       reliable kind) and NPC vitals replication — NPC AI currently runs
-       independently on every client (per-client desync). See S-1..S-5
-       in the foundation audit.
-
-### 5S — Save + world-state sync ◐
-- ☑ Phase 5S0 Inc1: snapshot-on-connect, host enumerates `Aprop_C` +
-       sends `PropSpawn` per prop on client join.
-- ☑ Phase 5S0 Inc2: continuous spawn + PropDestroy lifecycle hook.
-- ☑ Gap I-1: fuzzy de-dupe + rekey for same-position divergent-key
-       spawns from natural spawners.
-
-### 5T — Story-object terminals ◐
-- ☑ RE pass complete (`research/findings/computers-devices/votv-interactable-terminals-RE-2026-05-25.md`)
-       — 12 sections + 4 audit cycles + UE4SS Lua probe pass (E-12-CR1
-       critical finding: direct OnClicked invoke crashes without active-use
-       state). 13-increment plan.
-- ☐ Inc1: terminal-key resolution + singleton fallback. Awaiting user
-       direction; the user has since pivoted to simpler doors/lights work
-       (5D) as the next sync target.
-
-### 5D — Doors + light switches ☑
-- ☑ RE pass complete 2026-05-25
-       (`research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md`)
-       — class enumeration, hook/invoke = `doorOpen`/`doorClose` +
-       `Atrigger_lightRoot_C::SetActive`, 7-increment plan, 6 open
-       flags.
-- ☑ Inc1: door Key resolution infrastructure — AS-BUILT. `AtriggerBase_C::Key`
-       resolved via reflection (`ue_wrap/door.cpp` EnsureResolved/GetKeyString)
-       and wired as the door channel's key->actor index. SHIPPED v27 2026-06-03
-       (commit 43e2a843).
-- ☑ Phase 5D fully SHIPPED beyond Inc1: doors + light switches + container
-       lids + garage + appliances + lockers, host-authoritative, protocol
-       v27->v62 (DoorState=9, LightState=10, DoorOpenRequest=26 v32,
-       GarageDoorState=33 v44, ApplianceState, LockerDoorState=50 v62).
-       Engine in `coop/interactable_channel.h`; adapters in
-       `coop/interactable_sync.cpp`; installed at `subsystems.cpp:89`.
-
-### Dev convenience features ◑ (one-off shipping)
-> NOTE 2026-07-26: the "Ini-gated `[dev] X=1`" lines below describe the ORIGINAL
-> hotkey-era shape. 2026-06-02 `31408685` migrated these into the F1 ImGui menu and
-> RETIRED the granular ini keys (`posinfo` etc. — a live SETTINGS CHECK correctly
-> flags them as unknown in old inis). "Tidy up" COMMENTS THEM OUT as of 2026-07-26
-> `a05b14e5` — before that it only re-laid-out the file and the warning came back
-> every launch. Rows kept for history.
-- ☑ HOME freecam — flying debug camera with WASD/Space/Ctrl + wheel
-       speed + MMB teleport. Ini-gated `[dev] freecam=1`. 2026-07-05
-       `ee828ff7`: entering freecam FREEZES the pawn (CMC MOVE_None,
-       captured mode restored verbatim on exit) so the fly keys stop
-       driving the character; look stays live (the freecam aims with it).
-- ☑ F2 pos+cam HUD — on-screen player position + camera rotation
-       overlay. Ini-gated `[dev] posinfo=1`.
-- ☑ F3 RestoreVitals — refills food/sleep/health on both peers via the
-       reliable channel. Ini-gated `[dev] devkeys=1`.
-       (`coffeePower` deliberately excluded — triggers a screen-shake
-       BP side-effect.)
-- ☑ F4 TeleportClient — host presses, client teleports to host's pose.
-       Uses VOTV's own `teleportWObackrooms` UFunction (bypasses CMC
-       constraints that revert `K2_TeleportTo`). Ini-gated.
-- ☑ F12 screenshot — via VOTV's own console `HighResShot`. Hands-on play
-       SHOULD NOT use it (the saving-screenshot toast is distracting);
-       autonomous scenarios only.
-
-### Shipped since (moved out of Open / future)
-- ☑ Phase 5D Inc1+ — doors + light switches sync SHIPPED (proto v27,
-       2026-06-03; commit 43e2a843). See the 5D section above (extended to
-       container lids, garage v44, lockers/console v62).
-- ☑ Multiplayer menu in VOTV's main menu — native MULTIPLAYER button
-       injected above NEW GAME into `ui_menu_C` (`coop/multiplayer_menu.cpp`)
-       opening an ImGui server browser (`ui/server_browser.cpp`) with Host
-       Game (save picker), direct-IP Connect, master-lobby list + double-click
-       join, and nickname editing; backends in `coop/session_manager.cpp`.
-       Wired via `engine::InjectCanvasButton` (`ue_wrap/engine/engine_widget.cpp`); rendered from `imgui_overlay.cpp`'s `RenderFrameGuarded` (`ui::server_browser::Render`). *(Line citations corrected 2026-07-30 -- both were dead; cite the SYMBOL.)*
-       Shipped 43e2a843 (2026-06-05). See the "Multiplayer menu — SHIPPED"
-       section above. The .bat launchers remain a dev/test convenience only.
-- ☑ v66 Voice chat — proximity positional (SetListener + SVC REDUCED-mode
-       pan + distance attenuation) + push-to-talk (default key 'G',
-       `voice.ptt_key` overridable) + activation mode; Opus over the existing
-       coop session (`MsgType::VoiceFrame`), miniaudio capture/playback, jitter
-       buffer, whisper, per-player volume, mute, voice icons on nameplate /
-       scoreboard / HUD. Simple-Voice-Chat port
-       (`research/findings/network/votv-voice-chat-port-design-2026-06-12.md`). Code:
-       `src/votv-coop/src/coop/voice/*`, `session_voice.cpp`; wired
-       `subsystems.cpp:108`/`:332`. Shipped f32ed1b0, UI refined 9ed8789a.
-- ☑ Master server + opt-in public server browser — SHIPPED. ImGui browser
-       (`ui/server_browser.cpp`) over a master lobby service
-       (`coop/net/lobby_client.cpp` GET /v1/lobbies + `lobby_announcer.cpp`
-       /v1/host /heartbeat /leave /visibility); built-in official VPS endpoint
-       (`config.cpp` kBuiltinMasterUrl), opt-in "Show in server browser"
-       toggle (`scoreboard.cpp` -> /v1/visibility), reference master server at
-       `tools/coop_master_server.py`. Landed in commit 43e2a843.
-       - 2026-07-16: the VPS master + signaling were **rewritten in Rust**
-         (`tools/coop-server-rs/`, static musl) and **DEPLOYED LIVE** (wire-compatible;
-         Python retired on the box). A 4-agent security audit + Tier A hardening
-         followed (server `249a22b0`, client `7e8b1d2c`).
-       - 2026-07-16 (evening): stack **MIGRATED to the new coop VPS `<coop-vps>`**
-         (Rust-native provision, verified; old box keeps only unrelated services, coop wiped per RULE 2;
-         compiled endpoints flipped `cd6faf81`; box upgraded +
-         rebooted, docker/WG removed, re-verified outside). Domain: `multivoid.dev` LIVE
-         2026-07-19 (root proxied; `master.multivoid.dev` unproxied/grey-cloud -> the box;
-         the never-delegated `votv.mp` zone retired).
-         See `research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md`.
-       - 2026-07-20: **Tier B TLS arcs 1-2 BUILT + LIVE.** A Let's Encrypt cert on
-         `master.multivoid.dev` terminated by `tokio-rustls` inside our own bins on new
-         ports 10443/10442, beside the plaintext pair for the cutover (`7aff6b73`); the
-         client's master traffic moved to TLS, grammar **schemeless = secure** (`87e66bce`).
-         Renewal is hardened (deploy hook restarts the services, since `LoadCredential` is a
-         start-time snapshot) with the staleness alarm OFF the box (`tools/cert_check.py`).
-         Arcs 1-2 stay shipped. Design of record (as-built record only, no longer the plan):
-         `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
-       - 2026-07-20 (later, same day): **the remaining TLS arcs are ON HOLD — a threat model was
-         finally written and it reordered the work.** The short public version: the transport is
-         already encrypted, so the next thing worth building is **peer IDENTITY**, not more transport
-         encryption — which is why **Tier C dissolved into peer identity**. (It was specified as a
-         master-run CA for six weeks; a 9-round `/qf` on 2026-08-29 measured that design false and
-         replaced it with something smaller — the identity IS the peer's own public key, which needs
-         no CA, no minting and no master, and therefore covers the LAN-only lane too. The public
-         short version: your peer is identified by a key it must possess, not by a name it claims.
-         **BUILT the same day, proto 144** — the keypair, the mutual admission challenge that makes
-         the name mean anything, and a drill that shows it REFUSING; the durable id also replaced the
-         per-session rendezvous name, which is a change with its own new residual, recorded in the
-         local register. Not hands-on.)
-         Arcs 3 / 3b / 4 / 5 remain HELD; the `net.master.insecure`
-         flag was designed and then dropped — do not build it. Two read-only audits ran the same
-         day; their findings, evidence and fix order live in the **local-only** register
-         (`docs/security/`, untracked since 2026-08-23 — the local-only docs-arc note says why). The
-         public statement of what the mod does and does not protect is the root `SECURITY.md`.
-
-### Open / future
-- ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose
-       replication (currently NPC AI runs per-client; combat / horror
-       loop incoherent without it). See S-1 in
-       `research/findings/architecture-audits/votv-architecture-audit-2026-05-29.md`.
-- ☐ Phase 5T Inc1+ — terminals interactive sync.
-- ☐ P2P + ICE / NAT punch (WAN). Design seed:
-       `research/findings/network/votv-gns-p2p-masterserver-plan-2026-05-28.md`.
-       `ENABLE_ICE=OFF` today.
-- ☐ Ragdoll sync (non-trivial — VOTV ragdoll renders on a SEPARATE
-       invisible body; we'd be inventing visible ragdoll on the puppet).
-- ☐ LuaJIT resource system, MTA-shape (designed-not-scheduled; user ask
-       2026-07-05: "MTA/SAMP have scripts support... custom gamemodes,
-       filterscripts, their own admin systems"). Post-sync-parity (R5+).
-       Shape: LuaJIT vendored INTO votv-coop.dll (RULE №3 — like MinHook/
-       ImGui; UE4SS-Lua stays dev-only), `resources/<name>/` folders with
-       a meta-manifest (MTA meta.xml analog), one sandboxed lua_State per
-       resource (no io/os by default), start/stop at runtime. API spine =
-       what already exists as C++ subsystems: coop/element registry
-       (element-tree functions), ProcessEvent-visible seams
-       (addEventHandler analog), one new ReliableKind ScriptEvent
-       namespaced per resource (triggerServerEvent/triggerClientEvent
-       analog), chat/nameplate/moderation/ImGui as stdlib. Client-script
-       distribution at join = the one MTA piece currently in the
-       explicitly-skipped column (asset-replication lite, hash-verified)
-       — revisit then. Phasing: embed + read-only API -> mutations via
-       existing lanes -> client-side scripts + ACL-like permission model.
-       Nothing built now is throwaway: every principle-2 subsystem API
-       becomes a binding.
-
-### PR-FOUNDATION queue (foundation audit v2, 2026-05-29)
-Strategic priorities derived from the 14-dimension audit. Read
-`research/findings/architecture-audits/votv-architecture-audit-2026-05-29.md` for the full
-TL;DR + tier-list.
-- ☐ PR-FOUNDATION-1 — Identity epoch + range enforcement
-       (`IsAllowedSenderEid` helper across 7+ wire sites; closes E-1 +
-       3 PropSpawn/Destroy/Join gaps + host-migration eid collision).
-- ☐ PR-FOUNDATION-2 — Save-game safety contract (PreSaveScrub /
-       PostSaveRestore hooks, atomic-rename, backup).
-- ☐ PR-FOUNDATION-3 — Manager pattern collapse (one canonical mirror
-       table; `ScopedElementRef<T>` RAII handles). Do BEFORE NPC 5N
-       expansion or Door/Vehicle/Switch.
-- ◐ PR-FOUNDATION-4 — Host policy layer. Kick/ban SHIPPED (moderation.cpp +
-       ban_list.cpp + the scoreboard actions; reasons + unban + the persistent
-       seen-players registry + the host-only F1 Administration UI landed
-       2026-07-05 `f66d2c7f`). Remaining: rate-limiting.
-- ☐ PR-FOUNDATION-5 — Per-peer observability HUD + structured event
-       stream.
-
----
-
-## Timeline note
-
-Per the methodology's final note: coop is a 6-month-to-2-year effort.
-UE4SS + reflection compressed Phase 1 (no blind RE) and de-risked Phase 2
-(engine natively supports multiple pawns). Phase 4 (replication) remains
-the bulk regardless of engine — it's where 2026-05-22 to today has been
-spent and where the upcoming months will continue.
+It is not a rewrite of the game in C++: server-side authoritative physics without the engine is a
+decade-class trap. The authority that moves is rules and state machines, which phases 5 and 6
+produce as resources. The reverse-engineering record of the game's systems, kept by the maintainer,
+is the specification those rules are written from.
