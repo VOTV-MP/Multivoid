@@ -1,8 +1,8 @@
-// coop/join_progress.cpp -- see coop/join_progress.h.
+// coop/session/join_progress.cpp -- see coop/session/join_progress.h.
 
 #include "coop/session/join_progress.h"
 
-#include "ui/join_curtain.h"  // instant-world: drop the curtain on a join ABORT (not the normal Complete path)
+#include "ui/join_curtain.h"  // drop the curtain on a join abort (not the normal complete path)
 #include "coop/session/shutdown.h"  // IsShuttingDown -- suppress the failure dialog during teardown
 #include "ue_wrap/core/log.h"
 
@@ -14,15 +14,15 @@
 namespace coop::join_progress {
 namespace {
 
-// phase + counts are atomics (written on the net-drain thread, read on the render
-// thread); the host label is a std::string under its own mutex (written rarely in
-// BeginConnect, read once/frame in Snapshot).
+// The phase and the counts are atomics (written on the net-drain thread, read on the render
+// thread); the host label is a string under its own mutex (written rarely in BeginConnect,
+// read once a frame in Snapshot).
 std::atomic<int>      g_phase{static_cast<int>(Phase::Idle)};
 std::atomic<int>      g_mode{static_cast<int>(Mode::Client)};
 std::atomic<uint32_t> g_applied{0};
 std::atomic<uint32_t> g_total{0};
-// World-blob download counters (bytes). Written by the harness join loop via
-// NoteDownload, read on the render thread in Snapshot.
+// World-blob download counters (bytes). Written by the harness join loop via NoteDownload,
+// read on the render thread in Snapshot.
 std::atomic<uint32_t> g_dlDone{0};
 std::atomic<uint32_t> g_dlTotal{0};
 std::atomic<int64_t>  g_startMs{0};
@@ -31,26 +31,25 @@ std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure 
 std::mutex  g_hostMu;
 std::string g_host;  // guarded by g_hostMu
 
-// Connect-failure reason for ui/connect_failed_dialog (see the header). Set by the
-// abort WINNER (Fail stashes / Cancel clears) and read/cleared by the render thread;
-// its own mutex, independent of g_abortReq (which the harness drains separately).
+// The connect-failure reason for the connect-failed dialog (see the header). Set by the abort
+// winner (Fail stashes, Cancel clears) and read and cleared by the render thread; its own
+// mutex, independent of the abort flag (which the harness drains separately).
 std::mutex  g_failMu;
 std::string g_failReason;  // guarded by g_failMu; non-empty == a modal is pending
-// Lock-free mirror of "g_failReason is non-empty" so the per-frame overlay GATE
-// (FailPending) never takes g_failMu -- only Render's actual string read does. Kept
-// in sync inside g_failMu's critical sections.
+// A lock-free mirror of "the reason is non-empty" so the per-frame overlay gate never takes
+// the mutex; only the render's actual string read does. Kept in sync inside the mutex's
+// critical sections.
 std::atomic<bool> g_failPending{false};
 
-// Generous failsafe: v56 save-transfer joins legitimately spend the cover on a
-// ~17 MB save download (WAN: tens of seconds) + the full world load (~30-60 s)
-// + the true-up bracket. The harness DriveMenuModeJoinWorldBoot owns the real
-// 120 s transfer timeout; this longer cap only fires if that path wedged (a
-// trapped cover is worse than revealing the game).
+// A generous failsafe: a save-transfer join legitimately spends the cover on a multi-megabyte
+// save download (tens of seconds over WAN), the full world load and the true-up bracket. The
+// harness's join drive owns the real transfer timeout; this longer cap fires only if that
+// path wedged (a trapped cover is worse than revealing the game).
 constexpr int64_t kMaxJoinMs = 240'000;
-// Host-boot failsafe backstop. The harness DriveHostBootIfPending normally Reset()s
-// this on session-start / its own ~120 s timeout; this longer cap only fires if that
-// path somehow never ran (a stuck cover at the menu is worse than dropping it). Host
-// mode just Resets (no Fail -- there is no client session to Stop).
+// The host-boot failsafe backstop. The harness's host-boot drive normally resets this on
+// session start or its own timeout; this longer cap fires only if that path never ran (a
+// stuck cover at the menu is worse than dropping it). Host mode just resets: no Fail, since
+// there is no client session to stop.
 constexpr int64_t kMaxHostBootMs = 180'000;
 
 int64_t NowMs() {
@@ -74,8 +73,8 @@ void BeginConnect(const std::string& hostLabel) {
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
-    // A fresh attempt clears any prior failure modal so a retry starts clean (the
-    // dialog otherwise lives until the user acknowledges it).
+    // A fresh attempt clears any prior failure modal so a retry starts clean (the dialog
+    // otherwise lives until the player acknowledges it).
     { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     g_startMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
@@ -94,7 +93,7 @@ void BeginHostBoot(const std::string& worldLabel) {
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
-    // Hosting after a failed join -- drop any lingering connect-failure modal.
+    // Hosting after a failed join: drop any lingering connect-failure modal.
     { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     g_startMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
@@ -103,22 +102,15 @@ void BeginHostBoot(const std::string& worldLabel) {
 }
 
 void BeginSnapshot(uint32_t propTotal) {
-    // BROWSER-JOIN ONLY (regression A completion, 2026-06-06). The loading screen tracks the
-    // snapshot ONLY when a browser join raised it (BeginConnect -> Connecting). EVERY client
-    // receives the host's v34 SnapshotBegin marker on connect -- including the env/.bat/
-    // autotest client, which is ALREADY in gameplay and must NOT have a loading screen +
-    // console pop up over it mid-walk (the user-reported bug + a per-frame render cost).
-    // So if we are not in a browser join (phase != Connecting), ignore the marker entirely.
-    // (The earlier 'adopt it anyway' was the bug: it popped the cover for env clients.)
-    // Fork A (2026-06-10): ALSO accept Receiving -- after a mid-drain world-
-    // transition abort (no SnapshotComplete), the deferred re-bracket's
-    // SnapshotBegin must refresh the stale denominator or the bar pegs at a
-    // wrong total for the full ~2300-prop re-stream. Env/autotest clients
-    // are Idle and still ignored (the regression-A target).
-    // Downloading is accepted for the SAME reason Connecting is: it is the phase a
-    // save-transfer joiner is actually in when the host's replay arrives, and it did
-    // not exist when this gate was written. Omitting it would have left the prop bar
-    // dead for every menu-mode join -- the regression this list's shape invites.
+    // Browser joins only: the loading screen tracks the snapshot only when a join raised it.
+    // Every client receives the host's snapshot-begin marker on connect, including a scripted
+    // client already in gameplay that must not have a loading screen and console pop up over it
+    // mid-walk, so outside a join (idle) the marker is ignored. Receiving is accepted too: after
+    // a mid-drain world-transition abort with no snapshot-complete, the deferred re-bracket's
+    // snapshot-begin must refresh the stale denominator or the bar pegs at a wrong total for the
+    // full re-stream. Downloading and loading-world are accepted for the same reason as
+    // connecting: they are the phases a save-transfer joiner is actually in when the host's
+    // replay arrives, and omitting them would leave the prop bar dead for every menu-mode join.
     const Phase ph = PhaseOf();
     if (ph != Phase::Connecting && ph != Phase::Downloading &&
         ph != Phase::LoadingWorld && ph != Phase::Receiving) return;
@@ -130,16 +122,15 @@ void BeginSnapshot(uint32_t propTotal) {
 }
 
 void NoteDownload(uint32_t doneBytes, uint32_t totalBytes) {
-    // Client joins only. A HOST boot shares the cover (Mode::Host) and must never be
-    // relabelled "Downloading the world" -- it is loading its OWN save off disk.
+    // Client joins only. A host boot shares the cover and must never be relabelled as
+    // downloading the world: it is loading its own save off disk.
     if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
     if (totalBytes == 0) return;  // Begin has not landed yet -- stay indeterminate
-    // COMPARE-EXCHANGE, NOT A READ-THEN-STORE. This runs on the TIMELINE thread while
-    // the game thread can call Reset() from net_pump's aggregate-disconnect edge --
-    // and the loop that calls this is itself posting that tick. A blind store on a
-    // stale read would re-raise the cover a Reset had just taken down (Active() true
-    // again, byte counters re-written non-zero), and against BeginSnapshot it would
-    // stomp Receiving so the prop bar never filled. Post-ship audit, 2026-09-02.
+    // Compare-exchange, not a read-then-store. This runs on the timeline thread while the game
+    // thread can reset from the pump's aggregate-disconnect edge, and the loop that calls this is
+    // itself posting that tick. A blind store on a stale read would re-raise the cover a reset
+    // had just taken down (active again, byte counters re-written non-zero), and against a
+    // snapshot-begin it would stomp the receiving phase so the prop bar never filled.
     int expected = static_cast<int>(Phase::Connecting);
     if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::Downloading),
                                         std::memory_order_acq_rel,
@@ -148,15 +139,16 @@ void NoteDownload(uint32_t doneBytes, uint32_t totalBytes) {
     } else if (expected != static_cast<int>(Phase::Downloading)) {
         return;  // the phase moved out from under us -- write nothing
     }
-    // Only now, with the phase confirmed OURS, are the counters ours to write.
+    // Only now, with the phase confirmed ours, are the counters ours to write.
     g_dlDone.store(doneBytes > totalBytes ? totalBytes : doneBytes, std::memory_order_relaxed);
     g_dlTotal.store(totalBytes, std::memory_order_relaxed);
 }
 
 void BeginWorldLoad() {
     if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
-    // Same CAS discipline, and it accepts EITHER predecessor: a normal join arrives
-    // from Downloading, while a no-save / never-sent-Begin host never left Connecting.
+    // The same compare-exchange discipline, accepting either predecessor: a normal join arrives
+    // from downloading, while a host with no save, or one that never sent a begin, never left
+    // connecting.
     for (const Phase from : {Phase::Downloading, Phase::Connecting}) {
         int expected = static_cast<int>(from);
         if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::LoadingWorld),
@@ -180,9 +172,9 @@ void Complete() {
     const uint32_t total = g_total.load(std::memory_order_relaxed);
     const uint32_t applied = g_applied.load(std::memory_order_relaxed);
     g_applied.store(total, std::memory_order_relaxed);  // snap to 100% for any in-flight read
-    // Symmetric with Reset(), which clears these too. Harmless today (the Idle
-    // early-return in loading_screen gates every read), but an asymmetry here is
-    // exactly what hands the NEXT cover a stale denominator.
+    // Symmetric with Reset, which clears these too. Harmless today (the idle early return in the
+    // loading screen gates every read), but an asymmetry here is exactly what hands the next
+    // cover a stale denominator.
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Idle), std::memory_order_release);
@@ -199,9 +191,9 @@ void Reset() {
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
-    // instant-world: an ABORT from a non-Idle phase (cancel / connect-fail / failsafe) reached here (the
-    // normal SnapshotComplete path uses Complete(), which fades the curtain via BeginDismiss and never calls
-    // Reset from non-Idle). Drop the cover so it can't trap the menu black. (Idle-already early-returned above.)
+    // An abort from a non-idle phase (cancel, connect failure, failsafe) reached here: the normal
+    // snapshot-complete path dismisses the curtain from the feed and calls Complete, never Reset
+    // from a non-idle phase. Drop the cover so it cannot trap the menu black.
     coop::join_curtain::Reset();
     UE_LOGI("join_progress: Reset -- loading screen hidden");
 }
@@ -209,36 +201,28 @@ void Reset() {
 void RequestCancel() {
     if (!Active()) return;
     if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
-    // We won the abort as a user CANCEL: silent, no failure modal. Clear any reason a
-    // losing Fail set in a race (the winner defines the abort's semantics).
+    // We won the abort as a player cancel: silent, no failure modal. Clear any reason a losing
+    // Fail set in a race (the winner defines the abort's semantics).
     { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
     UE_LOGI("join_progress: Cancel requested -- aborting the join");
 }
 
 void Fail(const std::string& reason) {
-    // No-op unless a browser join is in flight (so a host / env-boot failure can't pop a
+    // No-op unless a browser join is in flight (so a host or scripted-boot failure cannot pop a
     // client cover) and idempotent (the connect-fail detector re-fires every tick until the
-    // harness drains the abort -- log + flag exactly once).
+    // harness drains the abort; log and flag exactly once).
     if (!Active()) return;
     if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
-    // We won the abort as a FAILURE: stash the reason for ui/connect_failed_dialog, unless
-    // the process is tearing down (no UI to show; a "shutting down" reason must not pop a
-    // modal). Set only by the winner, so a racing Cancel that won first keeps it silent.
-    //
-    // ...AND THE FIRST REASON OF AN ATTEMPT WINS, which is the half of "idempotent"
-    // this function only claimed to have. `g_abortReq` is DRAINED by the harness
-    // (TakeAbortRequest) the moment it acts on the abort, so a detector that re-fires
-    // -- and the connect-fail edge re-fires every tick by design -- wins the exchange
-    // a second time and used to overwrite the stashed reason. Measured 2026-09-01: a
-    // client refused a locked host, stashed the sentence saying exactly why, and two
-    // ticks later replaced it with the generic "could not connect to the host",
-    // because the specific reason had already been MOVED out of the session by the
-    // first TakeHostCloseReason. The player read the fallback; the real reason
-    // existed, was correct, and was destroyed by its own success.
-    //
-    // Safe within an attempt and across them: BeginConnect / BeginHostBoot / Cancel
-    // each clear g_failReason, so this keeps the CAUSE of one failed join and never
-    // leaks it into the next.
+    // We won the abort as a failure: stash the reason for the connect-failed dialog, unless the
+    // process is tearing down (no UI to show; a shutting-down reason must not pop a modal). Set
+    // only by the winner, so a racing cancel that won first keeps it silent. And the first reason
+    // of an attempt wins: the abort flag is drained by the harness the moment it acts on the
+    // abort, so a detector that re-fires (the connect-fail edge re-fires every tick by design)
+    // wins the exchange a second time and used to overwrite the stashed reason with the generic
+    // fallback, because the specific reason had already been moved out of the session by the
+    // first take of the host's close reason. Safe within an attempt and across them:
+    // BeginConnect, BeginHostBoot and Cancel each clear the reason, so this keeps the cause of
+    // one failed join and never leaks it into the next.
     bool kept = false;
     if (!coop::shutdown::IsShuttingDown()) {
         std::lock_guard<std::mutex> lk(g_failMu);
@@ -253,10 +237,10 @@ void Fail(const std::string& reason) {
 }
 
 void RefuseJoin(const std::string& reason) {
-    // Pre-flight rejection (v122 version gate): nothing is in flight -- no cover was
-    // raised, no abort to request -- so unlike Fail there is NO Active() gate. Just
-    // stash the reason; connect_failed_dialog renders on FailPending() alone and the
-    // OK button / the next BeginConnect clears it (the measured bounded lifecycle).
+    // A pre-flight rejection (the version gate): nothing is in flight, no cover was raised and
+    // there is no abort to request, so unlike Fail there is no active gate. Just stash the
+    // reason; the connect-failed dialog renders on the pending flag alone, and its OK button or
+    // the next BeginConnect clears it.
     if (coop::shutdown::IsShuttingDown()) return;
     {
         std::lock_guard<std::mutex> lk(g_failMu);
@@ -306,9 +290,9 @@ void MaybeTimeout() {
     if (!Active()) return;
     const int64_t start = g_startMs.load(std::memory_order_relaxed);
     if (start == 0) return;
-    // HOST boot: the harness owns the lifecycle (Reset on session-start / its own
-    // timeout). This is only a last-resort backstop so a wedged host boot can't trap
-    // the cover forever -- just drop it (no Fail: there is no client session to Stop).
+    // A host boot: the harness owns the lifecycle (a reset on session start or its own timeout).
+    // This is only a last-resort backstop so a wedged host boot cannot trap the cover forever:
+    // just drop it (no Fail, there is no client session to stop).
     if (static_cast<Mode>(g_mode.load(std::memory_order_relaxed)) == Mode::Host) {
         if (NowMs() - start > kMaxHostBootMs) {
             UE_LOGW("join_progress: host-boot cover exceeded %llds -- dropping it (failsafe)",
@@ -318,10 +302,10 @@ void MaybeTimeout() {
         return;
     }
     if (NowMs() - start > kMaxJoinMs) {
-        // FAIL, not a bare Reset: Reset hides the cover but never tells the harness to Stop
-        // the session, so a stuck/zombie net session keeps net_pump pumping the full gameplay
-        // tick at the menu -- the RAM balloon. Fail sets the abort the harness drains (Stop +
-        // reopen browser), which actually ends the pump. (audit Issue 7, 2026-06-06.)
+        // Fail, not a bare Reset: Reset hides the cover but never tells the harness to stop the
+        // session, so a stuck or zombie net session keeps the pump running the full gameplay tick
+        // at the menu, the RAM balloon. Fail sets the abort the harness drains (stop and reopen the
+        // browser), which actually ends the pump.
         Fail("connection timed out (lost SnapshotComplete or a stalled drain?)");
     }
 }
