@@ -1,49 +1,9 @@
-// coop/net/session.cpp -- PR-4 multi-peer GNS implementation.
-//
-// Lifecycle (host):
-//   Start():    Init GNS (refcounted) -> register status callback ->
-//               CreateListenSocketIP -> CreatePollGroup -> spin NetThread.
-//   On Connecting (None->Connecting status callback): find lowest free
-//               client slot in [1..kMaxPeers-1], AcceptConnection,
-//               SetConnectionUserData(slot), SetConnectionPollGroup ->
-//               wait for Connected.
-//   On Connected: ConfigureConnectionLanes per connection. Aggregate
-//               state_=Connected if it isn't already.
-//   On Closed:  free the slot; if any peers remain, stay Connected;
-//               otherwise downgrade aggregate state_=Handshaking, reset
-//               all remote state.
-//   Stop():     CloseConnection on every active peer, DestroyPollGroup,
-//               CloseListenSocket, join NetThread.
-//
-// Lifecycle (client):
-//   Start():    Init GNS -> register status callback ->
-//               ConnectByIPAddress -> store hConn at peerConns_[0] ->
-//               spin NetThread.
-//   On Connected: ConfigureConnectionLanes, aggregate state_=Connected.
-//   On Closed:  clear peerConns_[0], state_=Handshaking, reset remote.
-//   Stop():     CloseConnection(peerConns_[0]), join.
-//
-// Receive (net thread):
-//   Host:   ReceiveMessagesOnPollGroup(hPollGroup_, ...).
-//           Per-msg peerSlot = msg->m_nConnUserData (set at AcceptConnection).
-//   Client: ReceiveMessagesOnConnection(peerConns_[0], ...).
-//           peerSlot = 0.
-//   Dispatch through HandleMessage(peerSlot, data, len).
-//
-// Send (net thread, pose stream @ sendHz):
-//   Host:   iterate peerConns_[1..kMaxPeers-1], SendMessageToConnection for
-//           each (UnreliableNoDelay; per-peer m_idxLane=0 implicit).
-//   Client: SendMessageToConnection(peerConns_[0], ...).
-//
-// Send (game thread, SendReliable):
-//   Host:   allocate one SteamNetworkingMessage_t PER connected client
-//           (GNS owns each), set m_idxLane=LaneForKind(kind), SendMessages.
-//   Client: single message to peerConns_[0].
-//
-// Wire format inside each GNS message is unchanged from PR-2/PR-3:
-// PacketHeader (20 B) + the per-MsgType body (PoseSnapshot / PropPosePacket /
-// ReliableHeader+payload). The header's token field is always 0 (GNS auth
-// replaces it).
+// coop/net/session.cpp -- the GameNetworkingSockets session: the reliable send paths, the
+// admission handler for unproved connections, the per-message dispatch and the net thread's loop
+// (the signaling poll, callbacks, the pending sweep, the inbound drain with its backpressure
+// pause, the stream fan-out, the backlog drain, the per-second diagnostics). Start/Stop and the
+// status callbacks live in session_start.cpp and session_status.cpp; the scalar streams, the NPC,
+// world-actor and trash-carry batches, voice and the relay each have their own file beside this.
 
 #include "coop/net/session.h"
 
@@ -78,43 +38,15 @@ uint64_t NowMs() {
 
 constexpr int kSendStaging = kMaxPacketBytes;
 
-// PR-3 priority lanes + the T2-3 host-relay kind whitelist now live in the
-// shared internal header coop/net/session_lanes.h so session_relay.cpp can
-// reuse LaneForKind without duplicating the switch (T2-3 extraction). Pin
-// Lane::Count to session_status.cpp's hard-coded kLaneCount=3 at compile
-// time: a 4th lane here would flow through LaneForKind but
-// ConfigureConnectionLanes would still pass 3, silently dropping reliables
-// on the new lane.
+// The lanes and the relayable-kind list live in session_lanes.h; Lane::Count is pinned to the
+// kLaneCount ConfigureLanesForPeer passes, or a fourth lane would flow through LaneForKind while
+// the connection still configured three.
 static_assert(static_cast<int>(Lane::Count) == 3,
               "Lane::Count changed -- update kLaneCount in session_status.cpp::ConfigureLanesForPeer");
 
-// ConfigureLanesForPeer moved to session_status.cpp (M-1 2026-05-29).
-// Used only by HandleConnStatusChanged which also moved.
-
 }  // namespace
 
-// OnConnStatusChanged + ConnStatusTrampoline + the g_session bridge moved to
-// session_start.cpp (2026-06-05) alongside Start/Stop.
-
-// FindFreePeerSlotForClient / FindPeerSlotForConn / ResetPeerRemoteState /
-// connectedPeerCount / HandleConnStatusChanged moved to session_status.cpp
-// (M-1 2026-05-29) to bring this file under the 800-LOC soft cap.
-
 Session::~Session() { Stop(); }
-
-// Session::Start (topology dispatch) + Session::Stop moved to
-// session_start.cpp (2026-06-05) to bring this file under the 800-LOC cap
-// and give the upcoming P2P branch a clean home.
-
-// The 9 SCALAR stream channels (pose/prop/ragdoll/hand/deskCursor/hostClock/
-// deskSim/dishPose/reelPose) -- Set* publishers, TryGet* readers, the
-// HandleMessage receive-store (StoreStreamPacket) and the NetThread step-3
-// fan-out (SendStreamsTick) -- moved to session_streams.cpp (2026-07-18, the
-// 800-LOC cap; bodies verbatim).
-
-// SetLocalNpcPoseBatch / TakeRemoteNpcBatch / SerializeLocalNpcBatch /
-// StoreRemoteNpcBatch -> session_npc.cpp (v37 NPC pose batch path; extracted
-// 2026-06-07 per the 800-LOC soft cap).
 
 bool Session::TryGetReliable(ReliableMessage& out) {
     std::lock_guard<std::mutex> lk(reliableInboxMutex_);
@@ -124,14 +56,10 @@ bool Session::TryGetReliable(ReliableMessage& out) {
     return true;
 }
 
-// (v66 voice send/inbox live in session_voice.cpp -- the session_npc.cpp
-// extraction precedent; session.cpp had crossed the 800-LOC soft cap.)
-
 namespace {
-// R-4b: build the complete on-wire reliable packet (PacketHeader +
-// ReliableHeader + payload) into `buf` (caller-sized). ONE builder for the
-// guaranteed path, the try path and the fan-out -- the backlog stores and
-// retries exactly these bytes.
+// Build the complete on-wire reliable packet (PacketHeader + ReliableHeader + payload) into
+// `buf`: one builder for the guaranteed path, the try path and the fan-out, so the backlog retries
+// exactly these bytes.
 int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int len,
                        uint32_t seq, uint32_t ownEpoch, uint8_t senderSlot) {
     auto* hdr = reinterpret_cast<PacketHeader*>(buf);
@@ -140,8 +68,7 @@ int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int
     std::memset(rh, 0, sizeof(*rh));
     rh->kind = static_cast<uint8_t>(kind);
     rh->payloadLen = static_cast<uint16_t>(len);
-    // len=0 with payload=nullptr is a legitimate control packet; memcpy of a
-    // null source is UB pre-C++20, hence the guard.
+    // len=0 with a null payload is a legitimate control packet; memcpy from null is UB.
     if (len > 0 && payload) {
         std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
     }
@@ -151,10 +78,9 @@ int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int
 
 bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                                  int len, uint8_t senderSlot) {
-    // R-4b D2: the save-stream family is the pump's PACING lane -- it must not
-    // mix with the backlog (a bypassing chunk would overtake a queued Begin in
-    // the same Bulk lane). The pump calls TrySendReliableToSlot directly; this
-    // routing keeps any stray caller correct rather than silently wrong.
+    // The save-stream family is the pump's pacing lane and must not mix with the backlog (a
+    // bypassing chunk would overtake a queued Begin in the same lane); the pump calls
+    // TrySendReliableToSlot itself, and this routing keeps a stray caller correct.
     if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk)
         return TrySendReliableToSlot(peerSlot, kind, payload, len, senderSlot);
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
@@ -163,12 +89,10 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
                 peerSlot, len, kMaxReliablePayload);
         return false;
     }
-    // v56 pre-world gate (B2, the MTA invariant): world-mutating kinds don't
-    // flow to a slot that hasn't announced world-ready (a menu-mode joiner is
-    // connected ~30-60 s before it has a world); the world-ready connect replay
-    // reconstructs all of it. Allowlist: handshake/identity + the save transfer.
-    // Deliberately NOT absorbed by the backlog: queueing a gate-skip would
-    // deliver stale pre-world mutations at ready-time and DUPE the replay.
+    // The pre-world gate: world-mutating kinds do not flow to a slot that has not announced
+    // world-ready (a menu-mode joiner is connected 30-60 s before it has a world); the connect
+    // replay rebuilds all of it. Not absorbed by the backlog: a queued gate-skip would deliver
+    // stale mutations at ready time and duplicate the replay.
     if (!IsSlotWorldReady(peerSlot) && !IsPreWorldSendableKind(kind)) return false;
     const uint32_t hConn = peerConns_[peerSlot].load();
     if (hConn == 0) return false;
@@ -176,8 +100,8 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     uint8_t wire[sizeof(PacketHeader) + sizeof(ReliableHeader) + kMaxReliablePayload];
     const int total = BuildReliableWire_(wire, kind, payload, len,
                                          sendSeq_.fetch_add(1), ownEpoch_, senderSlot);
-    // Delivery contract: entered the stream or the backlog -> true; a dying
-    // connection -> false (teardown owns cleanup). See send_backlog.h.
+    // Entered the stream or the backlog: true; a dying connection: false (teardown owns the
+    // cleanup). See send_backlog.h.
     return backlog_.SendOrQueue(peerSlot, static_cast<int>(LaneForKind(kind)),
                                 hConn, wire, total);
 }
@@ -185,10 +109,9 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
 bool Session::TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                                     int len, uint8_t senderSlot) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
-    // v56: SaveTransferChunk is the one BULK kind -- it bypasses the 228B inbox on
-    // the receiver (bulk sink), so its real bound is ReliableHeader.payloadLen's
-    // uint16 (kSaveChunkBytes + 4 fits with headroom). Everything else keeps the
-    // tight event-datagram cap.
+    // SaveTransferChunk is the one bulk kind: it bypasses the inbox on the receiver (the bulk
+    // sink), so its bound is ReliableHeader.payloadLen's uint16; everything else keeps the
+    // event-datagram cap.
     const int cap = (kind == ReliableKind::SaveTransferChunk) ? 65000 : kMaxReliablePayload;
     if (len < 0 || len > cap) {
         UE_LOGW("net: TrySendReliableToSlot rejected (slot=%d len=%d > %d)",
@@ -220,8 +143,8 @@ bool Session::TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void*
     int64 outMsgNum = 0;
     sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
     if (outMsgNum < 0) {
-        // Save-family sends fail ROUTINELY under send-buffer backpressure -- that
-        // IS the pump's pacing signal (it retries next tick); don't spam.
+        // Save-family sends fail routinely under send-buffer backpressure: that is the pump's
+        // pacing signal, not a warning.
         return false;
     }
     net_stats::AddSent(static_cast<uint32_t>(total));
@@ -237,16 +160,14 @@ bool Session::SendRawReliableToConn(uint32_t hConn, ReliableKind kind,
     const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
     SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
     if (!msg) return false;
-    // senderSlot 0: the admission exchange predates any slot assignment on both
-    // ends, and the receiver of these three kinds never reads it (the host routes
-    // by the connection's pending tag, the client has exactly one peer).
+    // senderSlot 0: the admission exchange predates any slot assignment, and the receiver of these
+    // kinds never reads it (the host routes by the pending tag, the client has one peer).
     BuildReliableWire_(static_cast<uint8_t*>(msg->m_pData), kind, payload, len,
                        sendSeq_.fetch_add(1), ownEpoch_, /*senderSlot*/0);
     msg->m_conn = static_cast<HSteamNetConnection>(hConn);
     msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
-    // Lane 0 explicitly. ConfigureConnectionLanes has NOT run on this connection
-    // yet -- it is part of finishing the link, which admission gates -- and GNS
-    // gives every connection lane 0 by default.
+    // Lane 0 explicitly: the lanes are configured when the link is finished, which admission gates,
+    // and GNS gives every connection lane 0 by default.
     msg->m_idxLane = 0;
     int64 outMsgNum = 0;
     sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
@@ -267,8 +188,7 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
         UE_LOGW("net: SendReliable rejected (len=%d > %d)", len, kMaxReliablePayload);
         return false;
     }
-    // ONE wire build, ONE seq for the whole fan-out (the pre-R-4b behavior);
-    // the backlog copies the bytes per slot as needed.
+    // One wire build and one seq for the whole fan-out; the backlog copies the bytes per slot.
     uint8_t wire[sizeof(PacketHeader) + sizeof(ReliableHeader) + kMaxReliablePayload];
     const int total = BuildReliableWire_(wire, kind, payload, len,
                                          sendSeq_.fetch_add(1), ownEpoch_, /*senderSlot*/0);
@@ -278,9 +198,9 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     for (int i = 0; i < kMaxPeers; ++i) {
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
-        // v56 pre-world gate (B2) -- same rule as SendReliableToSlot, per slot.
+        // The pre-world gate, per slot (SendReliableToSlot's rule).
         if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
-        // R-4b delivery contract per slot (stream or backlog -> counted sent).
+        // Delivery per slot: the stream or the backlog counts as sent.
         if (backlog_.SendOrQueue(i, laneIdx, hConn, wire, total)) anySuccess = true;
     }
     return anySuccess;
@@ -294,8 +214,9 @@ bool Session::SendPropRelease(const WireKey& key,
     p.key = key;
     p.linVelX = linVelX; p.linVelY = linVelY; p.linVelZ = linVelZ;
     p.angVelX = angVelX; p.angVelY = angVelY; p.angVelZ = angVelZ;
-    p.elementId = elementId;  // v82: a keyless trash clump is routed by eid (key=None can't disambiguate)
-    p.ctx = ctx;              // v82: stamp the host's per-eid generation so a stale throw can't re-apply post-transition
+    p.elementId = elementId;  // a keyless trash clump is routed by eid (key=None cannot disambiguate)
+    p.ctx = ctx;              // the host's per-eid generation, so a stale throw cannot re-apply after a
+                              // transition
     return SendReliable(ReliableKind::PropRelease, &p, sizeof(p));
 }
 
@@ -317,49 +238,27 @@ bool Session::SendEntityDestroy(uint32_t elementId) {
     return SendReliable(ReliableKind::EntityDestroy, &p, sizeof(p));
 }
 
-// ---- ADMISSION: what an UNADMITTED connection is allowed to do ------------
-// Security A2/A57/A15. A parked connection holds no player seat, so it cannot
-// reach any handler that takes a senderSlot -- which is every handler. This is
-// the ONLY code an unproved peer can run.
-//
-// THE ADMISSION TEST IS THE IDENTITY CHALLENGE (v144, 2026-08-29). A peer is
-// seated when, and only when, it has signed our nonce with the private key its
-// GNS identity names -- see coop/net/peer_admission.h for the exchange and for
-// why the library's own checks cannot substitute for it.
-//
-// WHAT THIS REPLACED, AND WHY THE INTERMEDIATE STEP EXISTED. The 2026-08-26 gate
-// admitted on "sent one well-formed packet of our protocol version", which was
-// honest about buying only the SEAT half of A57: a silent socket or a wrong-build
-// socket could no longer hold the lobby shut, but a peer that merely spoke could
-// still pull the host's entire world. `[V]` It could not have been tightened to
-// "send a Join" -- that draft was measured to deadlock every honest join, because
-// a joining client is in MENU MODE with no world and its FIRST message is
-// `SaveTransferRequest` (kind 42); it must fetch the save and load it before it
-// can Join at all. That measurement is why the gate needed its own wire pair
-// UPSTREAM of the save rather than a field on an existing packet.
+// ---- admission: what an unadmitted connection may do ----
+// A parked connection holds no seat, so it cannot reach any handler that takes a senderSlot,
+// which is every handler; this is the only code an unproved peer can run. The admission test is
+// the identity challenge (coop/net/peer_admission.h): a peer is seated when it has signed our
+// nonce with the private key its GNS identity names. The gate needs its own wire pair upstream of
+// the save transfer, because a joining client is in menu mode and its first message is
+// SaveTransferRequest; "send a Join first" deadlocks every honest join.
 void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data, int len) {
-    // THE BAND IS THE AUTHORITY ON WHETHER THIS INDEX IS STILL LIVE, and this
-    // guard is what makes a refusal cost O(1) instead of O(packets already
-    // queued). GNS hands the drain up to 256 messages at once, each carrying the
-    // user data it had when it was received -- so after we refuse and close a
-    // connection, every message of ITS that was already in the same batch still
-    // routes here. Without this test each one re-ran the refusal: another
-    // `CloseConnection`, and another `UE_LOGW`, and `[V]` a WARN does a
-    // synchronous `fflush` under a lock the game thread shares (`log.cpp:225-227`,
-    // whose own comment records ~50 flushes/sec "visibly tanking FPS"). One junk
-    // burst from an UNAUTHENTICATED peer was therefore 256 disk syncs.
-    // Found by a post-ship audit, 2026-08-29. The pre-arc gate could not have this
-    // shape: it admitted on the first well-formed packet, so a pending connection
-    // logged at most once.
+    // The band is the authority on whether this index is still live, and the guard makes a refusal
+    // O(1): GNS hands the drain up to 256 messages carrying the user data they had at receipt, so
+    // after a refusal every message of that connection's already in the batch still routes here,
+    // and without this each re-ran the refusal (a CloseConnection and a WARN, whose fflush is a
+    // disk sync).
     if (pendIdx < 0 || pendIdx >= kMaxPending) return;
     if (pendingConns_[pendIdx].load(std::memory_order_acquire) != hConn) return;
     MsgType type;
     uint32_t seq, senderEpoch;
     uint8_t headerSenderSlot;
     if (!ParseHeader(data, len, type, seq, senderEpoch, headerSenderSlot)) {
-        // Protocol mismatch is worth SAYING to an unadmitted peer too -- the
-        // pre-fix silent-hang failure mode (handshake fine, every packet
-        // dropped, connection "Connected" forever) is exactly as confusing here.
+        // A protocol mismatch is worth saying to an unadmitted peer too; the silent alternative is
+        // a connection that stays "Connected" forever with every packet dropped.
         const uint16_t peerVer = PeekProtocolVersion(data, len);
         if (peerVer != 0 && peerVer != kProtocolVersion) {
             char reason[64];
@@ -377,8 +276,8 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     const int payloadLen = len - static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader));
     const void* payload = static_cast<const uint8_t*>(data) + sizeof(PacketHeader) +
                           sizeof(ReliableHeader);
-    // The declared length must match what actually arrived before anything reads
-    // the body: this is the one parser an unauthenticated peer can reach.
+    // The declared length must match what arrived before anything reads the body: this is the one
+    // parser an unauthenticated peer can reach.
     if (payloadLen < 0 || rh.payloadLen != static_cast<uint16_t>(payloadLen)) {
         UE_LOGW("net: PENDING %d sent a length-inconsistent packet -- closing", pendIdx);
         RetirePending(pendIdx, hConn, "malformed packet");
@@ -395,20 +294,11 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         return;
     }
 
-    // SUPERSESSION: one identity, one seat. A peer that has PROVED possession of
-    // the key already sitting in a slot is that person, so the older connection
-    // goes and the new one is seated -- synchronously, here, before the seat is
-    // asked for, or the returning player would be refused by a lobby that its own
-    // ghost is filling.
-    //
-    // THE TRIGGER IS NOT AN ATTACK, IT IS A DROPPED LINK. GNS takes seconds to
-    // tens of seconds to time out a dead connection; a player who rejoins inside
-    // that window used to take a SECOND seat under the same identity -- and `[V]`
-    // `PlayerFilePath` (`player_inventory_sync.cpp:88-102`) keys the stored
-    // inventory by GUID, not by slot, so both seats then marked the same
-    // `coop_players/<slot>/<guid>.json` dirty and persisted it: last writer wins,
-    // silent inventory loss. Found by a post-ship audit, 2026-08-29; PLAN_01 §2.3
-    // specified this and part 2 shipped without it.
+    // Supersession, one identity one seat: a peer that proved the key already sitting in a slot is
+    // that person, so the older connection goes and the new one is seated, here, before the seat is
+    // asked for. The trigger is a dropped link, not an attack: GNS takes seconds to time out a dead
+    // connection, a player rejoining inside that window would otherwise take a second seat, and the
+    // stored inventory is keyed by guid, so both seats would persist it (last writer wins).
     const std::string guid = peer_identity::GuidForPublicKey(res.provedKey);
     for (int s = 1; s < kMaxPeers; ++s) {
         if (peerConns_[s].load() == 0) continue;
@@ -425,12 +315,10 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         RetirePending(pendIdx, hConn, "host full");
         return;
     }
-    // The peer's storage guid is DERIVED from the key it just proved, and it is
-    // published here -- on the net thread, into a net-owned store -- because the
-    // roster row is game-thread-only (`roster_ledger.cpp:210` asserts it). The
-    // Join handler reads it back on the game thread. This is the whole point of
-    // the arc: the guid that names a player's stored inventory is now a fact about
-    // a key, not a 32-char string the peer asked to be called.
+    // The peer's storage guid is derived from the key it proved and published here, on the net
+    // thread into a net-owned store, because the roster row is game-thread-only; the Join handler
+    // reads it back there. The guid naming a player's stored inventory is a fact about a key, not a
+    // string the peer asked to be called.
     SetProvedGuidForSlot(slot, guid);
     UE_LOGI("net: PENDING %d ADMITTED -> slot %d (identity-bound, guid %s)",
             pendIdx, slot, guid.c_str());
@@ -443,11 +331,9 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     uint32_t senderEpoch;
     uint8_t headerSenderSlot;
     if (!ParseHeader(data, len, type, seq, senderEpoch, headerSenderSlot)) {
-        // Distinguish "random garbage / spoofed packet" (silent drop) from
-        // "a peer running an older/newer protocol" (close cleanly with a
-        // human-readable reason so both ends see WHY they got dropped --
-        // pre-fix this was a silent hang: handshake succeeds, every
-        // application packet drops, connection stays "Connected" forever).
+        // Distinguish garbage (a silent drop) from a peer on another protocol version (a clean
+        // close with a readable reason, so both ends see why): the silent alternative is a
+        // connection that stays "Connected" with every packet dropped.
         const uint16_t peerVer = PeekProtocolVersion(data, len);
         if (peerVer != 0 && peerVer != kProtocolVersion &&
             peerSlot >= 0 && peerSlot < kMaxPeers) {
@@ -472,21 +358,11 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
     net_stats::AddRecv(static_cast<uint32_t>(len));
 
-    // PR-FOUNDATION-1b v16: per-peer stale-generation defense. The first
-    // packet from this slot establishes the expected epoch; subsequent
-    // packets must match exactly or are dropped. ResetPeerRemoteState
-    // clears expectedEpoch_[peerSlot] to 0 on disconnect so the next
-    // connection at the same slot re-latches. Two edge cases:
-    //  - senderEpoch == 0: pre-v16 sender (impossible at v16 since ParseHeader
-    //    rejects mismatched version) OR a buggy sender forgot to mint --
-    //    drop it; never latch 0.
-    //  - expectedEpoch_[slot] == 0 + senderEpoch != 0: first packet from this
-    //    slot, latch it.
-    // Lock ordering: this matches every per-peer state update below (all
-    // take remoteMutex_), so the lock is acquired once here, checked, and
-    // released before falling into the per-type switch which re-acquires
-    // it. Doing the check under the lock keeps the latch atomic with
-    // ResetPeerRemoteState's clear.
+    // The per-peer epoch latch: the slot's first packet sets the expected senderEpoch, later
+    // packets must match or are dropped; ResetPeerRemoteState clears it on disconnect so the next
+    // occupant re-latches. senderEpoch 0 is never latched (a sender that forgot to mint). Checked
+    // under remoteMutex_, the lock every per-peer store below takes, so the latch is atomic with
+    // the reset's clear.
     {
         std::lock_guard<std::mutex> lk(remoteMutex_);
         if (senderEpoch == 0) {
@@ -500,11 +376,8 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             UE_LOGI("net: latched senderEpoch=0x%08x for peer slot %d",
                     static_cast<unsigned>(senderEpoch), peerSlot);
         } else if (expected != senderEpoch) {
-            // Logged at INFO not WARN: the most common cause is a clean
-            // reconnect race (in-flight packets from the old connection
-            // arrive after the new connection's first packet relatches),
-            // which is benign and self-corrects. A WARN spam during
-            // reconnect churn would be misleading.
+            // INFO, not WARN: the common cause is a reconnect race (in-flight packets from the old
+            // connection arriving after the new one re-latched), benign and self-correcting.
             UE_LOGI("net: stale-gen drop slot=%d expected=0x%08x got=0x%08x kind=%u",
                     peerSlot,
                     static_cast<unsigned>(expected),
@@ -514,14 +387,11 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
     }
 
-    // PR-FOUNDATION Tier 2 T2-2 (host-relay): determine the LOGICAL origin
-    // slot used to ROUTE pose data into the per-puppet store, distinct from
-    // the connection slot `peerSlot` used for the epoch latch above.
-    //  - HOST: the connection IS the origin (GNS-authenticated m_nConnUserData);
-    //    trust it, ignore the header's (spoofable) senderSlot.
-    //  - CLIENT: all packets arrive on the single host connection (peerSlot 0),
-    //    so the connection can't distinguish originators -- route by the
-    //    host-stamped header senderSlot. The host is trusted to have set it.
+    // The logical origin slot that routes pose data into the per-puppet store, distinct from the
+    // connection slot the epoch latch used: on the host the connection is the origin
+    // (GNS-authenticated user data; the header's senderSlot is spoofable and ignored), on a client
+    // every packet arrives on the one host connection, so the host-stamped header senderSlot
+    // routes.
     int routeSlot = peerSlot;
     if (cfg_.role == Role::Client) {
         routeSlot = static_cast<int>(headerSenderSlot);
@@ -532,9 +402,8 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
     }
 
-    // DEV wire census (VOTVCOOP_WIRE_CENSUS=1; the D2 wire-window probe):
-    // count every non-reliable inbound by logical origin; reliables are logged
-    // individually inside their case below once the kind is parsed.
+    // The dev wire census (VOTVCOOP_WIRE_CENSUS=1): every non-reliable inbound counted by logical
+    // origin; reliables are counted once the kind is parsed.
     if (type != MsgType::Reliable && dev::wire_census::Enabled())
         dev::wire_census::NoteStream(routeSlot, static_cast<unsigned>(type));
 
@@ -548,23 +417,22 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     case MsgType::DeskSimPose:
     case MsgType::DishPose:
     case MsgType::ReelPose:
-        // -> session_streams.cpp: the 9 scalar per-channel stream cases
-        // (validate + newest-wins store + host relay; bodies verbatim).
+        // The nine scalar stream channels (session_streams.cpp): validate, newest-wins store, host
+        // relay.
         StoreStreamPacket(type, routeSlot, peerSlot, data, len, seq);
         break;
     case MsgType::EntityPose:
         StoreRemoteNpcBatch(data, len, seq);  // -> session_npc.cpp (parse + newest-wins store)
         break;
     case MsgType::WorldActorPose:
-        StoreRemoteWorldActorBatch(data, len, seq);  // v80 (B3b) -> session_worldactor.cpp (parse + newest-wins store)
+        StoreRemoteWorldActorBatch(data, len, seq);  // session_worldactor.cpp (parse + newest-wins store)
         break;
     case MsgType::TrashCarryPose:
-        StoreRemoteTrashCarryBatch(data, len, seq);  // v85 (Increment 2) -> session_trashcarry.cpp (parse + newest-wins store)
+        StoreRemoteTrashCarryBatch(data, len, seq);  // session_trashcarry.cpp (parse + newest-wins store)
         break;
     case MsgType::VoiceFrame:
-        // v66 voice: a STREAM -- queue every arrival (no header-seq stale-drop;
-        // the per-payload voice seq orders at the jitter buffer). Store + host
-        // relay live in session_voice.cpp.
+        // Voice is a stream: every arrival is queued (no header-seq stale drop; the per-payload
+        // voice seq orders at the jitter buffer). Store and relay in session_voice.cpp.
         StoreVoiceFrame(routeSlot, peerSlot, data, len);
         break;
     case MsgType::Reliable: {
@@ -573,13 +441,11 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
         if (dev::wire_census::Enabled())
             dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
-        // payloadLen is uint16_t, can't be negative -- only the upper bound is
-        // a real guard.
+        // payloadLen is a uint16, so only the upper bound is a real guard.
         const int payloadLen = static_cast<int>(rh.payloadLen);
-        // v56: the save-blob chunk exceeds the fixed inbox payload BY DESIGN --
-        // divert it whole to the registered bulk sink (coop/save_transfer's heap
-        // assembler) right here on the net thread; it never enters the 228B
-        // ReliableMessage ring (and is never relayed -- host->one-client only).
+        // The save-blob chunk exceeds the inbox payload by design: diverted whole to the bulk sink
+        // (save_transfer's heap assembler) on the net thread; it never enters the inbox and is
+        // never relayed (host to one client only).
         if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferChunk) {
             if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
             if (BulkSinkFn sink = bulkSink_.load(std::memory_order_acquire)) {
@@ -591,12 +457,11 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
-        // --- ADMISSION, CLIENT SIDE (v144) ---------------------------------
-        // Handled HERE, on the net thread, and not through the inbox: a joining
-        // client is in menu mode with no world and its game thread may be inside
-        // a multi-second save load, so an exchange that waited on the game tick
-        // would stall behind the very thing the exchange must precede. It also
-        // touches no engine object, which is what makes that possible.
+        // --- admission, client side ---
+        // On the net thread, not through the inbox: a joining client is in menu mode and its game
+        // thread may be inside a multi-second save load, so an exchange that waited on the game
+        // tick would stall behind the very thing it must precede. It touches no engine object,
+        // which makes that possible.
         if (cfg_.role == Role::Client && peerSlot == 0) {
             const uint32_t hostConn = peerConns_[0].load();
             const void* body = static_cast<const uint8_t*>(data) + sizeof(PacketHeader) +
@@ -611,13 +476,10 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                 }
                 return;  // consumed by the exchange; never reaches the game thread
             }
-            // THE HOST'S AssignPeerSlot IS THE ADMISSION SIGNAL -- peeked, not
-            // consumed: it still carries the slot + hostElementId the game thread
-            // needs, so it falls through to the inbox below. `[V]`
-            // FinishPeerConnected sends it only when role == Host, and on a host it
-            // runs only from AdmitPending, so its arrival means we were seated.
-            // Refusing it before the host has proved itself is the point: otherwise
-            // an impostor could skip the challenge and seat us anyway.
+            // The host's AssignPeerSlot is the admission signal, peeked rather than consumed (it
+            // still carries the slot and hostElementId the game thread needs). FinishPeerConnected
+            // sends it only from AdmitPending, so its arrival means we were seated. Refused before
+            // the host has proved itself, or an impostor could skip the challenge and seat us.
             if (static_cast<ReliableKind>(rh.kind) == ReliableKind::AssignPeerSlot) {
                 if (!peer_admission::ClientProvedHost()) {
                     static const char* kWhy =
@@ -629,17 +491,13 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                 FinishClientLink(hostConn);
             }
         }
-        // The admission kinds are NET-THREAD-TERMINAL in both directions: the host
-        // answers them in HandlePendingMessage (before a slot exists) and the client
-        // just above. Arriving here means an ALREADY-ADMITTED peer replayed one --
-        // it has no consumer, and letting it reach the inbox costs an event_feed
-        // "unknown ReliableKind" warning per copy.
+        // The admission kinds are net-thread-terminal in both directions; one arriving here is an
+        // already-admitted peer replaying it, with no consumer, and letting it into the inbox costs
+        // an "unknown ReliableKind" warning per copy.
         if (IsAdmissionKind(static_cast<ReliableKind>(rh.kind))) return;
-        // W3 (docs/security/PLAN_02_WIRE_HARDENING.md): divert the save-blob ANNOUNCE to the net
-        // thread too, so it lands on the same thread and in the same lane order as the chunks above.
-        // It is small enough for the inbox -- it is diverted for ORDERING, not for size, and both
-        // length guards above still applied. This is the sole Begin path (the event_feed game-thread
-        // case was retired with it, RULE 2): two paths for one message is what created the window.
+        // The save-blob announce is diverted to the net thread too, so it lands on the same thread
+        // and in the same lane order as the chunks: diverted for ordering, not size, and the sole
+        // Begin path (two paths for one message is what created the window).
         if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferBegin) {
             if (BulkSinkFn sink = saveBeginSink_.load(std::memory_order_acquire)) {
                 sink(peerSlot,
@@ -650,25 +508,12 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
-            // SECURITY W10: the 8192 hard cap that used to DROP here is gone (RULE 2).
-            // A silent drop on an in-order reliable lane is permanent state divergence,
-            // and it discarded whichever message happened to arrive at the cap -- not
-            // necessarily the flooder's. Growth is now bounded upstream instead, by the
-            // NetThread pause both roles share: the drain loop stops receiving at
-            // kReliableInboxSoftPause (6144) and GNS buffers losslessly beneath it.
-            //
-            // The pause is evaluated once per loop iteration and each iteration receives
-            // at most one 256-wide batch, so the depth cannot exceed 6144 + 256 = 6400
-            // before the next evaluation -- with 1792 messages of margin under the value
-            // this branch used to fire at. HandleMessage has exactly ONE caller (the drain
-            // loop below), so there is no second path that could grow the inbox unchecked.
-            // emplace + memcpy avoids the per-receive heap alloc
-            // (vector::assign). ReliableMessage now holds an inline 228 B
-            // payload buffer. Stamp senderPeerSlot = routeSlot so drainers
-            // route per-sender: on the host routeSlot is the authenticated
-            // connection slot; on a client it is the host-stamped origin
-            // (a relayed reliable from peer A carries senderSlot=A so B's
-            // event_feed applies it to A's puppet, not the host's).
+            // No hard cap here: a silent drop on an in-order reliable lane is permanent state
+            // divergence. Growth is bounded upstream by the NetThread pause both roles share, which
+            // stops receiving at kReliableInboxSoftPause while GNS buffers losslessly beneath; one
+            // 256-wide batch per iteration bounds the overshoot, and HandleMessage has exactly one
+            // caller. emplace + memcpy avoids a per-receive allocation; senderPeerSlot = routeSlot
+            // so drainers route per sender.
             reliableInbox_.emplace_back();
             ReliableMessage& m = reliableInbox_.back();
             m.kind = static_cast<ReliableKind>(rh.kind);
@@ -682,31 +527,22 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             if (depth > reliableInboxPeak_.load(std::memory_order_relaxed))
                 reliableInboxPeak_.store(depth, std::memory_order_relaxed);
         }
-        // Seeds arc (2026-08-23): stamp the slot RELAY-ELIGIBLE at the net-thread
-        // RECEIPT of ClientWorldReady, hConn-stamped (the send_backlog anti-recycle
-        // idiom). Placed AFTER the inbox accepted the announce (audit F-5: stamping
-        // a hard-cap-DROPPED announce would open relays while the GT flip + seed
-        // never run). The GT flip lags this instant by one drain; a peer reliable
-        // received in that gap was relay-SKIPPED for the joiner AND applied to the
-        // host array after the ready-edge seed's cur-read -- lost (the /qf R1
-        // micro-window). With the stamp, received-after rows relay directly (the
-        // joiner IS world-ready) and stay out of the seed; received-before rows
-        // drain ahead of ClientWorldReady in the FIFO inbox and ride the seed.
-        // Exactly once, by ordering. Design doc par.2 (votv-signal-email-ready-seeds).
+        // Stamp the slot relay-eligible at the net-thread receipt of ClientWorldReady,
+        // hConn-stamped, after the inbox accepted the announce. The game-thread flip lags this by
+        // one drain, and a peer reliable received in that gap would otherwise be skipped for the
+        // joiner and applied to the host after the ready-edge seed's read (lost); with the stamp,
+        // rows received after relay directly and rows received before ride the seed. Exactly once,
+        // by ordering.
         if (cfg_.role == Role::Host &&
             static_cast<ReliableKind>(rh.kind) == ReliableKind::ClientWorldReady &&
             peerSlot >= 1 && peerSlot < kMaxPeers) {
             relayEligible_[peerSlot].store(peerConns_[peerSlot].load(),
                                            std::memory_order_release);
         }
-        // Host relay (T2-3): forward peer-originated gameplay reliables to
-        // every OTHER client so cross-peer item/prop actions are seen by
-        // all. Host-authoritative kinds (Weather/RedSky/Lightning/Entity*)
-        // and handshake kinds (Join/AssignPeerSlot/PlayerJoined) are NOT
-        // relayed -- they either originate on the host (fanned out via
-        // SendReliable already) or are point-to-point handshake. The host
-        // also processes the reliable locally (above) so its own view of
-        // the origin peer's puppet updates too.
+        // Host relay: peer-originated gameplay reliables go to every other client.
+        // Host-authoritative kinds (weather, sky, entities) and handshake kinds are not relayed;
+        // the host also processes the reliable locally, so its own view of the origin's puppet
+        // updates.
         if (cfg_.role == Role::Host &&
             IsClientRelayableReliableKind(static_cast<ReliableKind>(rh.kind))) {
             RelayReliableToOtherClients(peerSlot,
@@ -720,104 +556,62 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     }
 }
 
-// RelayUnreliableToOtherClients + RelayReliableToOtherClients are defined in
-// session_relay.cpp (the host-relay subsystem TU, extracted at T2-3 when this
-// file crossed the 800-LOC soft cap).
-
 void Session::NetThread() {
     const auto sendInterval = std::chrono::milliseconds(
         cfg_.sendHz > 0 ? 1000 / cfg_.sendHz : 33);
     auto nextSend = std::chrono::steady_clock::now();
     auto nextRttSample = std::chrono::steady_clock::now();
-    // v109 (design F): the host world-clock snapshot streams on its OWN ~500 ms cadence,
-    // independent of (and far slower than) the pose sendHz -- one game-minute of real time
-    // is well over 500 ms at any plausible day length, so this keeps the frozen client
-    // mirror within a minute of the host without loading the wire. Net-thread-local (only
-    // this loop touches it), like nextSend.
+    // The host world clock streams on its own ~500 ms cadence, far slower than the pose sendHz (one
+    // game minute of real time is well over 500 ms at any day length), keeping the client's frozen
+    // mirror within a minute of the host. Net-thread-local.
     auto nextClockSend = std::chrono::steady_clock::now();
     auto nextDeskSimSend = std::chrono::steady_clock::now();
 
     auto* sockets = SteamNetworkingSockets();
 
-    // --- Net diagnostics (PERMANENT; user request 2026-06-06: "log all rate-limiting +
-    // high-PING events, now and for future"). The per-peer status block below reads GNS's
-    // real-time telemetry every ~1 s and (a) logs an INFO summary, (b) WARNs on threshold
-    // breach -- so a real user's log self-flags a slow link or a send-side rate-limit stall.
-    // The two net-thread-local counters accumulate between samples. ---
+    // Net diagnostics: the per-peer block below reads GNS's real-time telemetry every ~1 s, logs an
+    // INFO summary and WARNs on a threshold breach, so a user's log self-flags a slow link or a
+    // send-side stall. The counters accumulate between samples.
     constexpr int kHighPingMs      = 250;    // LAN ~1 ms; 250+ = a real link/relay problem
     constexpr int kHighPendingBytes = 65536; // 64 KB outbound PENDING = a real send backlog
     uint64_t sendFails  = 0;  // SendMessageToConnection rejections since the last status sample
     int      worstDrain = 0;  // worst single-pass receive drain since the last status sample
-    // W10 pause accounting, per trigger, since the last status sample. Kept SEPARATE
-    // because the two triggers mean different things: a depth pause says the game thread
-    // is behind, an apply-park pause says one lane asked for backpressure.
+    // Pause accounting per trigger, since the last sample: a depth pause says the game thread is
+    // behind, an apply-park pause says one lane asked for backpressure.
     uint64_t pauseDepthHits = 0, pauseParkHits = 0;
     size_t   pauseWorstDepth = 0;
 
     while (running_.load()) {
-        // 0) P2P: pump the signaling transport -- drain inbound ICE rendezvous
-        // blobs (-> ReceivedP2PCustomSignal, which advances the handshake) and
-        // flush outbound. Before RunCallbacks so a connection-state advance
-        // triggered by a received signal is dispatched in the SAME iteration.
-        // No-op (nullptr) for LanDirect. signaling_ is set before this thread
-        // spawned and reset only after it joins, so the lock-free read is safe
-        // (same discipline as ownEpoch_).
+        // 0) P2P: pump the signaling transport (inbound ICE rendezvous blobs advance the handshake;
+        // outbound is flushed), before RunCallbacks so a state advance a signal triggers is
+        // dispatched in the same iteration. nullptr for LanDirect; set before this thread spawned
+        // and reset after it joins, so the read needs no lock.
         if (signaling_) signaling_->Poll();
 
-        // DEV wire census: flush the aggregated stream counters at 1 Hz from the
-        // LOOP (not from arrivals), so the final second before a peer disconnect
-        // still lands in the log -- that tail IS the wire-window measurement.
+        // The dev wire census flushes its counters at 1 Hz from the loop, not from arrivals, so the
+        // final second before a disconnect still lands in the log.
         if (dev::wire_census::Enabled()) dev::wire_census::Tick();
 
-        // 1) Pump GNS internal timers + dispatch any pending status callbacks
-        // (the trampoline runs inline on THIS thread).
+        // 1) Pump GNS's timers and dispatch pending status callbacks (the trampoline runs inline on
+        // this thread).
         sockets->RunCallbacks();
 
-        // 1b) Close pending sockets that never proved an identity. Eight relaxed
-        // loads; the band's own deadline, finally enforced (see SweepPending).
+        // 1b) Close pending sockets that never proved an identity (eight relaxed loads).
         if (cfg_.role == Role::Host) SweepPending();
 
-        // 2) Drain inbound messages -- to EMPTY, every iteration. A full batch means
-        // more may be queued, so loop the receive until it returns a PARTIAL batch;
-        // only then does the idle sleep at the bottom run. ROOT-CAUSE FIX (3 converging
-        // audit agents, 2026-06-06) for the long-standing "remote player lags ~10000 ms"
-        // bug: the old 16-wide batch + the UNCONDITIONAL 5 ms sleep capped intake at
-        // 16/5ms = 3200 msg/sec -- BELOW the connect-snapshot's ~6000 reliable
-        // PropSpawn/sec burst (prop_snapshot DrainChunk 100/tick x 60 Hz). So the
-        // client's GNS receive queue backed up by SECONDS, and the unreliable pose
-        // stream interleaved behind it was delivered ~10 s stale -> the puppet froze
-        // then snapped. A 256-wide batch drained to empty clears a ~2300-msg snapshot
-        // in ~9 receive calls within one loop pass, so poses are never starved behind it.
-        // Per-pass drain cap (audit 2026-06-06): break after kMaxDrainPerPass even if the
-        // batch stays full, so the outer `while (running_)` re-checks the stop flag within a
-        // bounded number of messages. Without it a SUSTAINED flood (a buggy/hostile peer, or
-        // the 4-peer host PollGroup under a reconnect storm) keeps n==256 forever -> the inner
-        // loop never breaks -> Session::Stop()'s thread join HANGS. 4096/5ms = ~819k msg/sec is
-        // far above any real rate AND above the ~2300 one-shot snapshot (which clears in one
-        // pass via the n<256 break first), so this cap is invisible in normal operation.
+        // 2) Drain inbound messages to empty every iteration: a full batch means more may be
+        // queued, so the receive loops until a partial batch, and only then does the idle sleep run
+        // (a 16-wide batch with an unconditional sleep capped intake below the connect snapshot's
+        // ~6000 reliables/s, and the pose stream queued behind it arrived seconds stale). The
+        // per-pass cap keeps the outer loop re-checking the stop flag under a sustained flood, so
+        // Session::Stop's join cannot hang.
         constexpr int kMaxDrainPerPass = 4096;
-        // R-4b D10 + SECURITY W10 (docs/security/TRACKER.md): the reliable inbox at its
-        // threshold is BACKPRESSURE, not drop -- pause this pass's receive so GNS buffers
-        // underneath (measured lossless-by-stall: reassembly overflow does not ACK, and
-        // decoded-queue overflow refuses without advancing the stream, so the sender
-        // retransmits). The pause is bounded by the game-thread stall that caused the
-        // pile-up, since the inbox drains on the game tick; unreliable pose staleness
-        // during it is the channel's normal contract.
-        //
-        // W10: THIS USED TO BE CLIENT-ONLY, and that was the whole finding. The host had
-        // no depth check at all, so its inbox grew to a hard 8192 cap in HandleMessage and
-        // then SILENTLY DROPPED a reliable message -- permanent state divergence on an
-        // in-order lane, and the arriving message need not even be the flooder's. The
-        // comment here used to justify that with "its poll group cannot pause one
-        // connection selectively", which is doubly wrong: [V] pausing is not per-connection
-        // at all (not draining the group pauses every source, which is exactly what the
-        // client's pause does with its one source), and [V] selective pausing WOULD have
-        // been available anyway via SetConnectionPollGroup, which session_status.cpp:229
-        // already calls. The fix is therefore not a cap, a share, or a terminal: the host
-        // simply gets the pause the client already had, and the drop becomes unreachable.
-        //
-        // Both triggers are load-bearing and both apply to both roles: inbox depth, AND a
-        // lane's apply park escalating (the seeds arc -- pause-not-drop at both caps).
+        // The reliable inbox at its threshold is backpressure, not drop: pause this pass's receive
+        // so GNS buffers underneath (lossless by stall: reassembly overflow does not ACK and
+        // decoded-queue overflow refuses without advancing the stream, so the sender retransmits).
+        // The pause is bounded by the game-thread stall that caused the pile-up, since the inbox
+        // drains on the game tick. Both triggers apply to both roles: inbox depth, and a lane's
+        // apply park escalating.
         constexpr size_t kReliableInboxSoftPause = 6144;
         SteamNetworkingMessage_t* msgs[256]{};
         int drained = 0;
@@ -830,9 +624,8 @@ void Session::NetThread() {
             const bool inboxFull = inboxDepth >= kReliableInboxSoftPause;
             const bool parked    = applyBackpressureCount_.load(std::memory_order_acquire) > 0;
             if (inboxFull || parked) {
-                // Attribute the pause to ONE trigger, depth first. Conflating them would let
-                // a seeds-arc apply park read as a depth pause -- the W10 drill would then
-                // "pass" on a fire it did not cause.
+                // Attribute the pause to one trigger, depth first, so an apply park cannot read as
+                // a depth pause.
                 if (inboxFull) {
                     ++pauseDepthHits;
                     if (inboxDepth > pauseWorstDepth) pauseWorstDepth = inboxDepth;
@@ -857,23 +650,17 @@ void Session::NetThread() {
                 }
             }
             for (int i = 0; i < n; ++i) {
-                // Host: peerSlot was stashed via SetConnectionUserData at accept
-                // time; PollGroup messages carry it forward as m_nConnUserData.
-                // Client: only ever receives from peerConns_[0] (host).
+                // Host: peerSlot is the connection user data set at accept; a client only receives
+                // from the host.
                 int peerSlot;
                 if (cfg_.role == Role::Host) {
-                    // m_nConnUserData defaults to 0 (or -1 on some GNS versions)
-                    // before SetConnectionUserData lands. Narrowing a default of
-                    // 0 here would corrupt slot 0 (the host's own local-self
-                    // slot) and then the backward-compat 0-arg TryGetRemotePose
-                    // would permanently return it. Validate bounds AND reject
-                    // slot 0 on host before narrowing.
+                    // m_nConnUserData defaults to 0 or -1 before SetConnectionUserData lands;
+                    // narrowing a default 0 would corrupt slot 0, the host's own, so bounds and
+                    // slot 0 are checked before narrowing.
                     const int64 ud = msgs[i]->m_nConnUserData;
-                    // SECURITY A2/A57: a PENDING (unadmitted) connection is
-                    // tagged deliberately outside [1, kMaxPeers), so it lands in
-                    // the drop below by construction. Fork it to the admission
-                    // handler FIRST; everything that is neither a seat nor a
-                    // pending tag keeps falling into the same drop as before.
+                    // A pending connection is tagged outside [1, kMaxPeers) by construction, so it
+                    // lands in the drop below unless forked to the admission handler first;
+                    // everything that is neither a seat nor a pending tag still drops.
                     if (IsPendingUserData(ud)) {
                         HandlePendingMessage(PendingIndexOf(ud),
                                              static_cast<uint32_t>(msgs[i]->m_conn),
@@ -896,8 +683,7 @@ void Session::NetThread() {
                 msgs[i]->Release();
             }
             drained += n;
-            // Stop when the queue is drained (partial batch) OR the per-pass cap is hit
-            // (the latter guarantees the outer running_ re-check -- Stop() liveness).
+            // Stop on a partial batch or at the per-pass cap (the latter keeps Stop() live).
             if (n < static_cast<int>(std::size(msgs)) || drained >= kMaxDrainPerPass) break;
         }
         if (drained > worstDrain) worstDrain = drained;  // net-diag: receive-backlog high-water
@@ -906,18 +692,14 @@ void Session::NetThread() {
                     "sustained inbound flood; the rest is queued for the next pass",
                     kMaxDrainPerPass, cfg_.role == Role::Host ? "host" : "client");
 
-        // 3) Connected: stream the local pose at sendHz, fan out to all peers.
-        //    -> session_streams.cpp (SendStreamsTick; the step-3 body verbatim,
-        //    incl. the npc/wa/tc batch stamps). `now` is computed ONCE here and
-        //    shared with step 4's net-diag below -- one timestamp per iteration.
+        // 3) The stream fan-out at sendHz (session_streams.cpp). `now` is computed once and shared
+        // with step 4.
         const auto now = std::chrono::steady_clock::now();
         SendStreamsTick(now, sendInterval, nextSend, nextClockSend, nextDeskSimSend, sendFails);
 
-        // 3b) R-4b: drain the reliable-send backlogs (the delivery guarantee) --
-        // one pass per loop iteration per live slot. The GNS rc is the headroom
-        // read; the D8 reserve keeps the UnreliableNoDelay pose/voice streams
-        // flowing during a drain episode. A slot whose backlog trips a fatal
-        // bound (no progress / byte cap) is closed honestly, never trimmed.
+        // 3b) Drain the reliable-send backlogs, one pass per live slot; the GNS return is the
+        // headroom read, and the reserve keeps the unreliable pose and voice streams flowing during
+        // a drain. A slot whose backlog trips a fatal bound is closed, never trimmed.
         for (int i = 0; i < kMaxPeers; ++i) {
             const uint32_t hConn = peerConns_[i].load();
             if (hConn == 0) continue;
@@ -926,25 +708,20 @@ void Session::NetThread() {
             if (backlog_.CheckFatal(i, &fatalReason)) FatalCloseSlot(i, fatalReason);
         }
 
-        // 4) Per-peer NET DIAGNOSTICS every ~1 s (RTT + send-queue + rate-limit telemetry).
-        // GNS GetConnectionRealTimeStatus exposes the SEND-side state that explains a laggy
-        // peer: m_usecQueueTime (how long the NEXT outbound packet will wait before it hits the
-        // wire), m_cbPendingReliable/Unreliable (bytes already queued to send), and
-        // m_nSendRateBytesPerSecond (the rate GNS is currently allowing). When our outbound
-        // demand (the ~2300-msg connect-snapshot + the 60 Hz pose stream) exceeds the allowed
-        // send rate, packets pile up in the send queue and the pose stream is delivered SECONDS
-        // late -- which is invisible without this telemetry. Logged as an INFO summary; WARNs
-        // fire on high ping / send-queue latency / pending backlog so the events stand out (and
-        // flush to disk). rttMsBySlot_[i] gets each peer's ping for the nameplate + scoreboard.
+        // 4) Per-peer diagnostics every ~1 s from GetConnectionRealTimeStatus: queue time, pending
+        // bytes and the allowed send rate, the send-side state that explains a laggy peer (an
+        // outbound burst over the allowed rate piles up in the send queue and the pose stream
+        // arrives seconds late). An INFO summary, WARNs on high ping, queue latency or pending
+        // backlog; rttMsBySlot_ gets each peer's ping.
         if (state_.load() != ConnState::Connected && now >= nextRttSample) {
-            // Not connected: publish zeroed rates so the ui net-stats panel reads
-            // "offline" instead of the last live sample frozen forever (totals stay).
+            // Not connected: publish zeroed rates so the net-stats panel reads offline rather than
+            // the last live sample frozen.
             net_stats::PublishRates(0.f, 0.f, 0.f, 0.f, 0, -1, false);
             nextRttSample = now + std::chrono::milliseconds(1000);
         }
         if (state_.load() == ConnState::Connected && now >= nextRttSample) {
-            // ui net-stats: sum the GNS real-time view across live conns (wire-level
-            // bytes/pkts per sec incl. acks/retransmits) + the worst ping among them.
+            // Net stats: the GNS real-time view summed across live connections (wire-level bytes
+            // and packets per second, acks and retransmits included) plus the worst ping.
             float sumInBps = 0.f, sumOutBps = 0.f, sumInPktps = 0.f, sumOutPktps = 0.f;
             int livePeers = 0, pingMax = -1;
             for (int i = 0; i < kMaxPeers; ++i) {
@@ -958,14 +735,13 @@ void Session::NetThread() {
                 sumOutPktps += st.m_flOutPacketsPerSec;
                 ++livePeers;
                 if (st.m_nPing >= 0 && st.m_nPing < 60000 && st.m_nPing > pingMax) pingMax = st.m_nPing;
-                // m_usecQueueTime ("usec until the next send") returns a huge sentinel (~INT64_MAX)
-                // whenever the estimate is undefined -- which is MOST of the time, even WITH a little
-                // pending data -- so clamp anything absurd to 0. The reliable send-backlog signal is
-                // the PENDING BYTES (m_cbPendingReliable/Unreliable), not this field.
+                // m_usecQueueTime returns a huge sentinel whenever the estimate is undefined, which
+                // is most of the time, so anything absurd clamps to 0; the pending bytes are the
+                // real backlog signal.
                 long long queueMs = static_cast<long long>(st.m_usecQueueTime / 1000);
                 if (queueMs < 0 || queueMs > 60000) queueMs = 0;  // sentinel / no estimate -> 0
-                // Store THIS slot's RTT for the per-peer nameplate + scoreboard ping
-                // (event_feed fans it to the slot's puppet; roster reads it per row).
+                // This slot's RTT for the nameplate and the scoreboard (event_feed fans it to the
+                // puppet).
                 rttMsBySlot_[i].store((st.m_nPing >= 0 && st.m_nPing < 60000) ? st.m_nPing : -1,
                                       std::memory_order_relaxed);
                 UE_LOGI("net-diag[slot %d]: ping=%dms qual=%.0f/%.0f%% in=%.0f out=%.0f pkt/s "
@@ -979,8 +755,8 @@ void Session::NetThread() {
                 if (st.m_nPing > kHighPingMs)
                     UE_LOGW("net-diag[slot %d]: HIGH PING %d ms (> %d) -- the link/relay is slow",
                             i, st.m_nPing, kHighPingMs);
-                // Send backlog = PENDING BYTES over threshold (the reliable signal; queueMs is
-                // sentinel-prone). A real rate-limit / slow-link stall shows here as KB+ pending.
+                // A send backlog is pending bytes over the threshold; a rate limit or a slow link
+                // shows here as KB pending.
                 if (st.m_cbPendingReliable > kHighPendingBytes ||
                     st.m_cbPendingUnreliable > kHighPendingBytes)
                     UE_LOGW("net-diag[slot %d]: SEND BACKLOG pendRel=%dB pendUnrel=%dB (> %d) -- the "
@@ -997,10 +773,9 @@ void Session::NetThread() {
             if (worstDrain > static_cast<int>(std::size(msgs)))
                 UE_LOGW("net-diag: receive backlog -- worst single-pass drain %d msgs (> one 256 "
                         "batch) since last sample; an inbound burst exceeded the batch", worstDrain);
-            // SECURITY W10 instrument. Reported EVERY sample, including the quiet case, and
-            // with its INPUT: the peak depth is what the pause compares, so "no pause fired"
-            // is only meaningful next to how close the depth actually came. Without this the
-            // drill cannot tell a working pause from a depth that never got there.
+            // Reported every sample, quiet case included, with its input: the peak depth is what
+            // the pause compares, so "no pause fired" means something only beside how close the
+            // depth came.
             const uint32_t inboxPeak = reliableInboxPeak_.exchange(0, std::memory_order_relaxed);
             UE_LOGI("net-diag: reliable inbox peak %u/%zu since last sample (%s); pauses: "
                     "depth=%llu (worst %zu) park=%llu",
