@@ -2,26 +2,25 @@
 
 ## Purpose
 
-How a change is tested without a human in the loop, what that proves and what it cannot, and
-the gates a push and a release run. The rig is two to four copies of the game on one machine,
-driven by one Python launcher, judged by their logs.
+How to run the test rig, what it can stage, and the gates a push and a release run. The rig is two
+to four copies of the game on one machine, driven by one launcher and judged by their logs.
 
 ## How it works
 
 ### The rig
 
-Four copies of the game live beside the repository, each with its own saved games and logs:
-a host, two clients, and a fourth used for development and autonomous runs. One script deploys
-the built DLL into every copy's mod folder, skipping a copy whose bytes already match
-(`tools/deploy-all.ps1`, over `tools/deploy-mod.ps1`); another installs the pinned UE4SS
-loader into a copy once, verifying its hash and refusing on a mismatch
-(`tools/install-ue4ss.ps1`). Nothing in a game copy is tracked.
+Four copies of the game live beside the repository, each with its own saved games and logs: a
+host, two clients and a fourth kept for development. `tools/deploy-all.ps1` deploys the built DLL
+into every copy's mod folder (over `tools/deploy-mod.ps1`, which skips a copy whose bytes already
+match); `tools/install-ue4ss.ps1` installs the pinned UE4SS loader into a copy once, verifying its
+hash. Nothing in a game copy is tracked.
 
 ### The launcher
 
-`tools/mp.py` deploys and launches peers and runs the scenarios; its `host` and `client`
-subcommands are the entry points for a person hosting or joining by hand. Every step prints a line as it happens,
-and the game is launched detached so the launcher never holds its pipes.
+`tools/mp.py` deploys and launches peers and runs scenarios. `host`, `client`, `client2` and
+`client3` launch one peer each for hands-on play; `kill` stops every game process. Every step
+prints a line as it happens, and the game is launched detached so the launcher never holds its
+pipes.
 
 The smoke is the standing regression check:
 
@@ -30,41 +29,45 @@ python tools/mp.py smoke --duration 60
 ```
 
 It deploys, launches the host windowed, waits for it to bind its port, launches a client, samples
-every process's memory on an interval for the duration, kills everything if any peer crosses the
-memory threshold, tails both logs, kills both peers, and passes only if both were alive at the
-last sample and nothing breached the threshold. Its own verdict is liveness and memory; the
-subsystem verdicts are read from the logs. `smoke4` runs a host and three clients with a
-staggered connect and proves the host relay end to end by finding, in each client's log, a
-puppet spawned for another client. The other subcommands are one scenario each: join churn,
-world-reload churn, NPC and kerfur drills, the death run, the container take race, the browser
-lab run, the chat history and seed drills with a must-fail injection, the admission drill, a
-dead master, a graceful exit, and screenshot runs for the menu, the scoreboard and the puppet.
+every process's memory on an interval, kills everything if a peer crosses the memory threshold,
+tails both logs, kills both peers, and passes only if both were alive at the last sample. Its own
+verdict is liveness and memory; feature verdicts are read from the logs. `smoke4` runs a host and
+three clients with a staggered connect and proves the host relay end to end by finding, in each
+client's log, a puppet spawned for another client.
+
+The other subcommands stage one scenario each:
+
+| Area | Subcommands |
+|---|---|
+| joins and the world | `joinchurn`, `reloadchurn`, `menutravel`, `wirewindow`, `fogprobe`, `deadmaster`, `gracefulexit`, `authdrill` |
+| players, entities and props | `npctest`, `kerfurtoggle`, `death`, `ragdollshot`, `ragdollspawn`, `puppetshot`, `walkgrab`, `clumpvis`, `spawnmenutest`, `navprobe` |
+| devices and races | `lightgroup`, `ctakeprobe`, `ctakerace` |
+| screens and captures | `browser`, `nativeui`, `menushot`, `scoreshot`, `hudtint`, `chathistory`, `chatseed` |
+| variants of the smoke | `smoke_phystele`, `smoke_i18n` |
+
+`ctakerace` is the shape a concurrency test takes here: the host and a client both walk to the
+same container and take the same item at one GO barrier (a future-timestamp sentinel file, which
+gives sub-millisecond simultaneity on one machine); each peer counts the item afterwards and the
+launcher sums across peers, so one is correct, two is a duplicate and zero is a loss. Its
+`control` mode, where only the host takes, must sum to one before a race result is trusted.
 
 ### The in-game harness
 
-The harness is part of the shipping DLL (`harness/`). At load it reads a scenario from a file
-beside itself or from the environment, and the scenario selects a code path that posts engine
-actions onto the game thread: `play` loads a save and idles for hands-on play, `load:<slot>` loads
-a named slot, `none` launches with no automation. Environment variables override the ini for one
-launch, so a launcher sets the role, port, peer, nickname and spawn pose without editing files.
-Each feature's autonomous scenario is one file under `harness/autotest/`, armed by its own
-environment gate: grab, ragdoll, weather, events, death, damage, the pause guard, the save UI,
-scan parity and the rest. A scenario drives the engine through reflected function calls, never
-through synthesised input.
+The harness ships inside the DLL (`harness/`). At load it reads a scenario from a file beside the
+mod or from the environment, and the scenario selects a code path that posts engine actions onto
+the game thread: `play` loads a save and idles, `load:<slot>` loads a named slot, `none` launches
+with no automation. Environment variables override the ini for one launch (role, port, peer,
+nickname, spawn pose), which is how the launcher configures a peer without editing files. Each
+scenario is one file under `harness/autotest/`, armed by its own environment gate. A scenario
+drives the engine through reflected function calls and walks a bot by asking the game for a path
+to a target, never through synthesised input.
 
-The log is the report. Every copy writes a levelled, timestamped `multivoid.log` beside the mod,
-and a scenario's verdict is a line in it. Where a feature has invariants worth asserting across
-both peers' logs, a script does it: `tools/pile-test-assert.ps1` checks the pile carry and throw
-loop against thirteen log-truth invariants and prints a verdict table. Screenshots for a human's
-eye come from an external window capture (`tools/capture_window.ps1`); the game's own screenshot
-command is used only in autonomous runs, because its toast is distracting in play.
+### Logs and assertions
 
-### What autonomy proves
-
-An autonomous pass validates one process's code paths. It does not prove co-op correctness under
-load, the feel of a mechanic, or anything visual; the evidence ladder on [STATUS.md](STATUS.md)
-puts a hands-on observation above a log line, a log line above a self-test, and a self-test above
-the lane merely existing. A change is not called working on the strength of the smoke alone.
+Every copy writes a levelled, timestamped `multivoid.log` beside the mod, and a scenario's verdict
+is a line in it. `tools/pile-test-assert.ps1` checks the pile carry-and-throw loop against
+thirteen invariants across both peers' logs and prints a verdict table. `tools/capture_window.ps1`
+grabs a game window from outside the process for the screenshot scenarios.
 
 ### The gates a push runs
 
@@ -87,10 +90,10 @@ checksum ([RELEASE.md](RELEASE.md)).
 
 | Limit | Evidence |
 |---|---|
-| No autonomous player walks the world; every scenario teleports to a standoff and injects one action, so the concurrent races two humans cannot stage are not staged by the rig either | `[V]` a navmesh-walking director is designed and not built |
-| The smoke's own verdict is liveness and memory; a subsystem regression that keeps both peers alive passes it | `[V]` by design; the log assertions are per feature |
-| No structured report; a pass or fail is a token in a log | `[V]` |
-| Visuals need a person; the screenshot runs frame a capture but do not judge it | `[V]` |
+| The rig stages what a scenario scripts: a bot walks to a chosen target and performs the scripted action. Nobody plays the game freely, so a mechanic's feel and anything visual are judged by a person | `[V]` `tools/mp.py`, `harness/autotest/` |
+| A race is staged only where a scenario provides a barrier; the container take is the one that has it, other concurrent interactions have no scenario yet | `[V]` `tools/mp.py` (`ctakerace`) |
+| The smoke's own verdict is liveness and memory; a regression that keeps both peers alive passes it unless a feature assertion reads the logs | `[V]` by design |
+| No structured report; a verdict is a line in a log | `[V]` |
 
 ## Code map
 
