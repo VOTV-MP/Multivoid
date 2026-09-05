@@ -141,11 +141,10 @@ primed by a watermark so the joiner's next order is the first it forwards.
 
 | Limit | Evidence |
 |---|---|
-| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it; the loss is rare since the key index was fixed, and it is the one place a client authors a shared-world destruction before the arbiter answers | `[V]` three refusals, three lost items in one field log before the index fix |
-| A mirrored coin is born with the default denomination, so its material can be wrong until the birth blob names its points | `[V]` measured on the coin's begin-play |
-| The coin collect seam has two entries, and the interceptor has never been observed firing on the press entry | `[?]` no line in six real credits |
-| A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` the credit sites are invisible to every hook and leave no artifact |
-| The light groups' host-authored state has not been observed by hand; the field report of a client's index dropping to zero after a join is still open | `[?]` issue 11 |
+| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: the one place a client authors a shared-world destruction before the arbiter answers. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
+| The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
+| A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
+| A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
 
 ## Code map
 
