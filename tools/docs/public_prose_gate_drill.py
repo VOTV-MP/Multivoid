@@ -58,6 +58,8 @@ int calledOnce() { return 0; }
 // the s28 cut named a session
 // finding 3 named itself
 // K-5: a bare label counts when it opens the comment
+// v133 names the build a change landed in, which a reader cannot look up
+// PRECISION: IPv4, a path like tools/v12/x, a decimal 1.v20 and a bare v9 are not build tags
 // a colon does too, as in R-2: the shared-scan consumer
 // PRECISION: an auditorium, a bracketed [Value], an [ok] flag, leaving N-1 rows and
 // a balance of X -> X-93 are none of them
@@ -146,6 +148,10 @@ MUTANTS = [
     ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
                                    "                out.append((no, k, line))\n",
      "            pass\n"),
+    # The build tag. Reading only the named families is what the gate did while 452 lines across
+    # 187 files cited a build; matching one digit as well would flag `v9` and a decimal.
+    ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
+    ("label: build tag from one digit", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r"|v\\d+"'),
     # Both notations of the memory pointer. Reading only the path form is what the gate did while
     # 80 wiki links sat in source and the counter read 0; matching any bracket pair instead flags
     # an array index and a short tag, which would push a sweep to damage correct prose.
@@ -215,13 +221,13 @@ def main():
               "md.dated": 1, "md.ptr_memory": 2, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 51, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 53, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_blocks_over_15": 1, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 10}
+              "src.comment_label": 11}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to

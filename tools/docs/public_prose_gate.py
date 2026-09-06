@@ -119,10 +119,15 @@ SRC_EXTRA = collections.OrderedDict([
     # families are exact; the one-letter form counts only where it OPENS the comment or carries
     # a colon, which is how a label is written and how arithmetic is not: `leave N-1 host
     # props`, `X -> X-93` and `1->(P-2)` all read as prose and none of them counts.
+    # `v133`, `v85`, `v42` -- the BUILD a change landed in, which is the same citation again: join
+    # compatibility is byte-equality on the version pair, so there is no "from build N onward"
+    # semantics for a comment to be stating, only a diary entry. Two to three digits, and not after
+    # a word character, a slash or a dot, so `IPv4`, a path and a decimal are left alone.
     ("label", (re.compile(r"\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\d+\b"
                           r"|\bsecurity\s+[A-Z]\d+\b|\bA\d\d/A\d\d\b"
                           r"|\bInc-\d+[a-z]?\b|\bINCREMENT\s+\d+[a-z]?\b"
                           r"|\btake-\d+\b|\bWP-?\d+\b|\bs\d\d cut\b|\bfinding \d+\b"
+                          r"|(?<![\w/.])v\d{2,3}\b"
                           r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),
                "comment lines citing a work item by its label")),
 ])
