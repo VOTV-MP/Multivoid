@@ -47,12 +47,12 @@ void Install(coop::net::Session* session);
 void Tick();
 
 // HOST, game thread, at a joiner's world-ready edge (subsystems::ConnectReplayForSlot, AFTER
-// world_actor_sync/npc_sync queued their snapshots so the mirrors will exist): if a gather is
-// in flight RIGHT NOW (edge map holds gathering=true and the actor still points at a live
-// wispTarget), re-send PyramidGather ToSlot -- the lane's late-join answer
-// (docs/events-and-weather.md); without it a join DURING the ~10 s gather misses the whole
-// choreography, because the
-// commit relay is edge-triggered and fired before this peer connected).
+// world_actor_sync and npc_sync queued their snapshots so the mirrors will exist): if a
+// gather is in flight RIGHT NOW -- the edge map holds gathering=true and the actor still
+// points at a live wispTarget -- re-send PyramidGather ToSlot. That is the lane's late-join
+// answer (docs/events-and-weather.md): without it a join DURING the roughly 10 s gather
+// misses the whole choreography, because the commit relay is edge-triggered and fired before
+// this peer connected.
 void QueueConnectBroadcastForSlot(int slot);
 
 // Clear per-session state (pending gather, edge map, restored-tick set, probe counters).
@@ -73,10 +73,11 @@ void OnDisconnect();
 // map, so there is no echo, and whichever lands second sees "already not-live" and no-ops.
 void OnPyramidGather(const coop::net::PyramidGatherPayload& payload);
 
-// HOST pose augmentation (v100 auxYaw, called by world_actor_sync::TickPoseStream per pyramid
-// entry, game thread): read the actor's VISIBLE heading -- the movementVector ArrowComponent's
-// world yaw (the actor root never yaws; the AnimBP orients the body off the component). Returns
-// false pre-arm / on an offset miss (caller falls back to the actor yaw).
+// HOST pose augmentation (auxYaw, called by world_actor_sync::TickPoseStream per pyramid
+// entry, game thread): read the actor's VISIBLE heading -- the movementVector
+// ArrowComponent's world yaw, since the actor root never yaws and the AnimBP orients the
+// body off the component. Returns false pre-arm or on an offset miss, and the caller falls
+// back to the actor yaw.
 bool ReadHostHeadingYaw(void* actor, float& outYaw);
 
 // CLIENT facing drive (the auxYaw consumer): write `yaw` to the pyramid mirror's BOTH heading
@@ -84,10 +85,10 @@ bool ReadHostHeadingYaw(void* actor, float& outYaw);
 // world_actor_sync's client drive after each pose apply for a piramid2_C mirror.
 void ApplyMirrorHeadingYaw(void* actor, float yaw);
 
-// HOST pose augmentation (v102 auxVec): read the actor's `relLook` -- the head/searchlight's
-// idle look TARGET (relative frame), natively re-rolled at 1 Hz by the RANDOM changeLook
-// timer. Returns false pre-arm / on an offset miss (caller streams zeros; client keeps its
-// last target).
+// HOST pose augmentation (auxVec): read the actor's `relLook` -- the head and searchlight's
+// idle look TARGET in the relative frame, natively re-rolled at 1 Hz by the random
+// changeLook timer. Returns false pre-arm or on an offset miss; the caller then streams
+// zeros and the client keeps its last target.
 bool ReadHostRelLook(void* actor, float& outX, float& outY, float& outZ);
 
 // CLIENT head drive (the auxVec consumer): write the streamed relLook onto the pyramid
@@ -97,10 +98,10 @@ bool ReadHostRelLook(void* actor, float& outX, float& outY, float& outZ);
 // simple assignment -- no setter side effects), so a raw write is the faithful mirror.
 void ApplyMirrorRelLook(void* actor, float x, float y, float z);
 
-// HOST pose augmentation (v104 auxTargetEid): the live wispTarget's npc-lane eid (0 = none /
-// pre-arm). Cached per target change -- callable at the 60 Hz pose stream. The 0y-residue
-// root: during the walk-to-wisp phase the host head runs the tick's CHASE branch (world
-// location of wispTarget) while relLook keeps re-rolling ignored; the mirror needs the
+// HOST pose augmentation (auxTargetEid): the live wispTarget's npc-lane eid, 0 for none or
+// pre-arm. Cached per target change, so it is callable at the 60 Hz pose stream. It exists
+// because during the walk-to-wisp phase the host head runs the tick's CHASE branch, on the
+// world location of wispTarget, while relLook keeps re-rolling ignored: the mirror needs the
 // IDENTITY, not the idle vector, to run the same branch.
 uint32_t ReadHostWispTargetEid(void* actor);
 

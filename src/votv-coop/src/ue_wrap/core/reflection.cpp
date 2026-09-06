@@ -154,7 +154,7 @@ uint8_t* ItemAt(int32_t index) {
 
 void* ObjectAt(int32_t index) {
     uint8_t* item = ItemAt(index);
-    return item ? *reinterpret_cast<void**>(item) : nullptr;  // FUObjectItem.Object @ +0x00
+    return item ? *reinterpret_cast<void**>(item) : nullptr;  // the object pointer is the item's first member
 }
 
 namespace {

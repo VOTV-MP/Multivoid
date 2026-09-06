@@ -800,9 +800,9 @@ struct EntityPoseSnapshot {
     float    x, y, z;     // 12 -- world cm (actor location = ACharacter capsule centre = pivot)
     float    yaw;         // 4  -- actor yaw deg (NormalizeAxis'd)
     float    speed;       // 4  -- horizontal velocity magnitude cm/s (drives the locomotion blend)
-    float    lookAtX, lookAtY, lookAtZ;  // 12 -- the kerfur's head look target in world space; valid iff kEntityPoseBitHasLookAt
-                          //      FAnimNode_LookAt aim point). VALID iff stateBits has kEntityPoseBitHasLookAt
-                          //      (only kerfur-family NPCs carry it; non-kerfur NPCs leave it zero + the bit clear).
+    float    lookAtX, lookAtY, lookAtZ;  // 12 -- the kerfur's head look target in world space, valid iff
+                                         // stateBits has kEntityPoseBitHasLookAt. Only kerfur-family
+                                         // NPCs carry it; the rest leave it zero with the bit clear.
     float    bodyYaw;     // 4  -- the kerfur's visible body yaw, decoupled from the actor root; valid iff kEntityPoseBitHasBodyYaw
     uint8_t  stateBits;   // 1  -- bit0=inAir, bit1=hasLookAt, bit2=hasBodyYaw, bit3=hasKerfurState, bit4=kerfurSpooky
     uint8_t  kerfState;   // 1  -- the kerfur's command state; valid iff bit 3. Drives the parked mirror's state machine.
@@ -1077,9 +1077,9 @@ inline constexpr uint8_t kIsHeavy         = 0x02;
 inline constexpr uint8_t kFrozen          = 0x04;
 // The remaining Aprop_C bools the game's own loader restores before re-running init(), which
 // derives physics and collision from them; the receiver raw-writes them before FinishSpawningActor.
-inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static @0x02D8
-inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep  @0x02DD
-inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn @0x02D9
+inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static
+inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep
+inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn
 inline constexpr uint8_t kHasSavedScalar  = 0x40;  // PropSpawnPayload.savedScalar / PropDropIntentPayload.savedScalar is valid
 }  // namespace propspawn_flags
 
@@ -1414,7 +1414,8 @@ static_assert(sizeof(DishAimStatePayload) == 32, "DishAimStatePayload must be 32
 struct KeyedScalarPayload {
     WireKey  key;        // 32 -- instance identity string (FName for windows; quantized position for grime)
     float    value;      // 4  -- the dirt scalar (>= 0; 0 = fully clean)
-    uint8_t  adopt;      // 1  -- 1 = connect-snapshot, apply VERBATIM (adopt host's world); 0 = live wipe, apply MIN
+    uint8_t  adopt;      // 1  -- 1 = connect-snapshot, adopt the host's value as is;
+                         // 0 = live wipe, apply the minimum
     uint8_t  _pad[3];    // 3  -- 8-byte alignment / reserved
 };
 static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 bytes");
@@ -1424,9 +1425,9 @@ static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
 // A dispenser pile's counters (TrashPileState): the displayed count is their sum. adopt 1 writes as
 // is; 0 applies the per-component minimum, so concurrent collects converge.
 struct TrashPileStatePayload {
-    WireKey  key;        // 32 -- Aactor_save_C::Key @0x0230 (FName string; save-persisted)
-    int16_t  amountA;    // 2  -- AtrashBitsPile_C::amountA @0x0260
-    int16_t  amountB;    // 2  -- AtrashBitsPile_C::amountB @0x0264
+    WireKey  key;        // 32 -- Aactor_save_C::Key (FName string; save-persisted)
+    int16_t  amountA;    // 2  -- AtrashBitsPile_C::amountA
+    int16_t  amountB;    // 2  -- AtrashBitsPile_C::amountB
     uint8_t  adopt;      // 1
     uint8_t  _pad[3];    // 3
 };
@@ -1460,7 +1461,7 @@ static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
 // calc, light). The setter's argument order differs, so the wrapper maps bit to argument by name.
 struct PowerPanelPayload {
     WireKey  key;        // 32 -- the panel's AtriggerBase_C::Key FName (string)
-    uint8_t  pressMask;  // 1  -- bit0=coord,1=downl,2=play,3=calc,4=light (press_* @0x0380-0x0384)
+    uint8_t  pressMask;  // 1  -- bit0=coord,1=downl,2=play,3=calc,4=light (the panel's press_* bools)
     uint8_t  _pad[7];    // 7  -- 8-byte alignment / reserved
 };
 static_assert(sizeof(PowerPanelPayload) == 40, "PowerPanelPayload must be 40 bytes");
@@ -1470,7 +1471,7 @@ static_assert(sizeof(PowerPanelPayload) == 40, "PowerPanelPayload must be 40 byt
 // position error is closed by a bounded corrective velocity, and past a speed-scaled threshold the
 // game's own teleportVehicle re-places the whole rig.
 struct AtvStatePayload {
-    WireKey  key;          // 32 -- the ATV's Key@0x0618 (FName string)
+    WireKey  key;          // 32 -- the ATV's Key (FName string)
     float    x, y, z;      // 12 -- root body world location (cm; the root Mesh == the actor)
     float    pitch, yaw, roll;  // 12 -- full rotation (the ATV tips/flips, unlike a biped)
     float    linVelX, linVelY, linVelZ;  // 12 -- root body linear velocity (cm/s) at sample time
@@ -1526,7 +1527,7 @@ static_assert(sizeof(AtvDestroyPayload) == 32, "AtvDestroyPayload must be 32 byt
 // The authority-lost edge (AtvRelease): a dismount or an ungrab, not a yield. The receiver clears
 // the author slot and nothing else; the stream continues from the host as the idle syncer.
 struct AtvReleasePayload {
-    WireKey key;       // 32 -- the ATV's Key@0x0618
+    WireKey key;       // 32 -- the ATV's Key
 };
 static_assert(sizeof(AtvReleasePayload) == 32, "AtvReleasePayload must be 32 bytes");
 
@@ -1541,9 +1542,6 @@ struct DroneStatePayload {
     uint8_t _pad;              // 1
     float   dustX, dustY, dustZ;  // 12 -- the dust emitter's world location, which the host's tick pins to its ground
                                   //        trace; the mirror replays the same calls. Valid while bit 0 is set.
-                               //        bAbsoluteLocation component to its ground-trace hit per tick;
-                               //        the mirror replays K2_SetWorldLocation + the 'dust' param from
-                               //        it). Valid only while stateBits bit0 is set; zeros otherwise.
 };
 static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
 
@@ -1705,8 +1703,8 @@ struct WorldActorSpawnPayload {
     uint8_t       birthLen;                    // 1  -- bytes valid in `birth`; 0 = none carried
     uint8_t       birth[64];                   // 64 -- class-interpreted; see the class's own decoder
     uint8_t       _pad[3];                     // 3  -- explicit; the struct is 4-aligned for the floats
-    // Headroom: 172 of the 228 usable bytes. A class whose birth content does not fit
-    // length-prefixed in 64 bytes needs the blob sized first.
+    // The payload uses 172 of the 228 usable bytes. A class whose birth content does not
+    // fit length-prefixed in 64 bytes needs the blob sized first.
 };
 static_assert(sizeof(WorldActorSpawnPayload) == 172,
               "WorldActorSpawnPayload must be 172 bytes");
@@ -1841,33 +1839,34 @@ struct WeatherStatePayload {
     uint8_t  flags;              // see weather_flags bit layout above
     uint8_t  flags2;             // fog_flags2
     uint8_t  _pad[2];            // align the float block
-    float    rainStrength;        // AdaynightCycle_C::rainStrength @0x0404
-    float    rainLightningChance; // AdaynightCycle_C::rainLightningChance @0x0408
-    float    rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance @0x040C
-    float    rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed @0x041C
+    float    rainStrength;        // AdaynightCycle_C::rainStrength
+    float    rainLightningChance; // AdaynightCycle_C::rainLightningChance
+    float    rainDeactivateChance;// AdaynightCycle_C::rainDeactivateChance
+    float    rainWindSpeed;       // AdaynightCycle_C::rainWindSpeed
     // The host's current interpolated levels, so a joiner snaps to them instead of ramping over
     // minutes. Not in the dedup signature, which hashes only the flags and the four rain scalars.
-    float    rain;            // AdaynightCycle_C::rain @0x02E0 -- the rainStrength EASE
-                              //   TARGET. Anchored on apply so ReceiveTick doesn't drag
-                              //   the synced rainStrength back to the client's local target.
-    float    finalFogDensity; // AdaynightCycle_C::finalFogDensity @0x0418 -- the visible
-                              //   height-fog density (pushed via SetFogDensity). Snapped +
-                              //   SetFogDensity so the joiner's fog is instant, not eased up.
-    float    fogAlpha;        // AweatherFogController_C::Alpha @0x023C -- the rolling-fog
-                              //   actor's ramp intensity. THE DRIVER (thickFog = Alpha*Strength,
-                              //   fogprobe-confirmed). Copied onto the client mirror actor so it
-                              //   renders at the host's fog level + keeps ramping in lockstep (the
-                              //   actor ACCEPTS the write -- a plain accumulator, not Timeline-locked,
-                              //   snaptest-proven). 0 when the host has no rolling-fog actor.
-    float    fogStrength;     // AweatherFogController_C::Strength @0x024C -- the per-spawn
-                              //   density scale. Snapped WITH Alpha (Strength is randomized per
-                              //   fog event, so Alpha alone wouldn't reproduce the host's thickFog).
+    float    rain;            // AdaynightCycle_C::rain -- the rainStrength EASE TARGET.
+                              // Anchored on apply so ReceiveTick doesn't drag the synced
+                              // rainStrength back to the client's local target.
+    float    finalFogDensity; // AdaynightCycle_C::finalFogDensity -- the visible
+                              // height-fog density (pushed via SetFogDensity). Snapped +
+                              // SetFogDensity so the joiner's fog is instant, not eased up.
+    float    fogAlpha;        // AweatherFogController_C::Alpha -- the rolling-fog actor's
+                              // ramp intensity. THE DRIVER (thickFog = Alpha*Strength).
+                              // Copied onto the client mirror actor so it renders at the
+                              // host's fog level and keeps ramping in lockstep: the actor
+                              // accepts the write, being a plain accumulator and not
+                              // Timeline-locked. 0 when the host has no rolling-fog actor.
+    float    fogStrength;     // AweatherFogController_C::Strength -- the per-spawn density
+                              // scale. Snapped WITH Alpha, since Strength is randomized per
+                              // fog event and Alpha alone would not reproduce the host's
+                              // thickFog.
     // The wind fields. Correct for rain wind and the particle, audio and engine speed; the leaf
     // shake is windTarget below.
-    float    windSpeedBg;       // AdirectionalWind_C::windSpeed_background    @0x02EC
-    float    windStrengthBg;    // AdirectionalWind_C::windStrength_background @0x02F0
-    float    windSpeedRain;     // AdirectionalWind_C::windSpeed_rain          @0x02E4
-    float    windStrengthRain;  // AdirectionalWind_C::windStrength_rain       @0x02E8
+    float    windSpeedBg;       // AdirectionalWind_C::windSpeed_background
+    float    windStrengthBg;    // AdirectionalWind_C::windStrength_background
+    float    windSpeedRain;     // AdirectionalWind_C::windSpeed_rain
+    float    windStrengthRain;  // AdirectionalWind_C::windStrength_rain
     // The gust input: windTarget's relative location, the leaf-shake driver the tick springs
     // intensity from. Re-rolled per peer by a random timer, so the client suppresses its own roll and
     // writes the host's. Gated by kWindValid.
@@ -1958,12 +1957,12 @@ inline constexpr uint8_t kChatLineFlagSeed = 0x01;
 // integrator; the receiver writes them raw and the turbine's tick does the rest.
 struct TurbineStatePayload {
     WireKey key;            // 32 -- "t_<qx>_<qy>_<qz>" quantized world position
-    float   headRotation;   // @0x0300 the facing (world yaw deg; spring output)
-    float   targetRot;      // @0x030C spring target
-    float   rot;            // @0x0340 servo integrator (unbounded deg, raw)
-    float   alphaBlades;    // @0x02F8 blade spin phase (deg accumulator)
-    float   bladesMomentum; // @0x0334 blade spring output (spin rate)
-    float   mult;           // @0x0328 per-instance BeginPlay rand(0.9,1.0) rate skew
+    float   headRotation;   // the facing (world yaw deg; spring output)
+    float   targetRot;      // spring target
+    float   rot;            // servo integrator (unbounded deg, raw)
+    float   alphaBlades;    // blade spin phase (deg accumulator)
+    float   bladesMomentum; // blade spring output (spin rate)
+    float   mult;           // per-instance BeginPlay rand(0.9,1.0) rate skew
 };
 static_assert(sizeof(TurbineStatePayload) == 56, "TurbineStatePayload must be 56 bytes");
 
@@ -2278,7 +2277,7 @@ static_assert(sizeof(DishCalibPayload) <= 256 - 20 - 8,
 // One reel slot edge (ReelSlot): reel 0 big, 1 small; op 0 insert (progress valid), 1 eject.
 struct ReelSlotPayload {
     float   progress;   // 4 -- INSERT: the value entering the unit (0..100); EJECT: last value
-    uint8_t reel;       // 1 -- 0 = reelBig @0x288, 1 = reelSmall @0x28C
+    uint8_t reel;       // 1 -- 0 = the big reel, 1 = the small reel
     uint8_t op;         // 1 -- 0 = INSERT (-1 -> P), 1 = EJECT (P -> -1)
     uint8_t _pad[2];    // 2
 };

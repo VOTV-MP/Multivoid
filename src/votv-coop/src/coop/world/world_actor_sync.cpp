@@ -421,7 +421,7 @@ void OnDisconnect() {
             ++nK2;
         }
     }
-    ClearMirrorActors();   // I-3: the raw-pointer mirror set must not outlive the mirrors
+    ClearMirrorActors();   // the raw-pointer mirror set must not outlive the mirrors
     const size_t total = WaMirrors().DrainAll();
     if (total > 0)
         UE_LOGI("world-actor: drained %zu WorldActor element(s) (%zu host release-only, %zu client "

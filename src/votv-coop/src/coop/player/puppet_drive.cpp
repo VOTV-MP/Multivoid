@@ -43,13 +43,11 @@ coop::RemotePlayer& Puppet(int slot) {
 
 bool DestroySlot(int slot) {
     UE_ASSERT_GAME_THREAD("g_puppets (puppet_drive::DestroySlot)");
-    // UnregisterPuppet drops the Player Element from players::Registry.
-    // If the puppet was never spawned (peer
-    // disconnected after Join but before any PoseSnapshot), g_puppets[
-    // slot].valid() is false but playerBySlot_[slot] may still hold a
-    // mirror Element installed by EstablishMirrorForSlot. Calling
-    // UnregisterPuppet unconditionally is safe -- DropPlayerElement_
-    // is a no-op when playerBySlot_ is null.
+    // UnregisterPuppet drops the Player Element from players::Registry. If the puppet was never
+    // spawned -- the peer disconnected after Join but before any PoseSnapshot -- then
+    // g_puppets[slot].valid() is false while playerBySlot_[slot] may still hold a mirror Element
+    // installed by EstablishMirrorForSlot. Calling UnregisterPuppet unconditionally is safe:
+    // DropPlayerElement_ is a no-op when playerBySlot_ is null.
     coop::players::Registry::Get().UnregisterPuppet(static_cast<uint8_t>(slot));
     if (g_puppets[slot].valid()) {
         g_puppets[slot].Destroy();
@@ -62,12 +60,13 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
     UE_ASSERT_GAME_THREAD("g_puppets (puppet_drive::DriveTick)");
     namespace PP = coop::dev::perf_probe;
 
-    // Pose-apply diagnostic: the wire is measured clean by net-diag, so this
-    // measure the APPLY side. Per remote puppet, accumulate the FRESH-pose count (isNew/sec)
-    // and the latest stream target below, then log once/sec the target vs the puppet's rendered
-    // position + the trailing distance. Healthy = ~sendHz fresh/s + a small trail; a big/growing
-    // trail means the interp/engine apply lags the on-time stream; low fresh/s = upstream
-    // staleness. Game-thread-only Tick -> static locals need no atomics.
+    // Pose-apply diagnostic. net-diag measures the wire; this measures the APPLY side. Per remote
+    // puppet, accumulate the FRESH-pose count (isNew per second) and the latest stream target
+    // below, then log once a second the target against the puppet's rendered position and the
+    // trailing distance. Healthy is about sendHz fresh per second with a small trail; a big or
+    // growing trail means the interpolation and engine apply lag an on-time stream, and a low
+    // fresh count means upstream staleness. The Tick is game-thread-only, so the static locals
+    // need no atomics.
     static std::array<int, coop::players::kMaxPeers> sPoseFresh{};
     static std::array<coop::net::PoseSnapshot, coop::players::kMaxPeers> sPoseTarget{};
     static std::chrono::steady_clock::time_point sNextPoseDiag{};
@@ -100,10 +99,10 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
             if (!session.TryGetRemotePose(slot, remote, &isNew)) continue;
             sPoseTarget[slot] = remote;  // pose-diag: latest stored pose (the interp target source)
             if (!g_puppets[slot].valid()) {
-                // v56: a save-transfer joiner receives poses while still at the
-                // MENU (downloading + loading the host save) -- never spawn a
-                // puppet into a non-gameplay world; the pose keeps streaming
-                // and the spawn happens on the first pose after world-ready.
+                // A save-transfer joiner receives poses while still at the MENU (downloading
+                // and loading the host save) -- never spawn a puppet into a non-gameplay
+                // world. The pose keeps streaming and the spawn happens on the first pose
+                // after world-ready.
                 if (session.role() == coop::net::Role::Client &&
                     !worldReadyAnnounced) continue;
                 // Spawn-retry backoff: BeginDeferredActorSpawnFromClass refuses
@@ -126,13 +125,13 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // Register with the central Registry. peerId == slot directly.
                 coop::players::Registry::Get().RegisterPuppet(
                     static_cast<uint8_t>(slot), &g_puppets[slot]);
-                // Apply the cached nickname now that the puppet exists. The
-                // identity (Join / PlayerJoined) can arrive BEFORE the first
-                // pose spawns the puppet -- in that race the handler cached
-                // the nick but found no puppet to label. Reading the cache
-                // here closes that gap for the host puppet AND cross-peer
-                // puppets (T2-1). Falls back to the placeholder if no
-                // identity has landed yet; the handler re-applies on arrival.
+                // Apply the cached nickname now that the puppet exists. The identity
+                // (Join / PlayerJoined) can arrive BEFORE the first pose spawns the
+                // puppet -- in that race the handler cached the nick and found no
+                // puppet to label. Reading the cache here closes the gap for the host
+                // puppet and for cross-peer puppets alike. Falls back to the
+                // placeholder if no identity has landed yet; the handler re-applies
+                // on arrival.
                 g_puppets[slot].SetNickname(
                     coop::player_handshake::NicknameForSlot(slot));
                 // Join announcement at the APPEARANCE seam: the puppet just spawned, which
@@ -157,12 +156,11 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
             }
         }
     }
-    // v22: per-slot ragdoll PELVIS-physics drive. Decoupled from the pose stream
-    // above (a momentary pose-packet gap must not stall the ragdoll velocity feed).
-    // Only FRESH packets apply -- the puppet's mirror body integrates between them.
-    // SetRagdollPose applies the velocity to the body + stamps the streamed pelvis
-    // rotation for the next Tick's ApplyToEngine. Runs BEFORE the Tick loop so the
-    // velocity is set before the same-frame ApplyToEngine reads the body.
+    // Per-slot ragdoll PELVIS-physics drive. Decoupled from the pose stream above, so a momentary
+    // pose-packet gap cannot stall the ragdoll velocity feed. Only FRESH packets apply -- the
+    // puppet's mirror body integrates between them. SetRagdollPose applies the velocity to the
+    // body and stamps the streamed pelvis rotation for the next Tick's ApplyToEngine. Runs BEFORE
+    // the Tick loop so the velocity is set before the same-frame ApplyToEngine reads the body.
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
         if (!g_puppets[slot].valid()) continue;
         coop::net::RagdollPoseSnapshot rdoll;
@@ -179,10 +177,10 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
         if (g_puppets[slot].valid()) g_puppets[slot].Tick();
     }
 
-    // Killer-wisp grab-window body placement (v2 choreography). MUST run AFTER the
-    // puppet Tick loop above: a held victim puppet is snapped to the wisp's
-    // 'playerGrab' socket, overwriting the streamed pose for the hold window (the
-    // module's own liveness guards release it). Cheap no-op when nothing is held.
+    // Killer-wisp grab-window body placement. MUST run AFTER the puppet Tick loop above: a held
+    // victim puppet is snapped to the wisp's 'playerGrab' socket, overwriting the streamed pose
+    // for the hold window (the module's own liveness guards release it). Cheap no-op when
+    // nothing is held.
     coop::wisp_grab_hold::Tick();
 
     // Pose-apply diagnostic emit (once/sec). target = the latest pose received for this slot;
