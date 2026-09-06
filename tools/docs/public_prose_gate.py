@@ -61,6 +61,7 @@ OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
 # whole tree is its own declaration plus its definition: nothing calls it.
 DECL = re.compile(r"^[A-Za-z_][\w:<>,*&\s]*?[\s*&]([A-Za-z_]\w+)\s*\([^;{]*\)\s*(?:const\s*)?;", re.M)
 IDENT = re.compile(r"[A-Za-z_]\w*")
+INCLUDE = re.compile(r'#\s*include\s+"([^"]+)"')
 DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", "reinterpret_cast",
              "const_cast", "dynamic_cast", "assert", "catch"}
 
@@ -264,14 +265,14 @@ def measure(repo):
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     c["src.comment_dead_docpath"] = 0
     c["src.comment_pinned_offset"] = 0
-    ident_uses = collections.Counter()     # every identifier in the tree, for the dead-decl check
-    declared = {}                          # name -> the header that declares it
+    bare_by_file = {}                      # path -> its code with comments and strings gone
+    declared = collections.defaultdict(list)   # name -> every header that declares it
     for p in src:
         text = read(repo, p)
         if text is None:
             continue
         bare = code_only(text)
-        ident_uses.update(IDENT.findall(bare))
+        bare_by_file[p] = bare
         # The offsets this file's own code reads. A comment naming one of them sits beside the read
         # it explains and the number IS the fact; a comment naming any other pins a number whose
         # owner is elsewhere -- another file's named constant, or a property the code resolves by
@@ -280,7 +281,7 @@ def measure(repo):
         if p.endswith(".h") and "/include/" in p:
             for name in set(DECL.findall(bare)):
                 if name not in DECL_SKIP and len(name) > 3:
-                    declared.setdefault(name, p)
+                    declared[name].append(p)
         comments, code, long_blocks = comment_lines(text)
         c["src.comment_lines"] += len(comments)
         code_total += code
@@ -306,11 +307,44 @@ def measure(repo):
                     c["src.comment_pinned_offset"] += 1
                     who["src.comment_pinned_offset"][p] += 1
     # A capability nothing calls is not shipped, and its comment describes code no one runs.
+    #
+    # Uses are attributed to the header that DECLARES the name, counted only where that header is
+    # actually reachable. Counting the bare name tree-wide could not do this: `SetActiveFn` is
+    # declared by both ue_wrap/desk/desk_audio.h and ue_wrap/devices/lightswitch.h, and the live
+    # call to the first marked the second alive, hiding a dead capability behind a live sibling.
+    # The reach is TRANSITIVE and includes the header itself, because the two cheaper answers are
+    # both wrong: direct includers alone miss a caller that picks the declaration up through
+    # another header, and excluding the declaring header misses the inline wrapper that calls the
+    # out-of-line function right beneath it.
+    direct = collections.defaultdict(set)          # header path -> files that #include it directly
+    for path, bare in bare_by_file.items():
+        for inc in INCLUDE.findall(bare):
+            for root in SRC_ROOTS:
+                if root + inc in bare_by_file:
+                    direct[root + inc].add(path)
+                    break
+    reach_cache = {}
+
+    def reach(header):
+        """Every file that can see `header`'s declarations, itself included."""
+        if header not in reach_cache:
+            seen, stack = {header}, [header]
+            while stack:
+                for f in direct.get(stack.pop(), ()):
+                    if f not in seen:
+                        seen.add(f)
+                        stack.append(f)
+            reach_cache[header] = seen
+        return reach_cache[header]
+
     c["src.dead_declarations"] = 0
-    for name, header in declared.items():
-        if ident_uses[name] <= 2:          # the declaration and its definition, and nothing else
-            c["src.dead_declarations"] += 1
-            who["src.dead_declarations"][header] += 1
+    for name, headers in declared.items():
+        word = re.compile(r"\b" + re.escape(name) + r"\b")
+        for header in headers:
+            uses = sum(len(word.findall(bare_by_file[f])) for f in reach(header))
+            if uses <= 2:                  # its own declaration and its definition, and nothing else
+                c["src.dead_declarations"] += 1
+                who["src.dead_declarations"][header] += 1
     c["src.comment_permille"] = int(round(1000.0 * c["src.comment_lines"] / max(1, code_total + c["src.comment_lines"])))
     c["src.files"] = len(src)
     # The burn-down. A source file is SWEPT when it contributes zero to every rule counter above;

@@ -422,7 +422,14 @@ tools/atv_probe_report.py
 tools/bp_gate_census.py
 tools/capture-kerfur-repro.ps1
 tools/coverage.py
-tools/dead_api_census.py
+# The sweep's own instruments and the session-close census: they serve OUR workflow, not a
+# contributor's, so they stay local under the same test as LESSONS.md. The prose gate and its
+# drill are public, because CI runs them and a fork needs to pass them.
+tools/docs/census_close.py
+tools/docs/census_drill_lib.py
+tools/docs/sweep_file.py
+tools/docs/sweeplib.py
+tools/docs/__pycache__/
 tools/diag-*.ps1
 tools/kerfur-delivery-assert.ps1
 tools/master_smoke.py

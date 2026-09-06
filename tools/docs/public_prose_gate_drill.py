@@ -29,7 +29,8 @@ An [uppercase scheme](HTTPS://example.com/x), an [encoded name](My%20File.md), a
 a [link in a code block](nothing.md) is not a link
 ```
 """
-SRC = """// 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
+SRC = """#include "d.h"
+// 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
 // see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
 // docs/nowhere.md names no tracked doc; docs/a.md does
 // the field sits at 0x04F8, a number pinned in prose that this file's code never reads
@@ -39,6 +40,8 @@ SRC = """// 2026-09-05: the USER asked for this, verbatim; a /qf round and an ag
 int calledOnce() { return 0; }
 int neverCalledAnywhere() { return calledOnce(); }
 int hiddenByAComment() { return 0; }
+int sameNameAsALiveOne() { return 0; }
+int useTheLiveTwin() { return sameNameAsALiveOne(); }
 int f() { return 0; } // trailing comments are code lines
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
@@ -73,6 +76,12 @@ HDR = """#pragma once
 int calledOnce();
 int neverCalledAnywhere();
 int hiddenByAComment();
+int sameNameAsALiveOne();
+"""
+# The precision canary for attribution: this header declares a name that ALSO exists, live, in
+# d.h. Counting the bare name tree-wide called both alive and hid a real dead capability.
+HDR_TWIN = """#pragma once
+int sameNameAsALiveOne();
 """
 # the offsets belong here, so a pinned number in THIS file is not counted
 HDR_OWNER = """#pragma once
@@ -116,6 +125,8 @@ def main():
         f.write(HDR)
     with open(os.path.join(repo, "src", "votv-coop", "include", "sdk_profile.h"), "w", encoding="utf-8") as f:
         f.write(HDR_OWNER)
+    with open(os.path.join(repo, "src", "votv-coop", "include", "twin.h"), "w", encoding="utf-8") as f:
+        f.write(HDR_TWIN)
     git(["add", "."], repo, env)
     git(["commit", "-q", "-m", "[drill] seed"], repo, env)
     baseline = os.path.join(tmp, "baseline.json")
@@ -132,8 +143,8 @@ def main():
     expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
-              "src.comment_pinned_offset": 1, "src.dead_declarations": 2,
-              "src.comment_lines": 28, "src.files": 4, "src.files_not_swept": 2,
+              "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
+              "src.comment_lines": 28, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
