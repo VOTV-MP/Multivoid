@@ -272,8 +272,6 @@ void LogClassProperties(const wchar_t* className);
 
 // USceneComponent world location (K2_GetComponentLocation) and forward vector; (0,0,0) on failure.
 FVector GetComponentLocation(void* component);
-FVector GetComponentForwardVector(void* component);
-
 // USceneComponent::RelativeLocation read raw at +0x011C: the BP-authored offset, stable once
 // construction has run, where K2_GetComponentLocation is unsettled mid-init. (0,0,0) on null.
 FVector GetComponentRelativeLocation(void* component);
@@ -389,10 +387,6 @@ bool SetAnimTickAlways(void* skeletalMeshComponent);
 // USkinnedMeshComponent::SetSkeletalMesh(NewMesh, bReinitPose=true), resolved on the owning class.
 // Game thread.
 bool SetSkeletalMesh(void* skeletalMeshComponent, void* skeletalMeshAsset);
-
-// SetSkeletalMesh(null): render nothing without touching visibility or AttachParent (a hide on a
-// parent whose child is a simulating ragdoll would cascade). Game thread.
-bool ClearSkeletalMesh(void* skeletalMeshComponent);
 
 // USkeletalMeshComponent::SetAnimClass: assign and instantiate an AnimBP class. Game thread.
 bool SetAnimClass(void* skeletalMeshComponent, void* animBlueprintClass);
@@ -582,11 +576,6 @@ void* GetActorRootPhysicalMaterial(void* actor);
 // failure. The host stamps kAtRest from it.
 bool IsActorRootBodyAtRest(void* actor);
 
-// PutRigidBodyToSleep on the root: a teleport wakes the body, and a thousand woken props that never
-// re-sleep are a permanent physics scene, so the client sleeps a kAtRest prop right after
-// converging it. The body stays dynamic and grabbable.
-bool PutActorRootBodyToSleep(void* actor);
-
 // The sender's ragdoll stream: the native ragdoll's (ragdollActor @0xC40) pelvis world transform
 // and velocity (cm/s, deg/s); false while not ragdolling. Game thread.
 bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& outRot,
@@ -639,10 +628,6 @@ void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,
 
 // ---- Navigation and locomotion ----
 // A baked-NavMesh path query and pawn movement input, for the bot director. Game thread.
-
-// A point reachable within `radiusCm` of `origin` (K2_GetRandomReachablePointInRadius on the CDO);
-// false when the navmesh has no polygon there.
-bool RandomReachablePoint(void* worldContext, const FVector& origin, float radiusCm, FVector& out);
 
 // A route from `start` to `end` (FindPathToLocationSynchronously on the CDO), its PathPoints into
 // `outPts`; false on no route.

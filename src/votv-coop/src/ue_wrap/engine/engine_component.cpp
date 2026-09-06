@@ -32,7 +32,6 @@ void* g_sceneCompClass = nullptr;
 void* g_setVisFn = nullptr;
 void* g_setHiddenFn = nullptr;
 void* g_getCompLocFn = nullptr;
-void* g_getCompFwdFn = nullptr;
 
 void* SceneCompClass() {
     if (!g_sceneCompClass) g_sceneCompClass = R::FindClass(P::name::SceneComponentClass);
@@ -138,17 +137,6 @@ FVector GetComponentLocation(void* component) {
     if (!Call(component, f)) return loc;
     f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
     return loc;
-}
-
-FVector GetComponentForwardVector(void* component) {
-    FVector fwd;
-    if (!component || !SceneCompClass()) return fwd;
-    if (!g_getCompFwdFn) g_getCompFwdFn = R::FindFunction(g_sceneCompClass, P::name::GetComponentForwardFn);
-    if (!g_getCompFwdFn) return fwd;
-    ParamFrame f(g_getCompFwdFn);
-    if (!Call(component, f)) return fwd;
-    f.GetRaw(L"ReturnValue", &fwd, sizeof(fwd));
-    return fwd;
 }
 
 FVector GetComponentRelativeLocation(void* component) {
@@ -257,23 +245,6 @@ bool SetSkeletalMesh(void* component, void* skeletalMeshAsset) {
     ParamFrame f(g_setSkeletalMeshFn);
     f.Set<void*>(L"NewMesh", skeletalMeshAsset);
     f.Set<bool>(L"bReinitPose", true);
-    return Call(component, f);
-}
-
-bool ClearSkeletalMesh(void* component) {
-    // SetSkeletalMesh(NewMesh=null): the component renders NOTHING, but its
-    // visibility flags + AttachParent graph are untouched. Used by
-    // StartPuppetMeshRagdoll to suppress the native ACharacter::Mesh @0x0280
-    // double-image during the puppet flop WITHOUT hiding it -- mesh_playerVisible
-    // @0x4F8 is a CHILD of @0x0280 and UE4 USceneComponent::IsVisible() cascades
-    // up the parent chain, so a bHiddenInGame hide on @0x0280 would kill the
-    // simulating child too (the reverted 2026-05-25 "no visible model" regression).
-    // Clearing the mesh asset avoids that cascade. bReinitPose=false (no mesh to
-    // repose from). Separate fn because SetSkeletalMesh deliberately rejects null.
-    if (!component || !ResolveMeshFns() || !g_setSkeletalMeshFn) return false;
-    ParamFrame f(g_setSkeletalMeshFn);
-    f.Set<void*>(L"NewMesh", nullptr);
-    f.Set<bool>(L"bReinitPose", false);
     return Call(component, f);
 }
 

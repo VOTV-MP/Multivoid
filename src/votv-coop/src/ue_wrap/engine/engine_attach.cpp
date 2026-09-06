@@ -150,35 +150,6 @@ bool IsActorRootBodyAtRest(void* actor) {
     return !f.Get<bool>(L"ReturnValue");
 }
 
-bool PutActorRootBodyToSleep(void* actor) {
-    // Force the root rigid body to sleep (PutRigidBodyToSleep, BoneName=NAME_None =
-    // the root body). Used on the client right after teleport-converging a kAtRest
-    // prop so it lands at the host's authoritative position and immediately returns
-    // to the rest state the host observed -- no transient settle, no permanent
-    // active-island physics cost. The body stays a DYNAMIC physics body (still
-    // grabbable / collidable / wakes-on-touch) -- this is NOT SetSimulatePhysics(false)
-    // (that path is the kinematic grab-drive, scoped to held props). No-op + false
-    // on failure. Generic (root component, not the Aprop_C mesh offset). Game thread.
-    void* root = RootComponentOf(actor);
-    if (!root) return false;
-    // SAFETY GATE (2026-06-09, smoke-caught AV): PutRigidBodyToSleep is only valid on a
-    // DYNAMIC simulating body -- in PhysX putToSleep on a static/kinematic/bodyless actor
-    // AVs. The host stamps kAtRest from IsAnyRigidBodyAwake==false, which is ALSO true for
-    // static/kinematic props (no dynamic body) -- so we must NOT blindly sleep every
-    // kAtRest prop. Only an AWAKE body is guaranteed dynamic-simulating, AND an awake body
-    // is exactly what we want to quiet (the teleport-WOKEN divergent prop). A not-awake
-    // body is already asleep or non-dynamic -> nothing to do. So gate the sleep on awake.
-    void* awakeFn = PrimFn(&g_isAwakeFn, L"IsAnyRigidBodyAwake");
-    if (!awakeFn) return false;
-    { ParamFrame fa(awakeFn);
-      if (!Call(root, fa) || !fa.Get<bool>(L"ReturnValue")) return false; }
-    void* fn = PrimFn(&g_putSleepFn, L"PutRigidBodyToSleep");
-    if (!fn) { UE_LOGW("engine: PutRigidBodyToSleep unresolved"); return false; }
-    ParamFrame f(fn);
-    // BoneName defaults to NAME_None (the root body) -- ParamFrame zero-inits it.
-    return Call(root, f);
-}
-
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang) {
     void* root = RootComponentOf(actor);
     if (!root) return false;

@@ -27,7 +27,6 @@ namespace R = reflection;
 
 void* g_navCdo    = nullptr;   // UNavigationSystemV1 CDO (static dispatch target)
 void* g_findPath  = nullptr;   // FindPathToLocationSynchronously
-void* g_randReach = nullptr;   // K2_GetRandomReachablePointInRadius
 void* g_pawnClass = nullptr;
 void* g_addMove   = nullptr;   // APawn::AddMovementInput
 void* g_navPathCls = nullptr;
@@ -37,7 +36,6 @@ void EnsureNav() {
     if (!g_navCdo)  g_navCdo  = R::FindClassDefaultObject(L"NavigationSystemV1");
     void* cls = R::FindClass(L"NavigationSystemV1");
     if (cls && !g_findPath)  g_findPath  = R::FindFunction(cls, L"FindPathToLocationSynchronously");
-    if (cls && !g_randReach) g_randReach = R::FindFunction(cls, L"K2_GetRandomReachablePointInRadius");
 }
 
 void EnsurePawn() {
@@ -46,20 +44,6 @@ void EnsurePawn() {
 }
 
 }  // namespace
-
-bool RandomReachablePoint(void* worldContext, const FVector& origin, float radiusCm, FVector& out) {
-    EnsureNav();
-    if (!g_navCdo || !g_randReach || !worldContext) return false;
-    ParamFrame pf(g_randReach);
-    pf.Set<void*>(L"WorldContextObject", worldContext);
-    pf.Set<FVector>(L"Origin", origin);
-    pf.Set<float>(L"Radius", radiusCm);
-    // NavData / FilterClass left null (frame zeroed).
-    if (!Call(g_navCdo, pf)) return false;
-    if (!pf.Get<bool>(L"ReturnValue")) return false;
-    out = pf.Get<FVector>(L"RandomLocation");
-    return true;
-}
 
 bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
                  std::vector<FVector>& outPts) {
