@@ -1,15 +1,14 @@
 // coop/window_sync.cpp -- see coop/window_sync.h. Base-window dirt scalar sync.
 //
 // A trimmed sibling of interactable_sync's Channel: the same proven Key->actor index
-// (IsLiveByIndex self-heal), throttled rebuild, silent first-sight prime, deferred-apply
-// retry, and echo-suppress-via-priming. The differences that make it its own module rather
-// than another toggle Adapter (RULE 2): the state is a continuous FLOAT (clean), not a bool,
-// and the apply rule is MIN-WINS (monotone cooperative clean), not verbatim toggle -- so it
-// needs none of the door Channel's HostAuth machinery (hold register, settling bridge,
-// autonomy suppression) and forcing it into the bool Channel would mean templatizing that
-// battle-tested door code. clean is monotone-decreasing + inert (nothing re-raises it
-// locally), so a SYMMETRIC min-wins poll converges with no oscillation -- the simplest
-// correct model (Agent A's design verdict).
+// (IsLiveByIndex self-heal), throttled rebuild, silent first-sight prime, deferred-apply retry,
+// and echo-suppress-via-priming. The differences that make it its own module rather than another
+// toggle Adapter (RULE 2): the state is a continuous FLOAT (clean), not a bool, and the apply rule
+// is MIN-WINS (monotone cooperative clean), not a toggle -- so it needs none of the door Channel's
+// HostAuth machinery (hold register, settling bridge, autonomy suppression), and forcing it into
+// the bool Channel would mean templatizing that battle-tested door code. clean is
+// monotone-decreasing and inert (nothing re-raises it locally), so a SYMMETRIC min-wins poll
+// converges with no oscillation.
 
 #include "coop/interactables/window_sync.h"
 
@@ -22,8 +21,8 @@
 #include "ue_wrap/devices/base_window.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
-#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
 #include <algorithm>
 #include <atomic>
@@ -76,8 +75,8 @@ size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
 std::vector<std::pair<std::wstring, Ref>> g_pollScratch;  // GT-only: reused per-tick poll snapshot (capacity retained across clear() -> no realloc in steady state; the few short keys are SSO)
 
-// R-2: world generation of the last completed hub pass; a stale-gen index is treated as EMPTY
-// on every read path (dead-world guard).
+// World generation of the last completed hub pass; a stale-gen index is treated as EMPTY on every
+// read path (dead-world guard).
 uint32_t g_indexGen = 0;
 bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
 
@@ -90,11 +89,11 @@ void* ResolveFast(const std::wstring& key) {
     return nullptr;
 }
 
-// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
-// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks.
-// settleScans=2 kept: a window break/repair changes the count and would re-arm 15x2s of full
-// demand for a routine event (perf-audit 2026-07-04); only 4 windows exist -- 2 stable passes
-// suffice, the hub's 60 s backstop covers recycled-slot stragglers.
+// ---- shared-scan hub consumer -------------------------------------------------------------
+// There is no per-module walk; the hub's shared sliced pass drives these callbacks. settleScans=2:
+// a window break/repair changes the count and would otherwise re-arm 15 passes of full demand for
+// a routine event. Only 4 windows exist, so 2 stable passes suffice and the hub's 60 s backstop
+// covers recycled-slot stragglers.
 std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
 
 void HubPassBegin(void*, bool) { g_scanFound.clear(); }
@@ -149,10 +148,8 @@ void RegisterWithScanHub() {
         &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2});
 }
 
-// Apply a remote clean value. adopt -> VERBATIM (connect-snapshot: the joiner adopts the
-// host's world); else MIN(local, wire) (a live wipe can only make the window cleaner, never
-// re-dirty it -> concurrent wipes converge, no regression). Idempotent if already at target.
-// Primes g_lastKnown to the applied value so the next poll sees no delta (echo guard).
+// Apply a remote clean value. An adopt takes it unchanged (connect-snapshot: the joiner adopts the
+// host's world); a live wipe is MIN-WINS, so a value above ours is ignored.
 void ApplyResolved(void* actor, const std::wstring& key, float wireClean, bool adopt, unsigned fromSlot) {
     float cur = 0.f;
     if (!BW::ReadClean(actor, cur)) return;
@@ -225,13 +222,13 @@ void PollAndBroadcast() {
     }
 }
 
-// DEV-ONLY synthetic wipe (ini `window_synth=1`). One-shot, host-only: ~5s after
-// connect, decrement the first indexed window's `clean` via the SAME path a real
-// soapy-sponge wipe drives (WriteCleanAndApply -> field write + setClean repaint),
-// so the normal PollAndBroadcast below detects the decrease and broadcasts it. Used
-// to PROVE the live-wipe sync chain (host detect -> WindowCleanState -> client apply)
-// end-to-end autonomously, isolating any real-gesture bug to the clean@0x0260
-// detection. NOT shipped behavior -- gated off by default; remove the ini key for play.
+// DEV-ONLY synthetic wipe (ini `window_synth=1`). One-shot, host-only: about 5 s after connect,
+// decrement the first indexed window's `clean` through the SAME path a real soapy-sponge wipe
+// drives (WriteCleanAndApply -> field write + setClean repaint), so the PollAndBroadcast below
+// detects the decrease and broadcasts it. It exercises the live-wipe chain (host detect ->
+// WindowCleanState -> client apply) without a hand at the keyboard, which narrows a
+// real-gesture-only failure to the clean-field detection. NOT shipped behavior -- gated off by
+// default; remove the ini key for play.
 void MaybeSyntheticWipe() {
     static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::window_synth);
     if (!s_on) return;
@@ -252,7 +249,7 @@ void MaybeSyntheticWipe() {
         actor = kv.second.actor;
         idx = kv.second.idx;
     }
-    if (!actor || !R::IsLiveByIndex(actor, idx)) return;  // the 4 sibling sites' shape (islive-zeroav row :243)
+    if (!actor || !R::IsLiveByIndex(actor, idx)) return;  // the 4 sibling sites' shape
     float cur = 0.f;
     if (!BW::ReadClean(actor, cur)) return;
     float target = cur - 0.4f;
@@ -278,17 +275,13 @@ void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeer
         UE_LOGW("window: apply -- class not resolved, dropping key='%ls'", key.c_str());
         return;
     }
-    // Trust boundary: a VERBATIM adopt (which bypasses min-wins and so CAN make a window
-    // DIRTIER) is legitimate ONLY for the host's connect-snapshot. The host is slot 0; a
-    // client-originated edge is relayed carrying its true origin slot (>= 1). So honor adopt
-    // only from slot 0 -- a buggy/relayed client packet stamped adopt=1 is downgraded to a
-    // live wipe (min-wins) and can never force-dirty another peer's window. (Matches the
-    // codebase's host-only trust gates on senderPeerSlot == 0.)
+    // Trust boundary: an unchanged adopt (which bypasses min-wins and so CAN raise a window's
+    // clean) is host-only. A client claiming one would otherwise be able to scrub the world clean.
     const bool adopt = (payload.adopt != 0) && (senderPeerSlot == 0);
     if (void* actor = ResolveFast(key)) { ApplyResolved(actor, key, payload.value, adopt, senderPeerSlot); return; }
-    // Not streamed in yet -- defer + retry on the throttled tick. Merge with any existing
-    // pending entry: an adopt (host baseline) takes the value verbatim; a live wipe keeps the
-    // LOWEST seen so a lower value from one sender is not lost behind a higher one from another.
+    // Not streamed in yet -- defer + retry on the throttled tick. Merge with any existing pending
+    // entry: an adopt (host baseline) takes the value unchanged; a live wipe keeps the lower of the
+    // two, which is the same min-wins rule the direct apply uses.
     const auto deadline = std::chrono::steady_clock::now() + kPendingTTL;
     auto it = g_pending.find(key);
     if (it == g_pending.end()) {
@@ -309,8 +302,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s) return;
     if (s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
-    // (windows are static level actors; the staleness window is empty in practice).
+    // No forced rebuild here: the hub keeps the index within one pass (~2 s) of fresh, and windows
+    // are static level actors, so the staleness window is empty in practice.
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
@@ -325,7 +318,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         coop::net::KeyedScalarPayload p{};
         WireKeyFromString(d.first, p.key);
         p.value = clean;
-        p.adopt = 1;  // connect-snapshot -> the joiner adopts the host's world VERBATIM
+        p.adopt = 1;  // connect-snapshot -> the joiner adopts the host's world unchanged
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WindowCleanState, &p, sizeof(p));
         { std::lock_guard<std::mutex> lk(g_stateMutex); g_lastKnown[d.first] = clean; }
         ++sent;

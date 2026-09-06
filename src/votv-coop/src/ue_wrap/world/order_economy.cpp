@@ -44,7 +44,7 @@ constexpr int32_t kReadItemCap = 256;
 constexpr size_t  kCommitItemCap = 64;
 
 // ---- cached resolution (mirrors ue_wrap/economy.cpp) ----------------------------------------
-ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :47
+ue_wrap::CachedObjRef g_gm;
 void* ResolveGamemode() {
     if (g_gm.Alive()) return g_gm.Raw();
     g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
