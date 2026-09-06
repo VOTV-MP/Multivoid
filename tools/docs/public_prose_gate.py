@@ -4,7 +4,9 @@
 What it measures, over every tracked `*.md` and over the comments of the mod's own C++
 (`src/votv-coop/{src,include}`), is in COUNTERS below: working-notes vocabulary, non-English
 text, dated diary lines, pointers to files that are not in the repository, oversized docs,
-comment-heavy sources. Lower is better for every counter.
+comment-heavy sources. Lower is better for every counter. `src.files_not_swept` is the burn-down:
+how many of `src.files` still carry any of them, and `--report` lists its worst offenders in size
+order, which is the sweep's work queue.
 
 The baseline (`public_prose_baseline.json`) holds the last accepted value of each counter.
 The gate FAILS when a RULE counter is above its baseline and names the files that carry the
@@ -38,7 +40,7 @@ SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
 SRC_EXT = (".cpp", ".h", ".inc")
 MD_HARD_CAP = 600
 HALF_COMMENT_MIN_LINES = 300
-INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille")   # reported, never compared
+INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.files")  # reported, never compared
 
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
@@ -240,6 +242,16 @@ def measure(repo):
                 c["src.comment_dead_docpath"] += 1
                 who["src.comment_dead_docpath"][p] += 1
     c["src.comment_permille"] = int(round(1000.0 * c["src.comment_lines"] / max(1, code_total + c["src.comment_lines"])))
+    c["src.files"] = len(src)
+    # The burn-down. A source file is SWEPT when it contributes zero to every rule counter above;
+    # this counts the ones that do not, and `who` orders them by comment size, so --report's top
+    # list is the work queue itself.
+    rule_src = [k for k in c if k.startswith("src.") and k not in INFORMATIONAL
+                and k not in ("src.files", "src.files_not_swept")]
+    not_swept = {path for k in rule_src for path in who[k]}
+    c["src.files_not_swept"] = len(not_swept)
+    for path in not_swept:
+        who["src.files_not_swept"][path] = who["src.comment_lines"][path]
     return c, who
 
 
@@ -269,6 +281,8 @@ FIXED_DESCRIPTIONS = {
     "src.comment_dead_docpath": "comment lines naming a docs/*.md that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
+    "src.files": "tracked sources in the mod's own C++",
+    "src.files_not_swept": "sources still carrying at least one counter above",
 }
 
 

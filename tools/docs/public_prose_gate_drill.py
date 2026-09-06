@@ -55,6 +55,12 @@ const char* s = "// not a comment";
 int g() { return 1; }
 """
 
+# a source that carries comment but no counter at all: it must count as SWEPT
+SRC_CLEAN = """// What this does, in one line of present-tense fact.
+// A second line, well under the block cap.
+int h() { return 2; }
+"""
+
 
 def git(args, cwd, env):
     subprocess.run(["git"] + args, cwd=cwd, env=env, check=True, capture_output=True)
@@ -84,6 +90,8 @@ def main():
         f.write("# exactly six hundred lines\n" + "x\n" * 599)
     with open(os.path.join(repo, "src", "votv-coop", "src", "x.cpp"), "w", encoding="utf-8") as f:
         f.write(SRC)
+    with open(os.path.join(repo, "src", "votv-coop", "src", "clean.cpp"), "w", encoding="utf-8") as f:
+        f.write(SRC_CLEAN)
     git(["add", "."], repo, env)
     git(["commit", "-q", "-m", "[drill] seed"], repo, env)
     baseline = os.path.join(tmp, "baseline.json")
@@ -100,7 +108,8 @@ def main():
     expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
-              "src.comment_lines": 21, "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "src.comment_lines": 23, "src.files": 2, "src.files_not_swept": 1,
+              "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1}

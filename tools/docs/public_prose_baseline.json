@@ -33,6 +33,8 @@
   "src.files_half_comment": 1,
   "src.comment_blocks_over_15": 322,
   "src.comment_dead_docpath": 73,
-  "src.comment_permille": 295
+  "src.comment_permille": 295,
+  "src.files": 896,
+  "src.files_not_swept": 557
  }
 }
