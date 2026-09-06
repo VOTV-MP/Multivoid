@@ -6,6 +6,7 @@
 
 #include "coop/creatures/kerfur_entity.h"
 
+#include "coop/element/element_deleter.h"  // K's Element is parked, not freed at the seam
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"   // KerfurConvertBroadcastPayload + ReliableKind (the BindFormActor wire)
 #include "coop/net/session.h"
@@ -225,7 +226,28 @@ void ReleaseKerfurId(coop::element::ElementId kerfurId) {
             g_byKerfurId.erase(it);
         }
     }
-    // drained's ~KerfurEntity (-> ~Element -> Registry::FreeId(K)) fires here, outside g_mutex.
+    // K's Element is parked rather than freed here: the callers are destroy seams, and a PRE
+    // observer runs at whatever instant ProcessEvent dispatched, on whatever thread. The deleter
+    // flags it dead immediately and does the free at the game-thread flush.
+    coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
+}
+
+void ReleaseKerfurForEid(coop::element::ElementId currentEid) {
+    if (currentEid == coop::element::kInvalidId) return;
+    coop::element::ElementId kerfurId = coop::element::kInvalidId;
+    Form form = Form::Npc;
+    {
+        std::lock_guard<std::mutex> lk(g_mutex);
+        auto it = g_eidToKerfurId.find(currentEid);
+        if (it == g_eidToKerfurId.end()) return;  // not a tracked kerfur's live form
+        kerfurId = it->second;
+        auto rec = g_byKerfurId.find(kerfurId);
+        if (rec != g_byKerfurId.end()) form = rec->second.form;
+    }
+    UE_LOGI("kerfur_entity: releasing K=%u -- its %s form eid=%u died for good",
+            static_cast<uint32_t>(kerfurId), form == Form::Npc ? "NPC" : "prop",
+            static_cast<uint32_t>(currentEid));
+    ReleaseKerfurId(kerfurId);
 }
 
 void OnDisconnect() {

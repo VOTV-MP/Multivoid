@@ -16,7 +16,7 @@
 #include "coop/element/identity_destroy.h"   // RetireMirror, the single destroy funnel
 #include "coop/element/npc.h"
 #include "coop/element/registry.h"
-#include "coop/creatures/kerfur_entity.h"   // AllocKerfurId, the stable id a fresh kerfur NPC gets
+#include "coop/creatures/kerfur_entity.h"   // AllocKerfurId and ReleaseKerfurForEid, the id's two ends
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_mirror.h"
@@ -181,6 +181,11 @@ void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     // nest with it. Take returns null on an already drained eid (a double destroy, or a disconnect
     // race).
     coop::element::RetireMirror(eid);
+    // A kerfur reaching this seam died for good: a conversion's blueprint-internal destroy is
+    // invisible to the PRE, and the converge releases that form silently. Without this the record
+    // outlives its actor to the session end, and its stale currentEid entry answers for whatever
+    // the registry hands that id to next.
+    coop::kerfur_entity::ReleaseKerfurForEid(eid);
     UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released (deferred)", self, eid);
     // Broadcast EntityDestroy so the client mirrors tear their copy down.
     auto* s = LoadSession();
@@ -425,6 +430,7 @@ void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
         if (it != g_actorToNpcId.end() && it->second == eid) g_actorToNpcId.erase(it);
     }
     coop::element::RetireMirror(eid);  // Take + deferred ~Npc/FreeId; no-op if already drained
+    coop::kerfur_entity::ReleaseKerfurForEid(eid);  // same permanent death, reached by the pose walk
     UE_LOGI("npc-sync[pose dead-retire]: Npc eid=%u actor=%p released (PE-invisible destroy)",
             static_cast<uint32_t>(eid), actorKey);
     auto* s = LoadSession();

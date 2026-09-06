@@ -8,6 +8,7 @@
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the destroy-edge first refusal
+#include "coop/creatures/kerfur_entity.h"   // ReleaseKerfurForEid, past the refusal
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
@@ -115,6 +116,10 @@ void DestroySeamBody(void* self) {
     // the echo and episode gates, since wire teardowns and load churn are not conversions; the
     // capture owns the wire when it returns true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
+    // Past the refusal a kerfur prop is dying for real, not converting: drop its record so the id
+    // is freed and its currentEid stops answering for a kerfur once the registry recycles it. A
+    // no-op for every prop that is not a tracked kerfur's current form, which is nearly all of them.
+    coop::kerfur_entity::ReleaseKerfurForEid(destroyEid);
     coop::net::WireKey wk{};
     wk.len = 0;
     if (!keyless) {
