@@ -1,39 +1,18 @@
-// coop/net/send_backlog.h -- the reliable-send delivery guarantee (R-4b).
+// coop/net/send_backlog.h -- the reliable-send delivery guarantee.
 //
-// GNS "reliable" is ARQ only for messages that ENTER the stream: when the
-// per-connection send buffer is full, SendMessages refuses the message at
-// enqueue (-k_EResultLimitExceeded) and, with bDeleteFailedMessages, deletes
-// it. Before this class existed ~60 call sites ignored that false return --
-// measured in the field as 485 silently-lost PropSpawns in one join minute
-// (snapshot 2,607/3,093 applied, 282 containers permanently empty on the
-// joiner), and locally as 956 multi-kind losses in one pinned-buffer smoke.
+// GNS "reliable" is ARQ only for messages that ENTER the stream. With the per-connection
+// send buffer full, SendMessages refuses at enqueue (-k_EResultLimitExceeded) and, under
+// bDeleteFailedMessages, deletes the message. Some sixty call sites used to ignore that
+// false return, which is how a join could silently lose hundreds of prop spawns and leave
+// containers permanently empty on the joiner.
 //
-// THE INVARIANT: a reliable send either enters the stream, enters this
-// backlog, or the connection dies. Never warn-and-drop. Guarantee scope is
-// the connection's lifetime: FreeSlot at teardown discards the dead peer's
-// backlog (its state dies with it -- MTA CNetServerBuffer precedent).
-//
-// Shape: one FIFO per (slot, lane) -- GNS's ordering domain is the LANE, so a
-// per-slot QUEUE would collapse lane independence (a Bulk join-burst backlog
-// must not block a High-lane TeleportClient). FIFO-once-nonempty: while a
-// (slot,lane) backlog is non-empty, every later send for that (slot,lane)
-// appends behind it -- enforced by holding the slot's section across
-// [empty-check -> GNS attempt -> on-refusal append], which is what keeps the
-// order across BOTH producer threads (game-thread authors, net-thread relay).
-// THE MUTEX IS PER-SLOT (covering its 3 lanes) BY CHOICE -- coarser than the
-// ordering domain (audit 2026-08-23): correctness needs only per-lane
-// atomicity, but one lock per slot avoids three-way lock-order surface for
-// zero measured need; the cross-lane hold is bounded by kDrainPassCap below
-// (a drain pass is at most 256 sends, ~sub-ms), so a High send never waits on
-// a whole Bulk episode.
-//
-// Each slot's backlog is stamped with the hConn it opened under; the drain
-// discards the whole backlog when the slot's live hConn no longer matches
-// (slots recycle lowest-free with no observable absence -- person Y must
-// never receive person X's queued state, even if a teardown path missed).
-//
-// Design of record (6-round /qf):
-// research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md
+// THE INVARIANT: a reliable send either enters the stream, enters this backlog, or the
+// connection dies. Never warn-and-drop. The guarantee's scope is the connection's lifetime;
+// FreeSlot at teardown discards the dead peer's backlog, its state dying with it (the MTA
+// CNetServerBuffer precedent). Each slot's backlog is stamped with the hConn it opened
+// under, and the drain discards the whole thing when the slot's live hConn no longer
+// matches: slots recycle lowest-free with no observable absence, and person Y must never
+// receive person X's queued state.
 
 #pragma once
 
@@ -74,18 +53,17 @@ public:
     // Any thread. `hConn` is the slot's CURRENT connection handle.
     bool SendOrQueue(int slot, int lane, uint32_t hConn, const uint8_t* wire, int len);
 
-    // One drain pass for a slot (net-thread tick). Re-attempts queued heads in
-    // lane-priority order (High -> Normal -> Bulk); the GNS rc is the headroom
-    // read -- a refusal ends the pass. `reserveGate` (D8): the pass stops
-    // refilling once the connection's pending bytes (reliable + unreliable,
-    // the exact sum GNS's enqueue check uses) exceed sendBufBytes - kReserve,
-    // so the UnreliableNoDelay pose/voice streams keep flowing during a drain
-    // episode instead of being starved for its whole length.
+    // One drain pass for a slot (net-thread tick). Re-attempts queued heads in lane-priority
+    // order (High -> Normal -> Bulk); the GNS rc is the headroom read, so a refusal ends the
+    // pass. `reserveGate`: the pass stops refilling once the connection's pending bytes
+    // (reliable plus unreliable, the exact sum GNS's own enqueue check uses) exceed
+    // sendBufBytes - kReserve, so the UnreliableNoDelay pose and voice streams keep flowing
+    // through a drain episode instead of being starved for its whole length.
     void Drain(int slot, uint32_t hConn, int sendBufBytes);
 
-    // D3: true when the slot's backlog has tripped a fatal bound (no-progress
-    // or byte cap). Sets `reason` (static string). The caller (net thread)
-    // kicks/closes; this class never touches connections beyond SendMessages.
+    // True when the slot's backlog has tripped a fatal bound (no-progress or byte cap). Sets
+    // `reason` to a static string. The caller on the net thread kicks or closes; this class
+    // never touches connections beyond SendMessages.
     bool CheckFatal(int slot, const char** reason);
 
     // Teardown: discard everything queued for the slot. Call where
@@ -100,9 +78,9 @@ public:
     // (3 peers x 228 B voice frames + poses) -- 64 KB is ~30x margin.
     static constexpr int kReserve = 64 * 1024;
 
-    // Max messages one Drain() pass re-injects (audit WARN-1): bounds the
-    // per-slot mutex hold (and the cross-lane wait) to sub-ms; the next
-    // net-thread pass continues. 256 * ~200 passes/s far exceeds any burst.
+    // Max messages one Drain() pass re-injects: bounds the per-slot mutex hold, and so the
+    // cross-lane wait, to sub-millisecond; the next net-thread pass continues. 256 messages at
+    // about 200 passes a second far exceeds any burst.
     static constexpr int kDrainPassCap = 256;
 
 private:
@@ -122,7 +100,7 @@ private:
         size_t episodePeakBytes = 0;
         bool fatal = false;
         const char* fatalReason = nullptr;
-        bool dyingLogged = false;  // fold the dying-conn lines (audit WARN-2)
+        bool dyingLogged = false;  // fold the repeated dying-connection lines
     };
     // Reset q to a fresh state under mu (caller holds mu).
     void ResetLocked_(SlotQ& s);
