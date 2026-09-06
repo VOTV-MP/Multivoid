@@ -42,7 +42,7 @@ constexpr size_t kMainPlayer_ragdollActor = 0x0C40;
 // gameplay and is always resident per the probe's residency check). Plain void*
 // caches -- no atomics/mutex (the incremental-link DLL-corruption rule does not
 // structurally trigger), consistent with the engine_mainplayer.cpp precedent.
-ue_wrap::CachedObjRef g_ragdollClass;  // islive-zeroav row :71
+ue_wrap::CachedObjRef g_ragdollClass;
 void* g_setAllBodiesSimFn = nullptr;
 void* g_setSimPhysFn      = nullptr;
 void* g_setCollisionFn    = nullptr;
@@ -156,7 +156,7 @@ bool ResolvePhysicsFns() {
            g_getLinVelFn && g_getAngVelFn && g_setLinVelFn && g_setAngVelFn;
 }
 
-// Resolve a ragdoll actor's body SkeletalMesh @0x230 (live-checked). null on miss.
+// Resolve a ragdoll actor's body SkeletalMesh (kAragdoll_SkeletalMesh, live-checked). null on miss.
 void* RagdollMeshOf(void* ragdollActor) {
     if (!ragdollActor || !R::IsLive(ragdollActor)) return nullptr;
     void* mesh = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ragdollActor) + kAragdoll_SkeletalMesh);
@@ -171,11 +171,8 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
     if (!cls) { UE_LOGW("ragdoll_body: playerRagdoll_C class unresolved -- cannot spawn"); return nullptr; }
     void* body = BeginDeferredSpawn(cls, location, rotation);
     if (!body) { UE_LOGW("ragdoll_body: BeginDeferredSpawn returned null"); return nullptr; }
-    // Expose-On-Spawn: stamp Player @0x248 BEFORE FinishDeferredSpawn runs
-    // ReceiveBeginPlay, so the actor self-configures its visible kel body mesh from
-    // the owning player (the same way the K2 SpawnActorFromClass node exposes
-    // construction params -- mirrors the deferred variantState pattern in
-    // remote_prop). Raw UPROPERTY* write into the uninitialized actor.
+    // Expose-On-Spawn: stamp Player (kPlayerRagdoll_Player) BEFORE FinishDeferredSpawn runs
+    // BeginPlay, so the BP's construction sees the owner it expects.
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kPlayerRagdoll_Player) = ownerPlayer;
     FinishDeferredSpawn(body, location, rotation);
     if (!R::IsLive(body)) { UE_LOGW("ragdoll_body: body died during FinishDeferredSpawn"); return nullptr; }
@@ -191,13 +188,8 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
     return body;
 }
 
-// Attach `actor` (its RootComponent) to the ragdoll `body`'s mesh @0x230 at the
-// PELVIS bone, so the actor rigidly follows the flopping ragdoll's pelvis per-frame --
-// the user's "pelvis to pelvis attachment". KeepWorld rules: the actor keeps its
-// current world transform at attach time (it spawned co-located with the ragdoll), then
-// follows the pelvis's motion deltas, so it tumbles WITH the flop. No shared skeleton
-// needed (rigid transform follow, not pose copy). Falls back to NAME_None (the
-// component root) if the pelvis bone isn't found. Game thread only.
+// Attach `actor` (its RootComponent) to the ragdoll `body`'s mesh (kAragdoll_SkeletalMesh) at the
+// named socket, so it rides the simulated bones.
 bool AttachActorToRagdollBody(void* actor, void* body) {
     if (!actor || !R::IsLive(actor) || !body || !R::IsLive(body)) return false;
     void* mesh = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kAragdoll_SkeletalMesh);

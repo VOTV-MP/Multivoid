@@ -1,11 +1,9 @@
 // coop/props/remote_prop_physics.cpp -- the reflected UPrimitiveComponent physics thunks
 // (SetSimulatePhysics / linear + angular velocity) + the Aprop_C.thrown dispatch.
 //
-// EXTRACTED from remote_prop.cpp 2026-07-19 (s28 modular cut; the same anti-smear lane-split
-// family as remote_prop_spawn / remote_prop_destroy / remote_prop_convert). The public trio
-// (DriveSimulate / DriveSetLinearVelocity / DriveSetAngularVelocity) stays declared in
-// remote_prop.h; DrivePropThrown is impl-private (remote_prop_internal.h; single cross-TU
-// caller: OnRelease). Bodies verbatim; the cached-resolve state stays TU-local, lazy per call
+// The public trio (DriveSimulate / DriveSetLinearVelocity / DriveSetAngularVelocity) is declared
+// in remote_prop.h; DrivePropThrown is impl-private (remote_prop_internal.h; single cross-TU
+// caller: OnRelease). The cached-resolve state stays TU-local and lazy per call
 // (constant-initialized PODs -- no TU-order dependence).
 //
 // Game-thread only (ProcessEvent contract).
@@ -27,19 +25,15 @@ namespace R = ue_wrap::reflection;
 namespace {
 
 
-// Cached UFunction pointers for the engine PrimComp ops we call per release.
-// SetSimulatePhysics + SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees
-// live on UPrimitiveComponent. PropThrown is on Aprop_C (BP-class lookup).
-// One-shot resolve; IsLive checks re-resolve if the UClass got GC'd at a
-// level unload.
+// Cached UFunction pointers for the engine PrimComp ops we call per release. SetSimulatePhysics +
+// SetPhysicsLinearVelocity + SetPhysicsAngularVelocityInDegrees live on UPrimitiveComponent.
+// PropThrown is on Aprop_C (BP-class lookup). One-shot resolve; IsLive checks re-resolve if the
+// UClass got GC'd at a level unload.
 //
-// v5 design (post-RE 2026-05-24): the launch energy is the body's inherited
-// PhysX tracking velocity captured by the HOST at the release edge (see
-// research/findings/physics-grab/votv-throw-release-pipeline-RE-2026-05-24.md). Receiver
-// applies linear + angular velocity AFTER SetSimulatePhysics(true) so the
-// body resumes dynamic sim with the matching launch state. No AddImpulse
-// (the impulse was the v4 partial fix; replaced cleanly per RULE 2).
-ue_wrap::CachedObjRef g_primCompCls;  // slot-validated self-healing cache (islive-zeroav row :84)
+// The launch energy is the body's inherited PhysX tracking velocity, captured by the HOST at the
+// release edge. The receiver applies linear + angular velocity AFTER SetSimulatePhysics(true), so
+// the body resumes dynamic sim with the matching launch state -- no AddImpulse.
+ue_wrap::CachedObjRef g_primCompCls;  // slot-validated self-healing cache
 void*  g_setSimulateFn          = nullptr;
 void*  g_setLinVelFn            = nullptr;
 void*  g_setAngVelFn            = nullptr;
@@ -97,7 +91,7 @@ bool ResolveUFns() {
         return false;
     }
     g_setSimulateFrameSize = R::FunctionFrameSize(g_setSimulateFn);
-    // Param is `bSimulate` per Engine.hpp:17349 (Hungarian b- prefix for bool).
+    // Param is `bSimulate` (the engine's Hungarian b- prefix for a bool).
     g_setSimulatePSim = R::FindParamOffset(g_setSimulateFn, L"bSimulate");
     // UPrimitiveComponent.SetPhysicsLinearVelocity(FVector NewVel, bool
     // bAddToCurrent, FName BoneName). Per UE4 4.27 Engine.hpp; UFunction param
@@ -117,12 +111,10 @@ bool ResolveUFns() {
                 g_setAngVelPVec, g_setAngVelPBone);
         return false;
     }
-    // Aprop_C.thrown is handled by the TryResolvePropThrown() call at the
-    // top of this function (which retries every call to pick up `prop_C`
-    // when it loads after PrimitiveComponent). No second call here -- the
-    // duplicate would be a no-op (TryResolvePropThrown self-gates on
-    // g_propThrownFn != nullptr) and audit-flagged as RULE 2 dual path
-    // (audit fix 2026-05-24 post-Bug-B).
+    // Aprop_C.thrown is handled by the TryResolvePropThrown() call at the top of this function,
+    // which retries every call to pick up `prop_C` when it loads after PrimitiveComponent. No
+    // second call here: the duplicate would be a no-op (TryResolvePropThrown self-gates on
+    // g_propThrownFn) and a second resolve path for one thing.
     UE_LOGI("remote_prop: resolved -- SetSimulatePhysics frame=%d (sim@%d), "
             "SetPhysicsLinearVelocity frame=%d (vec@%d bone@%d), "
             "SetPhysicsAngularVelocityInDegrees frame=%d (vec@%d bone@%d), "
@@ -137,19 +129,16 @@ bool ResolveUFns() {
 }
 }  // namespace
 
-// Fire Aprop_C.thrown(Player) on the prop actor so the BP's sound +
-// particle-trail effects play. `propActor` is the Aprop_C; `localPlayer`
-// is the local mainPlayer_C ptr (BP uses it for stats; semantically we're
-// crediting local for a remote throw, accepted for natural-sound benefit).
+// Fire Aprop_C.thrown(Player) on the prop actor so the BP's sound + particle-trail effects play.
+// `propActor` is the Aprop_C; `localPlayer` is the local mainPlayer_C ptr (the BP uses it for
+// stats, so a remote throw is credited locally -- accepted for the natural sound).
 //
-// Skips silently when localPlayer is null -- a null Player would feed the
-// BP graph a guaranteed-null cast, almost always producing a no-op or
-// null-deref. Audit-found 2026-05-24 (RULE 1: degrade gracefully, never
-// dispatch a known-null into BP we can't statically inspect).
+// Skips silently when localPlayer is null: a null Player would feed the BP graph a guaranteed-null
+// cast, almost always a no-op or a null-deref, and we cannot statically inspect that graph.
 //
-// Frame buffer matches DriveSimulate/DriveSetLinearVelocity/DriveSetAngularVelocity
-// (64 B). PropertiesSize covers params + locals, so a BP event with
-// temporaries can exceed the 8 bytes the `Player` param alone takes.
+// The frame buffer matches DriveSimulate/DriveSetLinearVelocity/DriveSetAngularVelocity (64 B).
+// PropertiesSize covers params + locals, so a BP event with temporaries can exceed the 8 bytes the
+// `Player` param alone takes.
 void DrivePropThrown(void* propActor, void* localPlayer) {
     if (!propActor || !g_propThrownFn || !localPlayer) return;
     unsigned char frame[64] = {};
@@ -160,9 +149,8 @@ void DrivePropThrown(void* propActor, void* localPlayer) {
     R::CallFunction(propActor, g_propThrownFn, frame);
 }
 
-// Public accessors (M-1 2026-05-29 split): UPrimitiveComponent ops used
-// by both the drive Tick path (PropPose stream) and the spawn receiver
-// (coop::remote_prop_spawn::OnSpawn). Game-thread only.
+// Public accessors: UPrimitiveComponent ops used by both the drive Tick path (PropPose stream)
+// and the spawn receiver (coop::remote_prop_spawn::OnSpawn). Game-thread only.
 void DriveSimulate(void* mesh, bool simulate) {
     if (!mesh) return;
     if (!ResolveUFns()) return;

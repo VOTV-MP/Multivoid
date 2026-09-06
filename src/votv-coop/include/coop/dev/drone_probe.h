@@ -1,23 +1,19 @@
-// coop/dev/drone_probe.h -- dev-only RE probe for the delivery drone (Adrone_C).
-//
-// Gated on ini `drone_probe=1`. Resolves the unknowns the static RE couldn't (BP
-// bytecode isn't in the EXE -- see research/findings/votv-delivery-drone-RE-and-
-// coop-sync-design-2026-06-03.md, the 10 [PROBE]s). Answers, from ONE real
-// delivery (call the drone console -> watch it fly in -> drop -> leave):
+// coop/dev/drone_probe.h -- dev-only RE probe for the delivery drone (Adrone_C), gated on ini
+// `drone_probe=1`. From ONE real delivery (console -> fly in -> drop -> leave) it answers:
+
 //   [#1] is mainGamemode.drone a persistent placed singleton? (presence + ptr stability)
 //   [#2] is AdroneConsole::player_use ProcessEvent-dispatched (hookable)? (observer fires)
 //   [#3] does dropSack's box fire the Aprop_C Init observer? (orderbox/giftbox Init fires)
 //   [#4] flyingType int -> {delivery,pickup,sell} value (state dump during the cycle)
-//   [#5] which of triggerFly/beginFly/dropSack/soundAlarm/checkOrders/compileOrder are
-//        ProcessEvent vs BP-internal? (observer fires vs silence)
+//   [#5] triggerFly/beginFly/dropSack/soundAlarm/checkOrders/compileOrder: PE or BP-internal?
 //   [#6] order-commit path (saveSlot.orders.Num / droneOrder.items.Num dump)
+//   [#7] is the laptop shop reachable from a client? (a CLIENT-side run answers it)
 //   [#8] auto-drive schedule (daynight sendDriveBox / Make Default Order observer fires)
 //   [#9] gift injector on good task (createNewTask / Make Default Order fires)
 //   [#10] does the mirror drone register in mainGamemode.radarObjects? (membership check)
-// A CLIENT-side run additionally answers [#7] (is the laptop shop reachable) + [#10].
-//
-// NONE of this ships (RULE 3 -- dev probe). All reads are reflection (FindPropertyOffset
-// by field name -> robust to offset drift) + ProcessEvent observers. Game thread only.
+
+// NONE of this ships (RULE 3 -- dev probe). All reads are reflection (FindPropertyOffset by
+// field name -> robust to offset drift) + ProcessEvent observers. Game thread only.
 
 #pragma once
 

@@ -75,7 +75,7 @@ void RegisterOn(const wchar_t* className, const wchar_t* fnName, const char* lab
 bool g_installed = false;
 
 // ---- state poll cache ------------------------------------------------------
-ue_wrap::CachedObjRef g_gmCache;  // islive-zeroav row :79
+ue_wrap::CachedObjRef g_gmCache;
 void* ResolveGamemode() {
     if (g_gmCache.Alive()) return g_gmCache.Raw();
     g_gmCache.Set(R::FindObjectByClass(L"mainGamemode_C"));
@@ -102,10 +102,10 @@ uint64_t g_tickCounter = 0;
 // below our ProcessEvent detour) BUT are freely CALLABLE actively via ProcessEvent (all are
 // FUNC_BlueprintEvent|FUNC_BlueprintCallable). So instead of asking a human to fly a delivery, we
 // drive the game's OWN delivery path on the game thread (this Tick runs in net_pump, GT-serial):
-//   HOST   -> Make Default Order(out) then laptop.makeAnOrder(order, automatic=true)  == func_newHour
+//   HOST   -> Make Default Order(out) then laptop.makeAnOrder(order, automatic=true) ==
+// func_newHour
 //   CLIENT -> Make Default Order(out) then laptop.addOrderCart(order)  (commit-only, no fly)
-// One-shot, fired after a settle delay so the world + link are stable. RE: the "autonomous trigger"
-// agent pass in votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+// One-shot, fired after a settle delay so the world + link are stable.
 bool DriveEnabled() {
     static const bool s_on = coop::config::ResolveFlag(::coop::config_registry::rows::drone_probe_drive);
     return s_on;
@@ -129,9 +129,8 @@ bool BuildDefaultOrder(void* gm, void* gmCls, uint8_t out[kOrderStructSize]) {
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     if (!ue_wrap::Call(dnc, f)) { UE_LOGW("[drone_probe] drive: Make Default Order call failed"); return false; }
-    // The order is the function's OUT/return struct param; locate it via the FProperty chain,
-    // then read it BY NAME through GetRaw -- which bounds-checks the offset against the frame
-    // size (the manual f.data()+offset memcpy skipped that guard -- audit 2026-06-09).
+    // The order is the function's OUT/return struct param; locate it via the FProperty chain, then
+    // read it BY NAME through GetRaw, which bounds-checks the offset against the frame size.
     for (const auto& p : R::FunctionParams(fn)) {
         if ((p.flags & kCpfOutOrReturn) && p.size >= 0x10) {
             const int32_t n = p.size < kOrderStructSize ? p.size : kOrderStructSize;
@@ -295,21 +294,22 @@ void Tick(bool connected, bool isHost) {
         }
     }
 
-    // Advance the throttle counter once per drone-present tick (NOT inside the save guard below --
-    // a transiently-null saveSlot would otherwise stall the SAVE-dump cadence; audit 2026-06-08).
+    // Advance the throttle counter once per drone-present tick, NOT inside the save guard below: a
+    // transiently-null saveSlot would otherwise stall the SAVE-dump cadence.
     ++g_tickCounter;
 
     // ---- order queue: the load-bearing economy signal ([#6][#7]) -------------
-    // The static BP RE (bytecode-verified 2026-06-08) proved the ONLY persistent order write is
-    // ui_laptop.makeAnOrder -> addOrderCart -> Array_Add(saveSlot.orders) on the LOCAL GameMode
-    // (VOTV has no UE replication) -> a CLIENT's order is client-LOCAL and never reaches the host.
-    // So poll saveSlot.orders.Num EVERY tick (two cheap derefs) and report the EDGE:
+    // The only persistent order write is ui_laptop.makeAnOrder -> addOrderCart -> orders.Add on the
+    // LOCAL GameMode (VOTV has no UE replication), so a CLIENT's order is client-local and never
+    // reaches the host. The drain is ui_laptop.removeOrderCart, which does orders.Remove(0). So
+    // poll saveSlot.orders.Num EVERY tick (two cheap derefs) and report the EDGE:
     //   INCREMENT on a CLIENT = [#7] the laptop shop works AND the order stayed local -> confirms
-    //                           the OrderRequest client->host edge is required (+ dump order[0] so
-    //                           we see what an order carries / that the TSubclassOf `object` reads).
-    //   DECREMENT            = the queue DRAIN point the static RE lost (no Array_Remove was found
-    //                          in any drone fn). (droneOrder@0x01F0 is never written per the RE --
-    //                          dumped throttled below only as a runtime cross-check.)
+    // the
+    //                           OrderRequest client->host edge is required (+ dump order[0] so we
+    // see
+    //                           what an order carries / that the TSubclassOf `object` reads).
+    //   DECREMENT             = a cart removal, the queue's only drain.
+    // droneOrder is dumped throttled below purely as a runtime cross-check.
     const int32_t offSave = Off(gmCls, L"saveSlot");
     void* save = offSave >= 0 ? ReadAt<void*>(gm, offSave) : nullptr;
     if (save && R::IsLive(save)) {
@@ -365,13 +365,12 @@ void Tick(bool connected, bool isHost) {
 
     // ---- autonomous one-shot trigger (ini drone_probe_drive=1) -- "run the probe yourself" ----
     if (DriveEnabled() && connected && !g_driveFired) {
-        // Settle ~10s after connected + drone-present (we only reach here with a live drone) so the
-        // world is loaded + the link stable, then fire ONCE. HOST flies a delivery; CLIENT commits a
-        // shop order. The state/orders/cargo/radar edges above capture the result.
-        // ~14s after connect+drone-present. Deliberately LONGER than coop::order_sync's connect-time
-        // watermark prime (~5s, when the client's saveSlot first resolves) so the auto-placed order
-        // lands AFTER the prime -> order_sync forwards it (else the order is swallowed as pre-existing
-        // and the v49 economy e2e can't be observed in the autonomous smoke).
+        // Settle after connected + drone-present (we only reach here with a live drone) so the
+        // world is loaded and the link stable, then fire ONCE. HOST flies a delivery; CLIENT
+        // commits a shop order. The state/orders/cargo/radar edges above capture the result. The
+        // wait is deliberately LONGER than coop::order_sync's connect-time watermark prime (~5 s,
+        // when the client's saveSlot first resolves), so the auto-placed order lands AFTER the
+        // prime and order_sync forwards it instead of swallowing it as pre-existing.
         if (++g_settleTicks >= 1800) {
             g_driveFired = true;  // latch BEFORE the call: blocks any re-fire; each precondition bail
                                   // below logs its own reason (re-arm needs a restart -- fine, one-shot)
