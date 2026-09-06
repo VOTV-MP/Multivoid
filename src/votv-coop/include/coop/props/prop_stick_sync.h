@@ -25,11 +25,10 @@ struct PropStickStatePayload;
 
 namespace coop::prop_stick_sync {
 
-// Idempotent install, retried each net-pump tick until comp_wallAttachable_C
-// loads: resolves the component class + ExecuteUbergraph_comp_wallAttachable +
-// the comp's `prop` field + prop_wallAttachable_C (+ its comp_wallAttachable
-// field) + forceStick/init UFunctions, then registers the POST observer.
-// Caches `session`.
+// Idempotent install, retried each net-pump tick until comp_wallAttachable_C loads:
+// resolves the component class, ExecuteUbergraph_comp_wallAttachable, the comp's `prop`
+// field, prop_wallAttachable_C with its comp_wallAttachable field, and forceStick, then
+// registers the POST observer. Caches `session`.
 void Install(coop::net::Session* session);
 
 // Drain the stick commits recorded by the observer since the last pass:
@@ -47,11 +46,13 @@ void OnStickState(const coop::net::PropStickStatePayload& payload,
 // class resolves. Cheap SuperStruct walk; any thread.
 bool IsWallAttachable(void* actor);
 
-// Clear a stuck wall-attachable for an incoming kinematic drive: frozen=false
-// + static=false + PE prop->init() (re-enables simulate, which in UE4.27 also
-// detaches an attached root -- the SP unstick shape). Returns true if the
-// actor WAS stuck and is now clear. The caller (remote_prop) gates the call on
-// IsWallAttachable + its sustained-stream check. Game thread.
+// Clear a stuck wall-attachable for an incoming kinematic drive: frozen=false, static=false
+// and SetActorSimulatePhysics(true), which is the SP unstick shape with the simulate
+// recompute applied directly -- enabling simulate also detaches an attached root in
+// UE4.27, which the Blueprint's own unstick relies on. No init() is dispatched anywhere in
+// this module; the .cpp says why. Returns true if the actor WAS stuck and is now clear.
+// The caller (remote_prop) gates the call on IsWallAttachable and its sustained-stream
+// check. Game thread.
 bool UnstickForDrive(void* actor);
 
 // Clear per-session state (the commit-pending list). Net disconnect.

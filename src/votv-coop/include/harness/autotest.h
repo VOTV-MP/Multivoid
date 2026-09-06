@@ -78,10 +78,12 @@ DWORD WINAPI ClumpVisProbeThread(LPVOID arg);
 void RunWorldRulesProbe();
 DWORD WINAPI WorldRulesProbeThread(LPVOID arg);
 
-// The flashlight-toggle test (harness/autotest_flashlight.cpp): AmainPlayer_C's Flashlight
-// Update is called by reflection four times, 2 s apart; the POST observer sends ItemActivate
-// each time and the other peer's puppet reflects the toggles (item_activate::ApplyToPuppet).
-// Both peers; blocks about 25 s. Env VOTVCOOP_RUN_FLASHLIGHT_TEST=1.
+// The flashlight-toggle test (harness/autotest_flashlight.cpp): the local flashlight is
+// toggled five times, 2 s apart, through item_activate::DebugForceToggle -- the Blueprint
+// path is gated on real engine input, which reflection cannot synthesise -- and each
+// toggle sends ItemActivate, so the other peer's puppet reflects it
+// (item_activate::ApplyToPuppet). Both peers; blocks about 25 s. Env
+// VOTVCOOP_RUN_FLASHLIGHT_TEST=1.
 void RunAutonomousFlashlightTest();
 DWORD WINAPI FlashlightTestThread(LPVOID arg);
 

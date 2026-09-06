@@ -59,10 +59,10 @@ int32_t g_propCompOff    = -1;       // prop_wallAttachable_C::comp_wallAttachab
 // init internally anyway; only the raw fallback + UnstickForDrive use the
 // direct toggle.
 
-// The commit's ubergraph entry: offset 45 in ExecuteUbergraph_comp_wallAttachable
-// (kismet ground truth, header). The byte offset is part of the cooked BP the
-// same way the keypad/door entry constants are; a game update that recooks the
-// BP shifts it -- the install log prints it so a silent no-fire is diagnosable.
+// The commit's ubergraph entry: offset 45 in ExecuteUbergraph_comp_wallAttachable, from
+// the kismet bytecode. The byte offset is part of the cooked BP the same way the keypad
+// and door entry constants are; a game update that recooks the BP shifts it, and the
+// install log prints it so a silent no-fire is diagnosable.
 constexpr int32_t kStickCommitEntry = 45;
 
 // ---- commit-pending list -------------------------------------------------------

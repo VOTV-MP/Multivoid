@@ -17,9 +17,9 @@
 namespace coop::shutdown {
 
 // Global atomic shutdown flag -- file-private (internal linkage). Read through the public
-// IsShuttingDown(); the SOLE writer is DoShutdown()'s compare_exchange. Once tripped it NEVER
-// clears, the process being on its way down, and it needs no public setter because no
-// external writer exists.
+// IsShuttingDown(); the only writers are in this file, DoShutdown()'s compare_exchange and
+// the process-exit persist. Once tripped it NEVER clears, the process being on its way
+// down, and it needs no public setter because no external writer exists.
 static std::atomic<bool> g_shuttingDown{false};
 
 namespace {

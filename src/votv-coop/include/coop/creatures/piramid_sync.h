@@ -46,12 +46,13 @@ void Install(coop::net::Session* session);
 //              pending-gather replay attempts while one is queued.
 void Tick();
 
-// HOST, game thread, at a joiner's world-ready edge (subsystems::ConnectReplayForSlot, AFTER
-// world_actor_sync and npc_sync queued their snapshots so the mirrors will exist): if a
-// gather is in flight RIGHT NOW -- the edge map holds gathering=true and the actor still
-// points at a live wispTarget -- re-send PyramidGather ToSlot. That is the lane's late-join
-// answer (docs/events-and-weather.md): without it a join DURING the roughly 10 s gather
-// misses the whole choreography, because the commit relay is edge-triggered and fired before
+// HOST, game thread, at a joiner's world-ready edge (subsystems::ConnectReplayForSlot,
+// AFTER world_actor_sync and npc_sync queued their snapshots so the mirrors will exist):
+// if a gather is in flight RIGHT NOW -- read off the live actors, whose `gathering` flag
+// is latched and whose wispTarget still resolves, never off the edge map, which lags the
+// 1 Hz sweep -- re-send PyramidGather ToSlot. That is the lane's late-join answer
+// (docs/events-and-weather.md): without it a join DURING the roughly 10 s gather misses
+// the whole choreography, because the commit relay is edge-triggered and fired before
 // this peer connected.
 void QueueConnectBroadcastForSlot(int slot);
 

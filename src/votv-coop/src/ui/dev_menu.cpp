@@ -361,9 +361,9 @@ void RenderNameplatePref() {
     ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
 
     // The local player's nick COLOUR preference. SYNCED (a live NickColorChange plus the Join
-    // colour field for late joiners) and persisted (multivoid.ini nick_color=). Applied on
-    // picker RELEASE rather than per drag frame, since each apply persists and announces over
-    // the wire.
+    // colour field for late joiners) and persisted (multivoid.ini nick_color=). Committed on a
+    // debounce after the last edit rather than per drag frame, since each commit persists and
+    // announces over the wire; the debounce and its reason are at the picker below.
     ImGui::Spacing();
     ImGui::SeparatorText("Nickname color");
     const uint32_t cur = coop::nick_color::LocalPacked();

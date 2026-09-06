@@ -32,9 +32,8 @@ namespace cfg = coop::config;
 // peer's puppet should follow over the wire. Verification is by log diff.
 //
 // Expected on the SENDING peer:
-//   flashlight: 4 POST observer(s) installed (...)
-//   flashlight[POST Flashlight_Update] self=... flashlight=1/0 ...
-//   flashlight: sent state=1/0 (peer=0 or 1)
+//   flashlight_test: iteration N -- DebugForceToggle (local visual + wire)
+//   flashlight: DebugForceToggle sent state=1/0 ...
 // and on the RECEIVING peer:
 //   flashlight: applied to puppet=... state=1/0
 //
@@ -73,8 +72,9 @@ void RunAutonomousFlashlightTest() {
     // toggle path can flip the light. The save should carry one, and
     // coop::dev::flashlight_setup::EnsureFlashlightReady() makes sure of it: it
     // reads hasFlashlight and calls addPropToPlayer when false, writes
-    // saveSlot.battery = 1.0 and saveSlot.flashlightBattery = prop_batts_C, and
-    // logs the state before and after.
+    // saveSlot.battery = 100 (the scale is 0-100, not 0-1) and
+    // saveSlot.flashlightBattery = prop_batts_C, and logs the state before and
+    // after.
     {
         auto ensureDone = std::make_shared<std::atomic<int>>(0);
         GT::Post([rsv, ensureDone] {
@@ -90,14 +90,14 @@ void RunAutonomousFlashlightTest() {
     // entries -- either dispatches and no-ops or wants input state we cannot
     // synthesise, the graph being gated on the engine input system actually firing
     // an InputAction event. So the test bypasses it.
-    // coop::item_activate::DebugForceToggle flips the player's flashlight bool,
+    // coop::item_activate::DebugForceToggle flips the player's flashlight bool and
     // drives the local light_R Intensity through SetIntensity -- what the Blueprint
-    // would have done -- and invokes our POST observer with the new state. The
-    // sender's own light therefore toggles, a wire packet flies on every iteration
-    // since each is a genuine state change, and the receiver applies the same
-    // intensity to the puppet. The iteration count is ODD so both peers end ON,
-    // which is what an end-of-run screenshot should show; an even count left them
-    // both dark.
+    // would have done -- then builds and sends the ItemActivate packet itself,
+    // rather than through the POST observer that path never reaches. The sender's
+    // own light therefore toggles, a packet flies on every iteration since each is
+    // a genuine state change, and the receiver applies the same intensity to the
+    // puppet. The iteration count is ODD so both peers end ON, which is what an
+    // end-of-run screenshot should show.
     const int kIterations = 5;
     for (int i = 0; i < kIterations; ++i) {
         UE_LOGI("flashlight_test: iteration %d -- DebugForceToggle (local visual + wire)", i);

@@ -1,18 +1,14 @@
-// coop/save_identity_bind.h -- CLIENT-side eid-range BIND of keyless save-loaded natives.
+// coop/props/save_identity_bind.h -- CLIENT-side eid-range BIND of keyless save-loaded
+// natives.
 //
-// Gives each keyless save-loaded native (a chipPile or an off-prop kerfur) a stable cross-peer
-// identity -- the HOST eid -- keyed on the saveSlot ARRAY INDEX, per family. The host sends an
-// {array index -> host eid} map; as the client's loadObjects and Load-Primitives replay the
-// saved arrays, caught at the BeginDeferred thunk, the k-th spawn OF EACH FAMILY binds to that
-// family's k-th entry. Each replay loop is a synchronous for-loop, so within an array the spawn
-// order IS the index order; only the cross-array phase order varies, which per-family cursors
-// are immune to and one global ordinal would not be.
-//
-// The bind is the terminal operation the position-adopt path already ships
-// (remote_prop_spawn.cpp): retire the native's peer-range LOCAL element, then RegisterPropMirror
-// it at the HOST eid. Only the TRIGGER differs -- host eid plus spawn order, not a 30 cm
-// position match -- and the two ranges are disjoint, so no collision can arise. An element a
-// host PropSpawn already bound is rebound in place, its redundant actor echo-destroyed.
+// Gives each keyless save-loaded native (a chipPile or an off-prop kerfur) a stable
+// cross-peer identity, the HOST eid, keyed per family on the ORDER the save arrays are
+// replayed in. The host sends a map whose entries are in that order; as the client's
+// loadObjects and Load-Primitives replay the saved arrays, caught at the BeginDeferred
+// thunk, the k-th spawn OF EACH FAMILY binds to that family's k-th entry. Each replay
+// loop is a synchronous for-loop, so within an array the spawn order IS the index order;
+// only the cross-array phase order varies, which per-family cursors are immune to and one
+// global ordinal would not be.
 #pragma once
 
 #include "coop/props/save_identity_map.h"  // IdMap, Family

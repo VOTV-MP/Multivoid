@@ -2,17 +2,17 @@
 //
 // Three sources, one namespace: "dr_kel" (entry 0) is the native stock body and loads
 // no asset; the builtin skins are the game's own kerfurOmegaV1_Skeleton bodies, addressed
-// by game asset path, so no pak is needed; converter paks under LogicMods carry the rest.
-// A single-skin pak's stem is both the skin name and the package name the runtime loads.
-// A BUNDLE pak carries several skins, and since assets are addressed by their internal
-// paths its filename says nothing: kSkinBundles maps a bundle stem to the members it
-// provides. A preview tile is a sibling <name>.png or .bmp named after the MEMBER.
+// by game asset path, so no pak is needed; converter paks under LogicMods carry the rest,
+// a single-skin pak's stem being both the skin name and the package name the runtime
+// loads. A BUNDLE pak carries several skins, and since assets are addressed by their
+// internal paths its filename says nothing: kSkinBundles maps a stem to its members. A
+// preview tile is a <name>.png or .bmp in a pak directory named after the SKIN -- bundle
+// members and builtins included, neither having a pak of its own.
 //
 // The catalog half is filesystem only and Entries() has one caller, the UI on the render
 // thread, which is what makes the absence of a lock correct. The usability half loads
 // assets, so it is game-thread-only with storage of its own. A skin name is both a
-// LoadObject path component and a reliable-payload field: one rule validates it at the
-// ini read, the wire receive and the pak scan alike.
+// LoadObject path component and a wire field, so ONE rule validates it everywhere.
 
 #pragma once
 
