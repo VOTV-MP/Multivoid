@@ -145,8 +145,8 @@ FRotator GetVisibleMeshWorldRotation(void* actor);
 // EventTick, which re-applies view and post-process to the shared screen. Game thread.
 bool SetActorTickEnabled(void* actor, bool enabled);
 
-// AActor::SetActorHiddenInGame: visual only (bHidden @0x58; collision is bActorEnableCollision
-// @0x5C). Game thread.
+// AActor::SetActorHiddenInGame: visual only. Collision is a separate flag with its own setter
+// below. Game thread.
 bool SetActorHiddenInGame(void* actor, bool hidden);
 
 // AActor::SetActorEnableCollision; pair it with a hide so an invisible mirror is neither grabbable
@@ -159,8 +159,8 @@ void* GetController(void* pawn);
 // AController::GetControlRotation: the mouse-look view rotation; (0,0,0) on failure. Game thread.
 FRotator GetControlRotation(void* controller);
 
-// Direct write of AController::ControlRotation (offset 0x0288); the engine reads it next tick, and
-// the setter UFunction does no more than store it. Game thread.
+// Direct write of AController::ControlRotation, at the sdk_profile.h offset; the engine reads it
+// next tick, and
 void SetControlRotation(void* controller, const FRotator& rot);
 
 // K2_TeleportTo: the engine's own long-range teleport; K2_SetActorLocation can be silently reverted
@@ -210,10 +210,6 @@ bool SetComponentTickEnabled(void* component, bool enabled);
 // Direct write of a UObject* slot at `byteOffset` inside `target`. Game thread.
 void WriteObjectField(void* target, size_t byteOffset, void* value);
 
-// If `localPlayer` is grabbing `actor` through the light-grab path (grabbing_actor @0x07D0,
-// grabHandle @0x0688), dispatch UPhysicsHandleComponent::ReleaseComponent and clear the slot; true
-// iff a release happened. Release before destroy: K2_DestroyActor leaves PHC.GrabbedComponent
-// dangling and the handle's tick dereferences it. Game thread.
 bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor);
 
 // True iff `localPlayer`'s grabbing_actor slot holds `actor`; no mutation. A held prop is skipped
@@ -242,17 +238,17 @@ struct MainPlayerGrabState {
 };
 bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 
-// AmainPlayer_C::lookAtActor @0x0AA0, the interactable under the crosshair; nullptr if unresolved
-// or nothing is aimed at. Game thread.
+// AmainPlayer_C::lookAtActor, the interactable under the crosshair; nullptr if unresolved or
+// nothing is aimed at. Reflection-resolved. Game thread.
 void* ReadMainPlayerLookAtActor(void* mainPlayer);
 
 // Direct write of lookAtActor, the interaction-trace result the BP re-derives each tick; lets a
 // test aim the next InpActEvt_use dispatch at a chosen actor. Game thread.
 bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor);
 
-// The radial-menu confirm state: releaseEToUse @0x0E88 and actionIndex @0x0A98 (the index into
-// getActionOptions). The kerfur radial verb is relayed from these because the actionName dispatch
-// is EX_LocalVirtualFunction, invisible to ProcessEvent. Game thread.
+// The radial-menu confirm state, releaseEToUse and actionIndex, the index into getActionOptions.
+// Both reflection-resolved. The kerfur radial verb is relayed from these because the actionName
+// dispatch is internal to the Blueprint and invisible to ProcessEvent. Game thread.
 bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex);
 
 // Write grabbing_actor and grabbing_component in one dispatch (the autotest's synthetic grab keeps
@@ -272,8 +268,9 @@ void LogClassProperties(const wchar_t* className);
 
 // USceneComponent world location (K2_GetComponentLocation) and forward vector; (0,0,0) on failure.
 FVector GetComponentLocation(void* component);
-// USceneComponent::RelativeLocation read raw at +0x011C: the BP-authored offset, stable once
-// construction has run, where K2_GetComponentLocation is unsettled mid-init. (0,0,0) on null.
+// USceneComponent::RelativeLocation, read raw at the sdk_profile.h offset: the Blueprint-authored
+// value, stable once construction has run, where K2_GetComponentLocation is unsettled mid-init.
+// (0,0,0) on null.
 FVector GetComponentRelativeLocation(void* component);
 
 // A UParticleSystemComponent's `Template`, read raw at a reflection-resolved offset; the cue sync
@@ -481,9 +478,9 @@ bool ForceMainPlayerGetUp(void* mainPlayer);
 // Possessed players only.
 bool ForceMainPlayerWakeup(void* mainPlayer);
 
-// AmainPlayer_C::canRagdoll (@0x0D10), ragdollMode()'s precondition: false early-outs every ragdoll
-// cause. The Killer Wisp false-grab window forces it false on the host, since an HP pin cannot stop
-// a ragdoll death. A raw masked write. Game thread.
+// AmainPlayer_C::canRagdoll, ragdollMode()'s precondition: false early-outs every ragdoll cause.
+// The Killer Wisp false-grab window forces it false on the host, since an HP pin cannot stop a
+// ragdoll death. Resolved by property name, then a masked write. Game thread.
 bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed);
 
 // Read the same bool back, so a test can assert the gate took.
@@ -506,8 +503,9 @@ void* AddPlayerDamageFunctionPtr();
 // pelvis-attaches the puppet (RagdollDisplay in coop/player/remote_player_ragdoll).
 
 // ---- Damage body pulse (material swap) ----
-// SavedMaterial (types.h) is (component, slot, original); the puppet renders two body meshes (Mesh
-// @0x280 and mesh_playerVisible), so the saved set spans both. The caller owns the vector.
+// SavedMaterial (types.h) is (component, slot, original); the puppet renders two body meshes, the
+// native ACharacter slot and mesh_playerVisible, so the saved set spans both. The caller owns the
+// vector.
 using ue_wrap::SavedMaterial;
 
 // Swap both body meshes' materials to the hurt-flash material (a skeletal gore skin, so it renders
@@ -522,9 +520,9 @@ void WarmupHurtFlashCache();
 // A loaded UMaterialInterface by object name; nullptr if not loaded. Game thread.
 void* ResolveMaterialByName(const wchar_t* name);
 
-// Spawn the game's playerRagdoll_C for `ownerPlayer` as the visible flop body: Player @0x248
-// stamped before Finish so BeginPlay configures the mesh from the owner, then the simulation
-// started. Death-free (ragdollMode would kill the host). The AActor*, or nullptr. Game thread.
+// Spawn the game's playerRagdoll_C for `ownerPlayer` as the visible flop body: its Player field is
+// stamped before Finish, so BeginPlay configures the mesh from the owner, and then the simulation
+// starts. Death-free, since ragdollMode would kill the host. The AActor*, or nullptr. Game thread.
 void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const FRotator& rotation);
 
 // Attach `actor` to `body`'s mesh at the pelvis bone (KeepWorld), so it follows the flop; Detach
@@ -576,8 +574,8 @@ void* GetActorRootPhysicalMaterial(void* actor);
 // failure. The host stamps kAtRest from it.
 bool IsActorRootBodyAtRest(void* actor);
 
-// The sender's ragdoll stream: the native ragdoll's (ragdollActor @0xC40) pelvis world transform
-// and velocity (cm/s, deg/s); false while not ragdolling. Game thread.
+// The sender's ragdoll stream: the native ragdoll's pelvis world transform and velocity, in cm/s
+// and deg/s. False while not ragdolling. Game thread.
 bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& outRot,
                                    FVector& outLinVel, FVector& outAngVel);
 
@@ -585,12 +583,11 @@ bool ReadLocalRagdollPelvisPhysics(void* mainPlayer, FVector& outLoc, FRotator& 
 // tracks the sender's flop. Game thread.
 void DriveRagdollBodyPelvisVelocity(void* body, const FVector& linVel, const FVector& angVel);
 
-// A ragdoll actor's simulating SkeletalMesh (Aragdoll_C::SkeletalMesh @0x230); null if dead. Game
-// thread.
+// A ragdoll actor's simulating SkeletalMesh; null if dead. Game thread.
 void* GetRagdollBodyMesh(void* ragdollActor);
 
-// The local player's native ragdoll mesh (ragdollActor @0xC40 is non-null exactly while
-// ragdolling). Game thread.
+// The local player's native ragdoll mesh; the owning field is non-null exactly while ragdolling.
+// Game thread.
 void* GetLocalRagdollBodyMesh(void* mainPlayer);
 
 // A long-lived WorldContextObject for the deferred-spawn pair: the GameInstance, else the World.
