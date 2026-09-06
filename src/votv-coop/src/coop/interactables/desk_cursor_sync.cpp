@@ -137,8 +137,8 @@ uint64_t g_lastSampleMs = 0;     // last isNew sample from g_streamSlot
 bool     g_applying = false;     // stream-active latch (drives the start/idle edges)
 int      g_lastHolder = -1;      // last tick's holder (release-edge detector)
 uint64_t g_lastReleaseMs = 0;    // flap WARN bookkeeping
-int      g_lastReleasedSlot = -1;  // WHO released (the flap WARN must not fire
-                                   // on an ordinary X->Y handoff -- audit WARN)
+int      g_lastReleasedSlot = -1;  // WHO released -- the flap WARN must not fire
+                                   // on an ordinary X->Y handoff
 
 // Sender state.
 bool     g_streaming = false;    // are WE currently publishing our cursor?

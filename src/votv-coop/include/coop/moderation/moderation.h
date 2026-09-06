@@ -66,11 +66,16 @@ void SetSession(coop::net::Session* session);
 // replaced -- see the token note above.
 void KickPlayer(const PlayerToken& token);
 
-// Permanently ban the captured player by IP, then kick them. Host-only. The ban is added FIRST
-// and the kick follows, so the seat cannot be retaken between the two -- MTA's order in
-// CStaticFunctionDefinitions::BanPlayer, whose KickPlayer/BanPlayer pair this module mirrors
-// (reference/mtasa-blue/Server/.../CStaticFunctionDefinitions.cpp). The IP is captured from the
-// live connection before the kick, since it is unreadable afterwards.
+// Permanently ban the captured player by IP, then kick them -- MTA's order in
+// CStaticFunctionDefinitions::BanPlayer, whose KickPlayer/BanPlayer pair this module mirrors.
+// Host-only. The ban survives host restarts (coop::ban_list persists to disk) and rejects that
+// IP on future connects through the accept filter; `reason` is stored on the record for the
+// admin's reference (null/empty is fine). Safe to call from the render thread. The address is
+// read BEFORE the kick because Kick() zeroes the slot and it is unresolvable afterwards.
+//
+// ABORTS -- writing no ban and kicking nobody -- if the captured player is gone. This is the
+// whole point of the token: a permanent ban is the least reversible thing the host can do, so
+// it must never land on whoever happens to hold the seat now.
 void BanPlayer(const PlayerToken& token, const char* reason);
 
 // Permanently ban an OFFLINE player by its seen-players GUID (the F1
