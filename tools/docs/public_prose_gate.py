@@ -91,7 +91,11 @@ LINE_MARKERS = collections.OrderedDict([
     ("qf",           (re.compile(r"(?<![\w/])/qf\b|\bqf\b(?!\.)"), "lines naming the /qf ritual")),
     ("agent",        (re.compile(r"\b(?:sub)?agents?\b", re.I), "lines naming an agent")),
     ("dated",        (DATE, "lines carrying a date")),
-    ("ptr_memory",   (re.compile(r"(?<![\w.])memory/"), "pointers into the memory directory")),
+    # Both notations for the same pointer. `memory/x.md` is the path; `[[x]]` is the wiki link the
+    # memory files use among themselves, and 84 of them sat in public source naming 49 slugs, none
+    # of which is or will be a tracked file. One habit, one counter.
+    ("ptr_memory",   (re.compile(r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"),
+                      "pointers into the memory directory")),
     ("ptr_research", (re.compile(r"(?<![\w.])research/"), "pointers into research/")),
     ("ptr_claude",   (re.compile(r"\bCLAUDE\.md\b|\.claude/"), "pointers to CLAUDE.md or .claude/")),
     ("ptr_security", (re.compile(r"\bdocs/security/"), "pointers into docs/security/")),

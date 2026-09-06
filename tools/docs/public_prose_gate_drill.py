@@ -23,6 +23,7 @@ DOC = """# A doc
 
 USER said, verbatim: «делай». A /qf round and two audit agents agreed on 2026-09-05.
 See memory/feedback_x.md, research/runs/x, CLAUDE.md, .claude/skills and docs/security/TRACKER.md.
+A wiki link [[lesson-some-slug]] is the same pointer in the notation memory uses.
 A [tracked link](../README.md), an [external](https://example.com), and a [dead one](../nowhere.md).
 A backticked `docs/nowhere.md` names no file; a backticked `docs/a.md` does.
 An [uppercase scheme](HTTPS://example.com/x), an [encoded name](My%20File.md), a [backslash](sub\\c.md).
@@ -34,6 +35,8 @@ a [link in a code block](nothing.md) is not a link
 SRC = """#include "d.h"
 // 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
 // see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
+// a wiki link like [[feedback-some-rule]] points at memory the same as memory/x.md does
+// PRECISION: an array index a[[i]] and a short [[ab]] are not slugs
 // docs/nowhere.md names no tracked doc; docs/a.md does
 // the field sits at 0x04F8, a number pinned in prose that this file's code never reads
 // PRECISION: opcode 0x45, sentinel 0xFF and colour 0x40 are hex, not offsets, and must NOT count
@@ -143,6 +146,13 @@ MUTANTS = [
     ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
                                    "                out.append((no, k, line))\n",
      "            pass\n"),
+    # Both notations of the memory pointer. Reading only the path form is what the gate did while
+    # 80 wiki links sat in source and the counter read 0; matching any bracket pair instead flags
+    # an array index and a short tag, which would push a sweep to damage correct prose.
+    ("ptr_memory: path form only", 'r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"',
+     'r"(?<![\w.])memory/"'),
+    ("ptr_memory: any bracket pair", 'r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"',
+     'r"(?<![\w.])memory/|\[\[.+?\]\]"'),
     # The markers must read the comment TRAILING a code line. Blinding them to it is what the
     # gate did until the tails were threaded through, and it hid 54 citations plus 98 pinned
     # offsets while calling their files swept.
@@ -202,12 +212,12 @@ def main():
     with open(baseline, encoding="utf-8") as f:
         counters = json.load(f)["counters"]
     expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
-              "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
+              "md.dated": 1, "md.ptr_memory": 2, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 49, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 51, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_blocks_over_15": 1, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
-              "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
+              "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
               "src.comment_review": 3, "src.comment_evidence": 4,
