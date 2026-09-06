@@ -60,9 +60,9 @@ int  g_pileIndexBuiltCount = 0;  // size of g_pileBindIndex at build (the L1 orp
 // [PILE-DELTA]/[PILE-CENSUS] probe gate (L1 orphan histogram), read ONCE + cached. Ships dark (off => zero
 // cost). When on, logs the per-orphan nearest-proxy/native deltas so we can band the host-drift orphans
 // (0-5cm near-miss vs >30cm true drift). HANDS-ON FLAG: multivoid.ini [dev] `pile_delta_probe=1` (the
-// established probe pattern; the user toggles the ini, NOT the launch bats). The env is the autonomous
-// mp.py-harness override only. [[feedback-test-flags-in-ini-not-bats-or-env]] Used by TryDestroyTwin's
-// delta-log AND LogCensus's verbose mode -- ONE concept, ONE gate, file-local to this module.
+// established probe pattern: the ini is the toggle, not the launch bats). The env var is the
+// mp.py-harness override only. Used by TryDestroyTwin's delta-log AND LogCensus's verbose
+// mode -- ONE concept, ONE gate, file-local to this module.
 bool DeltaProbeOn() {
     static const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe) || [] {
         const char* v = std::getenv("VOTVCOOP_PILE_DELTA_PROBE");
@@ -136,7 +136,7 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
         void* native = g_pileBindIndex[matchIdx].actor;
         g_pileBindIndex[matchIdx] = g_pileBindIndex.back();   // O(1) remove (consume the twin)
         g_pileBindIndex.pop_back();
-        // (X) MED-2: the EnsureIndex bound-mirror skip runs at index-BUILD time; a native that binds AFTER
+        // The EnsureIndex bound-mirror skip runs at index-BUILD time; a native that binds AFTER
         // the (latched) build is still in the index. Re-check at the consume site so a bound native can never
         // be destroyed even if it bound late (cheap -- one map lookup on the single matched candidate).
         if (coop::prop_element_tracker::IsBoundMirrorNative(native)) return;

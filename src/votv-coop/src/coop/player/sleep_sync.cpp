@@ -65,9 +65,9 @@ void ApplyAccelerateLocal(coop::net::Session* s, bool on) {
     if (on) {
         if (SLP::IsSleeping()) {
             SLP::SetGlobalTimeDilation(20.f);
-            // The cinematic base view belongs to THIS phase (user directive
-            // 2026-06-13): the WAITING hold parked the camera at the bed;
-            // hand it to the gamemode's own sleepCam now.
+            // The cinematic base view belongs to THIS phase: the WAITING hold
+            // parked the camera at the bed; hand it to the gamemode's own
+            // sleepCam now.
             if (SLP::SetSleepViewTarget(SLP::SleepCam()))
                 UE_LOGI("sleep_sync: camera -> sleepCam (the timelapse view)");
         }
@@ -180,7 +180,7 @@ void Tick() {
     // the nightmare policy on the new instance (the signal_catch shape). A
     // connected gamemode swap is unreachable in the session lifecycle today
     // (level travel disconnects first), but a stranded accelerate/tally would
-    // be poisonous if it ever became reachable -- clear it all (audit note 1).
+    // be poisonous if it ever became reachable -- clear it all.
     if (gm != g_gmInst) {
         g_gmInst = gm;
         g_lastInBed = SLP::IsSleeping();
@@ -210,14 +210,14 @@ void Tick() {
     // the dev probe's reflected sleep(), and a host that was already asleep
     // when the first client connected.
     if (inBed && !g_accelerate && !g_waitUndone) {
-        // Latch ONLY on success (perf-audit note A): a transient world-context
+        // Latch ONLY on success: a transient world-context
         // gap would otherwise skip the undo yet latch, stranding this peer at
         // the native 20x for the whole wait. On failure we just retry next tick.
         if (SLP::SetGlobalTimeDilation(1.0f)) {
             g_waitUndone = true;
-            // Hold the camera AT THE BED while waiting (user directive
-            // 2026-06-13): the native entry retargeted it to the sleepCam
-            // base shot; the cinematic only belongs to the all-asleep phase
+            // Hold the camera AT THE BED while waiting: the native entry
+            // retargeted it to the sleepCam base shot, and the cinematic only
+            // belongs to the all-asleep phase
             // (ApplyAccelerateLocal hands it back). Null-safe: if the pawn/
             // controller is not up yet the view stays native -- cosmetic,
             // never a gate blocker.
