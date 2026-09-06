@@ -1,42 +1,18 @@
-// coop/moderation.h -- host-side player-admin actions (player-list action menu).
+// coop/moderation.h -- host-side player-admin actions (the player-list action menu).
 //
-// The host's interactive scoreboard (ui::scoreboard) calls these when the
-// host clicks a player row. This module is the single entry point for the three
-// actions: KICK + BAN are always available to the host; TELEPORT-TO-ME is the
-// dev-gated one (the scoreboard only shows it when [dev] devkeys is on -- this
-// module doesn't re-check the dev flag, it just performs the teleport).
+// The host's interactive scoreboard (ui::scoreboard) calls these when the host clicks a player
+// row, and this module is the single entry point for the three actions: KICK and BAN are always
+// available to the host, TELEPORT-TO-ME is the dev-gated one -- the scoreboard shows it only
+// when [dev] devkeys is on, and this module does not re-check the flag, it performs the
+// teleport.
 //
-// All three are HOST-only and self-gate on Session::Role::Host (defense in
-// depth -- the scoreboard already only renders actions for the host, but a
-// destructive kick/ban must never run off a client even if a future caller
-// misuses it). Each action marshals onto the game thread (GT::Post) so the
-// scoreboard's render-thread click does no net/disk work inline, and so the
-// nick lookup (player_handshake::NicknameForSlot, game-thread-asserted) is legal.
+// All three are HOST-only and self-gate on Session::Role::Host: defence in depth, because a
+// destructive kick or ban must never run off a client even if a future caller misuses it. Each
+// action marshals onto the game thread, so the scoreboard's render-thread click does no net or
+// disk work inline and the game-thread-asserted nick lookup is legal.
 //
-// principle-7: this is gameplay/policy orchestration (coop/), wiring the net
-// mechanism (Session::Kick / GetPeerAddress), the persistence policy
-// (coop::ban_list), and the existing teleport feature together. The net layer
-// stays policy-free -- it learns about bans only through the injected accept
-// filter (Session::SetAcceptFilter), never by calling this module.
-//
-// MTA precedent: CStaticFunctionDefinitions::KickPlayer / BanPlayer ->
-// CGame::QuitPlayer (reference/mtasa-blue/Server/.../CStaticFunctionDefinitions
-// .cpp:11876 / :11924). MTA's BanPlayer adds the ban THEN kicks the matching
-// live player -- BanPlayer below does the same (capture IP -> add ban -> kick).
-
-// THE TOKEN (arc A, 2026-07-27). Every slot-addressed destructive action takes a
-// PlayerToken, not a bare slot, and the token is in the SIGNATURE so a tokenless
-// call does not compile -- the defence cannot be forgotten at a call site.
-//
-// The measured defect it closes: the ban modal captured its target slot when the
-// modal OPENED, then executed after an arbitrary typing delay, while slots
-// recycle (lowest-free). A permanent IP ban could therefore land on the
-// SUCCESSOR -- a different person who merely inherited the seat.
-//
-// A token is (slot, playerNo, generation) read from ONE ledger row. The
-// generation is validated against the LIVE net-layer authority at execution
-// time, so a stale capture fails CLOSED. Validating playerNo against playerNo
-// inside the same mirror would fail OPEN and merely narrow the window to a tick.
+// Principle 7: policy orchestration over a policy-free net layer, which learns about bans only
+// through the injected accept filter (Session::SetAcceptFilter), never by calling this module.
 
 #pragma once
 
@@ -45,6 +21,20 @@
 namespace coop::net { class Session; }
 
 namespace coop::moderation {
+
+// THE TOKEN. Every slot-addressed destructive action takes a PlayerToken, not a bare slot, and
+// the token is in the SIGNATURE so a tokenless call does not compile -- the defence cannot be
+// forgotten at a call site.
+//
+// The measured defect it closes: the ban modal captured its target slot when the modal OPENED,
+// then executed after an arbitrary typing delay, while slots recycle lowest-free. A permanent
+// IP ban could therefore land on the SUCCESSOR -- a different person who merely inherited the
+// seat.
+//
+// A token is (slot, playerNo, generation) read from ONE ledger row. The generation is validated
+// against the LIVE net-layer authority at execution time, so a stale capture fails CLOSED.
+// Validating playerNo against playerNo inside the same mirror would fail OPEN and merely narrow
+// the window to a tick.
 
 // The captured identity of a moderation target. Build it with TokenForSlot at
 // the moment the admin picks the row; carry it, unchanged, to the action.
@@ -76,14 +66,11 @@ void SetSession(coop::net::Session* session);
 // replaced -- see the token note above.
 void KickPlayer(const PlayerToken& token);
 
-// Permanently ban the captured player by IP, then kick them. Host-only. The ban
-// survives host restarts (coop::ban_list persists to disk) and rejects that IP on
-// future connects (via the accept filter). `reason` is stored on the ban record
-// for the admin's reference (null/empty ok). Safe to call from the render thread.
-//
-// ABORTS -- writing no ban and kicking nobody -- if the captured player is gone.
-// This is the whole point: a permanent ban is the least reversible thing the host
-// can do, so it must never be applied to whoever happens to hold the seat now.
+// Permanently ban the captured player by IP, then kick them. Host-only. The ban is added FIRST
+// and the kick follows, so the seat cannot be retaken between the two -- MTA's order in
+// CStaticFunctionDefinitions::BanPlayer, whose KickPlayer/BanPlayer pair this module mirrors
+// (reference/mtasa-blue/Server/.../CStaticFunctionDefinitions.cpp). The IP is captured from the
+// live connection before the kick, since it is unreadable afterwards.
 void BanPlayer(const PlayerToken& token, const char* reason);
 
 // Permanently ban an OFFLINE player by its seen-players GUID (the F1

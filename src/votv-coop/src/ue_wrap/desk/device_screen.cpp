@@ -70,27 +70,26 @@ const wchar_t* const g_deviceKeys[] = {
 void* g_playerCls = nullptr;
 void* g_setActiveInterfaceFn = nullptr;
 // Per-instance widget backref fields (FindPropertyOffset, recook-robust).
-int32_t g_offTfmrWidgetInst = -1;   // transformerMGPanel_C::widgetInst @0x02A8
+int32_t g_offTfmrWidgetInst = -1;   // transformerMGPanel_C::widgetInst
 int32_t g_offArcadeScrWidge = -1;   // prop_arcade_C::scrWidge
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
 
 // CORE resolve only (player class + setActiveInterface fn + the activeInterface/lookAt/HitResult
-// offsets). Throttled to 2 s, and STOPS the moment the core latches (g_coreResolved). The device +
-// widget CLASS pointers are NOT resolved here any more -- they resolve lazily at the interaction edge
+// offsets). Throttled to 2 s, and STOPS the moment the core latches (g_coreResolved). The device
+// and widget CLASS pointers are NOT resolved here: they resolve lazily at the interaction edge
 // (FillDeviceSlotFromClass / FillWidgetSlotFromClass below).
 //
-// WHY (L5 device_occupancy hitch root, 2026-06-24): the old per-2 s
-// `for (d : g_devices) if (!d.cls) d.cls = FindClass(d.name)` loop name-walked all ~237k UObjects EVERY
-// 2 s for any class that had not loaded -- and the BUYABLE props (prop_arcade_C / prop_portablePc_C) only
-// load when PURCHASED, so an un-bought one walked FOREVER (~30 ms/2 s, the measured device_occupancy half
-// of the steady hitch). A settle-bound poll-stop would strand a genuinely-late buy; resolving from a live
-// instance's ClassOf at the edge is walk-free AND late-buy-safe by construction (you cannot aim at / enter
-// a device that does not exist -- the instant it does, ClassOf resolves it inline, before the claim check
-// in the SAME dispatch). [[lesson-periodic-hitch-not-the-walk-by-period-coincidence]] cousin: it WAS a
-// real walk here, just a class-resolution walk, not an instance-index walk -> the fix is edge-resolve, not
-// IncrementalObjectScan.
+// WHY the split. A per-2 s `for (d : g_devices) if (!d.cls) d.cls = FindClass(d.name)` loop
+// name-walked all ~237k UObjects every 2 s for any class that had not loaded -- and the BUYABLE
+// props (prop_arcade_C / prop_portablePc_C) only load when PURCHASED, so an un-bought one walked
+// FOREVER: ~30 ms every 2 s, the measured device half of a steady hitch. A settle-bound
+// poll-stop would strand a genuinely late buy; resolving from a live instance's ClassOf at the
+// edge is walk-free AND late-buy-safe by construction, since you cannot aim at or enter a device
+// that does not exist, and the instant it does ClassOf resolves it inline, before the claim
+// check in the SAME dispatch. It was a real walk, just a class-resolution walk rather than an
+// instance-index one, so the fix is edge-resolve and not an incremental object scan.
 void ResolvePass() {
     if (g_coreResolved) return;  // core latched -- nothing left to poll (classes are edge-lazy now)
     const auto now = std::chrono::steady_clock::now();
@@ -116,13 +115,14 @@ void ResolvePass() {
     }
 }
 
-// ---- Edge-lazy class resolution (beta, 2026-06-24) ------------------------
-// Fill a device/widget cache slot DIRECTLY from a live instance's ClassOf -- the aimed/entered object IS
-// an instance of its class, so ClassOf(obj) is the exact UClass with NO GUObjectArray walk. Exact-name
-// match into the fixed slot list; idempotent (early-out if already cached). Exact match is correct: none
-// of the 8 device / 7 widget BPs is subclassed (RE census + reflection-dump subclass scan 2026-06-24),
-// and this is behaviour-IDENTICAL to the prior exact-ClassOf comparison the deny gate already relied on.
-// Called only at the interaction EDGE (E-press deny / activeInterface rising edge), never per-tick.
+// ---- Edge-lazy class resolution ------------------------------------------
+// Fill a device/widget cache slot DIRECTLY from a live instance's ClassOf -- the aimed/entered
+// object IS an instance of its class, so ClassOf(obj) is the exact UClass with NO GUObjectArray
+// walk. Exact-name match into the fixed slot list; idempotent (early-out if already cached).
+// Exact match is correct because none of the 8 device / 7 widget BPs is subclassed, measured by
+// a census over the reflection dump, and it is behaviour-IDENTICAL to the prior exact-ClassOf
+// comparison the deny gate already relied on. Called only at the interaction EDGE (E-press deny
+// / activeInterface rising edge), never per-tick.
 void FillDeviceSlotFromClass(void* cls) {
     if (!cls) return;
     for (auto& d : g_devices) if (d.cls == cls) return;  // already cached
@@ -147,12 +147,13 @@ void FillWidgetSlotFromClass(void* cls) {
         return;
     }
 }
-// The per-instance device classes (transformer [6] / arcade [7]) map a per-instance widget back to its
-// owning actor via FindOwnerByWidgetField, which needs the backref OFFSET (-> needs the device class). The
-// E-press deny path normally resolves this first (OnUseInputPre -> ClassifyDeviceActorClaimKey), but to
-// guarantee NO bypass (Check 2) -- any enter that skips the deny path -- resolve it here too: ONE edge-rate
-// FindClass on actual enter (the device provably exists, so it resolves in a single walk + caches). This is
-// NOT the removed per-2s poll; it is a once-ever resolve on real interaction.
+// The per-instance device classes (transformer [6] / arcade [7]) map a per-instance widget back
+// to its owning actor through FindOwnerByWidgetField, which needs the backref OFFSET and so
+// needs the device class. The E-press deny path normally resolves this first (OnUseInputPre ->
+// ClassifyDeviceActorClaimKey), but to guarantee NO bypass -- any enter that skips the deny path
+// -- resolve it here too: ONE edge-rate FindClass on an actual enter, where the device provably
+// exists, so it resolves in a single walk and caches. This is not the removed per-2 s poll; it
+// is a once-ever resolve on real interaction.
 void EnsurePerInstanceDevice(size_t i) {
     if (g_devices[i].cls) return;
     g_devices[i].cls = R::FindClass(g_devices[i].name);
@@ -162,17 +163,17 @@ void EnsurePerInstanceDevice(size_t i) {
     UE_LOGI("device_screen: per-instance device '%ls' resolved at enter edge", g_devices[i].name);
 }
 
-// Quantized-position identity for the per-instance devices (the turbine
-// PosKey shape; both transformer panels and arcade props sit still in play --
-// the arcade is a physics prop, but its key need only be stable while someone
-// is INSIDE it, which freezes the player and leaves the cabinet parked).
-// FORMAT BUDGET (audit CRIT-2): the key must fit WireKey.data (31 chars) BY
-// CONSTRUCTION -- WireKeyFromString truncates silently, and a truncated wire
-// key would mismatch the receiver's locally-computed full key, silently
-// disabling the deny gate for that device. Prefixes are 4 chars ("arc_" /
-// "tfm_", no "t_" infix): worst case 4 + 3x(7-digit signed coord) + 2
-// separators = 27 chars at +/-100 km world coords -- beyond any UE4 float
-// world. The defensive WARN below catches the impossible anyway.
+// Quantized-position identity for the per-instance devices (the turbine PosKey shape; both
+// transformer panels and arcade props sit still in play -- the arcade is a physics prop, but its
+// key need only be stable while someone is INSIDE it, which freezes the player and leaves the
+// cabinet parked).
+//
+// FORMAT BUDGET: the key must fit WireKey.data (31 chars) BY CONSTRUCTION -- WireKeyFromString
+// truncates silently, and a truncated wire key would mismatch the receiver's locally-computed
+// full key, silently disabling the deny gate for that device. Prefixes are 4 chars ("arc_" /
+// "tfm_", no "t_" infix): worst case 4 + 3x(7-digit signed coord) + 2 separators = 27 chars at
+// +/-100 km world coords, beyond any UE4 float world. The defensive WARN below catches the
+// impossible anyway.
 constexpr double kPosGrid = 10.0;  // cm
 std::wstring PosKey(const wchar_t* prefix, void* actor) {
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(actor);

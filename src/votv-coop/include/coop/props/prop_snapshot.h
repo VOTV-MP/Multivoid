@@ -1,25 +1,11 @@
-// coop/prop_snapshot.h -- Phase 5S0 save snapshot bootstrap.
+// coop/prop_snapshot.h -- the connect-time prop snapshot.
 //
-// USER DIRECTIVE 2026-05-24 ("client just reconnects to the host's game
-// and all objects and states are force synced"): when the session reaches
-// Connected, host enumerates every live Aprop_C derivative in GUObjectArray
-// and broadcasts a PropSpawn for each. Client OnSpawn de-dupes on
-// FindByKeyString -- existing actors are skipped; missing actors are
-// created; transform mismatches converge to host's truth.
-//
-// Two-phase design (audit I-2 2026-05-24; enumeration source updated
-// 2026-05-28 per H2-redux):
-//   Phase 1 (TriggerForSlot on host-connected edge): snapshot-copies
-//   prop_lifecycle's maintained known-keyed-props set into the local
-//   candidate vector. The set is seeded ONCE at Install via a single
-//   GUObjectArray walk and kept current via Init POST insert +
-//   K2_DestroyActor PRE evict -- per-reconnect cost is O(set-size)
-//   pointer copy (~2000) instead of O(GUObjectArray) walk (~150k).
-//   No ProcessEvent dispatch.
-//   Phase 2 (per NetPumpTick): drain kSnapshotChunkSize=100 candidates,
-//   reading their transforms and calling SendReliableToSlot. The
-//   reliable channel buffers internally; ~330-500 ms total wall-clock,
-//   spread across frames.
+// When the session reaches Connected the host enumerates every live Aprop_C derivative and
+// broadcasts a PropSpawn for each, so a joiner's world converges on the host's. The client's
+// OnSpawn de-dupes on FindByKeyString: an existing actor is skipped, a missing one is created,
+// and a transform mismatch converges to the host's truth. The work is two-phase, one phase per
+// declaration below -- an enumerate on the connected edge, then a bounded drain per net-pump
+// tick.
 
 #pragma once
 
@@ -34,55 +20,54 @@ namespace coop::prop_snapshot {
 // at startup from harness.cpp.
 void SetSession(coop::net::Session* session);
 
-// Per-slot snapshot replay. `peerSlot` is a coop::players::Registry
-// slot index (1..kMaxPeers-1 for clients on host). The function:
-//   - if no drain is currently in progress, enumerates live keyed-
-//     interactable Aprop_C derivatives into the internal candidate
-//     vector and sets the drain target to `peerSlot`;
-//   - if a drain to a DIFFERENT slot is already in progress, queues
-//     `peerSlot` for after the current drain completes.
-// Host-only sender (no-op + log if called on client). The drain is
-// pumped one chunk per NetPumpTick frame via DrainChunk().
+// PHASE 1. Per-slot snapshot replay; `peerSlot` is a coop::players::Registry slot index
+// (1..kMaxPeers-1 for clients on the host). With no drain in progress it snapshot-copies
+// prop_lifecycle's maintained known-keyed-props set into the internal candidate vector and
+// sets the drain target; with a drain to a DIFFERENT slot in progress it queues `peerSlot` for
+// afterwards. That set is seeded ONCE at Install by a single GUObjectArray walk and kept
+// current by the Init POST insert and the K2_DestroyActor PRE evict, so the per-reconnect cost
+// is an O(set-size) pointer copy (~2000) rather than an O(GUObjectArray) walk (~150k), with no
+// ProcessEvent dispatch. Host-only sender (no-op + log on a client); the drain is pumped one
+// chunk per NetPumpTick.
 void TriggerForSlot(int peerSlot);
 
-// Phase 2: drain up to chunkSize candidates per call (read transform,
-// build payload, call session.SendReliableToSlot for the current target
-// slot). No-op when no drain is in progress. Called from NetPumpTick
-// each frame while connected.
+// PHASE 2. Drain up to kSnapshotChunkSize=100 candidates per call: read the transform, build
+// the payload, call session.SendReliableToSlot for the current target slot. No-op when no
+// drain is in progress. Called from NetPumpTick each frame while connected; the reliable
+// channel buffers internally, so the cost is spread across frames.
 void DrainChunk();
 
-// R1 (2026-06-17, MTA CEntityAddPacket): broadcast ONE additive PropSpawn for a
-// single runtime-adopted prop WITHOUT opening a snapshot bracket. The steady-
-// world re-seed (net_pump) calls this per newly-tracked prop instead of re-firing
-// the full bracketed snapshot -- a SnapshotBegin/Complete bracket RE-ARMS the
-// client's destructive divergence sweep (the join-churn), a bracket-free add does
-// not. Reuses the EXACT per-prop payload logic DrainChunk uses (keyed vs
-// keyless/eid-only pile handling, wire-suppress/per-player skips, v54
-// physics+identity). Host-only (host-authoritative spawns); silent no-op for a
-// non-expressible actor (dead / suppressed / per-player / unkeyed-non-pile).
-// Mirrors MTA: one CEntityAddPacket per runtime entity, never a world re-send
-// (Server/.../CStaticFunctionDefinitions.cpp:8349).
+// Broadcast ONE additive PropSpawn for a single runtime-adopted prop WITHOUT opening a snapshot
+// bracket. The steady-world re-seed (net_pump) calls this per newly-tracked prop instead of
+// re-firing the full bracketed snapshot: a SnapshotBegin/Complete bracket RE-ARMS the client's
+// destructive divergence sweep, and a bracket-free add does not. Reuses the EXACT per-prop
+// payload logic DrainChunk uses (keyed vs keyless/eid-only pile handling, wire-suppress and
+// per-player skips, physics + identity). Host-only; a silent no-op for a non-expressible actor
+// (dead / suppressed / per-player / unkeyed-non-pile). MTA's shape: one CEntityAddPacket per
+// runtime entity, never a world re-send (Server/.../CStaticFunctionDefinitions.cpp).
 void ExpressIncrementalSpawn(void* actor);
 
 // Does the express path above actually BROADCAST right now? It returns immediately on a client,
-// so a caller that narrates "broadcasting one PropSpawn each" owes this question first -- `[V]`
-// 2026-09-01 a client printed that sentence over 3,102 adoptions and broadcast nothing. Reads the
-// same session pointer the express path does, so the answer cannot disagree with the behaviour.
+// so a caller that narrates "broadcasting one PropSpawn each" owes this question first -- one
+// printed that sentence over 3,102 adoptions and broadcast nothing. Reads the same session
+// pointer the express path does, so the answer cannot disagree with the behaviour.
 bool ExpressWouldBroadcast();
 
-// Deliver a kerfur OFF-prop that the generic ExpressIncrementalSpawn deliberately skips (:568) -- the
-// join-window deliver-missing owner for a host turn-off whose KerfurConvert never fired (the death-watch
-// raced the host's one-shot world-NPC registration; the off-prop also post-dates the join snapshot).
-// Only safe for a re-seed-NEW (== un-converted) off-prop; the client dedups by eid via
-// kerfur_prop_adoption::Arm. OWNER BOUNDARY -- JOIN-EDGE ONLY (steady-state stays KerfurConvert-primary);
-// see the .cpp + docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md. Host-only.
+// Deliver a kerfur OFF-prop, which ExpressIncrementalSpawn deliberately skips at its kerfur
+// guard because a kerfur's only steady-state signal is KerfurConvert. This is the join-window
+// deliver-missing owner for a host turn-off whose KerfurConvert never fired: the death-watch
+// raced the host's one-shot world-NPC registration, and the off-prop also post-dates the join
+// snapshot. Only safe for a re-seed-NEW, i.e. un-converted, off-prop; the client dedups by eid
+// through kerfur_prop_adoption::Arm. OWNER BOUNDARY -- JOIN-EDGE ONLY, steady state stays
+// KerfurConvert-primary. Host-only; see the .cpp for the window itself.
 void ExpressIncrementalKerfurOffProp(void* actor);
 
-// THE host-side late-registration deliver-missing owner: the steady-world re-seed (net_pump) hands this
-// every prop it newly adopted into tracking (one no fast channel had delivered yet) and this delivers
-// each exactly once -- a generic prop via ExpressIncrementalSpawn, a kerfur off-prop via
-// ExpressIncrementalKerfurOffProp. The join-edge backstop that makes the per-mutation channels
-// accelerators. Host-only; the client's idempotent apply absorbs any overlap.
+// THE host-side late-registration deliver-missing owner: the steady-world re-seed (net_pump)
+// hands this every prop it newly adopted into tracking (one no fast channel had delivered yet)
+// and this delivers each exactly once -- a generic prop via ExpressIncrementalSpawn, a kerfur
+// off-prop via ExpressIncrementalKerfurOffProp. The join-edge backstop that makes the
+// per-mutation channels accelerators. Host-only; the client's idempotent apply absorbs any
+// overlap.
 void DeliverLateRegisteredProps(const std::vector<void*>& lateProps);
 
 // Abort any pending or in-progress drain for `peerSlot`. Called from

@@ -59,7 +59,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     for (coop::element::Npc* el : elems) {
         if (!el) continue;
         void* actor = el->GetActor();
-        // Skip elements with no bound actor / a GC-purged actor; a real game-spawned NPC binds in POST.
+        // Skip elements with no bound actor / a GC-purged actor; a real game-spawned NPC binds in
+        // POST.
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
         coop::net::EntitySpawnPayload p{};
         const std::string& tn = el->GetTypeName();
@@ -69,23 +70,23 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.elementId = static_cast<uint32_t>(el->GetId());
         const auto loc = ue_wrap::engine::GetActorLocation(actor);
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
-        const auto scl = ue_wrap::engine::GetActorScale3D(actor);  // v99: mirror at true size
+        const auto scl = ue_wrap::engine::GetActorScale3D(actor);  // mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-        // v75: mark save-persisted NPCs so the joiner ADOPTS its own local twin (class-match in
+        // Mark save-persisted NPCs so the joiner ADOPTS its own local twin (class-match in
         // coop/npc_adoption) instead of spawning a duplicate. A non-None int_save Key == this NPC
         // is a save object both peers booted (the kerfur); a host-spawned transient enemy has no
-        // key -> savePersisted=0 -> the receiver fresh-spawns a mirror. (v74 shipped the key VALUE
-        // for key-equality adoption -- abandoned: the kerfur's key is minted RANDOM per load, so it
-        // differs across peers; only the PRESENCE of a key is portable.)
+        // key -> savePersisted=0 -> the receiver fresh-spawns a mirror. Only the PRESENCE of a key
+        // is portable, never its value: the kerfur's key is minted RANDOM per load, so it differs
+        // across peers and key-equality adoption cannot work.
         p.savePersisted = ue_wrap::kerfur::HasSaveKey(actor) ? 1 : 0;
-        // scope A (v91 deterministic): carry the off->active dup RETIRE key for a kerfur that was OFF at the
-        // blob instant and the host turned ON in the join window. GetOriginOffEidForEid returns the host EID
-        // of the off-prop it replaced (kInvalidId for an always-active kerfur). The joiner retires its stale
-        // local off-prop MIRROR bound at that EXACT eid (kerfur_reconcile). This rides the npc EntitySpawn --
-        // the channel that DOES reach the joiner -- not the KerfurConvert reliable (pre-world-gated mid-join:
-        // v56 B2; hands-on 16:37 + 13:21 root).
+        // Carry the off->active dup RETIRE key for a kerfur that was OFF at the blob instant and
+        // the host turned ON in the join window. GetOriginOffEidForEid returns the host EID of the
+        // off-prop it replaced (kInvalidId for an always-active kerfur), and the joiner retires its
+        // stale local off-prop MIRROR bound at that EXACT eid (kerfur_reconcile). This rides the
+        // npc EntitySpawn -- the channel that DOES reach the joiner -- rather than the
+        // KerfurConvert reliable, which is pre-world-gated mid-join.
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(el->GetId());
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
@@ -97,14 +98,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void TickPoseStream() {
     // HOST-only: read each live NPC's transform + CMC velocity each tick + publish ONE EntityPose
-    // batch for the net thread to fan out, so the client mirrors MOVE + animate (they otherwise sit
-    // at the spawn pose). Always publishes (an EMPTY batch clears it -> stop sending when NPCs vanish).
-    // dev-spawned NPCs bind in POST, so they stream like any real game NPC.
-    // Game thread (the net-pump tick asserts GT) -> the scratch statics below are single-threaded.
-    // LIFECYCLE runs while HOSTING (alone included); only the batch PUBLISH is peer-dependent
-    // -- the EX-catch drain must enroll event creatures spawned while the host is alone, and a
-    // tracked NPC that self-destroys while alone must dead-retire then; the join
-    // connect-snapshot replays what remains.
+    // batch. Runs on the game thread from the net-pump tick; the batch is serialized once and
+    // stamped per peer in session_streams.
     auto* s = GetSession();
     if (!s || s->role() != coop::net::Role::Host) return;
     const bool connected = s->connected();
@@ -113,9 +108,8 @@ void TickPoseStream() {
     // Func-thunk fires PRE-Finish; by this tick FinishSpawningActor ran -> real transform).
     coop::npc_world_enum::DrainPendingExSpawns();
 
-    // DIAGNOSTIC ([dev] kerfur_census=1): periodic HOST kerfur census so a hands-on can diff host vs client
-    // counts after the world settles.
-    // No-op unless the flag is set; throttled internally. Read-only.
+    // DIAGNOSTIC ([dev] kerfur_census=1): a periodic HOST kerfur census, so a live run can diff
+    // host against client without a rebuild.
     coop::kerfur_census::Tick();
 
     // Reused scratch (no per-tick heap alloc): Snapshot() clears+fills elems; batch is cleared then
@@ -168,7 +162,7 @@ void TickPoseStream() {
         snap.yaw = ue_wrap::NormalizeAxis(rot.Yaw);
         snap.speed = std::sqrt(vel.X * vel.X + vel.Y * vel.Y);  // horizontal velocity magnitude
         snap.stateBits = ue_wrap::puppet::ReadCharacterIsFalling(actor) ? coop::net::kStateBitInAir : uint8_t{0};
-        // v39 head-look: read the kerfur AnimBP's resolved `lookAt` WORLD target (the head/neck
+        // Head-look: read the kerfur AnimBP's resolved `lookAt` WORLD target (the head/neck
         // FAnimNode_LookAt aim point). Only kerfur-family NPCs carry it (ReadKerfurLookAt is
         // class-gated -> false for non-kerfur NPCs); the bit tells the client when lookAt is valid.
         ue_wrap::FVector lookAt{};
@@ -180,9 +174,10 @@ void TickPoseStream() {
                 UE_LOGI("npc-headlook: host streaming kerfur lookAt=(%.0f,%.0f,%.0f) eid=%u (first)",
                         lookAt.X, lookAt.Y, lookAt.Z, snap.elementId); }
         }
-        // v40 body-facing: the kerfur actor BP aims the VISIBLE body (ACharacter::Mesh world yaw) at
-        // the LOCAL player, decoupled from the actor root above. Read the resolved mesh world yaw so
-        // the mirror reproduces the host's body facing (its actor tick is off -> can't compute it).
+        // Body-facing: the kerfur actor BP aims the VISIBLE body (ACharacter::Mesh world yaw) at
+        // the LOCAL player, decoupled from the actor root above. Read the resolved mesh world yaw
+        // so the mirror reproduces the host's body facing (its actor tick is off -> it cannot
+        // compute it).
         float bodyYaw = 0.f;
         if (ue_wrap::puppet::ReadKerfurBodyYaw(actor, bodyYaw)) {
             snap.bodyYaw = ue_wrap::NormalizeAxis(bodyYaw);
@@ -192,10 +187,10 @@ void TickPoseStream() {
                 UE_LOGI("npc-bodyfacing: host streaming kerfur bodyYaw=%.1f eid=%u (first)",
                         snap.bodyYaw, snap.elementId); }
         }
-        // v74 host-authoritative kerfur cosmetic/command state: the parked mirror runs no AI
-        // (actor tick off + timers neutralized) so it can't pick its own command/face. Stream
-        // the host kerfur's State (enum_kerfurCommand -> AnimBP state machine) + isSpooky + face
-        // index so the mirror's body animation matches. Class-gated (non-kerfur NPCs skip).
+        // Host-authoritative kerfur cosmetic/command state: the parked mirror runs no AI (actor
+        // tick off + timers neutralized) so it cannot pick its own command/face. Stream the host
+        // kerfur's State (enum_kerfurCommand -> AnimBP state machine) + isSpooky + face index so
+        // the mirror's body animation matches. Class-gated (non-kerfur NPCs skip).
         uint8_t kState = 0, kFace = 0; bool kSpooky = false;
         if (ue_wrap::kerfur::ReadKerfurState(actor, kState, kSpooky, kFace)) {
             snap.kerfState = kState;

@@ -82,8 +82,8 @@ namespace {
 bool ResolveFromClass(void* cls) {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
-    // FName lookups are case-SENSITIVE (the 2026-06-12 casing bug) -- the names below
-    // match the live CXXHeaderDump member spellings exactly (note LEG_R is upper-case).
+    // FName lookups are case-SENSITIVE -- the names below match the live CXXHeaderDump member
+    // spellings exactly (note LEG_R is upper-case).
     const int32_t tryGrabOff   = ResolveOff(cls, L"tryGrab",       kTryGrabFallback);
     const int32_t grabOff      = ResolveOff(cls, L"grab",          kGrabFallback);
     const int32_t killedOff    = ResolveOff(cls, L"killed",        kKilledFallback);
@@ -117,16 +117,15 @@ bool IsKillerWisp(void* obj) {
     if (!obj) return false;
     if (!g_resolved.load(std::memory_order_acquire)) {
         // Self-resolve from the CANDIDATE's own class -- O(1), NO GUObjectArray walk (the
-        // EnsurePlainWispResolved shape). CRITICAL fix (perf audit 2026-07-03 night):
-        // every production caller (host attack Tick, client tear mirror, grab hold) gates
-        // on IsKillerWisp BEFORE any member accessor that runs EnsureResolved, so without
-        // this the wrapper only ever resolved when the dev probe's unguarded ReadState
-        // ran -- the whole killerwisp lane was probe-armed-only
-        // ([[lesson-gated-probe-verify-the-gate]]). While unresolved this pays one
-        // NameEquals per candidate; sessions that never spawn a killerwisp keep paying
-        // that (trivial: FName compare per tracked NPC per tick), everyone else latches
-        // on the first real killerwisp. Exact-name only: a hypothetical subclass resolves
-        // via EnsureResolved instead (killerwisp_C has no subclasses in VOTV).
+        // EnsurePlainWispResolved shape). This is load-bearing, not an optimisation: every
+        // production caller (host attack Tick, client tear mirror, grab hold) gates on IsKillerWisp
+        // BEFORE any member accessor that runs EnsureResolved, so without a self-resolve the
+        // wrapper only ever resolved when the dev probe's unguarded ReadState ran, leaving the
+        // whole killerwisp lane probe-armed-only. While unresolved this pays one NameEquals per
+        // candidate; a session that never spawns a killerwisp keeps paying that (an FName compare
+        // per tracked NPC per tick), everyone else latches on the first real killerwisp. Exact-name
+        // only: a hypothetical subclass resolves through EnsureResolved instead, and killerwisp_C
+        // has no subclasses in VOTV.
         void* candCls = R::ClassOf(obj);
         if (!candCls || !R::NameEquals(R::NameOf(candCls), P::name::NpcClass_KillerWisp))
             return false;
@@ -177,10 +176,9 @@ bool WriteTarget(void* wisp, void* pawnOrNull) {
 
 bool CanReach(void* wisp, void* target) {
     if (!wisp || !target) return false;
-    // canReach parity: the native gate traces lib_obj.obj_statDyn = {WorldStatic,
-    // WorldDynamic} -- exactly trace::LineBlockedStatDyn's set (the primitive was
-    // extracted from here 2026-07-04 when nameplate occlusion became the second
-    // consumer). Unresolvable (-1) -> blocked, the native default.
+    // canReach parity: the native gate traces lib_obj.obj_statDyn = {WorldStatic, WorldDynamic} --
+    // exactly trace::LineBlockedStatDyn's set, the primitive this shares with nameplate occlusion.
+    // Unresolvable (-1) -> blocked, the native default.
     const ue_wrap::FVector start = ue_wrap::engine::GetActorLocation(wisp);
     const ue_wrap::FVector end   = ue_wrap::engine::GetActorLocation(target);
     return ue_wrap::trace::LineBlockedStatDyn(wisp, start, end) == 0;
@@ -192,7 +190,7 @@ bool GrabSocketWorldLocation(void* wisp, ue_wrap::FVector& out) {
     return ue_wrap::engine::GetBoneWorldLocationByName(mesh, L"playerGrab", out);
 }
 
-// ---- v2 victim-side grab choreography (the native Capture player template) ------------
+// ---- victim-side grab choreography (the native Capture player template) ---------------
 
 namespace {
 // mainPlayer-side grab-state members (the Capture template targets). Resolved once from
@@ -326,7 +324,7 @@ bool CallReleasePlayer(void* wisp) {
     return ue_wrap::Call(wisp, f);
 }
 
-// ---- Inc1b: tear-mirror substrate -----------------------------------------------------
+// ---- tear-mirror substrate -----------------------------------------------------------
 
 namespace {
 // The killerWispAnim1 montage asset (the `fatality` section lives in it). Resolved once via
@@ -358,7 +356,7 @@ bool ForceMeshTick(void* wisp) {
     return ue_wrap::engine::SetAnimTickAlways(mesh);
 }
 
-// ---- plain wisp_C landing drive (2026-07-03 wisp mirror lane) --------------------------
+// ---- plain wisp_C landing drive ---------------------------------------------------------
 
 namespace {
 // Resolved once from the live wisp_C class (loads with the map -- trigger_wispSwarm_2 imports
@@ -373,8 +371,8 @@ uint8_t g_landedMask    = 0;        //          ... and bit mask
 void*   g_dirFn         = nullptr;  // dir(bool Condition) -- Play/Reverse the fade timeline
 
 // `candidateCls` = the CALLER'S actor's class (ClassOf -- O(1)); resolution never walks
-// GUObjectArray (perf audit W2: the old FindClass here was 2 full walks on the first landing
-// frame). The candidate is name-verified before being trusted as wisp_C.
+// GUObjectArray, because a FindClass here cost two full walks on the first landing frame. The
+// candidate is name-verified before being trusted as wisp_C.
 bool EnsurePlainWispResolved(void* candidateCls) {
     const int st = g_plainState.load(std::memory_order_acquire);
     if (st == 1) return true;

@@ -1,36 +1,17 @@
 // coop/desk_cursor_sync.cpp -- see coop/desk_cursor_sync.h.
 //
-// v109: the coords-panel LIVE cursor (ui_coordinates.viewCoordinate) as continuous
-// MOTION, fixing the 3Hz-reliable-snap jaggy. Sibling of the hand-item motion stream
-// (MsgType::HandPose): the reliable DishAimState carries the committed-coord IDENTITY
-// (discrete locks), THIS carries the sweep.
+// The coords-panel LIVE cursor (ui_coordinates.viewCoordinate) as continuous MOTION, the fix
+// for a 3 Hz reliable-snap jaggy. Sibling of the hand-item motion stream (MsgType::HandPose):
+// the reliable DishAimState carries the committed-coord IDENTITY, the discrete locks, and this
+// carries the sweep.
 //
-// v115 redesign (qf 2026-07-17 "that holds"): the CURSOR axis is DECOUPLED from the
-// desk CLAIM axis -- natively the glide integrator (spaceRenderer uber @518-970:
-// movement := Vector2DInterpTo(movement, dir*vel, dt, coordinateDrift=0.5);
-// setCoordinateLocation(cursor+movement)) has NO focus/claim gate, so the cursor
-// keeps moving after the presser dismounts (measured decay: a max flick reaches
-// sub-visible speed in ~12.4 s).
-//
-// SENDER: streams viewCoordinate while WE hold the desk claim, AND KEEPS streaming
-// through release while the glide still moves the cursor (settle: |dPos| < 0.25 px
-// over a 500 ms window; hard cap 15 s; cut early if another peer claims -- they own
-// the cursor now).
-//
-// RECEIVER: applies whatever slot currently streams (holder, else the last holder's
-// tail) while samples stay fresh (<700 ms); the release EDGE still replays the
-// native intComs_unfocused (the dim -- native does the same at dismount) but does
-// NOT reset the interp -- a claim flap or the momentum tail render seamlessly. The
-// interp resets only when the stream goes idle. At the stream-START edge the local
-// spaceRenderer.movement is zeroed once (a residual local glide would co-write
-// against the incoming stream -- the integrator is ungated).
-//
-// INTERP: identical-target packets (a sender frame with no new position still sends
-// -- same pos, new seq) no longer reopen the ease window, and the window ADAPTS to
-// the measured position-change inter-arrival (EMA, clamp 25..80 ms) -- kills both
-// the 60/60 aliasing beat and the staircase when the sender's frame rate dips.
-// Writes go through WriteCursorOnly (a pure viewCoordinate memcpy -- NEVER
-// updCursorLocations; the widget's own Tick repaints from the field).
+// The CURSOR axis is DECOUPLED from the desk CLAIM axis, because natively the glide integrator
+// has no focus or claim gate at all (spaceRenderer uber @518-970: movement :=
+// Vector2DInterpTo(movement, dir*vel, dt, coordinateDrift=0.5); setCoordinateLocation(cursor +
+// movement)), so the cursor keeps moving after the presser dismounts -- a max flick reaches
+// sub-visible speed in ~12.4 s. Sender, receiver and interpolator each carry their own half
+// below. Writes go through WriteCursorOnly, a pure viewCoordinate memcpy and NEVER
+// updCursorLocations, since the widget's own Tick repaints from the field.
 
 #include "coop/interactables/desk_cursor_sync.h"
 
@@ -63,8 +44,8 @@ uint64_t NowMs() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-// ---- sender-side momentum tail (qf R2: coordinateDrift=0.5 -> e-fold 2 s;
-// a max flick decays to sub-visible ~12.4 s -- the cap is a runaway guard only).
+// ---- sender-side momentum tail: coordinateDrift=0.5 gives an e-fold of 2 s, so a max flick
+// decays to sub-visible in ~12.4 s and the cap below is a runaway guard only.
 constexpr uint64_t kTailCapMs = 15000;
 constexpr uint64_t kSettleWindowMs = 500;
 constexpr float    kSettleEpsPx = 0.25f;  // sub-visible on the ~5000 px canvas
@@ -73,17 +54,19 @@ constexpr float    kSettleEpsPx = 0.25f;  // sub-visible on the ~5000 px canvas
 // sample parks the mirror exactly where the sender's glide rested.
 constexpr uint64_t kStreamIdleMs = 700;
 
-// ---- flap attribution (qf R3 Q4): a release+reclaim inside this window gets
-// a WARN so a REAL occupancy flicker (if one exists) surfaces measured.
+// ---- flap attribution: a release+reclaim inside this window gets a WARN, so a REAL occupancy
+// flicker surfaces measured rather than assumed.
 constexpr uint64_t kFlapWarnMs = 2000;
 
 constexpr float kSnapPx = 4000.f;  // a jump beyond a window's plausible screen
                                    // motion -> snap (first sample / re-claim)
 
-// The mirror interpolator (v115): error-window ease toward the newest sample,
-// with identical-target dedupe + an adaptive window from the EMA of the
-// position-CHANGE inter-arrival. Own tiny buffer -- NOT the actor-eid
-// interpolator (a keyless screen coord has no actor / IsLiveByIndex).
+// The mirror interpolator: an error-window ease toward the newest sample, with identical-target
+// dedupe and a window that ADAPTS to the EMA of the position-CHANGE inter-arrival (clamped
+// 25..80 ms). Both terms earn their place: a sender frame with no new position still sends (same
+// pos, new seq) and must not reopen the ease window, and the adaptive width kills the 60/60
+// aliasing beat as well as the staircase when the sender's frame rate dips. Its own tiny buffer,
+// NOT the actor-eid interpolator -- a keyless screen coord has no actor and no IsLiveByIndex.
 struct CursorInterp {
     float curX = 0, curY = 0;
     float targetX = 0, targetY = 0;
@@ -190,8 +173,10 @@ void Tick() {
     const bool weHold  = coop::device_occupancy::LocalHolds(kDeskClaim);
     const uint64_t now = NowMs();
 
-    // ---- SENDER: publish OUR live viewCoordinate while WE hold the desk,
-    // and THROUGH release while the native glide still moves it. ----
+    // ---- SENDER: publish OUR live viewCoordinate while WE hold the desk claim, AND keep streaming
+    // through release while the native glide still moves the cursor. The tail ends at settle
+    // (|dPos| < 0.25 px over a 500 ms window), at the hard cap, or early if another peer claims --
+    // they own the cursor from then on. ----
     bool wantStream = weHold;
     if (!weHold && g_streaming) {
         if (!g_tail) { g_tail = true; g_tailStartMs = now; }
@@ -238,9 +223,14 @@ void Tick() {
         StopStreaming(s, "released-idle");
     }
 
-    // ---- RECEIVER: mirror whichever slot currently streams. ----
-    // Pick the source: the holder while one exists; otherwise keep the last
-    // source (its momentum tail is still authoritative).
+    // ---- RECEIVER: mirror whichever slot currently streams -- the holder, else the last holder's
+    // tail -- while samples stay fresh. The release EDGE still replays the native intComs_unfocused
+    // dim, as native does at dismount, but does NOT reset the interp, so a claim flap or the
+    // momentum tail renders seamlessly; the interp resets only when the stream goes idle. At the
+    // stream-START edge the local spaceRenderer.movement is zeroed once, because a residual local
+    // glide would co-write against the incoming stream through the ungated integrator. ----
+    // Pick the source: the holder while one exists; otherwise keep the last source (its momentum
+    // tail is still authoritative).
     if (holder >= 0 && holder != g_streamSlot) {
         g_streamSlot = holder;
         SR::ZeroMovement();  // kill any residual LOCAL glide: the remote stream
@@ -262,8 +252,8 @@ void Tick() {
     }
     if (holder >= 0 && g_lastHolder < 0 && g_lastReleaseMs &&
         (now - g_lastReleaseMs) < kFlapWarnMs && holder == g_lastReleasedSlot) {
-        // The SAME slot re-claimed within the window -- a real flap candidate
-        // (an ordinary X->Y handoff must not fire this; audit 2026-07-17 WARN).
+        // The SAME slot re-claimed within the window -- a real flap candidate. An ordinary X->Y
+        // handoff must not fire this.
         UE_LOGW("desk_cursor: claim FLAP -- slot %d re-claimed %.0f ms after release "
                 "(occupancy flicker attribution, qf R3)",
                 holder, static_cast<double>(now - g_lastReleaseMs));

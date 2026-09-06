@@ -1,52 +1,16 @@
-// coop/world/event_fire_sync.h -- HOST-AUTHORITATIVE scheduled-event replay channel (v95).
-//
-// THE GAP (docs/COOP_SYNC_MAP "DESIGNED, NOT BUILT" 2026-07-03 -> built here): VOTV's scripted
-// story events (list_events DataTable, 69 rows) fire via saveSlot::settime -> eventer.runEvent --
-// a BP->BP EX_LocalVirtualFunction chain INVISIBLE to every hook we own (COOP_DISPATCH_VISIBILITY).
-// Level-placed event flips (the campfire / treehouse builds / server breaks / forceObjects
-// signals) ride NO existing lane, so a client never sees them fire. This module is the missing
-// channel, host-authoritative per the catalog-B verdict (_events_catalog_B_scheduler.md section 5A):
-//
-//   - HOST OBSERVATION: settime appends each fired row to saveSlot.passEvents (Array_Add,
-//     bytecode-verified saveSlot.json settime; runEvent itself never touches the array). The host
-//     Tick polls passEvents GROWTH (~1 Hz, two int reads steady-state) and broadcasts
-//     EventFire{dispatch,rowName} for each new entry. Poll-only is impossible for dev fires (a
-//     direct runEvent never appends), so the dev seam below broadcasts at dispatch.
-//   - CLIENT SUPPRESSION: settime's event walk iterates saveSlot.allEvents (NOT the DataTable --
-//     bytecode-verified). The client Tick keeps allEvents.Num == 0 (a one-int write; a legal
-//     TArray state; mainGamemode's boot ubergraph rebuilds allEvents from the DataTable
-//     UNCONDITIONALLY every world load, so this can never poison a save). This closes the
-//     sleep-accelerate hole: during the v71 accelerate phase the client clock free-runs
-//     (TimeScale=1), its settime walk RUNS, and day-boundary rows (treehouse_N at 00:00) would
-//     fire natively on the client -- the "dormant scheduler" claim (event_cue_sync) was only true
-//     outside sleep. Restored on disconnect (the local SP world resumes scheduling).
-//   - CLIENT REPLAY, PER-ROW POLICY: the receiver replays the SAME native verb reflected
-//     (runEvent(name, None) / runSpecialEvent(name)) -- but ONLY for rows on the REPLAY allowlist
-//     (the dupe matrix, votv-event-system-RE-2026-06-13.md section 10/10.4 ground truth). Default
-//     is NO-replay: rows whose outputs already ride a lane (prop/npc/atv/sleep/wisp/event_cue/
-//     device) would DOUBLE-deliver (the client-local dup disease), creature/save-actor spawns
-//     would create client-local actors, and prank specials are host-local RNG. Replayed rows are
-//     the level-flip / save-story / cosmetic-sound ones no lane carries. ariralPrank special is
-//     NEVER forwarded (the client would re-roll a DIFFERENT random prank).
-//   - DEDUPE: a replayed row is skipped if the client's own passEvents already contains it (the
-//     v56 save transfer carried the fire) or it was already replayed this session. Exception:
-//     the v98 ACTIVE-OVERRIDE (ReplayInFlightRow below) -- an event the host registry says is IN
-//     FLIGHT replays even when passEvents carries it, because a mid-event joiner's blob records
-//     the fire as history while the event is still running (COOP_EVENT_JOIN.md section 2).
-//
-// One owner (anti-smear): this module owns the whole scheduled-event authority axis --
-// suppression + observation + the native-fire primitive + replay. The F1 dev menu
-// (coop/dev/event_trigger) dispatches THROUGH HostFire so dev fires broadcast exactly like
-// scheduler fires (dev depends on coop/world, never the reverse).
-//
-// Known boundaries (documented, deliberate):
-//   - Trigger-volume fires (bedEvent, scares armed by TBoxActivator) execute per-peer natively
-//     when THAT peer overlaps -- per-viewer by SP design (RE 2026-06-13 section 10.4), not a gap.
-//   - The game's own internal runSpecialEvent picks (summonArirPrank) are invisible (no
-//     passEvents append) -- prank outputs ride the prop lane, as before this module.
-//   - A dev fire does not append the HOST's passEvents (native ui_eventRun behaves the same), so
-//     the scheduler can re-fire that row at its scheduled time on the host; the client's
-//     replayed-set dedupes its side.
+// coop/world/event_fire_sync.h -- HOST-AUTHORITATIVE scheduled-event replay channel.
+// VOTV's scripted story events (list_events DataTable, 69 rows) fire through saveSlot::settime
+// -> eventer.runEvent, a BP->BP EX_LocalVirtualFunction chain invisible to every hook we own,
+// and level-placed event flips ride no other lane. Three mechanisms carry the channel, each
+// bytecode-verified: the HOST polls saveSlot.passEvents for GROWTH, because settime appends
+// each fired row there while runEvent never touches the array; the CLIENT holds
+// saveSlot.allEvents.Num at 0, because settime's walk iterates that array and not the
+// DataTable, which mainGamemode's boot ubergraph rebuilds unconditionally at every world load,
+// so it can never poison a save; and the client REPLAYS the same native verb for allowlisted
+// rows only. The replay policy and its reasoning are in docs/events-and-weather.md.
+// One owner: this module owns the whole scheduled-event authority axis -- suppression,
+// observation, the native-fire primitive and replay. The F1 dev menu (coop/dev/event_trigger)
+// dispatches THROUGH HostFire, so dev depends on coop/world and never the reverse.
 
 #pragma once
 
@@ -72,6 +36,18 @@ void Install(coop::net::Session* session);
 // Per net-pump tick, game thread, ~1 Hz internally throttled:
 //   HOST + connected: passEvents growth poll -> broadcast new fires.
 //   CLIENT: assert allEvents.Num == 0 (scheduler suppression) + drain pending replays.
+//
+// The client assert is what closes the sleep-accelerate hole: during an accelerate the client
+// clock free-runs at TimeScale=1 and its own settime walk RUNS, so day-boundary rows would
+// otherwise fire natively there. Restored on disconnect, and the local world resumes its own
+// scheduling.
+//
+// Two classes of fire this poll cannot see, both deliberate: a trigger-volume fire (bedEvent,
+// a scare armed by TBoxActivator) executes per-peer natively when THAT peer overlaps, which is
+// per-viewer by the game's own design; and the game's internal runSpecialEvent picks append no
+// passEvents row, so their outputs ride the prop lane. A dev fire appends nothing to the HOST's
+// passEvents either -- the native ui_eventRun behaves the same -- so the scheduler may re-fire
+// that row at its scheduled time, and the client's replayed-set dedupes its side.
 void Tick();
 
 // The ONE native-fire primitive + the dev broadcast seam. Posts the reflected
@@ -87,13 +63,13 @@ bool HostFire(FireKind kind, const std::wstring& eventName, const std::wstring& 
 // queue until the eventer resolves (join window). Host receiving its own kind = dropped upstream.
 void OnReliable(const coop::net::EventFirePayload& payload);
 
-// CLIENT, game thread (event_active_sync's EventSnapshot receiver, v98): the host says this
+// CLIENT, game thread (event_active_sync's EventSnapshot receiver): the host says this
 // list_events row is IN FLIGHT right now. Same per-row policy as OnReliable (lane-owned /
-// host-local / unknown rows skip), but a replay-safe row replays with the ACTIVE-OVERRIDE:
-// the InClientPassEvents dedupe is bypassed (it exists for COMPLETED history; the joiner's
-// blob already carries this row). The session replayed-set still applies (a world-change
-// re-sync resends the snapshot; the row must not replay twice). Always FireKind::RunEvent
-// (registry senders are scheduled/story rows; runSpecialEvent never registers).
+// host-local / unknown rows skip), but a replay-safe row replays with the ACTIVE-OVERRIDE: the
+// InClientPassEvents dedupe is bypassed, since it exists for COMPLETED history and the joiner's
+// blob already carries this row. The session replayed-set still applies (a world-change re-sync
+// resends the snapshot; the row must not replay twice). Always FireKind::RunEvent -- registry
+// senders are scheduled/story rows, and runSpecialEvent never registers.
 void ReplayInFlightRow(const std::string& rowName);
 
 // Teardown: restore the client's allEvents.Num (SP scheduler resumes), clear poll baseline +

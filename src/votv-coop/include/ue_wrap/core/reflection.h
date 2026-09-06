@@ -130,9 +130,17 @@ void* FindClass(const wchar_t* className);
 // only; does not climb to super classes.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
 
-// First live instance whose class name is `className`, skipping the CDO (names starting with
-// "Default__"). For runtime singletons that exist by the time of the call, such as the
-// GameInstance or the live World.
+// First object whose class name is `className` in object-array order, skipping nulls and
+// the class default object (names starting with "Default__"). There is NO liveness test and
+// no world filter. After a menu-to-game cycle the departed world's instance sits at a lower
+// index and wins, so a caller resolving a world-scoped actor this way can silently address
+// the world it just left -- it once handed a joiner a save serialised from a gamemode whose
+// world no longer existed, a structurally complete file describing nothing. A site reached
+// only while a single world is live is fine; a site that can run across a world change
+// should compare world_identity::WorldOf against CurrentWorld, a null stamp not being a
+// rejection. Most of the world-scoped classes resolved this way -- the gamemode, the player,
+// the day-night cycle, the fog, the menu widget, the black screen -- have never been checked
+// against that question. The GameInstance is immortal by design.
 void* FindObjectByClass(const wchar_t* className);
 
 // The Class Default Object of a class given by name. Static BlueprintCallable UFunctions are

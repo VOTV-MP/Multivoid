@@ -1,37 +1,18 @@
-// coop/player/hand_item.h -- the hotbar HAND-ITEM display axis (v105).
+// coop/player/hand_item.h -- the hotbar HAND-ITEM display axis.
 //
-// RULE-1 root fix for "peer's held item updates late/never" (user 2026-07-06;
-// host log 12:40:05 proof): the item shown in a player's hand is NOT a world
-// entity -- VOTV's updateHold destroys + respawns a fresh local actor on every
-// quick-slot switch -- yet it rode the WORLD-prop pipeline
-// (PropSpawn/PropPose/PropRelease). That mismatch produced: the host's
-// PRE-QUIESCENCE express gate suppressing every host hand item forever (the
-// client dropped 60 Hz keyed poses -- 'no local match' x1809), physics-release
-// litter/dupes on switch-away, and a fresh key/mirror churn per switch.
+// The item shown in a player's hand is NOT a world entity: VOTV's updateHold destroys and
+// respawns a fresh local actor on every quick-slot switch. Riding the WORLD-prop pipeline
+// (PropSpawn/PropPose/PropRelease) therefore produced a peer's held item updating late or never
+// -- the host's pre-quiescence express gate suppressed every host hand item forever, the client
+// dropped its 60 Hz keyed poses as unmatched, and every switch left physics-release litter and
+// a fresh key/mirror churn.
 //
-// The proper model (MTA shape: a ped's current weapon is PLAYER STATE attached
-// to the ped locally on every machine): the hand item is part of the player's
-// EXPRESSION, like skin/nick color.
-//   - owner polls mainPlayer.holding_actor (Aprop_C only -- the trash
-//     clump/pile carry stays on its own lane) and broadcasts a small reliable
-//     HandItem{class, name} on change;
-//   - every peer keeps a DISPLAY-ONLY mirror (physics off, collision off,
-//     spawn-echo suppressed) attached to the puppet's `weapon` component at
-//     the NATIVE hold transform (updateHold @1628 attaches holding_actor to
-//     `weapon` -- socket weapon_R of the FP arms rig, camera-anchored via the
-//     arms_lag spring arm -- at rel loc(0,0,0) rot(0,180,0); hands-on
-//     2026-07-06 13:43: the old puppet-ROOT+offset attach read as carry/grab);
-//   - nothing per-tick on the wire; switch latency = one reliable message;
-//   - late-join: the host stores per-slot state and replays it in the
-//     ConnectReplayForSlot fanout.
-//
-// The axis BOUNDARY is enforced at the world-prop census too: the owner's
-// live hand actor is NOT a world entity, so prop_element_tracker::SeedWalk_
-// consults LocalHandActor() and never adopts it (hands-on 2026-07-06 13:44:00:
-// the ~20s safety census adopted the host's in-hand rock -> incremental
-// PropSpawn -> a frozen dupe rock at the puppet on the client for 4s).
-//
-// All functions game-thread only.
+// The model is MTA's: a ped's current weapon is PLAYER STATE attached to the ped locally on
+// every machine, so the hand item is part of the player's EXPRESSION like skin and nick colour.
+// The owner polls mainPlayer.holding_actor (Aprop_C only -- the trash clump/pile carry keeps its
+// own lane) and broadcasts a small reliable HandItem{class, name} on change; every peer keeps a
+// display-only mirror. Nothing goes per-tick on the wire, switch latency is one reliable
+// message, and late join replays per-slot state. All functions game-thread only.
 
 #pragma once
 
@@ -41,21 +22,24 @@
 
 namespace coop::hand_item {
 
-// Owner side, per tick (from local_streams::Tick). `local` is the local
-// mainPlayer (cached for LocalHandActor's fresh read); `holdingProp` is the
-// local player's holding_actor IF it is a live Aprop_C descendant, else
-// nullptr. Announces EDGE-INSTANT on change (a quick-slot switch is one
-// synchronous updateHold call -- bytecode-proven -- so a null IS the stow).
-// v106: at the hand edge, an ex-hand actor that SURVIVED the edge was
-// RELEASED into the world (R-drop / quick-slot place is not a spawn -- the
-// game re-uses the view actor) -- it is expressed as a world prop right
-// there via trash_collect_sync::EnsureHeldItemBroadcast. The R-pickup
-// destroy side is owned by the K2_DestroyActor Func seam (prop_lifecycle).
+// Owner side, per tick (from local_streams::Tick). `local` is the local mainPlayer (cached for
+// LocalHandActor's fresh read); `holdingProp` is the local player's holding_actor IF it is a
+// live Aprop_C descendant, else nullptr. Announces EDGE-INSTANT on change -- a quick-slot switch
+// is one synchronous updateHold call, bytecode-proven, so a null IS the stow.
+//
+// At the hand edge, an ex-hand actor that SURVIVED the edge was RELEASED into the world (an
+// R-drop or quick-slot place is not a spawn; the game re-uses the view actor), so it is expressed
+// as a world prop right there through trash_collect_sync::EnsureHeldItemBroadcast. The R-pickup
+// destroy side belongs to the K2_DestroyActor Func seam in prop_lifecycle.
 void TickOwner(coop::net::Session& session, void* local, void* holdingProp);
 
-// Receiver side, per tick (same site): lazily spawn/replace/destroy the
-// display mirrors so a state that arrives before the puppet exists (join) or
-// a puppet respawn are absorbed without event ordering.
+// Receiver side, per tick (same site): lazily spawn/replace/destroy the display mirrors, so a
+// state arriving before the puppet exists (join) or a puppet respawn are absorbed without event
+// ordering. A mirror has physics and collision off and its spawn echo suppressed, and it
+// attaches to the puppet's `weapon` component at the NATIVE hold transform -- updateHold @1628
+// attaches holding_actor to `weapon`, socket weapon_R of the FP arms rig, camera-anchored
+// through the arms_lag spring arm, at rel loc(0,0,0) rot(0,180,0). Attaching to the puppet ROOT
+// with an offset instead reads as a carry or a grab.
 void TickMirrors();
 
 // event_feed router entry. Parses, forgery-guards, stores, host-rebroadcasts.
@@ -66,23 +50,20 @@ bool HandleHandItem(coop::net::Session& session,
 // (subsystems::ConnectReplayForSlot; session = the one cached by TickOwner).
 void ReplayPeerStatesToSlot(int slot);
 
-// The v105 axis boundary for the world-prop census: the LOCAL player's live
-// hotbar hand actor (a fresh mainPlayer.holding_actor read, Aprop_C-gated),
-// or nullptr. prop_element_tracker::SeedWalk_ skips this actor -- it is
-// player expression, never a world entity. Fresh read (not the announce
-// latch): the census runs earlier in the pump tick than TickOwner, and
-// updateHold can have respawned the actor in between.
+// The axis boundary for the world-prop census: the LOCAL player's live hotbar hand actor (a
+// fresh mainPlayer.holding_actor read, Aprop_C-gated), or nullptr. prop_element_tracker's seed
+// walk skips this actor -- it is player expression, never a world entity, and adopting it makes
+// the safety census express an incremental PropSpawn that lands on the peer as a frozen duplicate
+// at the puppet. Fresh read rather than the announce latch: the census runs earlier in the pump
+// tick than TickOwner, and updateHold can have respawned the actor in between.
 void* LocalHandActor();
 
-// The FULL hand-axis boundary, ONE owner (audit 2026-07-10 HIGH: v105 excluded
-// only the LOCAL half -- a REMOTE peer's display mirror was census-adoptable as
-// a world prop, the other half of the 13:44:00 eid=5377 dupe class). True for
-// the local hand actor AND any live remote display mirror. Dead-mirror recycled
-// addresses are NOT matched (IsLiveByIndex-gated) -- a recycled slot belongs to
-// a different, adoptable actor. Consumers: prop_element_tracker::SeedWalk_
-// (via CollectHandAxisActors, hoisted once per walk), prop_drop_intent (enqueue
-// AND drain -- the drain-time re-check is load-bearing: holding_actor is not
-// yet written at FinishSpawn-return). Game thread only.
+// The FULL hand-axis boundary, ONE owner: true for the local hand actor AND for every live
+// remote mirror. LocalHandActor above answers only for the local half, and a census that asks it
+// alone adopts the mirrors. Callers: prop_element_tracker's seed walk (through
+// CollectHandAxisActors, hoisted once per walk) and prop_drop_intent on both enqueue AND drain --
+// the drain-time re-check is load-bearing, because holding_actor is not yet written when
+// FinishSpawn returns. Game thread only.
 bool IsHandAxisActor(void* actor);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)

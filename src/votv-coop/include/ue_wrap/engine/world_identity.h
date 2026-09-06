@@ -36,20 +36,6 @@ void* CurrentWorld();
 // dereferences it.
 void* WorldOf(void* obj);
 
-// The unscoped resolve. The reflection lookup by class skips only nulls and the CDO, no
-// liveness test and no world filter, and returns the first match in object-array order.
-// Together with the fact this header exists for, after a menu-to-game cycle the old instance
-// sits at a lower index and wins, so every caller resolving a world-scoped actor that way can
-// silently address the world it just left. It once handed a joiner a save serialised from a
-// gamemode whose world no longer existed, a structurally complete file describing nothing;
-// fixed at that site (the save capture) by comparing WorldOf against CurrentWorld, a null
-// stamp not being a rejection. The world-scoped classes resolved that way (the gamemode, the
-// player, the day-night cycle, the fog, the menu widget, the black screen) are mostly
-// unaudited: a site reached only while a single world is live is fine, and the discriminating
-// question per site is whether it can run across a world change; the cheapest answer for one
-// that can is the same two-line comparison. The GameInstance is immortal by design, and the
-// world itself is what CurrentWorld reads.
-
 // Which of the game's worlds is current, the question every world gate actually asks,
 // answered by the one reader a dying world cannot hold alive. Computed inside the refresh, at
 // the instant the pointer comes out of the engine's own field, because the identity above
