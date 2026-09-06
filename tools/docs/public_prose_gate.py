@@ -378,12 +378,30 @@ def main():
     ap.add_argument("--init", action="store_true", help="write the baseline from the current tree")
     ap.add_argument("--force", action="store_true", help="with --init: overwrite an existing baseline")
     ap.add_argument("--top", type=int, default=5)
+    ap.add_argument("--file", action="append", metavar="PATH",
+                    help="report what these files owe, counter by counter, and exit; repeatable")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
     counters, who = measure(a.repo)
+    if a.file:
+        for want in a.file:
+            want = want.replace("\\", "/").lstrip("./")
+            hits = sorted({p for k in who for p in who[k] if p.endswith(want)})
+            if not hits:
+                print("{}: no tracked file matches".format(want))
+                continue
+            for p in hits:
+                owed = [(k, who[k][p]) for k in counters
+                        if k not in INFORMATIONAL and k != "src.files_not_swept" and p in who[k]]
+                print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                for k, n in owed:
+                    print("    {:<30} {:>4}  {}".format(k, n, describe(k)))
+                if not owed:
+                    print("    SWEPT -- contributes to no counter")
+        return 0
     if a.init:
         if os.path.isfile(a.baseline) and not a.force:
             print("public_prose_gate: FAIL -- a baseline exists at {}; --init --force overwrites it "
