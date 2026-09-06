@@ -422,7 +422,7 @@ def save_baseline(path, counters, repo):
     sha = git(["rev-parse", "--short", "HEAD"], repo).strip()
     with io.open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump({"as_of": sha, "note": "measured on the working tree; as_of is HEAD at that moment",
-                   "counters": counters}, f, indent=1)
+                   "counters": counters}, f, indent=2)   # the shape the file is read in
         f.write("\n")
 
 
