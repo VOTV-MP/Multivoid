@@ -98,6 +98,10 @@ const char* s = "// not a comment";
 // line 14 of a long block
 // line 15 of a long block
 int g() { return 1; }
+// a survey row cited with no slug at all, as `row :79` is
+int r1() { return 0; } // and the same citation carrying its slug, as census row a_file:138 does
+int r2() { return 0; } // plural too, as census rows a_file:192/:196
+// PRECISION: a row that is a MIRROR -> a 1:1, rows 1 and 2, and a ratio of 3:4 are all prose
 """
 
 # The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
@@ -195,6 +199,13 @@ MUTANTS = [
      "                tails.append((no, s[i:e + 2]))\n", "                pass\n"),
     # The build tag. Reading only the named families is what the gate did while 452 lines across
     # 187 files cited a build; matching one digit as well would flag `v9` and a decimal.
+    # The row citation. Dropping it is what the gate did while 18 lines named a survey nobody can
+    # open; letting the number drift away from the word instead flags a ratio and an enumeration,
+    # and a sweep obeying that would rewrite correct prose.
+    ("doc_row: matches nothing", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\bZZZZ\b"'),
+    ("doc_row: singular only", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brow\s+[\w./-]*:\d+"'),
+    ("doc_row: number may drift from the word", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\b.*:\d+"'),
+    ("doc_row: slug not optional", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\s+[\w./-]+:\d+"'),
     ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
     ("label: build tag from one digit", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r"|v\\d+"'),
     # Both notations of the memory pointer. Reading only the path form is what the gate did while
@@ -282,7 +293,8 @@ def main():
               "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 54, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 56, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_doc_row": 3,
               "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,

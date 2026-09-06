@@ -140,6 +140,14 @@ SRC_EXTRA = collections.OrderedDict([
                           r"|(?<![\w/.])v\d{2,3}\b"
                           r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),
                "comment lines citing a work item by its label")),
+    # The third spelling of the same citation: a ROW of a table that lives in a document outside
+    # the tree. `islive-zeroav row :79`, `census row kerfur_command:138`, `census rows
+    # engine_mainplayer:192/:196` -- each names a line of a survey a maintainer has no way to
+    # open, and ten of the eighteen files carrying one were reported swept, because neither
+    # `review` nor `label` reads this shape. The row number must follow the word directly, with
+    # at most a slug between, so `the row is a MIRROR -> a 1:1` and other prose stay clear.
+    ("doc_row", (re.compile(r"\brows?\s+[\w./-]*:\d+"),
+                 "comment lines citing a row of a document outside the tree")),
 ])
 
 
