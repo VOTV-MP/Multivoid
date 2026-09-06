@@ -370,7 +370,7 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
                 g_getMaterialResolveFailed = true;
                 UE_LOGW("coingun[birth]: UPrimitiveComponent::GetMaterial unresolved -- the birth "
                         "instrument will print mat='<unresolved>' for the rest of this session. "
-                        "Latched: this walk is not repeated per coin. (audit M-3)");
+                        "Latched: this walk is not repeated per coin.");
             }
         }
         getMatFn = g_getMaterialFn;

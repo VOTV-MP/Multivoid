@@ -153,9 +153,10 @@ maintainer outside the repository. The `docs/` tree is an allowlist in `.gitigno
 published by adding its `!docs/<file>` line, so a working note left there stays local by default.
 `tools/docs/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
-the hard cap, dated lines, and in the source the comment blocks over 15 lines and the files that
-are more than half comment. CI refuses a push that makes any of those measures worse; the plain
-volume of prose is reported, not gated.
+the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
+more than half comment, offsets pinned in prose that the code resolves elsewhere, declarations
+nothing calls, and the citation vocabulary below. CI refuses a push that makes any of those
+measures worse; the plain volume of prose is reported, not gated.
 
 ## Code comments
 
@@ -163,6 +164,12 @@ A comment says what the code does and why, as of now. It carries no dates, no qu
 references to reviews or to notes outside the repository, and not the story of what the
 previous version did: that story is the commit message. A file may open with a block of up to
 15 lines saying what it is and why it exists; anything longer belongs in the subsystem's doc.
+
+Two habits from the working notes stay out of the source. A finding or work item named by its
+label -- `CRIT-1`, `Inc-2`, `take-9`, `K-5` -- points at a document that is not in the
+repository, so state what the code does instead. Evidence tags (`[V]`, `[?]`) belong in the
+documentation, where the index page carries their legend; a source comment has no legend, and
+the reader is better served by the fact than by a mark on it.
 
 ## Pull requests
 

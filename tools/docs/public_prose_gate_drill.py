@@ -8,8 +8,10 @@ count as dead; a link to an untracked one must.
 
     python tools/docs/public_prose_gate_drill.py
 """
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,11 +39,26 @@ SRC = """#include "d.h"
 // PRECISION: opcode 0x45, sentinel 0xFF and colour 0x40 are hex, not offsets, and must NOT count
 // OWNERSHIP: the translation at +0x10 is read three lines down, so the number IS the fact here
 // RECALL: naming hiddenByAComment() here must NOT rescue it from the dead list
-// the retry came from audit F-3, and audits/audited/auditing are the same citation
+// the retry came from a review nobody outside can read
+// two audits agreed; a third audited it; a fourth is auditing it now
+// AUDIT F-3 in capitals is the same citation
 // `[V]` an evidence tag from our working docs, which source has no legend for
-// a bare [?] and a [RD] belong to that same family
-// PRECISION: an auditorium, a bracketed [Value] and an [ok] flag are neither
+// a bare [?] on its own line
+// and a [RD] on its own
 int calledOnce() { return 0; }
+// one label family per line, so dropping any one of them turns this drill red
+// CRIT-1 names a review finding
+// security A34 names a row of a register that is not published
+// Inc-2 names a build increment
+// take-9 names an attempt
+// WP-2 names a work package
+// the s28 cut named a session
+// finding 3 named itself
+// K-5: a bare label counts when it opens the comment
+// a colon does too, as in R-2: the shared-scan consumer
+// PRECISION: an auditorium, a bracketed [Value], an [ok] flag, leaving N-1 rows and
+// a balance of X -> X-93 are none of them
+// `[A]` is an evidence tag of the same family as the three above
 int neverCalledAnywhere() { return calledOnce(); }
 int hiddenByAComment() { return 0; }
 int sameNameAsALiveOne() { return 0; }
@@ -92,6 +109,29 @@ HDR_OWNER = """#pragma once
 // the profile owns offsets: 0x1234 here is the point of the file
 inline constexpr int kThing = 0x1234;
 """
+
+
+# Every counter above is proved by a COUNT, and a count only proves the detector is not silent.
+# These prove it is not deaf either: each row breaks one detector on a COPY of the gate, and the
+# drill must go RED. A row that stays green names a regression that would ship -- which is how
+# `[A]` and the whole named-label family were found to have no canary at all.
+MUTANTS = [
+    ("review: no inflections", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit\\b", re.I'),
+    ("review: case-sensitive", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit(?:s|ed|ing)?\\b"'),
+    ("review: matches nothing", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\bZZZZ\\b", re.I'),
+    ("review: no trailing boundary", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit", re.I'),
+    ("evidence: drops [RD]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|A)\\]"'),
+    ("evidence: drops [?]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|RD|A)\\]"'),
+    ("evidence: drops [V]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:\\?|RD|A)\\]"'),
+    ("evidence: drops [A]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|RD)\\]"'),
+    ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
+    ("label: drops the named families",
+     'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
+    ("label: drops the one-letter form",
+     'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r""'),
+    ("label: one-letter form unanchored",
+     'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r"|\\b[A-Z]-\\d{1,2}\\b"'),
+]
 
 
 def git(args, cwd, env):
@@ -148,12 +188,13 @@ def main():
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 32, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 47, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
-              "src.comment_review": 1, "src.comment_evidence": 2}
+              "src.comment_review": 2, "src.comment_evidence": 4,
+              "src.comment_label": 9}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     r = run(["--repo", repo, "--baseline", baseline])
@@ -205,6 +246,29 @@ def main():
     git(["commit", "-q", "-am", "[drill] 601"], repo, env)
     r = run(["--repo", repo, "--baseline", baseline])
     arm("a 601-line doc crosses the 600-line cap", r.returncode == 1 and "md.over_600 0->1" in r.stdout)
+    # The mutation arms run the drill again against a broken copy of the gate, so the nested run
+    # must not mutate in turn: one level is the proof, two is a fork bomb.
+    if os.environ.get("PPG_DRILL_NESTED"):
+        bad = results.count(False)
+        print("public_prose_gate_drill: {} arms, {} failed".format(len(results), bad))
+        return 1 if bad else 0
+    mut = os.path.join(tmp, "mutant")
+    os.makedirs(mut, exist_ok=True)
+    for f in ("public_prose_gate.py", "public_prose_gate_drill.py"):
+        shutil.copy(os.path.join(HERE, f), os.path.join(mut, f))
+    gate_src = io.open(os.path.join(mut, "public_prose_gate.py"), encoding="utf-8").read()
+    for name, a, b in MUTANTS:
+        if gate_src.count(a) != 1:
+            arm("mutant anchor is unique: " + name, False, "found {}".format(gate_src.count(a)))
+            continue
+        with io.open(os.path.join(mut, "public_prose_gate.py"), "w", encoding="utf-8",
+                     newline="") as f:
+            f.write(gate_src.replace(a, b))
+        r = subprocess.run([sys.executable, os.path.join(mut, "public_prose_gate_drill.py")],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           env=dict(os.environ, PPG_DRILL_NESTED="1"))
+        arm("breaking " + name + " turns the drill RED", r.returncode != 0,
+            (r.stdout.strip().splitlines() or ["no output"])[-1])
     bad = results.count(False)
     print("public_prose_gate_drill: {} arms, {} failed".format(len(results), bad))
     return 1 if bad else 0

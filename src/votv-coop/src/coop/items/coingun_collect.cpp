@@ -211,8 +211,8 @@ bool OnCollectPre(void* self, void* params) {
         return true;
     }
 
-    UE_LOGW("coingun[client collect]: NON-MIRROR coin=%p collected locally (a map-placed coin -- `[V]` "
-            "two cooked maps carry them, and they are level content on both peers, never enrolled). "
+    UE_LOGW("coingun[client collect]: NON-MIRROR coin=%p collected locally (a map-placed coin: two "
+            "cooked maps carry them, they are level content on both peers and never enrolled). "
             "This credits THIS CLIENT only. If this player's puppet also trips the host's copy, the "
             "host's broadcast overwrites the number shortly; if it does not, this number is wrong "
             "until the host's balance next moves. Pre-existing (A13), deliberately not cancelled.",

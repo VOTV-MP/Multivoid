@@ -104,9 +104,23 @@ SRC_EXTRA = collections.OrderedDict([
     # never will be -- so the citation carries no information and the finding it stands for has
     # to be restated as what the code does. The word IS the vocabulary, as with `lesson`.
     ("review", (re.compile(r"\baudit(?:s|ed|ing)?\b", re.I), "comment lines citing an internal review")),
-    # `[V]` / `[?]` / `[RD]`: the evidence tags of our own working docs, which carry a legend on
-    # the docs index. Source has no legend, so in a comment the tag is noise around the fact.
-    ("evidence", (re.compile(r"\[(?:V|\?|RD)\]"), "comment lines carrying an evidence tag")),
+    # `[V]` / `[?]` / `[RD]` / `[A]`: the evidence tags of our own working docs, which carry a
+    # legend on the docs index. Source has no legend, so in a comment the tag is noise around
+    # the fact.
+    ("evidence", (re.compile(r"\[(?:V|\?|RD|A)\]"), "comment lines carrying an evidence tag")),
+    # The same citation without the word: a work item, a review finding or a register row named
+    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `take-9`, `WP-2`, `s28 cut`, `K-5`, `R-2`
+    # all name a document outside the tree, and the security register is deliberately
+    # unpublished, so those rows name something a reader is not meant to have. The named
+    # families are exact; the one-letter form counts only where it OPENS the comment or carries
+    # a colon, which is how a label is written and how arithmetic is not: `leave N-1 host
+    # props`, `X -> X-93` and `1->(P-2)` all read as prose and none of them counts.
+    ("label", (re.compile(r"\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\d+\b"
+                          r"|\bsecurity\s+[A-Z]\d+\b|\bA\d\d/A\d\d\b"
+                          r"|\bInc-\d+[a-z]?\b|\bINCREMENT\s+\d+[a-z]?\b"
+                          r"|\btake-\d+\b|\bWP-?\d+\b|\bs\d\d cut\b|\bfinding \d+\b"
+                          r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),
+               "comment lines citing a work item by its label")),
 ])
 
 
@@ -455,6 +469,25 @@ def describe(k):
     return k
 
 
+def unstaged_measured(repo):
+    """Measured files whose working-tree content differs from the index.
+
+    A baseline describes a COMMIT: the gate re-runs at that commit and compares. Measuring the
+    working tree and then committing only some of it writes numbers no commit ever has -- the
+    baseline lands one commit before the change that made it true, and every commit in between
+    fails a gate that has not regressed. So a write refuses while a measured file is unstaged.
+    """
+    out = git(["diff", "--name-only", "--"] + list(SRC_ROOTS) + ["*.md"], repo)
+    return [p for p in out.split("\n") if p.strip()]
+
+
+def unstaged_message(dirty):
+    return ("public_prose_gate: FAIL -- {} measured file(s) are modified but not staged, so "
+            "these numbers describe no commit: {}{} -- stage them first "
+            "(--force writes anyway)".format(
+                len(dirty), ", ".join(dirty[:6]), " ..." if len(dirty) > 6 else ""))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo", default=REPO)
@@ -493,6 +526,10 @@ def main():
             print("public_prose_gate: FAIL -- a baseline exists at {}; --init --force overwrites it "
                   "(that can raise values silently, so say why in the commit)".format(a.baseline))
             return 1
+        dirty = unstaged_measured(a.repo)
+        if dirty and not a.force:
+            print(unstaged_message(dirty))
+            return 1
         save_baseline(a.baseline, counters, a.repo)
         print("public_prose_gate: baseline written ({} counters)".format(len(counters)))
         return 0
@@ -528,6 +565,10 @@ def main():
             len(fails), ", ".join("{} {}->{}".format(k, b, v) for k, b, v in fails)))
         return 1
     if a.update:
+        dirty = unstaged_measured(a.repo)
+        if dirty and not a.force:
+            print(unstaged_message(dirty))
+            return 1
         lowered = [k for k, v in counters.items() if k in bc and v < bc[k] and k not in INFORMATIONAL]
         save_baseline(a.baseline, counters, a.repo)
         print("public_prose_gate: PASS -- baseline updated ({} lowered: {})".format(

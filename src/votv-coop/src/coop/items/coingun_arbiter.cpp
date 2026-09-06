@@ -190,12 +190,9 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     if (!prop) {
         const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
         if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
-                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world. This used to "
-                "say the two peers had disagreed before anyone fired -- a divergence this lane "
-                "exposed rather than caused. That was WRONG and it misdirected the diagnosis for "
-                "a day: `[V]` 2026-09-01 the host's key index held 28 keyed props against a world "
-                "of ~2200, because the steady re-seed consumer was gated off by a verdict nobody "
-                "published, so EVERY sale of an ordinary save-loaded prop landed here. That root "
+                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world. The usual "
+                "cause is on this side: a key index holding a few dozen props against a world of "
+                "thousands sends every sale of an ordinary save-loaded prop here. That root "
                 "is fixed (registry_reaper publishes it now); reaching this line again means a "
                 "genuinely unknown key. The client's own destroy still lands, so it costs the "
                 "ITEM -- the lane's header names that invariant and does not yet hold it.",
@@ -217,7 +214,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
             if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
                     "(verdict=%s dist=%.0f allowed=%.0f; 'no-body' with -1 for both means the sender "
                     "has no live puppet here, so there is no body to measure a reach from and we "
-                    "refuse rather than assume one). The gun `[V]` traces arm(1000.0) from the "
+                    "refuse rather than assume one). The gun traces 1000 uu from the "
                     "sender's own camera, so a prop outside that reach was not shot -- naming it is "
                     "enumeration, not a sale.",
                     senderSlot, artifact.c_str(), coop::element::OutcomeName(sub.outcome),
@@ -243,7 +240,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoGun);
         if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=no-live-coingun. Nothing in "
                 "our world can execute `sell` (the sender's hand mirror may have been stowed within "
-                "the RTT). We mint nothing rather than inventing an instance -- `[V]` a CDO executor "
+                "the RTT). We mint nothing rather than inventing an instance: a CDO executor "
                 "would mint ZERO coins anyway, since EX_Self is the WorldContextObject of every "
                 "deferred spawn inside `sell`.", senderSlot, artifact.c_str());
         return;
