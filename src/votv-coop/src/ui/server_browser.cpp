@@ -14,7 +14,7 @@
 
 #include "ui/host_save_picker.h"
 #include "ui/menu_sfx.h"        // native VOTV button click + rollover sounds
-#include "coop/net/protocol.h"  // kProtocolVersion (the v59 "Ver" mismatch tint)
+#include "coop/net/protocol.h"  // kProtocolVersion (the "Ver" mismatch tint)
 #include "coop/session/session_manager.h"
 #include "coop/config/config.h"   // local-only ini persistence for the name + last direct address
 #include "ui/scale.h"
@@ -42,20 +42,15 @@ std::atomic<bool> g_justOpened{false};   // Open() -> Render triggers one auto-r
 std::vector<Row> g_rows;
 // THE SELECTION IS A LOBBY ID, NOT A ROW INDEX.
 //
-// This was an `int g_selected` until 2026-08-30, re-clamped for SIZE every frame and
-// read positionally by the footer's Connect -- so a lobby appearing or leaving between
-// the click and the press shifted every later row and the player joined a server they
-// did not pick. The native browser has carried the id-keyed invariant since it was
-// written (`ui/server_browser_rows.h`); this surface did not, and a post-ship audit
-// found it on the day the native one became the default and this one became the
-// permanent FALLBACK -- which is exactly why it is worth fixing rather than leaving to
-// die. Sorting the list at the producer narrowed the window; it did not close it, and a
-// narrower silent defect is a harder one to notice.
+// A row index is read positionally by the footer's Connect, so a lobby appearing or leaving between
+// the click and the press shifts every later row and the player joins a server they did not pick.
+// Sorting the list at the producer narrows that window without closing it. The native browser
+// (`ui/server_browser_rows.h`) keys by id for the same reason; this surface is the permanent
+// fallback and holds the same invariant.
 std::string g_selectedId;
-// Overwritten from `browser.lastdirect` on Open(), so this initialiser is only what
-// the buffer holds before the first open -- but it was the SECOND copy of the wrong
-// "127.0.0.1:7777" (see coop::net::kDefaultDirectAddr), and a wrong literal that is
-// usually overwritten is still a wrong literal waiting for a path that does not.
+// Overwritten from `browser.lastdirect` on Open(), so this initialiser is only what the buffer
+// holds before the first open. The address itself belongs to coop::net::kDefaultDirectAddr -- do
+// not spell a second copy of it here.
 char g_directIp[64] = "127.0.0.1:47621";
 static_assert(::coop::net::kDefaultPort == 47621, "keep this in step with kDefaultDirectAddr");
 char g_hostName[64] = "My VOTV Server";
@@ -162,7 +157,7 @@ void Render() {
         ImGui::TextDisabled("Direct connect:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220.0f));
-        // Enter in the address field = Connect (the chat-input lesson 2026-07-04).
+        // Enter in the address field = Connect.
         const bool ipEnter = ImGui::InputText("##directip", g_directIp, sizeof(g_directIp),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         // Remember the typed address across relaunches (multivoid.ini browser.lastdirect).
@@ -230,13 +225,11 @@ void Render() {
                 ImGui::TableSetColumnIndex(4);
                 ImGui::TextUnformatted(r.world.c_str());
                 ImGui::TableSetColumnIndex(5);
-                // Version column = the host's PAIR identity "0.9.0-n b122" (game
-                // target + build number, user 2026-07-19 -- the build number shows
-                // everywhere). Amber + (!) when EITHER axis mismatches ours -- the
-                // same tiers the Join gate refuses on, so amber ALWAYS means "join
-                // will be refused with a popup". Unknown fields (pre-field host)
-                // skip their axis; game "" falls back to the legacy version tag
-                // (old hosts announced their game version there).
+                // Version column = the host's PAIR identity, the game target plus the build number.
+                // Amber and (!) when EITHER axis mismatches ours -- the same tiers the Join gate
+                // refuses on, so amber ALWAYS means "join will be refused with a popup". Unknown
+                // fields (a pre-field host) skip their axis; an empty game falls back to the legacy
+                // version tag, where old hosts announced their game version.
                 const bool gameMismatch =
                     !r.game.empty() && r.game != sm::GameTarget();
                 const bool verMismatch =
