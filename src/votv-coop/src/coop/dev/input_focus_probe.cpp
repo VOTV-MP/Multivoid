@@ -1,30 +1,12 @@
 // coop/dev/input_focus_probe.cpp -- DIAGNOSTIC (VOTVCOOP_INPUT_PROBE=1).
 //
-// Answers the load-bearing unknowns of the input-ownership arc (design fact base
-// research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md):
+// Three questions about input ownership that only a running game can settle, logged side by
+// side so one never stands in for another: M1, whether a reflected
+// `UWidget::HasKeyboardFocus()` reports Slate keyboard focus on VOTV's editable widgets; M1b,
+// the cheaper `mainPlayer.activeInterface` secondary; M5, whether the camera spins while one
+// of our surfaces is up. Each is commented at its own site below.
 //
-//   M1  Does a reflected `UWidget::HasKeyboardFocus()` actually report Slate keyboard
-//       focus on VOTV's editable widgets? The whole arc hangs on this: the game's 73
-//       text fields are 3 engine widget CLASSES (UEditableTextBox x66,
-//       UMultiLineEditableText x5, UMultiLineEditableTextBox x2), so a per-class scan
-//       is an invariant where a per-surface allowlist would be a 26-row site list.
-//       Its RED is built in: the same line reports the count of live editable widgets
-//       and how many have focus, so "nothing focused" must read focus=0 with count>0.
-//       A predicate that is always false is therefore distinguishable from a working
-//       one -- an always-false read would show count>0 focus=0 in EVERY sample
-//       including the ones taken while a field is demonstrably focused.
-//   M1b The cheaper secondary: `mainPlayer.activeInterface` (0x07E0) and, when it is
-//       non-null, `HasFocusedDescendants()` on it. Measured to be BROADER than "a text
-//       field is focused" (panel_radar is an interface with no text field), so the two
-//       reads are logged side by side rather than one standing in for the other.
-//   M5  Does the camera spin while one of our surfaces is up? VOTV calls SetCursorPos
-//       ~120x/s and our SetCursorPosDetour no-ops all of them while capture is active.
-//       If mouselook is poll-based (GetCursorPos minus centre) rather than raw-input,
-//       suppressing the recentre feeds the same delta every tick forever. ControlRotation
-//       yaw is logged so a spin is visible as a monotonic drift rather than inferred.
-//
-// Everything here is read-only and env-gated; nothing is installed when the env is
-// absent. RULE 2 exempts probes/diagnostics (feedback_rule2_exempts_probes_diagnostics_tools).
+// Everything here is read-only and env-gated; nothing is installed when the env is absent.
 
 #include "coop/dev/input_focus_probe.h"
 
@@ -45,8 +27,14 @@ namespace {
 bool g_armed = false;
 bool g_checked = false;
 
-// The three engine widget classes that hold every one of the game's 73 measured
-// editable-text fields. Resolved once; a null entry just contributes nothing.
+// M1's universe: the three engine widget classes that hold every one of the game's 73 measured
+// editable-text fields. A per-class scan is an invariant where a per-surface allowlist would
+// be a 26-row site list. Resolved once; a null entry just contributes nothing.
+//
+// M1's RED is built in: one line reports both the count of live editable widgets and how many
+// have focus, so a predicate hard-wired false is distinguishable from a working one -- it
+// would read count>0 focus=0 in EVERY sample, including those taken while a field is
+// demonstrably focused.
 void* g_clsEditableTextBox = nullptr;
 void* g_clsMultiLineText = nullptr;
 void* g_clsMultiLineTextBox = nullptr;
@@ -57,7 +45,7 @@ void* g_fnHasAnyUserFocus = nullptr;
 void* g_fnHasUserFocusedDesc = nullptr;
 bool  g_classesResolved = false;
 
-// mainPlayer.activeInterface (0x07E0 by the dump; resolved by name, never hardcoded).
+// mainPlayer.activeInterface, resolved by name.
 int32_t g_activeInterfaceOff = -2;
 int32_t g_controlRotationOff = -2;
 
@@ -90,10 +78,9 @@ void ResolveOnce() {
             g_fnHasKeyboardFocus, g_fnHasFocusedDescendants);
 }
 
-// The logger's vsnprintf drops the whole line on a %ls it cannot encode (measured
-// 2026-07-28, the arc-D2 gate run read as a relay failure because of it). Widget names
-// are ASCII, but a probe whose ABSENCE looks like a negative result is exactly the
-// instrument trap this project has paid for twice -- so narrow every name first.
+// The logger's vsnprintf drops the whole line on a %ls it cannot encode. Widget names are
+// ASCII, but a probe whose ABSENCE looks like a negative result is the instrument trap this
+// project has paid for twice -- so narrow every name first.
 std::string Narrow(const std::wstring& w) {
     std::string out;
     out.reserve(w.size());
@@ -101,18 +88,17 @@ std::string Narrow(const std::wstring& w) {
     return out;
 }
 
-// A live widget INSTANCE, as opposed to the two things that share its class and can
-// never have Slate focus: the class default object (name "Default__*") and the widget
-// TEMPLATE stored inside a WidgetBlueprintGeneratedClass (its Outer IS that class).
-// Run 1 of this probe asked the CDO and reported "PREDICATE DEAD"; that was the
-// instrument, and it is exactly why the round trip prints what it targeted.
+// A live widget INSTANCE, as opposed to the two things that share its class and can never have
+// Slate focus: the class default object (name "Default__*") and the widget TEMPLATE stored
+// inside a WidgetBlueprintGeneratedClass (its Outer IS that class). Asking either reads
+// "predicate dead" when the predicate is fine, which is why the round trip prints what it
+// targeted.
 bool IsLiveInstance(void* o) {
     if (R::ToString(R::NameOf(o)).rfind(L"Default__", 0) == 0) return false;
-    // Walk the WHOLE Outer chain. Run 2 filtered only the immediate outer and removed 3
-    // of 400, because a widget-tree TEMPLATE's immediate outer is a UWidgetTree just like
-    // a live instance's is -- the discriminator is one level further up, where a template
-    // reaches its WidgetBlueprintGeneratedClass and a live widget reaches a UUserWidget
-    // instance and then the World/GameInstance.
+    // Walk the WHOLE Outer chain. The immediate outer does not discriminate: a widget-tree
+    // TEMPLATE's immediate outer is a UWidgetTree just like a live instance's is. One level
+    // further up a template reaches its WidgetBlueprintGeneratedClass, while a live widget
+    // reaches a UUserWidget instance and then the World/GameInstance.
     void* outer = R::OuterOf(o);
     for (int depth = 0; outer && depth < 8; ++depth) {
         if (R::ToString(R::NameOf(outer)).rfind(L"Default__", 0) == 0) return false;
@@ -143,18 +129,16 @@ void* ActiveInterface() {
     return (w && R::IsLive(w)) ? w : nullptr;
 }
 
-// GREEN half of M1's control pair. Reading "focused=0" forever is indistinguishable
-// from a predicate that is hard-wired false, so once per run we take a live editable
-// widget, give it Slate keyboard focus through the ENGINE'S OWN `SetKeyboardFocus`,
-// and re-read. If the count does not become >=1 the predicate does not work and the
-// whole arc's chosen invariant is dead.
+// GREEN half of M1's control pair. Reading "focused=0" forever is indistinguishable from a
+// predicate hard-wired false, so once per run we take a live editable widget, give it Slate
+// keyboard focus through the ENGINE'S OWN `SetKeyboardFocus`, and re-read. If the count does
+// not become >=1 the predicate does not work and the invariant built on it is dead.
 //
-// LIMIT, stated so it is not over-claimed: this proves the READ reflects Slate focus.
-// It does NOT prove the game's own entry path (panel_SATconsole -> Enter Interface ->
-// EditableTextBox.SetFocus) produces the same state -- that still wants a real
-// in-game GREEN. It deliberately does NOT go through `Enter Interface`, which would
-// also author bIsFocusable / SetInputMode* / bShowMouseCursor, i.e. the probe would be
-// writing the surrounding state it is meant to observe independently.
+// LIMIT, stated so it is not over-claimed: this proves the READ reflects Slate focus. It does
+// NOT prove the game's own entry path (panel_SATconsole -> Enter Interface ->
+// EditableTextBox.SetFocus) produces the same state. It deliberately does NOT go through
+// `Enter Interface`, which would also author bIsFocusable / SetInputMode* / bShowMouseCursor,
+// i.e. the probe would be writing the surrounding state it is meant to observe independently.
 bool g_focusTestDone = false;
 
 void FocusRoundTrip() {
@@ -162,10 +146,9 @@ void FocusRoundTrip() {
     char v[8]{};
     if (!(::GetEnvironmentVariableA("VOTVCOOP_INPUT_PROBE_FOCUS", v, sizeof(v)) > 0 && v[0] == '1'))
         return;
-    // Target a field of the UI THAT IS ACTUALLY ON SCREEN. Runs 2 and 3 took the first
-    // live instance in object order and got `pcui_file` then `ui_resetSave` -- widgets
-    // that exist but are not in the viewport, where SetKeyboardFocus is a no-op. Slate
-    // focus is a property of the live widget tree, so the target must belong to the
+    // Target a field of the UI THAT IS ACTUALLY ON SCREEN. The first live instance in object order
+    // is typically a widget that exists but is not in the viewport, where SetKeyboardFocus is a
+    // no-op. Slate focus is a property of the live widget tree, so the target must belong to the
     // currently-active interface.
     void* iface = ActiveInterface();
     if (!iface) return;  // no game UI open yet
@@ -239,15 +222,20 @@ void Sample() {
         }
     }
 
-    // M1b: the activeInterface secondary.
+    // M1b: the activeInterface secondary. `HasFocusedDescendants()` on the active interface is
+    // BROADER than "a text field is focused" -- panel_radar is an interface with no text field at
+    // all -- so this is logged beside M1 rather than in place of it.
     void* activeIface = ActiveInterface();
     const bool ifaceHasFocusedDesc =
         activeIface ? CallBoolFn(activeIface, g_fnHasFocusedDescendants) : false;
     std::wstring ifaceName = L"-";
     if (activeIface) ifaceName = R::ClassNameOf(activeIface);
 
-    // M5: control rotation yaw. A poll-based mouselook fed a frozen off-centre pointer
-    // would drift monotonically; a stationary camera holds one value.
+    // M5: control rotation yaw. VOTV calls SetCursorPos ~120x/s and our SetCursorPosDetour no-ops
+    // all of them while capture is active; if mouselook is poll-based (GetCursorPos minus centre)
+    // rather than raw-input, suppressing the recentre feeds the same delta every tick forever. A
+    // poll-based mouselook fed a frozen off-centre pointer drifts monotonically, so the yaw is
+    // logged and a spin is visible rather than inferred; a stationary camera holds one value.
     float yaw = 0.f, pitch = 0.f;
     void* pc = R::FindObjectByClass(L"PlayerController");
     if (pc) {

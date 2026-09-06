@@ -1,48 +1,17 @@
-// harness/autotest_navprobe.cpp -- the Phase-0 HALT probe for the autonomous
-// bot-director (design: research/findings/tooling/votv-baritone-analog-autonomous-
-// director-DESIGN-2026-07-23.md, section B7). SOLO, role-agnostic -- no connection
-// needed; it only needs a possessed local player in the gameplay world.
+// harness/autotest_navprobe.cpp -- the two navigation measurements an autonomous bot-director
+// is gated on: does FindPath return a traversable path over VOTV's baked NavMesh (GATE A), and
+// does a reflected APawn::AddMovementInput actually move the possessed body (GATE B). Each is
+// commented at its own section below. Neither is an inference the static RE can settle, so
+// nothing of a director is built until both are measured on a real running game.
 //
-// WHY THIS EXISTS: the director design is HALT-gated on two independent, must-
-// measure-before-build gates (design B7 "Phase 0"). Nothing of the director is
-// built until BOTH are measured on a real running game, because each is a load-
-// bearing INFERENCE the static RE could not settle:
+// The gates are NECESSARY-not-sufficient: they gate the ATTEMPT, and closed-loop convergence
+// (steer -> arrive) is proven only by a real run. What the probe picks is the fallback rung:
+// A&B -> a real walk; A-only -> a swept SetActorLocation along the real FindPath; A-fail -> a
+// standoff teleport.
 //
-//   GATE A -- does UNavigationSystemV1::FindPathToLocationSynchronously RETURN a
-//     traversable path over VOTV's baked NavMesh? The cooked umaps EXPORT the nav
-//     actors (RecastNavMesh x49 etc., measured), but "actors authored" != "navmesh
-//     BUILT with traversable polys" -- a runtime fact only this probe settles.
-//     Discriminated three ways (probe-must-count): call-failed (fn unresolved /
-//     bad world context / null return) vs no-route (path returned but <=1 point /
-//     invalid) vs traversable (>1 points + IsValid). We pick the ENDPOINT via
-//     K2_GetRandomReachablePointInRadius so it is GUARANTEED reachable by
-//     construction -- removing the "I chose an unreachable target" confound (a
-//     failed FindPath to a random-reachable point is then a real navmesh signal,
-//     not a bad-target artifact). That query ALSO doubly-confirms the navmesh: it
-//     only succeeds if the navmesh has reachable polygons near the player.
-//
-//   GATE B -- does a REFLECTED APawn::AddMovementInput actually MOVE the possessed
-//     body? This is a dispatch-visibility question (does the native exec thunk run
-//     the CharacterMovement input path when we call it via ProcessEvent). Measured
-//     by sweeping 4 world directions (so a wall in one direction is not a false
-//     negative) and reading the HORIZONTAL displacement (X/Y only -- Z would fold
-//     in gravity/falling, not walk input).
-//
-// TRAP AVOIDED (findfunction-does-not-walk-the-superclass-chain): AddMovementInput
-// is declared on APawn, NOT on mainPlayer_C. R::FindFunction is exact-owner (it does
-// NOT climb to the super), so we resolve it on FindClass(L"Pawn") -- resolving it on
-// the leaf class would return nullptr = a silent permanent no-op. Same reason the
-// static nav UFunctions are dispatched on the NavigationSystemV1 CDO.
-//
-// The two gates are NECESSARY-not-sufficient: they gate the ATTEMPT. Closed-loop
-// convergence (steer -> arrive) is proven only by the Phase-1 flagship RUN, which
-// fails safe. This probe just picks the fallback rung (design B7): A&B -> rung0 real
-// walk; A-only -> rung1 swept SetActorLocation along the real FindPath; A-fail ->
-// rung2 standoff-teleport (today's chippile, a P0 failure). NON-DESTRUCTIVE: the
-// player is teleported back to its start location at the end.
-//
-// Gated by env VOTVCOOP_RUN_NAV_PROBE="1". Launch: solo (mp.py) or in a peer.
-// Greppable verdict: "nav_probe: VERDICT".
+// SOLO, role-agnostic -- it needs a possessed local player in the gameplay world and no
+// connection. NON-DESTRUCTIVE: the player is teleported back to its start location at the end.
+// Gated by env VOTVCOOP_RUN_NAV_PROBE="1". Greppable verdict: "nav_probe: VERDICT".
 
 #include "harness/autotest.h"
 
@@ -129,6 +98,16 @@ void RunNavHaltProbe() {
     // =====================================================================
     // GATE A -- FindPath returns a traversable path over the baked NavMesh.
     // =====================================================================
+    //
+    // The cooked umaps EXPORT the nav actors (RecastNavMesh x49 and others), but "actors
+    // authored" is not "navmesh BUILT with traversable polys". Discriminated three ways:
+    // call-failed (fn unresolved / bad world context / null return) vs no-route (path
+    // returned but <=1 point / invalid) vs traversable (>1 points + IsValid). The ENDPOINT
+    // comes from K2_GetRandomReachablePointInRadius, so it is reachable by construction,
+    // and a failed FindPath to it is a real navmesh signal rather than a bad-target
+    // artifact -- that query alone already needs reachable polygons near the player, so it
+    // doubly confirms the mesh.
+    // =====================================================================
     struct GateA {
         bool  fnResolved   = false;   // the FindPath + random-reachable UFunctions resolved
         bool  reachOk      = false;   // K2_GetRandomReachablePointInRadius succeeded (navmesh queryable)
@@ -212,7 +191,18 @@ void RunNavHaltProbe() {
 
     // =====================================================================
     // GATE B -- reflected AddMovementInput moves the possessed body.
-    // Sweep 4 world directions (wall-robust); measure HORIZONTAL displacement.
+    // =====================================================================
+    //
+    // A dispatch-visibility question: does the native exec thunk run the CharacterMovement
+    // input path when we call it through ProcessEvent. Sweep 4 world directions so a wall
+    // in one is not a false negative, and read the HORIZONTAL displacement -- Z would fold
+    // in gravity, not walk input.
+    //
+    // TRAP AVOIDED: AddMovementInput is declared on APawn, NOT on mainPlayer_C, and
+    // R::FindFunction is exact-owner (it does not climb to the super), so it is resolved on
+    // FindClass(L"Pawn"). Resolving it on the leaf class returns nullptr, a silent
+    // permanent no-op. Same reason the static nav UFunctions go to the NavigationSystemV1
+    // CDO.
     // =====================================================================
     struct GateB { void* fn = nullptr; float best = 0.f; float d0 = 0, d1 = 0, d2 = 0, d3 = 0; ue_wrap::FVector home{}; };
     auto gb = std::make_shared<GateB>();
@@ -266,7 +256,7 @@ void RunNavHaltProbe() {
     UE_LOGI("nav_probe: GATE B %s -- fnResolved=%d best=%.0f cm (thresh=%.0f) per-dir=[%.0f,%.0f,%.0f,%.0f]",
             gateB ? "PASS" : "FAIL", gb->fn ? 1 : 0, gb->best, kMoveThreshCm, gb->d0, gb->d1, gb->d2, gb->d3);
 
-    // ---- VERDICT + the fallback rung it picks (design B7).
+    // ---- VERDICT + the fallback rung it picks ----
     const char* rung =
         (gateA && gateB) ? "rung0 (real walk: FindPath + per-tick AddMovementInput) -- the Phase-1 walked-grab flagship is UNBLOCKED"
       : (gateA && !gateB) ? "rung1 (swept SetActorLocation along the real FindPath -- real path traversal, no movement physics; LEGITIMATE only for scenarios with NO movement/pose/velocity invariant)"

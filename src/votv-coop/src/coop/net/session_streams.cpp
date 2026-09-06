@@ -29,9 +29,8 @@ namespace coop::net {
 // --- game-thread publishers -------------------------------------------------
 
 void Session::SetLocalPose(const PoseSnapshot& pose) {
-    // v141 (A52): stamp the SAMPLE moment here, not the send moment in the net thread. This
-    // runs on the game thread directly after ReadLocalPose, so `now` is when this position was
-    // actually true -- which is the whole contract of PacketHeader::stateTimeMs24.
+    // Stamp the SAMPLE moment here, not the send moment in the net thread. This is the time the
+    // pose was TRUE, and the receiver's freshness accounting is only as good as that.
     const uint32_t stateMs = NowStateTimeMs24();
     std::lock_guard<std::mutex> lk(localMutex_);
     localPose_ = pose;
@@ -81,7 +80,7 @@ void Session::SetHostDishPose(const DishPoseBody& body) {
     dishPoseDirty_ = true;  // one-shot: the net thread sends once + clears
 }
 
-void Session::SetHostReelPose(const ReelPosePayload& body) {  // v114 (L7)
+void Session::SetHostReelPose(const ReelPosePayload& body) {
     std::lock_guard<std::mutex> lk(localMutex_);
     localReelPose_ = body;
     reelPoseDirty_ = true;  // one-shot: the net thread sends once + clears
@@ -164,7 +163,7 @@ bool Session::TryGetHostDeskSim(DeskSimSnapshot& out, bool* outIsNew) {
     return true;
 }
 
-bool Session::TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew) {  // v114 (L7)
+bool Session::TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew) {
     std::lock_guard<std::mutex> lk(remoteMutex_);
     if (!hasRemoteReelPose_) return false;
     out = remoteReelPose_;
@@ -329,7 +328,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         break;
     }
-    case MsgType::DeskCursorPose: {  // v109: coords-panel live cursor (sibling of HandPose)
+    case MsgType::DeskCursorPose: {  // coords-panel live cursor (sibling of HandPose)
         if (len < static_cast<int>(sizeof(DeskCursorPosePacket))) return;
         DeskCursorPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
@@ -353,10 +352,11 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         break;
     }
-    case MsgType::ClockPose: {  // v109 (design F): HOST->all world-clock snapshot (single value, newest-wins)
+    case MsgType::ClockPose: {  // HOST->all world-clock snapshot (single value, newest-wins)
         if (len < static_cast<int>(sizeof(ClockPosePacket))) return;
         // Host is authoritative -- it owns the clock and never applies a received one (a self-echo
-        // via the relay can't reach it: this kind is host-originated + not relayed, but guard anyway).
+        // via the relay cannot reach it: this kind is host-originated + not relayed, but guard
+        // anyway).
         if (cfg_.role == Role::Host) break;
         ClockPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
@@ -373,9 +373,10 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         break;
     }
-    case MsgType::DeskSimPose: {  // v111: HOST->all download-sim output vector (single value, newest-wins)
+    case MsgType::DeskSimPose: {  // HOST->all download-sim output vector (single value, newest-wins)
         if (len < static_cast<int>(sizeof(DeskSimPosePacket))) return;
-        // Host owns the sim and never applies a received one (host-originated + not relayed; guard anyway).
+        // Host owns the sim and never applies a received one (host-originated + not relayed; guard
+        // anyway).
         if (cfg_.role == Role::Host) break;
         DeskSimPosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
@@ -392,7 +393,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         break;
     }
-    case MsgType::DishPose: {  // v113 (L4): HOST->all dish-pose row batch (newest-wins)
+    case MsgType::DishPose: {  // HOST->all dish-pose row batch (newest-wins)
         if (len < static_cast<int>(sizeof(DishPosePacket))) return;
         if (cfg_.role == Role::Host) break;  // host-originated; never applied locally
         DishPosePacket pkt;
@@ -411,7 +412,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         break;
     }
-    case MsgType::ReelPose: {  // v114 (L7): HOST->all reel corrector (newest-wins)
+    case MsgType::ReelPose: {  // HOST->all reel corrector (newest-wins)
         if (len < static_cast<int>(sizeof(ReelPosePacket))) return;
         if (cfg_.role == Role::Host) break;  // host-originated; never applied locally
         ReelPosePacket pkt;
@@ -447,7 +448,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                               uint64_t& sendFails) {
     auto* sockets = SteamNetworkingSockets();
     constexpr auto kClockSendInterval = std::chrono::milliseconds(500);
-    constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // v111: ~10 Hz
+    constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // ~10 Hz
 
     if (state_.load() == ConnState::Connected && now >= nextSend) {
         PoseSnapshot local;
@@ -477,31 +478,31 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
           localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
           localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_;
           localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_;
-          // v113 (L4): dirty one-shot -- the GT sweep owns the cadence; consume the flag.
+          // Dirty one-shot -- the GT sweep owns the cadence; consume the flag.
           localDishPose = localDishPose_;
           dishPoseDue = dishPoseDirty_ && cfg_.role == Role::Host;
           dishPoseDirty_ = false;
-          // v114 (L7): reel corrector -- same dirty one-shot shape.
+          // Reel corrector -- same dirty one-shot shape.
           localReelPose = localReelPose_;
           reelPoseDue = reelPoseDirty_ && cfg_.role == Role::Host;
           reelPoseDirty_ = false; }
-        // v109 (design F): the clock rides its OWN 500 ms throttle, and only the HOST
-        // originates it. Computed once here so the per-peer fan-out below sends the same
-        // snapshot to every peer this round (and nextClockSend advances once, after).
+        // The clock rides its OWN 500 ms throttle, and only the HOST originates it. Computed once
+        // here so the per-peer fan-out below sends the same snapshot to every peer this round (and
+        // nextClockSend advances once, after).
         const bool clockDue = haveHostClock && cfg_.role == Role::Host && now >= nextClockSend;
         const bool deskSimDue = haveDeskSim && cfg_.role == Role::Host && now >= nextDeskSimSend;
-        // v37: serialize the live NPC pose batch ONCE (same body for every peer; only the
-        // per-peer header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads
-        // localNpcBatch_ under localMutex_ + writes the body after the leading PacketHeader,
-        // returning 0 when there is no batch to send this tick (no intermediate copy).
+        // Serialize the live NPC pose batch ONCE (same body for every peer; only the per-peer
+        // header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads localNpcBatch_ under
+        // localMutex_ + writes the body after the leading PacketHeader, returning 0 when there is
+        // no batch to send this tick (no intermediate copy).
         uint8_t npcBuf[kNpcPoseDatagramMax];
         const int npcMsgLen = SerializeLocalNpcBatch(npcBuf);
-        // v80 (B3b): the live WorldActor pose batch, serialized ONCE like the NPC batch (host-only
-        // producer -- SerializeLocalWorldActorBatch returns 0 on a client / when no actors stream).
+        // The live WorldActor pose batch, serialized ONCE like the NPC batch (host-only producer --
+        // SerializeLocalWorldActorBatch returns 0 on a client / when no actors stream).
         uint8_t waBuf[kWorldActorPoseDatagramMax];
         const int waMsgLen = SerializeLocalWorldActorBatch(waBuf);
-        // v85 (Increment 2): the carried-trash-clump pose batch, serialized ONCE (host-only producer
-        // -- SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
+        // The carried-trash-clump pose batch, serialized ONCE (host-only producer --
+        // SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
         uint8_t tcBuf[kTrashCarryPoseDatagramMax];
         const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
         if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue || deskSimDue ||
@@ -513,10 +514,10 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     PosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::PoseSnapshot,
                                 sendSeq_.fetch_add(1), ownEpoch_);
-                    // v141 (A52): the ORIGIN's time for the STATE in this datagram. WriteHeader
-                    // leaves 0 (= not stamped) for every lane without a reader; the pose lane has
-                    // one (coop::movement_ledger on the host), so it stamps the SAMPLE time that
-                    // came out of localMutex_ with the pose itself.
+                    // The ORIGIN's time for the STATE in this datagram. WriteHeader leaves 0 (= not
+                    // stamped) for every lane without a reader; the pose lane has one
+                    // (coop::movement_ledger on the host), so it stamps the SAMPLE time that came
+                    // out of localMutex_ with the pose itself.
                     WriteStateTimeMs24(pkt.header, localStateMs);
                     pkt.pose = local;
                     const EResult rc = sockets->SendMessageToConnection(
@@ -544,7 +545,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (haveHand) {  // v109: hand-item view-relative transform (while holding)
+                if (haveHand) {  // hand-item view-relative transform (while holding)
                     HandPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::HandPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
@@ -554,7 +555,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (haveDeskCursor) {  // v109: coords-panel live cursor (while desk-claimed + moving)
+                if (haveDeskCursor) {  // coords-panel live cursor (while desk-claimed + moving)
                     DeskCursorPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DeskCursorPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
@@ -564,7 +565,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (npcMsgLen > 0) {  // v37: NPC pose batch -- body built once above; stamp the header per-peer
+                if (npcMsgLen > 0) {  // NPC pose batch -- body built once above; stamp the header per-peer
                     PacketHeader npcHdr{};  // build + memcpy (npcBuf is uint8_t[]; no misaligned PacketHeader lvalue)
                     WriteHeader(npcHdr, MsgType::EntityPose, sendSeq_.fetch_add(1), ownEpoch_);
                     std::memcpy(npcBuf, &npcHdr, sizeof(npcHdr));
@@ -573,7 +574,8 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(npcMsgLen)); else ++sendFails;
                 }
-                if (waMsgLen > 0) {  // v80 (B3b): WorldActor pose batch -- body built once above; stamp the header per-peer
+                if (waMsgLen > 0) {  // WorldActor pose batch -- body built once above; stamp the header
+                                     // per-peer
                     PacketHeader waHdr{};
                     WriteHeader(waHdr, MsgType::WorldActorPose, sendSeq_.fetch_add(1), ownEpoch_);
                     std::memcpy(waBuf, &waHdr, sizeof(waHdr));
@@ -582,7 +584,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(waMsgLen)); else ++sendFails;
                 }
-                if (tcMsgLen > 0) {  // v85 (Increment 2): trash-clump carry batch -- body built once above; stamp per-peer
+                if (tcMsgLen > 0) {  // trash-clump carry batch -- body built once above; stamp per-peer
                     PacketHeader tcHdr{};
                     WriteHeader(tcHdr, MsgType::TrashCarryPose, sendSeq_.fetch_add(1), ownEpoch_);
                     std::memcpy(tcBuf, &tcHdr, sizeof(tcHdr));
@@ -591,7 +593,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(tcMsgLen)); else ++sendFails;
                 }
-                if (clockDue) {  // v109 (design F): HOST world-clock snapshot -- same body to every peer
+                if (clockDue) {  // HOST world-clock snapshot -- same body to every peer
                     ClockPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::ClockPose, sendSeq_.fetch_add(1), ownEpoch_);
                     pkt.clock = localHostClock;
@@ -600,7 +602,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (deskSimDue) {  // v111: HOST download-sim output vector -- same body to every peer
+                if (deskSimDue) {  // HOST download-sim output vector -- same body to every peer
                     DeskSimPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DeskSimPose, sendSeq_.fetch_add(1), ownEpoch_);
                     pkt.sim = localDeskSim;
@@ -609,7 +611,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (dishPoseDue) {  // v113 (L4): HOST dish-pose batch -- same body to every peer
+                if (dishPoseDue) {  // HOST dish-pose batch -- same body to every peer
                     DishPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DishPose, sendSeq_.fetch_add(1), ownEpoch_);
                     pkt.body = localDishPose;
@@ -618,7 +620,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(sizeof(pkt)); else ++sendFails;
                 }
-                if (reelPoseDue) {  // v114 (L7): HOST reel corrector -- same body to every peer
+                if (reelPoseDue) {  // HOST reel corrector -- same body to every peer
                     ReelPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::ReelPose, sendSeq_.fetch_add(1), ownEpoch_);
                     pkt.body = localReelPose;

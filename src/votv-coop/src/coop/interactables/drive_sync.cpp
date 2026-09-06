@@ -301,12 +301,11 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
         UE_LOGW("drive_sync: payload blob for eid=%u malformed -- dropped", eid);
         return;
     }
-    // The CONTENT-correlated deny reap. A denied rack take's
-    // ghost identifies itself here -- its adoption payload hashes to exactly
-    // the row the winning take removed. The VERDICT (ring+TTL+consume) is
-    // drive_rack_sync's (the take-race axis owner); the ACTION stays here.
-    // Host destroys it (the destroy rides v106 to every peer). Exact; a
-    // legitimate birth from the same peer never matches.
+    // The CONTENT-correlated deny reap. A denied rack take's ghost identifies itself here -- its
+    // adoption payload hashes to exactly the row the winning take removed. The VERDICT
+    // (ring+TTL+consume) is drive_rack_sync's, the take-race axis owner; the ACTION stays here.
+    // The host destroys it and the destroy rides the ordinary prop-destroy broadcast to every
+    // peer. Exact; a legitimate birth from the same peer never matches.
     if (IsHost()) {
         const uint64_t rh = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(row, false));
         if (coop::drive_rack_sync::TryConsumeDenyReap(senderSlot, rh)) {

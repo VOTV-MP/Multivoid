@@ -1,28 +1,16 @@
-// harness/autotest_menutravel_probe.cpp -- SP-solo "which command travels to the
-// MAIN MENU?" probe.
+// harness/autotest_menutravel_probe.cpp -- SP-solo probe for VOTV's menu-travel verb.
 //
-// The client-death OOM fix must flee the leaking gameplay world to the menu (the
-// balloon was believed to be VOTV's own possessed-player ragdoll leaking in-world
-// ~165 MB/s -- *** THAT RATE WAS RE-MEASURED 2026-08-31 AT 0.00-0.11 MB/s over four
-// runs of `mp.py death`, i.e. ~1% of it, and the claim had no finding doc anywhere;
-// see net_pump.cpp's death-policy comment and docs/DEATH_ARC.md section 9. The travel
-// verb this probe found is still the right one and this probe's result stands -- only
-// the MOTIVE recorded here was wrong. ***). Three hands-on death tests failed because we never
-// had a WORKING travel command: `disconnect` is a no-op (VOTV is single-player, no
-// UE netdriver), and raw `open menu` does NOT travel -- the live death log showed
-// the world stayed `untitled` through four re-issues, then froze. VOTV travels via
-// its OWN verb: AmainGamemode_C::transition(FName LevelName) (mainGamemode.hpp:512),
-// NOT a bare engine `open`.
+// A dead player has to be able to leave the gameplay world for the main menu, and neither
+// engine verb does it: `disconnect` is a no-op (VOTV is single-player, no netdriver) and a
+// bare `open menu` leaves the live UWorld on `untitled`. VOTV travels through its own
+// AmainGamemode_C::transition(FName LevelName), which needs no pause and therefore works
+// with the player ragdolled.
 //
-// This probe settles in normal gameplay (NO death needed -- the travel command is
-// independent of death) and tries the candidate travel commands SERIALLY: a command
-// that fails leaves us in `untitled`, so the next can be tried, and the FIRST one
-// that changes the live UWorld away from `untitled` is logged as the WINNER. It
-// breaks the guess-and-ship-to-user cycle: we learn the correct menu-travel
-// primitive autonomously before wiring it into the death path.
+// The probe settles in gameplay, optionally dwells, then dispatches transition("/Game/menu")
+// in one game-thread task. A held transparent bypass goes first by default, because our own
+// detour hangs the untitled_1 teardown; flat RSS across the run is the pass condition.
 //
-// Gated by env VOTVCOOP_RUN_MENUTRAVEL_PROBE=1; launch `mp.py menutravel` (solo).
-// Throwaway diagnostic -- not a shipping path.
+// Gated by env VOTVCOOP_RUN_MENUTRAVEL_PROBE=1. Throwaway diagnostic, not a shipping path.
 
 #include "harness/autotest.h"
 
@@ -119,14 +107,12 @@ void RunProbe() {
     }
     UE_LOGI("menutravel: in gameplay (world='%ls') -- arming held bypass + transition", w.c_str());
 
-    // VOTVCOOP_MENUTRAVEL_DWELL_S (2026-08-23, the stale-cross-world-pawn measurement):
-    // reaching gameplay is not the same as HAVING PLAYED. This probe historically fired
-    // `transition` within ~1 s of the world coming up -- before the overlay's first
-    // present, so before `input_owner` had ever ticked and before anything had warmed
-    // `players::Registry::Local()`. The field flow it is standing in for (Linux triage
-    // 2026-08-23) played a solo save for ~75 s first, and the 44-second stale window
-    // that followed is GC-purge-timing dependent, i.e. a function of how much the
-    // session actually generated. Dwell here so the run is the same experiment.
+    // VOTVCOOP_MENUTRAVEL_DWELL_S: reaching gameplay is not the same as HAVING PLAYED. Without
+    // a dwell this probe fires `transition` within ~1 s of the world coming up -- before the
+    // overlay's first present, so before `input_owner` has ever ticked and before anything has
+    // warmed `players::Registry::Local()`. The stale-cross-world-pawn window that follows a
+    // travel is GC-purge-timing dependent, i.e. a function of how much the session generated,
+    // so dwelling here makes the run the same experiment as a played save.
     {
         const std::string dwell = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_DWELL_S");
         const int dwellS = dwell.empty() ? 0 : atoi(dwell.c_str());
@@ -138,13 +124,11 @@ void RunProbe() {
         }
     }
 
-    // VOTVCOOP_MENUTRAVEL_WAIT_SESSION=1 (2026-08-22, the D2 wire-window probe):
-    // this peer is a CLIENT in a two-peer run -- wait until the coop session is
-    // live (join complete; gameplay is only reachable through the save-transfer
-    // world, so running()==true here means joined), then DWELL so the join-tail
-    // traffic (seeds, snapshot, replays) settles and the census window is not
-    // confounded by it. The transition then exits to menu with the layer LIVE,
-    // which opens the <=4 s purge-blind window the host-side wire census
+    // VOTVCOOP_MENUTRAVEL_WAIT_SESSION=1: this peer is a CLIENT in a two-peer run. Wait until
+    // the coop session is live (gameplay is only reachable through the save-transfer world, so
+    // running()==true here means joined), then dwell so the join tail -- seeds, snapshot,
+    // replays -- settles and does not confound what follows. The transition then exits to menu
+    // with the layer LIVE, which opens the <=4 s purge-blind window the host-side wire census
     // (VOTVCOOP_WIRE_CENSUS=1) measures.
     if (coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_WAIT_SESSION") == "1") {
         bool sessionUp = false;
@@ -163,18 +147,14 @@ void RunProbe() {
                 static_cast<unsigned long long>(GetTickCount64()));
     }
 
-    // The decisive experiment. Established: (1) our detour HANGS the untitled_1 teardown
-    // -> a transparent bypass is required; (2) the menu IS reachable; (3) the post-flee
-    // balloon is OUR layer resuming at the menu at bypass-EXPIRY -- HOLDING the bypass
-    // (300 s) kept RSS dead-flat for 171 s (validated). Now test the DEAD-PLAYER-SAFE
-    // reach: AmainGamemode_C::transition("/Game/menu") needs NO pause (a real death
-    // ragdolls the player; the pause may be unavailable). Arm a held bypass FIRST, then
-    // transition, in ONE task. Flat RSS for the whole probe == transition+held works for
-    // a dead player -> the robust death-menu-return.
-    // VOTVCOOP_MENUTRAVEL_NO_BYPASS=1 (2026-08-22, the IsLive/VEH repro): transition
-    // with the layer LIVE -- the shape of a player's own in-game exit-to-menu, which
-    // is where the exit-path IsLive fault fires (the bypass keeps the layer dormant
-    // through teardown, so the default probe can never reproduce it).
+    // The travel itself. Arm a held bypass and dispatch transition in ONE task: our detour hangs
+    // the untitled_1 teardown, and the post-travel RSS climb is our own layer resuming at the
+    // menu when the bypass expires, so a 300 s hold keeps RSS flat for the whole probe.
+    // transition needs no pause, which is what makes it usable from a real death.
+    //
+    // VOTVCOOP_MENUTRAVEL_NO_BYPASS=1 travels with the layer LIVE instead -- the shape of a
+    // player's own in-game exit to menu, and the only way to reach the exit-path IsLive fault,
+    // which the default bypass hides by keeping the layer dormant through teardown.
     const bool noBypass = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_NO_BYPASS") == "1";
     auto done = std::make_shared<std::atomic<int>>(0);
     auto ok = std::make_shared<int>(0);
@@ -188,12 +168,10 @@ void RunProbe() {
     });
     WaitDone(done, 8000);
 
-    // Pump is off now (bypass armed). Just wait for VOTV's fade + teardown + menu load,
-    // then signal the screenshot. Worker-thread logging is GT-independent.
-    // VOTVCOOP_MENUTRAVEL_MENU_S widens the menu window past the default 32 s: the
-    // stale-pawn window this probe now also measures ran 44 s in the field, and a
-    // 32 s observation cannot distinguish "it never went stale" from "it was still
-    // stale when we stopped looking".
+    // Pump is off now (bypass armed). Wait out VOTV's fade, teardown and menu load, then signal
+    // the screenshot; worker-thread logging is GT-independent. VOTVCOOP_MENUTRAVEL_MENU_S widens
+    // the window past the default 32 s, which is too short to tell "the pawn never went stale"
+    // from "it was still stale when we stopped looking".
     {
         const std::string ms = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_MENU_S");
         const int menuS = ms.empty() ? 32 : atoi(ms.c_str());
@@ -202,9 +180,8 @@ void RunProbe() {
     UE_LOGI("menutravel: MENU-SHOT READY");  // mp.py captures the window here
     ::Sleep(5000);
     UE_LOGI("menutravel: DONE");
-    // The menu is log-quiet, so everything since the last WARN (incl. the re-injection
-    // lines the D1 differential asserts on) sits in the CRT INFO buffer -- a kill would
-    // discard it. Flush so an external runner can read the full tail from disk.
+    // The menu is log-quiet, so everything since the last WARN sits in the CRT INFO buffer and a
+    // kill would discard it. Flush so an external runner can read the full tail from disk.
     ue_wrap::log::Flush();
 }
 

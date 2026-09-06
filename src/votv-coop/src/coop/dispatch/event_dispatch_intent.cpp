@@ -15,7 +15,7 @@
 
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
-#include "coop/creatures/roach_sync.h"    // v108: CLIENT->HOST local roach consumption intent
+#include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
 #include "coop/interactables/interactable_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
@@ -33,7 +33,7 @@ namespace coop::event_feed {
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer) {
-    // v139: CoinCollect is the family's first consumer of `localPlayer` -- the host passes its own
+    // CoinCollect is the family's first consumer of `localPlayer` -- the host passes its own
     // mainPlayer into the coin's `actionOptionIndex`. Every other case resolves targets by key/eid.
     switch (msg.kind) {
     case net::ReliableKind::OrderRequest: {
@@ -74,13 +74,13 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::CoinCollect: {
-        // v139 (coingun_sync -- B2): a CLIENT collected a coin that mirrors one of the host's, and
-        // forwards it because it cannot perform the collect itself (`lib_C::addPoints` is
+        // coingun_sync: a CLIENT collected a coin that mirrors one of the host's, and forwards it
+        // because it cannot perform the collect itself (`lib_C::addPoints` is
         // EX_LocalVirtualFunction -- no peer but the owner may author a credit). The host runs the
         // coin's own `actionOptionIndex`, so the native credit and self-destroy are the game's.
         // HOST-TERMINAL -- never relayed; the consequence reaches the other peers as the coin's
-        // ordinary WorldActorDestroy.
-        // CLIENT->HOST: slot 0 is the host, which never forwards its own collect.
+        // ordinary WorldActorDestroy. CLIENT->HOST: slot 0 is the host, which never forwards its
+        // own collect.
         if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
             UE_LOGW("event_feed: CoinCollect from invalid senderPeerSlot=%d -- dropping",
                     msg.senderPeerSlot);
@@ -91,12 +91,12 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::CoinGunResult: {
-        // v138 (coingun_sync -- B1): the HOST's answer to ONE client's sale. HOST->CLIENT, addressed
-        // with SendReliableToSlot, never relayed. The seller's prop is already gone from its own
-        // screen (its destroy is deliberately unchanged and still lands), so a refusal that says
-        // NOTHING renders as the exact bug the field reported -- the sentence is the point. A
-        // success carries the price the HOST used, which can legitimately differ from the seller's
-        // own local toast (`getPriceMultiplier` is per-instance and divergent).
+        // coingun_sync: the HOST's answer to ONE client's sale. HOST->CLIENT, addressed with
+        // SendReliableToSlot, never relayed. The seller's prop is already gone from its own screen
+        // (its destroy is deliberately unchanged and still lands), so a refusal that says NOTHING
+        // renders as a silently vanished item -- the sentence is the point. A success carries the
+        // price the HOST used, which can legitimately differ from the seller's own local toast
+        // (`getPriceMultiplier` is per-instance and divergent).
         if (session.role() == net::Role::Host) {
             UE_LOGW("event_feed: CoinGunResult received on the HOST -- dropping");
             break;
@@ -147,10 +147,10 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::KerfurConvertRequest: {
-        // v67: client->host kerfur on/off conversion request. Host-authoritative
-        // (the DoorOpenRequest shape); the handler validates the element + class
-        // + the BP kill-guard, runs the real verb, and converges the BP-internal
-        // spawn/destroy side effects onto the wire (coop::kerfur_convert).
+        // client->host kerfur on/off conversion request. Host-authoritative (the DoorOpenRequest
+        // shape); the handler validates the element + class + the BP kill-guard, runs the real
+        // verb, and converges the BP-internal spawn/destroy side effects onto the wire
+        // (coop::kerfur_convert).
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: KerfurConvertRequest received on a client -- dropping");
             break;
@@ -175,9 +175,9 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::KerfurCommand: {
-        // v74: client->host kerfur radial-menu command (follow/idle/patrol/...). Host-authoritative;
-        // the handler validates the element + kerfur class + the BP kill-guard, then runs the verb
-        // (or, for Follow, starts the host-side MoveTo loop toward the REQUESTING player's body --
+        // client->host kerfur radial-menu command (follow/idle/patrol/...). Host-authoritative; the
+        // handler validates the element + kerfur class + the BP kill-guard, then runs the verb (or,
+        // for Follow, starts the host-side MoveTo loop toward the REQUESTING player's body --
         // senderSlot). coop::kerfur_command.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: KerfurCommand received on a client -- dropping");
@@ -225,7 +225,7 @@ bool HandleIntentEvent(net::Session& session,
         coop::trash_channel::OnGrabIntent(session, p.eid, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
-    case net::ReliableKind::ThrowIntent: {       // v85 (Increment 2 phase 2): CLIENT->HOST throw of a puppet-held clump
+    case net::ReliableKind::ThrowIntent: {       // CLIENT->HOST throw of a puppet-held clump
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: ThrowIntent received on a client -- dropping");
             break;
@@ -251,14 +251,15 @@ bool HandleIntentEvent(net::Session& session,
                                            static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
-    case net::ReliableKind::PileResyncRequest:  // v84 STAGED (Increment 2 phase 3) -- ID reserved, no handler yet
+    case net::ReliableKind::PileResyncRequest:  // STAGED -- ID reserved, no handler yet
         UE_LOGI("event_feed: STAGED ReliableKind=%u from slot=%d -- no handler yet",
                 static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
         break;
-    case net::ReliableKind::PropDropIntent: {   // CLIENT->HOST -- client placed a keyed
-                                                // world prop it had picked up; the HOST re-spawns it
-                                                // authoritatively by Key + broadcasts. Host-authoritative
-                                                // (the GrabIntent shape). coop::prop_drop_intent.
+    case net::ReliableKind::PropDropIntent: {   // CLIENT->HOST -- client placed a keyed world
+                                                // prop it had picked up; the HOST re-spawns it
+                                                // authoritatively by Key + broadcasts.
+                                                // Host-authoritative (the GrabIntent shape).
+                                                // coop::prop_drop_intent.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: PropDropIntent received on a client -- dropping");
             break;
@@ -277,9 +278,9 @@ bool HandleIntentEvent(net::Session& session,
         coop::prop_drop_intent::OnPropDropIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
-    case net::ReliableKind::ReelEjectIntent: {  // v114 (L7): CLIENT->HOST -- a caddy/reelbox eject
-                                                // birthed a reel prop in the client's hands; the HOST
-                                                // authors it (class-whitelisted to the reel lineage).
+    case net::ReliableKind::ReelEjectIntent: {  // CLIENT->HOST -- a caddy/reelbox eject birthed a
+                                                // reel prop in the client's hands; the HOST authors
+                                                // it (class-whitelisted to the reel lineage).
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: ReelEjectIntent received on a client -- dropping");
             break;
@@ -298,10 +299,11 @@ bool HandleIntentEvent(net::Session& session,
         coop::prop_drop_intent::OnReelEjectIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
-    case net::ReliableKind::RoachConsumed: {  // v108: CLIENT->HOST -- a native eat/stomp destroyed a
-                                              // roach component locally; the host deletes its nearest
-                                              // roach and the next RoachState converges every peer.
-                                              // Role/sender validation in roach_sync::OnConsumedIntent.
+    case net::ReliableKind::RoachConsumed: {  // CLIENT->HOST -- a native eat/stomp destroyed a
+                                              // roach component locally; the host deletes its
+                                              // nearest roach and the next RoachState converges
+                                              // every peer. Role/sender validation lives in
+                                              // roach_sync::OnConsumedIntent.
         if (msg.payloadLen < sizeof(net::RoachConsumedPayload)) {
             UE_LOGW("event_feed: RoachConsumed payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::RoachConsumedPayload));

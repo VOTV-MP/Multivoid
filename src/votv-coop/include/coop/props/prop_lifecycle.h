@@ -1,19 +1,16 @@
 // coop/prop_lifecycle.h -- Aprop_C spawn/destroy/extract wire observers.
 //
-// The host-authoritative prop sync layer:
-//   - Aprop_C::Init POST (subclass-aware GUObjectArray scan): host
-//     broadcasts PropSpawn on every BP-spawned prop derivative; client
-//     suppresses intermediate-variant local spawns (mushroom7_C) and
-//     waits for the mature variant via the wire.
-//   - AActor::K2_DestroyActor PRE: bidirectional broadcast (host AND
-//     client destroys replicate -- food consumption, container break,
-//     etc.). Echo-suppressed via the remote_prop incoming-destroy set.
-//   - propInventory_C::takeObj PRE/POST: brackets container extracts so
-//     the nested Init POST defers its broadcast (Key is NewGuid pre-
-//     loadData) and takeObj POST broadcasts with the restored saved UUID.
+// The host-authoritative prop sync layer, three seams:
+//   - Aprop_C::Init POST (subclass-aware GUObjectArray scan): the host broadcasts PropSpawn
+//     for every BP-spawned prop derivative; the client suppresses intermediate-variant local
+//     spawns (mushroom7_C) and waits for the mature variant on the wire.
+//   - AActor::K2_DestroyActor PRE: bidirectional broadcast (food consumption, container
+//     break). Echo-suppressed through the remote_prop incoming-destroy set.
+//   - propInventory_C::takeObj PRE/POST: brackets a container extract so the nested Init POST
+//     defers its broadcast (Key is a NewGuid until loadData runs) and takeObj POST broadcasts
+//     with the restored saved UUID.
 //
-// Principle 7: this is gameplay/network logic; talks to ue_wrap through
-// reflection + engine + game_thread.
+// Principle 7: gameplay/network logic, reaching the engine through reflection + game_thread.
 
 #pragma once
 
@@ -48,25 +45,17 @@ void Install(coop::net::Session* session);
 // retried each NetPumpTick until propInventory_C appears.
 void InstallInventory(coop::net::Session* session);
 
-// 2026-05-27: per-feature retry queues retired -- the reliable channel
-// (coop/net/reliable_channel.cpp) now buffers internally so Send() always
-// succeeds. EnqueuePropSpawnForRetry / DrainPendingPropSpawns / their
-// PropDestroy twins went with them per RULE 2.
-
 // Host-authoritative intermediate-variant suppression predicate. Three
 // call sites (Init POST host-broadcast, snapshot enumerate, client local
 // spawn destroy) use this for symmetry. Public so prop_snapshot can
 // share it.
 bool IsWireSuppressedPropClass(const std::wstring& cls);
 
-// PER-PLAYER state actors, NOT shared world props (2026-06-10): each peer
-// owns its own instance (per-save key, can never claim-bind). Never
-// snapshot-expressed, never live-broadcast, never swept -- but unlike
-// IsWireSuppressedPropClass the LOCAL instance lives (it is the player's
-// own state; the 2026-06-10 smoke swept the client's
-// prop_inventoryContainer_player_C as "unclaimed" and the client fataled
-// at the next GC purge). Call sites: snapshot enumerate-skip, Init POST
-// broadcast-skip, adoption-sweep universe-skip.
+// PER-PLAYER state actors, NOT shared world props: each peer owns its own instance (per-save
+// key, can never claim-bind). Never snapshot-expressed, never live-broadcast, never swept --
+// but unlike IsWireSuppressedPropClass the LOCAL instance LIVES, because it is the player's
+// own state and sweeping it as unclaimed fatals that peer at the next GC purge. Call sites:
+// snapshot enumerate-skip, Init POST broadcast-skip, adoption-sweep universe-skip.
 bool IsPerPlayerPropClass(const std::wstring& cls);
 
 // Destroy a local prop via K2_DestroyActor, ECHO-SUPPRESSED: MarkIncomingDestroy
@@ -91,16 +80,13 @@ void DestroyLocalProp(void* actor, bool deferred);
 // ONLY (runs ProcessEvent reads on the actor).
 void ExpressSpawnedProp(void* actor);
 
-// HOST kerfur conversion (K-4b): register a BP-internally-spawned prop (the turn_off output -- the
-// verb spawns it via EX_CallMath, so no Init POST fires for it) as a host Prop Element shadow WITHOUT
-// the wire PropSpawn broadcast (the SOLE conversion signal is KerfurConvert -- kerfur redesign 10.3).
-// Reads the actor's class + key, MarkPropElement's the shadow, and returns the host-range eid
-// (kInvalidId on no-key / failure). The dying prop form is released the symmetric SILENT way via
+// HOST kerfur conversion: register a BP-internally-spawned prop (the turn_off output -- the verb
+// spawns it via EX_CallMath, so no Init POST fires for it) as a host Prop Element shadow WITHOUT
+// the wire PropSpawn broadcast, since the sole conversion signal is KerfurConvert. Reads the
+// actor's class + key, MarkPropElement's the shadow, and returns the host-range eid (kInvalidId
+// on no-key / failure). The dying prop form is released the symmetric SILENT way through
 // prop_element_tracker::UnmarkKnownKeyedProp (no PropDestroy). Game thread.
 coop::element::ElementId RegisterHostPropSilent(void* actor);
-
-// GetPropElementIdForActor moved to coop::prop_element_tracker (M-1
-// 2026-05-29 follow-up). #include "coop/props/prop_element_tracker.h" instead.
 
 // Per-session state cleanup on disconnect. Returns counters for the
 // log line. Clears: takeObj-in-flight flag, processed-Init dedupe set.

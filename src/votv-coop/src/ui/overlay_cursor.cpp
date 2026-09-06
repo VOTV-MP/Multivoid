@@ -1,8 +1,8 @@
 // ui/overlay_cursor.cpp -- see ui/overlay_cursor.h.
 //
-// Ported in shape from MTA's `CLocalGUI::Draw`
-// (reference/mtasa-blue/Client/core/CGUI.cpp:800-848), MIT. Divergences from that source
-// are commented at their site with the reason, per RULE 2026-05-28.
+// Follows MTA's `CLocalGUI::Draw` transition (reference/mtasa-blue/Client/core/CGUI.cpp).
+// The two places this deliberately diverges from MTA are commented at their site with the
+// reason.
 
 #include "ui/overlay_cursor.h"
 
@@ -43,31 +43,25 @@ void FrameTransition(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursor
     g_hadCapture = captureActive;
     if (!hwnd || !origSetCursorPos) return;
     {
-        // THE DECISION TERM IS THE WORLD, and the cursor-write age beside it is EVIDENCE,
-        // not a second gate. Read the header for why a warp is wrong outside gameplay.
+        // THE DECISION TERM IS THE WORLD, and the cursor-write age beside it is EVIDENCE, not a
+        // second gate. A warp exists to stop the game reacting to pointer movement, and the game
+        // only reacts while it is MOUSELOOKING; at the menu it shows a cursor and lets Slate track
+        // it, so there is nothing to hand back and a warp is pure damage. `captureActive` cannot
+        // tell those apart -- it means "an ImGui surface owns input", true at the menu too, and the
+        // native server browser holds no ImGui capture at all.
         //
-        // A "warp only while the game is actually driving the pointer" gate was designed
-        // here first, on the strength of overlay_diag.h's note that "the game recentres
-        // the pointer ~118x/s while playing". THE NOTE IS TRUE -- tools/cursor_probe.py
-        // on 2026-08-26 printed scpCalls 1340 -> 2779 over ~12 s, i.e. ~120/s. What is
-        // false is that the signal can GATE this transition: measured in the same runs,
-        // every capture transition reported everSeen=0, because capture flips at the
-        // first present and the game's recentre loop has not started yet. A freshness
-        // gate would therefore have skipped the FIRST transition of every session and
-        // warped correctly only afterwards -- silently wrong exactly where it matters.
-        //
-        // (I recorded the opposite conclusion here first -- "the game issued ZERO
-        // SetCursorPos calls" -- from a single everSeen=0 reading taken AT a transition,
-        // and generalised it to 18 seconds of runtime I had not measured. cursor_probe's
-        // own counter refuted it minutes later. The age stays logged below so the next
-        // reader gets the number rather than either of my summaries of it.)
+        // A "warp only while the game is actually driving the pointer" gate was designed here first
+        // and cannot gate THIS edge: capture flips at the first present, before the game's recentre
+        // loop has started, so every transition reads everSeen=0 and a freshness gate would skip
+        // the first transition of every session -- silently wrong exactly where it matters. The age
+        // is logged below instead, so a reader gets the number rather than a summary of it.
         const WID::WorldKind kind = WID::CurrentWorldKind();
         const uint64_t last = g_lastGameWriteMs.load(std::memory_order_relaxed);
         const uint64_t age  = last ? (::GetTickCount64() - last) : 0;
-        // POSITIVE Gameplay only. `Unknown` is published for ~1 s across every travel and
-        // for the whole boot window, and it NEVER means "not in gameplay" -- so nothing
-        // fires on it. (`docs/COOP_SYNC` reading-order 4j: every `!` over a bool
-        // projection of this enum is a bug candidate; this is the shape that avoids one.)
+        // POSITIVE Gameplay only. `Unknown` is published for ~1 s across every travel and for the
+        // whole boot window, and it NEVER means "not in gameplay" -- so nothing fires on it. Every
+        // `!` over a bool projection of this enum is a bug candidate; this is the shape that avoids
+        // one.
         if (kind != WID::WorldKind::Gameplay) {
             UE_LOGI("overlay_cursor: transition -> capture=%d SKIPPED (worldKind=%s, so the game "
                     "is not mouselooking and there is no pointer ownership to hand back) "

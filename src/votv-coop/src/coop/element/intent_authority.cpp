@@ -72,7 +72,7 @@ bool ReachVerdict(const ue_wrap::FVector& body, const ue_wrap::FVector& target,
 // instead of inventing a constant fudge for "big things".
 //
 // `GetActorBounds` returning true means THE DISPATCH SUCCEEDED, not that the box is meaningful:
-// `[A]` UE4 `AActor::GetActorBounds` starts from an empty FBox and expands it per qualifying
+// UE4's `AActor::GetActorBounds` starts from an empty FBox and expands it per qualifying
 // component, so an actor with no COLLIDING components (carried, physics off, inside a container)
 // yields Origin=(0,0,0) Extent=(0,0,0) -- the WORLD ORIGIN, an ordinary position. A zero extent is
 // therefore "no bounds", never "a point-sized prop at the origin".
