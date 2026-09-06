@@ -29,15 +29,12 @@ void* g_storyGsCdo = nullptr;
 void* g_loadGameFn = nullptr;
 void* g_setSaveSlotFn = nullptr;
 
-// The cached save object is campaign-scoped, not process-scoped: a campaign is one continuous
-// poll sequence targeting one slot (menu, open the level, gameplay). Within a campaign the
-// gameInstance.saveSlotObject property we register it into keeps it alive; once the campaign
-// ends the game owns or replaces that reference and the object can be purged at any world
-// transition. A process-scoped cache once handed a re-host the first session's purged object:
-// setSaveSlotObject planted a dangling pointer into the GameInstance, the world was built from
-// freed memory and the GC mark phase faulted on a garbage index. So the campaign identity (the
-// slot and the polling world) forces a disk reload on every new campaign, and IsLiveByIndex
-// guards the reuse within one.
+// The cached save object is campaign-scoped, not process-scoped: a campaign is one continuous poll
+// sequence targeting one slot. Within it the gameInstance.saveSlotObject property we register into
+// keeps the object alive; once the campaign ends the game may replace that reference and the object
+// can be purged at any world transition. So a new campaign forces a disk reload, and IsLiveByIndex
+// guards the reuse within one. Caching across campaigns instead planted a dangling pointer into the
+// GameInstance and the world was rebuilt from freed memory.
 void* g_storySave = nullptr;          // cached USaveGame* (one disk load per campaign)
 int32_t g_storySaveIdx = -1;          // its GUObjectArray index (IsLiveByIndex guard)
 std::wstring g_storySaveSlot;         // campaign identity axis 1: the target slot
@@ -134,12 +131,11 @@ void ApplyGameModeFromSlot(void* gi, const wchar_t* slot, int forceGameMode = -1
     }
 }
 
-// The campaign scope of the cache, one owner: called at the top of the boot phase with the
-// target slot and the current non-gameplay world. A new campaign (the polling world changed, or
-// a different slot) gets a full reset and a disk reload (fresh pointer and fresh content, since
-// an autosave may have rewritten the slot) plus a fresh mode derive. Within a campaign, a purge
-// between polls drops just the object; the mode latch stays, since the GameInstance already
-// carries the byte.
+// The campaign scope of the cache, one owner: called at the top of the boot phase with the target
+// slot and the current non-gameplay world. A changed polling world or slot is a new campaign and
+// resets everything, reloading from disk since an autosave may have rewritten the slot. Within a
+// campaign a purge between polls drops only the object; the mode latch stays, the GameInstance
+// already holding the byte.
 void ValidateCachedSaveForCampaign(const wchar_t* slot, void* curWorld) {
     const bool worldChanged =
         g_campaignWorld &&
@@ -165,15 +161,13 @@ void ValidateCachedSaveForCampaign(const wchar_t* slot, void* curWorld) {
     }
 }
 // The boot poll's two "where are we?" reads, one owner for LoadStorySave and StartFreshGame.
-// Adopted from archhn0madd's Multifoid fork (commit feae7730). After a quit to the menu the dying
-// gameplay world and its player corpse stay in GUObjectArray for tens of seconds, and their
-// kill flags can lag too, so a class search found the corpse at a non-origin position and
-// answered "in gameplay" while the process sat at the menu, and the first World found was the
-// dying one, whose name still read as the gameplay map, so the open was never issued. The fix
-// keys on world identity: the current world comes from the GameInstance's local player chain,
-// which a dying world cannot hold alive; the pawn must be live and belong to that world;
-// "gameplay loading?" keys on the current world's kind, with the legacy first-World scan kept
-// only for the mid-travel window where the chain cannot answer, and for a degraded chain.
+// Adopted from archhn0madd's Multifoid fork; see docs/CREDITS.md.
+// After a quit to the menu the dying gameplay world and its player corpse stay in GUObjectArray for
+// tens of seconds and their kill flags can lag, so a class search found the corpse off the origin
+// and answered "in gameplay" while the process sat at the menu. This keys on world identity
+// instead: the current world comes from the GameInstance's local player chain, which a dying world
+// cannot hold alive, and the pawn must be live and belong to it. The legacy first-World scan is
+// kept only for the mid-travel window, where that chain cannot answer.
 struct BootWorldView {
     bool inGameplay;       // (a): a LIVE mainPlayer_C of the CURRENT world, off-origin
     bool gameplayLoading;  // (b): a gameplay world is up/loading -> never re-open, wait
