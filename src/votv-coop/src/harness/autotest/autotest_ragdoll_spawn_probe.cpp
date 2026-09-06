@@ -1,36 +1,17 @@
-// harness/autotest_ragdoll_spawn_probe.cpp -- SP-solo xray-ragdoll feasibility probe.
-//
-// The xray-ragdoll direction ([[project-ragdoll-sync]]): VOTV's real ragdollMode
-// is LEAK-FREE but GLOBALLY scoped -- calling it kills the host's own player
-// (death event regardless of params). So we cannot reuse ragdollMode on a puppet.
-// The plan is to spawn VOTV's own `playerRagdoll_C` body MANUALLY (UWorld deferred
-// spawn, NOT ragdollMode) on the puppet and xray it. This probe answers, by
-// OBSERVING live objects in plain single-player (NO connection, role-agnostic) --
-// per the 2026-06-01 rule "forget ue4ss, we use our c++ instead" -- the two
-// decisive questions BEFORE any production code is written:
-//
-//   Q1  (manual spawn viable?): BeginDeferredSpawn<playerRagdoll_C> + set Player
-//        @0x248 (Expose-On-Spawn) + FinishDeferredSpawn -- WITHOUT ragdollMode --
-//        and check whether the actor's SkeletalMesh @0x230 component ends up
-//        VISIBLE + PHYSICALLY SIMULATING (IsAnyRigidBodyAwake) and the body FALLS
-//        (lowest-bone Z drops over a few ticks). I.e. does AplayerRagdoll_C
-//        SELF-CONFIGURE in its own ReceiveBeginPlay from the Player ref?
-//   Q1b (death-free?): does the manual spawn trigger a DEATH/faint on the Player
-//        we set? (read mainPlayer.dead + isRagdoll before/after; screenshot the
-//        un-faded screen). The host-death bleed lived in ragdollMode (global); the
-//        hypothesis is the actor's own BeginPlay does NOT carry it. This confirms
-//        or refutes that -- the whole feature hinges on it.
-//   Q2  (ground truth): trigger the REAL ragdollMode(true,false,false), grab
-//        mainPlayer.ragdollActor @0xC40, and dump the SAME fields -> the target
-//        config to match. forceGetUp() to recover.
-//
-// Single instance: launch via `mp.py ragdollspawn` (solo host, no client).
-// Screenshots land in research/ragdoll_shots/ on the "MANUAL-SHOT READY" /
-// "REAL-SHOT READY" log markers. Gated by env VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1
-// (registered in autotest_dispatch.cpp). Throwaway diagnostic: raw offset reads
-// on AplayerRagdoll_C (Player @0x248, SkeletalMesh comp @0x230) and mainPlayer
-// (ragdollActor @0xC40) are cited to the CXX SDK dump, mirroring the sibling
-// autotest_vitals.cpp raw-ParamFrame diagnostics -- this is not a shipping path.
+// harness/autotest/autotest_ragdoll_spawn_probe.cpp -- the single-player ragdoll feasibility
+// probe. The game's own ragdoll verb is a method of the player pawn and acts on that player,
+// so it cannot be reused on a puppet; the plan is to spawn the game's ragdoll body manually
+// (a deferred world spawn) on the puppet and skin it. This probe answers, by observing live
+// objects in plain single-player with no connection, the decisive questions before any
+// production code: whether a manual deferred spawn with the owning player set before the
+// finish leaves the body's skeletal mesh visible, physically simulating and falling (does
+// the body self-configure in its own BeginPlay from the player reference); whether that
+// manual spawn is death-free for the player it names (the dead and ragdoll flags before and
+// after); and the ground truth, the real verb's own body dumped with the same fields, then
+// recovered with the get-up verb. Single instance: the ragdollspawn scenario of tools/mp.py
+// launches it and captures screenshots on the shot-ready log markers. Gated by
+// VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1. A throwaway diagnostic: raw offset reads cited to the
+// SDK header dump, not a shipping path.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "harness/autotest.h"
@@ -56,7 +37,7 @@ namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 
-// --- CXX SDK offsets (Game_0.9.0n CXXHeaderDump; cited, raw diagnostic) ---
+// Offsets from the SDK header dump (a raw diagnostic).
 constexpr size_t kAragdoll_SkeletalMesh = 0x0230;  // Aragdoll_C::SkeletalMesh (USkeletalMeshComponent*)
 constexpr size_t kPlayerRagdoll_Player  = 0x0248;  // AplayerRagdoll_C::Player (AmainPlayer_C*)
 constexpr size_t kMainPlayer_ragdollActor = 0x0C40;  // AmainPlayer_C::ragdollActor (AplayerRagdoll_C*)
@@ -68,16 +49,16 @@ std::string ReadEnv(const char* name) {
     return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
 }
 
-// Bounded spin-wait on a game-thread task's completion flag (mirrors
-// autotest_vitals.cpp). false => the posted task faulted (SEH firewall ate the
-// AV, flag never set) so the caller bails instead of hanging the probe.
+// Bounded spin-wait on a game-thread task's completion flag. False means the posted task
+// faulted (the exception firewall ate the fault and the flag was never set), so the caller
+// bails instead of hanging the probe.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// Call a no-arg bool UFunction (e.g. IsVisible / IsAnyRigidBodyAwake) on `comp`.
-// Game thread only. Returns false if unresolved/uncallable.
+// Call a no-argument bool function (IsVisible, IsAnyRigidBodyAwake) on `comp`. Game thread
+// only. False if unresolved or uncallable.
 bool CallBoolFn(void* comp, const wchar_t* cls, const wchar_t* fn) {
     if (!comp || !R::IsLive(comp)) return false;
     void* f = R::FindFunction(R::FindClass(cls), fn);
@@ -87,11 +68,10 @@ bool CallBoolFn(void* comp, const wchar_t* cls, const wchar_t* fn) {
     return ue_wrap::Call(comp, pf) && pf.Get<bool>(L"ReturnValue");
 }
 
-// Start the PhysX gravity simulation on a skeletal-mesh component (collision so
-// the bodies have a floor to rest on, then SetAllBodiesSimulatePhysics(true) +
-// SetSimulatePhysics(true)). This is the step ragdollMode does AFTER spawn that
-// AplayerRagdoll_C::BeginPlay does NOT -- the bare spawn builds the bodies but
-// leaves them frozen. Game thread only. Throwaway diagnostic (raw UFunction calls).
+// Start the physics simulation on a skeletal-mesh component (collision so the bodies have a
+// floor to rest on, then all bodies simulate and the component simulates). This is the step
+// the ragdoll verb does after spawn that the body's own BeginPlay does not: the bare spawn
+// builds the bodies but leaves them frozen. Game thread only.
 void StartBodySim(void* comp) {
     if (!comp || !R::IsLive(comp)) return;
     if (void* f = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"SetCollisionEnabled")) {
@@ -106,15 +86,15 @@ void StartBodySim(void* comp) {
     }
 }
 
-// The SkeletalMesh component @0x230 on an Aragdoll_C/AplayerRagdoll_C actor.
+// The skeletal mesh component on a ragdoll actor.
 void* RagdollMeshComp(void* actor) {
     if (!actor || !R::IsLive(actor)) return nullptr;
     void* c = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + kAragdoll_SkeletalMesh);
     return (c && R::IsLive(c)) ? c : nullptr;
 }
 
-// Dump the full live configuration of a ragdoll actor (manual or real) so the
-// two can be compared field-for-field. Game thread only.
+// Dump the full live configuration of a ragdoll actor (manual or real) so the two can be
+// compared field for field. Game thread only.
 void DumpRagdollActor(void* actor, const char* tag) {
     if (!actor || !R::IsLive(actor)) {
         UE_LOGW("ragdollspawn[%s]: actor null/dead -- nothing to dump", tag);
@@ -137,7 +117,7 @@ void DumpRagdollActor(void* actor, const char* tag) {
     float lowZ = 0.f;
     const bool okBone = E::GetLowestBoneWorldZ(comp, lowZ);
 
-    // Material slot-0 (what the body renders with today -> the xray swap target).
+    // Material slot 0 (what the body renders with today, the swap target).
     std::wstring mat0 = L"<?>";
     int32_t numMat = 0;
     if (void* gn = R::FindFunction(R::FindClass(L"PrimitiveComponent"), L"GetNumMaterials")) {
@@ -156,8 +136,8 @@ void DumpRagdollActor(void* actor, const char* tag) {
             cLoc.Z, lowZ, okBone ? 1 : 0, numMat, mat0.c_str());
 }
 
-// Aim the local player's camera at a target actor's mesh so the autonomous
-// screenshot frames the spawned body. Game thread only.
+// Aim the local player's camera at a target actor's mesh so the autonomous screenshot frames
+// the spawned body. Game thread only.
 void AimLocalAt(void* local, void* target) {
     if (!local || !R::IsLive(local) || !target || !R::IsLive(target)) return;
     void* ctrl = E::GetController(local);
@@ -172,14 +152,14 @@ void AimLocalAt(void* local, void* target) {
     E::SetControlRotation(ctrl, ue_wrap::FRotator{pitch, yaw, 0.f});
 }
 
-// Read mainPlayer.dead + isRagdoll (Q1b death/faint detection). Returns false if
-// unreadable. Game thread only.
+// Read the player's dead and ragdoll flags (the death detection). False if unreadable. Game
+// thread only.
 bool ReadDeadRagdoll(void* mp, bool& dead, bool& isRagdoll) {
     return E::ReadMainPlayerRagdollState(mp, isRagdoll, dead);
 }
 
-// Sample whether a body is FALLING: log component Z + lowest-bone Z (a drop over
-// successive samples == real physics; static == not simulating). Game thread.
+// Sample whether a body is falling: log the component Z and the lowest-bone Z (a drop over
+// successive samples is real physics; static is not simulating). Game thread.
 void SampleFall(void* actor, const char* tag) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([actor, tag, done] {
@@ -196,8 +176,8 @@ void SampleFall(void* actor, const char* tag) {
     WaitDone(done, 8000);
 }
 
-// ====================== EXPERIMENT B: manual spawn ======================
-// Returns the spawned actor (kept alive for the screenshot), or nullptr.
+// Experiment B: the manual spawn. Returns the spawned actor (kept alive for the screenshot),
+// or null.
 void* SpawnManualRagdoll(void* local) {
     auto done = std::make_shared<std::atomic<int>>(0);
     auto out  = std::make_shared<void*>(nullptr);
@@ -207,20 +187,20 @@ void* SpawnManualRagdoll(void* local) {
         const ue_wrap::FVector pl = E::GetActorLocation(local);
         const ue_wrap::FVector fwd = E::GetActorForwardVector(local);
         const ue_wrap::FRotator rot = E::GetActorRotation(local);
-        // ~120u in front of the player at the same Z (framable; not inside the body).
+        // About 120 units in front of the player at the same height (framable; not inside the
+        // body).
         const ue_wrap::FVector loc{ pl.X + fwd.X * 120.f, pl.Y + fwd.Y * 120.f, pl.Z };
         void* actor = E::BeginDeferredSpawn(cls, loc, rot);
         if (!actor) { UE_LOGW("ragdollspawn[manual]: BeginDeferredSpawn returned null"); done->store(1); return; }
-        // Expose-On-Spawn: set Player @0x248 BEFORE FinishDeferredSpawn runs
-        // BeginPlay, so the actor's own ReceiveBeginPlay sees its owning player.
+        // Expose-on-spawn: set the owning player before the finish runs BeginPlay, so the actor's
+        // own BeginPlay sees it.
         *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actor) + kPlayerRagdoll_Player) = local;
         E::FinishDeferredSpawn(actor, loc, rot);
-        // Root it for the probe's lifetime so an incidental GC pass cannot reap the
-        // body mid-experiment and turn a working spawn into a false "null/dead" dump
-        // (audit 2026-06-01). Rooted for the probe's own run only: the static pin holds ONE
-        // body, so a second invocation releases the first, and the pin stands down at process
-        // teardown. DestroyActor below tears the body down regardless of root, and a
-        // self-destructing BeginPlay still shows as dead.
+        // Root it for the probe's lifetime so an incidental GC pass cannot reap the body
+        // mid-experiment and turn a working spawn into a false null-or-dead dump. Rooted for the
+        // probe's own run only: the static pin holds one body, so a second invocation releases the
+        // first, and the pin stands down at process teardown. The destroy below tears the body down
+        // regardless of root, and a self-destructing BeginPlay still shows as dead.
         static ue_wrap::GcPin sProbePin;  // one throwaway probe body, owned for its session
         sProbePin.Pin(actor);
         UE_LOGI("ragdollspawn[manual]: spawned playerRagdoll_C @%p at (%.0f,%.0f,%.0f), Player set -- NO ragdollMode called",
@@ -235,7 +215,7 @@ void* SpawnManualRagdoll(void* local) {
 void RunManualExperiment(void* local) {
     UE_LOGI("ragdollspawn: === EXPERIMENT B (manual spawn, NO ragdollMode) ===");
 
-    // Baseline dead/isRagdoll (Q1b: must be unchanged after the manual spawn).
+    // The baseline dead and ragdoll flags (they must be unchanged after the manual spawn).
     bool deadBefore = false, ragBefore = false;
     {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -258,8 +238,8 @@ void RunManualExperiment(void* local) {
 
     ::Sleep(1500);  // let ReceiveBeginPlay + the first ticks run (BARE -- no sim yet)
 
-    // Dump the BARE configured body + the Q1b death check (this is what BeginPlay
-    // alone produces -- expected visible but frozen).
+    // Dump the bare configured body and run the death check (what BeginPlay alone produces;
+    // expected visible but frozen).
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         auto d = std::make_shared<int>(0), r = std::make_shared<int>(0);
@@ -277,9 +257,9 @@ void RunManualExperiment(void* local) {
     }
     SampleFall(actor, "manual-bare");  // expected static (BeginPlay doesn't sim)
 
-    // START THE SIM ourselves -- the step ragdollMode does after spawn. If the body
-    // now FALLS (lowestBoneZ drops toward the floor), the recipe is: deferred spawn
-    // + set Player + Finish + StartBodySim. That is the whole feature.
+    // Start the sim ourselves, the step the ragdoll verb does after spawn. If the body now falls
+    // (the lowest bone drops toward the floor), the recipe is: deferred spawn, set the player,
+    // finish, start the sim. That is the whole feature.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([actor, local, done] {
@@ -303,12 +283,12 @@ void RunManualExperiment(void* local) {
     UE_LOGI("ragdollspawn[manual]: MANUAL-SHOT READY");  // mp.py captures here
     ::Sleep(1200);
 
-    // Does it FALL now that the sim is started? Sample geometry across ~3 s.
+    // Does it fall now that the sim is started? Sample the geometry across about three seconds.
     SampleFall(actor, "manual-sim");
     ::Sleep(1500); SampleFall(actor, "manual-sim");
     ::Sleep(1500); SampleFall(actor, "manual-sim");
 
-    // Clean up so it doesn't confuse the real-ragdoll comparison frame.
+    // Clean up so it does not confuse the real-ragdoll comparison frame.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([actor, done] {
@@ -320,12 +300,12 @@ void RunManualExperiment(void* local) {
     }
 }
 
-// ====================== EXPERIMENT A: real ragdollMode ======================
+// Experiment A: the real ragdoll verb.
 void RunRealExperiment(void* local) {
     UE_LOGI("ragdollspawn: === EXPERIMENT A (real ragdollMode, ground truth) ===");
 
-    // Fire the real ragdollMode on the LOCAL possessed player (in plain SP this
-    // is the normal faint mechanic; forceGetUp recovers it below).
+    // Fire the real ragdoll verb on the local possessed player (in plain single-player this is
+    // the normal faint mechanic; the get-up verb recovers it below).
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([local, done] {
@@ -338,7 +318,7 @@ void RunRealExperiment(void* local) {
 
     ::Sleep(1500);  // let the real playerRagdoll_C spawn + configure
 
-    // Grab mainPlayer.ragdollActor @0xC40 -> dump it + frame it.
+    // Read the player's ragdoll actor field, dump it and frame it.
     auto real = std::make_shared<void*>(nullptr);
     {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -354,10 +334,10 @@ void RunRealExperiment(void* local) {
             bool dead = false, isRag = false;
             if (ReadDeadRagdoll(local, dead, isRag))
                 UE_LOGI("ragdollspawn[real]: player dead=%d isRagdoll=%d after ragdollMode", dead ? 1 : 0, isRag ? 1 : 0);
-            // Ragdoll bone visualizer chain verify (2026-07-03): exercise the EXACT accessor +
-            // bone-graph path the overlay uses, in-process, while the real ragdoll is live --
-            // the autonomous screenshot keeps missing the ~4 s auto-getup window, so this log
-            // line is the deterministic proof the overlay would have drawn N bones.
+            // The bone-overlay chain check: exercise the exact accessor and bone-graph path the
+            // overlay uses, in-process, while the real ragdoll is live. The autonomous screenshot
+            // keeps missing the short auto-get-up window, so this log line is the deterministic
+            // proof the overlay would have drawn the bones.
             {
                 void* mesh = E::GetLocalRagdollBodyMesh(local);
                 std::vector<E::BonePoint> pts;
@@ -394,8 +374,8 @@ void RunRealExperiment(void* local) {
 void RunRagdollSpawnProbe() {
     UE_LOGI("ragdollspawn: probe armed -- SP-solo xray-ragdoll feasibility (manual spawn vs real ragdollMode)");
 
-    // Wait for a live local possessed mainPlayer_C (post-load). Poll up to 90 s
-    // (the `play` scenario loads s_may2026 then enters gameplay).
+    // Wait for a live local possessed player (post-load). Poll up to 90 s (the play scenario
+    // loads a save, then enters gameplay).
     auto local = std::make_shared<void*>(nullptr);
     for (int attempt = 0; attempt < 90 && !*local; ++attempt) {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -414,9 +394,9 @@ void RunRagdollSpawnProbe() {
     UE_LOGI("ragdollspawn: local player resolved -- letting the world settle 5 s");
     ::Sleep(5000);
 
-    // Diagnostic: is playerRagdoll_C already resident, or only loaded lazily when
-    // ragdollMode first fires? (Tells us whether the real-first ordering below was
-    // load-bearing or just belt-and-suspenders.)
+    // Diagnostic: is the ragdoll blueprint class already resident, or only loaded lazily when
+    // the ragdoll verb first fires? (Tells whether the real-first ordering below is load-bearing
+    // or only belt and braces.)
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([done] {
@@ -428,10 +408,10 @@ void RunRagdollSpawnProbe() {
         WaitDone(done, 8000);
     }
 
-    // REAL experiment FIRST: ragdollMode loads the playerRagdoll_C BP class as a
-    // side effect, so the MANUAL experiment's FindClass is guaranteed to resolve
-    // (BP classes load lazily; running manual first risks a silent class-not-found
-    // false negative -- audit 2026-06-01). It also yields the ground-truth dump.
+    // The real experiment first: the ragdoll verb loads the ragdoll blueprint class as a side
+    // effect, so the manual experiment's class lookup is guaranteed to resolve (blueprint classes
+    // load lazily; running manual first risks a silent class-not-found false negative). It also
+    // yields the ground-truth dump.
     RunRealExperiment(*local);
     ::Sleep(2500);  // let forceGetUp recovery settle + ragdollActor@0xC40 clear
     RunManualExperiment(*local);
