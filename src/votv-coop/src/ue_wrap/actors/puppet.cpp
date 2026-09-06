@@ -1,5 +1,5 @@
 #include "ue_wrap/actors/puppet.h"
-#include "puppet_internal.h"  // shared file-privates (offset templates + g_meshComp + LiveAnimInstance)
+#include "puppet_internal.h"  // offset templates, g_meshComp, LiveAnimInstance
 
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -25,31 +25,29 @@ namespace R = reflection;
 namespace E = engine;
 namespace GT = game_thread;
 
-// puppet actor -> its cached SkeletalMeshComponent (avoid a GUObjectArray walk
-// per Drive() frame).
-std::unordered_map<void*, ue_wrap::CachedObjRef> g_meshComp;  // islive-zeroav row :162
+// Puppet actor -> its cached SkeletalMeshComponent, so Drive() does not walk GUObjectArray
+// every frame.
+std::unordered_map<void*, ue_wrap::CachedObjRef> g_meshComp;
 
-// The live AnimInstance running on a SkeletalMeshComponent (comp + AnimScriptInstance).
+// The live AnimInstance running on a SkeletalMeshComponent.
 void* LiveAnimInstance(void* skeletalMeshComponent) {
     return ReadPtr(skeletalMeshComponent, P::off::USkeletalMesh_AnimScriptInstance);
 }
 
 namespace {
 
-// Plan B1 (BUA interceptor) and Plan B2 (satellite ACharacter feeding the
-// AnimBP's Pawn pointer) are both retired. v2 (2026-05-27, see
-// research/findings/player-puppet/votv-local-anim-drive-RE-2026-05-27.md) writes
-// Velocity + MovementMode directly on the puppet's OWN CMC each tick
-// (CMC tick is parked, so we own those fields). BUA reads them naturally
-// via Pawn=orphan -> CMC=orphan.CMC, exactly like the LOCAL player's
-// possessed CMC -- same spd / IK gate behaviour with zero AnimInstance
-// pointer-redirect plumbing.
+// The puppet's animation is driven by writing Velocity + MovementMode on its OWN
+// CharacterMovement each tick; the CMC tick is parked, so those fields are ours to own. The
+// AnimBP's BlueprintUpdateAnimation reads them through Pawn -> Pawn.CMC on its own, exactly as
+// it does for the possessed local player, so speed and the IK gate behave the same with no
+// AnimInstance pointer plumbing.
 
-// ---- kerfur head-look (v39) ----------------------------------------------
-// Guard for every lookAt/customLookAt access: is this AnimInstance a kerfur-family AnimBP?
-// A different AnimBP would have unrelated fields at 0x2D90/0x2E49, so an unguarded write
-// there would corrupt foreign state. The class ptr resolves once + caches; re-resolves while
-// still null (the BP class loads with the level, possibly after the first NPC streams).
+// ---- kerfur head-look --------------------------------------------------------
+// Guard for every lookAt / customLookAt access: is this AnimInstance a kerfur-family AnimBP?
+// A different AnimBP holds unrelated fields at those offsets, so an unguarded write would
+// corrupt foreign state. The class pointer resolves once and caches; it re-resolves while
+// still null, because the BP class loads with the level and may arrive after the first NPC
+// streams in.
 bool IsKerfurAnimBP(void* anim) {
     if (!anim || !R::IsLive(anim)) return false;  // guard the raw ClassOf read against a GC'd AnimInstance
     static void* kerfurAnimClass = nullptr;
@@ -62,10 +60,10 @@ bool IsKerfurAnimBP(void* anim) {
     return R::IsDescendantOfAny(cls, kerfurBases, 1);  // skerfuro / skeleton AnimBP variants subclass it
 }
 
-// An NPC's body skeletal-mesh COMPONENT: ACharacter::Mesh @0x0280. Real kerfur NPCs run the
-// AnimBP on (and show their visible body as) the native ACharacter mesh slot -- their own
-// component list has no body skeletal mesh, only particles/static/outfits -- unlike mainPlayer_C
-// which uses mesh_playerVisible @0x04F8. Null if not resolvable.
+// An NPC's body skeletal-mesh component, the native ACharacter::Mesh slot. Real kerfur NPCs
+// run the AnimBP on that slot and show their visible body there -- their own component list
+// holds only particles, static meshes and outfits -- unlike mainPlayer_C, which uses
+// mesh_playerVisible. Null if not resolvable.
 void* NpcBodyMesh(void* actor) {
     if (!actor || !R::IsLive(actor)) return nullptr;
     void* mesh = ReadPtr(actor, P::off::ACharacter_Mesh);
@@ -73,15 +71,16 @@ void* NpcBodyMesh(void* actor) {
     return mesh;
 }
 
-// That mesh's live AnimInstance (AnimScriptInstance @0x6B0). Null if not resolvable.
+// That mesh's live AnimInstance. Null if not resolvable.
 void* NpcBodyAnimInstance(void* actor) {
     void* mesh = NpcBodyMesh(actor);
     return mesh ? LiveAnimInstance(mesh) : nullptr;
 }
 
-// Read/write the kerfur head-look on an already-resolved AnimInstance (class-gated; offsets
-// reflection-resolved, recook-proof). WriteLookAtOnAnim also sets customLookAt=true so the
-// AnimInstance's own BUA stops overwriting lookAt with its local player camera.
+// Read and write the kerfur head-look on an already-resolved AnimInstance. Class-gated, and
+// the offsets are reflection-resolved so a recook cannot silently move them. The write also
+// sets customLookAt, which stops the AnimInstance's own BlueprintUpdateAnimation from
+// overwriting lookAt with the local player's camera.
 bool ReadLookAtOnAnim(void* anim, FVector& out) {
     if (!IsKerfurAnimBP(anim)) return false;
     const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_lookAt();
@@ -102,8 +101,8 @@ void WriteLookAtOnAnim(void* anim, const FVector& target) {
                 target.X, target.Y, target.Z); }
 }
 
-// The head-look STATE-GATE defeat hook (HeadGateBUAPost + InstallHeadGateHook) moved to
-// puppet_spawn.cpp 2026-07-19 (s28 modular cut; its sole install site is the spawn path).
+// The head-look state-gate defeat hook lives in puppet_spawn.cpp, beside its only install
+// site on the spawn path.
 }  // namespace
 
 void* GetMeshPlayerVisibleAsset(void* mainPlayerPawn) {
@@ -116,9 +115,8 @@ void* GetMeshPlayerVisibleAsset(void* mainPlayerPawn) {
     void* meshAsset = ReadPtr(comp, P::off::USkinnedMesh_SkeletalMesh);
     UE_LOGI("puppet: local skin = %ls (comp=%p asset=%p)",
             R::ClassNameOf(meshAsset).c_str(), comp, meshAsset);
-    // Snapshot the LOCAL working body's AnimBP state so SpawnPuppet's puppet dump
-    // can be diffed against it (the "diff observable state" rule): if the puppet
-    // is still a stick, the diff pinpoints which variable to set.
+    // Snapshot the local working body's AnimBP state so the puppet dump taken at spawn can be
+    // diffed against it: if the puppet renders as a stick, the diff names the variable to set.
     DumpAnimState(L"local", comp);
     return meshAsset;
 }
@@ -149,62 +147,45 @@ void* GetComponentSkeletalMeshAsset(void* skinnedComponent) {
 
 void* GetSkeletalMeshComponent(void* puppetActor) {
     if (!puppetActor) return nullptr;
-    // If the puppet was destroyed (level change), its cached component is freed
-    // too -- drop the stale entry instead of returning a dangling pointer that
-    // DriveAnimBP would then read at +0x6B0 (AV).
+    // A destroyed puppet (a level change) takes its component with it. Drop the stale entry
+    // rather than return a dangling pointer that the caller would read AnimScriptInstance from.
     if (!R::IsLive(puppetActor)) { g_meshComp.erase(puppetActor); return nullptr; }
     auto it = g_meshComp.find(puppetActor);
     if (it != g_meshComp.end()) {
-        // The actor can outlive its child component for a tick mid-tear-down
-        // (UE finalizes sub-objects first). A live actor with a dying cached
-        // component must NOT return the dying pointer -- the caller would then
-        // read AnimScriptInstance @+0x6B0 on freed memory (AV). Treat as a
-        // cache miss; drop the entry and fall through to re-resolve.
+        // The actor can outlive its child component for a tick mid-teardown, because UE finalises
+        // sub-objects first. A live actor with a dying cached component must not hand back the
+        // dying pointer; treat it as a cache miss, drop the entry, and re-resolve below.
         if (void* liveComp = it->second.Get()) return liveComp;  // slot-validated
         g_meshComp.erase(it);
     }
-    // 2026-05-25 audit fix (post-ship CRITICAL-3): on cache miss for the
-    // mainPlayer_C puppet path, read mesh_playerVisible @0x04F8
-    // DIRECTLY. mainPlayer_C has FOUR SkeletalMeshComponents (the
-    // ACharacter::Mesh native slot @0x0280, mesh_playerVisible @0x04F8,
-    // arms @0x05F8, playermodel @0x0638); ChildObjectsOf returns
-    // whichever appears first in GUObjectArray order, which on this
-    // class is the native Mesh slot (typically hidden + has no AnimBP).
-    // DriveAnimBP then dispatches to the wrong AnimInstance.
-    // Audit H9 (2026-05-27): MainPlayer is the only puppet kind. Read
-    // mesh_playerVisible @0x04F8 directly. ChildObjectsOf fallback removed
-    // (was the SkelMesh path's single-skel-comp resolver, which can no
-    // longer happen).
+    // On a cache miss, read mesh_playerVisible directly. mainPlayer_C carries four
+    // SkeletalMeshComponents (the native ACharacter::Mesh slot, mesh_playerVisible, arms and
+    // playermodel), and a child-object scan returns whichever comes first in GUObjectArray order
+    // -- on this class the native Mesh slot, which is typically hidden and carries no AnimBP. The
+    // driver would then dispatch to the wrong AnimInstance. MainPlayer is the only puppet kind, so
+    // the direct read is the whole resolver.
     void* comp = ReadPtr(puppetActor, P::off::AmainPlayer_mesh_playerVisible);
     if (comp && !R::IsLive(comp)) comp = nullptr;
     if (comp) g_meshComp[puppetActor].Set(comp);  // fresh + just-IsLive'd above
     return comp;
 }
 
-// Bug 2 deep diagnostic 2026-05-23: BUA interceptor is firing every frame writing
-// correct spd values (290 cm/s while remote walks), but the puppet STILL doesn't
-// animate -- so spd isn't reaching the BlendSpace, or a state machine gates the
-// transition. Dump the live FAnimNode_* memory regions (offsets per the CXX dump:
-// BlendSpacePlayer @ 0x1180 sz 0xE8; StateMachine @ 0x1AC0 sz 0xB0;
-// StateMachine_1 @ 0x1CC8 sz 0xB0) and log all non-trivial floats+ints. Compare
-// LOCAL (walking, animates correctly) vs PUPPET (sliding) to find the offset
-// where walking-speed appears on local and to see if puppet state index is
-// stuck on idle.
+// Dump the live FAnimNode_* memory regions and log every non-trivial float and int in them.
+// The point is a local-versus-puppet diff: which offset carries walking speed on the body that
+// animates, and whether the puppet's state-machine index is stuck on idle.
 void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
     void* anim = LiveAnimInstance(skeletalMeshComponent);
     if (!anim) return;
     struct Region { const char* name; size_t start; size_t end; };
-    // Offsets named in sdk_profile.h::anim (audit M19, 2026-05-27 -- moved
-    // out of inline magic numbers so a future VOTV recook surfaces here
-    // via the same sdk_profile.h::anim block other AnimBP offsets live in).
+    // The region bounds are named in sdk_profile.h::anim rather than inlined here, so a VOTV
+    // recook surfaces in the same block every other AnimBP offset lives in.
     const Region regions[] = {
         {"BlendSpacePlayer", P::anim::kKerfurBlendSpacePlayer_Start, P::anim::kKerfurBlendSpacePlayer_End},
         {"StateMachine_1",   P::anim::kKerfurStateMachine1_Start,    P::anim::kKerfurStateMachine1_End},
         {"StateMachine",     P::anim::kKerfurStateMachine_Start,     P::anim::kKerfurStateMachine_End},
-        // AnimBP INSTANCE-LEVEL public variables block (post-AnimGraphNode
-        // tail). Bug 2 deep dive 2026-05-23: state machine differs (idx 1 vs 2)
-        // between local-walking and puppet-sliding; this region covers all
-        // kerfur AnimBP vars + padding so any field difference shows up.
+        // The AnimBP instance-level public variables, past the AnimGraphNode tail. The region
+        // covers every kerfur AnimBP variable plus padding, so any field that differs between the
+        // two bodies shows up.
         {"AnimBP_vars_all",  P::anim::kKerfurAnimBPVarsAll_Start,    P::anim::kKerfurAnimBPVarsAll_End},
     };
     for (const Region& r : regions) {
@@ -213,9 +194,8 @@ void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
             uint8_t* p = static_cast<uint8_t*>(anim) + off;
             const float fv = *reinterpret_cast<float*>(p);
             const int32_t iv = *reinterpret_cast<int32_t*>(p);
-            // log only non-zero values, in either float or int form (engine
-            // values are typically floats or small ints; pointers would show as
-            // huge ints that we filter by upper bound).
+            // Log only non-zero values, as float and as int. Engine values are typically floats or
+            // small ints; a pointer reads as a huge int, which the upper bound filters out.
             const bool floatNontrivial = std::isfinite(fv) && std::fabs(fv) > 0.0001f && std::fabs(fv) < 1.0e6f;
             const bool intNontrivial = (iv != 0 && iv > -1000000 && iv < 1000000);
             if (floatNontrivial || intNontrivial) {
@@ -233,7 +213,7 @@ void DumpKerfurHeadGraph(void* skeletalMeshComponent) {
     void* anim = LiveAnimInstance(skeletalMeshComponent);
     if (!anim) { UE_LOGW("puppet: DumpKerfurHeadGraph: no AnimInstance"); return; }
     auto bn = reinterpret_cast<uint8_t*>(anim);
-    // Read FName at BoneToModify (FBoneReference.BoneName @ +0 of the struct).
+    // BoneToModify's FName sits at the head of the FBoneReference.
     auto boneName = [bn](size_t nodeOff) {
         return *reinterpret_cast<R::FName*>(bn + nodeOff + P::anim::LookAtMod_BoneToModify);
     };
@@ -288,11 +268,9 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
     }
     const float spd = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_spd());
     const float walkSpeed = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_walkSpeed());
-    // animWalkAlpha + animWalkRate: kept in the dump as observable AnimBP state.
-    // The Plan A hypothesis that animWalkAlpha gates idle-vs-walk was DISPROVED
-    // by the 2026-05-23 spawn diagnostic -- the LOCAL has animWalkAlpha=0.00
-    // while WALKING. spd is the actual locomotion driver (BlendSpace X input),
-    // which Plan B1's BUA interceptor pushes from the network speed.
+    // animWalkAlpha and animWalkRate are dumped as observable AnimBP state only. They do not gate
+    // idle-versus-walk: the local body walks with animWalkAlpha at 0. spd is the locomotion
+    // driver, the BlendSpace X input.
     const float animWalkAlpha = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_animWalkAlpha());
     const float animWalkRate = ReadAt<float>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_animWalkRate());
     void* pawn = ReadPtr(anim, ue_wrap::reflected_offset::AnimBP_kerfur_Pawn());
@@ -313,43 +291,28 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
 
 void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     void* comp = GetSkeletalMeshComponent(puppetActor);
-    // The actor slot can still pass IsLive for a tick while its child component is
-    // already being torn down (UE finalizes sub-objects first). Re-check the
-    // component before reading AnimScriptInstance @ +0x6B0.
+    // The actor slot can still pass IsLive for a tick while its child component is being torn
+    // down, so re-check the component before reading its AnimScriptInstance.
     if (!comp || !R::IsLive(comp)) return;
     void* anim = LiveAnimInstance(comp);
     if (!anim) return;
 
-    // Drive the head via the kerfur NATIVE lookAt pipeline (RE 2026-06-11,
-    // votv-puppet-head-look-RE-2026-06-11.md). The visible head/neck twist comes
-    // from two FAnimNode_LookAt nodes (head Alpha 1.0 / neck Alpha 0.5, 45-deg
-    // clamp each) that aim at the AnimBP `lookAt` FVector; a native PropertyAccess
-    // FastPath copy carries `lookAt` -> LookAtLocation each tick. So writing
-    // `lookAt` (+ `customLookAt=true`) via WriteLookAtOnAnim makes OUR world target
-    // win: it is the nodes' native input, and customLookAt stops BUA re-aiming
-    // `lookAt` at the LOCAL PlayerCameraManager (= the observer -- the old "puppet
-    // head follows the host" bug).
-    //
-    // The retired recipe (zero the LookAt Alphas + write ModifyBone @0x2C60
-    // .Rotation + RotationMode=2 + lookingAtPlayer=false + headLookAt) FOUGHT THE
-    // WRONG NODE: that ModifyBone .Rotation was clobbered every tick by FastPath
-    // copy [5] (headLookAt -> .Rotation) and was in the wrong mode (2 = ADDITIVE,
-    // not Replace) and world space. Deleted (RULE 2). This is the SAME write
-    // DriveKerfurLookAt uses for the NPC mirror (WriteLookAtOnAnim, kerfur-gated),
-    // on the PUPPET's OWN instances -- so NPC head-follow is untouched.
+    // Drive the head through the kerfur native lookAt pipeline. The visible head and neck twist
+    // comes from two FAnimNode_LookAt nodes -- head at alpha 1.0, neck at 0.5, 45 degrees of clamp
+    // each -- aiming at the AnimBP's lookAt vector, which a native PropertyAccess fast-path copies
+    // into LookAtLocation every tick. Writing lookAt with customLookAt set therefore makes our
+    // world target the nodes' input, and stops BlueprintUpdateAnimation from re-aiming lookAt at
+    // the local PlayerCameraManager, which would make every puppet head track the observer.
+    // This is the same write DriveKerfurLookAt uses for an NPC mirror, applied to the puppet's own
+    // instances, so NPC head-follow is untouched.
     WriteLookAtOnAnim(anim, worldTarget);
 
-    // The puppet renders TWO overlapped kel bodies (hands-on root cause
-    // 2026-06-11 round 3): mainPlayer_C shows mesh_playerVisible @0x04F8
-    // ATTACHED TO the native ACharacter::Mesh slot @0x0280 -- same skin asset,
-    // EACH ticking its OWN kerfur AnimInstance (see the v5 spawn comment "both
-    // ... as ONE body"; the hurt-flash already swaps materials on BOTH meshes).
-    // In SP the two stay identical because both BUAs auto-aim lookAt at the
-    // same local camera; driving only ONE instance breaks that invariant and
-    // the OTHER (un-driven) head keeps auto-following the observer = the
-    // "auto head follow still ticking" report. Drive BOTH instances with the
-    // same target (class-gated per instance; the dedupe guard covers a future
-    // single-mesh refactor).
+    // The puppet renders two overlapped bodies: mesh_playerVisible is attached to the native
+    // ACharacter::Mesh slot with the same skin asset, and each ticks its own kerfur AnimInstance.
+    // In single-player the two stay identical because both auto-aim lookAt at the same local
+    // camera; driving only one breaks that, and the un-driven head keeps following the observer.
+    // Drive both with the same target. Each write is class-gated, and the dedupe guard covers a
+    // future single-mesh refactor.
     void* meshSlot = ReadPtr(puppetActor, P::off::ACharacter_Mesh);
     if (meshSlot && meshSlot != comp && R::IsLive(meshSlot)) {
         if (void* slotAnim = LiveAnimInstance(meshSlot)) {
@@ -362,23 +325,23 @@ bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out) {
     out = {};
     void* comp = GetSkeletalMeshComponent(puppetActor);
     if (!comp || !R::IsLive(comp)) return false;
-    // LookAtClamp (degrees) read off the puppet's OWN kerfur AnimInstance -- the two
-    // FAnimNode_LookAt nodes (head @kKerfurLookAt_1, neck @kKerfurLookAt), clamp @+0x170.
+    // LookAt clamp, in degrees, off the puppet's own kerfur AnimInstance: one value per
+    // FAnimNode_LookAt node, head and neck.
     void* anim = LiveAnimInstance(comp);
     if (anim && IsKerfurAnimBP(anim)) {
         out.headClampDeg = ReadAt<float>(anim, P::anim::kKerfurLookAt_1 + P::anim::LookAt_Clamp);
         out.neckClampDeg = ReadAt<float>(anim, P::anim::kKerfurLookAt   + P::anim::LookAt_Clamp);
         out.haveClamp = true;
-        // Gate diagnostics: the LookAt node alphas (does the look get blended OUT when the
-        // head freezes?) + lookingAtPlayer (the dot-product state gate) + customLookAt (is
-        // our drive still pinned, or did BUA reclaim lookAt?).
+        // Gate diagnostics: the node alphas say whether the look is blended out when the head
+        // freezes, lookingAtPlayer is the dot-product state gate, and customLookAt says whether our
+        // drive is still pinned or BlueprintUpdateAnimation reclaimed lookAt.
         out.headAlpha = ReadAt<float>(anim, P::anim::kKerfurLookAt_1 + P::anim::SkelCtl_Alpha);
         out.neckAlpha = ReadAt<float>(anim, P::anim::kKerfurLookAt   + P::anim::SkelCtl_Alpha);
         out.lookingAtPlayer = ReadAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer());
         out.customLookAt    = ReadAt<bool>(anim, ue_wrap::reflected_offset::AnimBP_kerfur_customLookAt());
         out.haveGates = true;
     }
-    // Resolved WORLD rotation of the 'head' + 'neck' bones (the actual rendered twist).
+    // Resolved world rotation of the head and neck bones: the twist actually rendered.
     ue_wrap::FRotator hr{}, nr{};
     if (E::GetBoneWorldRotationByName(comp, L"head", hr)) {
         out.headWorldYaw = hr.Yaw; out.headWorldPitch = hr.Pitch; out.haveHead = true;
@@ -398,9 +361,9 @@ void DriveKerfurLookAt(void* npcActor, const FVector& worldTarget) {
 }
 
 bool ReadKerfurBodyYaw(void* npcActor, float& outYaw) {
-    // The kerfur actor BP aims the VISIBLE body by rotating ACharacter::Mesh's WORLD rotation
-    // (decoupled from the actor root) -- per-peer toward the local player. Read the resolved mesh
-    // world yaw on the host so the mirror can reproduce it. Class-gated (kerfur-family only).
+    // The kerfur actor BP aims the visible body by rotating the mesh's world rotation, decoupled
+    // from the actor root, per peer toward the local player. Read the resolved mesh world yaw on
+    // the host so the mirror can reproduce it. Kerfur-family only.
     void* mesh = NpcBodyMesh(npcActor);
     if (!mesh || !IsKerfurAnimBP(LiveAnimInstance(mesh))) return false;
     outYaw = ue_wrap::engine::GetComponentWorldRotation(mesh).Yaw;
@@ -408,10 +371,10 @@ bool ReadKerfurBodyYaw(void* npcActor, float& outYaw) {
 }
 
 void DriveKerfurBodyYaw(void* npcActor, float yaw) {
-    // Drive a mirror kerfur's body facing: set ACharacter::Mesh WORLD rotation to the streamed
-    // yaw. The mirror's actor tick is OFF (DisableCharacterTicks), so the BP's per-tick mesh
-    // rotation never runs there -> no clobber, no gate flag needed. MUST be called AFTER
-    // SetActorRotation (moving the actor root re-bases this child mesh's world transform).
+    // Drive a mirror kerfur's body facing by setting the mesh's world rotation to the streamed
+    // yaw. The mirror's actor tick is off, so the BP's per-tick mesh rotation never runs there and
+    // cannot clobber this. Must be called AFTER SetActorRotation: moving the actor root re-bases
+    // this child mesh's world transform.
     void* mesh = NpcBodyMesh(npcActor);
     if (!mesh || !IsKerfurAnimBP(LiveAnimInstance(mesh))) return;
     ue_wrap::engine::SetComponentWorldRotation(mesh, ue_wrap::FRotator{0.f, yaw, 0.f});
@@ -423,10 +386,9 @@ void DriveCharacterMovement(void* puppetActor,
     if (!puppetActor || !R::IsLive(puppetActor)) return;
     void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
     if (!cmc || !R::IsLive(cmc)) return;
-    // UMovementComponent::Velocity @+0xC4 (FVector, Engine.hpp:15427).
-    // Constant is hardcoded here rather than promoted into sdk_profile.h so
-    // every "raw memory write" stays in the ue_wrap layer; coop/ callers
-    // see only this typed API.
+    // UMovementComponent::Velocity. The offset is hardcoded here rather than promoted into
+    // sdk_profile.h so that every raw memory write stays inside ue_wrap; coop/ callers see only
+    // this typed API.
     constexpr size_t kUMovementComponent_Velocity = 0xC4;
     WriteAt<FVector>(cmc, kUMovementComponent_Velocity, worldVelocity);
     const uint8_t mm = inAir ? P::off::kMOVE_Falling : uint8_t{1};  // MOVE_Walking
@@ -437,18 +399,16 @@ void DriveSprintWalkSpeed(void* puppetActor, bool sprinting) {
     if (!puppetActor || !R::IsLive(puppetActor)) return;
     void* cmc = ReadPtr(puppetActor, P::off::ACharacter_CharacterMovement);
     if (!cmc || !R::IsLive(cmc)) return;
-    // MaxWalkSpeed @+0x18C (float, Engine.hpp): run-LOUDNESS parity (sounds RE
-    // 2026-06-11 par.4). lib_C::step's footstep volume =
-    // clamp(CMC.MaxWalkSpeed/400, 0.5, 2.0) -- it reads the SETTING, not
-    // Velocity. The parked puppet CMC never runs mainPlayer's updateSpeed, so
-    // without this write a sprinting remote sounds walk-quiet. Mirror the
-    // native sprint knob: class-default while walking, x2 while sprinting
-    // (updateSpeed @676 defSpeed*2; the <=25% agility lerp deliberately
-    // skipped). PLAYER PUPPETS ONLY -- a separate function (not a
-    // DriveCharacterMovement param) because npc_pose_drive shares that drive
-    // and an NPC's MaxWalkSpeed must not be captured as, or overwritten with,
-    // the mainPlayer class default. The default is latched from the first
-    // PLAYER puppet CMC (class default -- updateSpeed never ran on a puppet).
+    // MaxWalkSpeed, for footstep-loudness parity. lib_C::step scales the step sound by
+    // clamp(CMC.MaxWalkSpeed / speedVolume, 0.5, 2) with speedVolume defaulting to 400 -- it reads
+    // the SETTING, not Velocity. A parked puppet CMC never runs mainPlayer's updateSpeed, so
+    // without this write a sprinting remote sounds walk-quiet. Mirror the native knob: the class
+    // default while walking, doubled while sprinting, as updateSpeed does (its further agility
+    // lerp, up to a quarter more, is deliberately skipped).
+    // Player puppets only. It is a separate function rather than a DriveCharacterMovement
+    // parameter because npc_pose_drive shares that drive, and an NPC's MaxWalkSpeed must be
+    // neither captured as nor overwritten with the mainPlayer class default. The default is
+    // latched from the first player puppet CMC, where updateSpeed has never run.
     constexpr size_t kCMC_MaxWalkSpeed = 0x18C;
     static float sDefaultMaxWalk = 0.f;
     if (sDefaultMaxWalk <= 0.f) sDefaultMaxWalk = ReadAt<float>(cmc, kCMC_MaxWalkSpeed);
@@ -469,15 +429,16 @@ bool ReadCharacterIsFalling(void* actor) {
 void DisableCharacterTicks(void* actor) {
     if (!actor || !R::IsLive(actor)) return;
     DisableMovementTick(actor);
-    // Actor tick OFF: suppress the BP ReceiveTick graph (for an NPC mirror that is its AI state
-    // machine). The AnimBP still ticks on the mesh, so it reads our per-tick CMC.Velocity write.
+    // Actor tick off, to suppress the BP ReceiveTick graph -- for an NPC mirror, that graph is its
+    // AI state machine. The AnimBP still ticks on the mesh, so it reads our per-tick CMC velocity
+    // write.
     E::SetActorTickEnabled(actor, false);
 }
 
 void DisableMovementTick(void* actor) {
     if (!actor || !R::IsLive(actor)) return;
-    // CMC tick OFF: stop gravity + Velocity integration so the network SetActorLocation drive
-    // is authoritative (we own CMC.Velocity/MovementMode -- DriveCharacterMovement writes them).
+    // CMC tick off, to stop gravity and velocity integration so the networked SetActorLocation
+    // drive is authoritative; we own CMC velocity and movement mode.
     if (void* cmc = ReadPtr(actor, P::off::ACharacter_CharacterMovement)) {
         if (R::IsLive(cmc)) E::SetComponentTickEnabled(cmc, false);
     }
