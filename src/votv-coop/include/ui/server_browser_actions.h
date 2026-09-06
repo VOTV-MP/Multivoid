@@ -1,49 +1,40 @@
-// ui/server_browser_actions.h -- the native server browser's action bar.
+// ui/server_browser_actions.h -- the native server browser's action bar: CONNECT, HOST and
+// REFRESH. Before it, the native screen could show servers and select one and then do nothing with
+// either, and `ui/host_window_native` had no way in but a dev flag.
 //
-// CONNECT, HOST and REFRESH: the three controls the browser has been missing since it was
-// built. Until now the native screen could show servers and select one, and then do nothing
-// with either -- `docs/MULTIPLAYER_UI.md` recorded that as "selection exists, nothing
-// consumes it", and HOST as "a missing LINK, not a missing button", because
-// `ui/host_window_native` shipped with no way in but a dev flag.
+// WHY A SEPARATE TU. `server_browser_native.cpp` is past the 800-LOC soft cap, and the modular
+// rule's extraction trigger says new code that is conceptually its own subsystem goes in its own
+// file rather than growing that one further. An action bar qualifies: it owns three buttons, their
+// placement, their click routing and the sentences they produce, and holds no row state and no
+// screen state. (The row model is a second, larger extraction still owed.)
 //
-// WHY A SEPARATE TU. `server_browser_native.cpp` is past the 800-LOC soft cap, and the
-// modular rule's extraction trigger says new code that is conceptually its own subsystem
-// goes in its own file rather than growing that one further. An action bar qualifies: it
-// owns three buttons, their placement, their click routing and the sentences they produce,
-// and it holds no row state and no screen state. (The row model is a second, larger
-// extraction that is genuinely owed and is scheduled as plan step T6, where the choice of
-// row model is made -- doing it now would refactor code that step is about to reshape.)
-//
-// PRINCIPLE 7: this is presentation. It authors no hosting and no joining of its own -- it
-// calls the same `coop::session_manager` entry points the ImGui browser calls, so the two
-// surfaces cannot drift into two different meanings of "Connect".
-//
-// Game thread only, like every other native-screen TU.
+// PRINCIPLE 7: this is presentation. It authors no hosting and no joining of its own -- it calls
+// the same `coop::session_manager` entry points the ImGui browser calls, so the two surfaces
+// cannot drift into two different meanings of "Connect". Game thread only, like every other
+// native-screen TU.
 
 #pragma once
 
 namespace ui::server_browser_actions {
 
-// Build the ACTION GRID into `parent` (a UVerticalBox), styled from `donorBtn` (the game's
-// own `ui_saveSlots_C.button_back`, so the buttons carry its press and hover sounds).
+// Build the ACTION GRID into `parent` (a UVerticalBox), styled from `donorBtn` (the game's own
+// `ui_saveSlots_C.button_back`, so the buttons carry its press and hover sounds).
 //
-// A GRID UNDER THE LIST, NOT A ROW IN THE FOOTER. The footer bar was the table layout's
-// shape; the redesign mirrors VOTV's save browser, which puts a block of large framed
-// action buttons directly beneath the list it acts on and leaves the footer to `Back`
-// alone (docs/SERVER_BROWSER_ARC.md section 7.2). The cell table lives in the .cpp and the
-// grid renders however many cells there are, so the input-variant fork can add its two
-// without reshaping anything here.
+// A GRID UNDER THE LIST, NOT A ROW IN THE FOOTER, mirroring VOTV's own save browser: a block of
+// large framed action buttons directly beneath the list they act on, with the footer left to
+// `Back` alone. The cell table lives in the .cpp and the grid renders however many cells there
+// are, so a variant can add one without reshaping anything here.
 //
-// Returns false if any button could not be built; the caller treats that as a build
-// failure rather than shipping a grid with a hole in it.
+// Returns false if any button could not be built; the caller treats that as a build failure rather
+// than shipping a grid with a hole in it.
 bool Build(void* parent, void* donorBtn);
 
 // Build CONNECT on its own, into the RIGHT-HAND column directly under the details panel.
 //
-// It is not in the grid because it is not the same KIND of action: every cell in the grid
-// is true whatever is selected, and this one acts on the selection the panel above it is
-// describing (USER 2026-08-31). Putting the verb under its subject is also what makes the
-// panel worth reading before pressing it.
+// It is not in the grid because it is not the same KIND of action: every cell in the grid is true
+// whatever is selected, and this one acts on the selection the panel above it is describing.
+// Putting the verb under its subject is also what makes the panel worth reading before pressing
+// it.
 bool BuildConnect(void* parent, void* donorBtn);
 
 // Handle a left-button RELEASE while the browser is open. Returns true if one of these
@@ -73,15 +64,14 @@ void* RefreshButton();
 
 // WHAT THE LAST CLICK DECIDED, as a short stable token. Empty until one is handled.
 //
-// It exists because every one of CONNECT's outcomes is a SENTENCE IN THE FOOTER, and a
-// sentence is not observable to anything but a human reading the screen -- so "the button
-// is wired" and "the button did nothing" produce identical evidence. That is exactly the
-// state the browser's row hover sat in for three days.
+// It exists because every one of CONNECT's outcomes is a SENTENCE IN THE FOOTER, and a sentence is
+// not observable to anything but a human reading the screen -- so "the button is wired" and "the
+// button did nothing" produce identical evidence.
 //
 // Tokens: "connect:none" (nothing selected) / "connect:self" (your own server) /
-// "connect:started" / "connect:busy" / "host" / "refresh". They are TOKENS, not the
-// player-facing text: the sentences are free to be reworded and translated, and an
-// assertion must not break when they are.
+// "connect:started" / "connect:busy" / "host" / "refresh". They are TOKENS, not the player-facing
+// text: the sentences are free to be reworded and translated, and an assertion must not break when
+// they are.
 const char* LastOutcome();
 
 }  // namespace ui::server_browser_actions
