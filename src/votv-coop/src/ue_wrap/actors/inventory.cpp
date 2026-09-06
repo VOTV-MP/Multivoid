@@ -1,8 +1,8 @@
 // ue_wrap/inventory.cpp -- see ue_wrap/inventory.h.
 //
-// The Fstruct_save record codec + the TArray primitives moved to ue_wrap/actors/save_record
-// (2026-07-22) when coop/props/container_contents_sync needed the same walk; what stays here is
-// the player-scoped concern: the saveSlot resolve, the three player arrays, and Fstruct_equipment.
+// The Fstruct_save record codec + the TArray primitives live in ue_wrap/actors/save_record, which
+// coop/props/container_contents_sync needs for the same walk; what stays here is the
+// player-scoped concern: the saveSlot resolve, the three player arrays, and Fstruct_equipment.
 
 #include "ue_wrap/actors/inventory.h"
 
@@ -32,18 +32,17 @@ constexpr int32_t kEquip_propKey   = 0x08;   // Fstruct_propDynamic.key  FName
 constexpr int32_t kEquip_data      = 0x10;   // embedded Fstruct_save (in a 0x100 slot)
 constexpr int32_t kEquip_tag       = 0x110;  // FName
 // 16-ALIGNED stride (raw `Size: 0x118` -> Align(0x118,16) = 0x120). Fstruct_equipment embeds the
-// 16-aligned Fstruct_save, so it too is 16-aligned. SDK-confirmed: struct_equipmentWear.hpp:6
-// reports the embedded Fstruct_equipment as size 0x120 (next field @0x120). Same crash class as
-// save_record::kSaveStride if the raw 0x118 is used for the equipment/hold arrays with N>=2.
+// 16-aligned Fstruct_save, so it too is 16-aligned, and the struct that embeds it reports the
+// member as 0x120 wide. Same crash class as save_record::kSaveStride if the raw 0x118 is used for
+// the equipment/hold arrays with N>=2.
 constexpr int32_t kEquipStride     = 0x120;
 
-ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :100
+ue_wrap::CachedObjRef g_gm;
 int32_t g_offSave = -1;
 
-// ---- live personal store: reflected offsets (resolved once; -1 = looked and failed) -----------
+// ---- live personal store: reflected offsets (resolved once; -1 = looked and failed) ----------
 // -2 = not looked at yet. Never guessed: an unresolvable offset makes the reader inert, it does
-// not fall back to a hardcoded number (the SDK values are recorded here as DOCUMENTATION only --
-// mainGamemode.playerContainer@0x0780, propInventory.Index@0x00B0, propInventory.Player@0x00F9).
+// not fall back to a hardcoded number.
 int32_t g_offPlayerContainer  = -2;  // mainGamemode_C.playerContainer  -> Aprop_inventoryContainer_player_C*
 int32_t g_offContainerPropInv = -2;  // prop_container_C.propInventory  -> UpropInventory_C*
 int32_t g_offInvPlayer        = -2;  // propInventory_C.Player          -> the personal discriminator

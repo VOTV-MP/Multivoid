@@ -14,7 +14,7 @@ namespace R = ue_wrap::reflection;
 
 // Cached gamemode pointer (singleton-per-session); revalidated via IsLive, re-walked
 // via FindObjectByClass on a level transition. NOT a per-frame full-array scan (cached).
-ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :18
+ue_wrap::CachedObjRef g_gm;
 void* ResolveGamemode() {
     if (g_gm.Alive()) return g_gm.Raw();
     g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
@@ -46,7 +46,7 @@ void* ResolveSaveSlotAndPoints(int32_t* outOff) {
 
 }  // namespace
 
-void* SaveSlotPtr() {  // v114 (L7): the shared gamemode->saveSlot resolve, ptr only
+void* SaveSlotPtr() {  // the shared gamemode->saveSlot resolve, ptr only
     void* gm = ResolveGamemode();
     if (!gm) return nullptr;
     if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
@@ -83,23 +83,22 @@ bool AddPoints(int32_t amount) {
     // AmainGamemode_C::AddPoints(int32 Add) -- writes saveSlot.Points + BP side-effects.
     ue_wrap::ParamFrame f(fn);
     f.Set<int32_t>(L"Add", amount);
-    // PROPAGATE the dispatch result. This used to `Call(); return true;`, which made every caller's
-    // failure branch unreachable -- including order_sync's "committed but not charged" guard, the one
-    // instrument watching for the exact regression A34 is about (audit 2026-08-24).
+    // PROPAGATE the dispatch result. Returning true unconditionally would make every caller's
+    // failure branch unreachable -- order_sync's "committed but not charged" guard among them,
+    // which is the one instrument watching for that regression.
     return ue_wrap::Call(gm, f);
 }
 
 bool RefreshPointsHud() {
     // The HUD credit number (mainGamemode.playerInterface.text_points, a UTextBlock) is
-    // push-updated ONLY by the BP credit-writer addPoints via SetText -- nothing re-evaluates
-    // it per frame. The client balance mirror writes saveSlot.Points directly (WritePoints,
+    // push-updated ONLY by the BP credit-writer addPoints via SetText -- nothing re-evaluates it
+    // per frame. The client balance mirror writes saveSlot.Points directly (WritePoints,
     // deliberately side-effect-free to avoid firing credit-earned UI/email), which leaves the
-    // DISPLAYED number frozen at the old value (the 2026-06-08 "host +1000 didn't show on the
-    // client" bug). Re-run the BP's OWN repaint by adding ZERO: lib_C::addPoints disassembles
-    // to exactly { saveSlot.Points += Add; text_points.SetText(IntToText(Points)); if (Add>=0)
-    // stats.total_points += Add else stats.points_spent += -Add }. With Add=0 the value is
-    // unchanged, the stat write is a no-op (+= 0, and the >=0 branch so points_spent is never
-    // touched), and the ONLY observable effect is the SetText repaint -- matching the native
+    // DISPLAYED number frozen at the old value. Re-run the BP's OWN repaint by adding ZERO:
+    // lib_C::addPoints is exactly { saveSlot.points += Add; text_points.SetText(IntToText(points));
+    // if (Add>=0) stats.total_points += Add else stats.points_spent += |Add| }. With Add=0 the
+    // value is unchanged, the stat write is a no-op (+= 0, on the >=0 branch, so points_spent is
+    // never touched), and the ONLY observable effect is the SetText repaint -- matching the native
     // formatting EXACTLY. The credit-earned side-effects WritePoints avoids are gated on a real
     // (non-zero) credit, so a zero add is clean. Preferred over hand-rolling Conv_IntToText ->
     // UTextBlock::SetText, which would risk a grouping/format mismatch + FText marshaling.

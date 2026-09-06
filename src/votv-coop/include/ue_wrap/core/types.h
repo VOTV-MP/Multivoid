@@ -19,9 +19,8 @@ struct FVector {
 };
 static_assert(sizeof(FVector) == 12, "FVector layout");
 
-// FTransform -- 48 bytes: FQuat Rotation (16) + FVector Translation (12+4 pad) +
-// FVector Scale3D (12+4 pad). Confirmed by the live param dump (SpawnTransform
-// size=48). Defaults to identity rotation, unit scale.
+// FTransform -- 48 bytes: FQuat Rotation (16) + FVector Translation (12+4 pad) + FVector Scale3D
+// (12+4 pad). Defaults to identity rotation, unit scale.
 struct FTransform {
     float RotX = 0.f, RotY = 0.f, RotZ = 0.f, RotW = 1.f;  // 0x00 FQuat (identity)
     float TX = 0.f, TY = 0.f, TZ = 0.f, _padT = 0.f;       // 0x10 Translation
@@ -53,14 +52,12 @@ struct FLinearColor {
 };
 static_assert(sizeof(FLinearColor) == 16, "FLinearColor layout");
 
-// SavedMaterial -- one cached material-override slot for the Inc3 hurt flash:
-// which component, which slot index, the original material to restore. Not
-// marshaled into a param frame; it lives here (not engine.h) so the gameplay
-// layer (RemotePlayer) can cache a std::vector of them WITHOUT pulling the full
-// engine.h wrapper API into the widely-included remote_player.h.
-// component/original are CachedObjRef, not raw pointers: the vector is held
-// ACROSS the ~0.5 s flash window and both objects can be GC'd inside it
-// (islive-zeroav census rows engine_mainplayer:192/:196).
+// SavedMaterial -- one cached material-override slot for the hurt flash: which component, which
+// slot index, the original material to restore. Not marshaled into a param frame; it lives here
+// (not engine.h) so the gameplay layer (RemotePlayer) can cache a std::vector of them WITHOUT
+// pulling the full engine.h wrapper API into the widely-included remote_player.h.
+// component/original are CachedObjRef, not raw pointers: the vector is held ACROSS the ~0.5 s
+// flash window and both objects can be GC'd inside it.
 struct SavedMaterial { CachedObjRef component; int32_t index = 0; CachedObjRef original; };
 
 inline FTransform MakeTransform(const FVector& location) {
@@ -71,17 +68,13 @@ inline FTransform MakeTransform(const FVector& location) {
     return t;
 }
 
-// Normalize a degree angle into the canonical FRotator axis range (-180, 180].
-// UE4's AController::GetControlRotation returns the RAW ControlRotation field,
-// which the input system accumulates as unnormalized [0, 360): looking 10 deg
-// DOWN reads back as Pitch=350, not -10. Two independent agents (2026-05-23)
-// converged on this as the root cause of "puppet freezes when source looks
-// below horizontal" -- the unnormalized 350 failed coop::net::ValidatePose's
-// (-90, 90) bound and dropped the entire pose packet. The proper fix is at
-// the wire boundary: produce values in the canonical axis range BEFORE they
-// enter PoseSnapshot. Mirrors MTA's SCameraRotationSync bWrapInsteadOfClamp
-// pattern (see research/findings/mta/mta-rotation-normalize-2026-05-23.md).
-// Equivalent of UE4's FRotator::NormalizeAxis(float Angle).
+// Normalize a degree angle into the canonical FRotator axis range (-180, 180]. The equivalent of
+// UE4's FRotator::NormalizeAxis(float Angle).
+// AController::GetControlRotation returns the RAW ControlRotation field, which the input system
+// accumulates unnormalized in [0, 360): looking 10 deg DOWN reads back as Pitch=350, not -10. A
+// puppet whose source looked below the horizontal used to freeze, because 350 failed
+// coop::net::ValidatePose's (-90, 90) bound and the whole pose packet was dropped. Values enter
+// PoseSnapshot already in the canonical range, so the bound sees what it expects.
 inline float NormalizeAxis(float deg) {
     deg = std::fmod(deg, 360.f);
     if (deg > 180.f)  deg -= 360.f;

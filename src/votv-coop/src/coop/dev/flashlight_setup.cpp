@@ -1,6 +1,5 @@
-// coop/dev/flashlight_setup.cpp -- autotest-only flashlight setup helpers.
-// See coop/dev/flashlight_setup.h and
-// research/findings/inventory-items/votv-inventory-equip-battery-RE-2026-05-26.md.
+// coop/dev/flashlight_setup.cpp -- autotest-only flashlight setup helpers. See
+// coop/dev/flashlight_setup.h.
 
 #include "coop/dev/flashlight_setup.h"
 
@@ -21,7 +20,7 @@ namespace R = ue_wrap::reflection;
 
 // Cached reflection state (resolved on first call, then constant).
 struct Cache {
-    ue_wrap::CachedObjRef mainGameInstance;  // UmainGameInstance_C* (islive-zeroav row :39)
+    ue_wrap::CachedObjRef mainGameInstance;  // UmainGameInstance_C*
     int32_t saveGameInstOff = -1;       // mainGameInstance_C::save_gameInst
     void* saveSlotClass = nullptr;
     int32_t batteryOff = -1;            // saveSlot.battery (float)
@@ -140,10 +139,8 @@ bool SetBatteryFull(void* mainPlayer) {
     void* prevBatteryClass = *reinterpret_cast<void**>(
         slotBytes + g_cache.flashlightBatteryOff);
 
-    // 2026-05-26: hands-on observation showed VOTV's battery scale is
-    // 0-100 (percentage), NOT 0-1. Reading a fresh s_may2026 save returns
-    // ~98.68. The earlier 1.0 default was draining the battery to "1%"!
-    // 100.0 = full charge.
+    // VOTV's battery scale is 0-100 (a percentage), NOT 0-1 -- a fresh save reads about 98.7. 100.0
+    // is a full charge; a 1.0 default would set it to 1%.
     *reinterpret_cast<float*>(slotBytes + g_cache.batteryOff) = 100.f;
     *reinterpret_cast<void**>(slotBytes + g_cache.flashlightBatteryOff) = g_cache.battsClass;
 

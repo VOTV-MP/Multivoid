@@ -1,8 +1,7 @@
 // ue_wrap/engine_pawn.cpp -- Pawn / Controller / Camera operations.
 //
-// Extracted from ue_wrap/engine.cpp (2026-05-25 modular refactor).
-// Public API lives in ue_wrap/engine.h; this TU implements the
-// pawn/controller/camera-related functions in `namespace ue_wrap::engine`.
+// Public API lives in ue_wrap/engine.h; this TU implements the pawn/controller/camera-related
+// functions in `namespace ue_wrap::engine`.
 //
 // Covers:
 //   - APawn: GetController, SpawnDefaultController
@@ -56,7 +55,7 @@ void* g_setViewTargetFn = nullptr;
 void* g_camMgrClass = nullptr;
 void* g_getCamLocFn = nullptr;
 void* g_getCamRotFn = nullptr;
-ue_wrap::CachedObjRef g_camMgr;  // cached instance (islive-zeroav row :74); FindObjectByClass walks the array
+ue_wrap::CachedObjRef g_camMgr;  // cached instance; FindObjectByClass walks the array
 
 bool ResolveCamMgrFns() {
     if (!g_camMgrClass) g_camMgrClass = R::FindClass(P::name::PlayerCameraManagerClass);
@@ -86,14 +85,11 @@ void* GetController(void* pawn) {
 
 void SetControlRotation(void* controller, const FRotator& rot) {
     if (!controller) return;
-    // Audit H4 (2026-05-27): call K2_SetControlRotation via reflection
-    // instead of writing the field directly. The UFunction's body runs
-    // ProcessViewRotation + UpdateRotation in addition to the field
-    // assignment; the direct write skipped those. Lazy resolve on first
-    // call (PlayerController is loaded by engine boot, well before any
-    // puppet controller is wired). Falls back to the direct write only
-    // if resolution fails (PlayerController class somehow not loaded --
-    // wouldn't happen in a working build but defensive).
+    // Call K2_SetControlRotation via reflection rather than writing the field: the UFunction's body
+    // runs ProcessViewRotation + UpdateRotation as well as the assignment, which a direct write
+    // skips. Lazy resolve on first call (PlayerController is loaded by engine boot, well before any
+    // puppet controller is wired). Falls back to the direct write only if resolution fails, which a
+    // working build should never reach.
     if (!g_controllerClass) g_controllerClass = R::FindClass(P::name::ControllerClassName);
     if (g_controllerClass && !g_setControlRotFn)
         g_setControlRotFn = R::FindFunction(g_controllerClass, P::name::SetControlRotationFn);
