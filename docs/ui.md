@@ -39,6 +39,13 @@ own save creation) and how the session is reachable, direct or brokered through 
 find it: a password, and whether the lobby is listed (`ui/host_session_settings`). Only then is
 Host offered.
 
+The save list is scanned rather than loaded (`ue_wrap/engine/save_browser`). Driving the game's
+own slot loader would deserialize every world file on the game thread to fill a row that needs
+half a dozen numbers, so the scan lists the directory and reads the game's own defaults on the
+game thread, then tag-walks each file's metadata on a worker and caches it by modification time.
+Which slots are worlds and which are the game's sub-saves is decided by the game's own
+classifier, never by matching slot names.
+
 The top row of the game's own build labels gets one more native label: the mod's game target and
 build, cyan like the button, amber when the master reports a newer release, and silent while the
 master has no released record.

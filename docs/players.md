@@ -73,6 +73,21 @@ a number) and every peer, the named one included, adopts what it is handed
 (`coop/player/nickname_arbiter`). Arbitration keys on the roster's occupied rows, so a
 reconnecting peer is never renamed for colliding with its own not-yet-reaped ghost.
 
+A name may be written in any script. One place owns the encoding (`coop/text/utf8_codec`), and
+two different caps are stated separately: the display policy counts codepoints, the wire and the
+buffers count bytes at four times that, so a name that satisfies the policy fits whatever script
+it is written in. A single byte cap would give Latin twenty characters, Cyrillic ten and CJK six.
+Bytes arriving from another peer are decoded strictly and a malformed field is refused whole
+rather than repaired, because a repair invents a name nobody chose.
+
+Uniqueness is decided on what the name LOOKS like, not on its bytes. A font draws one fallback
+glyph for every character it does not carry, so two names sharing no character at all can appear
+identical; the arbiter folds every character this build cannot draw to a single sentinel before
+comparing, so those names collide and one of them takes the number. The set of drawable
+characters is baked at build time from the fonts that ship with the mod (`coop/text/repertoire`),
+never read from the local machine's atlas, so peers agree about who collided even when one of
+them cannot draw the name.
+
 The nameplate is drawn by the mod's own overlay as a screen-space projection of the puppet's
 head: nickname, ping and a health bar, faded with distance (`coop/player/nameplate`, `ui/hud`).
 A per-player preference hides your own plate from others, and a nickname colour is a per-player
