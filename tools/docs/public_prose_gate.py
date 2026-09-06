@@ -48,6 +48,16 @@ LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
 DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")   # a doc named in a source comment
 LONG_COMMENT_BLOCK = 15
+RAW_OFFSET = re.compile(r"0x[0-9A-Fa-f]{2,4}\b")          # a struct offset pinned in prose
+# The files whose JOB is offsets. Everywhere else a pinned number duplicates them and rots when the
+# game is recooked, silently, because nothing ever compiles against a comment.
+OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
+# A free-function declaration in one of our headers. An identifier appearing at most twice in the
+# whole tree is its own declaration plus its definition: nothing calls it.
+DECL = re.compile(r"^[A-Za-z_][\w:<>,*&\s]*?[\s*&]([A-Za-z_]\w+)\s*\([^;{]*\)\s*(?:const\s*)?;", re.M)
+IDENT = re.compile(r"[A-Za-z_]\w*")
+DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", "reinterpret_cast",
+             "const_cast", "dynamic_cast", "assert", "catch"}
 
 # name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
 LINE_MARKERS = collections.OrderedDict([
@@ -218,10 +228,18 @@ def measure(repo):
     c["src.files_half_comment"] = 0
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     c["src.comment_dead_docpath"] = 0
+    c["src.comment_pinned_offset"] = 0
+    ident_uses = collections.Counter()     # every identifier in the tree, for the dead-decl check
+    declared = {}                          # name -> the header that declares it
     for p in src:
         text = read(repo, p)
         if text is None:
             continue
+        ident_uses.update(IDENT.findall(text))
+        if p.endswith(".h") and "/include/" in p:
+            for name in set(DECL.findall(text)):
+                if name not in DECL_SKIP and len(name) > 3:
+                    declared.setdefault(name, p)
         comments, code, long_blocks = comment_lines(text)
         c["src.comment_lines"] += len(comments)
         code_total += code
@@ -241,6 +259,15 @@ def measure(repo):
             if any(m not in tracked_set for m in DOC_PATH.findall(line)):
                 c["src.comment_dead_docpath"] += 1
                 who["src.comment_dead_docpath"][p] += 1
+            if not any(o in os.path.basename(p) for o in OFFSET_OWNERS) and RAW_OFFSET.search(line):
+                c["src.comment_pinned_offset"] += 1
+                who["src.comment_pinned_offset"][p] += 1
+    # A capability nothing calls is not shipped, and its comment describes code no one runs.
+    c["src.dead_declarations"] = 0
+    for name, header in declared.items():
+        if ident_uses[name] <= 2:          # the declaration and its definition, and nothing else
+            c["src.dead_declarations"] += 1
+            who["src.dead_declarations"][header] += 1
     c["src.comment_permille"] = int(round(1000.0 * c["src.comment_lines"] / max(1, code_total + c["src.comment_lines"])))
     c["src.files"] = len(src)
     # The burn-down. A source file is SWEPT when it contributes zero to every rule counter above;
@@ -283,6 +310,8 @@ FIXED_DESCRIPTIONS = {
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
     "src.files": "tracked sources in the mod's own C++",
     "src.files_not_swept": "sources still carrying at least one counter above",
+    "src.comment_pinned_offset": "comment lines pinning a raw offset outside the files that own them",
+    "src.dead_declarations": "declared functions nothing in the tree calls",
 }
 
 
