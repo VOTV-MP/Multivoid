@@ -1,10 +1,10 @@
-// coop/device_occupancy.cpp -- see coop/device_occupancy.h.
+// coop/interactables/device_occupancy.cpp -- see coop/interactables/device_occupancy.h.
 
 #include "coop/interactables/device_occupancy.h"
 
 #include "coop/comms/peer_action_feed.h"  // the busy-notice chat line (AnnounceDirect)
 #include "coop/interactables/atv_sync.h"  // IsOccupiedByOther -> ATV seating deny gate
-#include "coop/interactables/desk_input_sync.h"  // v116: PingActiveSlot -> the desk FSM-hold
+#include "coop/interactables/desk_input_sync.h"  // PingActiveSlot, the desk FSM-hold
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/players_registry.h"
@@ -38,23 +38,23 @@ using coop::net::StringFromWireKey;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// The busy table: claim key -> holding peer slot. On the HOST this is the
-// authoritative arbitration table; on a CLIENT it is the host-broadcast
-// mirror the deny gate reads. All access is game-thread-serial (pump tick /
-// event_feed drain / PE observers); the mutex is defensive (turbine shape).
+// The busy table: claim key to holding peer slot. On the host this is the authoritative
+// arbitration table; on a client it is the host-broadcast mirror the deny gate reads. All
+// access is game-thread serial (the pump tick, the feed drain, the observers); the mutex is
+// defensive.
 std::mutex g_mutex;
 std::unordered_map<std::wstring, uint8_t> g_busy;
 
-// Local claim edge state (GT-only). g_localWidget is the activeInterface
-// pointer last seen (edge detector); g_localKey the claim key we currently
-// hold/requested (empty = none). g_pendingSend holds a claim that could not
-// ship yet (slot unassigned / send refused) -- retried each Tick; cleared by
-// the falling edge so a stale claim never ships after exit.
+// The local claim edge state (game thread only). The widget is the active interface pointer
+// last seen (the edge detector); the key is the claim we currently hold or requested (empty:
+// none). The pending flag holds a claim that could not ship yet (slot unassigned, send
+// refused), retried each tick and cleared by the falling edge so a stale claim never ships
+// after exit.
 void* g_localWidget = nullptr;
 std::wstring g_localKey;
 bool g_pendingSend = false;
 
-// Deny-gate dispatch state (GT-only; PRE/POST pair within one dispatch).
+// The deny-gate dispatch state (game thread only; a pre and post pair within one dispatch).
 bool g_denyPending = false;
 std::wstring g_denyKey;   // log + the busy-line cooldown key
 uint8_t g_denyHolder = 0xFF;  // holder slot captured in PRE (drives the busy line's nick)
@@ -62,28 +62,27 @@ std::wstring g_denyName;      // the aimed unit's native object name captured in
 std::chrono::steady_clock::time_point g_lastDenySound{};
 constexpr auto kDenyDebounce = std::chrono::milliseconds(300);  // press+release double-fire
 
-// Aim memo (GT-only): the last E-press device classify. The individual UNIT is
-// only knowable at the aim seam (5 of 7 families render ONE shared widget
-// instance, so widget -> owning-unit is architecturally underivable at the
-// force-exit surfaces) -- capture (native name, key) at EVERY device aim,
-// unconditionally, so the rising-edge / lost-race denies can name the unit the
-// player just entered. <5s freshness bounds staleness; miss falls back to the
-// claim-key text (cosmetic only).
+// The aim memo (game thread only): the last use-press device classification. The individual
+// unit is only knowable at the aim seam (several device families render one shared widget
+// instance, so widget to owning unit is underivable at the force-exit surfaces), so capture
+// the native name and key at every device aim, unconditionally, so the rising-edge and
+// lost-race denies can name the unit the player just entered. A freshness bound limits
+// staleness; a miss falls back to the claim-key text (cosmetic only).
 std::wstring g_memoName;
 std::wstring g_memoKey;
 std::chrono::steady_clock::time_point g_memoTime{};
 constexpr auto kMemoFresh = std::chrono::seconds(5);
 
-// Per-key busy-LINE cooldown: an E-masher keeps the 300ms deny CLICK cadence but
-// must not flood the 6-line chat feed (one line per device per ~3s).
+// The per-key busy-line cooldown: a masher keeps the deny click cadence but must not flood
+// the chat feed (one line per device per few seconds).
 std::wstring g_lastLineKey;
 std::chrono::steady_clock::time_point g_lastLineTime{};
 constexpr auto kLineCooldown = std::chrono::seconds(3);
 
-// Push the local-only busy notice: "<HolderNick> is using <deviceName>". Rides
-// peer_action_feed::AnnounceDirect (UNgated by the cosmetic ui.chat.peer_actions
-// toggle: deny feedback is functional UX -- without it the deny is a bare click
-// sound; user 2026-07-18). Empty deviceName falls back to the claim key.
+// Push the local-only busy notice ("<nick> is using <device>"). Rides the feed's direct
+// announce, ungated by the cosmetic peer-actions chat toggle: deny feedback is functional,
+// since without it the deny is a bare click. An empty device name falls back to the claim
+// key.
 void PushBusyLine(const std::wstring& key, const std::wstring& deviceName, uint8_t holder) {
     const auto now = std::chrono::steady_clock::now();
     if (key == g_lastLineKey && now - g_lastLineTime < kLineCooldown) return;
@@ -95,19 +94,15 @@ void PushBusyLine(const std::wstring& key, const std::wstring& deviceName, uint8
 
 bool g_observersInstalled = false;
 
-// v116: the desk FSM-hold (HOST-only author). While a peer's ping FSM runs
-// (desk_input_sync::PingActiveSlot), the desk is functionally that peer's even
-// after it physically dismounts (the FSM keeps consuming the committed dots
-// for tens of seconds) -- so the host keeps a REAL busy-table entry for the
-// pinger. Every existing surface then does the work: BusyByOther's local
-// immediate-deny + ForceExitLocal, the arbitration's held-by deny, OnDishAim's
-// holder gate (a non-holder's aim never ships -> the presser's dots can't be
-// stomped mid-FSM). This replaces the native OnKeyDown coord_isPing swallow
-// that the retired v112 raw flag write used to provide by accident -- the raw
-// write is gone because it WOKE the phantom FSM (the v116 root).
-// g_deskFsmHold marks the entry as FSM-authored: a physical grant of the desk
-// clears it (the entry now belongs to the sitting player); a physical release
-// mid-FSM is re-asserted by the reconciler on the next tick.
+// The desk FSM-hold (host-authored). While a peer's ping state machine runs, the desk is
+// functionally that peer's even after it physically dismounts (the machine keeps consuming
+// the committed dots for tens of seconds), so the host keeps a real busy-table entry for
+// the pinger, and every existing surface then does the work: the local immediate deny and
+// force-exit, the arbitration's held-by deny, the dish aim's holder gate (a non-holder's aim
+// never ships, so the presser's dots cannot be stomped mid-machine). The hold flag marks the
+// entry as machine-authored: a physical grant of the desk clears it (the entry now belongs
+// to the sitting player); a physical release mid-machine is re-asserted by the reconciler
+// on the next tick.
 const wchar_t* const kDeskClaim = L"desk";
 bool g_deskFsmHold = false;
 std::chrono::steady_clock::time_point g_nextFsmHoldPoll{};
@@ -130,8 +125,8 @@ void ReconcileDeskFsmHold(coop::net::Session* s) {
                 g_busy[kDeskClaim] = pinger;
                 inserted = true;
             }
-            // held by someone else: a physical holder won a race window --
-            // leave it (never force-exit a sitting player from here).
+            // Held by someone else: a physical holder won a race window; leave it (never force-exit
+            // a sitting player from here).
         }
         if (inserted) {
             g_deskFsmHold = true;
@@ -140,9 +135,9 @@ void ReconcileDeskFsmHold(coop::net::Session* s) {
                     static_cast<unsigned>(pinger));
         }
     } else if (g_deskFsmHold) {
-        // The ping ended (or its setter left) while OUR fsm entry stands:
-        // release it. A physical grant in between cleared g_deskFsmHold, so a
-        // sitting player's claim is never torn down here.
+        // The ping ended (or its setter left) while our machine entry stands: release it. A
+        // physical grant in between cleared the hold flag, so a sitting player's claim is never
+        // torn down here.
         uint8_t held = 0xFF;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
@@ -182,10 +177,9 @@ void SendClaim(coop::net::Session* s, const std::wstring& key, uint8_t slot, boo
     }
 }
 
-// Force the LOCAL player out of its current interface + deny click. Clears
-// the local claim state FIRST so the resulting activeInterface falling edge
-// (next Tick) sees an empty key and does NOT send a release for a claim we
-// never owned.
+// Force the local player out of its current interface, with the deny click. Clears the local
+// claim state first so the resulting falling edge (next tick) sees an empty key and does not
+// send a release for a claim we never owned.
 void ForceExitLocal(void* local, const std::wstring& key, uint8_t holder) {
     g_localKey.clear();
     g_pendingSend = false;
@@ -198,33 +192,31 @@ void ForceExitLocal(void* local, const std::wstring& key, uint8_t holder) {
                 key.c_str(), static_cast<unsigned>(holder));
     }
     coop::prop_sound::PlayDenyClick(local);
-    // Busy notice for BOTH force-exit surfaces (rising-edge immediate deny +
-    // lost-race verdict). The unit name comes from the aim memo -- the loser's
-    // own E-press wrote it moments ago (sub-100ms race); a miss degrades to the
-    // claim-key text.
+    // The busy notice for both force-exit surfaces (the rising-edge immediate deny and the
+    // lost-race verdict). The unit name comes from the aim memo: the loser's own press wrote it
+    // moments ago; a miss degrades to the claim-key text.
     const bool fresh = !g_memoKey.empty() && g_memoKey == key &&
                        (std::chrono::steady_clock::now() - g_memoTime) < kMemoFresh;
     PushBusyLine(key, fresh ? g_memoName : std::wstring(), holder);
 }
 
-// ---- the InpActEvt_use deny gate (PRE clears the aim, POST restores) -------
-// Both roles: ANY peer aiming E at a device the wire says another peer holds
-// gets the native chain no-opped + the deny click. Door-precedent discipline:
-// leak-restore first in PRE (a SEH-faulted dispatch skips POST), restore
-// FIRST on every POST path.
+// The use-input deny gate (pre clears the aim, post restores). Both roles: any peer aiming
+// the use key at a device the wire says another peer holds gets the native chain no-opped
+// and the deny click. The door's discipline: leak-restore first in pre (a faulted dispatch
+// skips post), restore first on every post path.
 
 void OnUseInputPre(void* self, void*, void*) {
-    if (DS::HasClearedAim()) DS::RestoreAim();  // leak-heal (door audit IMP-3)
+    if (DS::HasClearedAim()) DS::RestoreAim();  // leak-heal
     if (!self) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
-    // Only the LOCAL player processes input (puppets are unpossessed), so
-    // `self` is the local mainPlayer_C by construction.
+    // Only the local player processes input (puppets are unpossessed), so `self` is the local
+    // pawn by construction.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!aimed) return;
 
-    // ATV occupancy gate: if another peer is already seated on this ATV, deny seating.
+    // The ATV occupancy gate: if another peer is already seated on this ATV, deny seating.
     if (ue_wrap::atv::EnsureResolved() && ue_wrap::atv::IsAtv(aimed)) {
         uint8_t holder = 0xFF;
         if (coop::atv_sync::IsOccupiedByOther(aimed, &holder)) {
@@ -244,9 +236,9 @@ void OnUseInputPre(void* self, void*, void*) {
     if (!DS::EnsureResolved()) return;
     const std::wstring key = DS::ClassifyDeviceActorClaimKey(aimed);
     if (key.empty()) return;  // not aiming at an enterable device
-    // Aim memo -- written UNCONDITIONALLY (before the busy check): the canonical
-    // rising-edge / lost-race denies see the table FREE at this press, so a
-    // deny-gated write would leave exactly those surfaces nameless.
+    // The aim memo is written unconditionally, before the busy check: the rising-edge and
+    // lost-race denies see the table free at this press, so a deny-gated write would leave
+    // exactly those surfaces nameless.
     g_memoName = R::ToString(R::NameOf(aimed));
     g_memoKey = key;
     g_memoTime = std::chrono::steady_clock::now();
@@ -261,7 +253,7 @@ void OnUseInputPre(void* self, void*, void*) {
 }
 
 void OnUseInputPost(void* self, void*, void*) {
-    // Restore FIRST -- every exit path must leave the aim fields intact.
+    // Restore first: every exit path must leave the aim fields intact.
     if (DS::HasClearedAim()) DS::RestoreAim();
     if (!g_denyPending) return;
     g_denyPending = false;
@@ -307,18 +299,17 @@ void Install(coop::net::Session* session) {
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    // v116: the desk FSM-hold reconciler runs regardless of the widget layer
-    // (a REMOTE ping needs no local screen resolved).
+    // The desk FSM-hold reconciler runs regardless of the widget layer (a remote ping needs no
+    // local screen resolved).
     ReconcileDeskFsmHold(s);
     if (!DS::EnsureResolved()) return;
     void* local = coop::players::Registry::Get().Local();
     if (!local) {
-        // World down (level transition / flee). If we held a claim, release it
-        // -- the screen is gone with the world. The HOST's table erase is
-        // UNCONDITIONAL (audit CRIT-1: gating it on connected() let a solo
-        // host strand its own claim across a world transition -- the stale
-        // entry then shipped in the connect snapshot and denied every later
-        // joiner until session end); only the SEND needs a connection.
+        // World down (a level transition or a flee). If we held a claim, release it: the screen is
+        // gone with the world. The host's table erase is unconditional (gating it on the connection
+        // let a solo host strand its own claim across a world transition; the stale entry then
+        // shipped in the connect snapshot and denied every later joiner until session end); only
+        // the send needs a connection.
         if (!g_localKey.empty()) {
             if (s->role() == coop::net::Role::Host) {
                 std::lock_guard<std::mutex> lk(g_mutex);
@@ -334,9 +325,9 @@ void Tick() {
 
     const uint8_t mySlot = LocalSlot();
 
-    // Pending claim retry: the rising edge fired before the slot was assigned
-    // or before the channel accepted the send (menu-window client). The
-    // falling edge clears this, so a retry can never ship a stale claim.
+    // The pending claim retry: the rising edge fired before the slot was assigned or before the
+    // channel accepted the send (a menu-window client). The falling edge clears this, so a retry
+    // can never ship a stale claim.
     if (g_pendingSend && !g_localKey.empty() && mySlot != 0xFF && s->connected()) {
         SendClaim(s, g_localKey, mySlot, true);
         g_pendingSend = false;
@@ -347,7 +338,7 @@ void Tick() {
     void* w = DS::ReadActiveInterface(local);
     if (w == g_localWidget) return;  // no edge -- the per-tick steady state
 
-    // FALLING edge (or direct widget switch): release what we held.
+    // The falling edge (or a direct widget switch): release what we held.
     if (!g_localKey.empty()) {
         UE_LOGI("device_occupancy: local EXIT '%ls' -- releasing", g_localKey.c_str());
         if (s->role() == coop::net::Role::Host) {
@@ -363,13 +354,13 @@ void Tick() {
         g_pendingSend = false;
     }
 
-    // RISING edge: classify + claim.
+    // The rising edge: classify and claim.
     if (w) {
         const std::wstring key = DS::ClassifyWidgetClaimKey(w);
         if (!key.empty()) {
             uint8_t holder = 0xFF;
             if (BusyByOther(key, mySlot, &holder)) {
-                // Known-busy locally: lose immediately, no round-trip.
+                // Known busy locally: lose immediately, no round-trip.
                 UE_LOGI("device_occupancy: entered '%ls' but slot %u holds it -- immediate deny",
                         key.c_str(), static_cast<unsigned>(holder));
                 ForceExitLocal(local, key, holder);
@@ -378,10 +369,9 @@ void Tick() {
             }
             g_localKey = key;
             if (s->role() == coop::net::Role::Host) {
-                // Host arbitrates its own claim directly. (v116: a physical
-                // self-grant of the desk supersedes an FSM-hold entry -- only
-                // reachable when the host itself is the pinger, else
-                // BusyByOther already denied above.)
+                // The host arbitrates its own claim directly. A physical self-grant of the desk
+                // supersedes an FSM-hold entry, reachable only when the host itself is the pinger
+                // (otherwise the busy check above already denied).
                 if (key == kDeskClaim) g_deskFsmHold = false;
                 {
                     std::lock_guard<std::mutex> lk(g_mutex);
@@ -409,8 +399,8 @@ void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot) {
     if (p.busy != 0 && p.busy != 1) return;
 
     if (s->role() == coop::net::Role::Host) {
-        // Arbitration. Trust the TRANSPORT sender slot, not the payload slot
-        // (a client cannot claim on another's behalf).
+        // Arbitration. Trust the transport sender slot, not the payload slot (a client cannot claim
+        // on another's behalf).
         if (senderSlot < 1 || senderSlot >= coop::net::kMaxPeers) {
             UE_LOGW("device_occupancy: claim from invalid senderSlot=%u -- dropping",
                     static_cast<unsigned>(senderSlot));
@@ -426,15 +416,15 @@ void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot) {
                 if (free || cur == senderSlot) g_busy[key] = senderSlot;
             }
             if (free || cur == senderSlot) {
-                // v116: a physical grant of the desk supersedes an FSM-hold
-                // entry (the pinger sat back down) -- the entry is theirs now.
+                // A physical grant of the desk supersedes an FSM-hold entry (the pinger sat back
+                // down): the entry is theirs now.
                 if (g_deskFsmHold && key == kDeskClaim) g_deskFsmHold = false;
                 UE_LOGI("device_occupancy: HOST grants '%ls' to slot %u",
                         key.c_str(), static_cast<unsigned>(senderSlot));
                 SendClaim(s, key, senderSlot, true);  // broadcast the verdict (acks the winner)
             } else {
-                // Held by someone else: point-to-point loss notice to the
-                // requester only (the table is unchanged for everyone else).
+                // Held by someone else: a point-to-point loss notice to the requester only (the
+                // table is unchanged for everyone else).
                 UE_LOGI("device_occupancy: HOST denies '%ls' to slot %u (held by %u)",
                         key.c_str(), static_cast<unsigned>(senderSlot),
                         static_cast<unsigned>(cur));
@@ -464,8 +454,8 @@ void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot) {
         return;
     }
 
-    // CLIENT: mirror the host's verdicts. Trust-gate to the host (slot 0) --
-    // claims are never client-relayed, so any other sender is bogus.
+    // The client mirrors the host's verdicts. Trust-gated to the host (slot 0): claims are never
+    // client-relayed, so any other sender is bogus.
     if (senderSlot != 0) {
         UE_LOGW("device_occupancy: DeviceClaim from non-host senderSlot=%u -- dropping",
                 static_cast<unsigned>(senderSlot));
@@ -477,8 +467,8 @@ void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot) {
             std::lock_guard<std::mutex> lk(g_mutex);
             g_busy[key] = p.slot;
         }
-        // Lost the race? We are inside that device but the verdict names
-        // another slot -> the game's own forced-exit + the deny click.
+        // Lost the race: we are inside that device but the verdict names another slot, so the
+        // game's own forced exit and the deny click.
         if (p.slot != mySlot && g_localKey == key) {
             void* local = coop::players::Registry::Get().Local();
             if (local) {
@@ -566,8 +556,8 @@ void OnDisconnect() {
     g_memoTime = {};
     g_lastLineKey.clear();
     g_lastLineTime = {};
-    g_deskFsmHold = false;   // v116
-    g_nextFsmHoldPoll = {};  // v116
+    g_deskFsmHold = false;
+    g_nextFsmHoldPoll = {};
 }
 
 }  // namespace coop::device_occupancy
