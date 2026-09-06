@@ -930,6 +930,11 @@ void OnDisconnect() {
         // The denominator dies with the buffer: a stale total left by a disconnect is a wrong
         // number for the first path that reads the progress before arming.
         g_cliTotal = 0;
+        // The rest of the Begin's scalars go with it, so no field of a finished transfer outlives
+        // its session; ClientArm re-zeroes the same set on the next join.
+        g_cliChunkCount = 0;
+        g_cliCrc = 0;
+        g_cliGameMode = 0;
         g_cliBuf.clear();
         g_cliBuf.shrink_to_fit();
     }

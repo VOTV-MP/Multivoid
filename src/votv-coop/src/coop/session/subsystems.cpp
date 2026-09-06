@@ -344,8 +344,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // Per-slot cleanup: only subsystems with per-slot state are called here; the global-state ones
     // are handled by DisconnectAll.
     coop::trash_proxy::OnDisconnectForSlot(slot);  // phase 1: retire the leaver's trash proxies BEFORE the generic mirror drain (else the rooted AStaticMeshActor leaks)
-    coop::trash_channel::OnGrabHolderLeft(slot);  // free any pile the leaver held via a client grab
-    coop::puppet_carry_drive::OnPeerLeft(slot);  // drop the leaver's puppet-held clump drive
+    coop::trash_channel::OnGrabHolderLeft(static_cast<uint8_t>(slot));  // free any pile the leaver held via a client grab
+    coop::puppet_carry_drive::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's puppet-held clump drive
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -450,6 +450,12 @@ DisconnectStats DisconnectAll() {
     coop::puppet_carry_drive::OnDisconnect();  // drop all puppet-held clump drives
     coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
+    // Last, after every element drain: the client's transfer state, its received identity map and
+    // the ephemeral zcoop_<pid> slot the join wrote. The map's binds resolve against Elements, so
+    // it must outlive their drain; the slot file is read once at the join and never again, and a
+    // leftover one only waits for the boot sweep's one-hour cutoff. On a host this finds an empty
+    // buffer, an unarmed map and no such file, and clears its own per-slot streams.
+    coop::save_transfer::OnDisconnect();
     // Every pin on a world-scoped object is session-scoped, so after a full teardown the
     // world-scoped pin count must be zero. A non-zero answer names the module still anchoring the
     // departing world's Outer chain, the condition that makes the next map load in this process
