@@ -24,23 +24,20 @@ namespace fs = std::filesystem;
 std::vector<SkinEntry> g_entries;
 bool g_scanned = false;
 
-// Builtin skins (v94, census-verified 2026-07-02): the game's own anthro-kerfur
-// bodies, loaded by asset path (no pak; materials ship WITH the mesh --
-// client_model applies no 'tex' MID override for builtins).
+// Builtin skins: the game's own anthro-kerfur bodies, loaded by asset path. No pak, and
+// materials ship WITH the mesh, so client_model applies no 'tex' MID override for them.
 //
-// Every entry passed the 4-check census (tools/client_model/builtin_skin_census.py):
-// (1) Skeleton import == kerfurOmegaV1_Skeleton (the player-body rig), (2) refskel
-// bone 0 == rootKerfur, (3) EVERY refskel bone exists in the skeleton asset,
-// (4) exactly one SkeletalMesh export named == stem (the LoadObject path).
-// Sharing the Skeleton asset is NOT enough: sk/assbreather points at the same
-// skeleton but its root bone is 'rootKerfur_010' (author-side Blender duplicate,
-// absent from the skeleton) -- applying it poisons the player AnimInstance and
-// locomotion never recovers across later mesh swaps (user-hit 2026-07-02). The
-// game itself never loads that asset; its antibreather kerfur wears
-// kerfurOmega_antibreatherSkin, which IS in this list. Re-run the census at every
-// game-version re-target before trusting this table.
-// kerfurOmega_KelSkin itself is intentionally absent: that asset is the kel look
-// dr_kel already provides via the pristine native mesh.
+// Every entry passed the four-check census (tools/client_model/builtin_skin_census.py): the
+// Skeleton import is kerfurOmegaV1_Skeleton (the player-body rig), refskel bone 0 is
+// rootKerfur, every refskel bone exists in the skeleton asset, and exactly one SkeletalMesh
+// export is named for the stem (the LoadObject path). Sharing the Skeleton asset is not
+// enough -- sk/assbreather points at the same skeleton but its root bone is
+// 'rootKerfur_010', a Blender-side duplicate absent from the skeleton, and applying it
+// poisons the player AnimInstance so locomotion never recovers across later mesh swaps. The
+// game never loads that asset; its antibreather kerfur wears kerfurOmega_antibreatherSkin,
+// which is in this list. Re-run the census at every game-version re-target before trusting
+// this table. kerfurOmega_KelSkin is deliberately absent: dr_kel already provides that look
+// through the pristine native mesh.
 struct BuiltinSkin { const char* name; const wchar_t* path; };
 constexpr BuiltinSkin kBuiltinSkins[] = {
     { "kerfur_omega",          L"/Game/meshes/kerfurAnthro/sk/kerfurOmegaV1.kerfurOmegaV1" },
@@ -70,10 +67,9 @@ constexpr BuiltinSkin kBuiltinSkins[] = {
     { "kerfur_furfur",         L"/Game/meshes/wendussy/kerfurOmega_furfurSkin.kerfurOmega_furfurSkin" },
 };
 
-// Bundle paks: one .pak carrying several skins (2026-08-29, user decision --
-// the four starter scientists ship as ONE scientists.pak). UE mounts every pak
-// under LogicMods and assets resolve by their internal package paths, so the
-// only thing the registry needs from a bundle is WHICH skin names its presence
+// Bundle paks: one .pak carrying several skins -- the four starter scientists ship as one
+// scientists.pak. UE mounts every pak under LogicMods and assets resolve by their internal
+// package paths, so all the registry needs from a bundle is which skin names its presence
 // vouches for. The bundle stem itself is never offered as a skin.
 struct SkinBundle { const char* pakStem; const char* members[8]; };
 constexpr SkinBundle kSkinBundles[] = {
@@ -87,8 +83,6 @@ const SkinBundle* BundleForStem(const std::string& stem) {
     return nullptr;
 }
 
-// Is `skin` available via a pak in `dirW` -- either its own <skin>.pak or a
-// bundle pak that lists it as a member?
 bool DirProvidesSkin(const std::wstring& dirW, const char* skin) {
     std::error_code ec;
     fs::path own = fs::path(dirW) / skin;
@@ -126,13 +120,10 @@ const wchar_t* BuiltinSkinPath(const std::string& name) {
 std::vector<std::wstring> PakDirs();  // defined below (the LogicMods subdir scan)
 
 std::string PickRandomStarterSkin() {
-    // v95 (user 2026-07-02): the curated "coolest" converter skins a NEW peer starts
-    // with. Names are pak stems; a name only qualifies when its pak is present here,
-    // so a fresh install without the bundle still boots with a loadable body.
-    // 2026-08-29 (USER): the starter set is EXACTLY these four scientists --
-    // "Эти 4 модели становятся дефолтом нашего мода и назначаются случайно
-    // новому юзеру именно что-то из них четырех." (twhl_scientist2/3 dropped
-    // from the roll; they remain installable skins like any other pak.)
+    // The curated starter set a NEW peer rolls from: exactly these four scientists, picked at
+    // random. Names are pak stems, and a name qualifies only when its pak is present, so a fresh
+    // install without the bundle still boots with a loadable body. The other scientist skins are
+    // installable like any other pak; they are simply not in the roll.
     static constexpr const char* kStarterSkins[] = {
         "walter_v1sc", "sci_v1sc", "rvi_scientist_v1sc", "luther_v1sc",
     };
@@ -144,10 +135,9 @@ std::string PickRandomStarterSkin() {
         }
     }
     if (present.empty()) {
-        // THE STOCK BODY, because this branch means NO starter pak is installed -- and
-        // The retired `kDefaultSkinName` was itself a pak skin, so naming it here handed a
-        // fresh identity a skin that by construction could not resolve either. `dr_kel`
-        // needs no pak.
+        // The stock body, because reaching here means no starter pak is installed. The retired
+        // kDefaultSkinName was itself a pak skin, so naming it here handed a fresh identity a skin
+        // that by construction could not resolve either. dr_kel needs no pak.
         UE_LOGI("skin_registry: no starter-list pak present -- new identity falls back to "
                 "the stock body '%s'", kNativeSkinName);
         return kNativeSkinName;
@@ -160,22 +150,18 @@ std::string PickRandomStarterSkin() {
 }
 
 std::vector<std::wstring> PakDirs() {
-    // ExeDir = <game>/VotV/Binaries/Win64. Model paks auto-mount from ANY
-    // subdirectory of <game>/VotV/Content/Paks/LogicMods (UE4 mounts the whole
-    // tree at startup). 2026-08-29 (THUNDERSTORE.md blocker row 5): the scan
-    // covers EVERY LogicMods SUBDIRECTORY, not just multivoid/ -- r2modman's
-    // shimloader VFS-maps each package's pak dir to LogicMods\<Author>-<Name>\,
-    // so a managed install lands the skin paks in a subdir we do not name.
-    // The TOP LEVEL of LogicMods is deliberately excluded: that is where
-    // foreign UE4SS BP mods live (DebugMod.pak), and listing those as skins
-    // would offer unloadable garbage. multivoid/ sorts first (the manual-lane
-    // convention + dev deploys) so its entries win the dedupe.
+    // ExeDir is <game>/VotV/Binaries/Win64. Model paks auto-mount from ANY subdirectory of
+    // <game>/VotV/Content/Paks/LogicMods, since UE mounts the whole tree at startup, so the scan
+    // covers every LogicMods SUBDIRECTORY rather than multivoid/ alone: r2modman's shimloader
+    // VFS-maps each package's pak dir to LogicMods\<Author>-<Name>\, landing skin paks in a
+    // subdir we cannot name in advance. The TOP LEVEL is deliberately excluded -- foreign UE4SS
+    // blueprint mods live there (DebugMod.pak), and listing those would offer unloadable
+    // garbage. multivoid/ sorts first, by the manual-lane convention and dev deploys, so its
+    // entries win the dedupe.
     //
-    // `harness/mod_environment.cpp` reads this SAME directory for the opposite
-    // question ("what is here that is NOT ours") and got it wrong on 2026-08-29 by
-    // assuming the top level was the only place foreign paks sit -- true by hand,
-    // false under shimloader. Keep the two in agreement: foreign BP paks live at
-    // the top level on the manual lane AND one level down on the managed one.
+    // harness/mod_environment.cpp reads this SAME directory for the opposite question, "what is
+    // here that is NOT ours". Keep the two in agreement: foreign blueprint paks sit at the top
+    // level on the manual lane and one level down on the managed one.
     const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
     std::error_code ec;
@@ -324,10 +310,9 @@ void ResolvePending(int budget) {
             g_pendingNames.pop_back();
             epoch = g_scanEpoch;
         }
-        // THE STOCK BODY AND THE BUILTINS ARE USABLE BY CONSTRUCTION -- they ship with the
-        // game. Answering them without a load is not an optimisation: charging them budget
-        // would force ~25 synchronous cooked-package loads through the game thread the first
-        // time the panel is opened, and again on every Refresh.
+        // The stock body, because reaching here means no starter pak is installed. The retired
+        // kDefaultSkinName was itself a pak skin, so naming it here handed a fresh identity a skin
+        // that by construction could not resolve either. dr_kel needs no pak.
         if (name.empty() || name == kNativeSkinName || BuiltinSkinPath(name)) {
             std::lock_guard<std::mutex> lk(g_usableMu);
             if (epoch == g_scanEpoch) g_verdicts[std::move(name)] = Usable::Yes;

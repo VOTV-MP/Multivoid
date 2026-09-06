@@ -1,25 +1,18 @@
-// ue_wrap/engine_playerragdoll.cpp -- AplayerRagdoll_C engine substrate (Principle 7).
+// ue_wrap/engine_playerragdoll.cpp -- AplayerRagdoll_C engine substrate (principle 7).
 //
-// VOTV's `playerRagdoll_C` is the "plushie" ragdoll body that ragdollMode spawns
-// when a player faints/ragdolls -- the visible flopping kel body (its SkeletalMesh
-// @0x230 self-configures to `kel_lmao` / `inst_kel_body`, natively rigged to the
-// full 6-bone chain lowlegs-thighs-pelvis-chest-head-head_end). We spawn it
-// OURSELVES on a puppet (coop/remote_player) as the VISIBLE flop display (the
-// 2026-07-03 visible-plushy rework -- the caller hides the puppet's kel meshes for
-// the flop), WITHOUT calling ragdollMode -- which is GLOBALLY scoped and KILLS the
-// host (death event regardless of params; 2026-06-01 RE, [[project-ragdoll-sync]]).
+// VOTV's `playerRagdoll_C` is the plushie ragdoll body ragdollMode spawns when a player faints: the
+// visible flopping kel body, whose SkeletalMesh self-configures to `kel_lmao` / `inst_kel_body` and
+// is natively rigged to the six-bone chain lowlegs-thighs-pelvis-chest-head-head_end. We spawn it
+// OURSELVES on a puppet (coop/remote_player) as the visible flop display, and the caller hides the
+// puppet's own kel meshes for it. We never call ragdollMode: it is globally scoped and kills the
+// host, firing the death event whatever its params say.
 //
-// Proven recipe (harness/autotest_ragdoll_spawn_probe.cpp SP-solo probe, commit
-// 01aad35):
-//   BeginDeferredSpawn(playerRagdoll_C) -> write Player @0x248 (Expose-On-Spawn,
-//   BEFORE Finish so ReceiveBeginPlay self-configures the visible kel mesh) ->
-//   FinishDeferredSpawn -> StartBodySim (collision + SetAllBodiesSimulatePhysics +
-//   SetSimulatePhysics; BeginPlay builds the bodies but leaves them FROZEN, so the
-//   caller must start the sim -- ragdollMode does exactly this after its spawn).
-// The spawn is DEATH-FREE: it never touches the owner's dead/isRagdoll fields.
-//
-// No network / gameplay state here (P7): coop/remote_player owns the lifecycle
-// (spawn on the ragdoll wire-bit edge, track, DestroyActor on recover).
+// The recipe, from an SP-solo probe (harness/autotest_ragdoll_spawn_probe.cpp):
+// BeginDeferredSpawn(playerRagdoll_C); write Player, an Expose-On-Spawn field that must land
+// BEFORE Finish for ReceiveBeginPlay to self-configure the visible kel mesh; FinishDeferredSpawn;
+// then StartBodySim for collision and the two simulate-physics calls, since BeginPlay builds the
+// rigid bodies and leaves them FROZEN, as ragdollMode also does. The spawn is DEATH-FREE: it
+// never touches the owner's dead or isRagdoll fields. coop/remote_player owns the lifecycle.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -37,11 +30,10 @@ namespace {
 
 namespace R = reflection;
 
-// CXX SDK (Game_0.9.0n): AplayerRagdoll_C::Player @0x0248 (AmainPlayer_C*);
-// Aragdoll_C::SkeletalMesh @0x0230 (USkeletalMeshComponent*, the body mesh).
-// AmainPlayer_C::ragdollActor @0x0C40 (AplayerRagdoll_C*, the NATIVE ragdoll the
-// C-key/faint spawns -- the v22 sender reads its pelvis physics). Offset cited to
-// the CXX dump + autotest_ragdoll_spawn_probe.cpp (which read the same field).
+// The three fields this file reads raw, from the CXX dump and confirmed by
+// autotest_ragdoll_spawn_probe.cpp: AplayerRagdoll_C::Player (AmainPlayer_C*),
+// Aragdoll_C::SkeletalMesh (the body mesh), and AmainPlayer_C::ragdollActor -- the NATIVE ragdoll
+// the C key or a faint spawns, whose pelvis physics the sender samples.
 constexpr size_t kPlayerRagdoll_Player  = 0x0248;
 constexpr size_t kAragdoll_SkeletalMesh = 0x0230;
 constexpr size_t kMainPlayer_ragdollActor = 0x0C40;
@@ -54,14 +46,14 @@ ue_wrap::CachedObjRef g_ragdollClass;  // islive-zeroav row :71
 void* g_setAllBodiesSimFn = nullptr;
 void* g_setSimPhysFn      = nullptr;
 void* g_setCollisionFn    = nullptr;
-// Pelvis reads: the SENDER samples its native ragdoll's pelvis loc/rot/velocity for
-// the v22 wire (ReadLocalRagdollPelvisPhysics). The "pelvis" FName is stable across
-// all ragdoll bodies (one GNames entry), so cache the 8 bytes once + the fns.
+// Pelvis reads: the sender samples its native ragdoll's pelvis location, rotation and velocity for
+// the wire (ReadLocalRagdollPelvisPhysics). The "pelvis" FName is one GNames entry, stable across
+// every ragdoll body, so the eight bytes are cached once alongside the functions.
 void* g_getSocketRotFn   = nullptr;
 uint8_t g_pelvisFName[8] = {};
 bool g_havePelvisFName   = false;
-// v22 ragdoll physics sync caches (resolve once; SceneComponent::GetSocketLocation +
-// the 4 UPrimitiveComponent velocity ops -- the same pair the prop pipeline uses).
+// The physics-sync caches, resolved once: SceneComponent::GetSocketLocation plus the four
+// UPrimitiveComponent velocity operations.
 void* g_getSocketLocFn = nullptr;
 void* g_getLinVelFn    = nullptr;  // UPrimitiveComponent::GetPhysicsLinearVelocity
 void* g_getAngVelFn    = nullptr;  // ::GetPhysicsAngularVelocityInDegrees
@@ -187,15 +179,11 @@ void* SpawnPlayerRagdollBody(void* ownerPlayer, const FVector& location, const F
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kPlayerRagdoll_Player) = ownerPlayer;
     FinishDeferredSpawn(body, location, rotation);
     if (!R::IsLive(body)) { UE_LOGW("ragdoll_body: body died during FinishDeferredSpawn"); return nullptr; }
-    // BeginPlay built the rigid bodies but left them frozen -- start the sim so it
-    // actually flops (proven necessary by the probe). The body's own mesh stays
-    // VISIBLE: it IS the display (2026-07-03 visible-plushy rework) -- the game's own
-    // plushie ragdoll, its full 6-bone chain natively rigged to the physics, exactly
-    // what SP shows in mirrors. (History: v22 hid it and tumbled the pelvis-attached
-    // kel instead -- a rigid one-piece look; a master-pose probe then coupled the kel
-    // meshes but only 4/6 bones mapped (the skin skeleton lacks thighs/lowlegs) and
-    // the user refuted it by eye. The caller hides the puppet's kel meshes for the
-    // flop instead -- no double-image, no skeleton mapping at all.)
+    // BeginPlay built the rigid bodies but left them frozen -- start the sim so it actually flops
+    // (the probe proved this necessary). The body's own mesh stays VISIBLE: it IS the display, the
+    // game's own plushie ragdoll with its six-bone chain natively rigged to the physics, exactly
+    // what single-player shows in mirrors. The caller hides the puppet's kel meshes for the flop
+    // instead of coupling them, so there is no double image and no skeleton mapping at all.
     void* comp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(body) + kAragdoll_SkeletalMesh);
     if (comp && R::IsLive(comp)) StartBodySim(comp);
     UE_LOGI("ragdoll_body: spawned VISIBLE playerRagdoll_C flop body @%p (owner=%p) at (%.0f,%.0f,%.0f), sim started",

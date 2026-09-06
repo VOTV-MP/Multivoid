@@ -330,10 +330,9 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     if (!edge || !face) return nullptr;
     // The frame is the game's own: image_border's brush is the material inst_uiBorder as a 9-slice
     // box, which is why the native frame has a different pair of greys on each edge (a bevel lit
-    // top-left) and a single-colour rectangle read as foreign in any grey. The brush is 0x88 bytes
-    // and its FSlateResourceHandle at +0x70 is unreflected (a TSharedPtr a raw copy would alias
-    // with no AddRef), so it goes through CloneStyle, which zeroes the handle and lets Slate
-    // rebuild it.
+    // top-left) and a single-colour rectangle read as foreign in any grey. The brush's
+    // FSlateResourceHandle is unreflected -- a TSharedPtr a raw copy would alias with no AddRef --
+    // so it goes through CloneStyle, which zeroes the handle and lets Slate rebuild it.
     bool framed = false;
     if (g_borderDonor) {
         static constexpr size_t kOneBrush[1] = {0};

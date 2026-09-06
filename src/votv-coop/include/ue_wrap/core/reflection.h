@@ -99,9 +99,8 @@ int32_t InternalFlagsOf(void* obj);
 // callers.
 // Mark a UObject as part of the root set so the GC never collects it. A C++ static void* is
 // not a reachable reference for the GC scan, so an unrooted runtime-constructed object is
-// reaped on the next pass and the cached pointer dangles. Sets EInternalObjectFlags::RootSet
-// (0x40000000) on FUObjectItem.Flags at +0x08. False if obj is null or its index is out of
-// range.
+// reaped on the next pass and the cached pointer dangles. Sets EInternalObjectFlags::RootSet on
+// the object's FUObjectItem flags word. False if obj is null or its index is out of range.
 bool AddToRoot(void* obj);
 
 // Clear the RootSet flag, making `obj` GC-eligible again; a destroyed-but-still-rooted object
@@ -111,10 +110,10 @@ bool AddToRoot(void* obj);
 // is the only caller. False if obj is null, its slot was recycled, or the index is out of range.
 bool RemoveFromRoot(void* obj);
 
-// UObjectBase accessors (the standard UE4.27 layout).
-const FName& NameOf(void* uobject);   // NamePrivate  @ +0x18
-void*        ClassOf(void* uobject);  // ClassPrivate @ +0x10
-void*        OuterOf(void* uobject);  // OuterPrivate @ +0x20
+// UObjectBase accessors, reading the standard UE4.27 fields by the offsets sdk_profile.h names.
+const FName& NameOf(void* uobject);   // NamePrivate
+void*        ClassOf(void* uobject);  // ClassPrivate
+void*        OuterOf(void* uobject);  // OuterPrivate
 
 // Lookups over GUObjectArray: linear walks, for one-time setup. All match on the object's
 // NamePrivate (the leaf name, not a path).

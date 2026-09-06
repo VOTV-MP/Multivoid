@@ -124,6 +124,18 @@ are put back in the client's cart, because the game's own affordability gate run
 is cleared while the refusal arrives after. This is the reference intent lane: the intent used to
 carry a client-chosen price, and every client shopped free.
 
+The intent names a shop ROW, not an object class, because a class cannot name an item: the game's
+473 shop rows map onto 368 distinct classes, and `prop_C` alone is shared by 50 of them, so 112
+rows have no unique class. The row name is the shop's real identity, and the game stamps it into
+each generated store entry, so a forwarded order already carries it.
+
+The host's price comes from the game's own `list_store` table, read two independent ways -- a walk
+over the row map, and a fully reflected column read that needs no layout knowledge. They are
+compared, and a single disagreement invalidates the whole catalog: the host then refuses client
+orders outright rather than charge a number it cannot vouch for. Setting
+`VOTVCOOP_STORE_CATALOG_BREAK=1` makes the walk read the wrong field on purpose, so that refusal
+can be seen firing before it is trusted (`ue_wrap/world/store_catalog`).
+
 ### The coin gun
 
 Shooting a prop with the coin gun sells it: the game destroys the prop and mints coins whose

@@ -1,53 +1,17 @@
 // harness/autotest_hud_tint.cpp -- SP-solo HUD RED-TINT discriminator.
 //
-// WHY THIS EXISTS. The user has reported a red wash over the screen across several
-// sessions ("красная пелена", "a red filled hud - the damage screen effect"). Two
-// hours of targeted probes each measured their own target clean while the user still
-// saw red -- the exact shape of [[lesson-a-symptom-needs-a-baseline-before-it-needs-a-
-// hypothesis]]. docs/DEATH_ARC.md 11.3a then recorded a live read that EXCLUDES the
-// obvious suspects from the pre-hit frame: `health=100.00`, `dead=0`, quadrants
-// `0.00`, bloodLoss actors `0` -- and the frame was STILL red, on a New Game, on both
-// RHIs, with fade/fog/blendables/grading all read clean. That red is still unexplained.
+// A red wash over the screen survives a frame whose health is 100, dead 0, quadrants 0, with no
+// bloodLoss actors and fade, fog, blendables and grading all clean. The remaining candidate is
+// `ui_damageIndicator_C`, a child of `ui_UI_C` that every viewport-widget census missed: its
+// `dmg_tunnel` draws a translucent full-screen material every frame, and a cooked material's
+// graph is stripped, so whether it is really transparent at alpha 0 cannot be read statically.
 //
-// The 2026-08-31 pak disassembly of `ui_damageIndicator_C` gives a candidate that no
-// previous probe could see, because the widget is a CHILD of `ui_UI_C` and every prior
-// census enumerated VIEWPORT widgets and never descended:
-//
-//   * `dmg_tunnel` carries NO `Visibility` property in its export, so it takes
-//     UWidget's class default (Visible) and draws `mat_tunnel` -- an MD_UI,
-//     BLEND_Translucent material -- FULL SCREEN, EVERY FRAME, FOREVER. Its Tick sets
-//     `alpha := 1 - saveSlot.health/100` (divisor is the LITERAL 100). At full health
-//     alpha is 0, but a cooked material's graph is STRIPPED, so whether `mat_tunnel`
-//     is actually transparent at alpha=0 CANNOT be read statically. That is the whole
-//     question this probe answers.
-//   * `dmg_full` is authored `Collapsed` and is turned Visible by the Tick's DEATH
-//     branch (`@2292 SetVisibility(b0)`) -- which nothing in the game ever undoes,
-//     because vanilla always tears the world down. That is a real one-way latch and it
-//     is ours now that we keep the world; but it is NOT what a pre-hit `dead=0` frame
-//     can be showing, so it is a SEPARATE red from the one above.
-//
-// So this probe does not "check the damage indicator". It DISCRIMINATES, by writing
-// the one field that separates the hypotheses and looking at the resulting frame:
-//
-//   arm A  baseline                      -> HUDTINT A-BASELINE READY
-//   arm B  whole umg_damageIndicator collapsed -> HUDTINT B-NOINDICATOR READY
-//   arm C  restore; only dmg_tunnel collapsed  -> HUDTINT C-NOTUNNEL READY
-//   arm D  restore; only dmg_full collapsed    -> HUDTINT D-NOFULL READY
-//   restore everything, log DONE.
-//
-// Arm B is the decisive one and it is deliberately FIRST after the baseline: if the
-// red survives the whole widget being collapsed, the damage indicator is excluded
-// ENTIRELY and the next hunt starts somewhere else -- which is worth exactly as much
-// as a positive result and costs the same single run. Arms C/D only narrow a positive B.
-//
-// The probe also LOGS the live state every arm reads (each image's pointer + its real
-// `Visibility` byte, plus health/maxHealth/dead/the four quadrant floats), because the
-// numbers are what let a future reader re-judge the screenshots without re-running.
-//
-// SOLO + role-agnostic; no session, no connection. Gated by env
-// VOTVCOOP_RUN_HUD_TINT_PROBE=1; launch `mp.py hudtint` (which captures one PNG per
-// arm). Throwaway diagnostic -- NOT a shipping path; it only ever writes `Visibility`
-// and it restores every value it touched before it exits.
+// The probe settles that by writing the one field that separates the hypotheses and looking at
+// the frame: arm A baseline, arm B the whole widget collapsed, arm C only `dmg_tunnel`, arm D
+// only `dmg_full`, each logging READY and restoring before the next. B runs first and is
+// decisive -- red surviving it excludes the indicator entirely, worth as much as a positive at
+// the same cost of one run -- and C and D only narrow a positive B. Every arm logs the state it
+// reads, so the screenshots can be re-judged later without re-running it.
 
 #include "harness/autotest.h"
 

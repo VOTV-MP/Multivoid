@@ -2,11 +2,9 @@
 //
 // Runs the REAL C++ lexer (coop/config selftest seams) over a corpus directory
 // of ini files and prints one verdict line per (file, key) for BOTH value
-// layers -- the AFTER half of the design's T4 instrument (the BEFORE half is
-// simulated offline by the instrument script; research/findings/tooling/
-// votv-ini-config-registry-DESIGN-2026-07-24.md section 5). Also proves the
-// tri-state branches: ENOENT -> Absent, injected mid-stream failure ->
-// Unreadable (never a clean end that would read as ABSENT downstream).
+// layers. Also proves the tri-state branches: ENOENT gives Absent, and an
+// injected mid-stream failure gives Unreadable -- never a clean end, which
+// would read as ABSENT downstream.
 //
 // SOLO, role-agnostic, no session and no settle needed (pure file ops).
 // Gated by env VOTVCOOP_RUN_CONFIG_SELFTEST="1"; corpus dir from
@@ -352,12 +350,11 @@ void RunConfigSelftest() {
             expect("garbage-above-valid dup: authoritative line wins -> garbage(0)",
                    cfg::SelftestFlagTriState(wrk, "dup_gav") == 0);
         }
-        // Drill H (tidy fix 2026-07-26): the reformat RETIRES the review
-        // panel's fixable complaints -- an unknown key (posinfo: the user's
-        // real case) and an invalid known value become comments; exact dups
-        // still collapse; healthy keys survive. Before this fix, Tidy moved
-        // layout only, the panel's rows survived every press, and the button
-        // looked dead.
+        // Drill H: the reformat RETIRES the review panel's fixable complaints
+        // -- an unknown key and an invalid known value become comments, exact
+        // dups still collapse, healthy keys survive. Tidy once moved layout
+        // only, so the panel's rows survived every press and the button looked
+        // dead.
         {
             FILE* f = nullptr;
             if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
@@ -472,10 +469,9 @@ void RunConfigSelftest() {
         }
     }
 
-    // ---- arc-4 T8 catalog drills: the boot-generated multivoid.ini.example
-    // through the six detectors + the round-trip, then SEVEN doctored-copy
-    // negative controls (each detector must PROVE it can fire) + the locale
-    // canary (design votv-ini-arc4-T8-catalog-impl-DESIGN-2026-07-25.md).
+    // ---- catalog drills: the boot-generated multivoid.ini.example through the
+    // six detectors and the round-trip, then seven doctored-copy negative
+    // controls, so each detector must PROVE it can fire, plus the locale canary.
     if (!dirA.empty()) {
         const std::wstring dir(dirA.begin(), dirA.end());
         namespace reg = coop::config_registry;

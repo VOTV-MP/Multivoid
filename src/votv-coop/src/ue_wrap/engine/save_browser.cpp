@@ -89,8 +89,8 @@ void ResolveSlotOffsets() {
     // The DAY shown on the game's own save rows is savedtime.Z + 1 (uicomp_saveSlot::upd
     // bytecode: days := save.savedtime.Z; SetText(Conv_IntToText(Add_IntInt(days, 1)))).
     // `savedtime` is an FIntVector {h, m, day}. The float `Day` property is the raw
-    // elapsed-TIME accumulator (== daynightCycle.totalTime) -- displaying it raw was the
-    // "Day 3566" bug (2026-06-10 user report).
+    // elapsed-TIME accumulator, equal to daynightCycle.totalTime; showing it raw is what
+    // painted "Day 3566" on the picker.
     g_off.savedtime = R::FindPropertyOffset(cls, L"savedtime");
     g_off.points    = R::FindPropertyOffset(cls, L"Points");
     g_off.health    = R::FindPropertyOffset(cls, L"health");
@@ -119,12 +119,12 @@ T ReadField(void* obj, int32_t off, T fallback = T{}) {
     return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
-// ---- the scan pipeline (2026-07-11 rework) ---------------------------------------
-// The old scan drove VOTV's Uui_saveSlots_C::loadSlots, which LoadGameFromSlot's
-// EVERY save -- each a full synchronous GVAS deserialize of a 15-20 MB world file ON
-// THE GAME THREAD (measured 2026-07-11: 15 saves = a multi-second picker-open freeze
-// + 15 transient UsaveSlot_C object graphs for GC). The picker only needs a handful
-// of scalars per row, so the scan is now two stages:
+// ---- the scan pipeline ------------------------------------------------------------
+// Driving VOTV's own Uui_saveSlots_C::loadSlots means LoadGameFromSlot on EVERY save:
+// a full synchronous GVAS deserialize of a 15-20 MB world file on the GAME THREAD,
+// measured at 15 saves to a multi-second picker-open freeze plus 15 transient
+// UsaveSlot_C object graphs for the GC. The picker needs a handful of scalars per row,
+// so the scan is two stages:
 //   STAGE A (game thread, cheap): resolve the SaveGames dir (native
 //     GetProjectSavedDirectory -- honors -saveddirsuffix), list *.sav, classify
 //     subsaves via VOTV's own lib_C::processSaveNameIntoSubsave (native filter
@@ -134,9 +134,9 @@ T ReadField(void* obj, int32_t off, T fallback = T{}) {
 //   STAGE B (worker thread): stat + gvas_meta::ReadSlotMeta each file (tag-walk,
 //     payload-skip -- no full deserialize), mtime-keyed cache so re-opens only
 //     re-parse changed files, sort newest-first, publish.
-// Filter parity with the native loadSlots list (ground-truthed against its logged
-// output 2026-07-11): everything except subsaves and non-saveSlot_C classes
-// (data.sav fails the native DynamicCast; here it fails the GVAS class check).
+// Filter parity with the native loadSlots list, ground-truthed against its own logged
+// output: everything except subsaves and non-saveSlot_C classes (data.sav fails the
+// native DynamicCast; here it fails the GVAS class check).
 // b_* files are SANDBOX saves (the 'b_' SAVE PREFIX), not backups -- never filter
 // by name. The gvas_meta.h header documents the format evidence.
 
@@ -373,9 +373,9 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
 
     // Stamp Version exactly as the native create does (ui_saveSlots button_create
     // ubergraph @5177-5227: tempSave.version = Default__lib_C->gameVersion("","")).
-    // A blank CDO-default object serializes an EMPTY Version -> every save list paints
-    // the red "unk!" badge and the widget's launch-time version check reads a mismatch
-    // (user report 2026-07-04). gameVersion's body is pure ([RD] lib bytecode:
+    // A blank CDO-default object serializes an EMPTY Version, so every save list paints
+    // the red "unk!" badge and the widget's launch-time version check reads a mismatch.
+    // gameVersion's body is pure (lib bytecode:
     // Concat(prefix, GetProjectVersion(), suffix); __WorldContext unused), so the lib
     // CDO is a valid call target at the menu. The out FString's buffer is minted
     // ENGINE-side inside the call; we transfer its 16-byte header into the fresh
