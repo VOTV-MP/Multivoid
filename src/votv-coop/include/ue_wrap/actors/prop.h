@@ -1,9 +1,9 @@
 // ue_wrap/prop.h -- Aprop_C accessors. VOTV's physics-grabbable props share the base class
 // Aprop_C (about 540 derivatives), and the fields live at fixed offsets in the base: propData
-// +0x0260 (Fstruct_prop; `heavy` at +0x6C inside), Static +0x02D8, frozen +0x02DA, Key (FName)
-// +0x02E0 (the cross-peer identifier is its ToString'd value, the save UUID; never the
-// ComparisonIndex), StaticMesh +0x0238. The offsets are the SDK dump's, confirmed by a runtime
-// probe. The readers are plain memory reads with no liveness checks: the caller owns liveness.
+// (with `heavy` inside it), Static, frozen, Key and StaticMesh. sdk_profile.h holds every one
+// of those offsets. The cross-peer identifier is the Key FName's ToString'd value, the save
+// UUID, never the ComparisonIndex. The readers are plain memory reads with no liveness
+// checks: the caller owns liveness.
 
 #pragma once
 
@@ -44,7 +44,7 @@ bool IsChipPile(void* obj);
 // ball a chipPile morphs into on grab. A pointer-chain test, no strings. False for null.
 bool IsGarbageClump(void* obj);
 
-// The AtrashBitsPile_C test and its collect counters: amountA at +0x0260 and amountB at +0x0264
+// The AtrashBitsPile_C test and its collect counters, amountA and amountB
 // (raw int32); the displayed count is their sum, formatted live by lookAt, so raw writes are
 // consistent (no refresh verb exists). The pair returns false for any other actor.
 bool IsTrashBitsPile(void* obj);
@@ -59,8 +59,8 @@ bool EnsurePropBaseResolved();
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 
-// The per-class Key reader for keyed interactables: an Aprop_C reads the FName at +0x02E0, a
-// trashBitsPile at +0x0230 (the Aactor_save_C offset), and a chipPile or clump has no native
+// The per-class Key reader for keyed interactables: an Aprop_C reads its own Key FName, a
+// trashBitsPile the Aactor_save_C one, and a chipPile or clump has no native
 // field and answers only through the BP GetKey UFunction, resolved and cached per class and
 // dispatched through ProcessEvent. NAME_None on failure. Game thread for the dispatch branch.
 reflection::FName GetInteractableKey(void* obj);
@@ -75,7 +75,7 @@ std::wstring GetInteractableKeyString(void* obj);
 // thread.
 std::wstring GetActorSaveKeyString(void* obj);
 
-// Aprop_C.Key at +0x02E0; {0,0} for null. The caller has established a live Aprop_C.
+// Aprop_C.Key; {0,0} for null. The caller has established a live Aprop_C.
 reflection::FName GetKey(void* prop);
 
 // The key as a string, the cross-peer-stable prop id: the same save UUID on both peers, whatever
@@ -86,10 +86,10 @@ std::wstring GetKeyString(void* prop);
 // the physics constraint (heavyGrab), false the physics handle (grabHandle).
 bool IsHeavy(void* prop);
 
-// Aprop_C.Static at +0x02D8; a static prop cannot be grabbed.
+// Aprop_C.Static; a static prop cannot be grabbed.
 bool IsStatic(void* prop);
 
-// Aprop_C.frozen at +0x02DA, the BP-controlled freeze; a frozen prop does not move when grabbed.
+// Aprop_C.frozen, the BP-controlled freeze; a frozen prop does not move when grabbed.
 bool IsFrozen(void* prop);
 
 // Static and frozen written on a live prop, the wall-attachable stick and unstick mirror; the
@@ -98,22 +98,22 @@ bool IsFrozen(void* prop);
 void WriteStatic(void* prop, bool on);
 void WriteFrozen(void* prop, bool on);
 
-// Aprop_C.sleep at +0x02DD: true means physics-sleeping. Aprop_C::init sets
+// Aprop_C.sleep: true means physics-sleeping. Aprop_C::init sets
 // SimulatePhysics(!(static || frozen || sleep)), so a save-loaded settled prop is non-simulating,
 // and the snapshot mirrors it kinematic on the client. Aprop_C lineage only; the offset is a
 // stray byte elsewhere.
 bool IsSleeping(void* prop);
 
-// The Aprop_C visual identity, the FName Name at +0x0258: the list_props row init() resolves
+// The Aprop_C visual identity, the FName Name: the list_props row init() resolves
 // the mesh, mass and collision from (the CDO's row is the cube; loadData restores it before
 // re-running init). Empty for null or a non-Aprop_C. Crosses the wire so a mirror constructs as
 // the real prop. Game thread (an FName pool read).
 std::wstring GetPropNameString(void* prop);
 
-// Aprop_C.removeWOrespawn at +0x02D9, one of the bools the save round-trips. Live Aprop_C only.
+// Aprop_C.removeWOrespawn, one of the bools the save round-trips. Live Aprop_C only.
 bool ReadRemoveWOrespawn(void* prop);
 
-// The pre-Finish identity write on a deferred-spawned Aprop_C mirror: Name at +0x0258 (skipped
+// The pre-Finish identity write on a deferred-spawned Aprop_C mirror: Name (skipped
 // for NAME_None) and the Static, removeWOrespawn, frozen and sleep bools before
 // FinishSpawningActor, whose init pass then resolves list_props[Name] into the true mesh, mass,
 // collision and SimulatePhysics, the field set and order the game's own loadData restore
@@ -122,7 +122,7 @@ bool WriteSpParityIdentity(void* prop, reflection::FName nameRow,
                            bool isStatic, bool removeWOrespawn,
                            bool frozen, bool sleep);
 
-// Aprop_C.StaticMesh at +0x0238, the UPrimitiveComponent the physics handle or constraint binds.
+// Aprop_C.StaticMesh, the UPrimitiveComponent the physics handle or constraint binds.
 void* GetStaticMesh(void* prop);
 
 // The chipType variant selector of the pile and clump family (a 1-byte enum, 14 variants), which
@@ -220,8 +220,8 @@ bool ForceRestoreDefaultCollision(void* prop);
 
 // The per-class save-scalar birth channel: state VOTV's own save carries in struct_save.mFloat[0]
 // and loadData restores, which a mirror must receive at birth or a peer interacting with it
-// reads a CDO default and re-broadcasts it as truth. Currently the Aprop_reel_C lineage (Progress
-// at +0x0364, through ue_wrap::tape_caddy). Read is false for a class with no scalar; Apply is
+// reads a CDO default and re-broadcasts it as truth. Currently the Aprop_reel_C lineage (Progress,
+// through ue_wrap::tape_caddy). Read is false for a class with no scalar; Apply is
 // the one mirror-birth write site, safe after Finish (the reel's consumers are lookAt and
 // loadData).
 bool ReadSavedScalarForClass(void* actor, float& out);

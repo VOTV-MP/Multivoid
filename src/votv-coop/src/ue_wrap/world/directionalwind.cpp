@@ -50,7 +50,8 @@ bool Write(const WindState& in) {
 }
 
 // windTarget is a UBillboardComponent ptr @ DirectionalWind_windTarget; the gust input
-// is its USceneComponent::RelativeLocation @ +0x011C. Both Read/WriteTarget chase the
+// is its USceneComponent::RelativeLocation, at the sdk_profile.h offset. Both Read
+// and WriteTarget chase the
 // component ptr then the field -- a null windTarget (mid-init) returns false.
 namespace {
 uint8_t* WindTargetComp(void* wind) {

@@ -7,7 +7,7 @@
 //     ::use, ::actionOptionIndex) + the current Atrigger_lightRoot_C::SetActive -- a FIRED
 //     line on a REAL flip (hands-on) tells us which edge is ProcessEvent-OBSERVABLE.
 //   - Runs a ONE-SHOT synthetic flip: finds a lightswitch, reads its A (switch-flip bool
-//     @0x02A0) + its lightRoot (via Trigger @0x02A8) IsActive, calls use() via reflection,
+//     flip bool) + its lightRoot (via Trigger) IsActive, calls use() via reflection,
 //     re-reads both. If A FLIPS + IsActive TOGGLES but lightRoot.SetActive did NOT fire ->
 //     SetActive is BP-internal (the trap) AND use() does the FULL flip (switch visual +
 //     lights) -> the fix = hook a player edge on the SENDER + replay use() on the RECEIVER

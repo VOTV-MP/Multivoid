@@ -18,11 +18,11 @@ void* GetMeshPlayerVisibleAsset(void* mainPlayerPawn);
 void* GetMeshPlayerVisibleComponent(void* mainPlayerPawn);
 
 // The AnimBP class the local player's body runs, read off its mesh_playerVisible component
-// (AnimClass @0x6A8): the live component is the source of truth, and the generated class does
+// (its AnimClass): the live component is the source of truth, and the generated class does
 // not resolve by leaf name. nullptr if none.
 void* GetMeshPlayerVisibleAnimClass(void* mainPlayerPawn);
 
-// The inherited ACharacter::Mesh slot (@0x0280), mesh_playerVisible's AttachParent: on
+// The inherited ACharacter::Mesh slot, mesh_playerVisible's AttachParent: on
 // mainPlayer_C it carries its own kel body overlapping mesh_playerVisible 1:1, so a custom skin
 // on the latter stays covered unless this one is hidden. nullptr if none.
 void* GetNativeBodyMeshComponent(void* mainPlayerActor);
@@ -74,8 +74,8 @@ bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out);
 // on the local body and on the puppet, to see which differs. Null-safe.
 void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent);
 
-// Diagnostic: dump the live FAnimNode memory regions (the BlendSpacePlayer at +0x1180, the two
-// state machines at +0x1AC0 and +0x1CC8): the walking-speed sample coordinate and the current
+// Diagnostic: dump the live FAnimNode memory regions named in sdk_profile.h -- the
+// BlendSpacePlayer and the two state machines: the walking-speed sample coordinate and the
 // state index, on the local body and the puppet. Null-safe.
 void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent);
 
@@ -105,8 +105,8 @@ bool ReadCharacterIsFalling(void* actor);
 
 // ---- kerfur head-look ----
 // The kerfur AnimBP (shared by the NPCs and the player puppets) aims the head and neck at its
-// `lookAt` member (a world FVector @0x2D90), which its update recomputes from the local camera
-// each tick unless `customLookAt` (@0x2E49) is set, so head-look is per peer by default; the NPC
+// `lookAt` member (a world FVector), which its update recomputes from the local camera
+// each tick unless `customLookAt` is set, so head-look is per peer by default; the NPC
 // sync streams the host's resolved target. Both functions are gated on the kerfur-family AnimBP
 // class, so a non-kerfur actor is a safe no-op.
 
