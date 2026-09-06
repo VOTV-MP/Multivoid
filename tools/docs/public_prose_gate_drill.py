@@ -131,6 +131,13 @@ MUTANTS = [
      'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r""'),
     ("label: one-letter form unanchored",
      'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r"|\\b[A-Z]-\\d{1,2}\\b"'),
+    # A DEAF explainer: it still prints each counter and its number, and names no line under it.
+    # That is the failure the agreement arms exist for, so breaking either half must turn them red.
+    ("--lines: names no source line",
+     "        for no, line in comments:\n", "        for no, line in []:\n"),
+    ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
+                                   "                out.append((no, k, line))\n",
+     "            pass\n"),
 ]
 
 
@@ -197,6 +204,28 @@ def main():
               "src.comment_label": 9}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
+    # --lines must name every hit it reports a count for. A counter added to `measure` and not to
+    # `explain` would print its number with no lines under it, and a sweep driven by that would
+    # edit what it could see and call the file done. The fixture trips every source counter, so
+    # agreement here is agreement across the whole table.
+    r = run(["--repo", repo, "--baseline", baseline, "--lines",
+             "--file", "src/votv-coop/src/x.cpp", "--file", "docs/a.md"])
+    owed, named, counter = {}, {}, None
+    for line in r.stdout.splitlines():
+        if line.startswith("    ") and not line.startswith("     "):
+            counter, n = line.split()[0], int(line.split()[1])
+            owed[counter] = n
+            named.setdefault(counter, 0)
+        elif line.startswith("      ") and counter:
+            # Only a real `path:NN` counts. The "(not line-addressable)" note is what a DEAF
+            # explainer prints, so counting it would let this arm pass on exactly the failure
+            # it exists to catch.
+            if not line.strip().startswith("("):
+                named[counter] += 1
+    arm("--lines reports the counters the file owes", bool(owed), r.stdout.strip()[:120])
+    for k, n in sorted(owed.items()):
+        arm("--lines names all {} hit(s) of {}".format(n, k), named.get(k) == n,
+            "named {}".format(named.get(k)))
     r = run(["--repo", repo, "--baseline", baseline])
     arm("exact baseline passes", r.returncode == 0, r.stdout.strip().splitlines()[-1])
     lowered = dict(counters, **{"md.cyrillic": 0})

@@ -181,23 +181,52 @@ def code_only(text):
     return "\n".join(out)
 
 
+def md_link_faults(line, base, tracked_set, subs):
+    """-> the counter key for every dead link and dead backticked path on one line of a doc.
+
+    One implementation, called by the counting pass and by the line explainer, so `--lines` cannot
+    disagree with the number it is explaining. A link into a submodule is live: its content is
+    public too."""
+    faults = []
+    for m in LINK.finditer(line):
+        target = unquote(m.group(1))
+        if re.match(r"^[a-z]+:", target, re.I) or target.startswith("/"):
+            continue
+        if "\\" in target:                       # a backslash path is dead on Linux
+            faults.append("md.dead_links")
+            continue
+        rel = os.path.normpath(os.path.join(base, target)).replace("\\", "/")
+        if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set) \
+                or any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in subs):
+            continue
+        faults.append("md.dead_links")
+    for m in BACKTICK_PATH.finditer(line):
+        rel = m.group(1)
+        if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set):
+            continue
+        faults.append("md.dead_paths")
+    return faults
+
+
 def comment_lines(text):
-    """-> (comment_line_texts, code_line_count, long_blocks). A line counts as COMMENT when it holds
-    nothing but comment (and whitespace); quotes are respected so a `//` inside a string is code.
-    `long_blocks` counts runs of more than LONG_COMMENT_BLOCK consecutive comment lines (blank lines
-    do not break a run; a code line does)."""
+    """-> ([(1-based line number, text)], code_line_count, long_blocks). A line counts as COMMENT
+    when it holds nothing but comment (and whitespace); quotes are respected so a `//` inside a
+    string is code. `long_blocks` LISTS the first line of each run of more than LONG_COMMENT_BLOCK
+    consecutive comment lines (blank lines do not break a run; a code line does), so its length is
+    the count the gate wants and its contents are the essays `--lines` points a human at. The line
+    number rides along with each comment for the same reason."""
     lines = text.split("\n")
-    comments, code, long_blocks, run = [], 0, 0, 0
+    comments, code, long_blocks, run = [], 0, [], 0
     in_block = False
 
     def comment(line):
-        nonlocal run, long_blocks
-        comments.append(line)
+        nonlocal run
+        comments.append((no, line))
         run += 1
         if run == LONG_COMMENT_BLOCK + 1:
-            long_blocks += 1
+            long_blocks.append(comments[-run][0])
 
-    for line in lines:
+    for no, line in enumerate(lines, 1):
         s = line.strip()
         if not s:
             continue
@@ -241,11 +270,14 @@ def comment_lines(text):
 
 
 def measure(repo):
-    """-> (counters dict, contributors dict: counter -> Counter(path -> hits))."""
+    """-> (counters dict, contributors dict: counter -> Counter(path -> hits), detail dict:
+    counter -> path -> [note]). `detail` carries the counters whose unit is not a line, so
+    `--lines` can name them without a second implementation of the analysis that found them."""
     files, subs = tracked(repo)
     tracked_set = set(files)
     c = collections.OrderedDict()
     who = collections.defaultdict(collections.Counter)
+    detail = collections.defaultdict(lambda: collections.defaultdict(list))
     md = [p for p in files if p.endswith(".md") and os.path.basename(p) not in MD_EXEMPT]
     c["md.files"] = len(md)
     c["md.lines"] = 0
@@ -276,26 +308,9 @@ def measure(repo):
                 if rx.search(line):
                     c["md." + k] += 1
                     who["md." + k][p] += 1
-            for m in LINK.finditer(line):
-                target = unquote(m.group(1))
-                if re.match(r"^[a-z]+:", target, re.I) or target.startswith("/"):
-                    continue
-                if "\\" in target:                       # a backslash path is dead on Linux
-                    c["md.dead_links"] += 1
-                    who["md.dead_links"][p] += 1
-                    continue
-                rel = os.path.normpath(os.path.join(base, target)).replace("\\", "/")
-                if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set) \
-                        or any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in subs):
-                    continue
-                c["md.dead_links"] += 1
-                who["md.dead_links"][p] += 1
-            for m in BACKTICK_PATH.finditer(line):
-                rel = m.group(1)
-                if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set):
-                    continue
-                c["md.dead_paths"] += 1
-                who["md.dead_paths"][p] += 1
+            for k in md_link_faults(line, base, tracked_set, subs):
+                c[k] += 1
+                who[k][p] += 1
     # Every OTHER tracked text file: the build, the CI workflows, the ignore rules, the scripts a
     # contributor runs. They are as public as the docs and were the last class no counter read --
     # the ignore file alone carried 31 dated lines, a user quote and a paragraph that counted the
@@ -353,12 +368,12 @@ def measure(repo):
         code_total += code
         who["src.comment_lines"][p] = len(comments)
         if long_blocks:
-            c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] += long_blocks
-            who["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK][p] = long_blocks
+            c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] += len(long_blocks)
+            who["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK][p] = len(long_blocks)
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
-        for line in comments:
+        for _no, line in comments:
             for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
                 key = "src.comment_" + k
                 if key in c and rx.search(line):
@@ -411,6 +426,7 @@ def measure(repo):
             if uses <= 2:                  # its own declaration and its definition, and nothing else
                 c["src.dead_declarations"] += 1
                 who["src.dead_declarations"][header] += 1
+                detail["src.dead_declarations"][header].append(name)
     c["src.comment_permille"] = int(round(1000.0 * c["src.comment_lines"] / max(1, code_total + c["src.comment_lines"])))
     c["src.files"] = len(src)
     # The burn-down. A source file is SWEPT when it contributes zero to every rule counter above;
@@ -422,7 +438,7 @@ def measure(repo):
     c["src.files_not_swept"] = len(not_swept)
     for path in not_swept:
         who["src.files_not_swept"][path] = who["src.comment_lines"][path]
-    return c, who
+    return c, who, detail
 
 
 def load_baseline(path):
@@ -456,6 +472,56 @@ FIXED_DESCRIPTIONS = {
     "src.comment_pinned_offset": "comment lines pinning an offset this file's own code never reads",
     "src.dead_declarations": "declared functions nothing in the tree calls",
 }
+
+
+def explain(repo, path, tracked_set, subs=()):
+    """-> [(line number, counter, line text)] for the counters whose unit is a line.
+
+    Every predicate here is the SAME object `measure` counts with -- the marker tables, the comment
+    lexer, the doc-path and offset patterns -- so this names lines without becoming a second
+    implementation that can drift from the gate. The counters whose unit is not a line
+    (`dead_declarations`, `files_half_comment`, the block and burn-down counters) are not produced
+    here; the caller reports them from `detail` and `who` instead of passing over them silently."""
+    text = read(repo, path)
+    if text is None:
+        return []
+    out = []
+    if path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT):
+        bare = code_only(text)
+        read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
+        owns_offsets = any(o in os.path.basename(path) for o in OFFSET_OWNERS)
+        comments, _code, long_blocks = comment_lines(text)
+        for start in long_blocks:
+            out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
+                        "-- block starts here --"))
+        for no, line in comments:
+            for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
+                if rx.search(line):
+                    out.append((no, "src.comment_" + k, line))
+            if any(m not in tracked_set for m in DOC_PATH.findall(line)):
+                out.append((no, "src.comment_dead_docpath", line))
+            if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
+                out.append((no, "src.comment_pinned_offset", line))
+        return sorted(out)
+    prefix, fenced = ("md." if path.endswith(".md") else "other."), False
+    comments_only = path.endswith(OTHER_COMMENTS_ONLY)
+    base = os.path.dirname(path)
+    for no, line in enumerate(text.splitlines(), 1):
+        if prefix == "md.":
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
+        elif comments_only and not line.lstrip().startswith("#"):
+            continue
+        for k, (rx, _) in LINE_MARKERS.items():
+            if rx.search(line):
+                out.append((no, prefix + k, line))
+        if prefix == "md.":
+            for k in md_link_faults(line, base, tracked_set, subs):
+                out.append((no, k, line))
+    return sorted(out)
 
 
 def describe(k):
@@ -499,13 +565,17 @@ def main():
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--file", action="append", metavar="PATH",
                     help="report what these files owe, counter by counter, and exit; repeatable")
+    ap.add_argument("--lines", action="store_true",
+                    help="with --file: name the offending line, so a sweep edits what the gate reads")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
-    counters, who = measure(a.repo)
+    counters, who, detail = measure(a.repo)
     if a.file:
+        tracked_files, tracked_subs = tracked(a.repo) if a.lines else ((), ())
+        tracked_set = set(tracked_files)
         for want in a.file:
             want = want.replace("\\", "/").lstrip("./")
             hits = sorted({p for k in who for p in who[k] if p.endswith(want)})
@@ -516,8 +586,25 @@ def main():
                 owed = [(k, who[k][p]) for k in counters
                         if k not in INFORMATIONAL and k != "src.files_not_swept" and p in who[k]]
                 print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                # Each counter's lines print UNDER its own heading -- a flat list of every
+                # offending line in the file would not say which rule each one answers to, and
+                # one line often answers to two. Anything owed that the explainer did not account
+                # for says so: a sweep that silently saw fewer lines than the gate counts would
+                # edit what it could see and call the file done.
+                by_counter = collections.defaultdict(list)
+                if a.lines:
+                    for no, k, line in explain(a.repo, p, tracked_set, tracked_subs):
+                        by_counter[k].append((no, line))
                 for k, n in owed:
                     print("    {:<30} {:>4}  {}".format(k, n, describe(k)))
+                    if not a.lines:
+                        continue
+                    for no, line in by_counter.get(k, []):
+                        print("      {}:{}  {}".format(p, no, line.strip()))
+                    for note in detail.get(k, {}).get(p, []):
+                        print("      {}  <- declared here, called nowhere".format(note))
+                    if not by_counter.get(k) and not detail.get(k, {}).get(p):
+                        print("      (not line-addressable: {} hit(s) of {})".format(n, k))
                 if not owed:
                     print("    SWEPT -- contributes to no counter")
         return 0
