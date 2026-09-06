@@ -4,7 +4,7 @@
 #include "coop/session/shutdown.h"
 
 #include "coop/net/session.h"
-#include "coop/items/player_inventory_sync.h"  // v73: flush inventories on shutdown
+#include "coop/items/player_inventory_sync.h"  // the shutdown inventory flush
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
@@ -16,20 +16,19 @@
 
 namespace coop::shutdown {
 
-// Global atomic shutdown flag -- file-private (internal linkage). Read via the public
-// IsShuttingDown(); the SOLE writer is DoShutdown()'s compare_exchange. Once tripped it
-// NEVER clears (process is going down). Was an extern in shutdown.h until the 2026-07-07
-// boundary pass; no external writer ever existed, so it needs no public setter.
+// Global atomic shutdown flag -- file-private (internal linkage). Read through the public
+// IsShuttingDown(); the SOLE writer is DoShutdown()'s compare_exchange. Once tripped it NEVER
+// clears, the process being on its way down, and it needs no public setter because no
+// external writer exists.
 static std::atomic<bool> g_shuttingDown{false};
 
 namespace {
 
-// Atomic single-HWND subclass tracking. Held as atomics so the wndproc
-// hot path can read them WITHOUT a mutex -- a mutex in CoopWndProc
-// would contend with every Win32 message on the UI thread (thousands
-// per second), and a per-tick Install() on the game thread holding the
-// same mutex starves the UI thread -> black screen (bug observed
-// 2026-05-26 v3). Atomic pair: HWND + its original wndproc pointer.
+// Atomic single-HWND subclass tracking. Held as atomics so the wndproc hot
+// path can read them WITHOUT a mutex: a mutex in CoopWndProc would contend
+// with every Win32 message on the UI thread, thousands per second, and a
+// per-tick Install() on the game thread holding the same mutex starves the UI
+// thread into a black screen. Atomic pair: the HWND and its original wndproc.
 std::atomic<HWND>    g_subclassedHwnd{nullptr};
 std::atomic<WNDPROC> g_origProc{nullptr};
 
@@ -72,15 +71,15 @@ HWND FindBestUnrealWindow() {
 }
 
 LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // Direct user-close signals -- no veto path, fire DoShutdown BEFORE
-    // forwarding so our PE detour comes down before UE4 starts its
-    // teardown PE calls:
-    //   * WM_CLOSE -- canonical "please close" (rare; UE4.27 intercepts
-    //     SC_CLOSE first).
-    //   * WM_SYSCOMMAND wp&0xFFF0 == SC_CLOSE -- X-click / Alt+F4.
+    // Direct user-close signals -- no veto path, so fire DoShutdown BEFORE
+    // forwarding and bring our ProcessEvent detour down before UE4 starts its own
+    // teardown dispatches:
+    //   * WM_CLOSE -- the canonical "please close", rare, because UE4.27
+    //     intercepts SC_CLOSE first.
+    //   * WM_SYSCOMMAND with wp & 0xFFF0 == SC_CLOSE -- the X click and Alt+F4.
     //     UE4.27's FWindowsApplication::ProcessMessage calls its
-    //     MessageHandler->OnWindowClose() directly on this, bypassing
-    //     WM_CLOSE entirely. Hands-on 2026-05-26 v4 confirmed.
+    //     MessageHandler->OnWindowClose() directly on this and never sends
+    //     WM_CLOSE at all.
     // The low 4 bits of WM_SYSCOMMAND wParam are reserved; mask 0xFFF0.
     const bool isDirectClose =
         msg == WM_CLOSE ||
@@ -96,13 +95,11 @@ LRESULT CALLBACK CoopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     LRESULT result = orig ? ::CallWindowProcW(orig, hwnd, msg, wp, lp)
                           : ::DefWindowProcW(hwnd, msg, wp, lp);
 
-    // WM_QUERYENDSESSION has a VETO path -- UE4 (or default) may
-    // return FALSE to refuse OS shutdown. If we DoShutdown'd
-    // unconditionally before forwarding (the audit-fix bug 2026-05-26 v5)
-    // and UE4 vetoed, the OS keeps the process alive but our coop
-    // subsystem is permanently dead with no recovery -- worse than
-    // the original X-close hang. Only DoShutdown when UE4 (or default)
-    // returns TRUE meaning OS will actually shut us down. Audit-fix.
+    // WM_QUERYENDSESSION has a VETO path: UE4, or the default handler, may return FALSE and
+    // refuse the OS shutdown. Shutting down unconditionally before forwarding would leave the
+    // coop subsystem permanently dead with no recovery in a process the OS then keeps alive --
+    // worse than the close hang this whole path exists to fix. So DoShutdown only when the
+    // forward returns TRUE, meaning the OS really will take us down.
     if (msg == WM_QUERYENDSESSION && result != 0) {
         UE_LOGI("shutdown: WM_QUERYENDSESSION approved by UE4 -- running cleanup");
         DoShutdown();
@@ -202,8 +199,8 @@ void DoShutdown() {
     UE_LOGI("shutdown: BEGIN cleanup (flag set; session=%p hwnd=%p)",
             g_session, g_subclassedHwnd.load(std::memory_order_relaxed));
 
-    // v73: flush each connected peer's last inventory blob to <guid>.json BEFORE the session
-    // stops (after Stop the slots are gone). Pure file I/O on captured bytes -- safe here.
+    // Flush each connected peer's last inventory blob to <guid>.json BEFORE the session stops;
+    // after Stop the slots are gone. Pure file I/O on captured bytes, so it is safe here.
     coop::player_inventory_sync::FlushAllToDisk();
 
     if (g_session) g_session->Stop();

@@ -84,10 +84,11 @@ void EnsureIndex(const std::unordered_set<void*>& claimed) {
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
         if (claimed.count(obj)) continue;  // already bound earlier this bracket
-        // (X) native-authoritative guard (b): a save_identity_bind BOUND native IS the authoritative
-        // host-range mirror -- it must NEVER be a reconcile-destroy candidate. Excluding it from the index
-        // here covers BOTH the world-ready TryDestroyTwin AND the adopt path (FindAndConsumeAdoptCandidate),
-        // so a co-located UNBOUND pile's proxy can never 1cm-destroy a bound native (the end-to-end killer).
+        // Native-authoritative guard: a save_identity_bind BOUND native IS the authoritative
+        // host-range mirror, so it must NEVER be a reconcile-destroy candidate. Excluding it from
+        // the index here covers BOTH the world-ready TryDestroyTwin and the adopt path
+        // (FindAndConsumeAdoptCandidate), so a co-located UNBOUND pile's proxy can never
+        // 1 cm-destroy a bound native.
         if (coop::prop_element_tracker::IsBoundMirrorNative(obj)) continue;
         const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
         // chipType read once at build time: save-loaded piles carry it from the
@@ -157,13 +158,14 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
     }
     // matchCount == 0: no twin within 1cm of matchPos in the CURRENT index.
     else if (matchCount == 0) {
-        // v86 Path 1c: if matchPos was a SAVE-TIME key (a stamped pile that SHOULD have a save-loaded
-        // twin), the miss is almost always TIMING -- this runs in the world-ready snapshot burst, BEFORE
-        // the client's async native-pile load-tail has drained, so the native@save-time-key has not
-        // loaded/indexed yet (it appears ~10s later, at the post-quiescence sweep). ARM it on the ORDER
-        // OWNER for a retry there (quiescence_drain::SweepReconcileSaveTimeTwins), where the late native is
-        // present. (A non-save-time miss is a genuine DERIVED pile with no twin -- the common gameplay case
-        // -- so do NOT record it.) The spawn mechanism only CAPTURES; the order owner drains.
+        // If matchPos was a SAVE-TIME key -- a stamped pile that SHOULD have a save-loaded twin --
+        // the miss is almost always TIMING: this runs in the world-ready snapshot burst, before the
+        // client's async native-pile load tail has drained, so the native at the save-time key has
+        // not loaded or indexed yet and appears about ten seconds later, at the post-quiescence
+        // sweep. ARM it on the ORDER OWNER for a retry there
+        // (quiescence_drain::SweepReconcileSaveTimeTwins), where the late native is present. A
+        // non-save-time miss is a genuine DERIVED pile with no twin -- the common gameplay case --
+        // so do NOT record it. The spawn mechanism only CAPTURES; the order owner drains.
         if (isSaveTimeKey && payload.elementId != 0)
             coop::element::quiescence_drain::ArmPendingSaveTimeTwin(payload.elementId, matchPos, payload.chipType);
     }

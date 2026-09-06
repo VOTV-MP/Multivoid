@@ -184,13 +184,13 @@ void RenderSpawnNpc() {
     if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();
     ImGui::SameLine();
     ImGui::TextDisabled("(mirror test: watch the client radar)");
-    // v72 Killer Wisp coop cross-peer-kill test: spawn the wisp ON a client puppet so it
-    // grabs the CLIENT (routes the kill there) instead of the nearest = the host.
+    // Killer-wisp cross-peer kill test: spawn the wisp ON a client puppet so it grabs the
+    // CLIENT, routing the kill there, instead of the nearest, which is the host.
     if (ImGui::Button("Spawn killerWisp ON client (coop kill test)"))
         coop::dev::spawn_npc::SpawnKillerWispOnClient();
     ImGui::Separator();
-    // v108 OWNER-ENTITY lane test: eyer is per-peer OWNED (native AI stalks the
-    // spawning peer) + cross-peer VISIBLE (peers get a brain-parked display mirror).
+    // Owner-entity lane test: an eyer is per-peer OWNED, its native AI stalking the spawning
+    // peer, and cross-peer VISIBLE, other peers getting a brain-parked display mirror.
     if (ImGui::Button("Spawn Eyer (in front)")) coop::dev::spawn_npc::SpawnEyer();
     ImGui::SameLine();
     ImGui::TextDisabled("(owner-entity test: it stalks YOU; peers see a harmless mirror)");
@@ -329,8 +329,8 @@ void RenderEvents() {
     ImGui::EndChild();
 }
 
-// v93 skins: the model browser (its own panel file -- the tiles + preview cache
-// live in ui/skins_panel.cpp; this is just the tree hook).
+// Skins: the model browser. Its own panel file -- the tiles and the preview cache live in
+// ui/skins_panel.cpp; this is just the tree hook.
 void RenderSkins() { ui::skins_panel::Render(); }
 
 // Network stats overlay pref + live readout (its own panel file -- ui/net_stats_panel.cpp;
@@ -351,8 +351,8 @@ void RenderChatPref() {
     ImGui::TextDisabled("sessions (ui.chat.peer_actions).");
 }
 
-// v94: the local player's plate-visibility pref. SYNCED (live NameplateChange +
-// the Join prefs byte for late joiners) and persisted (multivoid.ini nameplate=).
+// The local player's plate-visibility preference. SYNCED (a live NameplateChange plus the
+// Join prefs byte for late joiners) and persisted (multivoid.ini nameplate=).
 void RenderNameplatePref() {
     bool on = coop::nameplate::LocalVisible();
     if (ImGui::Checkbox("Show my nameplate to other players", &on))
@@ -360,10 +360,10 @@ void RenderNameplatePref() {
     ImGui::TextDisabled("Off = your floating name/health bar disappears on every peer's");
     ImGui::TextDisabled("screen -- synced live and to late joiners; persists across sessions.");
 
-    // v103 (12f): the local player's nick COLOR pref. SYNCED (live NickColorChange
-    // + the Join color field for late joiners) and persisted (multivoid.ini
-    // nick_color=). Applied on picker RELEASE, not per drag frame -- each apply
-    // persists + announces over the wire.
+    // The local player's nick COLOUR preference. SYNCED (a live NickColorChange plus the Join
+    // colour field for late joiners) and persisted (multivoid.ini nick_color=). Applied on
+    // picker RELEASE rather than per drag frame, since each apply persists and announces over
+    // the wire.
     ImGui::Spacing();
     ImGui::SeparatorText("Nickname color");
     const uint32_t cur = coop::nick_color::LocalPacked();

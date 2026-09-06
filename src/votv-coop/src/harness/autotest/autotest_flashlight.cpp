@@ -1,7 +1,6 @@
-// harness/autotest_flashlight.cpp -- the Phase 5F flashlight-toggle e2e test
-// (VOTVCOOP_RUN_FLASHLIGHT_TEST): both peers toggle; the ItemActivate wire
-// path drives the other peer's puppet. Extracted verbatim from
-// harness/autotest.cpp (2026-07-19 dissolve); interface + doc in harness/autotest.h.
+// harness/autotest_flashlight.cpp -- the flashlight-toggle end-to-end test
+// (VOTVCOOP_RUN_FLASHLIGHT_TEST): both peers toggle, and the ItemActivate wire path drives
+// the other peer's puppet. Interface and doc in harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -27,35 +26,21 @@ namespace cfg = coop::config;
 
 }  // namespace
 
-// --- Phase 5F flashlight autonomous test --------------------------------------
+// --- The autonomous flashlight test ------------------------------------------
 //
-// Drives flashlight toggles by calling AmainPlayer_C::`Flashlight Update`
-// directly via reflection (CallFunction -> ProcessEvent). That UFunction is
-// part of our 4-observer install set; calling it via reflection trips the
-// POST observer (the way F-press doesn't, because the input-event BP is
-// inlined). Each call toggles `mp.flashlight` AND fires the POST observer,
-// which sends the ItemActivate wire packet to the peer.
+// Both peers run this routine: each toggles its own flashlight and the other
+// peer's puppet should follow over the wire. Verification is by log diff.
 //
-// Both peers run this routine; each toggles its own local flashlight + the
-// OTHER peer's puppet should reflect it via the wire. Verification is by
-// log diff (the LAN harness parses both logs).
-//
-// Expected log lines on the SENDING peer:
+// Expected on the SENDING peer:
 //   flashlight: 4 POST observer(s) installed (...)
-//   flashlight_test: about to call 'Flashlight Update' (iteration N)
 //   flashlight[POST Flashlight_Update] self=... flashlight=1/0 ...
 //   flashlight: sent state=1/0 (peer=0 or 1)
-//
-// Expected log lines on the RECEIVING peer:
-//   event_feed: <something about ItemActivate received>  (drain path)
+// and on the RECEIVING peer:
 //   flashlight: applied to puppet=... state=1/0
 //
-// Pre-reqs:
-//   - mainPlayer_C exists (we're in gameplay; the autotest pose teleport ran)
-//   - flashlight equipped (s_may2026 save has one; both peers load the same
-//     save so both start with hasFlashlight=true)
-//   - session connected (the harness flips state to Connected before this
-//     test fires; the env gate is also after the same Start() call)
+// Pre-requisites: mainPlayer_C exists (the autotest pose teleport ran), a
+// flashlight is equipped, and the session is Connected -- the env gate sits
+// after the same Start() call.
 void RunAutonomousFlashlightTest() {
     const bool isHost = !IsClientRole();
     const char* roleStr = isHost ? "host" : "client";
@@ -84,31 +69,12 @@ void RunAutonomousFlashlightTest() {
     }
     UE_LOGI("flashlight_test: resolved (mainPlayer=%p)", rsv->player);
 
-    // ---- Toggle loop. 4 iterations with 2 s spacing.
-    //
-    // Prior approach (call 'Flashlight Update' via reflection) failed:
-    // the BP graph runs but the gating BP-side state (timer / press
-    // detector) is never satisfied from a reflection-only call, so the
-    // flashlight bool stays at 0 -- dedup then blocks every send past
-    // the first. Diagnosis: LAN run 2026-05-26.
-    //
-    // New approach: bypass the BP graph entirely. coop::item_activate::
-    // DebugForceToggle directly flips mp.flashlight @0x0838 + invokes
-    // our POST observer with the new state. Wire packet flies on every
-    // iteration (each is a genuine state change). The local light_R
-    // visual does NOT update because the BP did not fire -- but that's
-    // OK for the autonomous wire test (we verify the puppet's light
-    // toggles on the OTHER peer via log diff).
-    // 2026-05-26: per inventory/equip/battery RE, the local player's
-    // flashlight needs to be properly set up before BP toggle paths will
-    // actually flip the light. The s_may2026 save SHOULD have one
-    // equipped, but we top off the battery + verify the gate state just
-    // in case. coop::dev::flashlight_setup::EnsureFlashlightReady():
-    //   - reads hasFlashlight; if false, calls addPropToPlayer to give
-    //     the player a flashlight (the cheat-menu-equivalent path)
-    //   - writes saveSlot.battery = 1.0 (full)
-    //   - writes saveSlot.flashlightBattery = prop_batts_C UClass*
-    //   - logs the verified pre/post state
+    // ---- Setup. The local flashlight must be equipped and charged before any
+    // toggle path can flip the light. The save should carry one, and
+    // coop::dev::flashlight_setup::EnsureFlashlightReady() makes sure of it: it
+    // reads hasFlashlight and calls addPropToPlayer when false, writes
+    // saveSlot.battery = 1.0 and saveSlot.flashlightBattery = prop_batts_C, and
+    // logs the state before and after.
     {
         auto ensureDone = std::make_shared<std::atomic<int>>(0);
         GT::Post([rsv, ensureDone] {
@@ -119,22 +85,19 @@ void RunAutonomousFlashlightTest() {
         ::Sleep(500);  // let the BP equip path settle if addPropToPlayer ran
     }
 
-    // 2026-05-26 #3: every BP path tried via reflection (updateFlashlight,
-    // Flashlight Update, InpActEvt_13/14) either dispatched-but-no-op'd
-    // or required input state we can't synthesise. The BP graph is
-    // genuinely gated on the engine input system actually firing an
-    // InputAction event -- reflection can't fake that.
-    //
-    // Pivot: DebugForceToggle now also drives the LOCAL light_R Intensity
-    // via SetIntensity reflection, replicating exactly what the BP would
-    // have done (flip bool + set Intensity). Visual toggles on the sender,
-    // wire packet flies to the peer, receiver applies same intensity to
-    // puppet -- end-to-end visual + wire from one entry point.
-    // 5 iterations so final state is ON (each iter toggles, so odd
-    // count starting from OFF ends ON). This lets the end screenshot
-    // capture BOTH peers with their flashlights ON visually (user
-    // feedback 2026-05-26: 4-iter pattern left both OFF + the staggered
-    // peer-startup made the mid screenshot catch asymmetric states).
+    // ---- Toggle loop, 2 s apart. The Blueprint graph cannot be driven from here:
+    // every reflected path -- updateFlashlight, 'Flashlight Update', the InpActEvt
+    // entries -- either dispatches and no-ops or wants input state we cannot
+    // synthesise, the graph being gated on the engine input system actually firing
+    // an InputAction event. So the test bypasses it.
+    // coop::item_activate::DebugForceToggle flips the player's flashlight bool,
+    // drives the local light_R Intensity through SetIntensity -- what the Blueprint
+    // would have done -- and invokes our POST observer with the new state. The
+    // sender's own light therefore toggles, a wire packet flies on every iteration
+    // since each is a genuine state change, and the receiver applies the same
+    // intensity to the puppet. The iteration count is ODD so both peers end ON,
+    // which is what an end-of-run screenshot should show; an even count left them
+    // both dark.
     const int kIterations = 5;
     for (int i = 0; i < kIterations; ++i) {
         UE_LOGI("flashlight_test: iteration %d -- DebugForceToggle (local visual + wire)", i);

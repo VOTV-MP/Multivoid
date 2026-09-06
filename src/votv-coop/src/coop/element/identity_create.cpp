@@ -14,16 +14,16 @@
 #include "coop/element/npc.h"          // CreateOrAdoptNpcMirror
 #include "coop/element/world_actor.h"  // CreateOrAdoptWorldActorMirror
 #include "coop/element/registry.h"
-#include "coop/element/element_deleter.h"          // A' v122: the provisional-dissolve deferred drain
+#include "coop/element/element_deleter.h"          // the provisional-dissolve deferred drain
 #include "coop/creatures/kerfur_entity.h"          // NotifyKerfurPropMirrorBound (client held-pose eid map)
-#include "coop/player/local_streams.h"             // A' v122: held-eid cache rebind fanout (measured held-EDGE-cached)
+#include "coop/player/local_streams.h"             // the held-eid cache rebind fanout
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
-#include "coop/element/quiescence_drain.h"      // ArmGhostSweep (v106b: displaced live native -> wholesale adjudication)
+#include "coop/element/quiescence_drain.h"      // ArmGhostSweep (a displaced live native -> wholesale adjudication)
 #include "coop/props/prop_element_tracker.h"   // RebindLocalElementActor (local-element morph re-skin)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/engine.h"                    // GetActorLocation (identity logs carry loc -- user rule)
+#include "ue_wrap/engine/engine.h"                    // GetActorLocation (identity logs carry the location)
 
 namespace coop::element {
 // The friended gateway to the sealed MirrorManager::Install.
@@ -82,27 +82,25 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                              const std::wstring& key, const std::wstring& cls,
                              int senderSlot, bool morph) {
     if (!actor) return;
-    // Quiet idempotency (Fork B 2b): under the relaxed snapshot gate the OWNER
-    // client re-ingests its own entities at every re-bracket, re-resolving its OWN
-    // element's actor and re-binding the same (eid, actor). Short-circuit before
-    // Install so the manager's duplicate path doesn't warn once per entity.
+    // Quiet idempotency: under the relaxed snapshot gate the OWNER client re-ingests its own
+    // entities at every re-bracket, re-resolving its OWN element's actor and re-binding the same
+    // (eid, actor). Short-circuit before Install so the manager's duplicate path does not warn
+    // once per entity.
     if (auto* existing = coop::element::Registry::Get().Get(eid)) {
         if (existing->GetActor() == actor) return;  // ADOPT: idempotent no-op
-        // MORPH V2 -- the SINGLE rebind entry point. Re-skin eid onto the new
-        // rendering (pile-A -> clump -> pile-B). HEAD keeps the existing live actor
-        // (a different live actor for the same eid is a conflict to reject); the
-        // morph LEGITIMATELY swaps the actor (the old one is destroyed right after).
-        // Route on the Element's AUTHORITATIVE m_mirror flag -- NOT a caller's
-        // runtime guess: a MIRROR rebinds via SetActor here; a LOCAL element (a host
-        // applying a client's convert against its OWN pile) MUST go through
-        // RebindLocalElementActor so the unified actor->eid reverse (Registry::
-        // EidForActor, maintained by NoteActorRebind) stays consistent. Only the
-        // morph callers pass true.
+        // THE SINGLE REBIND ENTRY POINT. Re-skin eid onto the new rendering (pile-A -> clump ->
+        // pile-B). HEAD keeps the existing live actor, a different live actor for the same eid
+        // being a conflict to reject; the morph LEGITIMATELY swaps the actor, the old one being
+        // destroyed right after. Route on the Element's AUTHORITATIVE m_mirror flag, never a
+        // caller's runtime guess: a MIRROR rebinds via SetActor here, while a LOCAL element -- a
+        // host applying a client's convert against its OWN pile -- MUST go through
+        // RebindLocalElementActor so the unified actor-to-eid reverse (Registry::EidForActor,
+        // maintained by NoteActorRebind) stays consistent. Only the morph callers pass true.
         if (morph) {
             if (existing->IsMirror()) {
                 existing->SetActor(actor, R::InternalIndexOf(actor));
-                // Keep the K-5 client kerfur held-pose map consistent if this is a
-                // kerfur mirror (self-filters on class -- no-op for chipPile/clump).
+                // Keep the client kerfur held-pose map consistent if this is a kerfur mirror
+                // (self-filters on class -- a no-op for chipPile and clump).
                 coop::kerfur_entity::NotifyKerfurPropMirrorBound(actor, eid);
                 UE_LOGI("sync::CreateOrAdoptPropMirror: eid=%u REBOUND mirror in place -> actor=%p "
                         "cls='%ls' (morph re-skin)", eid, actor, cls.c_str());
@@ -139,31 +137,31 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                     "cls='%ls' (prior actor=%p was %s -- churn/recycle smear healed; displaced actor not "
                     "destroyed)", eid, actor, key.c_str(), cls.c_str(), old,
                     oldLive ? "LIVE-but-foreign" : "dead/stale");
-            // v106b: a LIVE displaced native chipPile is now identity-less -- the exact ghost the
-            // 10:19:27 wedge left for an E-press to find. Arm the wholesale adjudication (the
-            // quiescence_drain reconcile's GHOST-RETIRE tail): its OWN identity gets a re-bind
-            // chance in that same pass (binds run before the retire), else it is retired at once.
+            // A LIVE displaced native chipPile is now identity-less -- the exact ghost an E-press
+            // would find. Arm the wholesale adjudication, the quiescence_drain reconcile's
+            // GHOST-RETIRE tail: its OWN identity gets a re-bind chance in that same pass, binds
+            // running before the retire, and failing that it is retired at once.
             if (oldLive && ue_wrap::prop::IsChipPile(old))
                 coop::element::quiescence_drain::ArmGhostSweep();
             return;
         }
         // else: fall through to Install, which rejects the duplicate eid (HEAD live-conflict guard).
     }
-    // (A') ONE-ACTOR-ONE-ROW. Install would otherwise stack a SECOND row onto an actor
-    // already bound elsewhere and steal the unified reverse (RegisterMirror overwrites
-    // m_byActor) -- the measured zombie/reverse-steal class. Adjudicate by AUTHORITY:
-    //   HOST + live local row       -> the host's own element wins; REFUSE. (The
-    //                                  corrective, enroll + re-express under the host eid,
-    //                                  is remote_prop_spawn's HostAuthorityHandback_ at the
-    //                                  OnSpawn seam; this wall catches every other path.)
+    // ONE ACTOR, ONE ROW. Install would otherwise stack a SECOND row onto an actor already bound
+    // elsewhere and steal the unified reverse, since RegisterMirror overwrites m_byActor -- the
+    // measured zombie and reverse-steal class. Adjudicate by AUTHORITY:
+    //   HOST + live local row       -> the host's own element wins; REFUSE. The corrective,
+    //                                  enroll and re-express under the host eid, is
+    //                                  remote_prop_spawn's HostAuthorityHandback_ at the OnSpawn
+    //                                  seam; this wall catches every other path.
     //   CLIENT + host word (slot 0) -> the DESIGNED handback receiver: the provisional
-    //                                  client-band local dissolves (wire-silent Take ->
-    //                                  ElementDeleter, and ~Element's reverse clear is
-    //                                  ownership-gated so the mirror's reverse survives the
-    //                                  deferred dtor) and the host eid becomes the sole
-    //                                  identity. Key index KEPT: the actor still occupies it.
+    //                                  client-band local dissolves through ElementDeleter,
+    //                                  wire-silent, and the host eid becomes the sole identity.
+    //                                  ~Element's reverse clear is ownership-gated, so the
+    //                                  mirror's reverse survives the deferred dtor; the key
+    //                                  index is KEPT, the actor still occupying it.
     //   CLIENT + peer word          -> never let a peer steal a local row; REFUSE.
-    //   prior row is a MIRROR       -> 1:1 conflict; REFUSE. Every exit logs LOUD.
+    //   prior row is a MIRROR       -> a 1:1 conflict; REFUSE. Every exit logs LOUD.
     {
         const coop::element::ElementId prior = Registry::Get().EidForActor(actor);
         if (prior != coop::element::kInvalidId && prior != eid) {
@@ -202,8 +200,8 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
             }
         }
     }
-    // Tag with the originating peer slot for per-slot disconnect eviction (D1-7).
-    // Out-of-range/unknown -> -1 (untagged; only drained on full teardown).
+    // Tag with the originating peer slot for per-slot disconnect eviction. An out-of-range or
+    // unknown slot tags -1, which is only drained on a full teardown.
     const int ownerSlot =
         (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers))
             ? senderSlot : -1;

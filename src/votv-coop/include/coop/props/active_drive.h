@@ -1,20 +1,17 @@
-// coop/active_drive.h -- the FIXED-DELAY SNAPSHOT INTERPOLATION primitive.
+// coop/props/active_drive.h -- the FIXED-DELAY SNAPSHOT INTERPOLATION primitive.
 //
-// Extracted verbatim from remote_prop.cpp (2026-06-22) at the RULE 2026-05-25 800-LOC soft
-// cap, when the host-authoritative trash-clump carry/flight pose stream
-// (coop/trash_clump_pose_stream) needed to reuse the SAME proven interp rather than duplicate
-// it (RULE 2 -- one implementation of one concept). ZERO behaviour change vs the in-place
-// version: this IS the carry-jank fix (render the proxy BEHIND the newest pose by the measured
-// inter-pose interval, advancing on an INDEPENDENT render clock -- MTA CClientVehicle::
-// UpdateTargetPosition / fAlpha = Unlerp(start, now, finish)). [[feedback-follow-mta-architecture]]
+// One implementation of one concept, shared by the two pose streams that drive a local
+// actor from a remote peer's transform. It renders the proxy BEHIND the newest pose by the
+// measured inter-pose interval, advancing on an INDEPENDENT render clock -- MTA's
+// CClientVehicle::UpdateTargetPosition, whose fAlpha is Unlerp(start, now, finish).
 //
 // TWO consumers, same primitive:
-//   * remote_prop.cpp  -- a std::array<ActiveDrive, kMaxPeers> g_drives, ONE per peer slot (each
-//                         client kinematically drives its own held prop independently).
-//   * trash_clump_pose_stream.cpp -- a std::unordered_map<eid, ActiveDrive>, ONE per host-driven
-//                         trash clump (N simultaneously-carried client-grabbed clumps).
-// Both feed BeginLerpToPose (record a new target) + AdvanceLerp (advance one tick, EVERY tick).
-// GAME-THREAD only (SetActorLocation/Rotation are UFunction dispatches).
+//   * remote_prop.cpp -- a std::array<ActiveDrive, kMaxPeers> g_drives, ONE per peer slot,
+//                        each client kinematically driving its own held prop.
+//   * trash_clump_pose_stream.cpp -- a std::unordered_map<eid, ActiveDrive>, ONE per
+//                        host-driven trash clump.
+// Both feed BeginLerpToPose (record a new target) and AdvanceLerp (advance one tick, EVERY
+// tick). GAME-THREAD only: SetActorLocation and SetActorRotation are UFunction dispatches.
 
 #pragma once
 
@@ -40,13 +37,11 @@ struct ActiveDrive {
     int32_t      actorIdx = -1;  // GUObjectArray index at grab time. IsLiveByIndex guard for
                                  // the teardown release paths: a recycled slot passes plain
                                  // IsLive and the release UFunction call then lands on the
-                                 // foreign occupant (the setRainProperties-fatal class;
-                                 // audit 2026-07-04 item (a)).
+                                 // foreign occupant, which is fatal in setRainProperties.
     void*        mesh = nullptr;
 
-    // The drive's actor SLOT-VALIDATED through actorIdx (islive-zeroav 2026-08-22:
-    // bare IsLive on the cached `actor` was the census's active_drive/remote_prop
-    // rows). nullptr when unset or dead/recycled.
+    // The drive's actor SLOT-VALIDATED through actorIdx; a bare IsLive on the cached `actor`
+    // accepts a recycled slot. nullptr when unset or dead/recycled.
     void* LiveActor() const {
         return ue_wrap::reflection::IsLiveByIndex(actor, actorIdx) ? actor : nullptr;
     }
@@ -60,17 +55,18 @@ struct ActiveDrive {
     // Aprop_C held item keeps the 500 ms timeout (no such reliable end-of-carry guarantee).
     bool         isProxy = false;
     // FIXED-DELAY SNAPSHOT INTERP (scoped to the trash proxy; a non-proxy Aprop_C is EXEMPT and
-    // keeps its proven teleport-to-latest snap). Render between the two MOST RECENT timestamped
-    // poses a small fixed delay (the measured inter-pose interval) BEHIND the newest, so the
-    // render clock (nowMs) advances INDEPENDENTLY of pose arrival. First pose primes (snap), a
-    // far jump re-primes (snap), else interpolate prev->last. On a stream STOP the render clock
-    // advances past `last`'s timestamp -> alpha clamps to 1 -> the proxy reaches the last pose
-    // and FREEZES (no extrapolation; control released at the reliable edge).
+    // keeps its teleport-to-latest snap). Render between the two MOST RECENT timestamped poses,
+    // a small fixed delay behind the newest -- the measured inter-pose interval -- so the render
+    // clock (nowMs) advances INDEPENDENTLY of pose arrival. The first pose primes (snap), a far
+    // jump re-primes (snap), otherwise interpolate prev->last. On a stream STOP the render clock
+    // advances past `last`'s timestamp, alpha clamps to 1, and the proxy reaches the last pose
+    // and FREEZES: no extrapolation, control released at the reliable edge.
     //
-    // RETIRED 2026-06-22 (the carry JANK root, code-proven): the prior scheme lerped
-    // renderedLoc->latest over the measured interval, resetting lerpStartMs = nowMs on every pose
-    // -- and AdvanceLerp sampled the SAME nowMs that tick => alpha = 0 => ZERO movement on every
-    // new-pose tick. At vsync-60 (pose rate ~= tick rate) nearly every tick was a new-pose tick.
+    // The obvious scheme cannot work here, and it was the carry-jank root: lerping
+    // renderedLoc toward the latest pose over the measured interval resets lerpStartMs to nowMs
+    // on every pose, and AdvanceLerp samples that same nowMs on that tick, so alpha is 0 and
+    // nothing moves. At vsync 60, where the pose rate is about the tick rate, nearly every tick
+    // is a new-pose tick.
     bool              lerpSeeded   = false;  // identity primed (first pose snapped)
     bool              haveTwoSnaps = false;  // >=2 buffered poses -> interpolate (else sit at the single snap)
     ue_wrap::FVector  prevLoc{}, lastLoc{}, renderedLoc{};
