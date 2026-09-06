@@ -242,8 +242,8 @@ void MaybeWarnPeDepth(void* self, void* function) {
     void* cls = self ? reflection::ClassOf(self) : nullptr;
     const std::wstring cn = cls ? reflection::ToString(reflection::NameOf(cls)) : L"<null>";
     UE_LOGW("game_thread: PE recursion depth=%d -- function='%ls' self=%p class='%ls' "
-            "(a dispatch cascade this deep precedes a script-VM stack overflow -- the "
-            "2026-07-04 17:09 host death; the repeating function/class here names the cycle)",
+            "(a dispatch cascade this deep precedes a script-VM stack overflow; the "
+            "repeating function/class here names the cycle)",
             t_peDepth, fn.c_str(), self, cn.c_str());
 }
 

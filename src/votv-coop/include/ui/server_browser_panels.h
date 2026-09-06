@@ -1,26 +1,16 @@
-// ui/server_browser_panels.h -- THE TWO PANES BESIDE THE LIST: what the chosen server IS,
-// and what the SCREEN currently knows.
+// ui/server_browser_panels.h -- THE TWO PANES BESIDE THE LIST: what the chosen server IS, and
+// what the SCREEN currently knows.
 //
 // WHY THEY EXIST AT ALL. The browser used to be a five-column table with a one-line footer:
 // every fact about a server had to fit in a column ~130 px wide, and every fact about the
-// screen had to fit in one sentence that the next sentence overwrote. The user rejected that
-// whole shape ("это дизайн говно у сервер браузера"), and the redesign's root
-// (docs/SERVER_BROWSER_ARC.md section 7.1) is VOTV's OWN save browser -- list on the left,
-// a details panel top-right, a black status pane under it. This module is those two panes.
+// screen had to fit in one sentence that the next sentence overwrote. That shape was rejected
+// whole, and the redesign's root is VOTV's OWN save browser -- list on the left, a details
+// panel top-right, a black status pane under it. This module is those two panes.
 //
-// WHY ONE TU FOR BOTH. They are two halves of one idea -- "everything that is not the list"
-// -- they are built in the same pass, repainted on the same tick, and they share the one
-// mechanism that makes repainting them affordable (below). Splitting them would duplicate
-// that mechanism into two files whose only difference is which strings they render.
-//
-// THE MECHANISM, and it is the reason this is not a naive Sync(): EVERY LINE IS WRITTEN
-// ONLY WHEN ITS TEXT CHANGES. A UTextBlock write is a ProcessEvent dispatch, and these two
-// panes are ~11 lines; painting them every menu tick would be ~1,300 dispatches a second on
-// a screen whose content changes about once every five seconds. So each line holds the
-// string it last rendered and compares before it writes. The comparison is a std::string
-// == on short text; the dispatch it avoids is an engine call.
-//
-// THREADING: game thread only, like every other native screen module.
+// WHY ONE TU FOR BOTH. They are two halves of one idea -- "everything that is not the list" --
+// they are built in the same pass, repainted on the same tick, and they share the one mechanism
+// that makes repainting them affordable (below). Splitting them would duplicate that mechanism
+// into two files whose only difference is which strings they render.
 
 #pragma once
 

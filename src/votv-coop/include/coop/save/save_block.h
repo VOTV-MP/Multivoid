@@ -21,17 +21,11 @@
 // separate increment -- this part is the under-the-hood guarantee that covers
 // autosave/sleep/forced/direct-trigger saves the button grey-out cannot.
 //
-// Part 3 (user mandate 2026-07-04, "выключить полностью save цикл нативный"):
-// the native save CYCLE off, not just the write. saveSlot_C::save checks
-// gamemode.disableSave at its HEAD [V bytecode research/pak_re/saveSlot.json]
-// BEFORE the world gather (saveObjects/saveTriggers -- a full-actor walk) and
-// the saveToSlot write funnel; every gamemode trigger (autosave/sleep/menu/
-// quicksave) funnels through it, and no bytecode anywhere in mainGamemode ever
-// WRITES disableSave. Holding it TRUE on a coop client turns the whole native
-// pipeline off at the game's own gate (engine-native opt-out, principle 6).
-// The disk hook (part 1) stays as the boundary belt for the residue that does
-// not pass the gate: saveSlot_C::savePlayerOnly + a few world triggers calling
-// SaveGameToSlot directly.
+// Part 3 turns the native save CYCLE off, not just the write. saveSlot_C::save checks
+// gamemode.disableSave at its HEAD (bytecode-verified) BEFORE the world gather
+// (saveObjects/saveTriggers -- a full-actor walk) and the saveToSlot write funnel; every
+// gamemode trigger (autosave/sleep/menu/quicksave) funnels through it, and no bytecode anywhere
+// in mainGamemode ever WRITES disableSave. Holding it TRUE on a coop client turns the whole native
 #pragma once
 
 namespace coop::net { class Session; }

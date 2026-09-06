@@ -120,7 +120,7 @@ bool Tick(coop::net::Session& session) {
                         "and the quit-to-menu flee -- so a peer that leaves to the menu keeps its "
                         "session, and prop tracking breaks silently after ~7 world transitions "
                         "(the 16384 caps). This is a version-surface break: see the world_identity "
-                        "resolution line and docs/VERSION_MIGRATION.md.",
+                        "resolution line and docs/versioning.md.",
                         kUnknownScansBeforeAlarm * 4,
                         ue_wrap::world_identity::Degraded() ? 1 : 0);
             }

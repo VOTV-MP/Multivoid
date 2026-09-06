@@ -859,8 +859,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             const bool browserOut = !ui::server_browser_native::IsOpen();
             if (hostUp && browserOut)
                 UE_LOGW("server_browser_native: HOST LINK PASS -- a real click on HOST "
-                        "opened the hosting window and closed the browser. The window "
-                        "shipped 2026-08-29 with no way in but a dev flag; it has one now.");
+                        "opened the hosting window and closed the browser.");
             else
                 UE_LOGE("server_browser_native: HOST LINK FAIL -- after a real click on the "
                         "HOST button: hosting window open=%d, browser closed=%d. Both must "

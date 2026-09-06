@@ -67,10 +67,9 @@ float DistanceAlpha(float distCm) {
 // earlier 22->16 "huge up close" complaint), floored so a mid-range plate stays legible
 // while DistanceAlpha fades it out.
 float DistanceScale(float distCm) {
-    // kRefCm 600 -> 900 (2026-07-04, user: "ники становятся плохо читаемыми
-    // слишком рано -- отодвинь эту дистанцию в 1.5 раза"): full size holds to
-    // ~9 m, every farther plate is 1.5x its old size, and the legibility floor
-    // is reached at ~22.5 m instead of ~15 m.
+    // kRefCm is 900, not the 600 this started at: names became hard to read well before the plate
+    // was small, so full size holds to ~9 m, every farther plate is 1.5x its old size, and the
+    // legibility floor is reached at ~22.5 m instead of ~15 m.
     constexpr float kRefCm    = 900.f;  // at/under ~9 m the plate is at base (full) size
     constexpr float kMinScale = 0.40f;  // floor, reached ~22.5 m as the alpha fade progresses
     if (distCm <= kRefCm) return 1.f;

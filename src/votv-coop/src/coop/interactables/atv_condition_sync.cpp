@@ -188,7 +188,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         if (n == 1 || n % 100 == 0)
             UE_LOGW("atv_condition: presence from slot %u DIFFERS (mask %02X vs expressed %02X) "
                     "-- skipped by the authority rule, x%llu (KNOWN divergence until the "
-                    "act-as-host tire-eject intent lane; docs/CRUTCHES.md)",
+                    "act-as-host tire-eject intent lane)",
                     static_cast<unsigned>(senderSlot), p.tiresMask, ex.mask, n);
     }
 

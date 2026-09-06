@@ -685,7 +685,7 @@ constexpr int kSampleMs      = 250;
 DWORD WINAPI DeathTestThread(LPVOID) {
     UE_LOGI("death_test: armed -- a LETHAL Add Player Damage runs VOTV's native death "
             "chain to completion; the timeline + memory are OBSERVED, and the "
-            "docs/DEATH_ARC.md contract is the ACCEPTANCE half");
+            "death contract is the ACCEPTANCE half");
 
     // A pawn that can be killed: canRagdoll true, no invincibility term set, in the gameplay world.
     Sample s;

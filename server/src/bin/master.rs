@@ -370,9 +370,9 @@ fn game_shape_ok(game: &str) -> bool {
 /// Pure gate half (env resolved by the caller so this is unit-testable).
 ///
 /// SHAPE ONLY. THE MASTER DOES NOT ADJUDICATE WHICH BUILDS EXIST -- the proto ceiling
-/// (`COOP_MAX_BUILD`) and the exact-set allowlist (`COOP_ALLOWED_BUILDS`) are RETIRED,
-/// 2026-08-31, on the user's call: "Coop max build плохая идея, если она не дает другим
-/// тестерам на свежих билдах играть, о которых мастер не знает."
+/// (`COOP_MAX_BUILD`) and the exact-set allowlist (`COOP_ALLOWED_BUILDS`) are RETIRED. A
+/// ceiling that refuses hosting to a build the master has not been told about stops testers
+/// on fresh builds from playing at all, which costs more than the listing it was cleaning up.
 ///
 /// They were added for A58 -- a field host advertised a build that did not exist and the
 /// browser listed it, which reads as "a newer version is out". The trade turned out bad in

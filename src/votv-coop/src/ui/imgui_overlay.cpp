@@ -438,8 +438,8 @@ IDXGISwapChain* ValidatedSwapChain(void* viewport, size_t off, const char* which
             UE_LOGE("imgui_overlay: %s -- the pointer at viewport+0x%zX (%p) does not "
                     "QueryInterface as IDXGISwapChain. The offset has drifted for this "
                     "build; the overlay draws NOTHING rather than through an unidentified "
-                    "pointer (docs/OVERLAY_CAPTURE_COEXIST.md, re-derive per "
-                    "docs/VERSION_MIGRATION.md).", which, off, static_cast<void*>(sc));
+                    "pointer -- re-derive per docs/versioning.md.",
+                    which, off, static_cast<void*>(sc));
             ue_wrap::log::Flush();
         }
         return nullptr;
@@ -613,7 +613,7 @@ bool Init() {
                 // Expected for the RHI this cook does not contain; zero draw seams is checked after
                 // the loop.
                 UE_LOGW("imgui_overlay: %s signature NOT found -- that seam is ABSENT this "
-                        "run (docs/OVERLAY_CAPTURE_COEXIST.md).", sm.name);
+                        "run.", sm.name);
                 continue;
             }
             if (ue_wrap::hook::Install(reinterpret_cast<void*>(at), sm.detour, sm.tramp)) {
@@ -635,7 +635,7 @@ bool Init() {
             UE_LOGE("imgui_overlay: NO DRAW SEAM. Neither FD3D11Viewport::PresentChecked nor "
                     "FD3D12Viewport::PresentInternal resolved, so the overlay cannot draw and "
                     "is DISABLED for this run. This is what a game recook looks like from "
-                    "here -- re-derive the signatures per docs/VERSION_MIGRATION.md.");
+                    "here -- re-derive the signatures per docs/versioning.md.");
             ue_wrap::log::Flush();
             return false;
         }

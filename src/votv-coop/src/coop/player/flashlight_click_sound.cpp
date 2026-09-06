@@ -1,9 +1,4 @@
 // coop/flashlight_click_sound.cpp -- see flashlight_click_sound.h.
-//
-// Extracted from item_activate.cpp on 2026-05-26 (per modular soft-cap
-// rule: item_activate.cpp had grown to 853 LOC > 800 soft cap, and the
-// click-sound subsystem is conceptually distinct from the flashlight
-// state-sync wire / observer logic).
 
 #include "coop/player/flashlight_click_sound.h"
 
@@ -74,27 +69,21 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
                                     P::name::SoundWaveClass);
     }
 
-    // 3) RULE 1 native path: construct our own USoundAttenuation via
-    //    UGameplayStatics::SpawnObject. No coupling to VOTV's cooked
-    //    `att_*` content assets. A-3 (2026-05-29) Principle 7: the
-    //    SpawnObject UFunction call + the 8 raw att:: offset writes +
-    //    AddToRoot now live behind ue_wrap::engine::SpawnSoundAttenuation;
-    //    gameplay code holds only the cached pointer.
+    // 3) RULE 1 native path: construct our own USoundAttenuation through
+    //    UGameplayStatics::SpawnObject, with no coupling to VOTV's cooked `att_*` content assets.
+    //    Principle 7 puts the SpawnObject call, the eight raw att:: offset writes and AddToRoot
+    //    behind ue_wrap::engine::SpawnSoundAttenuation; gameplay code holds only the cached
+    //    pointer.
     //
-    //    Sphere shape. History: 2m/20m (initial) was too short -> bumped
-    //    10x to 20m full-volume / 200m falloff (2026-05-26) so the click
-    //    carried across VOTV's outdoor map. User feedback 2026-06-03: that
-    //    is too FAR for a REMOTE player's toggle ("радиус звука включения
-    //    фонарика у puppet понизить в 3 раза") -- reduce the radius 3x. We
-    //    scale BOTH the full-volume sphere radius AND the falloff distance
-    //    by 1/3 so the whole envelope shrinks uniformly (6.67m full-volume
-    //    -> ~73m silence, was 20m -> 220m = exactly 1/3 the reach).
+    //    Sphere shape, sized a third of the generic baseline: 6.67 m full volume falling off to
+    //    silence by ~73 m, where the baseline is 20 m and 220 m. Both terms are scaled by 1/3 so
+    //    the whole envelope shrinks uniformly. The baseline carries a click across VOTV's outdoor
+    //    map, which is right for the local player and too far for a REMOTE one's toggle.
     //
-    //    Puppet-only by construction: PlayIfStateChanged is ONLY ever
-    //    called from item_activate::ApplyToPuppet (the receiver path); the
-    //    local player's own flashlight click is VOTV's native sound, which
-    //    this code never touches. So this 1/3 only affects how far OTHERS
-    //    hear a remote player's flashlight toggle.
+    //    Puppet-only by construction: PlayIfStateChanged is ONLY ever called from
+    //    item_activate::ApplyToPuppet, the receiver path. The local player's own flashlight click
+    //    is VOTV's native sound, which this code never touches, so the 1/3 affects only how far
+    //    OTHERS hear a remote player's toggle.
     if (!sAttenuation) {
         ue_wrap::engine::SoundAttenuationConfig cfg{};  // generic baseline
         cfg.extents[0]      /= 3.f;   // 2000cm (20m)   -> 667cm  (6.67m)
@@ -102,8 +91,8 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
         sAttenuation = ue_wrap::engine::SpawnSoundAttenuation(cfg);
         if (sAttenuation) {
             UE_LOGI("flashlight: constructed native USoundAttenuation %p "
-                    "(sphere r=6.67m, falloff=66.7m, inverse; radius/3 per "
-                    "2026-06-03 puppet-volume req)", sAttenuation);
+                    "(sphere r=6.67m, falloff=66.7m, inverse; a third of the "
+                    "baseline, for a remote player's toggle)", sAttenuation);
         }
     }
 

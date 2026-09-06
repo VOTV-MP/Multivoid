@@ -130,8 +130,8 @@ const std::vector<EventInfo>& Events() {
         { "cookiebox",    D::SpecialEvent, C::Prop, -1, "rep-gated","spawns prop_cookiebox_C (gift)",  Risk::Safe },
         { "trashPiles",   D::SpecialEvent, C::Prop, -1, "rep-gated","trash props at doorways",         Risk::Safe },
         // arirGraff: the switch has ONLY the 7 per-variant cases (arirGraff_0..6) -- a bare
-        // "arirGraff" falls through the SwitchName to RETURN, a silent no-op (2026-07-03 fix
-        // of the exact bug the user reported: "не все ивенты в списке").
+        // "arirGraff" falls through the SwitchName to RETURN, a silent no-op. Listing the variants is
+        // what makes the whole family reachable from the menu.
         { "arirGraff_0",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 0 (grime_arirGraffiti_C)", Risk::Safe },
         { "arirGraff_1",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 1", Risk::Safe },
         { "arirGraff_2",  D::SpecialEvent, C::Prop, -1, "rep-gated","graffiti decal variant 2", Risk::Safe },

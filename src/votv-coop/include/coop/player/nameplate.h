@@ -25,12 +25,10 @@ namespace coop::net { class Session; }
 namespace coop::nameplate {
 
 // One projected label (plain data; the render thread reads it). nick is a fixed
-// UTF-8 buffer sized by the display policy (coop::text::kNickBufBytes) -- the
-// same alphabet the roster board and the chat bubble already carry. It was an
-// ASCII buffer filled through a `c < 127 ? c : '?'` squash until 2026-07-28,
-// which meant the FLOATING NAMEPLATE -- the surface the whole nickname arc was
-// asked for ("просто чтобы у всех был уникальный Nameplate") -- was the one
-// place a Cyrillic name still rendered as '????????'.
+// UTF-8 buffer sized by the display policy (coop::text::kNickBufBytes) -- the same alphabet the
+// roster board and the chat bubble already carry. It was an ASCII buffer filled through a
+// `c < 127 ? c : '?'` squash, which made the FLOATING NAMEPLATE -- the surface the whole
+// nickname arc exists for -- the one place a Cyrillic name still rendered as '????????'.
 struct Plate {
     float x = 0.f;           // screen px (viewport pixels, top-left origin) -- the head anchor
     float y = 0.f;

@@ -34,7 +34,7 @@ float UserMax() {
 
 // All render-thread only (the Present detour thread), like the rest of ui/.
 float g_res = 1.0f;      // quantized resolution factor (height / 1080)
-float g_user = 1.25f;    // the user's size pref (ini ui.scale; "побольше" default)
+float g_user = 1.25f;    // the player's size pref (ini ui.scale)
 float g_scale = 1.25f;   // published combined factor = min(res * user, cap)
 bool  g_rebuild = false;
 bool  g_prefLoaded = false;
@@ -110,9 +110,9 @@ void SetUserScale(float s) {
 void LoadUserPrefOnce() {
     if (g_prefLoaded) return;
     g_prefLoaded = true;
-    // Typed registry read (arc 2): garbage OR out-of-[row lo,hi] -> the 1.25
-    // default ("побольше") + a T10 sweep row. (The old atof path fed 99 into
-    // the clamp -> silently 1.75; out-of-range is garbage now, user ruling.)
+    // Typed registry read: garbage OR out-of-[row lo,hi] falls to the 1.25 default and reports a
+    // sweep row. Out-of-range counts as garbage rather than something to clamp -- the old atof
+    // path fed 99 into the clamp and silently became 1.75, which nobody asked for.
     SetUserScale(coop::config::ResolveFloat(coop::config_registry::rows::ui_scale));
 }
 

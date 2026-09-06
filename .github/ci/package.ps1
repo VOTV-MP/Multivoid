@@ -1,10 +1,8 @@
 # package.ps1 -- assemble the ONE distributable zip (docs/UE4SS_ARC.md 7.2a shape).
 #
-# WHY ONE ZIP. 7.4c (USER 2026-08-25): "Я хочу чтобы в zip лежал сам мод с нужной
-# иерархией под r2modman ... Кто захочет установить не для r2modman, а вручную для
-# ue4ss без shimloader то сам разберется и закинет куда надо файлы из нашего
-# собранного zip release." Both lanes take the SAME file: r2modman routes it by its
-# top-level folder names, and a hand-installer copies mod\ into the game's Mods\.
+# WHY ONE ZIP. The archive holds the mod under the hierarchy r2modman expects, and both
+# install lanes take the SAME file: r2modman routes it by its top-level folder names, and
+# someone installing by hand into a plain UE4SS copies mod\ into the game's Mods\.
 #
 # THE MANIFEST IS GENERATED, NEVER HAND-EDITED (7.3, HARD REQUIREMENT). A typed
 # version string that rots unbumped is the exact failure that got mod semver deleted
@@ -17,13 +15,12 @@
 # is a silently broken release"). Test-PackageZip lives in ledger_lib.ps1 so publish
 # can re-run the identical predicate on the artifact it downloaded back.
 #
-# THE PAK SHIPS (2026-08-29; the 7.7c debt is PAID). 7.7c item 1: the base skins ship
-# INSIDE the mod package, and 7.9's USER DIRECTION 2026-08-25 ("zip релиза будет
-# содержать мод и пак") chose manual assembly BECAUSE the pak ships. The user's
-# 2026-08-29 pick is the four starter scientists (walter/sci/rvi_scientist/luther +
-# preview tiles), staged in assets/paks/ and auto-included below when -Pak is not
-# given. Those binaries are TRACKED since 2026-09-01, so every checkout including a
-# CI one now has them and a release assembled on a runner carries the skins. The
+# THE PAK SHIPS. The base skins go INSIDE the mod package, which is why the zip is
+# assembled by hand rather than taken from a build output: the release carries the four
+# starter scientists (walter/sci/rvi_scientist/luther + preview tiles), staged in
+# assets/paks/ and auto-included below when -Pak is not given. Those binaries are
+# TRACKED, so every checkout including a CI one has them and a release assembled on a
+# runner carries the skins. The
 # -Release refusal below stays anyway: it guards the directory being empty for any
 # reason, and "the release shipped half of itself" is not a failure worth trusting
 # a default to prevent. skin_registry walks every LogicMods subdirectory since the same
@@ -139,19 +136,16 @@ Copy-Item $PayloadDll (Join-Path $stage 'mod/dlls/main.dll')
 # the literal "true" inside. Match them rather than shipping an empty file.
 Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Encoding ascii -NoNewline
 
-# --- Pak route (7.2a: pak\ -> shimloader\pak\<pkg>\ -> VFS LogicMods\<pkg>\) --
-# 2026-08-29 (USER: "zip должен содержать scientists.pak" -- the four starter
-# scientists): when -Pak is not given, the default input is assets/paks/ --
-# the staged starter-model paks + their .png preview tiles (the F1 skin
-# browser's sidecar convention). assets/paks IS TRACKED since 2026-09-01 (user
-# directive) -- it was untracked as public-repo caution for game-derived meshes,
-# which hid them from the repo and from nobody else, because the ship decision
-# (UE4SS_ARC 7.6) already put the same bytes in every release archive. The cost
-# was the automated lane: a runner's checkout had no paks, so with -Release it
-# refused. Every checkout has them now, CI included.
-# The manual-install step for pak\ lives in INSTALL.md;
-# skin_registry scans every LogicMods subdirectory since 2026-08-29, so both
-# lanes see the models wherever their route lands them.
+# --- Pak route (pak\ -> shimloader\pak\<pkg>\ -> VFS LogicMods\<pkg>\) --
+# When -Pak is not given the default input is assets/paks/: the staged starter-model
+# paks plus their .png preview tiles, the F1 skin browser's sidecar convention.
+# assets/paks is TRACKED. Keeping it untracked was public-repo caution about
+# game-derived meshes, and it hid them from the repository and from nobody else,
+# since the same bytes already ship in every release archive; the cost was the
+# automated lane, because a runner's checkout had no paks and -Release refused.
+# The manual-install step for pak\ lives in INSTALL.md, and skin_registry scans
+# every LogicMods subdirectory, so both lanes see the models wherever their route
+# lands them.
 if ($Pak.Count -eq 0) {
     $pakDir = if ($PakDir) { $PakDir } else { Join-Path $repoRoot 'assets/paks' }
     if (Test-Path -LiteralPath $pakDir) {

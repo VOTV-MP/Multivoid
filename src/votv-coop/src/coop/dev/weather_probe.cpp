@@ -66,9 +66,9 @@ void Tick(coop::net::Session* session) {
                 const bool  enFog     = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_fog);
                 const bool  enSuper   = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_superfog);
                 void*       effRain   = *reinterpret_cast<void**>(b + P::off::AdaynightCycle_eff_rain);
-                // Thick-fog signals: the rolling-fog ACTOR (fogEventObject -- the "жирный туман"
-                // when present), the visible height-fog DENSITY (finalFogDensity), and permanentFog.
-                // These are what distinguish a foggy peer from a clear one (rain/enable flags don't).
+                // Thick-fog signals: the rolling-fog ACTOR (fogEventObject, present only during the thick fog),
+                // the visible height-fog DENSITY (finalFogDensity), and permanentFog. These are what
+                // distinguish a foggy peer from a clear one; the rain and enable flags do not.
                 void*       rollFog   = *reinterpret_cast<void**>(b + P::off::AdaynightCycle_fogEventObject);
                 const float finalFog  = *reinterpret_cast<float*>(b + P::off::AdaynightCycle_finalFogDensity);
                 const bool  permFog   = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_permanentFog);

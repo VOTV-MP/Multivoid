@@ -1,22 +1,13 @@
 // ui/scale.h -- the ONE owner of the overlay's resolution-scale axis.
 //
-// Every pixel constant in ui/ was authored on a 1080p screen; on 1440p/4K the
-// whole overlay (fonts, windows, paddings) shrank relative to the screen (user
-// 2026-07-04: "на маленьком экране норм, на большом всё мелкое"). Ui() is the
-// proportional factor clientHeight / 1080, quantized to sixths so the standard
-// heights land exactly (720p=2/3, 1080p=1, 1440p=4/3, 2160p=2) and a windowed
-// drag-resize doesn't re-bake the font atlas every frame.
+// Every pixel constant in ui/ was authored on a 1080p screen, so on 1440p and 4K the whole
+// overlay -- fonts, windows, paddings -- shrank relative to the screen. Ui() is the
+// proportional factor clientHeight / 1080, quantized to sixths so the standard heights land
+// exactly (720p = 2/3, 1080p = 1, 1440p = 4/3, 2160p = 2) and a windowed drag-resize does not
+// re-bake the font atlas every frame. imgui_overlay::MaybeRescale() polls the client rect each
+// frame and performs the atlas/style rebuild when ConsumeRebuild() fires.
 //
-// The factor feeds THREE consumers, all on the render thread:
-//   1. ui::fonts::Load() bakes the atlas at px * Ui() (real rasterized size --
-//      NOT io.FontGlobalScale, which stretches the 1x bitmap and blurs);
-//   2. ImGuiStyle::ScaleAllSizes(Ui()) after a style reset (paddings/spacing);
-//   3. every explicit pixel constant in ui/ goes through S().
-// imgui_overlay::MaybeRescale() polls the client rect each frame and performs
-// the atlas/style rebuild when ConsumeRebuild() fires.
-//
-// All state is render-thread-only (the Present detour thread), like the rest
-// of the overlay UI state.
+// All state is render-thread-only (the Present detour thread), like the rest of the overlay.
 
 #pragma once
 
@@ -26,13 +17,15 @@ namespace ui::scale {
 // rebuild when the quantized factor changes.
 void NoteViewport(float width, float height);
 
-// Current combined scale factor (resolution factor x the user's size pref,
-// capped at 4.0). Stable within a frame.
+// Current combined scale factor (resolution factor x the player's size pref, capped at 4.0).
+// Stable within a frame. Three consumers read it, all on the render thread: ui::fonts::Load()
+// bakes the atlas at px * Ui(), a real rasterized size and NOT io.FontGlobalScale, which
+// stretches the 1x bitmap and blurs; ImGuiStyle::ScaleAllSizes(Ui()) runs after a style reset,
+// for paddings and spacing; and every explicit pixel constant in ui/ goes through S().
 float Ui();
 
-// The user's "UI size" pref (multivoid.ini ui.scale, default 1.25 -- user
-// 2026-07-04: "все менюшки и тексты ПОБОЛЬШЕ"). Multiplies the resolution
-// factor; the F1 > Cosmetics > Interface slider drives it live.
+// The player's "UI size" preference (multivoid.ini ui.scale, default 1.25). Multiplies the
+// resolution factor; the F1 > Cosmetics > Interface slider drives it live.
 float UserScale();
 void  SetUserScale(float s);   // clamps to the ui.scale registry row's [lo, hi]
 void  LoadUserPrefOnce();      // read ui.scale from the ini (bring-up, latched)

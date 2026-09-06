@@ -1,20 +1,13 @@
-// harness/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE (2026-07-03).
+// harness/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE.
 //
-// User report: "killer wisp игнорит пиров ... особый kill sequence" -- the June v72 chain
-// (SpawnKillerWispOnClient -> wisp acquires the PUPPET as Target -> inRange rising edge ->
-// wisp_attack_sync RelayGrab -> WispGrab/WispTear) reportedly never manifests in play.
-// READ-ONLY probe (probe-don't-guess): spawn a killerwisp ON the client puppet through the
-// existing dev path, teleport the HOST outside the wisp's 5000u acquire radius (so nearest-
-// pick cannot mask the question), then sample the wisp's REAL FSM fields every 2 s:
+// A killerwisp reportedly ignores peers and never runs its kill sequence on them, so the built
+// chain (SpawnKillerWispOnClient -> the wisp acquires the PUPPET as Target -> the inRange
+// rising edge -> wisp_attack_sync RelayGrab -> WispGrab/WispTear) never manifests in play.
+// READ-ONLY probe: spawn a killerwisp ON the client puppet through the existing dev path,
+// teleport the HOST outside the wisp's 5000u acquire radius so nearest-pick cannot mask the
+// question, then sample the wisp's REAL FSM fields every 2 s:
 //   kwisp_probe: t=NN target=puppet|host|npc|null|other harmless=X tryGrab=X grab=X
 //                killed=X dPuppet=NNNN dTarget=NNNN inRange=X
-// Where the chain breaks is read straight off the series:
-//   - target never 'puppet'      -> ACQUISITION broken (scanForActors/allow-set/LOS live gap)
-//   - target=puppet, no inRange  -> the wisp never closes to 550u (movement/AI gap)
-//   - inRange=1, no RELAYED line -> the wisp_attack_sync trigger/relay gap
-//   - "wisp_attack: RELAYED grab" in THIS log + client wisp_tear lines -> relay fine,
-//     the gap is FIDELITY (no lift/socket -- the special kill sequence's missing half).
-// Gated by env VOTVCOOP_RUN_KWISP_PROBE=1 (host-only; client observes via wire).
 
 #include "harness/autotest.h"
 

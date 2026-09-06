@@ -204,7 +204,7 @@ void LogResolutionStateOnce() {
                 "UGameInstance::LocalPlayers=%d UPlayer::PlayerController=%d "
                 "(-1 = not found; ULevel=%p UWorld=%p, null = the CLASS itself did not "
                 "resolve). Every world-currency term in the tree now fails "
-                "OPEN, i.e. back to liveness-only caches and the 2026-08-23 "
+                "OPEN, i.e. back to liveness-only caches and the "
                 "stale-cross-world-pawn class of bug. A game recook that renamed one "
                 "of these fields looks exactly like this.",
                 g_owningWorldOff, g_localPlayersOff, g_playerCtrlOff, g_levelCls, g_worldCls);
