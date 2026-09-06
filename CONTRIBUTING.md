@@ -116,6 +116,14 @@ git config core.hooksPath tools/git/hooks
 The hook refuses a message that breaks the shape and says why. CI runs the same check over
 every commit of a push.
 
+## What we add
+
+A change has to be intelligible and maintainable by the next person, not only correct. Prefer the
+shape a maintainer can hold in their head: an umbrella header over an include every caller must get
+right, one example over a paragraph of rules, a name that says what a thing is over a clever one.
+Precision that forces a lookup on every future edit is a cost, and it is usually larger than the
+duplication it removes. When the two pull apart, say in the commit message which you chose and why.
+
 ## Documentation
 
 `docs/` is written for two readers, a player and a contributor. It describes what the mod is,
