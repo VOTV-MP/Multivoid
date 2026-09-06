@@ -41,7 +41,7 @@ float g_speed = kBaseSpeed;             // wheel-adjustable; game-thread only
 
 // All touched only on the game thread (Enable/Disable/Teleport are posted; the
 // movement tick runs inside the ProcessEvent detour).
-ue_wrap::CachedObjRef g_camActor;  // islive-zeroav freecam rows
+ue_wrap::CachedObjRef g_camActor;
 ue_wrap::CachedObjRef g_pc;
 ue_wrap::CachedObjRef g_player;
 ue_wrap::FVector g_camPos;
@@ -56,14 +56,14 @@ inline void* ReadPtr(void* base, size_t off) {
     return base ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off) : nullptr;
 }
 
-// ---- player-control freeze (user 2026-07-05): while freecam is on, WASD/Space/Ctrl fly
-// the CAMERA -- the same keys must not also walk/jump the PAWN blindly. The engine seam is
-// CharacterMovement's mode: DisableMovement (MOVE_None) stops locomotion AND jump physics
-// wholesale, while LOOK (control rotation) stays live -- the freecam aims with it. Modes
-// are setter-managed (transition side effects), so this goes through the reflected
-// DisableMovement/SetMovementMode UFunctions, never a raw field write. The prior mode
-// (+custom sub-mode) is captured at freeze and restored verbatim at unfreeze -- a zero-g /
-// swimming player must come back to THAT state, not a hardcoded Walking. ----------------
+// ---- player-control freeze: while freecam is on, WASD/Space/Ctrl fly the CAMERA -- the same
+// keys must not also walk/jump the PAWN blindly. The engine seam is CharacterMovement's mode:
+// DisableMovement (MOVE_None) stops locomotion AND jump physics wholesale, while LOOK (control
+// rotation) stays live -- the freecam aims with it. Modes are setter-managed (transition side
+// effects), so this goes through the reflected DisableMovement/SetMovementMode UFunctions, never
+// a raw field write. The prior mode (+custom sub-mode) is captured at freeze and restored
+// unchanged at unfreeze -- a zero-g / swimming player must come back to THAT state, not a
+// hardcoded Walking. ----
 void* g_cmcClass = nullptr;
 void* g_disableMovementFn = nullptr;
 void* g_setMovementModeFn = nullptr;
@@ -126,10 +126,6 @@ void UnfreezePlayerControl() {
             g_frozenPrevMode, g_frozenPrevCustom);
 }
 
-// Walk GUObjectArray for THE local mainPlayer_C -- the one possessed by a
-// Local-vs-puppet discriminator + caching now lives in coop::local_player
-// per RULE 1 (2026-05-26 unification). This module just calls Get().
-
 void Enable() {
     if (!::coop::dev_gate::Allowed()) {
         UE_LOGW("freecam: REFUSED -- dev features are disabled while connected as a client");
@@ -169,7 +165,7 @@ void Enable() {
 
     E::SetViewTargetWithBlend(g_pc.Raw(), g_camActor.Raw(), 0.15f);
 
-    // The fly keys (WASD/Space/Ctrl) must not ALSO drive the pawn (user 2026-07-05).
+    // The fly keys (WASD/Space/Ctrl) must not ALSO drive the pawn.
     FreezePlayerControl();
 
     g_camPos = loc;
@@ -194,9 +190,9 @@ void Teleport() {
     UE_LOGI("freecam: teleported player to (%.0f,%.0f,%.0f)", g_camPos.X, g_camPos.Y, g_camPos.Z);
 }
 
-// Per-tick movement, throttled (~150 Hz) off the ProcessEvent stream so it's
-// frame-synced and dt-scaled (smooth regardless of fps), independent of any
-// specific event firing. Runs on the game thread inside the detour.
+// Per-tick movement, dt-scaled so motion is smooth regardless of fps. The driver thread posts
+// it at 60 Hz and the pump runs it on the game thread inside a ProcessEvent call; the 6 ms floor
+// below discards anything delivered faster and blocks re-entrant UFunction calls.
 void MovementTick() {
     if (!g_active.load() || !g_camActor.Raw() || !g_pc.Raw()) return;
     // Live role gate: a freecam activated BEFORE joining (or during hosting,
@@ -207,12 +203,11 @@ void MovementTick() {
         Disable();
         return;
     }
-    // Foreground-window gate (same reason as the hotkey thread): the WASD /
-    // Space / Ctrl / Shift KeyDown reads are GLOBAL, so without this the
-    // freecam would still move when the user types in the OTHER instance's
-    // window. Stop moving immediately when our window loses focus. Also stop
-    // while OUR overlay is capturing typed text (2026-07-09): WASD typed into the
-    // chat/rebind field must not ALSO fly the camera.
+    // Foreground-window gate (same reason as the hotkey thread): the WASD / Space / Ctrl / Shift
+    // KeyDown reads are GLOBAL, so without this the freecam would still move when the user types in
+    // the OTHER instance's window. Stop moving immediately when our window loses focus. Also stop
+    // while OUR overlay is capturing typed text: WASD typed into the chat/rebind field must not
+    // ALSO fly the camera.
     if (!::ui::input_focus::IsOurWindowForeground() ||
         ::ui::input_focus::IsOverlayCapturingText()) return;
     // The level may have reloaded under us (the cached actors are then freed).
@@ -283,12 +278,10 @@ LRESULT CALLBACK MouseProc(int code, WPARAM wParam, LPARAM lParam) {
     return ::CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
-// Audit H11 (2026-05-27): wheel hook thread ID, captured at thread entry.
-// HotkeyThread observes shutdown + posts WM_QUIT here so GetMessageW unblocks
-// and UnhookWindowsHookEx runs cleanly. Pre-fix the thread blocked in
-// GetMessageW until process termination; Windows force-killed it without
-// running the unhook (LL mouse hooks left registered for ~30s in winhk
-// timeout, which can briefly delay subsequent VOTV launches).
+// The wheel hook's thread id, captured at thread entry, so the driver thread can post WM_QUIT to
+// it at shutdown. Without that the thread stays blocked in GetMessageW until process termination
+// and UnhookWindowsHookEx never runs, leaving a low-level mouse hook registered until Windows
+// times it out -- which can briefly delay the next VOTV launch.
 std::atomic<DWORD> g_wheelHookTid{0};
 
 DWORD WINAPI WheelHookThread(LPVOID) {
@@ -309,18 +302,16 @@ DWORD WINAPI WheelHookThread(LPVOID) {
     return 0;
 }
 
-// Input/movement driver. Polls HOME (toggle -- kept by user request alongside the
-// menu checkbox), the in-freecam controls (MMB bring-player), and drives the
-// per-frame MovementTick while active.
+// Input/movement driver. Polls HOME (toggle, alongside the F1 menu checkbox), the in-freecam
+// controls (MMB bring-player), and drives the per-frame MovementTick while active.
 DWORD WINAPI InputDriverThread(LPVOID) {
     bool prevHome = false, prevMmb = false;
     while (!coop::shutdown::IsShuttingDown()) {
-        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes, so
-        // HOME/WASD/MMB in the client's window would otherwise drive THIS instance's
-        // freecam. Only react to keys when OUR window is focused AND no overlay
-        // text field owns the keyboard -- HOME is a caret-editing key, so typing
-        // in chat/rebind must never toggle the freecam (the hotkey-poller lesson;
-        // MovementTick :216 already gated, this poller had only the focus half).
+        // Foreground-window gate: GetAsyncKeyState is GLOBAL across processes, so HOME/WASD/MMB in
+        // the client's window would otherwise drive THIS instance's freecam. Only react to keys
+        // when OUR window is focused AND no overlay text field owns the keyboard -- HOME is a
+        // caret-editing key, so typing in chat/rebind must never toggle the freecam. MovementTick
+        // gates on both; this poller used to gate on focus alone.
         const bool focused = ::ui::input_focus::IsOurWindowForeground() &&
                              !::ui::input_focus::IsOverlayCapturingText();
 
@@ -345,11 +336,10 @@ DWORD WINAPI InputDriverThread(LPVOID) {
             GT::Post([] { g_movePosted.store(false); MovementTick(); });
         }
 
-        ::Sleep(16);  // 60 Hz (user-set 2026-06-04, was 125)
+        ::Sleep(16);  // 60 Hz
     }
-    // Audit H11 (2026-05-27): shutdown observed; wake the wheel hook thread.
-    // It's blocked in GetMessageW; without WM_QUIT it would hang until process
-    // termination, denying UnhookWindowsHookEx a clean exit.
+    // Shutdown observed; wake the wheel hook thread. It is blocked in GetMessageW; without WM_QUIT
+    // it would hang until process termination, denying UnhookWindowsHookEx a clean exit.
     if (DWORD tid = g_wheelHookTid.load(std::memory_order_acquire)) {
         ::PostThreadMessageW(tid, WM_QUIT, 0, 0);
     }

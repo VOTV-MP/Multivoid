@@ -34,7 +34,7 @@ std::atomic<bool> g_active{false};
 // exist by then; before that nothing in the world is meaningful to read anyway).
 // Owned by the engine via the GameInstance outer -- not destroyed on level
 // changes; we just RemoveFromViewport / AddToViewport to hide/show.
-ue_wrap::CachedObjRef g_root;  // islive-zeroav pos_hud rows
+ue_wrap::CachedObjRef g_root;
 void* g_text = nullptr;
 
 // Refresh-pump thread started once, lazily, on the first show.
@@ -96,11 +96,9 @@ void Refresh() {
     }
 
     wchar_t buf[256] = {};
-    // 2026-05-26: use the central coop::local_player registry instead of
-    // raw FindObjectByClass -- the latter could return the PUPPET (a
-    // mainPlayer_C orphan) and display its position as if it were the
-    // local player. local_player::Get() filters via controller-not-null
-    // and caches.
+    // Ask the registry, not FindObjectByClass: the raw scan can return the PUPPET (a mainPlayer_C
+    // orphan) and display its position as the local player's. Registry::Local() keeps only the
+    // actor that has a Controller, and caches it.
     void* local = coop::players::Registry::Get().Local();
     if (local) {
         const ue_wrap::FVector loc = E::GetActorLocation(local);
@@ -131,10 +129,10 @@ void Hide() {
     UE_LOGI("pos_hud: OFF");
 }
 
-// Refresh pump: while the overlay is visible, post a Refresh() to the game thread
-// every ~100 ms (10 Hz is plenty for a numeric readout; faster just burns UFunction
-// calls). Idles cheaply (one atomic load + sleep) while hidden. No key polling --
-// the menu drives visibility via SetVisible.
+// Refresh pump: while the overlay is visible, post a Refresh() to the game thread every ~190 ms
+// (about 5 Hz, plenty for a numeric readout; faster just burns UFunction calls). Idles cheaply
+// (one atomic load + sleep) while hidden. No key polling -- the menu drives visibility via
+// SetVisible.
 DWORD WINAPI RefreshPumpThread(LPVOID) {
     int refreshCounter = 0;
     constexpr int kRefreshEveryN = 12;  // 12 * 16 ms = ~192 ms -> ~5 Hz
@@ -150,7 +148,7 @@ DWORD WINAPI RefreshPumpThread(LPVOID) {
             refreshCounter = 0;
             GT::Post([] { if (g_active.load()) Refresh(); });
         }
-        ::Sleep(16);  // 60 Hz (user-set 2026-06-04, was 125)
+        ::Sleep(16);  // 60 Hz
     }
     return 0;
 }

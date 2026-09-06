@@ -26,31 +26,19 @@ namespace {
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Cached local mainPlayer_C pointer + cached teleportWObackrooms UFunction.
-// 2026-05-25 NIGHT (user retest +2): user reported "client just jumps not
-// changing his location" after retest -- K2_TeleportTo was being called,
-// returned true, but the actual position didn't stick. VOTV's own player
-// constraints revert large-distance K2_TeleportTo / SetActorLocation calls
-// silently (the autotest comment in harness.cpp:762-772 documents the same
-// symptom: client's 14-m autotest teleport "never stuck while the host's
-// 50-cm one did -- the engine snapped the actor back near the save spawn").
-//
-// Root-cause fix (RULE 1): use VOTV's own teleportWObackrooms UFunction
-// (mainPlayer.hpp:471). It's the function the game's own BP graph uses for
-// in-game teleports (e.g. backrooms exit, door teleports). It bypasses the
-// CMC constraints that K2_TeleportTo loses to. Falls back to TeleportTo +
-// SetActorLocation only if the VOTV function can't be resolved.
+// Cached teleportWObackrooms UFunction. VOTV's own player constraints silently revert a
+// large-distance K2_TeleportTo or SetActorLocation -- the actor snaps back near the save spawn,
+// so a client asked to move a long way appears to jump on the spot. teleportWObackrooms is the
+// function the game's own graph uses for in-game teleports (backrooms exit, door teleports) and
+// is not subject to them; K2_TeleportTo and SetActorLocation stay as fallbacks for the case where
+// it cannot be resolved.
 void* g_teleportWObackroomsFn = nullptr;  // mainPlayer_C::teleportWObackrooms UFunction*
 
-// Local-vs-puppet lookup + caching now lives in coop::local_player.
-// This module is a thin wrapper that calls Get().
-
-// Resolve mainPlayer_C::teleportWObackrooms once. The signature
-// (per mainPlayer.hpp:471) is:
+// Resolve mainPlayer_C::teleportWObackrooms once. Its signature is
 //   void teleportWObackrooms(FTransform NewTransform, bool useRotation, bool trueRotation);
-// We pass useRotation=false (we set actor/controller rotation separately,
-// avoiding an FRotator->FQuat conversion in the parameter frame). The function
-// pointer is class-level (same UFunction* for all instances), cached forever.
+// We pass useRotation=false (we set actor/controller rotation separately, avoiding an
+// FRotator->FQuat conversion in the parameter frame). The function pointer is class-level (the
+// same UFunction* for all instances), cached forever.
 void* ResolveTeleportFn(void* anyMainPlayer) {
     if (g_teleportWObackroomsFn) return g_teleportWObackroomsFn;
     if (!anyMainPlayer) return nullptr;
@@ -106,10 +94,8 @@ bool ApplyLocally(const ApplyArgs& args) {
             moved = E::SetActorLocation(local, loc);
         }
     }
-    // Always update the actor + controller rotation. Without the controller
-    // ControlRotation update, the camera stays aimed in the old direction even
-    // after the body moves -- the same fix the harness autotest uses
-    // (harness.cpp:782-784).
+    // Always update the actor + controller rotation. Without the controller's ControlRotation the
+    // camera stays aimed in the old direction after the body moves.
     E::SetActorRotation(local, rot);
     if (void* ctrl = E::GetController(local)) {
         E::SetControlRotation(ctrl, rot);
