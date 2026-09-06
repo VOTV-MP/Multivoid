@@ -48,14 +48,14 @@ void* g_spawnKerfuroFn     = nullptr;
 int32_t g_killOff          = -1;
 std::atomic<bool> g_ready{false};  // the request latch (flips with the residual's success g_installed)
 
-// ---- host-side converge (kerfur redesign K-4b) -------------------------------
+// ---- host-side converge -------------------------------------------------------
 // After the verb ran on the host (its own radial menu OR a client request), drive the SOLE
 // conversion signal KerfurConvert: find the new-form actor (the verb spawned it via EX_CallMath --
 // PE-invisible, so it is UNTRACKED), register it SILENTLY at a host-range eid, release the dying form
 // SILENTLY, and BindFormActor (rebinds the stable KerfurId IN PLACE + broadcasts KerfurConvert). No
-// EntityDestroy / PropSpawn for the kerfur itself (redesign 10.3 -- the kerfur is one entity, not a
-// destroy+create across two pipelines). The dropped FLOPPY (a normal prop, NOT part of the kerfur
-// identity) still rides the ordinary keyed ExpressSpawnedProp -> PropSpawn. Game thread.
+// EntityDestroy / PropSpawn for the kerfur itself -- the kerfur is one entity, not a destroy+create
+// across two pipelines. The dropped FLOPPY (a normal prop, NOT part of the kerfur identity) still
+// rides the ordinary keyed ExpressSpawnedProp -> PropSpawn. Game thread.
 
 // Find the host's untracked, live kerfur actor of the requested form nearest (x,y,z): the verb's
 // freshly-spawned new-form body. UNTRACKED = not yet a host element (g_actorToNpcId / the prop
@@ -116,7 +116,7 @@ void* PickDropPropFn(void* cls) {
     return g_dropPropFnBase;
 }
 
-// (take-9) request-verb bracket + converge handshake between OnConvertRequest and the destroy-edge
+// Request-verb bracket + converge handshake between OnConvertRequest and the destroy-edge
 // first refusal. The seam fires INSIDE the request-executed verb, so OnConvertRequest would run its
 // explicit ConvergeAfterConversion a second time right after the verb returns -- and the fresh
 // NPC, now tracked by the seam converge, would read as "no new kerfur NPC near" (a spurious
@@ -331,7 +331,7 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         // K2_DestroyActor's the prop (position continuity for the converge).
         const ue_wrap::FVector pos0 = ue_wrap::engine::GetActorLocation(actor);
         uint8_t frame[16] = {};  // spawnKerfuro takes no params (install-guarded)
-        // (take-9) bracket the verb: the prop's K2_DestroyActor INSIDE it hits the destroy seam,
+        // Bracket the verb: the prop's K2_DestroyActor INSIDE it hits the destroy seam,
         // whose kerfur first refusal converges inline and records the eid -- consumed just below
         // instead of double-converging (the NPC is tracked by then; the search in
         // ConvergeAfterConversion would spuriously fail and release the eid with a WARN).
@@ -384,7 +384,7 @@ void SetVerbs(void* dropPropFnBase, void* dropPropFnCol, void* dropPropFnColGame
 }
 
 void OnDisconnect() {
-    g_seamConvergedEid = 0xFFFFFFFFu;  // GT-only destroy-edge converge handshake (take-9)
+    g_seamConvergedEid = 0xFFFFFFFFu;  // GT-only destroy-edge converge handshake
     g_requestVerbEid   = 0xFFFFFFFFu;
 }
 

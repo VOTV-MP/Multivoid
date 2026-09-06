@@ -70,7 +70,7 @@ void WriteMarker(const char* entryTag) {
     }
 }
 
-// Support telemetry (D-3): which UE4SS host shares the process. Reads the
+// Support telemetry: which UE4SS host shares the process. Reads the
 // version RESOURCE of whichever UE4SS module is loaded (the official builds
 // ship "UE4SS.dll"; shimloader loads a lowercase "ue4ss.dll"). Boot-time
 // snapshot only.
@@ -111,16 +111,16 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // The Paper-pair identity line: game target + build number (= kProtocolVersion).
     UE_LOGI("boot: Multivoid %s b%u", coop::version::kGameTarget,
             static_cast<unsigned>(coop::net::kProtocolVersion));
-    // Build triage line (v122): discriminates same-proto rebuilds in bug reports
+    // Build triage line: discriminates same-proto rebuilds in bug reports
     // (banner-only -- never announced, never gated; the DLL hash stays the deploy
     // truth). The exe identity beside kGameTarget makes an install-skew report
     // (mod built for cook X running on exe Y) one-look diagnosable from the log.
     UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
-    // D-3 entry + load-moment marker: which entry point brought us in (the one
-    // live lane is start_mod, entry=cppmod -- mp.py's _lane_check greps it, and
-    // entry=proxy-dllmain appearing here means a PREDECESSOR binary booted),
-    // and how late relative to process creation (UE4SS's mod-scan runs after
-    // its sig-scan phase). The spike's timing cells diff this line.
+    // Entry + load-moment marker: which entry point brought us in (the one live
+    // lane is start_mod, entry=cppmod -- mp.py's _lane_check greps it, and
+    // entry=proxy-dllmain appearing here means a PREDECESSOR binary booted), and
+    // how late relative to process creation (UE4SS's mod-scan runs after its
+    // sig-scan phase).
     UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag,
             MsSinceProcessStart(), ::GetCurrentProcessId());
     LogUe4ssPresence();

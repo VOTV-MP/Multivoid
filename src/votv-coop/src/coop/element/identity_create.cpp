@@ -15,7 +15,7 @@
 #include "coop/element/world_actor.h"  // CreateOrAdoptWorldActorMirror
 #include "coop/element/registry.h"
 #include "coop/element/element_deleter.h"          // A' v122: the provisional-dissolve deferred drain
-#include "coop/creatures/kerfur_entity.h"          // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
+#include "coop/creatures/kerfur_entity.h"          // NotifyKerfurPropMirrorBound (client held-pose eid map)
 #include "coop/player/local_streams.h"             // A' v122: held-eid cache rebind fanout (measured held-EDGE-cached)
 #include "coop/player/players_registry.h"       // coop::players::kMaxPeers (ownerSlot bound)
 #include "coop/element/quiescence_drain.h"      // ArmGhostSweep (v106b: displaced live native -> wholesale adjudication)
@@ -218,15 +218,14 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         UE_LOGI("sync::CreateOrAdoptPropMirror: eid=%u bound to actor=%p "
                 "key='%ls' cls='%ls' ownerSlot=%d",
                 eid, actor, key.c_str(), cls.c_str(), ownerSlot);
-        // K-5: if this is a CLIENT kerfur prop mirror, record actor->host-range-eid
-        // so local_streams can stream the eid while carried. Self-filters to
-        // client + kerfur class (no-op for ordinary props / on the host). The single
-        // choke-point every kerfur prop mirror bind funnels through.
+        // On a CLIENT, record actor->host-range-eid so local_streams can stream the
+        // eid while the prop is carried. Self-filters to client + kerfur class (a
+        // no-op for ordinary props and on the host). The single choke-point every
+        // kerfur prop mirror bind funnels through.
         coop::kerfur_entity::NotifyKerfurPropMirrorBound(actor, eid);
-        // (A') v122 rebind fanout: the held-eid cache re-resolves only at the held
-        // EDGE, so an adopt landing MID-carry (incl. the handback dissolve above)
-        // would stream a stale/invalid eid for the rest of the hold. One pointer
-        // compare when not held.
+        // Rebind fanout: the held-eid cache re-resolves only at the held EDGE, so an
+        // adopt landing MID-carry (including the handback dissolve above) would stream
+        // a stale eid for the rest of the hold. One pointer compare when not held.
         coop::local_streams::NotifyPropEidRebound(actor);
     }
     // On false: Install already logged the failure (sentinel id, duplicate, or
