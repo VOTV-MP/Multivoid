@@ -109,6 +109,36 @@ def read(repo, path):
         return None
 
 
+def code_only(text):
+    """-> the text with comments removed, for counting how often an identifier is really USED.
+    Counting raw occurrences called a dead function alive whenever some comment happened to name
+    it: `DumpAnimNodeRegions` has a declaration, a definition and one mention in an sdk_profile.h
+    comment, and that third occurrence hid it. Strings are left in place; a name in a log message
+    is at least evidence of a caller nearby, while a name in prose is evidence of nothing."""
+    out, in_block = [], False
+    for line in text.split("\n"):
+        if in_block:
+            k = line.find("*/")
+            if k < 0:
+                continue
+            line, in_block = line[k + 2:], False
+        while True:
+            b = line.find("/*")
+            s = line.find("//")
+            if s >= 0 and (b < 0 or s < b):
+                line = line[:s]
+                break
+            if b < 0:
+                break
+            e = line.find("*/", b + 2)
+            if e < 0:
+                line, in_block = line[:b], True
+                break
+            line = line[:b] + " " + line[e + 2:]
+        out.append(line)
+    return "\n".join(out)
+
+
 def comment_lines(text):
     """-> (comment_line_texts, code_line_count, long_blocks). A line counts as COMMENT when it holds
     nothing but comment (and whitespace); quotes are respected so a `//` inside a string is code.
@@ -239,9 +269,10 @@ def measure(repo):
         text = read(repo, p)
         if text is None:
             continue
-        ident_uses.update(IDENT.findall(text))
+        bare = code_only(text)
+        ident_uses.update(IDENT.findall(bare))
         if p.endswith(".h") and "/include/" in p:
-            for name in set(DECL.findall(text)):
+            for name in set(DECL.findall(bare)):
                 if name not in DECL_SKIP and len(name) > 3:
                     declared.setdefault(name, p)
         comments, code, long_blocks = comment_lines(text)

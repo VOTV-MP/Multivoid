@@ -34,9 +34,9 @@
   "src.comment_blocks_over_15": 319,
   "src.comment_dead_docpath": 73,
   "src.comment_pinned_offset": 164,
-  "src.dead_declarations": 38,
+  "src.dead_declarations": 42,
   "src.comment_permille": 294,
   "src.files": 896,
-  "src.files_not_swept": 571
+  "src.files_not_swept": 572
  }
 }
