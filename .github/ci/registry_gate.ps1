@@ -1,4 +1,4 @@
-# tools/config/registry_gate.ps1 -- the STANDING config-registry CI gate
+# .github/ci/registry_gate.ps1 -- the STANDING config-registry CI gate
 # (ini rework arc 3 C5; design research/findings/tooling/
 # votv-ini-arc3-impl-DESIGN-2026-07-25.md). Replaces the retired
 # enum_check.ps1's non-inherited jobs -- the inheritor map lives in that design

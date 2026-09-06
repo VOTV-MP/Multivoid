@@ -19,10 +19,6 @@ Game_*/
 *.uasset    # cooked UE assets (if ever extracted)
 *.umap
 
-# ===== UE4SS runtime (per-machine; lives in the game install) =====
-# UE4SS is vendored as a submodule under reference/; its built/runtime
-# drop into Game/ is gitignored along with the rest of Game/.
-
 # ===== IDA Pro working files (per-user, large, regenerable) =====
 *.i64
 *.idb
@@ -32,7 +28,6 @@ Game_*/
 *.nam
 # generated output of tools/debug/ida_aob_derive.py -- regenerable; the SIGNATURE it
 # produces belongs in sdk_profile.h, the raw dump does not belong in the repo
-tools/debug/ida_aob_derive.txt
 *.til
 *.t01
 *.t02
@@ -42,7 +37,6 @@ _inspect/
 
 # ===== Heavy local working data (per-machine, not collab-relevant) =====
 ida/dumps/
-tools/x64dbg_snapshot*/
 __pycache__/
 
 # Build outputs of vendored deps (regenerable from submodule + build script)
@@ -124,16 +118,11 @@ vps_id_ed25519
 vps_id_ed25519.pub
 vps_known_hosts
 
-# VPS operations helper -- names infrastructure addresses; local only.
-/tools/vps.py
-
 # ===== Allow-list (override broad bans for our own outputs) =====
 !src/**/*.dll
-!tools/**/*.exe
 !Game/coop-*.bat
 
 # Agent-side test screenshots (capture-window.ps1 / shot.bat output)
-tools/shots/
 research/npctest_shots/
 research/menu_shots/
 research/clumpshot_shots/
@@ -167,9 +156,6 @@ models/
 # SourceIO = GPLv3 Blender addon (Source-engine import), unrealpak = Epic's
 # UnrealPak tool + demo videos, psk-psa = Blender PSK/PSA addon (RE reference),
 # kismet-analyzer = trumank's cooked-BP bytecode dumper release zip (dev RE only)
-tools/SourceIO/
-tools/unrealpak/
-tools/kismet-analyzer/
 reference/psk-psa-v9.1.2/
 
 # Third-party reference clones and drops under reference/: heavy source we READ for precedent and
@@ -212,7 +198,6 @@ ref_*vps*
 imgui.ini
 # Same list, the "prose only, NOT enforced" half -- enforced now for the same reason.
 docs/QUESTION_FORM_*
-tools/workflows/
 # The agent-spawning playbook, same class as the working notes above.
 docs/AGENT_SPAWNING.md
 

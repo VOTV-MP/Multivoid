@@ -1,5 +1,5 @@
 # notes_regen.ps1 -- regenerate a LIVE release's body from the notes authority
-# file (tools/release/notes/b<N>.md), preserving the machine lines byte-exact.
+# file (.github/ci/notes/b<N>.md), preserving the machine lines byte-exact.
 # This IS the sanctioned correction path from notes/README.md (fix the file ->
 # regenerate the body) and the retro path that first backfilled b126/b127.
 #

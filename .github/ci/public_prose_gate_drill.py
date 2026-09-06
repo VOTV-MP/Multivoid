@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""public_prose_gate_drill -- show tools/docs/public_prose_gate.py RED before trusting it green.
+"""public_prose_gate_drill -- show .github/ci/public_prose_gate.py RED before trusting it green.
 
 A throwaway repository with one doc and one source file carrying every class of marker; the
 gate must count each, FAIL against a baseline one lower, PASS against an exact one, refuse to
 ratchet up, and ratchet down after the marker is removed. A link to a tracked file must not
 count as dead; a link to an untracked one must.
 
-    python tools/docs/public_prose_gate_drill.py
+    python .github/ci/public_prose_gate_drill.py
 """
 import io
 import json

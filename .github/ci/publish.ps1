@@ -1,6 +1,6 @@
 # publish.ps1 -- the draft-first publish step (design D3), executed by
 # release-core's publish job after the judge said PUBLISH. It runs on a checkout
-# of the TAG with only tools/release/*.ps1 overlaid from main (2026-09-01): the
+# of the TAG with only .github/ci/*.ps1 overlaid from main: the
 # release CONTENT and identity belong to the commit being released, the
 # refuse-to-publish PREDICATES belong to main and nowhere else.
 # Draft -> assets -> sha256 re-download verify -> flip (prerelease
@@ -158,8 +158,8 @@ if ($tag.Dev) {
 }
 
 Write-Host "published: $title ($TagName @ $TagSha)"
-Write-Host 'RITUAL REMINDER: verify the release page, then append the published row to tools/release/LEDGER.tsv (closes state(N) API-free).'
+Write-Host 'RITUAL REMINDER: verify the release page, then append the published row to .github/ci/LEDGER.tsv (closes state(N) API-free).'
 if (-not $tag.Dev) {
-    Write-Host 'STABLE: update the master env constants, then run tools/release/verify_latest.ps1:'
+    Write-Host 'STABLE: update the master env constants, then run .github/ci/verify_latest.ps1:'
     Write-Host "  COOP_LATEST_PROTO=$($tag.N)  COOP_LATEST_MOD=`"$($tag.Game) b$($tag.N)`""
 }

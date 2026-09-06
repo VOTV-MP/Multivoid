@@ -1,4 +1,4 @@
-# tools/net/peerconn_gate.ps1 -- the STANDING per-slot OCCUPANCY GENERATION gate
+# .github/ci/peerconn_gate.ps1 -- the STANDING per-slot OCCUPANCY GENERATION gate
 # (arc A T3; design research/findings/join-identity/
 # votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md).
 #

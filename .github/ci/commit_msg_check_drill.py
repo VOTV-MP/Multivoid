@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""commit_msg_check_drill -- show tools/git/commit_msg_check.py RED before trusting it green.
+"""commit_msg_check_drill -- show .github/ci/commit_msg_check.py RED before trusting it green.
 
 Every rule in the checker gets one message that must be REFUSED and the good shapes get
 messages that must PASS; then the real entry points are exercised: the hook (a message file,
 including a legacy-encoded one) and the CI range mode on throwaway repositories (a bad commit,
 a merge with a bad body, a boundary that is the root commit).
 
-    python tools/git/commit_msg_check_drill.py
+    python .github/ci/commit_msg_check_drill.py
 """
 import os
 import shutil

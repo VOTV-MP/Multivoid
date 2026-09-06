@@ -691,7 +691,7 @@ target_include_directories(votv-coop PRIVATE include ${CMAKE_CURRENT_BINARY_DIR}
 # OUTPUT_NAME retired WITH its one consumer, the xinput proxy's scan -- the
 # old "load-bearing, not cosmetic" justification was the proxy's sentence
 # (UE4SS_ARC 7.3a item 2). The release identity lives in the zip name + the
-# generated manifest (tools/release/package.ps1), the boot banner
+# generated manifest written at packaging time, the boot banner
 # (coop/version.h + kProtocolVersion), and -- for the bytes themselves -- the
 # VERSIONINFO resource below, which deploy-mod.ps1 verifies against the tree.
 set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "main")
@@ -777,7 +777,7 @@ if (MSVC)
     target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8)
     # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
-    # name by grep via tools/maprva.py -- no IDA needed. The .map lands in
+    # name by grepping the linker map -- no IDA needed. The .map lands in
     # build/ (gitignored); link-time cost is trivial.
     target_link_options(votv-coop PRIVATE /MAP)
 

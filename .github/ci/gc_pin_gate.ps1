@@ -1,4 +1,4 @@
-# tools/gc/gc_pin_gate.ps1 -- a GC pin must be OWNED, never a hand-written flag pair.
+# .github/ci/gc_pin_gate.ps1 -- a GC pin must be OWNED, never a hand-written flag pair.
 #
 # THE RULE. `reflection::AddToRoot` / `RemoveFromRoot` are the slot primitives. Subsystems
 # hold an `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h), which roots on construction and un-roots

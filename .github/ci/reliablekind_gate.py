@@ -51,9 +51,9 @@ the 2026-09-01 dead kind WAS in that header (79 case labels), so a gate written 
 "is it mentioned anywhere" would have passed the very defect this one exists to catch.
 
 USAGE
-    python tools/net/reliablekind_gate.py            # the gate
-    python tools/net/reliablekind_gate.py --table    # + the per-kind wiring table
-    python tools/net/reliablekind_gate.py --drill    # injected must-fire controls, then the gate
+    python .github/ci/reliablekind_gate.py            # the gate
+    python .github/ci/reliablekind_gate.py --table    # + the per-kind wiring table
+    python .github/ci/reliablekind_gate.py --drill    # injected must-fire controls, then the gate
 """
 import pathlib
 import re

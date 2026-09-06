@@ -10,8 +10,8 @@
 #
 # So this CENSUSES POSITIVELY. It names the files it expects to find, counts what
 # it finds in each, classifies by OPERATION KIND, and FAILS ON AN EMPTY OR
-# UNEXPECTED CENSUS -- the shape tools/net/peerconn_gate.ps1,
-# tools/config/registry_gate.ps1 and tools/text/nick_gate.ps1 already use.
+# UNEXPECTED CENSUS -- the shape .github/ci/peerconn_gate.ps1,
+# .github/ci/registry_gate.ps1 and .github/ci/nick_gate.ps1 already use.
 #
 # It is NOT tripwires.ps1's business: that script's own header says "ADVISORY,
 # always exit 0". This is a refuse-to-build gate, in the family build-core.yml

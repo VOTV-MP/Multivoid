@@ -1,4 +1,4 @@
-# tools/hooks/minhook_free_gate.ps1 -- nothing in this mod may FREE a MinHook trampoline.
+# .github/ci/minhook_free_gate.ps1 -- nothing in this mod may FREE a MinHook trampoline.
 #
 # THE RULE, and why prose was not enough. `ue_wrap/core/hook.h` ("Retirement") states it:
 # lift a patch, never remove it. Removing writes a linked-list pointer over the trampoline's

@@ -27,7 +27,7 @@ function ConvertFrom-ReleaseTag {
 }
 
 # --- Ledger --------------------------------------------------------------
-# File format (tools/release/LEDGER.tsv): '#' comments and blank lines ignored;
+# File format (.github/ci/LEDGER.tsv): '#' comments and blank lines ignored;
 # every row = 6 tab-separated fields:  kind  N  game  tagName  sourceSha  date
 # kind in { consume | published | burn | retracted }. Append-only, HUMAN-written.
 
@@ -170,7 +170,7 @@ $script:InstallGuideUrl        = 'https://github.com/VOTV-MP/Multivoid/blob/main
 
 # --- Game target (the identity's game half) --------------------------------
 # THE one PS-side parser of VOTVCOOP_GAME_TARGET (CMakeLists.txt is the code
-# authority; no other tools/release script may re-parse it). Parser-miss FAILs
+# authority; no other release script may re-parse it). Parser-miss FAILs
 # loudly as UNREADABLE -- never returns $null into a comparison (the
 # ABSENT/UNREADABLE tri-state lesson).
 $script:CMakeListsPath = 'src/votv-coop/CMakeLists.txt'
@@ -184,7 +184,7 @@ function Get-GameTargetFromCMake {
     $m.Groups['t'].Value
 }
 
-# --- Release notes (the changelog authority; tools/release/notes/) ---------
+# --- Release notes (the changelog authority; .github/ci/notes/) ---------
 function Get-ReleaseNotesPath {
     param([Parameter(Mandatory)][int]$N)
     Join-Path $PSScriptRoot "notes/b$N.md"

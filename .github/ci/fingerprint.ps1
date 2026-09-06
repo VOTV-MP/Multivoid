@@ -1,5 +1,5 @@
 # fingerprint.ps1 -- the "proven runnable" toolchain gate (design D3, R23).
-# The committed fingerprint (tools/release/fingerprint.json, read from MAIN
+# The committed fingerprint (.github/ci/fingerprint.json, read from MAIN
 # HEAD) records the runner MSVC toolset + Windows SDK + the sha256 of
 # build-core.yml whose CI bytes were last proven runnable by the cacheless
 # smoke. A release run refuses on any mismatch ("re-smoke + re-commit").

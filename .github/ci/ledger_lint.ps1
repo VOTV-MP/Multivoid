@@ -182,7 +182,7 @@ if ($SkipApi) {
                         $notesPath = Get-ReleaseNotesPath -N $tag.N
                         $whatsNew = Get-ReleaseBodyWhatsNew $rel.body
                         if (-not (Test-Path -LiteralPath $notesPath)) {
-                            Fail "NOTES_DRIFT: live release '$($rel.tag_name)' but tools/release/notes/b$($tag.N).md is missing"
+                            Fail "NOTES_DRIFT: live release '$($rel.tag_name)' but .github/ci/notes/b$($tag.N).md is missing"
                         } else {
                             $fileNorm = Get-NormalizedProse (Get-Content -LiteralPath $notesPath -Raw)
                             $agrees = ($null -ne $whatsNew) -and

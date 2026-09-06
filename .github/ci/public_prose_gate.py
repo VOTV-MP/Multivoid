@@ -44,7 +44,7 @@ MD_HARD_CAP = 600
 # since a third-party file is not ours to rewrite.
 OTHER_EXT = (".py", ".ps1", ".yml", ".yaml", ".json", ".toml", ".rs", ".cs", ".txt", ".tsv",
              ".rc", ".in", ".cmake", "CMakeLists.txt", ".gitignore", ".gitattributes")
-OTHER_SKIP = ("src/votv-coop/third_party/", "reference/", "tools/client_model/mesh_extract/")
+OTHER_SKIP = ("src/votv-coop/third_party/", "reference/")
 # The files whose JOB is these markers: a gate that refuses a word must name it, and a drill
 # that proves the refusal must carry a fixture containing it. Counting those would push a sweep
 # to break the very checks it is measured by -- the same trap the offset detector hit.

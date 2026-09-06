@@ -11,8 +11,8 @@
 # So this greps for the VERB -- a raw byte/unit truncation applied to something
 # nick-shaped -- anywhere outside the codec that owns it.
 #
-# FAIL-CLOSED ON AN EMPTY CENSUS, like tools/net/peerconn_gate.ps1 and
-# tools/config/registry_gate.ps1: if the anchor scan finds nothing, the pattern
+# FAIL-CLOSED ON AN EMPTY CENSUS, like .github/ci/peerconn_gate.ps1 and
+# .github/ci/registry_gate.ps1: if the anchor scan finds nothing, the pattern
 # has rotted and a zero-row green is not evidence.
 [CmdletBinding()]
 param([switch]$Quiet)

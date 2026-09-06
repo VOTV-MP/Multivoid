@@ -75,7 +75,7 @@ if ($tag) {
 if ($tag) {
     $notesPath = Get-ReleaseNotesPath -N $tag.N
     if (-not (Test-Path -LiteralPath $notesPath)) {
-        Add-Check 'NOTES_OK' 'FAIL' "notes file missing: tools/release/notes/b$($tag.N).md (write it on main, re-run)"
+        Add-Check 'NOTES_OK' 'FAIL' "notes file missing: .github/ci/notes/b$($tag.N).md (write it on main, re-run)"
     } else {
         $notesViolations = @(Test-ReleaseNotesFormat -Content (Get-Content -LiteralPath $notesPath -Raw))
         if ($notesViolations.Count -eq 0) { Add-Check 'NOTES_OK' 'PASS' "notes/b$($tag.N).md present, format clean" }

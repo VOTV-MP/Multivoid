@@ -11,7 +11,7 @@ The rules are the "Commits" section of CONTRIBUTING.md:
   content   none of the working-notes vocabulary (VOCABULARY below names each word and why)
 
 Usage:
-  commit_msg_check.py <message-file>        the commit-msg hook (tools/git/hooks/commit-msg):
+  commit_msg_check.py <message-file>        the commit-msg hook (.github/ci/hooks/commit-msg):
                                             git's template comment lines and the scissors block
                                             are ignored, as git itself drops them
   commit_msg_check.py --range A..B          every commit in the range, judged as recorded (CI)
@@ -27,6 +27,10 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
+# The path the checker was ADDED at, which is a point in HISTORY and not a location: the
+# boundary below is the commit that introduced it, and `git log -- <path>` still resolves a
+# path the tree no longer has. Repointing this at the current path would name the MOVE commit
+# instead and shrink the judged range to almost nothing.
 SELF_REL = "tools/git/commit_msg_check.py"
 
 SUBJECT_MAX = 72
