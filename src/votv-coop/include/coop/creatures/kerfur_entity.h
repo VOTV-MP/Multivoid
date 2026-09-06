@@ -137,17 +137,12 @@ void BroadcastConvertRejected(coop::element::ElementId oldEid, Form oldForm,
                               float rotPitch, float rotYaw, float rotRoll,
                               const std::wstring& className);
 
-// Drop a kerfur record (its actor died for good: destroyed, not converted). The host frees the
-// id; K's Element is parked for the deferred flush, so a PRE observer on a worker thread may
-// call this. A no-op on an untracked id. The form bind handles the conversion case: reuse, not
-// drop.
-void ReleaseKerfurId(coop::element::ElementId kerfurId);
-
 // The same drop, addressed by the dying form's wire eid, for the death seams that hold one and
-// not the kerfur id. A no-op when the eid is not a tracked kerfur's current form. A conversion
-// never arrives here: the prop half is claimed by the kerfur first refusal ahead of the destroy
-// relay, and the NPC half dies to a blueprint-internal destroy the PRE cannot see, which is why
-// the converge releases that form silently instead.
+// not the kerfur id. A no-op unless the eid is still a tracked kerfur's CURRENT form, which is
+// what keeps a conversion safe: the form bind moves the record to the successor's eid, so a late
+// call naming the old one finds nothing to drop. The callers are the conversion converge, on the
+// branches where no successor appeared, the kerfur first refusal when no verb bracket is open,
+// and the NPC destroy PRE for a visible destroy.
 void ReleaseKerfurForEid(coop::element::ElementId currentEid);
 
 // Clear all per-session state (the host table and the client maps). The net disconnect. Game

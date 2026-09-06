@@ -181,10 +181,10 @@ void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     // nest with it. Take returns null on an already drained eid (a double destroy, or a disconnect
     // race).
     coop::element::RetireMirror(eid);
-    // A kerfur reaching this seam died for good: a conversion's blueprint-internal destroy is
-    // invisible to the PRE, and the converge releases that form silently. Without this the record
-    // outlives its actor to the session end, and its stale currentEid entry answers for whatever
-    // the registry hands that id to next.
+    // A kerfur reaching this seam died for good: a conversion destroys its old form from inside
+    // the blueprint, where the PRE cannot see it, and the converge releases that form itself. The
+    // kerfur's own PE-invisible death edge belongs to the conversion poll, so this is the belt for
+    // a VISIBLE destroy, not the lane's main path.
     coop::kerfur_entity::ReleaseKerfurForEid(eid);
     UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released (deferred)", self, eid);
     // Broadcast EntityDestroy so the client mirrors tear their copy down.
@@ -430,7 +430,6 @@ void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
         if (it != g_actorToNpcId.end() && it->second == eid) g_actorToNpcId.erase(it);
     }
     coop::element::RetireMirror(eid);  // Take + deferred ~Npc/FreeId; no-op if already drained
-    coop::kerfur_entity::ReleaseKerfurForEid(eid);  // same permanent death, reached by the pose walk
     UE_LOGI("npc-sync[pose dead-retire]: Npc eid=%u actor=%p released (PE-invisible destroy)",
             static_cast<uint32_t>(eid), actorKey);
     auto* s = LoadSession();

@@ -205,6 +205,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             UE_LOGW("kerfur_convert: turn_off converge -- no new kerfur prop near (%.0f,%.0f,%.0f); releasing dead NPC eid=%u (no broadcast)",
                     px, py, pz, static_cast<uint32_t>(oldEid));
             coop::npc_sync::ReleaseNpcElementSilent(oldEid);
+            KE::ReleaseKerfurForEid(oldEid);  // no successor: the kerfur is gone, not converted
             return;
         }
         const auto loc = ue_wrap::engine::GetActorLocation(newProp);
@@ -216,6 +217,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             UE_LOGW("kerfur_convert: turn_off converge -- RegisterHostPropSilent failed for prop %p; releasing NPC eid=%u",
                     newProp, static_cast<uint32_t>(oldEid));
             coop::npc_sync::ReleaseNpcElementSilent(oldEid);
+            KE::ReleaseKerfurForEid(oldEid);  // the bind never runs: nothing will re-point the record
             return;
         }
         coop::npc_sync::ReleaseNpcElementSilent(oldEid);
@@ -239,6 +241,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             UE_LOGW("kerfur_convert: turn-on converge -- no new kerfur NPC near (%.0f,%.0f,%.0f); releasing dead prop eid=%u (no broadcast)",
                     px, py, pz, static_cast<uint32_t>(oldEid));
             ReleaseHostPropSilent(oldActor);
+            KE::ReleaseKerfurForEid(oldEid);  // no successor: the kerfur is gone, not converted
             return;
         }
         const auto loc = ue_wrap::engine::GetActorLocation(newNpc);
@@ -250,6 +253,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             UE_LOGW("kerfur_convert: turn-on converge -- RegisterHostNpcSilent failed for NPC %p; releasing prop eid=%u",
                     newNpc, static_cast<uint32_t>(oldEid));
             ReleaseHostPropSilent(oldActor);
+            KE::ReleaseKerfurForEid(oldEid);  // the bind never runs: nothing will re-point the record
             return;
         }
         ReleaseHostPropSilent(oldActor);

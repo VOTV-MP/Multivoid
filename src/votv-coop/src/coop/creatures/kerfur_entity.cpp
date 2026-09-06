@@ -212,42 +212,32 @@ void ForgetKerfurPropMirror(void* actor) {
     g_kerfurMirrorActorToEid.erase(actor);
 }
 
-void ReleaseKerfurId(coop::element::ElementId kerfurId) {
-    if (kerfurId == coop::element::kInvalidId) return;
-    std::unique_ptr<coop::element::KerfurEntity> drained;  // free K's Element OUTSIDE the lock
-    {
-        std::lock_guard<std::mutex> lk(g_mutex);
-        auto it = g_byKerfurId.find(kerfurId);
-        if (it != g_byKerfurId.end()) {
-            if (it->second.actor) g_actorToKerfurId.erase(it->second.actor);
-            if (it->second.currentEid != coop::element::kInvalidId)
-                g_eidToKerfurId.erase(it->second.currentEid);
-            drained = std::move(it->second.elem);
-            g_byKerfurId.erase(it);
-        }
-    }
-    // K's Element is parked rather than freed here: the callers are destroy seams, and a PRE
-    // observer runs at whatever instant ProcessEvent dispatched, on whatever thread. The deleter
-    // flags it dead immediately and does the free at the game-thread flush.
-    coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
-}
-
 void ReleaseKerfurForEid(coop::element::ElementId currentEid) {
     if (currentEid == coop::element::kInvalidId) return;
     coop::element::ElementId kerfurId = coop::element::kInvalidId;
     Form form = Form::Npc;
+    std::unique_ptr<coop::element::KerfurEntity> drained;
     {
+        // One critical section for the lookup AND the erase. Splitting them let a form bind
+        // between the two move the record to a new eid, and the release would then have taken a
+        // kerfur that had just converted; the currentEid re-check is what makes that impossible.
         std::lock_guard<std::mutex> lk(g_mutex);
         auto it = g_eidToKerfurId.find(currentEid);
         if (it == g_eidToKerfurId.end()) return;  // not a tracked kerfur's live form
         kerfurId = it->second;
         auto rec = g_byKerfurId.find(kerfurId);
-        if (rec != g_byKerfurId.end()) form = rec->second.form;
+        if (rec == g_byKerfurId.end()) { g_eidToKerfurId.erase(it); return; }  // stale reverse row
+        if (rec->second.currentEid != currentEid) return;  // the record has already moved on
+        form = rec->second.form;
+        if (rec->second.actor) g_actorToKerfurId.erase(rec->second.actor);
+        g_eidToKerfurId.erase(it);
+        drained = std::move(rec->second.elem);
+        g_byKerfurId.erase(rec);
     }
     UE_LOGI("kerfur_entity: releasing K=%u -- its %s form eid=%u died for good",
             static_cast<uint32_t>(kerfurId), form == Form::Npc ? "NPC" : "prop",
             static_cast<uint32_t>(currentEid));
-    ReleaseKerfurId(kerfurId);
+    coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
 }
 
 void OnDisconnect() {

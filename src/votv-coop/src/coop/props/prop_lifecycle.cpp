@@ -8,7 +8,6 @@
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/element/element.h"
-#include "coop/element/mirror_manager.h"  // SyncDestroyedTrackedProp reads the key off the element
 #include "coop/element/prop.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"

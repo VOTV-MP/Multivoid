@@ -1,15 +1,12 @@
 // coop/props/prop_destroy_seam.cpp -- the actor-destroy half of the prop lifecycle: the
-// K2_DestroyActor patch seam, the explicit converge destroy for a destroy the seam cannot see,
-// and the echo-suppressed local destroy. The shared session cache rides
-// prop_lifecycle_detail.h.
+// K2_DestroyActor patch seam and the echo-suppressed local destroy. The shared session cache
+// rides prop_lifecycle_detail.h.
 
 #include "coop/props/prop_lifecycle.h"
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the destroy-edge first refusal
-#include "coop/creatures/kerfur_entity.h"   // ReleaseKerfurForEid, past the refusal
-#include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -116,10 +113,6 @@ void DestroySeamBody(void* self) {
     // the echo and episode gates, since wire teardowns and load churn are not conversions; the
     // capture owns the wire when it returns true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
-    // Past the refusal a kerfur prop is dying for real, not converting: drop its record so the id
-    // is freed and its currentEid stops answering for a kerfur once the registry recycles it. A
-    // no-op for every prop that is not a tracked kerfur's current form, which is nearly all of them.
-    coop::kerfur_entity::ReleaseKerfurForEid(destroyEid);
     coop::net::WireKey wk{};
     wk.len = 0;
     if (!keyless) {
