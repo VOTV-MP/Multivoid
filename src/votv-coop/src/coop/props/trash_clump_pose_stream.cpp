@@ -25,7 +25,7 @@ namespace AD = coop::active_drive;
 // carry a clump at once). GAME-THREAD only (every entry point runs on the net-pump game thread).
 std::unordered_map<uint32_t, AD::ActiveDrive> g_carryDrives;
 
-// Throttled apply log (first few + every 60th) per the perf discipline.
+// Throttled apply log: the first few, then every 60th.
 uint32_t g_applyCount = 0;
 
 }  // namespace
@@ -72,7 +72,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
     //    that did not route through ClearDriveForEid -- defensive; AdvanceLerp itself no-ops on a dead actor).
     for (auto it = g_carryDrives.begin(); it != g_carryDrives.end(); ) {
         AD::ActiveDrive& d = it->second;
-        if (!d.LiveActor()) { it = g_carryDrives.erase(it); continue; }  // slot-validated (islive-zeroav row :74)
+        if (!d.LiveActor()) { it = g_carryDrives.erase(it); continue; }  // slot-validated
         AD::AdvanceLerp(d, nowMs);
         ++it;
     }

@@ -17,7 +17,7 @@ namespace R = ue_wrap::reflection;
 // Cached singleton pointer. FindObjectByClass is a GUObjectArray walk; cache it +
 // revalidate by IsLive (the actor is destroyed + recreated on level transitions, at
 // which point we re-resolve). Game-thread only -- matches weather_sync::ResolveCycle.
-ue_wrap::CachedObjRef g_windCache;  // islive-zeroav row :22
+ue_wrap::CachedObjRef g_windCache;
 
 void* Resolve() {
     if (g_windCache.Alive()) return g_windCache.Raw();
@@ -49,10 +49,9 @@ bool Write(const WindState& in) {
     return true;
 }
 
-// windTarget is a UBillboardComponent ptr @ DirectionalWind_windTarget; the gust input
-// is its USceneComponent::RelativeLocation, at the sdk_profile.h offset. Both Read
-// and WriteTarget chase the
-// component ptr then the field -- a null windTarget (mid-init) returns false.
+// windTarget is a UBillboardComponent ptr @ DirectionalWind_windTarget; the gust input is its
+// USceneComponent::RelativeLocation, at the sdk_profile.h offset. ReadTarget and WriteTarget both
+// chase the component ptr then the field -- a null windTarget (mid-init) returns false.
 namespace {
 uint8_t* WindTargetComp(void* wind) {
     return *reinterpret_cast<uint8_t**>(

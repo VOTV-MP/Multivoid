@@ -22,14 +22,14 @@ namespace E = engine;
 
 std::atomic<bool> g_resolved{false};
 void*   g_skyCls         = nullptr;  // newsky_C UClass
-int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*) (Alpha 0.9.0-n: 0x0250)
-int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)         (0x02BC)
+int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*)
+int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)
 void*   g_setMoonPhaseFn = nullptr;  // setMoonPhase() -- re-applies the moon material param (optional)
 
 constexpr int32_t kSkyCompOffFallback   = 0x0250;
 constexpr int32_t kMoonPhaseOffFallback = 0x02BC;
 
-ue_wrap::CachedObjRef g_skyCache;  // cached singleton (GT-only; islive-zeroav row :70)
+ue_wrap::CachedObjRef g_skyCache;  // cached singleton; game thread only
 
 // The `sky` UStaticMeshComponent pointer off the actor -- its WORLD rotation IS the visible
 // star orientation. nullptr if unresolved / not present.

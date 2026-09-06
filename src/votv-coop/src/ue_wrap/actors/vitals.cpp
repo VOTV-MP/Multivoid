@@ -14,14 +14,13 @@ namespace {
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 
-// One-time resolution cache. History (from restore_vitals.cpp, which used to own
-// this): pre-cache every access walked GUObjectArray twice + several
-// FindPropertyOffset = ~100-300 ms of game-thread block per call -> a visible FPS
-// hitch. Cached, the steady-state cost is one pointer deref + one float access.
-// Cleared / re-resolved only if the cached GameInstance fails IsLive (level
-// transition / hot reload); the GameInstance singleton otherwise never dies.
+// One-time resolution cache. Resolving on every access walks GUObjectArray twice and runs several
+// FindPropertyOffset calls -- ~100-300 ms of game-thread block each time, a visible frame hitch.
+// Cached, the steady-state cost is one pointer deref plus one float access. Cleared and
+// re-resolved only when the cached GameInstance fails IsLive (level transition / hot reload); the
+// GameInstance singleton otherwise never dies.
 struct Cache {
-    ue_wrap::CachedObjRef gameInstance;  // live UmainGameInstance_C* (islive-zeroav row :43)
+    ue_wrap::CachedObjRef gameInstance;  // live UmainGameInstance_C*
     int32_t saveGameInstOff = -1;        // mainGameInstance_C::save_gameInst (UsaveSlot_C*)
     void* saveSlotClass = nullptr;       // UClass* for UsaveSlot_C (offset-lookup target)
     int32_t fieldOff[4] = {-1, -1, -1, -1};  // indexed by Field

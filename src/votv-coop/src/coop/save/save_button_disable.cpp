@@ -35,9 +35,9 @@ void* g_tickFn = nullptr;         // ui_menu_C::Tick (self-heal anchor)
 int32_t g_buttonSaveOff = -1;     // ui_menu_C -> button_Save (UButton*)
 int32_t g_isPauseOff = -1;        // ui_menu_C -> isPause (bool)
 
-// Cached live pause-menu instance (GameInstance-owned -> persists the whole session).
-// CachedObjRef: probed on EVERY ESC press incl. after a world swap freed the old
-// instance (islive-zeroav census row :90); only re-walked when stale.
+// Cached live pause-menu instance (GameInstance-owned -> persists the whole session). A
+// CachedObjRef because this is probed on EVERY ESC press, including after a world swap freed the
+// old instance; only a stale probe re-walks.
 ue_wrap::CachedObjRef g_menuInstance;
 
 // UWidget::bIsEnabled is a PACKED bitfield @ +0xB4 (bit 0x04; siblings bIsVariable=0x01,
@@ -64,8 +64,7 @@ void ApplyGreyOut(void* button) {
     if (!button || !R::IsLive(button)) return;
     { ParamFrame f(g_setEnabledFn); f.Set<bool>(L"bInIsEnabled", false); Call(button, f); }
     { ParamFrame f(g_setOpacityFn); f.Set<float>(L"InOpacity", 0.35f); Call(button, f); }
-    // Throttled read-back diagnostic (proves the disable took -- this is what the
-    // autonomous savebtn test greps for). First few applies only.
+    // Throttled read-back diagnostic, proving the disable took. First few applies only.
     static std::atomic<uint64_t> sCount{0};
     const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n <= 3 && g_getEnabledFn) {

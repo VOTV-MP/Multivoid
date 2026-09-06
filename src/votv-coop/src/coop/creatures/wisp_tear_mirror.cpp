@@ -54,21 +54,20 @@ void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot) {
     if (delay > 8000u) delay = 8000u;
     g_killAtMs = NowMs() + delay;
     g_killWispEid = p.wispElementId;
-    // v2 choreography: ride our local mirror's 'playerGrab' socket for the window (the
-    // native Capture experience -- attach + MOVE_None + camera decouple; grab_hold owns it).
+    // Ride our local mirror's 'playerGrab' socket for the window -- the native Capture experience
+    // (attach + MOVE_None + camera decouple), which grab_hold owns.
     coop::wisp_grab_hold::EngageSelf(p.wispElementId, delay);
     UE_LOGI("wisp_tear[victim]: WispGrab accepted (wispEid=%u) -- scheduling OUR ragdoll death in %u ms",
             p.wispElementId, delay);
 }
 
-// `wispActor` must arrive slot-validated (the caller passes el->LiveActor(); a
-// fresh-null is a fine no-op). The bare IsLive that used to sit here probed a
-// cached element actor -- islive-zeroav census row wisp_tear_mirror:65.
+// `wispActor` must arrive slot-validated (the caller passes el->LiveActor(); a fresh-null is a
+// fine no-op) -- a bare IsLive here would probe a cached element actor.
 void PlayTearOnWisp(void* wispActor, uint32_t victimSlot) {
     if (!wispActor || !ue_wrap::wisp::IsKillerWisp(wispActor)) return;
-    // Force the parked mirror mesh to tick so a played montage advances, then play the
-    // fatality tear. Both best-effort: the force-tick alone shows the mirror; the montage is
-    // the gore. (Gibs + the victim socket-attach hold are a documented follow-on.)
+    // Force the parked mirror mesh to tick so a played montage advances, then play the fatality
+    // tear. Both best-effort: the force-tick alone shows the mirror; the montage is the gore. Gibs
+    // and the victim socket-attach hold are a follow-on.
     ue_wrap::wisp::ForceMeshTick(wispActor);
     const bool montage = ue_wrap::wisp::PlayFatalityMontage(wispActor);
     UE_LOGI("wisp_tear: tear on wisp actor=%p (victimSlot=%u) -- force-tick + montage=%d",
@@ -91,10 +90,10 @@ void OnWispTear(const coop::net::WispTearPayload& p, uint8_t senderPeerSlot) {
         return;
     }
     PlayTearOnWisp(el->LiveActor(), p.victimSlot);
-    // v2 choreography (third peers): hold the VICTIM's puppet at the mirror's socket for
-    // the grab window. On the victim's own machine victimSlot==own slot -- no self-puppet;
-    // its first-person ride came in with WispGrab (EngageSelf). Host never receives its
-    // own broadcast (RelayGrab engages directly).
+    // Third peers hold the VICTIM's puppet at the mirror's socket for the grab window. On the
+    // victim's own machine victimSlot == own slot -- no self-puppet; its first-person ride came in
+    // with WispGrab (EngageSelf). The host never receives its own broadcast (RelayGrab engages
+    // directly).
     const uint8_t mySlot = coop::players::Registry::Get().LocalPeerId();
     if (static_cast<uint8_t>(p.victimSlot) != mySlot)
         coop::wisp_grab_hold::EngagePuppet(p.wispElementId, static_cast<uint8_t>(p.victimSlot));
@@ -109,12 +108,12 @@ void Tick() {
         UE_LOGW("wisp_tear[victim]: kill deadline elapsed but local player not live -- skipping");
         return;
     }
-    // v2: undo the grab FIRST (detach + restore movement/camera) -- the native
-    // releasePlayer shape is detach-then-ragdoll. Safe no-op if the ride never engaged.
+    // Undo the grab FIRST (detach + restore movement/camera) -- the native releasePlayer shape is
+    // detach-then-ragdoll. Safe no-op if the ride never engaged.
     coop::wisp_grab_hold::ReleaseSelf();
-    // The kill = DIRECT ragdollMode(true,false,true) (NOT kill() -- see the RE addendum:
-    // kill() no-ops behind immortal/startInvinc, ragdollMode does not). Native death -> menu
-    // -> rejoin (the settled permadeath-rejoinable policy).
+    // The kill is a DIRECT ragdollMode(true,false,true), not kill(): kill() no-ops behind
+    // immortal/startInvinc and ragdollMode does not. Native death -> menu -> rejoin, the settled
+    // permadeath-rejoinable policy.
     const bool ok = ue_wrap::engine::SetMainPlayerRagdollMode(local, /*ragdoll=*/true,
                                                               /*passOut=*/false, /*death=*/true);
     UE_LOGI("wisp_tear[victim]: ragdoll DEATH fired (wispEid=%u) ok=%d -- native death->menu->rejoin",

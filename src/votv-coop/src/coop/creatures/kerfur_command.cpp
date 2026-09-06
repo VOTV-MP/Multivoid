@@ -80,9 +80,8 @@ const wchar_t* VerbName(Command c) {
 // The requesting player's BODY actor to follow: the host's own mainPlayer_C (kPeerIdHost) or a
 // remote client's puppet (a bare skeletal-mesh actor). Null while the owner is momentarily absent.
 void* ResolveOwnerBody(uint8_t ownerSlot) {
-    // Both branches return a VALIDATED pointer (Local() revalidates its cache;
-    // valid() is IsLiveByIndex on the puppet's captured index) -- callers need no
-    // bare IsLive on the result (islive-zeroav census row kerfur_command:138).
+    // Both branches return a VALIDATED pointer (Local() revalidates its cache; valid() is
+    // IsLiveByIndex on the puppet's captured index), so callers need no bare IsLive on the result.
     auto& reg = coop::players::Registry::Get();
     if (ownerSlot == coop::players::kPeerIdHost) return reg.Local();
     if (coop::RemotePlayer* p = reg.Puppet(ownerSlot))
