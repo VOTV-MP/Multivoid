@@ -69,6 +69,11 @@ const wchar_t* const g_deviceKeys[] = {
 
 void* g_playerCls = nullptr;
 void* g_setActiveInterfaceFn = nullptr;
+// mainPlayer_C::isActiveINterface3D, resolved as a bool property because a BP bool can share its
+// byte with siblings. ForceExitInterface passes the player's LIVE value through, the way the
+// game's own forced exit does.
+int32_t g_off3D = -1;
+uint8_t g_mask3D = 0;
 // Per-instance widget backref fields (FindPropertyOffset, recook-robust).
 int32_t g_offTfmrWidgetInst = -1;   // transformerMGPanel_C::widgetInst
 int32_t g_offArcadeScrWidge = -1;   // prop_arcade_C::scrWidge
@@ -101,6 +106,11 @@ void ResolvePass() {
         g_setActiveInterfaceFn = R::FindFunction(g_playerCls, L"setActiveInterface");
         if (g_setActiveInterfaceFn)
             UE_LOGI("device_screen: setActiveInterface resolved (force-exit ready)");
+    }
+    if (g_playerCls && g_off3D < 0) {
+        if (!R::FindBoolProperty(g_playerCls, L"isActiveINterface3D", g_off3D, g_mask3D))
+            UE_LOGW("device_screen: mainPlayer_C::isActiveINterface3D unresolved -- a force-exit "
+                    "will collapse a world-space panel's widget");
     }
     const bool core = g_playerCls && g_setActiveInterfaceFn &&
                       RO::MainPlayer_activeInterface() >= 0 &&
@@ -302,20 +312,27 @@ bool HasClearedAim() { return g_saved.player.Raw() != nullptr; }
 
 bool ForceExitInterface(void* player) {
     if (!player || !R::IsLive(player) || !g_setActiveInterfaceFn) return false;
-    // setActiveInterface(activeInterface, InString, zoom, sentBy, ignoreZoom, isActiveINterface3D,
-    // showInterface, &return). A null activeInterface takes the game's own forced-exit branch --
-    // clears the held movement inputs, SetInputMode_GameOnly, cursor off, exitInterface
-    // BROADCAST -- so a zeroed frame is nearly that call. `zoom` is the exception: entering an
-    // interface sets the camera to settings.M_panelFOV, and ONLY the zoom leg of the exit puts it
-    // back to M_defaultFOV. ragdollMode, the game's own forced exit, passes zoom=true for exactly
-    // that reason; with it false the player leaves the screen still framed at the panel FOV.
-    // Everything else the frame zeroes is correct for an exit, and isLookAt (which zoom also
-    // raises) is read only while an interface is live.
+    // A null activeInterface takes the game's own forced-exit branch: SetInputMode_GameOnly,
+    // cursor off, exitInterface BROADCAST, held movement inputs cleared. TWO of the bools steer
+    // it, so a zeroed frame gets both wrong, and ragdollMode -- the game's own forced exit -- is
+    // the shape to copy: zoom=true plus the player's LIVE isActiveINterface3D.
+    //
+    // `zoom` gates the FOV. Entering sets settings.M_panelFOV; only the zoom leg of the exit puts
+    // it back to M_defaultFOV, and stopZooming (which this path also runs) halts the zoom timeline
+    // without firing an update, so it restores nothing.
+    //
+    // `isActiveINterface3D` gates the OUTGOING widget's teardown, which runs before the member is
+    // reassigned: false collapses that widget, and nothing un-collapses it, because every caller
+    // in the game passes showInterface=false. Our devices are world-space panels, so a false would
+    // blank the physical screen for good. A failed resolve leaves it false -- the behavior before
+    // this was understood -- and ResolvePass warns once when that happens.
     ue_wrap::ParamFrame f(g_setActiveInterfaceFn);
     if (!f.valid()) return false;
-    if (!f.Set<bool>(L"zoom", true)) {
-        UE_LOGW("device_screen: setActiveInterface has no `zoom` param -- forcing the exit "
-                "anyway; the camera keeps the panel FOV");
+    f.Set<bool>(L"zoom", true);
+    if (g_off3D >= 0 && g_mask3D) {
+        const bool is3D =
+            (*(reinterpret_cast<const uint8_t*>(player) + g_off3D) & g_mask3D) != 0;
+        f.Set<bool>(L"isActiveINterface3D", is3D);
     }
     return ue_wrap::Call(player, f);
 }
