@@ -232,4 +232,4 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 | the connect replay | `coop/session/subsystems`, `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/session/join_seed` |
 | the reconcile | `coop/props/join_membership_sweep`, `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/creatures/kerfur_reconcile`, `coop/element/mirror_defer` |
 | the pre-world set and the lanes | `coop/net/session_lanes.h` |
-| tests | `python tools/mp.py smoke` (the two-peer join), `harness/autotest/autotest_reloadchurn.cpp` (world-change churn) |
+| tests | the two-peer join scenario, `harness/autotest/autotest_reloadchurn.cpp` (world-change churn) |

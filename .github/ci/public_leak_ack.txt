@@ -20,18 +20,15 @@ docs/COOP_SYNC_MAP.md            | A51 is closed, **A50 is only MITIGATED   # po
 src/votv-coop/include/coop/items/coingun_sync.h | A50 -- MITIGATED           # names the state, not a way to exploit it
 src/votv-coop/include/coop/net/protocol.h       | A59 is MITIGATED           # A59 was fixed in the field 2026-08-31
 src/votv-coop/include/coop/net/protocol.h       | A50's residual and it is why A50 is MITIGATED   # architectural statement
-tools/coop-server-rs/src/bin/signaling.rs       | A59 is MITIGATED           # same, in the relay that carries the fix
-tools/sig_gate.py                | A59 is MITIGATED                         # says what the drill CANNOT assert
 
 # --- instruments describing their own subject ---
-tools/atv_probe_report.py        | A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN # FALSE POSITIVE: "A6" is an experiment ARM label
-tools/docs/status_grammar.py     | docs/security/LESSONS_SECURITY.md:329     # provenance for a REGEX decision; discloses the string "6c.c + 9b"
-tools/docs/public_leak_gate.py   | flag for `docs/security/                  # the S3 docstring quoting its own signal
+.github/ci/public_leak_gate.py   | flag for `docs/security/                  # the S3 docstring quoting its own signal
 
 # --- the drill's SYNTHETIC fixtures. Every identifier is invented (`DRILL_REGISTER.md` and `A99`
 # exist nowhere), and they are cleared PER FILE, so a REAL finding written into a drill is still an
 # unacknowledged hit and still fails.
-tools/docs/public_leak_gate_drill.py | security/DRILL_REGISTER.md:704        # incident 1's SHAPE with invented ids
-tools/docs/public_leak_gate_drill.py | docs/security/DRILL_REGISTER.md:704   # the S1 discrimination case
-tools/docs/public_leak_gate_drill.py | A99 is still OPEN                     # the S2 positive case
-tools/docs/public_leak_gate_drill.py | flag for `docs/security/              # the S3 positive case
+.github/ci/public_leak_gate_drill.py | security/DRILL_REGISTER.md:704        # incident 1's SHAPE with invented ids
+.github/ci/public_leak_gate_drill.py | docs/security/DRILL_REGISTER.md:704   # the S1 discrimination case
+.github/ci/public_leak_gate_drill.py | A99 is still OPEN                     # the S2 positive case
+.github/ci/public_leak_gate_drill.py | flag for `docs/security/              # the S3 positive case
+server/src/bin/signaling.rs      | A59 is MITIGATED           # the relay that carries the fix

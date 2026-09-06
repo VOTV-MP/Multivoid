@@ -9,8 +9,8 @@ The build output is **`main.dll`** (the UE4SS mod-folder contract name). The
 version identity — the Paper-Minecraft pair `<game target> b<build>` — is not
 in the filename: it is baked into the DLL's own **VERSIONINFO resource**
 (ProductVersion, e.g. `0.9.0n b143`), the boot banner, and the release zip's
-name. `tools/deploy-mod.ps1` refuses to deploy a `main.dll` whose
-VERSIONINFO disagrees with the source tree.
+name. The maintainer's deploy step refuses a `main.dll` whose VERSIONINFO
+disagrees with the source tree, so a stale build cannot reach a game copy.
 
 Both halves of the pair come out of the source at configure time — the game
 target from `VOTVCOOP_GAME_TARGET` in `src/votv-coop/CMakeLists.txt`, the
@@ -31,8 +31,7 @@ Visual Studio, CMake, or vcpkg at all:
    from the run page. It contains `main.dll` and `build-info.txt` with the
    exact source commit.
 4. Install it like a manual release install — the DLL goes to
-   `Mods\Multivoid\dlls\main.dll` (see [docs/INSTALL.md](docs/INSTALL.md), or
-   `tools/deploy-all.ps1` on a dev rig).
+   `Mods\Multivoid\dlls\main.dll` (see [docs/INSTALL.md](docs/INSTALL.md)).
 
 Notes:
 
@@ -211,20 +210,16 @@ This deploys `main.dll` into the mod folder
 mesh pak into `...\Content\Paks\LogicMods\multivoid\`. The deploy is
 idempotent (identical bytes are skipped) and refuses a `main.dll` whose
 VERSIONINFO disagrees with the tree. The UE4SS substrate itself is a one-time
-per-copy install: `tools/install-ue4ss.ps1`.
+per-copy install, and the build it pins is the one the mod manager ships, so
+both routes land on the same bytes.
 
 That four-copy layout is this repo's own test rig. If you are just building
 for yourself, install UE4SS once and copy `main.dll` to
 `...\Binaries\Win64\Mods\Multivoid\dlls\main.dll` (+ an `enabled.txt` beside
 `dlls\`) in your own install instead — see [docs/INSTALL.md](docs/INSTALL.md).
 
-For the LAN smoke (the pre-PR check in [CONTRIBUTING.md](CONTRIBUTING.md)):
-
-```powershell
-python tools/mp.py smoke --duration 60
-```
-
-It deploys, launches a host and a client, joins them, and reports PASS or FAIL from their logs
+For the two-peer check a pull request asks for ([CONTRIBUTING.md](CONTRIBUTING.md)): deploy the
+build to two game copies, host on one and join from the other, and read both logs
 ([docs/testing.md](docs/testing.md)).
 
 ## Troubleshooting

@@ -36,7 +36,7 @@ updates; the co-op layer is not.
 ## Own substrate
 
 UE4SS is the loader and the development tool, never the engine layer. The DLL imports zero
-symbols from it; `tools/loader/abi_gate.py` checks the built artifact in CI. Mods that link
+symbols from it; `.github/ci/abi_gate.py` checks the built artifact in CI. Mods that link
 UE4SS's C++ API import dozens of mangled symbols and break across UE4SS versions; a zero-import
 binary loads on every version that honours the `start_mod()` contract.
 

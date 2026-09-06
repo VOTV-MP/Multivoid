@@ -141,4 +141,4 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | the overlay host | `ui/imgui_overlay`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
 | the F1 panels | `ui/dev_menu`, `ui/skins_panel`, `ui/voice_panel`, `ui/world_rules_panel`, `ui/net_stats_panel`, `ui/admin_panel`, `ui/config_review_panel` |
 | the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format` |
-| tests | `python tools/mp.py browser` (the browser screenshot run), `tools/net/roster_shot.ps1` (the four-peer scoreboard capture) |
+| tests | the browser screenshot run and the four-peer scoreboard capture, both scripted on the rig |

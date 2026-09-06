@@ -6,7 +6,7 @@
 # -- a local-path `uses:` resolves from the TRIGGERING branch, letting a
 # contrib branch shadow this file while the caller's diff reads clean (R22).
 # Changes here land only as human commits on main; this file's sha256 is part
-# of the release fingerprint (tools/release/fingerprint.json, design D3/R23).
+# of the release fingerprint (.github/ci/fingerprint.json, design D3/R23).
 # Build steps based on PR #2 by huoyan1231 (reworked per design D2).
 name: build-core
 
@@ -88,7 +88,7 @@ jobs:
         # fails fast on both the CI and release lanes.
         shell: pwsh
         run: |
-          pwsh -File tools/config/registry_gate.ps1
+          pwsh -File .github/ci/registry_gate.ps1
           exit $LASTEXITCODE
 
       - name: Peer-slot generation gate (arc A T3 -- every peerConns_ write decides occupancy)
@@ -98,7 +98,7 @@ jobs:
         # missed two clear sites once.
         shell: pwsh
         run: |
-          pwsh -File tools/net/peerconn_gate.ps1
+          pwsh -File .github/ci/peerconn_gate.ps1
           exit $LASTEXITCODE
 
       - name: Master-contact gate (nothing tells an outside server where a player is, unasked)
@@ -112,7 +112,7 @@ jobs:
         # the player's address before they had asked it anything.
         shell: pwsh
         run: |
-          python tools/net/master_contact_gate.py
+          python .github/ci/master_contact_gate.py
           exit $LASTEXITCODE
 
       - name: ReliableKind routing gate (every wire kind reaches a receiver, or names why not)
@@ -128,7 +128,7 @@ jobs:
         # last-child-exit-code trap cannot discard the drill's verdict.
         shell: pwsh
         run: |
-          python tools/net/reliablekind_gate.py --drill
+          python .github/ci/reliablekind_gate.py --drill
           exit $LASTEXITCODE
 
       - name: MinHook free-call gate (nothing may free a trampoline the process still calls)
@@ -140,9 +140,9 @@ jobs:
         # the INVERSE control, so a decorative allowlist cannot pass as a working one.
         shell: pwsh
         run: |
-          pwsh -File tools/hooks/minhook_free_gate.ps1 -Drill -Quiet
+          pwsh -File .github/ci/minhook_free_gate.ps1 -Drill -Quiet
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -File tools/hooks/minhook_free_gate.ps1
+          pwsh -File .github/ci/minhook_free_gate.ps1
           exit $LASTEXITCODE
 
       - name: GC pin gate (a root-set pin is owned by a GcPin, never a hand-written pair)
@@ -155,9 +155,9 @@ jobs:
         # in-process map load adopted the corpse and crashed on its null WorldSettings.
         shell: pwsh
         run: |
-          pwsh -File tools/gc/gc_pin_gate.ps1 -Drill -Quiet
+          pwsh -File .github/ci/gc_pin_gate.ps1 -Drill -Quiet
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -File tools/gc/gc_pin_gate.ps1
+          pwsh -File .github/ci/gc_pin_gate.ps1
           exit $LASTEXITCODE
 
       - name: Atlas regime gate (the ImGui lazy atlas is on, watched, and bounded)
@@ -169,9 +169,9 @@ jobs:
         # exclude table that cannot be a zero-terminated no-op.
         shell: pwsh
         run: |
-          pwsh -File tools/text/atlas_regime_gate.ps1 -Drill -Quiet
+          pwsh -File .github/ci/atlas_regime_gate.ps1 -Drill -Quiet
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pwsh -File tools/text/atlas_regime_gate.ps1
+          pwsh -File .github/ci/atlas_regime_gate.ps1
           exit $LASTEXITCODE
 
       - name: Package drill (Test-PackageZip must CATCH a mis-rooted or hollow zip)
@@ -187,7 +187,7 @@ jobs:
         # name/version rules. Needs no build -- it assembles its own broken zips.
         shell: pwsh
         run: |
-          pwsh -File tools/release/package_drill.ps1
+          pwsh -File .github/ci/package_drill.ps1
           exit $LASTEXITCODE
 
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
@@ -266,8 +266,8 @@ jobs:
         run: |
           git fetch origin main
           $tmp = Join-Path $env:RUNNER_TEMP 'LEDGER.main.tsv'
-          git show origin/main:tools/release/LEDGER.tsv | Out-File -Encoding utf8 $tmp
-          pwsh -File tools/release/ledger_lint.ps1 -LedgerPath $tmp
+          git show origin/main:.github/ci/LEDGER.tsv | Out-File -Encoding utf8 $tmp
+          pwsh -File .github/ci/ledger_lint.ps1 -LedgerPath $tmp
 
       - name: Configure (CMake + vcpkg manifest mode)
         shell: pwsh
@@ -296,7 +296,7 @@ jobs:
         # silently discarded the drill's failure -- the script runs the drill
         # first and returns 2 immediately if it cannot fire.
         shell: pwsh
-        run: python tools/loader/abi_gate.py --drill "${{ env.BUILD_DIR }}/Release/main.dll"
+        run: python .github/ci/abi_gate.py --drill "${{ env.BUILD_DIR }}/Release/main.dll"
 
       - name: Package the r2modman zip + verify it (CI evidence, pak-less by construction)
         # THE DISTRIBUTABLE IS ASSEMBLED ON EVERY PUSH, not first at release time.
@@ -312,7 +312,7 @@ jobs:
         # stocked, so this step proves the STRUCTURE, never the payload set.
         shell: pwsh
         run: |
-          pwsh -File tools/release/package.ps1 -BuildDir "${{ env.BUILD_DIR }}/Release" `
+          pwsh -File .github/ci/package.ps1 -BuildDir "${{ env.BUILD_DIR }}/Release" `
                                                -OutDir "$env:RUNNER_TEMP/package"
           exit $LASTEXITCODE
 
@@ -340,7 +340,7 @@ jobs:
           $head = (git rev-parse HEAD).Trim()
           "commit: $head" | Out-File (Join-Path $out 'build-info.txt')
           # Toolchain facts for the human fingerprint commit (cacheless smoke, design section 5 step 4).
-          pwsh -File tools/release/fingerprint.ps1 -Mode dump | Tee-Object (Join-Path $out 'fingerprint-dump.json')
+          pwsh -File .github/ci/fingerprint.ps1 -Mode dump | Tee-Object (Join-Path $out 'fingerprint-dump.json')
           "dir=$out" | Out-File -Append $env:GITHUB_OUTPUT
           # Artifact NAME carries the source sha (CI evidence, not distribution);
           # the DLL filename inside stays canonical (main.dll -- the UE4SS

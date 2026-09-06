@@ -1,5 +1,10 @@
 # ===== Game install — never commit copyrighted binaries or assets =====
 Game/
+
+# Our own toolset. Untracked whole: it is the workflow that maintains this project, not
+# something a person forking it runs. What the CI genuinely needs lives in .github/ci.
+tools/
+
 Game_*/
 *.exe
 *.dll
@@ -39,9 +44,6 @@ _inspect/
 ida/dumps/
 tools/x64dbg_snapshot*/
 __pycache__/
-
-# Autonomous test run artifacts (regenerable, can be gigabytes)
-tools/test-runs/
 
 # Build outputs of vendored deps (regenerable from submodule + build script)
 third_party/*-build/
@@ -154,16 +156,8 @@ docs/piles/test-evidence/
 # research/bp_reflection above; the 419k-line mainGamemode.json etc. -- regenerate, never commit)
 docs/piles/re-artifacts/
 
-# mesh_extract C# build junk (tools/client_model)
-tools/client_model/mesh_extract/bin/
-tools/client_model/mesh_extract/obj/
-
 # repak unpack junk (never commit)
 /Engine/
-
-# third-party model assets (Valve/COF), local only -- never commit
-tools/cof_simonkitty_v1sc/
-tools/hl_einstein_v1sc/
 
 # Local skin-pak library: cooked paks derived from third-party models, plus their preview
 # tiles. Distribution-unsafe; the deploy reads it from disk and git never carries it.
@@ -183,13 +177,6 @@ reference/psk-psa-v9.1.2/
 reference/baritone/
 reference/voidmod-extracted/
 reference/unreal-shimloader/
-
-# portable client-model converter build output (game-derived template bytes + binaries)
-tools/client_model/portable/dist/
-tools/client_model/portable/build/
-
-# local model workfolders under tools/client_model (third-party assets, underscore convention)
-tools/client_model/_*/
 
 # The multivoid.dev website workspace: every site file lives in site/, fully untracked, worked
 # on locally and deployed outside this repository.
@@ -254,8 +241,6 @@ docs/security/
 # drops that link. If the link is wanted, add a second short tracked file rather than this one.
 SUPPORT.md
 
-
-
 # The known-weaknesses register, on the same terms as the security notes above.
 docs/CRUTCHES.md
 
@@ -307,54 +292,3 @@ docs/**
 !docs/versioning.md
 !docs/voice-and-chat.md
 reference/agency-agents/
-
-# ---- WORKFLOW TOOLING IS LOCAL (the same test as the docs above) ------------------------------
-# The public tools/ tree keeps what CI, the build, a release, a contributor's smoke, the skin
-# converter and the master server need. Session-ritual scripts, probes, one-off census and drill
-# scripts and per-operator helpers stay on disk.
-tools/docs/census_git.py
-tools/docs/census_history.py
-tools/docs/comment_lexer.py
-tools/docs/lessons_gate*
-tools/docs/memory_index.py
-tools/docs/reading_order.py
-tools/docs/status_census*.py
-tools/docs/status_grammar.py
-tools/docs/trailer_schema.py
-tools/*_probe.py
-# the critic ledger, its proof gate, its prior-art ranker and their drill: the same test
-tools/qf/
-tools/*_probe_drill.py
-tools/atv_probe_report_drill.py
-tools/atv_probe_report.py
-tools/bp_gate_census.py
-tools/capture-kerfur-repro.ps1
-tools/coverage.py
-# The sweep's instruments and the session-close census. The prose gate and its drill stay public:
-# CI runs them, and a fork needs to pass them.
-tools/docs/census_close.py
-tools/docs/census_drill_lib.py
-tools/docs/sweep_file.py
-tools/docs/sweeplib.py
-tools/docs/__pycache__/
-tools/diag-*.ps1
-tools/kerfur-delivery-assert.ps1
-tools/master_smoke.py
-tools/rng_census_analyze.py
-tools/verified_takes.tsv
-tools/vps_provision.sh
-tools/debug/parse_dump.py
-tools/debug/present_hook_census.py
-tools/net/departure_drill.ps1
-tools/net/replacement_drill.ps1
-tools/probes/
-tools/brightness.ps1
-tools/capture-window.ps1
-tools/capture-pile-shots.ps1
-tools/capture-showcase.ps1
-tools/probe-terminals.ps1
-tools/run-test.ps1
-tools/deploy-probe.ps1
-tools/reflection/islive_gate.ps1
-tools/release/compare_zips.ps1
-tools/release/mirror_pr.ps1

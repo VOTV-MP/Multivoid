@@ -36,14 +36,14 @@ half goes to `ue_wrap/`, the network state to `coop/`, joined by a header API.
 ## Build and deploy
 
 `BUILDING.md` at the repository root is the whole story: the toolchain, the configure, the build,
-and `tools/deploy-all.ps1`, which deploys `main.dll` to the four local game copies and refuses a
+and the maintainer's deploy step, which copies `main.dll` to the local game copies and refuses a
 DLL whose VERSIONINFO disagrees with the tree. The UE4SS substrate is installed once per copy by
-`tools/install-ue4ss.ps1`.
+a one-time per-copy UE4SS install.
 
 ## What is not in this tree
 
 - UE4SS's code: the mod imports nothing from it. UE4SS itself is the loader every game copy
-  runs (`tools/install-ue4ss.ps1` pins one build; the mod manager delivers the same one), and
+  runs (the pinned build and the one the mod manager delivers are the same), and
   the development copy also uses it for Live View, Lua probes and header dumps
   (`docs/RE_WORKFLOW.md`).
 - Game assets: never touched. Every sync rides reflected function calls and reads through cached

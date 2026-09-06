@@ -1,6 +1,6 @@
 # assets/paks: the starter-skin paks
 
-The release zip's `pak\` route is filled from here by `tools/release/package.ps1` (included
+The release zip's `pak\` route is filled from here by `.github/ci/package.ps1` (included
 automatically when the directory is non-empty). The contents are committed; see Tracking below
 for why. Expected contents: one bundle pak carrying the four starter scientists the mod assigns
 randomly to a new identity, plus the four skin-browser preview tiles named by member:
@@ -28,7 +28,7 @@ sees the difference.
 
 **Why it was that large, and the deeper fix, not done.** The meshes are 90-200 KB each; the whole
 cost is the textures, stored as uncompressed BGRA8. Three are exactly 4 MiB (1024x1024x4) and one
-is 1 MiB (512x512x4), for Half-Life-era art. The converter in `tools/client_model/` should emit a
+is 1 MiB (512x512x4), for Half-Life-era art. The skin converter should emit a
 block-compressed format (BC1/DXT1 is 8:1 on an opaque diffuse, BC7 4:1); that would cut the
 payload again and cut GPU memory at runtime, which Zlib does not, since a compressed pak still
 decompresses to 4 MiB per texture in VRAM. Zlib is the packaging fix; the texture format is the

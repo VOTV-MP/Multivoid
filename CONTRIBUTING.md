@@ -21,7 +21,7 @@ Three rules govern every change:
    no "deprecated, kept for now", no flags that re-enable old behaviour, no two implementations
    of one concept compiled together.
 3. **Own substrate.** UE4SS is the loader and the development tool, never the engine layer.
-   The DLL imports zero symbols from it (`tools/loader/abi_gate.py`, run in CI); reflection,
+   The DLL imports zero symbols from it (`.github/ci/abi_gate.py`, run in CI); reflection,
    hooking, transport and UI are the mod's own.
 
 And eight architectural principles; the reasoning behind them is in
@@ -52,7 +52,8 @@ in a comment at the site.
 | `src/votv-coop/src/harness/` | boot glue and the scripted test scenarios |
 | `src/votv-coop/src/loader/` | the UE4SS `start_mod()` entry |
 | `src/votv-coop/include/` | the headers, same split |
-| `tools/` | build, deploy, the test rig, release, the master server (`coop-server-rs/`), the gates |
+| `server/` | the master server and the signaling relay, in Rust |
+| `.github/ci/` | the scripts the workflows run: the public-surface gates, the release predicates |
 | `docs/` | the documentation; [docs/README.md](docs/README.md) is the index |
 | `reference/` | vendored read-only references (UE4SS, MTA:SA) |
 
@@ -66,10 +67,9 @@ GitHub Actions from a fork with no local toolchain.
 
 A change is not done when it compiles. Before a pull request:
 
-1. Build **Release** and deploy it to a game install (`tools/deploy-all.ps1` for the repo's
-   four-copy rig, or copy `main.dll` by hand as BUILDING.md describes).
-2. Run the two-peer LAN smoke, `python tools/mp.py smoke`, for at least 30 seconds of steady
-   state. It boots a host and a client, joins them, and reports PASS or FAIL from the logs.
+1. Build **Release** and deploy it to a game install, as BUILDING.md describes.
+2. Run two peers for at least 30 seconds of steady state -- host on one, join from the
+   other, on one machine or across a LAN.
    Read both logs: no `[Warn]` or `[Error]` lines from the mod, no line repeating at a rate
    the design did not intend.
 3. Keep files under 800 lines. A file that needs to grow past that is split first, in its own
@@ -107,10 +107,10 @@ Co-Authored-By: ...
   current, and nowhere if it is history: `git log -p` keeps the diff.
 - A doc that describes a subsystem changes in the same commit as the subsystem.
 
-`tools/git/commit_msg_check.py` is the checker. Install it as a hook once per clone:
+`.github/ci/commit_msg_check.py` is the checker. Install it as a hook once per clone:
 
 ```powershell
-git config core.hooksPath tools/git/hooks
+git config core.hooksPath .github/ci/hooks
 ```
 
 The hook refuses a message that breaks the shape and says why. CI runs the same check over
@@ -151,7 +151,7 @@ A doc that says something works without naming its evidence is a bug in the doc.
 Working notes, reverse-engineering logs, design drafts and session records are kept by the
 maintainer outside the repository. The `docs/` tree is an allowlist in `.gitignore`: a new doc is
 published by adding its `!docs/<file>` line, so a working note left there stays local by default.
-`tools/docs/public_prose_gate.py` measures the public tree
+`.github/ci/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
 the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
 more than half comment, offsets pinned in prose that the code resolves elsewhere, declarations

@@ -87,4 +87,4 @@ is contiguous so a seed can never be discarded as old. Voice presence states are
 | chat | `coop/comms/chat_sync`, `coop/comms/chat_log`, `coop/comms/chat_feed`, `coop/comms/chat_bubbles`, `coop/comms/chat_nick_color`, `coop/comms/peer_action_feed`, `ui/chat_input`, `ui/chat_view`, `ui/hud` |
 | voice | `coop/voice/voice_chat`, `coop/voice/voice_capture`, `coop/voice/voice_playback`, `ui/voice_panel`, `ui/voice_icons`, `third_party/opus`, `third_party/miniaudio` |
 | text | `coop/text/utf8_codec`, `coop/text/repertoire` |
-| tests | `python tools/mp.py chathistory` and `chatseed`, each with a must-fail injection |
+| tests | the `chathistory` and `chatseed` scenarios, each with a must-fail injection |

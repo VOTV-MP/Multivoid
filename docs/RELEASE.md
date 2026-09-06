@@ -4,7 +4,7 @@
 
 A release is a tag, `v<game>-b<N>` for a stable or `v<game>-b<N>-dev` for a prerelease, whose
 page carries one package zip, `Pelmentor-Multivoid-<major>.<minor>.<build>.zip`, and its
-SHA256. The zip is assembled by `tools/release/package.ps1` from the tagged build's `main.dll`,
+SHA256. The zip is assembled by `.github/ci/package.ps1` from the tagged build's `main.dll`,
 and the bytes are CI's cacheless rebuild of the tagged source, published by the release lane
 (`.github/workflows/release-trampoline.yml` into `release-core.yml`). The page body has one
 writer: a dev disclaimer, then what is new (the notes file for that build), then the install
@@ -12,7 +12,7 @@ steps with a link to [INSTALL.md](INSTALL.md), then the build provenance (the so
 the checksum).
 
 Build numbers are minted in one place, the append-only, human-written ledger
-`tools/release/LEDGER.tsv`. A tag or a release page is a deletable platform object and a drift
+`.github/ci/LEDGER.tsv`. A tag or a release page is a deletable platform object and a drift
 detector, never the authority. The identity a release carries is the version pair on
 [versioning.md](versioning.md).
 
@@ -26,23 +26,23 @@ builds.
    being released: a Release build, deployed, and a two-peer smoke of at least thirty seconds with
    clean logs; for a stable, a play session by a person. The smoke's host log carries `config-selftest: DONE fail=0` (the
    smoke run with `VOTVCOOP_RUN_CONFIG_SELFTEST=1`), and every peer's log carries
-   `repertoire selftest: PASS` and `font selftest: DONE fail=0`. Run `tools/release/tripwires.ps1`
+   `repertoire selftest: PASS` and `font selftest: DONE fail=0`. Run `.github/ci/tripwires.ps1`
    and keep its output; it advises and never blocks.
 
    **The relay gate blocks.** Run
 
    ```
-   python tools/sig_gate.py --remote <deployed relay> --token <its token>
+   Drill the deployed relay against its token before the release goes out.
    ```
 
    and it must pass. The mod fails closed on a signaling relay that does not challenge it, so a
    build published against an old relay loses peer-to-peer for every install at once. If the
    services need a redeploy, redeploy the signaling relay and the master together (the recipe is
-   in `tools/coop-server-rs/README.md`), run the gate, then publish. Also confirm a join request
+   in `server/README.md`), run the gate, then publish. Also confirm a join request
    for a direct lobby returns the host's identity; without it a password-locked direct lobby
    cannot be joined from the browser.
-2. **The changelog.** Write `tools/release/notes/b<N>.md` by the rules in
-   `tools/release/notes/README.md`: plain bullets, no heading, verbs that are status claims,
+2. **The changelog.** Write `.github/ci/notes/b<N>.md` by the rules in
+   `.github/ci/notes/README.md`: plain bullets, no heading, verbs that are status claims,
    anchored to the protocol header's consume comment and the git range. Show it to the
    maintainer before the tag is pushed; the judge refuses a tag whose notes file is missing or
    malformed, and only a person judges whether the prose is true.
@@ -66,7 +66,7 @@ builds.
    `COOP_LATEST_MOD=<game> b<N>` in the master's environment and restart it; the in-game line
    informs and never gates a join. A dev release skips this unless it is retiring an older
    cohort, since the client has no dev-or-stable axis and compares the build number alone. Then
-   `tools/release/verify_latest.ps1` must pass (`-AllowDev` when the master was pointed at a
+   `.github/ci/verify_latest.ps1` must pass (`-AllowDev` when the master was pointed at a
    prerelease on purpose).
 9. **The mod store.** Upload the same zip to the package listing; never delete a listed version,
    deprecate it.
@@ -76,7 +76,7 @@ builds.
 - **A judge refusal** names its check. Fix the cause and re-run; nothing to clean up.
 - **A fingerprint refusal** means the runner toolchain or the build workflow moved since the last
   proven-runnable smoke: dispatch the build workflow cacheless, smoke its bytes locally, commit
-  the run's fingerprint dump as `tools/release/fingerprint.json`, re-run the release.
+  the run's fingerprint dump as `.github/ci/fingerprint.json`, re-run the release.
 - **A tag on the wrong commit**, before publish: retag only toward the ledger row's commit and
   force-push the tag.
 - **A wrongly chosen number**, never published: append a `burn` row and push it at once; numbers
@@ -92,7 +92,7 @@ builds.
 
 A row is `kind<TAB>N<TAB>game<TAB>tagName<TAB>sourceSha<TAB>date`. The kinds are `consume` (the
 number is expected), `published` (a person closed it), and the terminal `burn` and `retracted`.
-`tools/release/ledger_lint.ps1` runs advisory in every CI build and enforcing in every release run,
+`.github/ci/ledger_lint.ps1` runs advisory in every CI build and enforcing in every release run,
 and locally at any time.
 
 ## What the code enforces, so no release re-implements it
@@ -106,7 +106,7 @@ and locally at any time.
   a mismatch with the tree or the tag.
 - The latest-release pointer never surfaces a prerelease, asserted at publish; the in-game "dev"
   wording is computed from the numbers, and no dev axis exists in the identity.
-- The judge, the fingerprint and the ledger predicates live in `tools/release/` and execute from
+- The judge, the fingerprint and the ledger predicates live in `.github/ci/` and execute from
   the main branch's head, where editing them is a protected act. The publish job checks out the
   tag for the release content and identity and overlays only those predicates from main, so
   the refuse-to-publish logic is never readable from a tag.

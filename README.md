@@ -103,7 +103,7 @@ cmake --build build/votv-coop --config Release
 |--|--|
 | [`docs/`](docs/README.md) | **Start here** — the documentation index |
 | [`src/votv-coop/`](src/votv-coop/) | The mod: `ue_wrap` / `coop` / `ui` / `harness` / `loader` |
-| [`tools/`](tools/) | Build, deploy, the test rig, release, and the master server (`coop-server-rs/`) |
+| [`server/`](server/) | The master server and the signaling relay, in Rust |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA) |
 | `Game_0.9.0n_HOST*/` | Local game installs. **Gitignored** — never committed |
 

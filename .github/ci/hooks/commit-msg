@@ -1,6 +1,6 @@
 #!/bin/sh
 # commit-msg hook: the shape of a commit message (CONTRIBUTING.md, "Commits").
-# Install once per clone:  git config core.hooksPath tools/git/hooks
+# Install once per clone:  git config core.hooksPath .github/ci/hooks
 #
 # On Windows `python3` may be the Store's execution alias, a stub that only prints an error, so a
 # candidate counts only if it can actually run; `python` is tried first there.

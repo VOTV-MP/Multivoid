@@ -12,7 +12,7 @@ here ships inside the mod.
 
 ### Two binaries
 
-Both services are Rust, in `tools/coop-server-rs/`: `coop-master` and `coop-signaling`, static
+Both services are Rust, in `server/`: `coop-master` and `coop-signaling`, static
 binaries configured by environment variables, with every secret in the environment and none in
 the code; a binary refuses to start without its required secret. Each terminates TLS inside
 itself on a second port beside its plaintext one, with a real certificate on the public host. The
@@ -58,14 +58,14 @@ relay forwards it with the sender's identity in front; a duplicate registration 
 older connection at once, and a slow destination has a bounded queue that drops rather than
 blocks. The mod fails closed on a relay that never challenges it: registering unproved would
 reopen exactly what the challenge closes, so a build that requires the challenge is published
-only after a drill proves the deployed relay speaks it (`tools/sig_gate.py`).
+only after a drill proves the deployed relay speaks it.
 
 ### Self-hosting
 
 Run the two binaries with their environment (the TURN secret, the signaling token, the
 signaling and TURN addresses) and a TURN server that shares the secret, then point the ini's
-custom master and signaling rows at them. `tools/mp.py` builds and launches the signaling binary
-locally for a scripted run, and `tools/fake_master.py` serves a synthetic lobby list to the browser.
+custom master and signaling rows at them. The rig builds and launches the signaling binary
+locally for a scripted run, and serves a synthetic lobby list to the browser in place of a master.
 
 ## Who owns what
 
@@ -104,7 +104,7 @@ most until its heartbeats lapse.
 
 | Concept | Files |
 |---|---|
-| the services | `tools/coop-server-rs/src/bin/master.rs`, `tools/coop-server-rs/src/bin/signaling.rs`, `tools/coop-server-rs/src/tls.rs`, `tools/coop-server-rs/src/common.rs`, `tools/coop-server-rs/README.md` |
+| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
 | the mod's master client | `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/session/host_mode` |
-| the drills and fixtures | `tools/sig_gate.py`, `tools/fake_master.py` (a synthetic lobby list for the browser), `tools/cert_check.py` (the off-box certificate check) |
+| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs` |

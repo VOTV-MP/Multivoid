@@ -10,7 +10,7 @@
     game retarget (see docs/versioning.md).
   - The manual-lane mod-folder path and the upgrade-from-standalone rule are
     anchor phrases shared with the release-body template
-    (tools/release/ledger_lib.ps1); the lint asserts they appear here word for word.
+    (.github/ci/ledger_lib.ps1); the lint asserts they appear here word for word.
     Reword them only together.
   - The dev-build/tester DISCLAIMER below is owned HERE too. README and the website Download section carry a one-line
     pointer, never a copy. It deliberately names no build number or hash, so it

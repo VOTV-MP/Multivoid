@@ -27,7 +27,7 @@ would rather stay anonymous. If a report shows people are actively at risk, it j
 
 - the mod itself (`main.dll`) — the network layer, the save transfer, the message parsers,
   the authority checks, the overlay
-- the master / signaling servers (`tools/coop-server-rs/`) and `master.multivoid.dev`
+- the master / signaling servers (`server/`) and `master.multivoid.dev`
 - the website and the release/installer path (a malicious update channel, a tampered artifact)
 
 **Out of scope** — report these to the people who own them, not to us:

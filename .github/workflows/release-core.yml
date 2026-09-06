@@ -1,7 +1,7 @@
 # release-core -- the release lane's brain, ALWAYS executed from main
 # (the trampoline calls it @main; the recovery dispatch runs main's YAML by
 # construction). THIN ORCHESTRATOR (design D3): every refusal / lint /
-# predicate decision lives in tools/release/*.ps1 executed from the MAIN
+# predicate decision lives in .github/ci/*.ps1 executed from the MAIN
 # checkout (checkout#2) -- the self-check below guards the JUDGE, not just the
 # evidence. The run logs workflow_ref/workflow_sha as evidence (not a gate --
 # a gate cannot guard itself; residual D7(a)).
@@ -74,13 +74,13 @@ jobs:
 
       - name: Tag-grammar fixture selftest
         shell: pwsh
-        run: pwsh -File tools/release/tag_regex_selftest.ps1
+        run: pwsh -File .github/ci/tag_regex_selftest.ps1
 
       - name: Ledger lint (ENFORCING on the release lane)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pwsh -File tools/release/ledger_lint.ps1
+        run: pwsh -File .github/ci/ledger_lint.ps1
 
       - name: Judge -- full verdict vector (no short-circuit)
         id: judge
@@ -88,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pwsh -File tools/release/judge.ps1 -TagName '${{ steps.resolve.outputs.tag-name }}' -TagShaEvidence '${{ steps.resolve.outputs.tag-sha }}'
+          pwsh -File .github/ci/judge.ps1 -TagName '${{ steps.resolve.outputs.tag-name }}' -TagShaEvidence '${{ steps.resolve.outputs.tag-sha }}'
           $code = $LASTEXITCODE
           # Explicit exits: without them the step ends with the child's
           # $LASTEXITCODE (10) and the no-op verdict turned the job RED --
@@ -102,7 +102,7 @@ jobs:
       - name: Fingerprint gate (early refusal, pre-build)
         if: steps.judge.outputs.verdict == 'publish'
         shell: pwsh
-        run: pwsh -File tools/release/fingerprint.ps1 -Mode check
+        run: pwsh -File .github/ci/fingerprint.ps1 -Mode check
 
   build:
     name: Cacheless build of the tagged source
@@ -142,18 +142,18 @@ jobs:
       # Only the *.ps1 predicates are overlaid, and only from main. A tag can be
       # created by anyone who can push one; the refuse-to-publish logic must not
       # be readable from it (RELEASE.md: "executed from main HEAD -- editing them
-      # is a human-only act"). Everything else under tools/release is CONTENT that
+      # is a human-only act"). Everything else under .github/ci is CONTENT that
       # describes this release -- the notes file, the store README, the ledger,
       # the fingerprint -- and stays at the tag.
       - name: Overlay the release predicates from main
         shell: pwsh
         run: |
           git fetch --depth=1 origin main
-          git checkout FETCH_HEAD -- 'tools/release/*.ps1'
+          git checkout FETCH_HEAD -- '.github/ci/*.ps1'
           Write-Host 'predicates overlaid from main:'
-          git --no-pager diff --name-only HEAD -- tools/release | ForEach-Object { "  $_" }
+          git --no-pager diff --name-only HEAD -- .github/ci | ForEach-Object { "  $_" }
           Write-Host 'content kept at the tag:'
-          Get-ChildItem tools/release -Exclude '*.ps1' -Name | ForEach-Object { "  tools/release/$_" }
+          Get-ChildItem .github/ci -Exclude '*.ps1' -Name | ForEach-Object { "  .github/ci/$_" }
 
       - name: Download build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -166,7 +166,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pwsh -File tools/release/publish.ps1 `
+          pwsh -File .github/ci/publish.ps1 `
             -TagName '${{ needs.judge.outputs.tag-name }}' `
             -TagSha  '${{ needs.judge.outputs.tag-sha }}' `
             -ArtifactDir _release_artifact

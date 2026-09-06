@@ -152,7 +152,7 @@ def drill_ack_is_path_keyed():
     """
     print("  -- the acknowledgement is keyed on (path, needle) --")
     ack = G.load_ack()
-    drill = "tools/docs/public_leak_gate_drill.py"
+    drill = ".github/ci/public_leak_gate_drill.py"
     needle = "flag for `docs/security/"
     check((drill, needle) in ack,
           "the drill's own S3 fixture IS cleared, in the drill")

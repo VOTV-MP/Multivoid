@@ -28,8 +28,8 @@ base properly, and resume X on top. The laptop's power lane parked this way on t
 
 ## Step 1: reverse-engineer until the facts are counted
 
-The tools are `tools/bp_cpp.py` (a whole Blueprint as readable pseudo-C++, with `--offsets` for
-the bytecode-offset listing that citations use), `tools/bp_cfg.py` (the control-flow graph), the
+Two wrappers over that dumper do the reading: one renders a whole Blueprint as readable pseudo-C++, with an option for
+the bytecode-offset listing that citations use; the other draws the control-flow graph. The
 reflection dumps for layouts, and a disassembler for native code, in that order of reach. The
 census a design owes: every writer of the state (all of them, by search and by reading, not the
 first hit), every verb (the player-facing entry points and their dispatch opcode), every reader

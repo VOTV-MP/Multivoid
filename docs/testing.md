@@ -10,25 +10,19 @@ to four copies of the game on one machine, driven by one launcher and judged by 
 ### The rig
 
 Four copies of the game live beside the repository, each with its own saved games and logs: a
-host, two clients and a fourth kept for development. `tools/deploy-all.ps1` deploys the built DLL
-into every copy's mod folder (over `tools/deploy-mod.ps1`, which skips a copy whose bytes already
-match); `tools/install-ue4ss.ps1` installs the pinned UE4SS loader into a copy once, verifying its
+host, two clients and a fourth kept for development. A deploy step copies the built DLL into every
+copy's mod folder, skipping a copy whose bytes already match; a separate one-time step installs the
+pinned UE4SS loader into a copy, verifying its
 hash. Nothing in a game copy is tracked.
 
 ### The launcher
 
-`tools/mp.py` deploys and launches peers and runs scenarios. `host`, `client`, `client2` and
+One launcher deploys and launches peers and runs scenarios. `host`, `client`, `client2` and
 `client3` launch one peer each for playing; `kill` stops every game process. Every step
 prints a line as it happens, and the game is launched detached so the launcher never holds its
 pipes.
 
-The smoke is the standing regression check:
-
-```
-python tools/mp.py smoke --duration 60
-```
-
-It deploys, launches the host windowed, waits for it to bind its port, launches a client, samples
+The smoke is the standing regression check. It deploys, launches the host windowed, waits for it to bind its port, launches a client, samples
 every process's memory on an interval, kills everything if a peer crosses the memory threshold,
 tails both logs, kills both peers, and passes only if both were alive at the last sample. Its own
 verdict is liveness and memory; feature verdicts are read from the logs. `smoke4` runs a host and
@@ -65,8 +59,8 @@ to a target, never through synthesised input.
 ### Logs and assertions
 
 Every copy writes a levelled, timestamped `multivoid.log` beside the mod, and a scenario's verdict
-is a line in it. `tools/pile-test-assert.ps1` checks the pile carry-and-throw loop against
-thirteen invariants across both peers' logs and prints a verdict table. `tools/capture_window.ps1`
+is a line in it. One log assertion checks the pile carry-and-throw loop against thirteen
+invariants across both peers' logs and prints a verdict table; a capture step
 grabs a game window from outside the process for the screenshot scenarios.
 
 ### The gates a push runs
@@ -90,8 +84,8 @@ checksum ([RELEASE.md](RELEASE.md)).
 
 | Limit | Evidence |
 |---|---|
-| The rig stages what a scenario scripts: a bot walks to a chosen target and performs the scripted action. Nobody plays the game freely, so a mechanic's feel and anything visual are judged by a person | `[V]` `tools/mp.py`, `harness/autotest/` |
-| A race is staged only where a scenario provides a barrier; the container take is the one that has it, other concurrent interactions have no scenario yet | `[V]` `tools/mp.py` (`ctakerace`) |
+| The rig stages what a scenario scripts: a bot walks to a chosen target and performs the scripted action. Nobody plays the game freely, so a mechanic's feel and anything visual are judged by a person | `[V]` `harness/autotest/` |
+| A race is staged only where a scenario provides a barrier; the container take is the one that has it, other concurrent interactions have no scenario yet | `[V]` `harness/autotest/` (the `ctakerace` scenario) |
 | The smoke's own verdict is liveness and memory; a regression that keeps both peers alive passes it unless a feature assertion reads the logs | `[V]` by design |
 | No structured report; a verdict is a line in a log | `[V]` |
 
@@ -99,7 +93,5 @@ checksum ([RELEASE.md](RELEASE.md)).
 
 | Concept | Files |
 |---|---|
-| the launcher and the rig | `tools/mp.py`, `tools/deploy-all.ps1`, `tools/deploy-mod.ps1`, `tools/install-ue4ss.ps1` |
 | the in-game harness | `harness/harness`, `harness/session_runtime`, `harness/autotest`, `harness/autotest_dispatch`, `harness/autotest/`, `harness/sdk_check`, `harness/screenshot` |
-| log assertions and captures | `tools/pile-test-assert.ps1`, `tools/capture_window.ps1` |
-| the gates | `tools/loader/abi_gate.py`, `tools/docs/public_prose_gate.py`, `tools/docs/public_leak_gate.py`, `tools/git/commit_msg_check.py`, `.github/workflows/build-core.yml`, `.github/workflows/repo-gates.yml`, `.github/workflows/release-core.yml` |
+| the gates | `.github/ci/abi_gate.py`, `.github/ci/public_prose_gate.py`, `.github/ci/public_leak_gate.py`, `.github/ci/commit_msg_check.py`, `.github/workflows/build-core.yml`, `.github/workflows/repo-gates.yml`, `.github/workflows/release-core.yml` |

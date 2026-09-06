@@ -175,4 +175,4 @@ the moment of the join is resolved on its first streamed frame.
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |
 | the spawners a client must not run | `coop/world/spawn_authority` |
-| tests | `harness/autotest/autotest_grab.cpp`; `python tools/mp.py smoke` |
+| tests | `harness/autotest/autotest_grab.cpp` |

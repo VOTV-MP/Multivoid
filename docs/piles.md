@@ -161,4 +161,4 @@ during the window arrives as a position correction after the snapshot.
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | garbage containers | `coop/interactables/garbage_sync` |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
-| tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `tools/pile-test-assert.ps1` |
+| tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp` |

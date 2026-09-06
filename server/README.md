@@ -27,9 +27,9 @@ Cross-compile for the Linux box from Windows with `cargo build --release --targe
 x86_64-unknown-linux-gnu` (needs the target and a linker), or build on the box. One static
 binary per service; no interpreter on the box to rot.
 
-The rig launches the signaling binary for its own scenarios (`tools/mp.py` builds it), so a
+The rig builds and launches the signaling binary for its own scenarios, so a
 line-protocol change is proven against the copy that ships. The browser rig uses
-`tools/fake_master.py` as its lobby source instead of a master, because a real master's rate
+a synthetic lobby list as its source instead of a master, because a real master's rate
 limits and per-IP caps are the wrong fixture for many synthetic rows from one address.
 
 ## The wire
@@ -42,7 +42,7 @@ limits and per-IP caps are the wrong fixture for many synthetic rows from one ad
   Unit-tested against a fixed reference vector; a mismatch breaks coturn auth silently.
 - **Signaling**: a `<token> <identity>` greeting, then `<dest> <hex>` relay lines; pre-auth and
   authed pools; per-IP caps; a duplicate identity evicts the older connection. The registration
-  challenge (a peer proves its key before it may be addressed) is drilled by `tools/sig_gate.py`,
+  challenge (a peer proves its key before it may be addressed) is drilled against a live relay,
   locally against a built relay, or with `--remote` against the live one.
 
 ## Security posture

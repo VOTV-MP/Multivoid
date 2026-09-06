@@ -15,7 +15,7 @@ generated into a header; the build number is the wire protocol's version in `coo
 bumped by every change to any wire format and by every release. The pair is stamped into the
 DLL's version resource, printed in the boot banner, and carried in the release zip's name; the
 deploy and publish scripts refuse on a mismatch between the resource and the tree. The build
-numbers themselves are minted in an append-only ledger in `tools/release/`, and a tag or a
+numbers themselves are minted in an append-only ledger in `.github/ci/`, and a tag or a
 release page is a drift detector, never the authority ([RELEASE.md](RELEASE.md)).
 
 Two peers play together only when their pairs are byte-equal. The build number rides every
@@ -50,7 +50,7 @@ can match the wrong site and still "succeed". It also logs the executable's vers
 warns when they differ from the build the mod was built against. A compatibility report is
 written beside the DLL on every boot with every resolved address, class, function and offset and
 a verdict per primitive; a second check runs once gameplay has loaded and resolves every content
-name, since many classes load only on the first level transition. `tools/sdk_diff.py` diffs two
+name, since many classes load only on the first level transition. A diff step compares two
 reports, or two SDK dumps, and names the constant each change belongs to.
 
 | Symptom | Almost certainly | Look at |
@@ -70,7 +70,7 @@ reports, or two SDK dumps, and names the constant each change belongs to.
 3. Take a fresh SDK dump from UE4SS installed into a copy of the new build (the header dump and
    the object dump); UE4SS is the dump tool here, and the shipped install carries it only as
    the loader.
-4. Diff the dumps with `tools/sdk_diff.py` and transcribe the offsets it names.
+4. Diff the two dumps and transcribe the offsets that moved.
 5. Re-derive the signatures only if the health check failed: the loader's log gives ground-truth
    addresses, a disassembler confirms each, and a unique byte pattern with wildcarded
    displacements replaces the old one. An open-source signature resolver for Unreal executables
@@ -103,6 +103,5 @@ plain recursive clone CI proves on every push.
 |---|---|
 | the pair | `src/votv-coop/CMakeLists.txt`, `coop/net/protocol.h`, `coop/session/player_handshake_version.cpp` |
 | the version surface | `ue_wrap/core/sdk_profile.h`, `ue_wrap/core/sdk_profile_names.h` |
-| the checks | `ue_wrap/core/reflection` (the boot health check), `harness/sdk_check`, `tools/sdk_diff.py` |
-| the signatures | `tools/debug/ida_aob_derive.py` (derives a unique byte signature for a function in IDA, for the seams reflection cannot name) |
-| the loader | `tools/install-ue4ss.ps1`, `tools/loader/abi_gate.py`, `loader/cppmod_entry.cpp` |
+| the checks | `ue_wrap/core/reflection` (the boot health check), `harness/sdk_check` |
+| the loader | `.github/ci/abi_gate.py`, `loader/cppmod_entry.cpp` |

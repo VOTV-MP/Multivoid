@@ -2,7 +2,7 @@
 
 How the game is reverse-engineered during development: reflection first, then a disassembler,
 then UE4SS as a live probe. None of it ships. The mod is a UE4SS mod, so every game copy runs the
-UE4SS loader (installed once by `tools/install-ue4ss.ps1`) and the mod loads from its mod folder;
+UE4SS loader, installed once per copy, and the mod loads from its mod folder;
 the own-substrate rule is about imports, not presence: the DLL imports nothing from UE4SS, and
 beyond being the loader, UE4SS is the everyday reverse-engineering tool.
 
@@ -10,14 +10,14 @@ beyond being the loader, UE4SS is the everyday reverse-engineering tool.
 
 | Path | Role | Use |
 |---|---|---|
-| `Game_0.9.0n_HOST/` | host | hosting a play session (`tools/mp.py host`) |
-| `Game_0.9.0n_CLIENT_1/` | client | joining a play session (`tools/mp.py client`) |
+| `Game_0.9.0n_HOST/` | host | hosting a play session |
+| `Game_0.9.0n_CLIENT_1/` | client | joining a play session |
 | `Game_0.9.0n_CLIENT_2/` | second client | three-peer runs |
-| `Game_0.9.0n_CLIENT_3/` | development | scripted runs (`tools/mp.py smoke`), Live View, Lua probes, Blueprint dumps |
+| `Game_0.9.0n_CLIENT_3/` | development | scripted runs, Live View, Lua probes, Blueprint dumps |
 
 Each copy keeps its own saved games, logs and screenshots, so a scripted run never collides
 with a play session. The development copy also carries UE4SS's bundled Lua mods and the UE4SS
-log. `tools/deploy-all.ps1` deploys the built DLL to all four after a build.
+log. A deploy step copies the built DLL into all four after a build.
 
 ## What UE4SS gives during development
 
@@ -44,9 +44,9 @@ touched. A probe is an experiment; nothing in this tree ships one.
 
 **Blueprint bytecode.** The game's logic is compiled Blueprint, and a function's signature tells
 you nothing about what it does. The project's own wrappers read the cooked assets out of the pak:
-`tools/bp_cpp.py` renders a whole Blueprint as readable pseudo-C++ (with `--offsets` for the
+One wrapper renders a whole Blueprint as readable pseudo-C++ (with an option for the
 listing where every line carries its bytecode offset, the currency the docs cite),
-`tools/bp_cfg.py` draws per-function control-flow graphs, and `tools/bp_reflect.py` gives the raw
+another draws per-function control-flow graphs, and a third gives the raw
 bytecode as JSON. Control flow is read only from those, never inferred from a header.
 
 ## The escalation ladder

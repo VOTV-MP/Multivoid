@@ -16,10 +16,10 @@ not fail a push. `--update` writes the current values after a PASS, so the basel
 down by itself; a counter that has no baseline fails until it is added by hand in the commit
 that needs it, where a reviewer sees it; raising a value is the same hand edit.
 
-    python tools/docs/public_prose_gate.py              # PASS/FAIL against the baseline
-    python tools/docs/public_prose_gate.py --report     # every counter, baseline, and top files
-    python tools/docs/public_prose_gate.py --update     # after a PASS: ratchet the baseline down
-    python tools/docs/public_prose_gate.py --init       # first run: write the baseline as-is
+    python .github/ci/public_prose_gate.py              # PASS/FAIL against the baseline
+    python .github/ci/public_prose_gate.py --report     # every counter, baseline, and top files
+    python .github/ci/public_prose_gate.py --update     # after a PASS: ratchet the baseline down
+    python .github/ci/public_prose_gate.py --init       # first run: write the baseline as-is
 """
 import argparse
 import collections
@@ -48,8 +48,8 @@ OTHER_SKIP = ("src/votv-coop/third_party/", "reference/", "tools/client_model/me
 # The files whose JOB is these markers: a gate that refuses a word must name it, and a drill
 # that proves the refusal must carry a fixture containing it. Counting those would push a sweep
 # to break the very checks it is measured by -- the same trap the offset detector hit.
-OTHER_MARKER_OWNERS = ("tools/docs/public_prose_gate", "tools/docs/public_leak_gate",
-                       "tools/docs/lessons_gate", "tools/git/commit_msg_check")
+OTHER_MARKER_OWNERS = (".github/ci/public_prose_gate", ".github/ci/public_leak_gate",
+                       ".github/ci/commit_msg_check")
 # Third-party licence texts are reproduced as-is, and the baseline is generated from the counters,
 # so it names them by construction.
 OTHER_EXEMPT = ("LICENSE", "THIRD-PARTY", "public_prose_baseline.json")

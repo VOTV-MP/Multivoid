@@ -6,10 +6,10 @@
 #     ratchet needs the maintainer's local trees and reports n/a here; the three line
 #     signals run everywhere)
 #   - commit messages: the shape CONTRIBUTING.md asks for, over every commit
-#     since the checker was added (tools/git/commit_msg_check.py, the same
+#     since the checker was added (.github/ci/commit_msg_check.py, the same
 #     script the commit-msg hook runs)
 #   - public prose: the working-notes markers, dead links and oversized files
-#     in the public tree may not grow (tools/docs/public_prose_gate.py, a
+#     in the public tree may not grow (.github/ci/public_prose_gate.py, a
 #     ratchet against its committed baseline)
 #
 # Its own workflow file on purpose: build-core.yml's sha256 is part of the
@@ -37,19 +37,19 @@ jobs:
           fetch-depth: 0
 
       - name: Public-leak gate drill
-        run: python3 tools/docs/public_leak_gate_drill.py
+        run: python3 .github/ci/public_leak_gate_drill.py
 
       - name: Public-leak gate
-        run: python3 tools/docs/public_leak_gate.py
+        run: python3 .github/ci/public_leak_gate.py
 
       - name: Commit-message check drill
-        run: python3 tools/git/commit_msg_check_drill.py
+        run: python3 .github/ci/commit_msg_check_drill.py
 
       - name: Commit-message check (every commit since the checker was added)
-        run: python3 tools/git/commit_msg_check.py --from-boundary
+        run: python3 .github/ci/commit_msg_check.py --from-boundary
 
       - name: Public-prose gate drill
-        run: python3 tools/docs/public_prose_gate_drill.py
+        run: python3 .github/ci/public_prose_gate_drill.py
 
       - name: Public-prose gate
-        run: python3 tools/docs/public_prose_gate.py
+        run: python3 .github/ci/public_prose_gate.py

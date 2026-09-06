@@ -110,7 +110,7 @@ same skin as the puppet and is re-applied across pawn generations (`coop/player/
 A peer without a pak sees the stock body, by design; nothing is downloaded from another peer.
 The F1 skins panel previews a skin on a live mannequin (`coop/player/skin_preview`,
 `ui/skins_panel`). Making a skin from a GoldSrc model, without the editor, is
-`tools/client_model/`; the starter bundle is `assets/paks/README.md`.
+a converter that needs no editor; the starter bundle is `assets/paks/README.md`.
 
 ### Vitals, damage and death
 
@@ -220,10 +220,10 @@ dead peer through the ragdoll bit of its next pose.
 | the local player's outbound streams | `coop/player/local_streams`, `coop/player/movement_ledger` |
 | identity and the roster | `coop/player/players_registry`, `coop/player/roster_ledger`, `coop/player/roster`, `coop/player/nickname_arbiter` |
 | name, colour, nameplate | `coop/player/nameplate`, `coop/player/nick_color`, `ui/hud`, `ui/scoreboard` |
-| skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `tools/client_model/`, `assets/paks/` |
+| skins | `coop/player/client_model`, `coop/player/skin_registry`, `coop/player/skin_effects`, `coop/player/local_body`, `coop/player/skin_preview`, `ui/skins_panel`, `assets/paks/` |
 | held and toggled items | `coop/player/hand_item`, `coop/player/item_activate`, `coop/player/flashlight_click_sound` |
 | damage and death | `coop/player/player_damage`, `coop/player/death_revive`, `coop/player/ragdoll_gate`, `ue_wrap/engine/level_travel` |
 | sleep | `coop/player/sleep_sync` |
 | inventory | `coop/items/player_inventory_sync` |
 | moderation | `coop/moderation/moderation`, `coop/moderation/ban_list`, `coop/moderation/seen_players` |
-| tests | `harness/autotest/autotest_death.cpp`, `autotest_damage.cpp`, `autotest_playerdmg.cpp`, `autotest_ragdoll.cpp`, `autotest_puppetframe.cpp`; `python tools/mp.py death` |
+| tests | `harness/autotest/autotest_death.cpp`, `autotest_damage.cpp`, `autotest_playerdmg.cpp`, `autotest_ragdoll.cpp`, `autotest_puppetframe.cpp` |
