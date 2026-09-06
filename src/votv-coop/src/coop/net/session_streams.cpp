@@ -1,21 +1,16 @@
-// coop/net/session_streams.cpp -- the scalar per-channel pose/state STREAMS for
-// Session (extracted from session.cpp 2026-07-18; the file sat at 1208 LOC, past
-// the 800 soft cap, and every new stream channel grew it further).
+// coop/net/session_streams.cpp -- the scalar per-channel pose and state STREAMS for Session.
 //
-// Owns the NINE scalar stream channels end-to-end at the Session layer:
+// Owns the nine scalar stream channels end to end at the Session layer:
 //   per-peer:    PoseSnapshot / PropPose / RagdollPose / HandPose / DeskCursorPose
 //   host-single: ClockPose / DeskSimPose / DishPose / ReelPose
-// as three surface groups, ALL bodies verbatim from session.cpp:
+// in four surfaces:
 //   - the game-thread publishers  (Set*)         -- local slots under localMutex_
 //   - the game-thread readers     (TryGet*)      -- remote slots under remoteMutex_
-//   - the net-thread receive-store (StoreStreamPacket) -- HandleMessage's grouped
-//     scalar case labels delegate here (the session_npc.cpp Store* precedent)
-//   - the net-thread send fan-out (SendStreamsTick)    -- NetThread's step 3,
-//     including the npc/worldactor/trashcarry batch stamps (their Serialize*
-//     bodies stay in their own TUs; this is the one per-tick fan-out loop).
-// The BATCH channels (npc/worldactor/trashcarry/voice) keep their own TUs.
-// Mutex discipline is UNCHANGED from the inline version: local* under
-// localMutex_, remote* under remoteMutex_.
+//   - the net-thread receive-store (StoreStreamPacket) -- HandleMessage's grouped scalar
+//     case labels delegate here
+//   - the net-thread send fan-out (SendStreamsTick) -- one per-tick loop, including the
+//     npc/worldactor/trashcarry batch stamps, whose Serialize* bodies live in their own TUs
+// The BATCH channels (npc, worldactor, trashcarry, voice) keep their own TUs.
 
 #include "coop/player/movement_ledger.h"
 #include "coop/net/session.h"
@@ -31,7 +26,7 @@
 
 namespace coop::net {
 
-// --- game-thread publishers (verbatim) --------------------------------------
+// --- game-thread publishers -------------------------------------------------
 
 void Session::SetLocalPose(const PoseSnapshot& pose) {
     // v141 (A52): stamp the SAMPLE moment here, not the send moment in the net thread. This
@@ -92,7 +87,7 @@ void Session::SetHostReelPose(const ReelPosePayload& body) {  // v114 (L7)
     reelPoseDirty_ = true;  // one-shot: the net thread sends once + clears
 }
 
-// --- game-thread readers (verbatim) -----------------------------------------
+// --- game-thread readers ----------------------------------------------------
 
 bool Session::TryGetRemotePose(int peerSlot, PoseSnapshot& out, bool* outIsNew) {
     if (state_.load() != ConnState::Connected) return false;
@@ -188,7 +183,7 @@ bool Session::TryGetHostDishPose(DishPoseBody& out, bool* outIsNew) {
     return true;
 }
 
-// --- net-thread receive-store: the 9 scalar stream cases (verbatim bodies) ---
+// --- net-thread receive-store: the nine scalar stream cases -----------------
 // Called from HandleMessage's grouped case labels AFTER the header parse, the
 // epoch latch, and the routeSlot derivation -- exactly the point the inline
 // switch cases ran at. `return` here == the old `return` from HandleMessage
@@ -213,13 +208,13 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
             hasRemote_[routeSlot] = true;
             ++remoteStamp_[routeSlot];
         }
-        // v141 (security A52): bill this peer for the distance it just CLAIMED to have covered.
-        // AFTER the freshness check above and outside remoteMutex_, both deliberately: a reordered
-        // datagram would otherwise walk the ledger's anchor backwards and then forwards and bill one
-        // metre twice, and the ledger owns its own lock because its row holds correlated fields.
-        // HOST ONLY -- the host may cheat and we relay it (USER 2026-08-24), so a symmetric validator
-        // would be a bug. `routeSlot == peerSlot` here == the GNS-authenticated connection.
-        // MEASURE-ONLY on this build: it records, nothing refuses.
+        // Bill this peer for the distance it just CLAIMED to have covered. After the freshness
+        // check above and outside remoteMutex_, both deliberately: a reordered datagram would
+        // otherwise walk the ledger's anchor backwards and then forwards and bill one metre
+        // twice, and the ledger owns its own lock because its row holds correlated fields.
+        // HOST ONLY: bounds apply to clients, never to the host, so a symmetric validator would
+        // be a bug. `routeSlot == peerSlot` here is the authenticated connection. Measure-only
+        // on this build: it records, nothing refuses.
         if (cfg_.role == Role::Host) {
             coop::movement_ledger::OnClientPose(
                 *this, routeSlot,
@@ -439,12 +434,10 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
     }
 }
 
-// --- net-thread step-3 stream fan-out (verbatim from NetThread) --------------
-// `now` is computed ONCE in the NetThread shell (step 4's net-diag shares the
-// same timestamp) and passed in; the cadence time_points live in the shell as
-// net-thread locals and are advanced here by reference. Wrapper lines (the ONLY
-// non-verbatim lines): the function head, the sockets re-fetch, and the two
-// cadence constexprs hoisted in from the old NetThread prologue.
+// --- net-thread stream fan-out ----------------------------------------------
+// `now` is computed ONCE in the NetThread shell, which shares that timestamp with its
+// net-diag step, and passed in; the cadence time_points live in the shell as net-thread
+// locals and are advanced here by reference.
 
 void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                               std::chrono::milliseconds sendInterval,

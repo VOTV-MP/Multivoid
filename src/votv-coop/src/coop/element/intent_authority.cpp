@@ -23,8 +23,8 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// The pose-staleness budget, PROMOTED VERBATIM from `coingun_arbiter.cpp` (RULE 2 -- that copy is
-// retired in the same commit). The host copy of a client body trails reality by the one-way
+// The pose-staleness budget, and the only copy of it. The host copy of a client body trails
+// reality by the one-way
 // latency + `RemotePlayer::kInterpWindowMs` (75 ms) + one send interval, and the game own reach
 // traces start at the player CAMERA, at eye height, not at the actor root that `GetActorLocation`
 // reports. 600 uu covers roughly half a second at a sprint plus that eye-height offset.
@@ -97,13 +97,13 @@ void RunSelftest();
 
 namespace {
 
-// THE DUAL-ANCHOR INSTRUMENT (see the header). We authorize off the PUPPET, which is what the
-// shipped gate already did; we LOG what the ledger would have said. `movement_ledger.cpp:688`
-// samples the same divergence at 0.1 Hz and `[V]` has produced exactly ONE sample in the whole
-// corpus, on a stationary peer, so it has never answered the question it was built for. Sampling it
-// HERE means every real intent contributes, at the site where the decision is actually made --
-// which is the number that will justify or refute moving the anchor, instead of a header comment
-// asserting it. It lives in `Authorize` because that is the only scope holding BOTH positions.
+// THE DUAL-ANCHOR INSTRUMENT. We authorize off the PUPPET, which is what the gate has always
+// done, and LOG what the movement ledger would have said. The ledger samples the same
+// divergence on its own at 0.1 Hz, which is rare enough that it has never answered the
+// question it was built for; sampling HERE means every real intent contributes, at the site
+// where the decision is made. That is the number that would justify or refute moving the
+// anchor to the ledger. It lives in `Authorize` because that is the only scope holding BOTH
+// positions.
 void LogAnchors(coop::net::Session* session, const IntentSubject& s, void* actor,
                 const ue_wrap::FVector& body, const ue_wrap::FVector& target) {
     if (!session) return;
@@ -187,12 +187,10 @@ IntentSubject IntentTarget::Authorize(void* actor) const {
     // puppet for slot 0, so the resolve below would answer NoBody anyway -- this makes that
     // explicit instead of relying on a lookup happening to miss.
     //
-    // THESE TWO CHECKS PRECEDE THE GAME-THREAD ASSERT ON PURPOSE, and the reason is a defect this
-    // module shipped for exactly one smoke run: the assert used to sit at the top of the function,
-    // and the selftest -- which runs from `OnSessionStart`, `[V]` NOT the game thread -- tripped it
-    // twice per session start on every peer. The honest fix is not to stop testing the guard but to
-    // notice that the assert was over-broad: neither branch below touches engine state, so neither
-    // needs the game thread. Everything that DOES touch it is still asserted, one line down.
+    // THESE TWO CHECKS PRECEDE THE GAME-THREAD ASSERT ON PURPOSE. The selftest runs from
+    // `OnSessionStart`, which is NOT the game thread, so an assert at the top of the function
+    // would trip on every session start. Neither branch below touches engine state, so neither
+    // needs the game thread; everything that DOES touch it is asserted one line down.
     if (!actor || slot_ == 0) { s.outcome = IntentOutcome::NoBody; return s; }
 
     UE_ASSERT_GAME_THREAD("intent_authority::Authorize");
@@ -200,10 +198,9 @@ IntentSubject IntentTarget::Authorize(void* actor) const {
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     ue_wrap::FVector body{};
     if (!puppet || !E::TryGetActorLocation(puppet, body)) {
-        // FAIL-CLOSED, and this is the shipped behaviour of both lanes that already ask:
-        // `[V]` `coingun_arbiter.cpp:167-171` returns false and `[V]` `trash_grab_intent.cpp:161-164`
-        // DENIES. The coin-gun header calls that "the principle-8 answer for this lane" and calls
-        // inventing a reach for a body we cannot see "the enumeration hole".
+        // FAIL-CLOSED, as both lanes that already ask this do: the coin-gun arbiter returns
+        // false and the grab intent denies. Inventing a reach for a body we cannot see is the
+        // hole this module exists to close.
         s.outcome = IntentOutcome::NoBody;
         return s;
     }

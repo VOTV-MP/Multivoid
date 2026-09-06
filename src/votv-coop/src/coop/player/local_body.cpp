@@ -82,27 +82,18 @@ void RequestSkin(const std::string& name) {
         return;
     }
     ue_wrap::game_thread::Post([name] {
-        // RESOLVE BEFORE COMMITTING -- and this order is the fix, not a nicety.
-        //
-        // This used to persist and announce FIRST and discover only afterwards, in Tick,
-        // that the skin could not be applied. That failure was written off as cosmetic
-        // ("only the local view degrades to kel") on the assumption that a name we cannot
-        // load is one our PEERS can. The opposite is the common case: the skin list offers
-        // the stem of every .pak under LogicMods, so another mod's pak -- `DebugMod`,
-        // `FusionPatch_P` -- is offered as a skin and exists as a skin NOWHERE.
-        //
-        // What the player then got (user, 2026-09-01, measured in both peers' logs): the
-        // announce went out with the unusable name, every peer failed the same load and
-        // fell back to the native kel, while the local body kept the skin it was ALREADY
-        // wearing -- the apply failed, so nothing overwrote it. So the host saw itself as a
-        // scientist and everyone else saw dr. kel, permanently. Picking a loadable skin on
-        // both machines "fixed" it only by making two wrong sources agree.
-        //
-        // A value we have just proven we cannot honour must not be persisted, must not be
-        // announced, and must not replace the one that works.
-        // THE SAME PREDICATE THE APPLY ENFORCES. Asking `GetSkinMesh` alone was weaker: a pak
-        // with a mesh but no atlas passed here, got persisted and announced, and failed to
-        // apply on the very next tick -- two contradictory chat lines in consecutive frames.
+        // RESOLVE BEFORE COMMITTING, and the order is the point. A name we cannot load here
+        // is usually one no peer can load either: the skin list offers the stem of every
+        // .pak under LogicMods, so another mod's pak is offered as a skin and is a skin
+        // nowhere. Persisting and announcing first would send that name out, every peer
+        // would fail the same load and fall back to the native body, while this machine
+        // kept the skin it was already wearing -- because the apply failed, nothing
+        // overwrote it -- so the player would see themselves in one skin and everyone else
+        // would see them in another, permanently. A value we have just proven we cannot
+        // honour must not be persisted, must not be announced, and must not replace the one
+        // that works.
+        // THE SAME PREDICATE THE APPLY ENFORCES: asking for the mesh alone is weaker, since a
+        // pak with a mesh but no atlas passes here and then fails to apply on the next tick.
         // Refused only on a DEFINITE No: `Unknown` means the resolver declined to ask inside
         // its retry window, and refusing a legitimate pick on a throttle would be a worse
         // failure than letting the apply heal it.
@@ -161,26 +152,21 @@ void Tick() {
         UE_LOGI("local_body: native kel mesh captured (%p) for pawn %p", g_native, g_pawn);
     }
 
-    // THE CHOICE AND THE WORN BODY ARE TWO VALUES, and fusing them was the root under the
-    // root. `g_skin` is what the player CHOSE: it is persisted, announced, and restored from
-    // the ini, and NOTHING local may overwrite it. What this body can actually put on is
-    // DERIVED, every tick, from whether the choice resolves here.
-    //
-    // The first fix wrote the fallback back into `g_skin` -- persisting it and re-announcing
-    // it -- because with one variable that was the only way to change the body. That turned a
-    // LOCAL, MOMENTARY observation into a GLOBAL, PERMANENT verdict: a texture that had not
-    // finished loading in the join window (a deferral `client_model` documents as "retry
-    // heals") destroyed the player's saved skin and took it off every peer that COULD render
-    // it. Splitting the two removes that possibility rather than guarding against it.
+    // THE CHOICE AND THE WORN BODY ARE TWO VALUES. `g_skin` is what the player CHOSE: it is
+    // persisted, announced and restored from the ini, and nothing local may overwrite it.
+    // What this body can actually put on is DERIVED every tick from whether the choice
+    // resolves here. Writing a fallback back into `g_skin` would turn a local, momentary
+    // observation into a global, permanent verdict: a texture that had not finished loading
+    // in the join window, a deferral the resolver expects a retry to heal, would destroy the
+    // player's saved skin and take it off every peer that COULD render it.
     //
     // Only a DEFINITE `No` degrades the body. `Unknown` means the resolver declined to ask
     // inside its retry window, so we keep trying the real choice and let the apply heal.
     // THE VERDICT IS STICKY PER CHOICE, and `Unknown` never overturns one. The resolver
     // refuses to re-probe inside a 5 s window, so a plain per-tick read alternates
-    // No -> Unknown -> No forever -- and with it the worn body, which flip-flopped between
-    // the stock body and a doomed re-apply every five seconds, warning the player each time
-    // (12 warnings in one 30 s smoke, measured). A decision this expensive to reach is kept
-    // until the CHOICE changes or the asset actually turns up.
+    // No -> Unknown -> No forever, and the worn body flip-flops between the stock body and a
+    // doomed re-apply every five seconds, warning the player each time. A decision this
+    // expensive to reach is kept until the CHOICE changes or the asset turns up.
     if (g_wearVerdictFor != g_skin) {
         g_wearVerdictFor = g_skin;
         g_wearVerdict = coop::client_model::Wearable::Unknown;
@@ -206,7 +192,7 @@ void Tick() {
         // refused. This path is reached with the player doing NOTHING -- an ini value whose
         // pak is not installed -- and there is nothing for them to do about it at that
         // moment. Narrating it puts a sentence about another mod's pak in front of someone
-        // who never chose it as a skin (user, 2026-09-01: "зачем это знать юзеру вообще").
+        // who never chose it as a skin.
         // The log line above is for us; the picker refusing the pick is for them.
     }
     if (!cannotWear) g_lastUnwearable.clear();

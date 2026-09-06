@@ -270,7 +270,7 @@ void RunConfigSelftest() {
             expect("write desk_diag_ms=99999999 (out of range) REFUSED",
                    !cfg::SelftestWriteValue(wrk, "desk_diag_ms", "99999999"));
         }
-        // Drill E (audit CRIT-1): a headered file whose LAST line has NO
+        // Drill E: a headered file whose LAST line has NO
         // trailing newline; a section insert into that last section must not
         // splice two lines into one.
         {
@@ -286,7 +286,7 @@ void RunConfigSelftest() {
             expect("no line splice: freecam=1 readable AND devkeys=1 intact",
                    fc.found && fc.value == "1" && dk.found && dk.value == "1");
         }
-        // Drill F (audit IMP-3): a COMPOSED key (ui.font.chat) gets section
+        // Drill F: a COMPOSED key (ui.font.chat) gets section
         // placement too -- same SectionForKey as the reformat.
         {
             FILE* f = nullptr;
@@ -301,7 +301,7 @@ void RunConfigSelftest() {
             const int dev = lineIndexOf("[dev]");
             expect("composed key landed inside [ui]", ui >= 0 && k > ui && k < dev);
         }
-        // Drill G (audit CRIT-2): keep-duplicate correlates by VALUE; a stale
+        // Drill G: keep-duplicate correlates by VALUE; a stale
         // value refuses and deletes nothing.
         {
             FILE* f = nullptr;

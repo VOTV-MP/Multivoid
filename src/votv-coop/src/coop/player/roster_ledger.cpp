@@ -130,33 +130,21 @@ void ClearAll() {
 }
 
 void Reset() {
-    // DELIBERATELY NOT UE_ASSERT_GAME_THREAD, and this is the only accessor
-    // without it. Reset is the SESSION-BRINGUP entry point: it is called from
-    // event_feed::OnSessionStart, which runs on the bringup thread at
-    // harness/session_runtime.cpp:386 -- BEFORE g_session.Start() at :430 spawns
-    // the net thread and before the pump can tick a running session. There is no
-    // concurrent reader by construction, and Start()'s thread creation is the
-    // happens-before edge for everything after. Same discipline the neighbouring
-    // SetLocalNickname writer already documents. (The smoke's HotPathGuard caught
-    // the assert firing here; the ACCESS is fine, the assert was mis-scoped.)
+    // DELIBERATELY NOT UE_ASSERT_GAME_THREAD, the only accessor without it. Reset is the
+    // SESSION-BRINGUP entry point, called from event_feed::OnSessionStart on the bringup thread
+    // BEFORE g_session.Start() spawns the net thread, so there is no concurrent reader by
+    // construction and that thread creation is the happens-before edge for everything after.
     //
-    // UNCONDITIONAL per-slot clears, unlike ClearAll: they run for every slot
-    // whether or not the ledger believed it occupied. The difference matters
-    // because some per-slot state is written from the wire BEFORE its row exists
-    // (a peer's display prefs land with its Join), so an occupancy-gated clear
-    // would leave exactly that state behind for the next session to inherit.
+    // UNCONDITIONAL per-slot clears, unlike ClearAll: they run whether or not the ledger believed
+    // the slot occupied, because some per-slot state is written from the wire BEFORE its row
+    // exists (a peer's display prefs land with its Join), and an occupancy-gated clear would
+    // leave exactly that behind for the next session.
     //
-    // NO SlotReplacedFn FANOUT HERE, and that is structural rather than a
-    // convention. A SlotReplaced subscriber exists to react to a PERSON changing
-    // seats; at bringup nobody is leaving, and the subscriber bodies do engine
-    // work (`chat_feed::Push`, `puppet_drive::DestroySlot`) that is not legal on
-    // this thread. This loop used to fan out on the theory that every outgoing
-    // row is already empty here and every subscriber early-returns on an
-    // unoccupied outgoing row -- BOTH halves of which were wrong (2026-07-27
-    // audit): `OnSlotReplaced_ArmPulse` carries no such guard and ran every time,
-    // and the emptiness itself is a precondition nothing enforces, so a Stop path
-    // that skipped ClearAll would have run a puppet destroy off the game thread.
-    // Safety is now a property of the code rather than of a comment.
+    // NO SlotReplacedFn FANOUT HERE, structurally: a subscriber exists to react to a PERSON
+    // changing seats, at bringup nobody is leaving, and the subscriber bodies do engine work
+    // (`chat_feed::Push`, `puppet_drive::DestroySlot`) that is not legal on this thread. Fanning
+    // out would rest on every outgoing row already being empty, which nothing enforces, and on
+    // every subscriber early-returning on one, which `OnSlotReplaced_ArmPulse` does not.
     for (int slot = 0; slot < kMaxSlots; ++slot) {
         g_rows[slot] = Row{};
         for (const auto& reg : PerSlotRegistry()) reg.fn(reg.self, slot);
@@ -308,8 +296,7 @@ void ReconcileFromSession(coop::net::Session& session) {
 
         // BIRTH waits for READY, never accept: a doomed connect that never
         // reaches Connected+lane-config must create no row at all, otherwise the
-        // birth pairs with a teardown and resurrects the false "left the game"
-        // the 2026-07-16 fix removed.
+        // birth pairs with a teardown and resurrects a false "left the game".
         if (liveGen != 0 && !g_rows[slot].occupied() && session.IsSlotReady(slot))
             InstallRow(slot, MintPlayerNo(), liveGen);
     }

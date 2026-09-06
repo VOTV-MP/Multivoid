@@ -24,64 +24,29 @@ bool Armed() {
     return s;
 }
 
-// =====================================================================================
 // The counters. See coop/dev/worldless_frames.h for why the number matters.
-// =====================================================================================
 //
-// Counted on the RENDER thread, one bucket per WorldKind. `Unknown` is the answer we are
-// after: it is exactly "CurrentWorld() is null" (a boot window or a travel) plus
-// "world_identity is Degraded()", and the report prints Degraded separately so a
-// recook-broken chain can never be read as a measurement.
+// Counted on the RENDER thread, one bucket per WorldKind. `Unknown` is the answer we are after:
+// exactly "CurrentWorld() is null" (a boot window or a travel) plus "world_identity is
+// Degraded()", and the report prints Degraded separately so a recook-broken chain can never be
+// read as a measurement.
 //
-// A FRAME LANDS IN EXACTLY ONE OF THREE CONFIDENCE CLASSES, and the first version of this
-// file had only two -- which made its headline number unattributable:
-//
-//   PUMP-FROZEN  `GT::TasksRun()` has not ADVANCED for longer than the ceiling: the game
-//             thread is presenting frames but is not draining our task queue. This is the
-//             decisive class and it took two runs to find. The first version asked
-//             `TasksRun() == 0` ("has the pump EVER run"), which is false almost
-//             immediately -- boot posts tasks before the first present -- so the bucket
-//             read 0 while 478 frames sat stale. HAS-EVER-RUN and IS-RUNNING-NOW are
-//             different questions and only the second one is about a window.
-//   STALE     the pump is advancing but our own refresh has not landed inside the ceiling.
-//             Rare; if it dominates, the post cadence is wrong, not the game.
-//   FRESH     the pump is current. Only these frames are evidence about the world.
-//
-// WHY PUMP-FROZEN IS THE ANSWER TO O4 AND THE WORLD MEMO IS NOT. Every UFunction this mod
-// calls -- `SpawnObject` included -- must run on the game thread, and it gets there through
-// `GT::Post`, which drains inside our ProcessEvent detour. So in a PUMP-FROZEN window we
-// cannot CREATE or DRIVE a UMG widget at all, whatever the engine is doing with Slate
-// meanwhile. That makes the frozen-window frame count a direct measurement of the window a
-// UMG surface structurally cannot serve, with no dependency on the world memo -- which is
-// itself unreadable in exactly that window, and unreadable for a reason that is about OUR
-// substrate rather than about UMG.
-//
-// TWO DEPENDENCIES, both real and both stated rather than assumed away:
-//
-//  1. The current-world pointer is MEMOISED and refreshed only by a GAME-THREAD caller
-//     (world_identity.cpp: `if (IsGameThread()) RefreshOnGameThread_()`), at a 100 ms
-//     cadence. The probe posts its OWN refresh at ~10 Hz while armed, and stamps WHEN THAT
-//     TASK RAN -- which is what makes the STALE class a measurement instead of an
-//     assumption. Without a stamp of our own there is no way to say how old the sample
-//     backing a given frame actually was.
-//
-//     CORRECTED 2026-08-26: the first version of this note justified the refresh by
-//     claiming that "at the main menu with no session up, nothing else in the tree calls
-//     it, so the memo would sit at its boot value forever". THAT IS FALSE, and it is worth
-//     leaving the correction here because a critic reading it built a whole question on it.
-//     `imgui_overlay.cpp:541-548` posts `input_owner::TickGameThread` every 100 ms from
-//     PresentDetour, and that function's FIRST statement is `CurrentWorld()` under a
-//     comment naming itself "THE REFRESH FLOOR ... 10 Hz, ungated, game thread, alive at
-//     the menu with no session" (input_owner.cpp:294-312). So the memo IS warm here; the
-//     probe's refresh is redundant AS A REFRESH and is kept only for the stamp above.
-//  2. `GT::Post` tasks drain inside our ProcessEvent detour, so the pump needs both the
-//     detour installed AND ProcessEvent traffic. The detour installs early, but BP dispatch
-//     traffic is near zero during the boot load -- which is exactly what the PUMP-FROZEN
-//     class exists to name, and why the game can present at ~42 fps while our pump does not
-//     advance at all.
+// A frame lands in one of three confidence classes. PUMP-FROZEN: `GT::TasksRun()` has not
+// ADVANCED for longer than the ceiling, so the game thread presents frames without draining our
+// task queue -- the test is whether the pump runs NOW, since boot posts tasks before the first
+// present and "has it ever run" is true almost immediately. STALE: the pump advances but our own
+// refresh has not landed inside the ceiling; if that dominates, the post cadence is wrong, not
+// the game. FRESH: the pump is current, and only these frames are evidence about the world.
 constexpr unsigned long long kRefreshPostMs = 100;   // our own game-thread refresh cadence
 constexpr unsigned long long kStaleMs       = 300;   // 3x the refresh: an older sample is not trusted
 constexpr unsigned long long kReportMs      = 5000;  // periodic report while the picture still changes
+// PUMP-FROZEN, not the world memo, is what says whether a UMG surface could serve a window.
+// Every UFunction this mod calls, `SpawnObject` included, reaches the game thread through
+// `GT::Post`, which drains inside our ProcessEvent detour, so in a frozen window we cannot
+// create or drive a UMG widget at all, whatever the engine is doing with Slate. The pump needs
+// both the detour installed AND ProcessEvent traffic: the detour installs early, but blueprint
+// dispatch traffic is near zero during the boot load, which is why the game can present at
+// ~42 fps while our pump does not advance at all.
 
 std::atomic<unsigned long long> g_lastRefreshMs{0};  // stamped by the refresh task WHEN IT RUNS
 std::atomic<unsigned long long> g_lastPostMs{0};     // stamped when we QUEUED it
@@ -134,9 +99,10 @@ void ReportRung0(const char* why) {
 void NoteFrame() {
     if (!Armed()) return;
     const unsigned long long now = ::GetTickCount64();
-    // Own the refresh (see the block header): at the main menu with no session up nothing
-    // else on the game thread calls CurrentWorld(), so without this the counter would be
-    // measuring our own staleness instead of the game's world.
+    // Post our own refresh -- not because the memo would go cold (input_owner's 10 Hz tick
+    // already calls CurrentWorld() from this same present path) but to STAMP when a
+    // game-thread task actually RAN. Without that stamp there is no way to say how old the
+    // sample behind a frame was, and the STALE class would be an assumption.
     if (now - g_lastPostMs.load(std::memory_order_relaxed) >= kRefreshPostMs) {
         g_lastPostMs.store(now, std::memory_order_relaxed);
         GT::Post([] {

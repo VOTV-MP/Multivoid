@@ -28,9 +28,9 @@ namespace {
 // UNBOOTED=0 -> BOOTING=1 at StartOnce entry (one attempt per module instance,
 // ever -- a failed half-boot must NOT be retried into half-installed hooks).
 volatile LONG g_bootLatch = 0;
-// Set only when the attempt reached kStarted (audit F3: a duplicate-mutex
-// REFUSED instance has attempted but never started -- its restart re-entry
-// must not read as a live session).
+// Set only when the attempt reached kStarted: a duplicate-mutex REFUSED
+// instance has attempted but never started, and its restart re-entry must
+// not read as a live session.
 volatile LONG g_started = 0;
 
 // Milliseconds since THIS process was created (GetProcessTimes creation time),
