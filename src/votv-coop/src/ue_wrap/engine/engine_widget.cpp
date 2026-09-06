@@ -21,7 +21,8 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// The identity transform: the quaternion at 0, the translation at 0x10, the scale at 0x20.
+// The identity transform. FTransform is the quaternion, then the translation, then the scale,
+// which as floats puts Quat.W at index 3 and Scale3D at 8..10.
 void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
     std::memset(xform, 0, sizeof(xform));
     float* f = reinterpret_cast<float*>(xform);

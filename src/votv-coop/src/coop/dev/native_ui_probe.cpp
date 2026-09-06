@@ -186,10 +186,10 @@ ue_wrap::FVector2D DesiredSizeOf(void* widget) {
     return v;
 }
 
-// The FSlateResourceHandle question. FSlateBrush is 0x88 bytes: the reflected fields end at 0x6F
-// and the bitfield bools resume at 0x80, so the 16 bytes at 0x70 are an unreflected handle (a
-// shared pointer). The button inject copies the whole 0x278 FButtonStyle, four brushes, so a
-// populated handle would be aliased with no reference added.
+// The FSlateResourceHandle question. FSlateBrush is 0x88 bytes and its reflected fields stop
+// short of the trailing bitfield bools; the 16-byte gap between them -- kHandleOff below -- is an
+// unreflected handle (a shared pointer). The button inject copies the whole 0x278 FButtonStyle,
+// four brushes, so a populated handle would be aliased with no reference added.
 void MeasureBrushHandles(void* donorButton, const wchar_t* label) {
     if (!donorButton) {
         UE_LOGW("[native_ui_probe] O5 SKIPPED (%ls) -- no donor button", label);

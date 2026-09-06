@@ -208,7 +208,7 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     }
     if (!ovl) return false;
     // The kit owns its child order: reading slots by literal index broke when the native-material
-    // frame reordered them, and UPanelWidget::Slots and UImage::Brush share offset 0x108, so
+    // frame reordered them, and UPanelWidget::Slots and UImage::Brush sit at the same offset, so
     // GetChildAt on the wrong child reads a brush vtable as a slot array.
     NS::FramedParts fp;
     if (!NS::FramedBoxParts(ovl, fp)) return false;

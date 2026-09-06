@@ -203,6 +203,30 @@ Hot-path rules bind every hook: no object-array scan per frame, no heavy work pe
 or per tick, engine calls on the game thread only. Discovery of the game's objects goes through
 one shared, sliced scan (`coop/element/object_scan_hub`) that every index rides.
 
+### Installing and retiring a detour
+
+A detour is created and enabled in one call (`ue_wrap/core/hook`), and the caller keeps the
+trampoline MinHook hands back. That pointer is MinHook's own memory, holding the target's stolen
+prologue plus a jump back into it — not the target's address, and not memory in the target's
+module.
+
+The facade offers no remove, and never uninitializes MinHook. That is a fix, not a preference.
+MinHook's memory slot is a union of a free-list link and the trampoline bytes, so freeing a hook
+writes a pointer over the stolen prologue, in place, and releases the block when the last slot
+goes (`minhook/src/buffer.c:43-50`, `buffer.c:282`, reached from `MH_RemoveHook` at
+`hook.c:702`). A thread still holding that trampoline then executes a list pointer as code, and
+no drain window helps, because the damage lands before the call returns. Disabling, by contrast,
+only writes the original prologue back: new callers stop arriving, while a thread already inside
+the detour returns through live memory. The process is exiting anyway and the OS reclaims every
+trampoline, so there is nothing to buy by freeing.
+
+One target needs more. `ProcessEvent` is detoured by UE4SS as well, whose PolyHook follows jump
+chains, and MinHook's classic relay is an indirect jump through an absolute pointer slot — a
+follower resolves it onto that slot and clobbers it. The relay for a shared target is therefore
+rewritten to a non-branching `MOV RAX, imm64 ; JMP RAX` form before it is enabled: the follower
+stops at the MOV and hooks the relay itself, absolute-jump semantics are unchanged, and the two
+detours compose.
+
 ## Where the authority is going
 
 The arbiter is the host's game process today, so it can read the engine whenever it wants, and

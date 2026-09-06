@@ -1,8 +1,7 @@
 // bootstrap/boot.cpp -- see bootstrap/boot.h.
 //
-// BootThread body moved VERBATIM from bootstrap/dllmain.cpp (2026-08-21, the
-// D-3 spike): dllmain keeps only the lane discriminator + DETACH backstop, and
-// src/loader/cppmod_entry.cpp is the second caller.
+// dllmain keeps only the lane discriminator + the DETACH backstop; the BootThread
+// body lives here, and src/loader/cppmod_entry.cpp is its second caller.
 
 #include "bootstrap/boot.h"
 
@@ -138,26 +137,19 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     }
     // THE VERDICT IS A DECISION, NOT A LOG LINE.
     //
-    // This is the one place in the process that knows whether our offsets match
-    // the running game. Until 2026-08-30 it returned void and boot continued
-    // unconditionally -- installing the ProcessEvent detour and driving VOTV's
-    // UFunctions through offsets the check had just called wrong. The hazard is
-    // NOT a null pointer (`game_thread::Install` refuses one at pe_detour.cpp:645);
-    // it is an AOB that matched the WRONG SITE, which is non-null and only the
-    // functional round-trips can catch. Continuing past that means writing through
-    // wrong offsets into a live game -- i.e. a corrupted save, which is a far worse
-    // outcome for a player than "the mod did not load".
-    //
-    // So we stand down, and we SAY SO on a surface that exists: the Win32 modal,
-    // never `ui::boot_warning_dialog`, because that renders from an overlay this
-    // path must not install (same reasoning as the loader's duplicate-install
-    // refusal -- they share bootstrap::ShowRefuseDialog).
+    // This is the one place that knows whether our offsets match the running game, so
+    // a failed check STOPS the boot instead of installing the ProcessEvent detour and
+    // driving VOTV's UFunctions through offsets the check has just called wrong. The
+    // hazard is NOT a null pointer (`game_thread::Install` refuses one at
+    // pe_detour.cpp:645); it is an AOB that matched the WRONG SITE, which is non-null,
+    // only the functional round-trips catch it, and writing through wrong offsets into
+    // a live game corrupts the save. So we stand down and SAY SO on a surface that
+    // exists: the Win32 modal, never `ui::boot_warning_dialog`, which renders from an
+    // overlay this path must not install (it shares ShowRefuseDialog with the loader).
     // THE NATIVE TEXT FIELD'S EDITING RULES, checked at BOOT and not at session start.
-    // It lives at the MENU -- the server browser's address box -- so a player can use it
-    // without a session ever existing. Its first home was beside the session-start
-    // selftests and it therefore never ran once: the browser scenario is menu-only, and
-    // the run came back with no verdict at all rather than a failing one. Un-gated, pure
-    // logic, microseconds.
+    // It lives at the MENU -- the server browser's address box -- so a player can use
+    // it without a session ever existing, and a check gated on a session start would
+    // never run at all. Un-gated, pure logic, microseconds.
     ui::native_text_field::RunSelftest();
 
     int healthFails = ue_wrap::reflection::RunHealthCheck();
@@ -205,7 +197,7 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     const unsigned long bootTid = ::GetCurrentThreadId();
     UE_LOGI("boot: BootThread tid=%lu", bootTid);
     {
-        // DIAGNOSTIC AMPLIFIER (probe; RULE 2 exempt; WP-2 2026-08-22): delay the
+        // DIAGNOSTIC AMPLIFIER (probe; RULE 2 exempt): delay the
         // PE MinHook install so the patch lands while the game thread is deep in
         // live ProcessEvent traffic. Used to force the ~20% boot AV into a
         // deterministic repro (hypothesis: a thread mid-PE at patch time).

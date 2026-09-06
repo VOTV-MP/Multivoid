@@ -41,8 +41,8 @@ bool    SwitcherSetIndex(void* switcher, int32_t index);
 int32_t SwitcherIndex(void* switcher);
 
 // Slate style cloning. FSlateBrush is 0x88 bytes and carries an unreflected shared-pointer
-// resource handle at 0x70 (the reflected members end at 0x6F, the bitfield bools resume at
-// 0x80), so a raw copy aliases a refcounted pointer with no reference added; Slate rebuilds the
+// resource handle in the gap between its reflected members and its trailing bitfield bools,
+// so a raw copy aliases a refcounted pointer with no reference added; Slate rebuilds the
 // handle lazily from the resource object, so zeroing it is free and always correct. A table of
 // brush offsets rather than one offset: FButtonStyle embeds four brushes, FScrollBarStyle nine,
 // FEditableTextBoxStyle thirteen (a nested scrollbar style included), all measured from the
