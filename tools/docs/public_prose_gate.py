@@ -48,7 +48,11 @@ LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
 DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")   # a doc named in a source comment
 LONG_COMMENT_BLOCK = 15
-RAW_OFFSET = re.compile(r"0x[0-9A-Fa-f]{2,4}\b")          # a struct offset pinned in prose
+# A struct offset pinned in prose. The offset CONTEXT is required, not merely a hex literal: the
+# tree is full of correct hex that is not an offset -- bytecode opcodes (0x45), sentinels (0xFF),
+# struct sizes, colour components -- and flagging those would push a sweep to make good comments
+# worse. Matching any hex over-reported by 118 lines when this was measured.
+RAW_OFFSET = re.compile(r"(?:@\s*\+?|\+|\bat\s+\+?|\boffset\s+)0x[0-9A-Fa-f]{2,4}\b")
 # The files whose JOB is offsets. Everywhere else a pinned number duplicates them and rots when the
 # game is recooked, silently, because nothing ever compiles against a comment.
 OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
