@@ -86,20 +86,16 @@ void ResolveSlotOffsets() {
     if (g_off.tried) return;
     void* cls = R::FindClass(L"saveSlot_C");
     if (!cls) return;  // not loaded yet -- retry next call (tried stays false)
-    // The DAY shown on the game's own save rows is savedtime.Z + 1 (uicomp_saveSlot::upd
-    // bytecode: days := save.savedtime.Z; SetText(Conv_IntToText(Add_IntInt(days, 1)))).
-    // `savedtime` is an FIntVector {h, m, day}. The float `Day` property is the raw
-    // elapsed-TIME accumulator, equal to daynightCycle.totalTime; showing it raw is what
-    // painted "Day 3566" on the picker.
+    // The row's DAY is savedtime.Z + 1 (uicomp_saveSlot::upd). `savedtime` is an FIntVector
+    // {h, m, day}; the float `Day` property is the raw elapsed-time accumulator and is not it.
     g_off.savedtime = R::FindPropertyOffset(cls, L"savedtime");
     g_off.points    = R::FindPropertyOffset(cls, L"Points");
     g_off.health    = R::FindPropertyOffset(cls, L"health");
     g_off.maxHealth = R::FindPropertyOffset(cls, L"maxHealth");
     g_off.version   = R::FindPropertyOffset(cls, L"Version");
     g_off.lastDate  = R::FindPropertyOffset(cls, L"lastDate");
-    // Latch ONLY when every field resolved, so a partial/recook miss (one field renamed)
-    // doesn't stick at -1 forever and silently read 0 for that field (audit I-2). Until
-    // then we retry each call (cheap; the class loads once on a gameplay/menu transition).
+    // Latch only once every field resolved, so a recook that renames one does not stick the rest
+    // at -1 and read 0 forever; until then each call retries.
     const bool all = g_off.savedtime >= 0 && g_off.points >= 0 && g_off.health >= 0 &&
                      g_off.maxHealth >= 0 && g_off.version >= 0 && g_off.lastDate >= 0;
     if (all) {
@@ -120,25 +116,12 @@ T ReadField(void* obj, int32_t off, T fallback = T{}) {
 }
 
 // ---- the scan pipeline ------------------------------------------------------------
-// Driving VOTV's own Uui_saveSlots_C::loadSlots means LoadGameFromSlot on EVERY save:
-// a full synchronous GVAS deserialize of a 15-20 MB world file on the GAME THREAD,
-// measured at 15 saves to a multi-second picker-open freeze plus 15 transient
-// UsaveSlot_C object graphs for the GC. The picker needs a handful of scalars per row,
-// so the scan is two stages:
-//   STAGE A (game thread, cheap): resolve the SaveGames dir (native
-//     GetProjectSavedDirectory -- honors -saveddirsuffix), list *.sav, classify
-//     subsaves via VOTV's own lib_C::processSaveNameIntoSubsave (native filter
-//     parity), derive mode/displayName from the slot prefix, and read the
-//     saveSlot_C CDO defaults (delta-vs-CDO serialization omits default-valued
-//     properties from the file -- the CDO supplies them, LoadGameFromSlot parity).
-//   STAGE B (worker thread): stat + gvas_meta::ReadSlotMeta each file (tag-walk,
-//     payload-skip -- no full deserialize), mtime-keyed cache so re-opens only
-//     re-parse changed files, sort newest-first, publish.
-// Filter parity with the native loadSlots list, ground-truthed against its own logged
-// output: everything except subsaves and non-saveSlot_C classes (data.sav fails the
-// native DynamicCast; here it fails the GVAS class check).
-// b_* files are SANDBOX saves (the 'b_' SAVE PREFIX), not backups -- never filter
-// by name. The gvas_meta.h header documents the format evidence.
+// The game's own loadSlots deserializes every .sav on the game thread; this scan reads the
+// few scalars a row needs instead, in two stages. STAGE A (game thread) resolves the
+// SaveGames dir, lists *.sav, drops subsaves through the game's own classifier and reads the
+// saveSlot_C CDO defaults. STAGE B (worker) tag-walks each file for its metadata, caches by
+// mtime and sorts newest-first. Slot names are never filtered by hand: the mode prefixes come
+// from the game's getSavePrefix.
 
 struct ScanItem {
     SaveInfo     base;   // slot/mode/modeLabel/displayName pre-filled (stage A)
@@ -155,10 +138,9 @@ struct SlotCdoDefaults {
     std::wstring version;
 };
 
-// Resolve <ProjectSavedDir>/SaveGames/ once via the native UFunction (the engine
-// honors -saveddirsuffix, so never rebuild this from the environment). The returned
-// FString's engine-side buffer is read once and pinned (the fstring_utils pin/leak
-// doctrine; one small allocation per process).
+// Resolve <ProjectSavedDir>/SaveGames/ once through the native UFunction, which honors
+// -saveddirsuffix; never rebuild it from the environment. The returned FString's engine-side
+// buffer is read once and pinned.
 std::wstring ResolveSaveGamesDir() {
     static std::wstring s_dir;
     if (!s_dir.empty()) return s_dir;
@@ -304,10 +286,8 @@ void ParseScanList(const std::vector<ScanItem>& items, const SlotCdoDefaults& de
         }
         rows.push_back({mt, std::move(info)});
     }
-    // Newest-first by file mtime. Deliberate divergence from loadSlots'
-    // MaxOfDateTimeArray-over-save-dates: mtime is stamped by the same
-    // SaveGameToSlot write those dates describe, gives the same ordering, and
-    // costs zero extra parsing (lastSavedDate is delta-omitted on fresh slots).
+    // Newest-first by file mtime rather than loadSlots' MaxOfDateTimeArray over the saved dates:
+    // the same write stamps both, and lastSavedDate is delta-omitted on a fresh slot.
     std::stable_sort(rows.begin(), rows.end(),
                      [](const Row& a, const Row& b) { return a.mtime > b.mtime; });
     out.clear();
@@ -371,19 +351,11 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
     }
     if (!save) { UE_LOGW("save_browser: CreateSaveGameObject returned null"); return false; }
 
-    // Stamp Version exactly as the native create does (ui_saveSlots button_create
-    // ubergraph @5177-5227: tempSave.version = Default__lib_C->gameVersion("","")).
-    // A blank CDO-default object serializes an EMPTY Version, so every save list paints
-    // the red "unk!" badge and the widget's launch-time version check reads a mismatch.
-    // gameVersion's body is pure (lib bytecode:
-    // Concat(prefix, GetProjectVersion(), suffix); __WorldContext unused), so the lib
-    // CDO is a valid call target at the menu. The out FString's buffer is minted
-    // ENGINE-side inside the call; we transfer its 16-byte header into the fresh
-    // object's Version field (the fstring_utils pin doctrine: the engine's later
-    // reassign/destroy frees it; ParamFrame is a raw byte arena that frees nothing,
-    // so ownership moves cleanly -- one allocation, zero copies, zero leaks).
-    // Best-effort: a resolve failure logs + still creates (the slot works; only the
-    // badge is wrong -- same as the pre-fix behavior).
+    // Stamp Version as the native create does (lib_C::gameVersion), because a blank CDO-default
+    // object serializes an empty one and every save row then paints the red "unk!" badge. The
+    // out FString's buffer is minted engine-side in the call and its header moves into the fresh
+    // object's field, so ownership transfers with no copy. A resolve failure still creates the
+    // slot; only the badge is wrong.
     ResolveSlotOffsets();
     do {
         void* libCdo = R::FindClassDefaultObject(L"lib_C");
@@ -443,12 +415,9 @@ bool CreateNamedSaveUnique(const std::wstring& baseName, uint8_t mode, std::wstr
         return false;
     }
 
-    // NUMBERED FROM TWO, the way every save list a player has ever read numbers a repeat --
-    // the first world keeps the bare name, so nothing changes for the player who hosts once.
-    //
-    // The cap REFUSES rather than wrapping. Reusing a slot at the end of the range would
-    // overwrite a world somebody played, and a hundred coop saves on one install is not a
-    // player being thorough, it is something creating them in a loop.
+    // Numbered from two, the way a save list numbers a repeat: the first world keeps the bare
+    // name. The cap refuses rather than wrapping, since reusing a slot at the end of the range
+    // would overwrite a world somebody played.
     for (int n = 1; n <= 99; ++n) {
         std::wstring name = baseName;
         if (n > 1) name += L" " + std::to_wstring(n);
@@ -467,12 +436,9 @@ void RefreshAsync() {
         g_status = "Scanning saves...";
     }
     GT::Post([] {
-        // STAGE A on the game thread (native dir resolve + subsave classify + CDO
-        // defaults -- all cheap); STAGE B (file stat + GVAS tag-walk) on a worker so
-        // no disk I/O ever runs under the game tick. The worker is detached: it only
-        // touches the leak-safe pipeline statics above, runs for tens of ms, and a
-        // scan can only be in flight while the picker is open (never during process
-        // exit teardown).
+        // STAGE A here on the game thread, STAGE B on a detached worker, so no disk I/O runs under
+        // the game tick. The worker touches only the statics above and a scan can be in flight only
+        // while the picker is open.
         auto items = std::make_shared<std::vector<ScanItem>>();
         auto def   = std::make_shared<SlotCdoDefaults>();
         const bool ok = BuildScanList(*items, *def);
@@ -480,9 +446,8 @@ void RefreshAsync() {
             std::lock_guard<std::mutex> lk(g_mu);
             g_status = "Save system not ready (try again)";
             ++g_rev;
-            // Clear the coalescing flag INSIDE the lock, after the rev/cache/status
-            // are coherent -- so a render-thread RefreshAsync that observes
-            // g_scanning==false also sees the completed scan's data (audit C-1).
+            // Clear the coalescing flag inside the lock, after rev/cache/status are coherent, so a
+            // render-thread RefreshAsync that sees g_scanning==false also sees the finished scan.
             g_scanning.store(false, std::memory_order_release);
             return;
         }
@@ -496,7 +461,7 @@ void RefreshAsync() {
                           g_cache.size() == 1 ? "" : "s");
             g_status = buf;
             ++g_rev;
-            g_scanning.store(false, std::memory_order_release);  // audit C-1: inside the lock
+            g_scanning.store(false, std::memory_order_release);  // inside the lock
         }).detach();
     });
 }

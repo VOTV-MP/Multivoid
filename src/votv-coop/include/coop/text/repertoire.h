@@ -1,36 +1,17 @@
-// coop/text/repertoire.h -- ARC D2: the set of codepoints this build can DRAW.
+// coop/text/repertoire.h -- the set of codepoints this build can DRAW.
 //
-// WHY A NAMING MODULE OWNS A FONT FACT. Arc B guarantees that no two players
-// carry the same display name, and it enforces that by comparing strings. Dear
-// ImGui substitutes ONE FallbackGlyph for EVERY codepoint absent from the atlas
-// (imgui_draw.cpp:3830-3838), so 张伟 and 李明 -- two names with no codepoint in
-// common, no collision, and therefore no numeric suffix -- draw as the SAME
-// nameplate. The guarantee was true in the domain the code compares in and false
-// in the domain the human looks at, which is the only domain the user asked
-// about ("просто чтобы у всех был уникальный Nameplate").
+// A naming module owns a font fact because Dear ImGui substitutes ONE fallback glyph for
+// every codepoint absent from the atlas, so two names with no codepoint in common draw as
+// the same nameplate. No glyph budget fixes that. The arbiter's FoldKey maps every codepoint
+// outside this repertoire to one sentinel instead, so names that render alike COLLIDE and
+// one takes the numeric suffix: uniqueness is font-independent and this table is a
+// legibility knob rather than a correctness input.
 //
-// Buying more glyphs cannot fix that. Any donor budget leaves some script out,
-// so a coverage-based guarantee is budget-shaped and known-incomplete whatever
-// the budget. Moving the guarantee into the ARBITER makes it total: FoldKey maps
-// every codepoint outside this repertoire to ONE sentinel, so names that render
-// alike now COLLIDE and one of them takes the suffix arc B already ships.
-// Uniqueness becomes FONT-INDEPENDENT, and the repertoire demotes from a
-// correctness input to a legibility knob.
-//
-// THE TABLE IS A BUILD CONSTANT, NOT THE LIVE ATLAS. Folding against the atlas
-// the local machine happens to have built would make one player's font install
-// the authority over everyone else's name, and peers would disagree about who
-// collided. It is generated from the fonts on disk at build time
-// (tools/text/build_repertoire.py), which is also what keeps it honest: the same
-// script emits the ranges ui::fonts::Load bakes, so what folds and what renders
-// are one definition rather than two that drift.
-//
-// SCOPE OF THE GUARANTEE. It holds on the PRIMARY font path -- our RCDATA
-// families plus the emoji donor. ui/fonts.cpp's two fallbacks (a Windows system
-// face, then ProggyClean) bake no embedded family, so the atlas there is short
-// of this table; the boot font selftest is what turns that from a silent
-// difference into a logged one. The FOLD does not move on those paths, so peers
-// still agree about names even where one of them cannot draw them.
+// The table is a BUILD CONSTANT, not the live atlas, or one player's font install would be
+// the authority over everyone else's name. tools/text/build_repertoire.py generates it from
+// the fonts on disk and emits the ranges ui::fonts::Load bakes in the same run. The two
+// fallback font paths bake no embedded family and their atlas is short of this table, which
+// the boot font selftest logs; the FOLD does not move there, so peers still agree.
 #pragma once
 
 #include <cstddef>
@@ -49,24 +30,20 @@ struct CodepointRange {
 // bakes. Binary search over ~441 ranges.
 bool InRepertoire(uint32_t cp);
 
-// The COMPLEMENT, within the render set -- every codepoint some embedded face or
-// the donor carries that we refuse to bake.
+// The COMPLEMENT, within the render set -- every codepoint some embedded face or the donor
+// carries that we refuse to bake.
 //
-// IT EXISTS BECAUSE THE ATLAS BECAME LAZY (ImGui 1.92, 2026-07-30). The eager
-// builder took an INCLUSION list, so `fold == bake` held by construction: the
-// same generated table was both. 1.92 bakes a codepoint the first time something
-// draws it and ignores ImFontConfig::GlyphRanges entirely, so the only surviving
-// lever is subtractive -- ImFontConfig::GlyphExcludeRanges, consulted by
-// ImFontAtlasBuildAcceptCodepointForSource on the on-demand path. The same
-// generator emits both tables from one source set in one run, so the invariant
-// still holds; it is just maintained from the other side.
+// It exists because the atlas is lazy. ImGui bakes a codepoint the first time something draws
+// it and ignores ImFontConfig::GlyphRanges, so the only surviving lever is subtractive:
+// ImFontConfig::GlyphExcludeRanges, consulted on the on-demand path. One generator run emits
+// both tables from one source set, so fold and bake stay one fact, maintained from the
+// subtractive side.
 //
-// InExcludeSet is NOT `!InRepertoire`. The repertoire is what we can draw; the
-// exclude set is what we refuse to draw. A codepoint no font carries at all --
-// U+4E00, say -- is outside BOTH. The distinction is load-bearing for the
-// pack-failure detector in ui/fonts.cpp: "the font has it, we did not forbid it,
-// and it still failed to bake" is a real defect, while "the font has it and we
-// forbade it" is this table working.
+// InExcludeSet is NOT `!InRepertoire`. The repertoire is what we can draw; the exclude set is
+// what we refuse to draw. A codepoint no font carries at all is outside BOTH. The distinction
+// is load-bearing for the pack-failure detector in ui/fonts.cpp: "the font has it, we did not
+// forbid it, and it still failed to bake" is a defect, while "the font has it and we forbade
+// it" is this table working.
 bool InExcludeSet(uint32_t cp);
 
 // The exclude set as ranges, for the atlas builder. Sorted, non-overlapping, and
@@ -75,35 +52,28 @@ bool InExcludeSet(uint32_t cp);
 // codepoint would bake. The generator hard-fails rather than emit one.
 const CodepointRange* ExcludeRanges(size_t* outCount);
 
-// Unicode 15.1 Default_Ignorable_Code_Point. Characters DEFINED to have no
-// visible rendering: soft hyphen, the variation selectors, the bidi controls,
-// the Hangul fillers, the tag block. A name may not contain one, because a name
-// that differs from another only in ignorables is a distinct fold key with
-// identical pixels -- the same defect as an absent glyph, arriving from the
-// other direction. Measured hole this closes: U+034F has advance 0 in Fixedsys
-// AND Roboto (the two default families) and was accepted mid-name, because
-// SanitizeNickname's combining-mark check only fires while the output is empty.
+// Unicode 15.1 Default_Ignorable_Code_Point. Characters defined to have no visible rendering:
+// soft hyphen, the variation selectors, the bidi controls, the Hangul fillers, the tag block.
+// A name may not contain one, because a name that differs from another only in ignorables is a
+// distinct fold key with identical pixels -- the same defect as an absent glyph, arriving from
+// the other direction. U+034F, for one, has advance 0 in both default families.
 bool IsDefaultIgnorable(uint32_t cp);
 
-// Is `cp` a combining mark this build can DRAW (Mn/Me/Mc, in the render set, and
-// not held out by the exclude set)? 335 codepoints as of commit 2.
+// Is `cp` a combining mark this build can DRAW (Mn/Me/Mc, in the render set, and not held out
+// by the exclude set)?
 //
-// ONE CONSUMER, and it is the reason this is generated rather than written down:
-// SanitizeNickname drops a mark at position 0, because a mark with no base sits
-// on whatever the UI drew before the name. That rule used to carry its own
-// literal, `c >= 0x0300 && c <= 0x036F` -- correct when the Latin block was the
-// only mark range that could bake, and silently wrong the moment commit 2
-// admitted the Thaana, Tamil, Thai, Arabic and Hebrew marks, every one of which
-// draws. A hand-written range and a generated table are two owners of one fact.
+// One consumer, and the reason this is generated rather than written down: SanitizeNickname
+// drops a mark at position 0, because a mark with no base sits on whatever the UI drew before
+// the name. A hand-written range for that rule covers the Latin block only and misses the
+// Thaana, Tamil, Thai, Arabic and Hebrew marks, every one of which draws.
 //
-// It is deliberately NOT `!InRepertoire`-shaped and not a denylist: a mark in the
-// MIDDLE of a name is legitimate text in five scripts and must pass untouched.
-// Only position 0 is a rendering problem.
+// It is deliberately not `!InRepertoire`-shaped and not a denylist: a mark in the MIDDLE of a
+// name is legitimate text in five scripts and passes untouched. Only position 0 is a
+// rendering problem.
 bool IsCombiningMark(uint32_t cp);
 
-// Machine-asserted at boot beside the codec and arbiter selftests. Covers the
-// table's own invariants (sorted, disjoint, non-empty) and the four membership
-// facts the fold depends on, none of which any LAN drill can reach.
+// Asserted at boot beside the codec and arbiter selftests. Covers the table's own invariants
+// (sorted, disjoint, non-empty) and the four membership facts the fold depends on.
 bool RunRepertoireSelftest();
 
 }  // namespace coop::text

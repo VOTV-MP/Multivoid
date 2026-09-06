@@ -1,36 +1,18 @@
-// ui/server_browser_rows.h -- THE SERVER LIST ITSELF: the row widgets, the data behind
-// them, the identity pairing between the two, and the hover and selection that read it.
+// ui/server_browser_rows.h -- THE SERVER LIST ITSELF: the row widgets, the data behind them,
+// the identity pairing between the two, and the hover and selection that read it. The window
+// around it -- scrim, frame, title strip, footer, ESC and the chrome polls -- stays in
+// ui/server_browser_native.cpp, which drives this one. The API says WHAT the screen wants and
+// never HOW a row is realised: nothing below names a child index, a widget count or a
+// UScrollBox. The column table is private because its two consumers, the header strip and
+// every row, must agree on the fill weights or the columns do not line up. Game thread only:
+// every function here spawns UObjects or calls UFunctions.
 //
-// WHAT IS HERE vs WHAT IS NOT. This module owns everything that answers "what is in the
-// list and which entry is the pointer on". The WINDOW that contains it -- the scrim, the
-// frame, the title strip, the footer, the switcher lifecycle, ESC and the chrome click
-// polls -- stays in `ui/server_browser_native.cpp`, which drives this one.
-//
-// WHY IT IS ITS OWN TU, and the reason is not only the line count. `docs/MULTIPLAYER_UI.md`
-// section 8c.-1 step T6 is a decision about exactly this object and nothing else: keep one
-// widget per row, pool a viewport's worth (~9 widgets instead of 64), or spike `UListView`.
-// While the row model lived inside the screen, that decision was surgery through a
-// 830-line file; behind this API it is a swap of one implementation. The API is therefore
-// written to say WHAT the screen wants, never HOW a row is realised: nothing below mentions
-// a child index, a widget count, or a `UScrollBox`.
-//
-// THE COLUMN TABLE IS PRIVATE ON PURPOSE. It has two consumers -- the header strip and
-// every row -- and they must agree on the fill weights or the columns do not line up. So
-// this module builds BOTH (`BuildHeader` below) and the table stays out of the header.
-//
-// THE INVARIANT THIS MODULE EXISTS TO HOLD (the browser header's invariant 1, moved here
-// with the code that keeps it): A ROW'S IDENTITY IS ITS `lobbyId`, NEVER ITS INDEX. The
-// master stores lobbies in a `HashMap` and emits `state.lobbies.values()`
-// (master.rs:531-553), so the wire order is arbitrary. Since 2026-08-30 the client imposes
-// a total order at the parse site (`lobby_client.cpp`), which makes the order STABLE FOR A
-// GIVEN SET -- and that is all it makes stable. THE SET STILL CHURNS: one host leaving while
-// another joins gives the SAME COUNT with different members, and every row after the
-// departure shifts. So an index still cannot identify a row across a refresh. A row
-// remembers the id it was RENDERED with, captured in the same pass as its text by the single
-// writer (`Sync`), and every click resolves against THAT -- never against a fresher copy of
-// the network list.
-//
-// THREADING: game thread only. Every function here spawns UObjects or calls UFunctions.
+// THE INVARIANT THIS MODULE EXISTS TO HOLD: a row's identity is its `lobbyId`, never its
+// index. The master emits lobbies in arbitrary order and the client imposes a total order at
+// the parse site (`lobby_client.cpp`), which makes it stable for a GIVEN SET and nothing more.
+// One host leaving while another joins gives the same count with different members and shifts
+// every row after it, so an index cannot identify a row across a refresh. A row remembers the
+// id it was RENDERED with, captured with its text by the single writer (`Sync`).
 
 #pragma once
 
@@ -42,11 +24,6 @@ namespace ui::server_browser_rows {
 
 // ---- construction -------------------------------------------------------------------
 
-// `BuildHeader` RETIRED 2026-08-31 (RULE 2): the five-column table it labelled is gone --
-// a row is now a NAME plus one right-hand fact, on the save browser's anatomy, and there is
-// nothing left for a header strip to name. Everything it used to abbreviate into a column
-// (world, the full version pair, the age) is spelled out in the details panel instead.
-
 // Adopt the panel the rows live in, and forget every row identity. Call it with the new
 // panel when the screen is built, and with `nullptr` when the menu instance dies and the
 // widgets die with it -- both sites want exactly this pair of effects.
@@ -57,12 +34,11 @@ void* Panel();
 
 // THE SCREEN IS BEING PRESENTED: forget where the pointer was.
 //
-// The hover answer is only re-evaluated when something could have CHANGED it -- the
-// pointer moved, the list scrolled, the row count changed. None of those happen when a
-// screen is closed and reopened with a still hand, so without this the list comes back
-// highlighting whatever row was under the cursor last time, over a list that has since
-// been refetched -- and that index is what a click reads. Found 2026-08-30 during the row
-// extraction: the sibling hosting window has always called this and the browser never did.
+// The hover answer is re-evaluated only when something could have CHANGED it -- the pointer
+// moved, the list scrolled, the row count changed. None of those happen when a screen is
+// closed and reopened with a still hand, so without this the list comes back highlighting
+// whatever row was under the cursor last time, over a list that has since been refetched --
+// and that index is what a click reads.
 void OnShown();
 
 // ---- the list -----------------------------------------------------------------------
@@ -102,9 +78,8 @@ bool ClickSelect();
 
 // ---- what is hovered / chosen -------------------------------------------------------
 //
-// These exist because both facts had no observer outside the pixels. Hover was silently
-// dead for as long as the screen existed -- a highlight that never appears looks exactly
-// like a cursor that was never there -- and the self-check now asserts on them.
+// Both facts have no observer outside the pixels -- a highlight that never appears looks
+// exactly like a cursor that was never there -- so the self-check asserts on them.
 int         HoveredRow();
 const char* SelectedId();
 
@@ -116,10 +91,10 @@ bool Selected(coop::net::lobby::LobbyRow& out);
 
 // ---- diagnostics --------------------------------------------------------------------
 
-// WHY ROW `i` DID NOT HOVER: its parts with their live visibility, rects and `IsHovered`.
-// It reports a signal PRODUCTION NO LONGER CONSUMES -- the walk moved to geometry -- and
-// that is the point: the question is "does Slate agree with the rects", and the answer
-// being NO inside a `UScrollBox` is the measurement this whole row model rests on.
+// WHY ROW `i` DID NOT HOVER: its parts with their live visibility, rects and `IsHovered`. It
+// reports a signal production no longer consumes -- the walk moved to geometry -- and that is
+// the point: the question is whether Slate agrees with the rects, and the answer being NO
+// inside a UScrollBox is the measurement this row model rests on.
 void LogRowHitDiagnostics(int32_t i);
 
 }  // namespace ui::server_browser_rows
