@@ -8,8 +8,6 @@
 // AambientLight_C in the group). Syncing at the lightRoot level captures EVERY
 // source (wall switch, power board, script) with one hook -- exactly as the RE
 // doc prescribes. Identity = the inherited AtriggerBase_C::Key.
-//
-// RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
 
 #pragma once
 
@@ -29,8 +27,7 @@ bool IsLightRoot(void* obj);
 // if unkeyed).
 std::wstring GetKeyString(void* root);
 
-// THE GROUP CARRIES THREE SEPARATE BOOLS -- bytecode-measured 2026-09-01, and this
-// CLOSES RE flag E-L2 (open since 2026-05-25, which could not tell them apart):
+// THE GROUP CARRIES THREE SEPARATE BOOLS, bytecode-measured and easy to confuse:
 //   isActive     -- the group's LIVE on/off. `updLig()` pushes it to every lamp in
 //                   `lights[]` / `ambs[]`. This is the bit a player sees.
 //   active       -- an ENABLE GATE, not a state. `runTrigger(owner,0)` opens with
@@ -54,8 +51,8 @@ bool TryReadActive(void* root, bool& on);
 // function up, as the class-shape check that the group really is a lightRoot.
 
 // --- The light SWITCH (Alightswitch_C) -- the user-facing flip toggle ---------
-// IDA-PROVEN 2026-06-04: lightRoot.SetActive (and the switch's player_use/use) are all
-// BP-INTERNAL -> a POST observer never fires on a real flip. The only observable edge is
+// lightRoot.SetActive (and the switch's player_use/use) are all BP-INTERNAL, so a POST
+// observer never fires on a real flip. The only observable edge is
 // the player's InpActEvt_use input action (coop::interactable_sync hooks it + reads
 // lookAtActor). Syncing the SWITCH (not just the lightRoot) lets the RECEIVER replay the
 // switch's use() so the switch FLIPS VISUALLY on the peer too -- use() flips the switch's
@@ -67,7 +64,7 @@ std::wstring GetSwitchKeyString(void* sw);  // the switch's AtriggerBase_C::Key
 bool TryReadSwitchA(void* sw, bool& on);    // the switch's flip state (bool A)
 bool CallUse(void* sw);                     // use() -- flips the switch visual + the lights
 
-// --- The GROUP as a synced entity (2026-09-01) --------------------------------------
+// --- The GROUP as a synced entity -----------------------------------------------------
 // The switch lane above syncs `A`, which use() sets from its OWN toggle -- presentation.
 // The GROUP's live state is trigger_lightRoot_C::isActive, and until now nothing on either
 // peer owned or reconciled it. These are the primitives the group lane drives it with.

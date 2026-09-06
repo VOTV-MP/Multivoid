@@ -31,11 +31,10 @@ constexpr int32_t kOrderItemsOff = 0x00;
 constexpr int32_t kOrderTimeOff  = 0x10;
 // Fstruct_store: 0x4D, TArray element stride 0x50 (8-byte aligned for the FText member).
 //
-// v136: the per-FIELD offsets that used to live here (price@0x00, object@0x10, category@0x20,
-// subcategory@0x28, size@0x40) are GONE -- five version-coupled literals retired, not moved. The
-// commit copies the whole row, and the two offsets still needed (`subcategory` to stamp, `name` to
-// read) are resolved BY NAME by ue_wrap::store_catalog, which owns the row's shape. What remains
-// here is the two STRIDES, which are properties of the native TArray rather than of any field.
+// No per-FIELD offset lives here. The commit copies the whole row, and the two offsets it still
+// needs (`subcategory` to stamp, `name` to read) are resolved BY NAME by ue_wrap::store_catalog,
+// which owns the row's shape. What remains here is the two STRIDES, which are properties of the
+// native TArray rather than of any field.
 constexpr int32_t kItemStride = 0x50;
 
 // Defensive cap when reading an order's items array (a garbage Num must not drive a huge read).
@@ -74,9 +73,9 @@ bool ResolveGmOffsets(void* gm) {
 // pending / just after a client forward.
 bool    g_droneOffsetsDone = false;
 int32_t g_offDroneSell     = -1;  // sellLocation (sendShop/beginFly read it)
-int32_t g_offDroneActive   = -1;  // Active@0x0370
-int32_t g_offDroneFlying   = -1;  // flyingType@0x0300
-int32_t g_offDroneHasOrder = -1;  // hasOrder@0x0360
+int32_t g_offDroneActive   = -1;  // Active
+int32_t g_offDroneFlying   = -1;  // flyingType
+int32_t g_offDroneHasOrder = -1;  // hasOrder
 void ResolveDroneOffsets(void* drone) {
     if (g_droneOffsetsDone) return;
     void* dCls = R::ClassOf(drone);
@@ -119,13 +118,12 @@ int32_t OrderCount() {
 
 bool ReadOrder(int32_t index, OrderData& out) {
     out.rowNames.clear();
-    // Ready() BUILDS the catalog; NameOffset() only reads what a previous build cached. Asking for
-    // the offset alone was a CRITICAL defect (audit 2026-08-24): on a real client nothing else on
-    // this path calls Ready(), so the catalog was never built, NameOffset() returned -1 forever, and
-    // EVERY client order failed to forward -- while the client had already debited itself locally
-    // and QuietLocalDrone had already disarmed its own delivery. A money sink with no goods, and a
-    // straight regression from the free-shop bug this change exists to fix. It survived the drill
-    // because the drill calls Ready() itself before placing its order, warming the same
+    // Ready() BUILDS the catalog; NameOffset() only reads what a previous build cached. Call
+    // Ready() here and never NameOffset() alone: nothing else on the client's path builds the
+    // catalog, so asking for the offset by itself returns -1 forever and EVERY client order fails
+    // to forward -- after the client has already debited itself locally and QuietLocalDrone has
+    // disarmed its own delivery. A money sink with no goods. The selftest does not catch it,
+    // because the selftest calls Ready() itself before placing its order, warming the same
     // process-global the production path never warms.
     if (!ue_wrap::store_catalog::Ready()) {
         UE_LOGW("order_economy: ReadOrder -- store_catalog unusable; refusing to read an order whose "
@@ -155,7 +153,7 @@ bool ReadOrder(int32_t index, OrderData& out) {
     out.rowNames.reserve(static_cast<size_t>(itemsNum));
     for (int32_t i = 0; i < itemsNum; ++i) {
         void* item = reinterpret_cast<uint8_t*>(itemsData) + static_cast<size_t>(i) * kItemStride;
-        // `[V]` generateStore stamps the list_store row key into Fstruct_store.name, so this IS the
+        // generateStore stamps the list_store row key into Fstruct_store.name, so this IS the
         // shop identity of the line item -- and the only part of it that travels.
         const R::FName nm = ReadAt<R::FName>(item, nameOff);
         std::wstring s = R::ToString(nm);
@@ -226,18 +224,16 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
         uint8_t* base = itemsBuf.data() + i * static_cast<size_t>(kItemStride);
         std::memcpy(base, row->data, static_cast<size_t>(kItemStride));
         std::memcpy(base + subcatOff, emptyText, ue_wrap::ftext_utils::kFTextSize);
-        // ...and stamp the row KEY into `name`, because the table does not carry it. `[V]` every
-        // one of the 473 stored rows has name = "None"; `generateStore` writes the key into the
-        // SHOP SLOT's copy at store-generation time (@1419), so a cart item built by the game's own
+        // ...and stamp the row KEY into `name`, because the table does not carry it: every one of
+        // the 473 stored rows has name = "None". `generateStore` writes the key into the SHOP
+        // SLOT's copy at store-generation time (@1419), so a cart item built by the game's own
         // Button_order carries it and a raw table row does not. Copying the row alone would
-        // therefore produce an item that is NOT what the host's own purchase produces -- and would
-        // strand the identity that v136 made load-bearing. Found by the order selftest, whose
-        // forward failed with "ReadOrder(0) failed" until this line existed.
+        // produce an item that is NOT what the host's own purchase produces, and would strand the
+        // identity the forward is keyed on.
         //
         // The FName comes from the catalog's own RowMap key, not from `StringToFName`: that helper
         // is a ProcessEvent dispatch PER ITEM and returns NAME_None SILENTLY when Kismet is
-        // unresolved, i.e. it could re-create the exact defect above without a word in the log
-        // (audit 2026-08-24).
+        // unresolved, i.e. it could re-create the exact defect above without a word in the log.
         *reinterpret_cast<R::FName*>(base + nameOff) = row->key;
     }
 
