@@ -39,8 +39,26 @@ MD_EXEMPT = ("THIRD-PARTY-NOTICES.md",)          # third-party license texts, re
 SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
 SRC_EXT = (".cpp", ".h", ".inc")
 MD_HARD_CAP = 600
+# The tracked text files that are neither markdown nor our own C++: build, CI, ignore rules,
+# scripts. Extension-gated so a binary is never read as prose; vendored trees are skipped whole,
+# since a third-party file is not ours to rewrite.
+OTHER_EXT = (".py", ".ps1", ".yml", ".yaml", ".json", ".toml", ".rs", ".cs", ".txt", ".tsv",
+             ".rc", ".in", ".cmake", "CMakeLists.txt", ".gitignore", ".gitattributes")
+OTHER_SKIP = ("src/votv-coop/third_party/", "reference/", "tools/client_model/mesh_extract/")
+# The files whose JOB is these markers: a gate that refuses a word must name it, and a drill
+# that proves the refusal must carry a fixture containing it. Counting those would push a sweep
+# to break the very checks it is measured by -- the same trap the offset detector hit.
+OTHER_MARKER_OWNERS = ("tools/docs/public_prose_gate", "tools/docs/public_leak_gate",
+                       "tools/docs/lessons_gate", "tools/git/commit_msg_check")
+# Third-party licence texts are reproduced as-is, and the baseline is generated from the counters,
+# so it names them by construction.
+OTHER_EXEMPT = ("LICENSE", "THIRD-PARTY", "public_prose_baseline.json")
+# In an ignore file the RULE is data and only the comment is prose: a rule cannot ignore a path
+# without naming it, so `docs/AGENT_SPAWNING.md` must appear for the rule to work at all.
+OTHER_COMMENTS_ONLY = (".gitignore", ".gitattributes")
 HALF_COMMENT_MIN_LINES = 300
-INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.files")  # reported, never compared
+INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.files",
+                 "other.files")  # reported, never compared
 
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
@@ -256,6 +274,32 @@ def measure(repo):
                     continue
                 c["md.dead_paths"] += 1
                 who["md.dead_paths"][p] += 1
+    # Every OTHER tracked text file: the build, the CI workflows, the ignore rules, the scripts a
+    # contributor runs. They are as public as the docs and were the last class no counter read --
+    # the ignore file alone carried 31 dated lines, a user quote and a paragraph that counted the
+    # open rows in an unpublished security register. Whole lines are measured, not just comments:
+    # in a config file the distinction does not hold, and a marker anywhere in one is the problem.
+    other = [p for p in files
+             if not p.endswith(".md") and p.endswith(OTHER_EXT)
+             and not p.startswith(SRC_ROOTS) and not p.startswith(OTHER_SKIP)
+             and not p.startswith(OTHER_MARKER_OWNERS)
+             and not any(x in os.path.basename(p) for x in OTHER_EXEMPT)]
+    c["other.files"] = len(other)
+    for k in LINE_MARKERS:
+        c["other." + k] = 0
+    for p in other:
+        text = read(repo, p)
+        if text is None:
+            continue
+        who["other.files"][p] = len(text.splitlines())
+        lines = text.splitlines()
+        if p.endswith(OTHER_COMMENTS_ONLY):
+            lines = [l for l in lines if l.lstrip().startswith("#")]
+        for line in lines:
+            for k, (rx, _) in LINE_MARKERS.items():
+                if rx.search(line):
+                    c["other." + k] += 1
+                    who["other." + k][p] += 1
     src = [p for p in files if p.startswith(SRC_ROOTS) and p.endswith(SRC_EXT)]
     c["src.comment_lines"] = 0
     code_total = 0

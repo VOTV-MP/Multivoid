@@ -130,6 +130,12 @@ what it syncs, how it works now, and how to work on it. Every tracked doc:
 - carries no working notes: no dated diary entries, no quoted conversations, no record of the
   review process, no pointers to files that are not in the repository.
 
+The last rule is about the whole repository, not only `docs/`. Every tracked file is published:
+the build files, the CI workflows, `.gitignore`, and the scripts you are invited to run. A comment
+in one of them says what the rule or the step does, not the story of the day it was added, and
+never describes material that is deliberately not in the repository -- an explanation of why
+something is unpublished can publish the interesting half of it.
+
 A claim about behaviour is tagged with how it was established: `[V]` measured, `[RD]` derived
 from reverse engineering, `[?]` unverified. The legend is on [docs/README.md](docs/README.md).
 A doc that says something works without naming its evidence is a bug in the doc.
