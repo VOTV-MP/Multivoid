@@ -22,7 +22,6 @@ void*   g_slotCls = nullptr;      // driveSlot_C
 void*   g_driveCls = nullptr;     // prop_drive_C
 void*   g_rackCls = nullptr;      // prop_driveRack_C
 void*   g_eraserCls = nullptr;    // signalDriveEraser_C
-void*   g_gamemodeCls = nullptr;  // mainGamemode_C (verb-ctx discrimination)
 void*   g_primCompCls = nullptr;  // PrimitiveComponent (IsOverlappingActor owner)
 
 int32_t g_offSlotDrive = -1;        // driveSlot_C::drive
@@ -83,7 +82,6 @@ bool EnsureResolved() {
     if (!g_driveCls)    g_driveCls = R::FindClass(L"prop_drive_C");
     if (!g_rackCls)     g_rackCls = R::FindClass(L"prop_driveRack_C");
     if (!g_eraserCls)   g_eraserCls = R::FindClass(L"signalDriveEraser_C");
-    if (!g_gamemodeCls) g_gamemodeCls = R::FindClass(L"mainGamemode_C");
     if (!g_primCompCls) g_primCompCls = R::FindClass(L"PrimitiveComponent");
     if (!g_slotCls || !g_driveCls) return false;
 

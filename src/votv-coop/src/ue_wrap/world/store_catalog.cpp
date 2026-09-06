@@ -271,8 +271,6 @@ const Row* Find(const std::wstring& rowName) {
     return (it == g_rows.end()) ? nullptr : &it->second;
 }
 
-int32_t Count() { return g_valid ? static_cast<int32_t>(g_rows.size()) : 0; }
-
 int32_t SubcategoryOffset() { return Ready() ? g_subcatOff : -1; }
 
 int32_t NameOffset() { return Ready() ? g_nameOff : -1; }

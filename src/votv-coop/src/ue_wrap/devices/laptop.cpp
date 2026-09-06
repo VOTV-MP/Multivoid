@@ -37,7 +37,6 @@ uint64_t NowMs() {
 // ---- resolved state ----
 void*   g_cls          = nullptr;  // laptop_C
 void*   g_discBaseCls  = nullptr;  // prop_floppyDisc_C
-void*   g_zipDiscCls   = nullptr;  // prop_floppyDisc_Wh_C
 int32_t g_offPowered = -1, g_offIsOpened = -1, g_offAnim = -1;
 int32_t g_offFloppyType = -1, g_offZip = -1, g_offReadWrites = -1;
 int32_t g_offNametype = -1, g_offObjectData = -1, g_offFloppyData = -1;
@@ -80,7 +79,6 @@ bool EnsureResolved() {
     void* cls = R::FindClass(L"laptop_C");
     void* discCls = R::FindClass(L"prop_floppyDisc_C");
     if (!cls || !discCls) return false;
-    g_zipDiscCls = R::FindClass(L"prop_floppyDisc_Wh_C");  // optional (zip slot)
 
     struct Row { const wchar_t* name; int32_t* slot; int32_t fallback; };
     const Row rows[] = {

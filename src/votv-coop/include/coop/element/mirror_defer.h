@@ -30,10 +30,6 @@ void Arm();
 // Disarm + drop all tracking (session end / teardown). Does NOT reveal -- teardown destroys.
 void Reset();
 
-// True while the join deferred-hide window is open. The spawn hooks gate on this so
-// steady-state gameplay spawns (post-quiescence) are NEVER hidden.
-bool IsArmed();
-
 // A fresh host-mirror actor was just spawned AND registered into its MirrorManager. Hide it
 // (SetActorHiddenInGame); when `collisionOff`, also SetActorEnableCollision(false) so it is
 // not grab-trace-hittable / physics-active while invisible (pile proxies are already

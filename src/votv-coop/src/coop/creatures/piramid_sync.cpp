@@ -113,7 +113,6 @@ std::unordered_set<uint32_t> g_tickRestored;
 // motion delta can observe.
 
 std::atomic<int> g_relayCount{0};
-std::atomic<int> g_replayCount{0};
 
 long long g_lastProbeMs = 0;   // 250 ms pre-arm probe / client restore-scan throttle
 long long g_lastSweepMs = 0;   // 1 s host edge-map sweep throttle
@@ -352,7 +351,6 @@ void TryReplayPendingGather() {
         *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(pyr) + g_offWispTarget) = nullptr;
         return;
     }
-    g_replayCount.fetch_add(1, std::memory_order_relaxed);
     // The suck is the wisp's own tick code: the wisp's gather, which the re-dispatched native
     // branch called on this mirror wisp, latches gathered and no movement and snapshots the mesh
     // start point; the rise itself is the wisp tick's gathered branch, which lerps the mesh toward
@@ -562,7 +560,6 @@ void OnDisconnect() {
     // The probe counters are per session: a forced re-run in the same process after a reconnect
     // must not see the previous session's relays.
     g_relayCount.store(0, std::memory_order_relaxed);
-    g_replayCount.store(0, std::memory_order_relaxed);
     // The hooks stay latched, role- and session-gated inside, the NPC and world-actor observer
     // shape.
 }

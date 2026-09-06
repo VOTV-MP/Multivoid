@@ -66,7 +66,4 @@ bool Remove(const char* ip);
 // Copy all ban records, most recent first. Any thread.
 void GetSnapshot(std::vector<Entry>& out);
 
-// Diagnostics: current number of banned IPs.
-int Count();
-
 }  // namespace coop::ban_list

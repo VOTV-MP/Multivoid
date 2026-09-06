@@ -67,8 +67,6 @@ void Reset() {
     g_revealed.clear();
 }
 
-bool IsArmed() { return g_armed; }
-
 void OnMirrorSpawned(uint32_t eid, void* actor, bool collisionOff, bool holdUntilQuiescence) {
     UE_ASSERT_GAME_THREAD("mirror_defer::OnMirrorSpawned");
     if (!g_armed || !actor || eid == 0u) return;

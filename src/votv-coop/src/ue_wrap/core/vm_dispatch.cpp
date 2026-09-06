@@ -329,7 +329,6 @@ void SetEnabled(bool on) {
 }
 
 bool IsEnabled() { return g_enabled.load(std::memory_order_acquire); }
-bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
 
 ActiveVerb CurrentThreadVerb() {
     ActiveVerb v{};

@@ -168,9 +168,4 @@ void GetSnapshot(std::vector<Entry>& out) {
     });
 }
 
-int Count() {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    return static_cast<int>(g_bans.size());
-}
-
 }  // namespace coop::ban_list

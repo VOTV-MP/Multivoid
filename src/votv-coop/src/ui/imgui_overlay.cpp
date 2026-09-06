@@ -667,7 +667,6 @@ bool Init() {
     return true;
 }
 
-bool IsVisible() { return g_visible.load(std::memory_order_relaxed); }
 void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relaxed); }
 // Forced, not g_scoreboard, so it survives the host losing focus to the launching client window
 // (WM_KILLFOCUS clears only the real key).

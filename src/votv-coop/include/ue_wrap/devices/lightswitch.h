@@ -46,13 +46,12 @@ std::wstring GetKeyString(void* root);
 // not be made (null / not resolved); leaves `on` untouched on failure.
 bool TryReadActive(void* root, bool& on);
 
-// The setActive UFunction pointer (for POST-observer registration). nullptr until
-// EnsureResolved. setActive writes the ENABLE GATE (`active`) and nothing else: the whole BP
-// body is one `EX_LetBool`, so it never touches `isActive`, never calls `updLig()` and moves
-// no lamps. What drives the lamps is `runTrigger(owner, 1)` = absolute ON and
-// `runTrigger(owner, 2)` = absolute OFF, both ungated and both calling `updLig()`; index 0 is
-// the gated toggle a switch uses.
-void* SetActiveFn();
+// A note the resolve depends on: `setActive` writes the ENABLE GATE (`active`) and nothing
+// else -- the whole blueprint body is one `EX_LetBool`, so it never touches `isActive`, never
+// calls `updLig()` and moves no lamps. What drives the lamps is `runTrigger(owner, 1)` for
+// absolute ON and `runTrigger(owner, 2)` for absolute OFF, both ungated and both calling
+// `updLig()`; index 0 is the gated toggle a switch uses. EnsureResolved still looks the
+// function up, as the class-shape check that the group really is a lightRoot.
 
 // --- The light SWITCH (Alightswitch_C) -- the user-facing flip toggle ---------
 // IDA-PROVEN 2026-06-04: lightRoot.SetActive (and the switch's player_use/use) are all

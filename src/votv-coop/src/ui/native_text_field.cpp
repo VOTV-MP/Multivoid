@@ -219,18 +219,6 @@ void Release(Field* f) {
     delete f;
 }
 
-void Destroy(Field* f) {
-    if (!f) return;
-    // Focus is cleared first: the detour reads the focus without a lock, so the window in which it
-    // could reach a half-destroyed field must close before anything is freed.
-    Field* expect = f;
-    g_focus.compare_exchange_strong(expect, nullptr);
-    for (size_t i = 0; i < g_live.size(); ++i)
-        if (g_live[i] == f) { g_live.erase(g_live.begin() + static_cast<long>(i)); break; }
-    if (f->box && f->parent) U::RemoveChild(f->parent, f->box);
-    delete f;
-}
-
 void Focus(Field* f) {
     if (!f) return;
     Field* prev = g_focus.exchange(f);

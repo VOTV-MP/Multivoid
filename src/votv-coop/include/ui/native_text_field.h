@@ -30,12 +30,6 @@ struct Field;
 // it). Null if the widget kit fails to build.
 Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx);
 
-// Tear down: removes the widgets from the parent and releases the handle. Safe on null. A
-// destroyed field is removed from the focus registry first, so a character message arriving
-// in the same tick cannot reach freed memory. Only while the parent is alive, since the
-// child removal is a ProcessEvent dispatch; use Release on the menu-instance death edge.
-void Destroy(Field* f);
-
 // Everything Destroy does except touching the engine: unhook the focus, drop the registry
 // row, free the handle. For a tree that died with its menu instance. The distinction is not
 // theoretical: a screen once called Destroy on the menu-instance death edge and dispatched

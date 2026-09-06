@@ -22,7 +22,6 @@ std::atomic<bool> g_resolved{false};
 void*   g_rootCls    = nullptr;  // trigger_lightRoot_C UClass
 int32_t g_keyOff     = -1;       // AtriggerBase_C::Key       (Alpha 0.9.0-n: 0x0260)
 int32_t g_isActiveOff = -1;      // trigger_lightRoot_C::IsActive (0x02B8)
-void*   g_setActiveFn = nullptr; // SetActive(bool Active) -- writes the GATE only (see the header)
 int32_t g_gateOff     = -1;      // trigger_lightRoot_C::active -- the ENABLE GATE (distinct from IsActive)
 void*   g_runTriggerFn = nullptr;// runTrigger(owner, index) -- index 1/2 are the ABSOLUTE setters
 int32_t g_objectsOff  = -1;      // triggerBase_C::objects (TArray<UObject*>) -- objects[0] is the switch's root
@@ -79,14 +78,12 @@ bool EnsureResolved() {
     g_rootCls     = rootCls;
     g_keyOff      = keyOff;
     g_isActiveOff = isActiveOff;
-    g_setActiveFn = setActiveFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("lightswitch: resolved trigger_lightRoot_C=%p Key@0x%04X IsActive@0x%04X SetActive=%p",
             rootCls, keyOff, isActiveOff, setActiveFn);
     return true;
 }
 
-void* SetActiveFn() { return g_setActiveFn; }
 
 bool IsLightRoot(void* obj) {
     if (!obj || !g_rootCls) return false;

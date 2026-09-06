@@ -78,9 +78,6 @@ void TickResolvePending();
 void SetEnabled(bool on);
 bool IsEnabled();
 
-// True once the swap is installed (a consumer registered at least one verb).
-bool IsInstalled();
-
 // Diagnostic counters (monotonic since install) for a once-a-second stats line and the
 // tripwires.
 struct Stats {

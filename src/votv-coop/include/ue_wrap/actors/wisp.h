@@ -98,11 +98,6 @@ bool ApplyGrabToLocalPlayer(void* wispActor, void* localPlayer);
 // grabbed. Game thread.
 bool ReleaseGrabOnLocalPlayer(void* localPlayer);
 
-// The wisp's four limb static-mesh components, the gib weld targets: on the kill the graph
-// spawns a blood gib and welds it to one of these, and the tear mirror does the same on the
-// mirrored wisp. Returns the component, or null.
-enum class Limb { ArmL, LegR, LegL, ArmR };
-
 // Dispatch the wisp's own releasePlayer verb, its canonical grab cancel: detaches the grabbed
 // player, clears the held flag, restores the controller, ragdolls the player (non-lethally if
 // no limb has torn yet; the death flag is playerDamaged), then after a second resets grab and

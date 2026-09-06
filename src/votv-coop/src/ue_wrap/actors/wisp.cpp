@@ -37,10 +37,6 @@ int32_t g_killedOff     = -1;       // killed        (0x0618, bool)
 int32_t g_playerDmgOff  = -1;       // playerDamaged (0x0635, bool)
 int32_t g_harmlessOff   = -1;       // harmless      (0x0658, bool)
 int32_t g_targetOff     = -1;       // Target        (0x0610, APawn*)
-int32_t g_legLOff       = -1;       // leg_L         (0x0550, UStaticMeshComponent*)
-int32_t g_armLOff       = -1;       // arm_L         (0x0558)
-int32_t g_legROff       = -1;       // LEG_R         (0x0560)
-int32_t g_armROff       = -1;       // arm_R         (0x0568)
 void*   g_releaseFn     = nullptr;  // releasePlayer() -- the grab-cancel verb
 
 // Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/killerwisp.hpp).
@@ -50,10 +46,6 @@ constexpr int32_t kKilledFallback    = 0x0618;
 constexpr int32_t kPlayerDmgFallback = 0x0635;
 constexpr int32_t kHarmlessFallback  = 0x0658;
 constexpr int32_t kTargetFallback    = 0x0610;
-constexpr int32_t kLegLFallback      = 0x0550;
-constexpr int32_t kArmLFallback      = 0x0558;
-constexpr int32_t kLegRFallback      = 0x0560;
-constexpr int32_t kArmRFallback      = 0x0568;
 
 int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
     int32_t off = R::FindPropertyOffset(cls, name);
@@ -98,10 +90,6 @@ bool ResolveFromClass(void* cls) {
     const int32_t playerDmgOff = ResolveOff(cls, L"playerDamaged", kPlayerDmgFallback);
     const int32_t harmlessOff  = ResolveOff(cls, L"harmless",      kHarmlessFallback);
     const int32_t targetOff    = ResolveOff(cls, L"Target",        kTargetFallback);
-    const int32_t legLOff      = ResolveOff(cls, L"leg_L",         kLegLFallback);
-    const int32_t armLOff      = ResolveOff(cls, L"arm_L",         kArmLFallback);
-    const int32_t legROff      = ResolveOff(cls, L"LEG_R",         kLegRFallback);
-    const int32_t armROff      = ResolveOff(cls, L"arm_R",         kArmRFallback);
 
     // releasePlayer() -- the grab-cancel verb (RE: entry ubergraph @13289). Tolerated
     // null here (the host neutralization can fall back to destroying the BP wisp), but
@@ -116,10 +104,6 @@ bool ResolveFromClass(void* cls) {
     g_playerDmgOff = playerDmgOff;
     g_harmlessOff  = harmlessOff;
     g_targetOff    = targetOff;
-    g_legLOff      = legLOff;
-    g_armLOff      = armLOff;
-    g_legROff      = legROff;
-    g_armROff      = armROff;
     g_releaseFn    = releaseFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("wisp: resolved killerwisp_C (grab@0x%X killed@0x%X playerDamaged@0x%X Target@0x%X "

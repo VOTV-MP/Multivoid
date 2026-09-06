@@ -11,9 +11,7 @@
 
 #include <windows.h>
 
-#include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <string>
 #include <unordered_map>

@@ -28,10 +28,6 @@ namespace ui::imgui_overlay {
 // render thread the first time the game presents a frame.
 bool Init();
 
-// True while the menu is shown (F1 toggles it). Other systems can read this to,
-// e.g., pause game input. Lock-free.
-bool IsVisible();
-
 // Force visibility (e.g. a future main-menu button opening the server browser).
 void SetVisible(bool visible);
 
