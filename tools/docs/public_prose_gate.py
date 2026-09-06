@@ -52,7 +52,8 @@ LONG_COMMENT_BLOCK = 15
 # tree is full of correct hex that is not an offset -- bytecode opcodes (0x45), sentinels (0xFF),
 # struct sizes, colour components -- and flagging those would push a sweep to make good comments
 # worse. Matching any hex over-reported by 118 lines when this was measured.
-RAW_OFFSET = re.compile(r"(?:@\s*\+?|\+|\bat\s+\+?|\boffset\s+)0x[0-9A-Fa-f]{2,4}\b")
+RAW_OFFSET = re.compile(r"(?:@\s*\+?|\+|\bat\s+\+?|\boffset\s+)(0x[0-9A-Fa-f]{2,4})\b")
+HEX_LITERAL = re.compile(r"0x[0-9A-Fa-f]{2,4}\b")
 # The files whose JOB is offsets. Everywhere else a pinned number duplicates them and rots when the
 # game is recooked, silently, because nothing ever compiles against a comment.
 OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
@@ -271,6 +272,11 @@ def measure(repo):
             continue
         bare = code_only(text)
         ident_uses.update(IDENT.findall(bare))
+        # The offsets this file's own code reads. A comment naming one of them sits beside the read
+        # it explains and the number IS the fact; a comment naming any other pins a number whose
+        # owner is elsewhere -- another file's named constant, or a property the code resolves by
+        # name -- where a recook moves the field and nothing ever compiles against the prose.
+        read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
         if p.endswith(".h") and "/include/" in p:
             for name in set(DECL.findall(bare)):
                 if name not in DECL_SKIP and len(name) > 3:
@@ -294,9 +300,11 @@ def measure(repo):
             if any(m not in tracked_set for m in DOC_PATH.findall(line)):
                 c["src.comment_dead_docpath"] += 1
                 who["src.comment_dead_docpath"][p] += 1
-            if not any(o in os.path.basename(p) for o in OFFSET_OWNERS) and RAW_OFFSET.search(line):
-                c["src.comment_pinned_offset"] += 1
-                who["src.comment_pinned_offset"][p] += 1
+            if not any(o in os.path.basename(p) for o in OFFSET_OWNERS):
+                pinned = {int(h, 16) for h in RAW_OFFSET.findall(line)}
+                if pinned - read_offsets:
+                    c["src.comment_pinned_offset"] += 1
+                    who["src.comment_pinned_offset"][p] += 1
     # A capability nothing calls is not shipped, and its comment describes code no one runs.
     c["src.dead_declarations"] = 0
     for name, header in declared.items():
@@ -345,7 +353,7 @@ FIXED_DESCRIPTIONS = {
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
     "src.files": "tracked sources in the mod's own C++",
     "src.files_not_swept": "sources still carrying at least one counter above",
-    "src.comment_pinned_offset": "comment lines pinning a raw offset outside the files that own them",
+    "src.comment_pinned_offset": "comment lines pinning an offset this file's own code never reads",
     "src.dead_declarations": "declared functions nothing in the tree calls",
 }
 

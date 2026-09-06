@@ -1,5 +1,5 @@
 {
- "as_of": "338d4d4eb",
+ "as_of": "2da520e2f",
  "note": "measured on the working tree; as_of is HEAD at that moment",
  "counters": {
   "md.files": 50,
@@ -33,10 +33,10 @@
   "src.files_half_comment": 1,
   "src.comment_blocks_over_15": 319,
   "src.comment_dead_docpath": 73,
-  "src.comment_pinned_offset": 164,
+  "src.comment_pinned_offset": 129,
   "src.dead_declarations": 40,
   "src.comment_permille": 294,
   "src.files": 896,
-  "src.files_not_swept": 572
+  "src.files_not_swept": 568
  }
 }
