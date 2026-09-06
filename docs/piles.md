@@ -69,6 +69,26 @@ direction; both are throw intents the host performs. Landing is an atomic conver
 the client's proxy retires and the pile native materialises at the landing pose with the same
 id. Pickup and landing sounds are synthesised on peers: the game plays them only for the actor.
 
+### The carry latch and the land settle
+
+The game churns a held clump: about once a second it re-piles on contact with a cluster and
+immediately re-grabs the result. Broadcasting every one of those would re-skin and teleport the
+client's rendering each cycle, so the host holds a per-id carry latch from the real grab to the
+real land, and suppresses the churn inside it -- no convert, no context bump. A churn re-grab
+rebinds the id onto the new clump so the pose stream keeps tracking it.
+
+Telling churn from a real landing needs one wait: a re-pile opens a settle window instead of
+broadcasting. A re-grab inside the window cancels it as churn; the window expiring commits the
+to-pile convert and closes the latch. The window is self-correcting either way -- too short
+commits a churn re-pile that the re-grab then re-opens, a brief flicker; too long lags the land
+by a few frames. Neither strands the id.
+
+Every open carry must eventually close, so the host's tick also terminates lanes the normal path
+would leave open: a clump destroyed mid-carry (consumed, or its holder gone) closes the lane and
+broadcasts a destroy, so no client is stuck holding a dead proxy; a clump left lying un-held,
+because the game's own re-pile gate aborted while the thrower's hand was busy, closes the lane
+silently and leaves the clump world-tracked and re-grabbable, which is what single-player does.
+
 ### Trash-bits piles
 
 The dispenser piles ("uses 6 of 7") are keyed save actors; a press, the vacuum or the broom
