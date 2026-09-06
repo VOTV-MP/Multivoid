@@ -25,8 +25,10 @@
 //              door HostAuth Active-gate precedent -- the native chain no-ops
 //              on its own icast guards), restore in POST, play
 //              button_keypad_deny (coop::prop_sound::PlayDenyClick).
-//   FORCE-EXIT -- reflected setActiveInterface(null): the game's own forced-
-//              exit path (ragdollMode rides it), restoring input/FOV/movement.
+//   FORCE-EXIT -- reflected setActiveInterface(null, zoom=true): the game's
+//              own forced-exit branch (ragdollMode calls it the same way),
+//              which clears the held inputs, returns GameOnly input and the
+//              cursor, restores the default FOV and broadcasts exitInterface.
 //   RELEASE -- the activeInterface falling edge covers EVERY exit cause (ESC,
 //              ragdoll, death -- ragdollMode also exits via the same field);
 //              the host clears a leaver's claims on its disconnect edge.

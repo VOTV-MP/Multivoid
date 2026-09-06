@@ -209,7 +209,7 @@ void* FindOwnerByWidgetField(const wchar_t* className, int32_t fieldOff, void* w
 // The one-slot PRE/POST aim save (door Active-gate shape; GT-only by
 // dispatch construction).
 struct SavedAim {
-    ue_wrap::CachedObjRef player;  // held the WHOLE interface session (islive-zeroav row :288)
+    ue_wrap::CachedObjRef player;  // held the WHOLE interface session
     void*    lookAtActor = nullptr;
     uint64_t hitActorWeak = 0;
 };
@@ -302,15 +302,21 @@ bool HasClearedAim() { return g_saved.player.Raw() != nullptr; }
 
 bool ForceExitInterface(void* player) {
     if (!player || !R::IsLive(player) || !g_setActiveInterfaceFn) return false;
-    // setActiveInterface(activeInterface=null, inString="", Zoom=false,
-    // sentBy=null, ignoreZoom=false, isActiveINterface3D=false,
-    // showInterface=false, &return). The null-widget branch (@1405-1531) is
-    // the game's own forced-exit path (ragdollMode rides it): GameOnly input,
-    // cursor off, default FOV, movement restored, exitInterface BROADCAST.
-    // An all-zero frame IS that call -- the bool params only matter on the
-    // non-null enter branch.
+    // setActiveInterface(activeInterface, InString, zoom, sentBy, ignoreZoom, isActiveINterface3D,
+    // showInterface, &return). A null activeInterface takes the game's own forced-exit branch --
+    // clears the held movement inputs, SetInputMode_GameOnly, cursor off, exitInterface
+    // BROADCAST -- so a zeroed frame is nearly that call. `zoom` is the exception: entering an
+    // interface sets the camera to settings.M_panelFOV, and ONLY the zoom leg of the exit puts it
+    // back to M_defaultFOV. ragdollMode, the game's own forced exit, passes zoom=true for exactly
+    // that reason; with it false the player leaves the screen still framed at the panel FOV.
+    // Everything else the frame zeroes is correct for an exit, and isLookAt (which zoom also
+    // raises) is read only while an interface is live.
     ue_wrap::ParamFrame f(g_setActiveInterfaceFn);
     if (!f.valid()) return false;
+    if (!f.Set<bool>(L"zoom", true)) {
+        UE_LOGW("device_screen: setActiveInterface has no `zoom` param -- forcing the exit "
+                "anyway; the camera keeps the panel FOV");
+    }
     return ue_wrap::Call(player, f);
 }
 
