@@ -241,7 +241,8 @@ void LogCensus() {
     // call, draining the join-tail backlog every few seconds), churning the GUObjectArray so every
     // stored internalIdx goes stale and IsLiveByIndex false-negatives on every survivor. Re-
     // enumerating live native chipPiles with fresh indices is exact instead: the burst's 1 cm
-    // twin-destroy already removed every MATCHED native, so the live survivors ARE the orphan set.
+    // twin-destroy already removed most matched natives, and the survivors are the orphan set up
+    // to the 1 cm proxy re-check below, whose `proxyMatched` count says how often that held.
     // One GUObjectArray walk, once per join, pointer-compare class filter before any read.
     if (!g_pileBindIndexBuilt) return;
     int live = 0, le5 = 0, mid = 0, gt30 = 0, none = 0;

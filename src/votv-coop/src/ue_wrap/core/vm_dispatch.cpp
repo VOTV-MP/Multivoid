@@ -3,8 +3,8 @@
 // The permanent GNatives[0x45] swap, the name-keyed registration API and the game-thread
 // name-first filter that fires consumer bracket callbacks. Only opcode 0x45
 // (EX_LocalVirtualFunction) is swapped; 0x46 (EX_LocalFinalFunction) has no customer, so its
-// slot is left untouched. Coverage-gated validation, a once-a-second slot-integrity re-check,
-// loud latches and the self-bracket TLS opener harden it.
+// slot is left untouched. The table is checked for plausibility once at install and every
+// install failure latches loudly; there is no periodic re-check of the swapped slot.
 
 #include "ue_wrap/core/vm_dispatch.h"
 

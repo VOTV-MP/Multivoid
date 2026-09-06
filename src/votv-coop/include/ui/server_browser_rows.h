@@ -2,10 +2,10 @@
 // the identity pairing between the two, and the hover and selection that read it. The window
 // around it -- scrim, frame, title strip, footer, ESC and the chrome polls -- stays in
 // ui/server_browser_native.cpp, which drives this one. The API says WHAT the screen wants and
-// never HOW a row is realised: nothing below names a child index, a widget count or a
-// UScrollBox. The column table is private because its two consumers, the header strip and
-// every row, must agree on the fill weights or the columns do not line up. Game thread only:
-// every function here spawns UObjects or calls UFunctions.
+// never HOW a row is realised: no signature below takes a child index or a widget count. The
+// cell table is private for the same reason -- it is the row builder's own layout, and a row
+// is three cells with no header strip. Game thread only: every function here spawns UObjects
+// or calls UFunctions.
 //
 // THE INVARIANT THIS MODULE EXISTS TO HOLD: a row's identity is its `lobbyId`, never its
 // index. The master emits lobbies in arbitrary order and the client imposes a total order at

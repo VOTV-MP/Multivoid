@@ -3,7 +3,7 @@
 //
 // The two caps are different questions and both are named below. kNickMaxChars
 // (player_handshake.h) is a display policy in CODEPOINTS; kNickMaxBytes is a buffer and wire
-// bound in BYTES. A single byte cap would hand Latin 20 characters, Cyrillic 10 and CJK 6.
+// bound in BYTES. A single byte cap would hand ASCII 20 characters, Cyrillic 10 and CJK 6.
 //
 // Well-formedness is established where we READ, not where we wrote: entry-side truncation
 // bounds only this machine, so the receive boundary decodes strictly and refuses a whole

@@ -75,7 +75,7 @@ FieldSlot g_fields[] = {
 
 // The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the same
 // update family the game's own apply chain uses, so a mirror repaint goes through the
-// blueprint's own painters (LEDs, toggles, text panes). None of them has a side effect; the comp
+// blueprint's own painters (LEDs, toggles, text panes). None was found to write state; the comp
 // repaint takes a condition and is dispatched separately.
 struct RefreshSlot { const wchar_t* name; void* fn; };
 RefreshSlot g_refresh[] = {

@@ -76,7 +76,7 @@ reconnecting peer is never renamed for colliding with its own not-yet-reaped gho
 A name may be written in any script. One place owns the encoding (`coop/text/utf8_codec`), and
 two different caps are stated separately: the display policy counts codepoints, the wire and the
 buffers count bytes at four times that, so a name that satisfies the policy fits whatever script
-it is written in. A single byte cap would give Latin twenty characters, Cyrillic ten and CJK six.
+it is written in. A single byte cap would give ASCII twenty characters, Cyrillic ten and CJK six.
 Bytes arriving from another peer are decoded strictly and a malformed field is refused whole
 rather than repaired, because a repair invents a name nobody chose.
 

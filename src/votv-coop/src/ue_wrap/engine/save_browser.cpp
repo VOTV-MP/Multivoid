@@ -370,7 +370,10 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
                     verFn, g_off.version);
             break;
         }
-        ParamFrame f(verFn);  // Prefix/Suffix stay zeroed = valid empty FStrings
+        // Prefix/Suffix stay zeroed = valid empty FStrings. gameVersion's body is pure --
+        // Concat(prefix, GetProjectVersion(), suffix) -- and never reads __WorldContext, so
+        // the CDO is a valid call target here and the argument is only a placeholder.
+        ParamFrame f(verFn);
         f.Set<void*>(L"__WorldContext", save);
         if (!Call(libCdo, f)) {
             UE_LOGW("save_browser: CreateNamedSave -- gameVersion call failed; creating unversioned");
