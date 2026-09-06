@@ -94,7 +94,17 @@ LINE_MARKERS = collections.OrderedDict([
     # Both notations for the same pointer. `memory/x.md` is the path; `[[x]]` is the wiki link the
     # memory files use among themselves, and 84 of them sat in public source naming 49 slugs, none
     # of which is or will be a tracked file. One habit, one counter.
-    ("ptr_memory",   (re.compile(r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"),
+    #
+    # The bracket form is the fussy one, because `[[...]]` is also C++ attribute syntax and TOML
+    # array-of-table syntax. A slug is THREE OR MORE words joined by `-` or `_` (either separator:
+    # the files are named with underscores and cited with hyphens), optionally followed by `|alias`
+    # or `#anchor`. That shape excludes every TOML header (`[[bin]]`, `[[test]]`) and all but the
+    # three-word attributes, which are named outright -- `[[no_unique_address]]` is otherwise
+    # indistinguishable from a slug, and flagging an attribute would push a sweep to damage code.
+    ("ptr_memory",   (re.compile(r"(?<![\w.])memory/"
+                                 r"|\[\[(?!(?:no_unique_address|carries_dependency|maybe_unused"
+                                 r"|nodiscard|fallthrough|noreturn|deprecated|likely|unlikely)"
+                                 r"[\]|#])[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){2,}(?:[|#][^\]]*)?\]\]"),
                       "pointers into the memory directory")),
     ("ptr_research", (re.compile(r"(?<![\w.])research/"), "pointers into research/")),
     ("ptr_claude",   (re.compile(r"\bCLAUDE\.md\b|\.claude/"), "pointers to CLAUDE.md or .claude/")),
@@ -190,6 +200,22 @@ def code_only(text):
     return "\n".join(out)
 
 
+def src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+    """-> the counter key for every rule one line of source COMMENT breaks.
+
+    One implementation, called by the counting pass and by the line explainer, for the same reason
+    `md_link_faults` is: the two disagreeing is the failure `--lines` exists to make impossible.
+    A key the caller does not count is still returned here -- `measure` filters, so retiring a
+    counter cannot leave the explainer naming lines for a number nobody prints."""
+    faults = ["src.comment_" + k for k, (rx, _) in
+              list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if rx.search(line)]
+    if any(m not in tracked_set for m in DOC_PATH.findall(line)):
+        faults.append("src.comment_dead_docpath")
+    if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
+        faults.append("src.comment_pinned_offset")
+    return faults
+
+
 def md_link_faults(line, base, tracked_set, subs):
     """-> the counter key for every dead link and dead backticked path on one line of a doc.
 
@@ -276,10 +302,17 @@ def comment_lines(text):
                 tails.append((no, s[i:]))
                 break
             elif s.startswith("/*", i):
-                tails.append((no, s[i:]))
-                if "*/" not in s[i + 2:]:
+                # A block comment that CLOSES on this line contributes only its own span; taking
+                # the rest of the line with it charges the code after `*/` to a comment counter,
+                # and `--lines` would then point a sweep at a string literal it cannot edit away.
+                e = s.find("*/", i + 2)
+                if e < 0:
+                    tails.append((no, s[i:]))
                     in_block = True
-                break
+                    break
+                tails.append((no, s[i:e + 2]))
+                i = e + 2
+                continue
             i += 1
         code += 1
     return comments, code, long_blocks, tails
@@ -389,20 +422,12 @@ def measure(repo):
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
+        owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
-            for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
-                key = "src.comment_" + k
-                if key in c and rx.search(line):
-                    c[key] += 1
-                    who[key][p] += 1
-            if any(m not in tracked_set for m in DOC_PATH.findall(line)):
-                c["src.comment_dead_docpath"] += 1
-                who["src.comment_dead_docpath"][p] += 1
-            if not any(o in os.path.basename(p) for o in OFFSET_OWNERS):
-                pinned = {int(h, 16) for h in RAW_OFFSET.findall(line)}
-                if pinned - read_offsets:
-                    c["src.comment_pinned_offset"] += 1
-                    who["src.comment_pinned_offset"][p] += 1
+            for k in src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+                if k in c:
+                    c[k] += 1
+                    who[k][p] += 1
     # A capability nothing calls is not shipped, and its comment describes code no one runs.
     #
     # Uses are attributed to the header that DECLARES the name, counted only where that header is
@@ -511,13 +536,8 @@ def explain(repo, path, tracked_set, subs=()):
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
         for no, line in comments + tails:
-            for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
-                if rx.search(line):
-                    out.append((no, "src.comment_" + k, line))
-            if any(m not in tracked_set for m in DOC_PATH.findall(line)):
-                out.append((no, "src.comment_dead_docpath", line))
-            if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
-                out.append((no, "src.comment_pinned_offset", line))
+            for k in src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+                out.append((no, k, line))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False
     comments_only = path.endswith(OTHER_COMMENTS_ONLY)
@@ -576,6 +596,10 @@ def main():
     ap.add_argument("--baseline", default=BASELINE)
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--update", action="store_true", help="after a PASS, ratchet the baseline down")
+    ap.add_argument("--relevel", action="store_true",
+                    help="re-level EVERY row to the tree after a detector widens; prints each "
+                         "rise and fall. Use this instead of hand-editing the rows you expect to "
+                         "move -- editing two of them left the rest describing an older tree.")
     ap.add_argument("--init", action="store_true", help="write the baseline from the current tree")
     ap.add_argument("--force", action="store_true", help="with --init: overwrite an existing baseline")
     ap.add_argument("--top", type=int, default=5)
@@ -635,6 +659,25 @@ def main():
             return 1
         save_baseline(a.baseline, counters, a.repo)
         print("public_prose_gate: baseline written ({} counters)".format(len(counters)))
+        return 0
+    if a.relevel:
+        # A widened detector legitimately raises rows, and a ratchet may not grow, so the raise is
+        # a deliberate act. Doing it BY HAND is what went wrong: two rows were edited, an
+        # intervening sweep had lowered a third, and its stale value left the ratchet six lines
+        # loose for one commit -- new debt that could have landed without failing anything. Every
+        # row is re-copied from one measurement of one tree, and each move is printed.
+        old = (load_baseline(a.baseline) or {}).get("counters", {})
+        dirty = unstaged_measured(a.repo)
+        if dirty and not a.force:
+            print(unstaged_message(dirty))
+            return 1
+        moved = [(k, old[k], v) for k, v in counters.items()
+                 if k in old and v != old[k] and k not in INFORMATIONAL]
+        save_baseline(a.baseline, counters, a.repo)
+        for k, b, v in sorted(moved):
+            print("  {:<30} {:>6} -> {:>6}  {}".format(k, b, v, "RISES" if v > b else "falls"))
+        print("public_prose_gate: re-levelled ({} rows moved, {} rows re-copied unchanged)".format(
+            len(moved), len(counters) - len(moved)))
         return 0
     base = load_baseline(a.baseline)
     if base is None:

@@ -36,7 +36,8 @@ SRC = """#include "d.h"
 // 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
 // see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
 // a wiki link like [[feedback-some-rule]] points at memory the same as memory/x.md does
-// PRECISION: an array index a[[i]] and a short [[ab]] are not slugs
+// PRECISION: a[[i]], [[ab]] and the C++ attribute [[no_unique_address]] are not slugs
+// the files are NAMED with underscores: [[feedback_probe_dont_guess_rule]] is the same pointer
 // docs/nowhere.md names no tracked doc; docs/a.md does
 // the field sits at 0x04F8, a number pinned in prose that this file's code never reads
 // PRECISION: opcode 0x45, sentinel 0xFF and colour 0x40 are hex, not offsets, and must NOT count
@@ -74,6 +75,8 @@ int f() { return 0; } // trailing comments are code lines for the VOLUME counter
 int t1() { return 0; } // WP-4 names a work package from a trailing comment
 int t2() { return 0; } // this one was settled by an audit nobody outside can read
 int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
+int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
+const char* d = /* closes here */ "docs/nowhere.md";  // the string is CODE, not comment
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
 /* a block
@@ -95,6 +98,34 @@ const char* s = "// not a comment";
 // line 14 of a long block
 // line 15 of a long block
 int g() { return 1; }
+"""
+
+# The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
+# are measured here, except in an ignore file where only the # comments are. One marker per line.
+OTHER_PY = """# a script
+# dated 2026-09-05
+# the USER asked for it
+# said verbatim
+# a /qf round
+# an agent ran it
+# see research/runs/x
+# see memory/feedback_y.md
+# see CLAUDE.md
+# see docs/security/TRACKER.md
+# a wiki link [[lesson-some-other-slug]]
+print("делай")
+"""
+# PRECISION for the comments-only carve-out: the RULES name research/ and .claude/ and must NOT
+# count, because a rule cannot ignore a path without naming it. Only the comment counts.
+OTHER_IGNORE = """# the notes are not published, decided 2026-09-05
+research/
+.claude/
+"""
+# PRECISION for the wikilink slug shape: a TOML array-of-tables header is not a pointer.
+OTHER_TOML = """# a manifest
+[[bin]]
+[[test]]
+name = "x"
 """
 
 # a source that carries comment but no counter at all: it must count as SWEPT
@@ -148,6 +179,20 @@ MUTANTS = [
     ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
                                    "                out.append((no, k, line))\n",
      "            pass\n"),
+    # The whole other.* class: 102 tracked files whose only proof was that nothing read them.
+    ("other: reads no file at all", "    for p in other:\n", "    for p in []:\n"),
+    # An ignore file's RULES are data. Dropping the carve-out makes --lines name `research/` and
+    # `.claude/` as debt, and a sweep obeying it would un-ignore the private trees.
+    ("other: ignore rules count as prose",
+     '        if p.endswith(OTHER_COMMENTS_ONLY):\n', '        if False:\n'),
+    # explain()'s third branch: blind it and --lines goes quiet for every non-md non-src file.
+    ("--lines: names nothing outside md and src",
+     '    prefix, fenced = ("md." if path.endswith(".md") else "other."), False\n',
+     '    if not path.endswith(".md"):\n        return out\n'
+     '    prefix, fenced = ("md." if path.endswith(".md") else "other."), False\n'),
+    # A trailing /* ... */ is a comment too, and the tail must stop at its close.
+    ("markers: blind to a trailing block comment",
+     "                tails.append((no, s[i:e + 2]))\n", "                pass\n"),
     # The build tag. Reading only the named families is what the gate did while 452 lines across
     # 187 files cited a build; matching one digit as well would flag `v9` and a decimal.
     ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
@@ -155,10 +200,16 @@ MUTANTS = [
     # Both notations of the memory pointer. Reading only the path form is what the gate did while
     # 80 wiki links sat in source and the counter read 0; matching any bracket pair instead flags
     # an array index and a short tag, which would push a sweep to damage correct prose.
-    ("ptr_memory: path form only", 'r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"',
-     'r"(?<![\w.])memory/"'),
-    ("ptr_memory: any bracket pair", 'r"(?<![\w.])memory/|\[\[[a-z0-9][a-z0-9-]{3,}\]\]"',
-     'r"(?<![\w.])memory/|\[\[.+?\]\]"'),
+    # Recall: the bracket notation is half the habit, and dropping it took the counter to 0 while
+    # 84 links sat in the tree.
+    ("ptr_memory: path form only", 'r"|\[\[(?!(?:no_unique_address', 'r"|ZZZZNOMATCH(?!(?:no_unique_address'),
+    # Precision, both ways. A slug is three or more words joined by - or _; matching any bracket
+    # content instead flags a TOML array-of-tables header, and dropping the one attribute that has
+    # that shape flags C++ code. A sweep obeying either would delete something real.
+    ("ptr_memory: any bracket content",
+     r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){2,}(?:[|#][^\]]*)?\]\]", r"[^\]|#]+\]\]"),
+    ("ptr_memory: no attribute guard", "no_unique_address|carries_dependency",
+     "ZZZZNOMATCH|carries_dependency"),
     # The markers must read the comment TRAILING a code line. Blinding them to it is what the
     # gate did until the tails were threaded through, and it hid 54 citations plus 98 pinned
     # offsets while calling their files swept.
@@ -197,6 +248,13 @@ def main():
         f.write(SRC)
     with open(os.path.join(repo, "src", "votv-coop", "src", "clean.cpp"), "w", encoding="utf-8") as f:
         f.write(SRC_CLEAN)
+    os.makedirs(os.path.join(repo, "tools"))
+    with open(os.path.join(repo, "tools", "x.py"), "w", encoding="utf-8") as f:
+        f.write(OTHER_PY)
+    with open(os.path.join(repo, ".gitignore"), "w", encoding="utf-8") as f:
+        f.write(OTHER_IGNORE)
+    with open(os.path.join(repo, "Cargo.toml"), "w", encoding="utf-8") as f:
+        f.write(OTHER_TOML)
     os.makedirs(os.path.join(repo, "src", "votv-coop", "include"))
     with open(os.path.join(repo, "src", "votv-coop", "include", "d.h"), "w", encoding="utf-8") as f:
         f.write(HDR)
@@ -220,14 +278,17 @@ def main():
     expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 2, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
+              "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
+              "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
+              "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 53, "src.files": 5, "src.files_not_swept": 3,
-              "src.comment_blocks_over_15": 1, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
-              "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 1, "src.comment_ptr_research": 1,
+              "src.comment_lines": 54, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 11}
+              "src.comment_label": 12}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to
@@ -235,23 +296,43 @@ def main():
     # edit what it could see and call the file done. The fixture trips every source counter, so
     # agreement here is agreement across the whole table.
     r = run(["--repo", repo, "--baseline", baseline, "--lines",
-             "--file", "src/votv-coop/src/x.cpp", "--file", "docs/a.md"])
-    owed, named, counter = {}, {}, None
+             "--file", "src/votv-coop/src/x.cpp", "--file", "docs/a.md",
+             "--file", "tools/x.py", "--file", ".gitignore"])
+    # Keyed by (file, counter): `owed` was keyed by counter alone, so two fixture files owing
+    # the same one overwrote the count while the named lines accumulated across both.
+    owed, named, where, counter, path = {}, {}, {}, None, None
     for line in r.stdout.splitlines():
-        if line.startswith("    ") and not line.startswith("     "):
-            counter, n = line.split()[0], int(line.split()[1])
-            owed[counter] = n
+        if line and not line.startswith(" "):
+            path, counter = line.split()[0], None
+        elif line.startswith("    ") and not line.startswith("     "):
+            head = line.split()
+            if head[0] == "SWEPT":          # a fixture that owes nothing carries no count
+                counter = None
+                continue
+            counter = (path, head[0])
+            owed[counter] = int(head[1])
             named.setdefault(counter, 0)
+            where.setdefault(counter, [])
         elif line.startswith("      ") and counter:
             # Only a real `path:NN` counts. The "(not line-addressable)" note is what a DEAF
             # explainer prints, so counting it would let this arm pass on exactly the failure
             # it exists to catch.
             if not line.strip().startswith("("):
                 named[counter] += 1
+                where[counter].append(line.strip().split()[0])
     arm("--lines reports the counters the file owes", bool(owed), r.stdout.strip()[:120])
     for k, n in sorted(owed.items()):
-        arm("--lines names all {} hit(s) of {}".format(n, k), named.get(k) == n,
+        arm("--lines names all {} hit(s) of {} in {}".format(n, k[1], k[0]), named.get(k) == n,
             "named {}".format(named.get(k)))
+    # A count says the explainer is not silent; only the NUMBER says it points at the right line.
+    # Turning the block-start list into a block-END list keeps every count and every arm above.
+    pinned = {
+        ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:48"],
+        (".gitignore", "other.dated"): [".gitignore:1"],
+    }
+    for k, want in pinned.items():
+        arm("--lines points at {} for {}".format(want[0], k[1]), where.get(k) == want,
+            "got {}".format(where.get(k)))
     r = run(["--repo", repo, "--baseline", baseline])
     arm("exact baseline passes", r.returncode == 0, r.stdout.strip().splitlines()[-1])
     lowered = dict(counters, **{"md.cyrillic": 0})
@@ -274,6 +355,25 @@ def main():
         after = json.load(f)["counters"]
     arm("update ratchets DOWN after the fix", r.returncode == 0 and after["md.cyrillic"] == 0,
         "md.cyrillic {} -> {}".format(counters["md.cyrillic"], after["md.cyrillic"]))
+    # --relevel is the ONE operation allowed to raise a row, so it must re-copy every row from a
+    # single measurement. Hand-editing the two rows expected to move is what left a third stale.
+    stale = dict(after)
+    stale["md.cyrillic"] = 9          # a row that must come DOWN to the tree
+    stale["md.dated"] = 0             # a row that must go UP to the tree
+    with open(baseline, "w", encoding="utf-8") as f:
+        json.dump({"as_of": "drill", "counters": stale}, f)
+    r = run(["--repo", repo, "--baseline", baseline, "--relevel"])
+    with open(baseline, encoding="utf-8") as f:
+        levelled = json.load(f)["counters"]
+    arm("relevel re-copies every row, up and down",
+        r.returncode == 0 and levelled["md.cyrillic"] == 0 and levelled["md.dated"] == after["md.dated"],
+        "cyrillic {} dated {}".format(levelled["md.cyrillic"], levelled["md.dated"]))
+    arm("relevel names the row that RISES", "RISES" in r.stdout and "md.dated" in r.stdout,
+        r.stdout.strip().splitlines()[0] if r.stdout.strip() else "no output")
+    arm("relevel leaves no row differing from the tree",
+        all(levelled[k] == after[k] for k in after), "")
+    with open(baseline, "w", encoding="utf-8") as f:
+        json.dump({"as_of": "drill", "counters": after}, f)
     r = run(["--repo", repo, "--baseline", os.path.join(tmp, "absent.json")])
     arm("no baseline is a failure, not a pass", r.returncode == 1, r.stdout.strip())
     # a counter missing from the baseline fails, and --update does not mint it

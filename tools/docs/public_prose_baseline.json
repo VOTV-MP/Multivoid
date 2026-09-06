@@ -1,5 +1,5 @@
 {
-  "as_of": "fe1c8718c",
+  "as_of": "dbdaf1df7",
   "note": "measured on the working tree; as_of is HEAD at that moment",
   "counters": {
     "md.files": 50,
@@ -28,7 +28,7 @@
     "other.ptr_research": 42,
     "other.ptr_claude": 1,
     "other.ptr_security": 7,
-    "src.comment_lines": 45441,
+    "src.comment_lines": 45447,
     "src.comment_cyrillic": 36,
     "src.comment_user": 11,
     "src.comment_verbatim": 80,
