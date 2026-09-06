@@ -142,6 +142,15 @@ suppressed, so exactly one lane expresses it. The eye camera both forms carry is
 which the game itself excludes from its world-object universe; the identity layer excludes child
 actors at every surface for the same reason. `[V]`
 
+The id is RELEASED when the kerfur dies for good rather than converts, at the three seams that can
+decide that: the conversion converge, on each branch where the verb destroyed the old form and no
+successor appeared; the kerfur first refusal at the prop destroy chokepoint, but only when no
+conversion bracket is open, since a capture that missed inside one is still a conversion and the
+converge behind it rebinds the record; and the character destroy PRE, for a destroy that is visible
+to it. A conversion reaches none of them. The release went unwired for a long time, and while it
+was, a dead kerfur kept its record and its element id kept answering "kerfur" once the registry
+recycled that id. `[V]`
+
 ## The dupe matrix
 
 Every place two seams can express one actor, and what deduplicates it:
