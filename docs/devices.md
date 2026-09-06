@@ -38,6 +38,38 @@ keeps a door open while any peer holds it and closes it when the last holder lea
 with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any peer's edge is
 the state.
 
+### What is inside a container
+
+A container's contents are not on the container. Every one of them reads from a single global
+per-peer array, `saveSlot.GObjStack`, addressed by an index the actor holds alongside a cached
+volume. That array reaches a client once, inside the join save-transfer blob, and never again on
+its own, because every verb that mutates it dispatches internally to the Blueprint and so is
+invisible to both hook seams (`docs/COOP_DISPATCH_VISIBILITY.md`). Without a lane of its own, a
+drone delivery landed full on the host and empty on the client.
+
+The seam is the bytecode dispatcher on the add and take verbs, and it only marks the container
+dirty -- it reads no arguments and takes no action, which is what makes it correct for every
+caller. The peer whose verb fired then authors the slice on the next sweep. There is no request
+the host could refuse: the item has already moved on the presser before any seam of ours exists.
+So the host arbitrates instead, accepting a client slice only if its author edited the truth the
+host last published and no host-side change is in flight, and relaying to every peer except the
+author -- echoing a peer's own state back would revert its newer local value. A refused write is
+answered by re-publishing the host's truth to that author, and counted.
+
+Applying a slice raw-writes the receiver's own array slot and then re-derives everything a setter
+owns through the game's own verbs -- the volume and mass recalculation and the display-name
+rebuild -- rather than writing those fields directly. The add verb cannot be the apply verb: it
+takes a live actor and serialises it itself, so it cannot ingest a record off the wire. The
+overflow check is not called on apply either: it ejects contents.
+
+Two boundaries, both fail-closed. Personal inventory is not this lane's business even though it
+is backed by the same global array, so a container whose component is flagged as a player's -- or
+whose flag cannot be resolved at all -- is skipped; writing over another peer's slice would wipe
+that player's inventory. And a nested container ships without its index, because that index names
+a slot in the sender's array and would resolve to an unrelated container on the receiver: a
+record whose class descends from the container class ships with its integers cleared and arrives
+empty rather than broken.
+
 ### Keypads and locks
 
 A keypad is a typed digit buffer plus three state bits, and its accept verb is unreachable from
