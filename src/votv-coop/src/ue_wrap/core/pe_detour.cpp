@@ -300,17 +300,6 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     // active observer count; an empty table exits on one acquire load.
     D::FirePreObservers(self, function, params);
 
-    // The name-prefix sniffer, free when no slot is set.
-    D::FireNameDiagnostics(self, function, params);
-
-    // The call trace: with the flag on, every dispatch logs, to capture a Blueprint call chain when
-    // a reflection-invoked function appears to do nothing. Relaxed, best effort.
-    if (D::g_callTrace.load(std::memory_order_relaxed) && function) {
-        auto fname = reflection::NameOf(function);
-        std::wstring nameStr = reflection::ToString(fname);
-        UE_LOGI("trace: PE self=%p func=%ls", self, nameStr.c_str());
-    }
-
     // The engine's ProcessEvent is bracketed when either timer wants it: the self sample subtracts
     // it, the whole-detour timer turns a wall-clock outer measurement into our share. Recorded at
     // depth 1 only: a nested dispatch runs inside this bracket and would replace the parent's

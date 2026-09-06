@@ -922,9 +922,10 @@ DWORD WINAPI DeathTestThread(LPVOID) {
             dead.SlopeMbPerSec(), dead.peakMb, alive.SlopeMbPerSec(),
             dead.SlopeMbPerSec() - alive.SlopeMbPerSec());
 
-    UE_LOGI("death_test: SEAM -- installed=%d travelsRefused=%llu lastReviveOk=%d "
+    UE_LOGI("death_test: SEAM -- installed=%d travelsSeen=%llu travelsRefused=%llu lastReviveOk=%d "
             "sessionRunning=%d (the seam is process-wide; the SESSION is what gates the veto)",
             coop::death_revive::SeamInstalled() ? 1 : 0,
+            coop::death_revive::TravelsSeen(),
             coop::death_revive::TravelsRefused(),
             coop::death_revive::LastReviveSucceeded() ? 1 : 0,
             last.sessionRunning ? 1 : 0);
@@ -1038,10 +1039,18 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                                "coop, which breaks the user's single-player guarantee");
         Verdict("D4 sp-no-revive", !(last.haveState && !last.dead && last.health > 1.f),
                 "nothing revived the player, which is correct with no session");
-        Verdict("D5 seam-quiet", coop::death_revive::TravelsRefused() == 0,
-                coop::death_revive::TravelsRefused() == 0
-                    ? "the travel seam refused nothing in a sessionless run"
-                    : "the seam REFUSED a travel with no session running");
+        // Refusing nothing is only half the claim: a seam that never saw the travel refuses
+        // nothing either, and D3 above has already established that a travel ran. So the pass
+        // needs both terms -- the detour saw it, and let it through.
+        const bool seamSaw = coop::death_revive::TravelsSeen() > 0;
+        const bool seamQuiet = coop::death_revive::TravelsRefused() == 0;
+        Verdict("D5 seam-quiet", seamSaw && seamQuiet,
+                !seamSaw ? "the travel ran but NEVER reached the seam -- the detour is not on "
+                           "the path, so this run proves nothing about the veto"
+                         : seamQuiet
+                           ? "the travel reached the seam and passed: refused nothing in a "
+                             "sessionless run"
+                           : "the seam REFUSED a travel with no session running");
     }
 
     const double diff = dead.SlopeMbPerSec() - alive.SlopeMbPerSec();

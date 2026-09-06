@@ -43,8 +43,6 @@ extern std::atomic<uint64_t> g_intcBloom[kBloomWords];
 extern std::atomic<int> g_interceptorActive;
 extern std::atomic<int> g_postObserverActive;
 extern std::atomic<int> g_preObserverActive;
-extern std::atomic<int> g_nameDiagAnySet;
-extern std::atomic<bool> g_callTrace;
 
 inline unsigned BloomBit(void* fn) {
     // UFunction pointers are >= 16-aligned; drop the dead low bits before masking.
@@ -66,8 +64,6 @@ extern std::atomic<unsigned long> g_gameThreadId;    // first-dispatch CAS recor
 // cancelled the original dispatch.
 bool FireInterceptorsMatched(void* self, void* function, void* params);
 void FireObserversMatched(bool post, void* self, void* function, void* params);
-// Name-prefix diagnostic walk (resolves the function name; gated by anySet).
-void FireNameDiagnosticsMatched(void* self, void* function, void* params);
 // The queue drain at TOP-LEVEL game-thread context: checks the spawn-refusal
 // gate (defers + episode-logs while the world refuses spawns -- the 2026-07-04
 // join-window null-burst fix), else pumps under the t_inPump guard. Returns
@@ -95,12 +91,6 @@ inline void FirePostObservers(void* self, void* function, void* params) {
     if (!BloomMaybe(g_postBloom, function)) return;  // O(1) reject
     FireObserversMatched(true, self, function, params);
 }
-inline void FireNameDiagnostics(void* self, void* function, void* params) {
-    if (g_nameDiagAnySet.load(std::memory_order_acquire) == 0) return;
-    if (!function) return;
-    FireNameDiagnosticsMatched(self, function, params);
-}
-
 // ---- SEH / absorbed-fault services in pe_detour.cpp ---------------------------
 // The Pump() crash firewall and the per-callback wrappers live with the detour
 // (one SEH concept, one owner); the pump + registry walks in game_thread.cpp

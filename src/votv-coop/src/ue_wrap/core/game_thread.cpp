@@ -33,10 +33,8 @@ std::atomic<uint64_t> g_intcBloom[kBloomWords]{};
 std::atomic<int> g_interceptorActive{0};
 std::atomic<int> g_postObserverActive{0};
 std::atomic<int> g_preObserverActive{0};
-std::atomic<int> g_nameDiagAnySet{0};
 // The call-trace flag: when true, the detour logs every UFunction dispatch. A one-shot probe
 // for blueprint call chains.
-std::atomic<bool> g_callTrace{false};
 // The lock-free emptiness probe. The detour runs on every game-thread ProcessEvent dispatch
 // (about 85k per second, measured) and once took the queue mutex just to test emptiness, a
 // locked read-modify-write on the hottest path in the program, for a queue that is empty
@@ -184,16 +182,6 @@ void ClearObserverSlot(ObserverSlot table[], std::atomic<int>& activeCounter,
     }
 }
 
-// The name-prefix diagnostic table; each slot is a prefix buffer and a callback. The any-set
-// flag is the fast-path bypass: with no slot populated the detour skips the whole
-// name-resolve-and-compare path. Single producer, multiple readers, atomic publish.
-struct NameDiagSlot {
-    wchar_t prefix[kMaxNameDiagnosticPrefixLen]{};
-    std::atomic<ProcessEventNameDiagnosticFn> cb{nullptr};
-    std::atomic<int> prefixLen{0};  // 0 = empty slot
-};
-NameDiagSlot g_nameDiagSlots[kMaxNameDiagnostics];
-
 // The posted-task queue. A task is pulled out under the lock, then run unlocked, so a task
 // may post without deadlocking.
 std::mutex g_queueMutex;
@@ -325,27 +313,6 @@ void FireObserversMatched(bool post, void* self, void* function, void* params) {
     }
 }
 
-void FireNameDiagnosticsMatched(void* self, void* function, void* params) {
-    // Resolve the function name. This calls into reflection, cheap but not free; the any-set fast
-    // path inline in the detour gates it.
-    auto fname = reflection::NameOf(function);
-    std::wstring nameStr = reflection::ToString(fname);
-    const wchar_t* funcName = nameStr.c_str();
-    const size_t funcLen = nameStr.size();
-    for (int i = 0; i < kMaxNameDiagnostics; ++i) {
-        const int prefLen = g_nameDiagSlots[i].prefixLen.load(std::memory_order_acquire);
-        if (prefLen <= 0) continue;
-        if (static_cast<int>(funcLen) < prefLen) continue;
-        // A case-sensitive prefix compare: FNames are case-preserving and compare
-        // case-insensitively, but for prefix debugging the case the blueprint author wrote is
-        // matched.
-        if (std::wmemcmp(funcName, g_nameDiagSlots[i].prefix, prefLen) == 0) {
-            ProcessEventNameDiagnosticFn cb = g_nameDiagSlots[i].cb.load(std::memory_order_relaxed);
-            if (cb) cb(self, funcName, params);
-        }
-    }
-}
-
 bool DrainPostedTasksAtTopLevel() {
     if (ue_wrap::spawn_gate::WorldRefusesSpawns()) {
         // Nested inside a construction script, or the world is tearing down: a task run here gets
@@ -436,50 +403,6 @@ void ClearAllObservers() {
     D::g_preObserverActive.store(0, std::memory_order_release);
     BloomClear(D::g_postBloom);
     BloomClear(D::g_preBloom);
-    ClearAllNameDiagnostics();
-}
-
-bool SetNameDiagnostic(int slot, const wchar_t* prefix, ProcessEventNameDiagnosticFn cb) {
-    if (slot < 0 || slot >= kMaxNameDiagnostics) return false;
-    if (!prefix || !cb || !*prefix) {
-        // Clear this slot.
-        g_nameDiagSlots[slot].prefixLen.store(0, std::memory_order_release);
-        g_nameDiagSlots[slot].cb.store(nullptr, std::memory_order_relaxed);
-        // Recompute the any-set flag.
-        int anySet = 0;
-        for (int i = 0; i < kMaxNameDiagnostics; ++i) {
-            if (g_nameDiagSlots[i].prefixLen.load(std::memory_order_relaxed) > 0) { anySet = 1; break; }
-        }
-        D::g_nameDiagAnySet.store(anySet, std::memory_order_release);
-        return true;
-    }
-    // Copy the prefix, bounded to the buffer.
-    int len = 0;
-    while (len < kMaxNameDiagnosticPrefixLen - 1 && prefix[len] != L'\0') {
-        g_nameDiagSlots[slot].prefix[len] = prefix[len];
-        ++len;
-    }
-    g_nameDiagSlots[slot].prefix[len] = L'\0';
-    g_nameDiagSlots[slot].cb.store(cb, std::memory_order_relaxed);
-    g_nameDiagSlots[slot].prefixLen.store(len, std::memory_order_release);
-    D::g_nameDiagAnySet.store(1, std::memory_order_release);
-    return true;
-}
-
-void ClearAllNameDiagnostics() {
-    for (int i = 0; i < kMaxNameDiagnostics; ++i) {
-        g_nameDiagSlots[i].prefixLen.store(0, std::memory_order_release);
-        g_nameDiagSlots[i].cb.store(nullptr, std::memory_order_relaxed);
-    }
-    D::g_nameDiagAnySet.store(0, std::memory_order_release);
-}
-
-void SetCallTrace(bool enabled) {
-    D::g_callTrace.store(enabled, std::memory_order_release);
-}
-
-bool GetCallTrace() {
-    return D::g_callTrace.load(std::memory_order_acquire);
 }
 
 int PostObserverCount() { return D::g_postObserverActive.load(std::memory_order_relaxed); }

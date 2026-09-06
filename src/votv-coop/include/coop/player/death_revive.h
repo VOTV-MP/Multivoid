@@ -46,9 +46,12 @@ void OnSessionStart();
 bool ArmedForThisDeath();
 
 // Diagnostics for the acceptance instrument: has the seam ever refused a travel, and did the
-// last revive complete its conjunction?
+// last revive complete its conjunction? The refused count alone cannot tell a quiet seam from
+// an absent one, so the seen count -- every travel that reached the detour, refused or not --
+// comes with it.
 bool SeamInstalled();
 unsigned long long TravelsRefused();
+unsigned long long TravelsSeen();
 bool LastReviveSucceeded();
 
 // The negative control, armed by VOTVCOOP_DEATH_NO_RECONCILE=1. When true the reconcile does

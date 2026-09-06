@@ -384,6 +384,17 @@ void DumpSummary(const char* when) {
             (unsigned long long)g_orderDestroyNoSpawn.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnBIndexLive.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnBIndexDead.load(std::memory_order_relaxed));
+    // The substrate underneath, which counts what the assembler above cannot see. offGtMatch is
+    // the one that must stay zero: a watched verb matching off the game thread means a capture ran
+    // where the engine calls are illegal. gtDispatch at zero with the hook installed says the
+    // 0x45 path never carried a dispatch, which reads the same as a quiet session and is not.
+    const vm::Stats vs = vm::GetStats();
+    UE_LOGI("[kerfur_asm][%s] VM SUBSTRATE (%s): installed=%d enabled=%d verbs{registered=%d resolved=%d} "
+            "dispatch{gt=%llu worker=%llu} nameMatch=%llu callbackFired=%llu OFF_GT_MATCH=%llu "
+            "-- GREEN iff OFF_GT_MATCH=0 and, with verbs registered, gt>0",
+            RoleTag(), when, vs.installed ? 1 : 0, vs.enabled ? 1 : 0,
+            vs.registeredVerbs, vs.resolvedVerbs,
+            vs.gtDispatch, vs.workerDispatch, vs.nameMatch, vs.callbackFired, vs.offGtMatch);
 }
 
 }  // namespace

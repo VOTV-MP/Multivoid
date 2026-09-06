@@ -659,6 +659,7 @@ void Watchdog() {
 bool ArmedForThisDeath() { return g_armed.load(std::memory_order_acquire); }
 bool SeamInstalled() { return LT::IsInstalled(); }
 unsigned long long TravelsRefused() { return LT::VetoCount(); }
+unsigned long long TravelsSeen() { return LT::SeenCount(); }
 bool LastReviveSucceeded() { return g_lastReviveOk; }
 
 bool ReconcileDisabled() {

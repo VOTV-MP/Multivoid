@@ -102,23 +102,6 @@ void UnregisterObservers(void* targetUFunction, ProcessEventObserverFn cb);
 // Drop both observer tables. Called from Uninstall.
 void ClearAllObservers();
 
-// The diagnostic name-prefix dispatcher, for "which UFunction does the game dispatch here?": up
-// to four prefixes, and for any dispatched function whose name starts with one the callback
-// fires with the name. Four string compares per dispatch, only while a prefix is set. A debug
-// tool, to be cleared once the real names are known.
-using ProcessEventNameDiagnosticFn = void(*)(void* self, const wchar_t* funcName, void* params);
-inline constexpr int kMaxNameDiagnostics = 4;
-inline constexpr int kMaxNameDiagnosticPrefixLen = 32;  // including the terminator
-
-// Add a name-prefix filter; an empty prefix or a null cb clears every entry.
-bool SetNameDiagnostic(int slot, const wchar_t* prefix, ProcessEventNameDiagnosticFn cb);
-void ClearAllNameDiagnostics();
-
-// The call trace: every ProcessEvent dispatch logs its UFunction name and self pointer, for
-// capturing a BP call chain. One-shot, and the volume is enormous.
-void SetCallTrace(bool enabled);
-bool GetCallTrace();
-
 // The perf instrumentation, driven by coop/dev/perf_probe. The detour is the hottest path in the
 // program, so its counters are gated: the dispatch count costs one relaxed load when off, and the
 // self-time samples one dispatch in 256, bracketing the detour body without the engine's own
