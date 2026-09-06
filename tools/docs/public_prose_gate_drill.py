@@ -37,6 +37,10 @@ SRC = """#include "d.h"
 // PRECISION: opcode 0x45, sentinel 0xFF and colour 0x40 are hex, not offsets, and must NOT count
 // OWNERSHIP: the translation at +0x10 is read three lines down, so the number IS the fact here
 // RECALL: naming hiddenByAComment() here must NOT rescue it from the dead list
+// the retry came from audit F-3, and audits/audited/auditing are the same citation
+// `[V]` an evidence tag from our working docs, which source has no legend for
+// a bare [?] and a [RD] belong to that same family
+// PRECISION: an auditorium, a bracketed [Value] and an [ok] flag are neither
 int calledOnce() { return 0; }
 int neverCalledAnywhere() { return calledOnce(); }
 int hiddenByAComment() { return 0; }
@@ -144,11 +148,12 @@ def main():
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 28, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 32, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
-              "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1}
+              "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
+              "src.comment_review": 1, "src.comment_evidence": 2}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     r = run(["--repo", repo, "--baseline", baseline])

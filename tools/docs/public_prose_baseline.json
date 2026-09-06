@@ -41,13 +41,15 @@
     "src.comment_ptr_security": 9,
     "src.comment_lesson": 73,
     "src.comment_sha": 1,
-    "src.files_half_comment": 1,
+    "src.comment_review": 197,
+    "src.comment_evidence": 51,
+    "src.files_half_comment": 0,
     "src.comment_blocks_over_15": 301,
     "src.comment_dead_docpath": 66,
     "src.comment_pinned_offset": 76,
     "src.dead_declarations": 0,
     "src.comment_permille": 293,
-    "src.files": 896,
-    "src.files_not_swept": 531
+    "src.files": 906,
+    "src.files_not_swept": 545
   }
 }

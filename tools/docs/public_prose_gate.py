@@ -99,6 +99,14 @@ LINE_MARKERS = collections.OrderedDict([
 SRC_EXTRA = collections.OrderedDict([
     ("lesson", (re.compile(r"\bLESSONS\b|\blessons?\b", re.I), "comment lines citing a lesson")),
     ("sha",    (re.compile(r"`[0-9a-f]{8,10}`|\bcommit [0-9a-f]{7,10}\b"), "comment lines citing a commit")),
+    # "audit F-3", "audit MINOR-6", "the audit's third category": a review of ours, named in a
+    # comment. A maintainer cannot look any of them up -- the reviews are not in the tree and
+    # never will be -- so the citation carries no information and the finding it stands for has
+    # to be restated as what the code does. The word IS the vocabulary, as with `lesson`.
+    ("review", (re.compile(r"\baudit(?:s|ed|ing)?\b", re.I), "comment lines citing an internal review")),
+    # `[V]` / `[?]` / `[RD]`: the evidence tags of our own working docs, which carry a legend on
+    # the docs index. Source has no legend, so in a comment the tag is noise around the fact.
+    ("evidence", (re.compile(r"\[(?:V|\?|RD)\]"), "comment lines carrying an evidence tag")),
 ])
 
 
