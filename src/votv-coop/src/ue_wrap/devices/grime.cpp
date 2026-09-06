@@ -62,8 +62,6 @@ bool EnsureResolved() {
     return true;
 }
 
-void* GrimeClass() { return g_grimeCls; }
-
 bool IsGrime(void* obj) {
     if (!obj || !g_grimeCls) return false;
     void* cls = R::ClassOf(obj);

@@ -140,37 +140,11 @@ coop::element::ElementId AllocKerfurId(void* actor, coop::element::ElementId cur
     return k;
 }
 
-coop::element::ElementId GetKerfurIdForActor(void* actor) {
-    if (!actor) return coop::element::kInvalidId;
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto it = g_actorToKerfurId.find(actor);
-    return it == g_actorToKerfurId.end() ? coop::element::kInvalidId : it->second;
-}
-
 coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid) {
     if (currentEid == coop::element::kInvalidId) return coop::element::kInvalidId;
     std::lock_guard<std::mutex> lk(g_mutex);
     auto it = g_eidToKerfurId.find(currentEid);
     return it == g_eidToKerfurId.end() ? coop::element::kInvalidId : it->second;
-}
-
-coop::element::ElementId GetCurrentEidForKerfurId(coop::element::ElementId kerfurId) {
-    if (kerfurId == coop::element::kInvalidId) return coop::element::kInvalidId;
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto it = g_byKerfurId.find(kerfurId);
-    return it == g_byKerfurId.end() ? coop::element::kInvalidId : it->second.currentEid;
-}
-
-Form GetFormForKerfurId(coop::element::ElementId kerfurId) {
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto it = g_byKerfurId.find(kerfurId);
-    return it == g_byKerfurId.end() ? Form::Npc : it->second.form;
-}
-
-bool IsKerfurEid(coop::element::ElementId currentEid) {
-    if (currentEid == coop::element::kInvalidId) return false;
-    std::lock_guard<std::mutex> lk(g_mutex);
-    return g_eidToKerfurId.count(currentEid) != 0;
 }
 
 coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentEid) {

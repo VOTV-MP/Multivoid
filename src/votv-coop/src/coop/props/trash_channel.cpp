@@ -233,11 +233,6 @@ bool HasPendingSettle(coop::element::ElementId E) {
     return g_settle.find(static_cast<uint32_t>(E)) != g_settle.end();
 }
 
-coop::element::ElementId AnyCarryingEid() {
-    return g_carry.empty() ? coop::element::kInvalidId
-                           : static_cast<coop::element::ElementId>(g_carry.begin()->first);
-}
-
 void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType) {
     if (!clump || E == 0u || E == coop::element::kInvalidId) return;
     g_clumpBirths[clump] = ClumpBirth{static_cast<uint32_t>(E), chipType, g_tick,

@@ -586,13 +586,6 @@ bool DownloadMeshValid() {
     return mesh != nullptr && R::IsLive(mesh);
 }
 
-bool WriteResDetect(float v) {
-    void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    *OffPtr<float>(d, g_offDlResDetecPercent) = v;
-    return true;
-}
-
 bool ReadSimOutputs(SimOutputs& out) {
     void* d = Instance();
     if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)

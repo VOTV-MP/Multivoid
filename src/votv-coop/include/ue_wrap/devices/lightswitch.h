@@ -46,21 +46,12 @@ std::wstring GetKeyString(void* root);
 // not be made (null / not resolved); leaves `on` untouched on failure.
 bool TryReadActive(void* root, bool& on);
 
-// setActive(on) -- writes the group's ENABLE GATE (`active`) and NOTHING ELSE. Measured:
-// the whole BP body is one `EX_LetBool`, member `active` := param. It does NOT touch
-// `isActive` and does NOT call `updLig()`, so it moves no lamps.
-//
-// (This header used to claim it "turns the whole group on/off (fans out to all lamps)".
-// That was false and it had no callers, so nothing was broken by it -- but it is exactly
-// the kind of comment that gets trusted instead of the code. The verb that actually drives
-// the lamps is `runTrigger(owner, 1)` = absolute ON and `runTrigger(owner, 2)` = absolute
-// OFF, both UNGATED and both calling `updLig()`; index 0 is the gated toggle a switch uses.)
-//
-// MUST run on the game thread. False on null / unresolved UFunction.
-bool CallSetActive(void* root, bool on);
-
-// The SetActive UFunction pointer (for POST-observer registration). nullptr until
-// EnsureResolved.
+// The setActive UFunction pointer (for POST-observer registration). nullptr until
+// EnsureResolved. setActive writes the ENABLE GATE (`active`) and nothing else: the whole BP
+// body is one `EX_LetBool`, so it never touches `isActive`, never calls `updLig()` and moves
+// no lamps. What drives the lamps is `runTrigger(owner, 1)` = absolute ON and
+// `runTrigger(owner, 2)` = absolute OFF, both ungated and both calling `updLig()`; index 0 is
+// the gated toggle a switch uses.
 void* SetActiveFn();
 
 // --- The light SWITCH (Alightswitch_C) -- the user-facing flip toggle ---------

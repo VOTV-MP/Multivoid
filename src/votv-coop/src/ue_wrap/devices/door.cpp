@@ -187,10 +187,6 @@ bool EnsureResolved() {
     return true;
 }
 
-void* DoorClass() { return g_doorCls; }
-void* DoorOpenFn() { return g_doorOpenFn; }
-void* DoorCloseFn() { return g_doorCloseFn; }
-
 bool IsDoor(void* obj) {
     if (!obj || !g_doorCls) return false;
     void* cls = R::ClassOf(obj);

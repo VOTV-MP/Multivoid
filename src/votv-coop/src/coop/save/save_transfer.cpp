@@ -835,11 +835,6 @@ void ClientArm() {
     UE_LOGI("save_transfer: client ARMED (menu-mode join -- will request the host save)");
 }
 
-bool ClientArmed() {
-    std::lock_guard<std::mutex> lk(g_cliMu);
-    return g_cliArmed;
-}
-
 void ClientNoteConnected() {
     std::lock_guard<std::mutex> lk(g_cliMu);
     if (!g_cliArmed || g_cliRequested || !g_session) return;

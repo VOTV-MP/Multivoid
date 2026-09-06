@@ -56,9 +56,6 @@ bool EnsureResolved() {
     return true;
 }
 
-void* OpenFn() { return g_openFn; }
-void* CloseFn() { return g_closeFn; }
-
 bool IsSwinger(void* obj) {
     if (!obj || !g_swingerCls) return false;
     void* cls = R::ClassOf(obj);

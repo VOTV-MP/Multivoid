@@ -34,9 +34,4 @@ bool TryReadOpen(void* swinger, bool& on);
 bool CallOpen(void* swinger, bool damage);
 bool CallClose(void* swinger);
 
-// The Open / Close UFunction pointers (for POST-observer registration). nullptr
-// until EnsureResolved.
-void* OpenFn();
-void* CloseFn();
-
 }  // namespace ue_wrap::swinger

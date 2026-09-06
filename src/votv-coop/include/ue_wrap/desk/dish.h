@@ -101,9 +101,8 @@ bool AnyCueActive(int32_t index, bool& ok);
 bool ReadActiveDish(int32_t index, bool& out);
 bool WriteActiveDish(int32_t index, bool active);
 
-// dish.calibration (float). Raw read/write (natively raw-written by
-// the slew-loop decay, the ui_console calibrate machine, tool + virus event).
-bool ReadCalibration(int32_t index, float& out);
+// dish.calibration (float). Raw write (the field is natively raw-written by the slew-loop
+// decay, the ui_console calibrate machine, the tool and the virus event).
 bool WriteCalibration(int32_t index, float v);
 
 // dish.techName (FString) for identity logging ("[dish] 3 'Bonna'").

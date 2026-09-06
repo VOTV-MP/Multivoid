@@ -112,6 +112,5 @@ void ApplyMirrorWispTarget(void* actor, uint32_t wispEid);
 // Probe/diagnostic accessors (autotest_piramidforce; thread-safe atomics).
 bool DebugHooksArmed();
 int  DebugHostRelayCount();
-int  DebugClientReplayCount();
 
 }  // namespace coop::piramid_sync

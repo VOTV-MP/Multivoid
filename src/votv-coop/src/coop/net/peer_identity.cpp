@@ -199,7 +199,6 @@ bool Load() {
 }
 
 const PubKey& LocalPublicKey() { return g_pub; }
-const std::string& LocalGuid()  { return g_guid; }
 const std::string& LocalIdentityString() { return g_identityString; }
 
 bool PublicKeyFromIdentityString(const std::string& identity, PubKey& out) {

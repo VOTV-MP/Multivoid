@@ -418,14 +418,6 @@ bool WriteActiveDish(int32_t index, bool active) {
     return true;
 }
 
-bool ReadCalibration(int32_t index, float& out) {
-    if (!g_l4Resolved) return false;
-    void* d = DishByIndex(index);
-    if (!d) return false;
-    out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offCalibration);
-    return true;
-}
-
 bool WriteCalibration(int32_t index, float v) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);

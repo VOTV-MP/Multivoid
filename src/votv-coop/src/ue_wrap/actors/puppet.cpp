@@ -170,45 +170,6 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
     return comp;
 }
 
-// Dump the live FAnimNode_* memory regions and log every non-trivial float and int in them.
-// The point is a local-versus-puppet diff: which offset carries walking speed on the body that
-// animates, and whether the puppet's state-machine index is stuck on idle.
-void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent) {
-    void* anim = LiveAnimInstance(skeletalMeshComponent);
-    if (!anim) return;
-    struct Region { const char* name; size_t start; size_t end; };
-    // The region bounds are named in sdk_profile.h::anim rather than inlined here, so a VOTV
-    // recook surfaces in the same block every other AnimBP offset lives in.
-    const Region regions[] = {
-        {"BlendSpacePlayer", P::anim::kKerfurBlendSpacePlayer_Start, P::anim::kKerfurBlendSpacePlayer_End},
-        {"StateMachine_1",   P::anim::kKerfurStateMachine1_Start,    P::anim::kKerfurStateMachine1_End},
-        {"StateMachine",     P::anim::kKerfurStateMachine_Start,     P::anim::kKerfurStateMachine_End},
-        // The AnimBP instance-level public variables, past the AnimGraphNode tail. The region
-        // covers every kerfur AnimBP variable plus padding, so any field that differs between the
-        // two bodies shows up.
-        {"AnimBP_vars_all",  P::anim::kKerfurAnimBPVarsAll_Start,    P::anim::kKerfurAnimBPVarsAll_End},
-    };
-    for (const Region& r : regions) {
-        std::string out;
-        for (size_t off = r.start; off < r.end; off += 4) {
-            uint8_t* p = static_cast<uint8_t*>(anim) + off;
-            const float fv = *reinterpret_cast<float*>(p);
-            const int32_t iv = *reinterpret_cast<int32_t*>(p);
-            // Log only non-zero values, as float and as int. Engine values are typically floats or
-            // small ints; a pointer reads as a huge int, which the upper bound filters out.
-            const bool floatNontrivial = std::isfinite(fv) && std::fabs(fv) > 0.0001f && std::fabs(fv) < 1.0e6f;
-            const bool intNontrivial = (iv != 0 && iv > -1000000 && iv < 1000000);
-            if (floatNontrivial || intNontrivial) {
-                char buf[96];
-                snprintf(buf, sizeof(buf), "    +0x%04zX: f=%9.3f  i=%d\n", off, fv, iv);
-                out += buf;
-            }
-        }
-        UE_LOGI("anim[%ls] %s @ +0x%04zX-+0x%04zX:\n%s",
-                label, r.name, r.start, r.end, out.c_str());
-    }
-}
-
 void DumpKerfurHeadGraph(void* skeletalMeshComponent) {
     void* anim = LiveAnimInstance(skeletalMeshComponent);
     if (!anim) { UE_LOGW("puppet: DumpKerfurHeadGraph: no AnimInstance"); return; }

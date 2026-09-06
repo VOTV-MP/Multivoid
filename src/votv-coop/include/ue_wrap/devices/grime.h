@@ -30,9 +30,6 @@ namespace ue_wrap::grime {
 // while the grime_C BP class is not yet loaded -- the caller retries on a later tick). Game thread.
 bool EnsureResolved();
 
-// The grime_C UClass pointer (nullptr until EnsureResolved succeeds). Exposed for IsGrime.
-void* GrimeClass();
-
 // True iff `obj`'s class is grime_C or a subclass (the ~20 grime_* variants). Cheap (a bounded
 // SuperStruct walk; no allocation). False if not yet resolved.
 bool IsGrime(void* obj);

@@ -29,9 +29,7 @@ struct FString {
 bool Resolve();
 bool IsResolved();
 
-// Resolved addresses (0 until Resolve succeeds), for diagnostics.
-uintptr_t GUObjectArrayAddr();
-uintptr_t FNameToStringAddr();
+// The resolved ProcessEvent, for the detour to trampoline through (0 until Resolve succeeds).
 uintptr_t ProcessEventAddr();
 
 // Call a UFunction on `object` through UObject::ProcessEvent. `params` points to the function's

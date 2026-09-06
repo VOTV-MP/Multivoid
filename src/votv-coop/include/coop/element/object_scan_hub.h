@@ -72,9 +72,6 @@ void Tick();
 // un-sliced, so a same-GT-task probe comparison has zero staleness. Never called in production.
 void ForceSyncFullPass();
 
-// True while a started pass has not yet completed (diagnostic).
-bool PassActive();
-
 // DEV-DRILL ONLY: the live count of consumer `name`'s last COMPLETED pass (SIZE_MAX when the
 // consumer is unknown or has not completed a pass). The parity drill compares this against an
 // independent old-shape probe walk -- see autotest_scanparity.cpp.

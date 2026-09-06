@@ -28,10 +28,6 @@ namespace ue_wrap::base_window {
 // paths). Game thread.
 bool EnsureResolved();
 
-// The baseWindow_C UClass pointer (nullptr until EnsureResolved succeeds). Exposed for
-// IsBaseWindow's descendant check.
-void* BaseWindowClass();
-
 // True iff `obj`'s class is baseWindow_C or a subclass. Cheap (a bounded SuperStruct
 // walk; no allocation). False if not yet resolved.
 bool IsBaseWindow(void* obj);

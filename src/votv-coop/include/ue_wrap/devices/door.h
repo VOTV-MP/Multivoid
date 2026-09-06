@@ -18,9 +18,6 @@ namespace ue_wrap::door {
 // class is not loaded yet; the caller retries on a later tick). Game thread.
 bool EnsureResolved();
 
-// The door class pointer, null until resolved; exposed for the descendant check.
-void* DoorClass();
-
 // True if `obj`'s class is door_C or a subclass (the pryable door). Cheap, a bounded super
 // walk with no allocation. False if not yet resolved.
 bool IsDoor(void* obj);
@@ -72,11 +69,6 @@ void SetActive(void* door, bool on);
 // door's false must survive the press dispatch, since restoring a hard-coded true silently
 // unlocked locked doors on the client.
 bool GetActive(void* door);
-
-// The open and close UFunction pointers, for the sync's POST observer registration; null
-// until resolved.
-void* DoorOpenFn();
-void* DoorCloseFn();
 
 // The host-authoritative client suppression. A door's open state is re-driven every tick by
 // its local sensor and autoclose logic (an empty sensor with autoclose closes the door). On a

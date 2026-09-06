@@ -91,16 +91,6 @@ void DestroyLocalProp(void* actor, bool deferred);
 // ONLY (runs ProcessEvent reads on the actor).
 void ExpressSpawnedProp(void* actor);
 
-// Explicit destroy-sync for a TRACKED prop whose K2_DestroyActor our PRE
-// observer could not see (BP-internal by-name call -- prop_kerfurOmega_C::
-// spawnKerfuro's self-destroy, v67). Broadcasts PropDestroy built from the
-// Prop ELEMENT's stored key (never dereferences `actorKey` -- safe on a
-// PendingKill or GC-purged pointer; the pointer is only a map key for the
-// tracker teardown) then drains the element via the same UnmarkKnownKeyedProp
-// path the organic destroy takes. No-ops when the element is already gone
-// (double call / raced the real PRE observer). Game thread.
-void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid);
-
 // HOST kerfur conversion (K-4b): register a BP-internally-spawned prop (the turn_off output -- the
 // verb spawns it via EX_CallMath, so no Init POST fires for it) as a host Prop Element shadow WITHOUT
 // the wire PropSpawn broadcast (the SOLE conversion signal is KerfurConvert -- kerfur redesign 10.3).

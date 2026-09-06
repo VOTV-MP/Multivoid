@@ -40,7 +40,6 @@ bool Load();
 // Our own public key, and the 32-char lowercase-hex guid derived from it. Empty or zero
 // before a successful load.
 const PubKey& LocalPublicKey();
-const std::string& LocalGuid();
 
 // Our identity as the transport renders it: a prefix plus 64 lowercase hex, 68 chars. The
 // string the P2P lane rendezvouses on: the host publishes it to the master and a joiner

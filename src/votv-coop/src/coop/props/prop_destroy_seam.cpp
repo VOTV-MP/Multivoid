@@ -166,37 +166,6 @@ void OnK2DestroyFunc(void* context, void* /*srcObj*/, void* /*result*/) {
 }
 
 
-void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
-    // See prop_lifecycle.h. `actorKey` is never dereferenced: the caller may hold a pending-kill
-    // or purged pointer (the kerfur convert calls this a tick after the blueprint-internal
-    // destroy). The wire key comes from the Element; the pointer is only the tracker maps' key.
-    if (!actorKey || eid == coop::element::kInvalidId) return;
-    std::string key8;
-    {
-        auto* el =
-            coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
-        if (!el) return;  // already drained -- double call / raced the real PRE
-        key8 = el->GetName();
-    }
-    auto* s = LoadSession();
-    if (s && s->connected()) {
-        coop::net::PropDestroyPayload dp{};
-        dp.key.len = 0;
-        for (size_t i = 0; i < key8.size() && i < 31; ++i) {
-            dp.key.data[dp.key.len++] = key8[i];
-        }
-        dp.elementId = eid;  // eid rides along (keyless elements route by it)
-        UE_LOGI("prop_lifecycle[explicit destroy]: broadcasting DESTROY key='%s' eid=%u (BP-internal K2_DestroyActor -- v67 converge)",
-                key8.c_str(), static_cast<uint32_t>(eid));
-        s->SendPropDestroy(dp);
-    }
-    // The same teardown the organic seam runs: the processed-Init latch out, then the keyed-prop
-    // unmark (the key index, the reverse map and the Element drain). Both use the pointer as a
-    // map key only.
-    PT::UnmarkProcessedInit(actorKey);
-    PT::UnmarkKnownKeyedProp(actorKey);
-}
-
 
 void DestroyLocalProp(void* actor, bool deferred) {
     if (!actor) return;

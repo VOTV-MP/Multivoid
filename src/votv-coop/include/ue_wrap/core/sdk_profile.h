@@ -537,19 +537,6 @@ inline constexpr size_t kKerfurModifyBone_3       = 0x2578;
 inline constexpr size_t kKerfurModifyBone_2       = 0x2680;
 inline constexpr size_t kKerfurModifyBone_1       = 0x2A28;
 inline constexpr size_t kKerfurModifyBone         = 0x2C60;
-
-// AnimBP node-region diagnostic offsets (DumpAnimNodeRegions in puppet.cpp): each pair brackets
-// a region of the kerfur AnimBP instance to scan and log.
-inline constexpr size_t kKerfurBlendSpacePlayer_Start = 0x1180;
-inline constexpr size_t kKerfurBlendSpacePlayer_End   = 0x1268;
-inline constexpr size_t kKerfurStateMachine1_Start    = 0x1AC0;
-inline constexpr size_t kKerfurStateMachine1_End      = 0x1B70;
-inline constexpr size_t kKerfurStateMachine_Start     = 0x1CC8;
-inline constexpr size_t kKerfurStateMachine_End       = 0x1D78;
-// The AnimBP instance-level variable tail after the AnimGraphNode block; the class ends at
-// 0x2E4A, rounded to 0x2E50.
-inline constexpr size_t kKerfurAnimBPVarsAll_Start    = 0x2D60;
-inline constexpr size_t kKerfurAnimBPVarsAll_End      = 0x2E50;
 }  // namespace anim
 
 // ---- content names: ue_wrap/sdk_profile_names.h, included below so P::name:: resolves

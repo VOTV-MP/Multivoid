@@ -71,8 +71,6 @@ bool EnsureResolved() {
     return true;
 }
 
-void* BaseWindowClass() { return g_winCls; }
-
 bool IsBaseWindow(void* obj) {
     if (!obj || !g_winCls) return false;
     void* cls = R::ClassOf(obj);

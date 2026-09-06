@@ -76,7 +76,6 @@ int32_t AnimBP_kerfur_walkSpeed();
 int32_t AnimBP_kerfur_Pawn();
 int32_t AnimBP_kerfur_Controller();
 int32_t AnimBP_kerfur_Movement();
-int32_t AnimBP_kerfur_Character();
 int32_t AnimBP_kerfur_animWalkAlpha();
 int32_t AnimBP_kerfur_animWalkRate();
 int32_t AnimBP_kerfur_lookingAtPlayer();
@@ -85,7 +84,6 @@ int32_t AnimBP_kerfur_walkSpeedMultiplier();
 int32_t AnimBP_kerfur_spd();
 int32_t AnimBP_kerfur_useLegIK();
 int32_t AnimBP_kerfur_removeArms();
-int32_t AnimBP_kerfur_headLookAt();
 int32_t AnimBP_kerfur_isFace();
 // v39 head-look sync: `lookAt` (FVector @0x2D90) = the WORLD location the head/neck
 // FAnimNode_LookAt nodes aim at; `customLookAt` (bool @0x2E49) gates BUA's per-tick

@@ -147,10 +147,6 @@ bool ReadDLSignalKey(uint64_t& out);
 // chain; the machine reset alone leaves the rendered signal object alive.
 bool DeleteSignalActor();
 
-// The raw detection write for the joiner adopt's needle catch-up, applied after the machine
-// arms; while the mesh is invalid the native pulse zeroes it again.
-bool WriteResDetect(float v);
-
 // The host-authoritative download-simulation output vector (desk_sim_sync). The download rate
 // formula rolls unseeded random terms per tick and integrates the filter offsets from per-peer
 // frame time, so these outputs diverge across peers even with identical knob inputs

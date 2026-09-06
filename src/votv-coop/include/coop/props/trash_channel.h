@@ -100,10 +100,6 @@ bool IsCarrying(coop::element::ElementId E);
 // while carrying and this is true.
 bool HasPendingSettle(coop::element::ElementId E);
 
-// Host: the one carried trash eid, or the invalid id. The drop thunk logs it to cross-check that
-// a real drop is the carried clump and not an equip drop.
-coop::element::ElementId AnyCarryingEid();
-
 // Host, per gameplay tick: expire birth certificates, count down the land settles and commit a
 // settled land, and terminate any carry the normal path would leave open -- a clump destroyed
 // mid-carry closes with a destroy, one left lying un-held closes silently and stays

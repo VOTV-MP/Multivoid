@@ -118,7 +118,6 @@ enum class ClientState : int {
 // clients that already booted a world never arm: they keep the fresh-world and true-up
 // baseline and the host never streams to them.
 void ClientArm();
-bool ClientArmed();
 
 // The connect edge (client): send the request once if armed. Idempotent.
 void ClientNoteConnected();

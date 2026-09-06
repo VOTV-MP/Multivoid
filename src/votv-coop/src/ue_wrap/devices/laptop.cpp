@@ -249,13 +249,6 @@ bool IsDiscClass(void* cls) {
     return R::IsDescendantOfAny(cls, base, 1);
 }
 
-bool IsZipDiscClass(void* cls) {
-    if (!cls || !g_zipDiscCls) return false;
-    if (cls == g_zipDiscCls) return true;
-    void* base[1] = { g_zipDiscCls };
-    return R::IsDescendantOfAny(cls, base, 1);
-}
-
 bool ReadDiscContent(void* discActor, DiscContent& out) {
     if (!discActor || !g_resolved) return false;
     const uint8_t* p = reinterpret_cast<const uint8_t*>(discActor);

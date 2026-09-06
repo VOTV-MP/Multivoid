@@ -110,14 +110,6 @@ bool TryReadActive(void* root, bool& on) {
     return true;
 }
 
-bool CallSetActive(void* root, bool on) {
-    if (!root || !g_setActiveFn) return false;
-    ParamFrame f(g_setActiveFn);
-    if (!f.valid()) return false;
-    f.Set<bool>(L"Active", on);
-    return Call(root, f);
-}
-
 // --- The light SWITCH (Alightswitch_C) ---
 
 bool EnsureSwitchResolved() {

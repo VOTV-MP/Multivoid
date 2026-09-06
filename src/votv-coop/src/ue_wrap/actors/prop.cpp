@@ -444,11 +444,6 @@ void* ResolvePileMesh(uint8_t chipType, void* worldContext) {
     return sLastGood;  // transient null -> last good (never invisible)
 }
 
-std::wstring GetClassName(void* prop) {
-    if (!prop) return {};
-    return R::ClassNameOf(prop);
-}
-
 NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outStats) {
     NearestResult best;
     ScanStats stats;

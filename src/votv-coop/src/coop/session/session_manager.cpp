@@ -833,11 +833,6 @@ void SetListed(bool listed) {
 
 bool ListedState() { return g_listedState.load(std::memory_order_relaxed); }
 
-uint16_t HostListenPort() {
-    std::lock_guard<std::mutex> lk(g_cfgMu);
-    return g_fallbackHostCfg.port ? g_fallbackHostCfg.port : net::kDefaultPort;
-}
-
 void SetPlayerCountSource(int (*fn)()) {
     // Announcer() lives for the process and the setter only stores the pointer, so installing it
     // before any lobby exists is correct.

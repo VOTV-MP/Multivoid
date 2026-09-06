@@ -68,17 +68,9 @@ bool IsKerfurPropClass(void* cls);
 coop::element::ElementId AllocKerfurId(void* actor, coop::element::ElementId currentEid,
                                        Form form, const std::wstring& className);
 
-// Host only: constant-time lookups (invalid or default if not a tracked kerfur).
-coop::element::ElementId GetKerfurIdForActor(void* actor);
+// Host only: the kerfur id behind a live wire eid, or invalid when the eid is not a tracked
+// kerfur's current form. Constant time.
 coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid);
-coop::element::ElementId GetCurrentEidForKerfurId(coop::element::ElementId kerfurId);
-Form                     GetFormForKerfurId(coop::element::ElementId kerfurId);
-
-// Host only: is this wire eid the current-form eid of a tracked kerfur? Used by the
-// client-mint class gate and the conversion routing. The client is eid-based and does not
-// track kerfur ids: it applies a conversion by the old and new eids plus the class test,
-// never by a kerfur id.
-bool IsKerfurEid(coop::element::ElementId currentEid);
 
 // Host only: the host eid of the off-prop that the kerfur currently at `currentEid`
 // replaced; the NPC spawn builders read it to carry the off-to-active duplicate retire key

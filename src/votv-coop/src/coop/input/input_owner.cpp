@@ -381,6 +381,4 @@ bool MayTakeKey(unsigned vk) {
     return !GameOwnsText();
 }
 
-const char* LastGameOwnerName() { return g_ownerName; }
-
 }  // namespace coop::input::input_owner

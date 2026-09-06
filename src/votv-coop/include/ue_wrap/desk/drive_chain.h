@@ -33,8 +33,6 @@ bool EnsureResolved();
 // Safe pre-resolve (false until the class loads).
 bool IsDriveClass(void* cls);
 bool IsRackClass(void* cls);
-bool IsSlotClass(void* cls);
-bool IsGamemodeClass(void* cls);
 
 // The resolved prop_drive_C class (null pre-resolve) -- spawn/refund callers
 // skip a FindClass walk.
@@ -52,7 +50,6 @@ int RoleOfSlotActor(void* slotActor);
 
 // slot.drive (null = empty). Also isRecentlyDetached for diagnostics.
 void* SlotDrive(void* slotActor);
-bool  SlotRecentlyDetached(void* slotActor);
 
 // Reflected FSM verbs (the proven authors). ScopedWireApply is the CALLER's
 // job. putDriveIn takes the drive ACTOR.

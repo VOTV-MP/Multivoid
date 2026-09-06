@@ -592,6 +592,5 @@ void OnPyramidGather(const coop::net::PyramidGatherPayload& payload) {
 
 bool DebugHooksArmed() { return g_armedAtomic.load(std::memory_order_acquire); }
 int  DebugHostRelayCount() { return g_relayCount.load(std::memory_order_relaxed); }
-int  DebugClientReplayCount() { return g_replayCount.load(std::memory_order_relaxed); }
 
 }  // namespace coop::piramid_sync

@@ -149,9 +149,6 @@ void SetChipTypeAndRebuild(void* actor, uint8_t chipType);
 // thread.
 void* ResolvePileMesh(uint8_t chipType, void* worldContext);
 
-// The prop's UClass name, for diagnostics.
-std::wstring GetClassName(void* prop);
-
 // FindNearest's result.
 struct NearestResult {
     void* prop = nullptr;

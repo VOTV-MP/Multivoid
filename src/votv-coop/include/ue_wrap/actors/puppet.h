@@ -74,11 +74,6 @@ bool ReadPuppetHeadLookProbe(void* puppetActor, PuppetHeadLookProbe& out);
 // on the local body and on the puppet, to see which differs. Null-safe.
 void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent);
 
-// Diagnostic: dump the live FAnimNode memory regions named in sdk_profile.h -- the
-// BlendSpacePlayer and the two state machines: the walking-speed sample coordinate and the
-// state index, on the local body and the puppet. Null-safe.
-void DumpAnimNodeRegions(const wchar_t* label, void* skeletalMeshComponent);
-
 // Diagnostic: dump the kerfur AnimBP's FAnimNode_LookAt instances and every FAnimNode_ModifyBone's
 // bone and alpha, the nodes that drive the head. Null-safe; once at puppet spawn.
 void DumpKerfurHeadGraph(void* skeletalMeshComponent);

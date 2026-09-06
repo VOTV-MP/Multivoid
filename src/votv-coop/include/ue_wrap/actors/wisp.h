@@ -102,7 +102,6 @@ bool ReleaseGrabOnLocalPlayer(void* localPlayer);
 // spawns a blood gib and welds it to one of these, and the tear mirror does the same on the
 // mirrored wisp. Returns the component, or null.
 enum class Limb { ArmL, LegR, LegL, ArmR };
-void* ReadLimbComponent(void* wisp, Limb limb);
 
 // Dispatch the wisp's own releasePlayer verb, its canonical grab cancel: detaches the grabbed
 // player, clears the held flag, restores the controller, ragdolls the player (non-lethally if

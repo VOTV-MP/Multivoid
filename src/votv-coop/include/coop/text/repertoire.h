@@ -101,9 +101,6 @@ bool IsDefaultIgnorable(uint32_t cp);
 // Only position 0 is a rendering problem.
 bool IsCombiningMark(uint32_t cp);
 
-// The repertoire as ranges, for the atlas builder. Sorted, non-overlapping.
-const CodepointRange* RepertoireRanges(size_t* outCount);
-
 // Machine-asserted at boot beside the codec and arbiter selftests. Covers the
 // table's own invariants (sorted, disjoint, non-empty) and the four membership
 // facts the fold depends on, none of which any LAN drill can reach.

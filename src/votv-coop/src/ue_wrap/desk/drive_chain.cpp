@@ -141,8 +141,6 @@ bool IsDriveClass(void* cls) {
 }
 bool IsRackClass(void* cls) { return cls && g_rackCls && cls == g_rackCls; }
 void* DriveClass() { return g_driveCls; }
-bool IsSlotClass(void* cls) { return cls && g_slotCls && cls == g_slotCls; }
-bool IsGamemodeClass(void* cls) { return cls && g_gamemodeCls && cls == g_gamemodeCls; }
 
 void* SlotActor(int role) {
     if (!g_resolved || role < 0 || role >= kRoleCount) return nullptr;
@@ -193,11 +191,6 @@ void* SlotDrive(void* slotActor) {
     if (!slotActor || g_offSlotDrive < 0) return nullptr;
     void* d = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotDrive);
     return (d && R::IsLive(d)) ? d : nullptr;
-}
-
-bool SlotRecentlyDetached(void* slotActor) {
-    if (!slotActor || g_offSlotDetached < 0) return false;
-    return *(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotDetached) != 0;
 }
 
 bool CallPutDriveIn(void* slotActor, void* driveActor) {

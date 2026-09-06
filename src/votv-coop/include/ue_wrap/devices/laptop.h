@@ -67,7 +67,6 @@ bool ClearSlot();  // floppyType=-1 + arrays/strings emptied + widget refresh
 
 // ---- disc prop accessors (Aprop_floppyDisc_C) ----
 bool  IsDiscClass(void* cls);      // any prop_floppyDisc variant
-bool  IsZipDiscClass(void* cls);   // the white (_Wh) zip disc
 struct DiscContent {
     int32_t readWrites = -1;
     std::vector<std::wstring> data;  // .data @0x368-equivalent (resolved)

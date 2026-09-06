@@ -286,8 +286,6 @@ void ForceSyncFullPass() {
     }
 }
 
-bool PassActive() { return g_inPass; }
-
 bool DebugConsumerSettled(const char* name) {
     for (const Row& r : g_rows) {
         if (std::strcmp(r.c.name, name) == 0) return r.stableScans >= r.c.settleScans;

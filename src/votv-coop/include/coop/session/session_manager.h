@@ -149,9 +149,6 @@ void SetListed(bool listed);
 // owns the truth. True when not hosting.
 bool ListedState();
 
-// The UDP port a direct host listens on, from net.port or the default. Thread-safe.
-uint16_t HostListenPort();
-
 // Install the source of the lobby's live player count, published on every heartbeat. Called
 // once at boot by the harness, which owns the session object, above the scenario branch, so it
 // precedes every announce site on every lane. `fn` runs on the announcer's heartbeat worker

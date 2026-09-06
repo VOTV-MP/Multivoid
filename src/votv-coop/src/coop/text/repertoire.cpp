@@ -59,11 +59,6 @@ bool InExcludeSet(uint32_t cp) { return Contains(kExclude, kExcludeCount, cp); }
 
 bool IsCombiningMark(uint32_t cp) { return Contains(kMarks, kMarkCount, cp); }
 
-const CodepointRange* RepertoireRanges(size_t* outCount) {
-    if (outCount) *outCount = kRepertoireCount;
-    return kRepertoire;
-}
-
 const CodepointRange* ExcludeRanges(size_t* outCount) {
     if (outCount) *outCount = kExcludeCount;
     return kExclude;

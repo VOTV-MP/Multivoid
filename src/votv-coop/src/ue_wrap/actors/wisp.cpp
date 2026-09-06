@@ -328,18 +328,6 @@ bool ReleaseGrabOnLocalPlayer(void* localPlayer) {
     return true;
 }
 
-void* ReadLimbComponent(void* wisp, Limb limb) {
-    if (!wisp || !EnsureResolved() || !IsKillerWisp(wisp)) return nullptr;
-    int32_t off = -1;
-    switch (limb) {
-        case Limb::ArmL: off = g_armLOff; break;
-        case Limb::LegR: off = g_legROff; break;
-        case Limb::LegL: off = g_legLOff; break;
-        case Limb::ArmR: off = g_armROff; break;
-    }
-    return (off >= 0) ? ReadAt<void*>(wisp, off) : nullptr;
-}
-
 bool CallReleasePlayer(void* wisp) {
     if (!wisp || !EnsureResolved() || !IsKillerWisp(wisp)) return false;
     if (!g_releaseFn) {

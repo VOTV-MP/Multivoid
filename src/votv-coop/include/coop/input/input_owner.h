@@ -62,7 +62,4 @@ bool IsForeground();
 // can type at the console and chat.
 bool MayTakeKey(unsigned vk);
 
-// Diagnostics for the log line; never a control-flow input.
-const char* LastGameOwnerName();
-
 }  // namespace coop::input::input_owner
