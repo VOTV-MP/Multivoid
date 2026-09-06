@@ -3,9 +3,7 @@
 // is authoritative for (OrderRequest, DoorOpenRequest, KerfurConvertRequest,
 // KerfurCommand, GrabIntent, ThrowIntent, PileResyncRequest, PropDropIntent).
 //
-// EXTRACTED VERBATIM from event_dispatch_state.cpp 2026-07-10 (816 LOC, past
-// the 800 soft cap; the queued event_dispatch_intent extraction). The intent
-// family is a distinct concept from keyed device-STATE mirrors: every case
+// The intent family is a distinct concept from keyed device-STATE mirrors: every case
 // here validates role()==Host + a client sender slot at the trust boundary,
 // then hands the request to the authoritative module. Family contract per
 // coop/event_dispatch.h: returns true iff msg.kind is in this family.
@@ -18,7 +16,7 @@
 #include "coop/interactables/interactable_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
-#include "coop/props/prop_drop_intent.h"  // v106 F2 Inc-1: CLIENT->HOST client-placed keyed prop
+#include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
 #include "coop/props/trash_channel.h"
 
 #include "ue_wrap/core/log.h"
@@ -36,11 +34,11 @@ bool HandleIntentEvent(net::Session& session,
     // mainPlayer into the coin's `actionOptionIndex`. Every other case resolves targets by key/eid.
     switch (msg.kind) {
     case net::ReliableKind::OrderRequest: {
-        // v49 (2026-06-09): delivery-drone ECONOMY -- a CLIENT forwards a laptop shop order to the
-        // HOST (the delivery authority). VARIABLE-LENGTH (OrderRequestHeader + packed items); the
-        // host assembles chunks per (senderSlot, orderId) then re-commits via the native
-        // makeAnOrder. order_sync::OnReliable fully range-checks the payload + no-ops on a client
-        // (host-only ingest). RE: votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+        // Delivery-drone ECONOMY: a CLIENT forwards a laptop shop order to the HOST (the
+        // delivery authority). VARIABLE-LENGTH (OrderRequestHeader + packed items); the host
+        // assembles chunks per (senderSlot, orderId) then re-commits via the native makeAnOrder.
+        // order_sync::OnReliable fully range-checks the payload and no-ops on a client
+        // (host-only ingest).
         // OrderRequest is CLIENT->HOST: a valid sender is a CLIENT slot (1..kMaxPeers-1). Slot 0
         // is the host (which never sends its own order as a request -- it is the delivery
         // authority); an out-of-range / not-yet-assigned slot must NOT be routed under a 0xFF
@@ -55,7 +53,7 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::CoinGunSell: {
-        // v137 (coingun_sync -- security A37/A38), payload rewritten v138 (B1): a CLIENT shot a prop
+        // A CLIENT shot a prop
         // with the coin gun. The payload NAMES the prop (save key first, ElementId as the keyless
         // fallback) and nothing else; the host prices the sale from its OWN copy and mints through
         // the game's own `sell`. HOST-TERMINAL -- never relayed, because the host authors every
@@ -104,7 +102,7 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::OrderRefused: {
-        // v136 (2026-08-24, security A34): the HOST tells ONE client that its forwarded shop order
+        // The HOST tells ONE client that its forwarded shop order
         // was not performed, and why. HOST->CLIENT, addressed with SendReliableToSlot, never
         // relayed. A client that receives this has ALREADY debited itself locally (Button_order
         // @6168 runs lib_C::addPoints before we ever see the order, and that call is
@@ -119,7 +117,7 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DoorOpenRequest: {
-        // v32 (2026-06-04): client->host door open/close REQUEST. Doors are HOST-
+        // Client->host door open/close REQUEST. Doors are HOST-
         // authoritative; only the host honors this. The host applies it (real lock/
         // jam guards) and its poll broadcasts the authoritative DoorState back to all.
         if (session.role() != net::Role::Host) {
@@ -197,14 +195,10 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::GrabIntent: {
-        // v84 (Increment 2, docs/piles/08): CLIENT->HOST chipPile grab REQUEST. Host-authoritative
-        // (the DoorOpenRequest shape). The host validates the eid is a tracked PILED pile + the sender
-        // isn't already holding one, executes playerGrabbed on puppet-N (probe-proven, see
-        // research/findings/player-puppet/votv-puppet-grab-feasibility-RE-2026-06-22.md), and broadcasts the
-        // authoritative PropConvert{kToClump}. coop::trash_channel::OnGrabIntent.
-        // NOTE (modular, RULE 2026-05-25): this file is ~757 LOC after this case (past the 800 soft cap
-        // is near) -- the NEXT trash-intent handler (ThrowIntent/PileResyncRequest, phase 2) MUST extract
-        // the trash-intent cases into a new event_dispatch_trash.cpp.
+        // CLIENT->HOST chipPile grab REQUEST. Host-authoritative (the DoorOpenRequest shape).
+        // The host validates the eid is a tracked PILED pile and that the sender is not already
+        // holding one, executes playerGrabbed on puppet-N, and broadcasts the authoritative
+        // PropConvert{kToClump}. coop::trash_channel::OnGrabIntent.
         if (session.role() != net::Role::Host) {
             UE_LOGW("event_feed: GrabIntent received on a client -- dropping");
             break;
@@ -258,7 +252,7 @@ bool HandleIntentEvent(net::Session& session,
         UE_LOGI("event_feed: STAGED ReliableKind=%u from slot=%d -- no handler yet",
                 static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
         break;
-    case net::ReliableKind::PropDropIntent: {   // v106 (F2 Inc-1): CLIENT->HOST -- client placed a keyed
+    case net::ReliableKind::PropDropIntent: {   // CLIENT->HOST -- client placed a keyed
                                                 // world prop it had picked up; the HOST re-spawns it
                                                 // authoritatively by Key + broadcasts. Host-authoritative
                                                 // (the GrabIntent shape). coop::prop_drop_intent.

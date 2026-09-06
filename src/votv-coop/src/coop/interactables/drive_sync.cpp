@@ -1,8 +1,6 @@
 // coop/drive_sync.cpp -- see coop/interactables/drive_sync.h.
 //
-// v119 L5 (votv-drive-chain-L5-impl-DESIGN-2026-07-18.md, 7-round /qf).
-// Two lanes over this module (the rack lane extracted 2026-07-18 to
-// drive_rack_sync -- votv-rack-extraction-DESIGN-2026-07-18.md):
+// Two lanes over this module (the rack lane lives in drive_rack_sync):
 //   DriveSlotState -- idempotent any-peer slot FSM lines, host canonical.
 //   DrivePayload   -- drive data_0 rows (signal_wire codec, blob chunks).
 // Detection = 0x45 verb dirty-marks (vm_dispatch; capture-only, barrier
@@ -77,19 +75,19 @@ coop::blob_chunks::Assembler g_payloadAsm;
 struct Pending {
     int kind;  // 0=slot line, 1=payload blob
     coop::net::DriveSlotStatePayload slotLine{};
-    SlotBase slotAtQueue{};  // audit CRIT-1: the role's baseline when queued --
-                             // replay only if the slot has NOT moved on since
+    SlotBase slotAtQueue{};  // the role's baseline when queued -- replay only
+                             // if the slot has NOT moved on since
     std::vector<uint8_t> blob;
     uint8_t senderSlot = 0xFF;
     Clock::time_point until{};
 };
 std::vector<Pending> g_pending;
 constexpr auto kPendingTtl = std::chrono::seconds(10);
-constexpr size_t kPendingCap = 256;  // perf-audit F-7: drop-oldest + WARN past this
+constexpr size_t kPendingCap = 256;  // drop-oldest + WARN past this
 
 // ---- locally-authored drive births (client): the payload broadcasts at
 // adoption ONLY for these; every other first sight is prime-only (a joiner's
-// save-loaded drives are NOT its births -- smoke-measured 2026-07-18).
+// save-loaded drives are NOT its births).
 struct NotedBirth { void* actor = nullptr; Clock::time_point until{}; };
 std::vector<NotedBirth> g_notedBirths;
 constexpr auto kNotedBirthTtl = std::chrono::seconds(30);
@@ -112,7 +110,7 @@ bool IsHost() {
 }
 
 // eid -> live actor: coop::element::LivePropActor (O(1) Registry::Get; the
-// promoted canonical resolve idiom -- perf-audit F-2 history in registry.cpp).
+// promoted canonical resolve idiom).
 using coop::element::LivePropActor;
 
 // All live drive-class props as (eid, actor).
@@ -303,7 +301,7 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
         UE_LOGW("drive_sync: payload blob for eid=%u malformed -- dropped", eid);
         return;
     }
-    // Audit MAJOR-1: the CONTENT-correlated deny reap. A denied rack take's
+    // The CONTENT-correlated deny reap. A denied rack take's
     // ghost identifies itself here -- its adoption payload hashes to exactly
     // the row the winning take removed. The VERDICT (ring+TTL+consume) is
     // drive_rack_sync's (the take-race axis owner); the ACTION stays here.
@@ -350,7 +348,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         void* drive = LivePropActor(p.driveEid);
         if (!drive || !DC::IsDriveClass(R::ClassOf(drive))) {
             if (!fromPending) {
-                // Audit CRIT-1: at most ONE pending line per role (a newer
+                // At most ONE pending line per role (a newer
                 // line supersedes the older), and the baseline at queue time
                 // is stashed so the replay DROPS if the slot moved on --
                 // never resurrect a stale occupant.
@@ -424,7 +422,7 @@ void RetryPendingTick() {
         }
         bool done = false;
         if (pd.kind == 0) {
-            // Audit CRIT-1: if the slot's state moved since the line was
+            // If the slot's state moved since the line was
             // queued, the world passed it by -- DROP, never replay stale.
             const SlotBase& nowB = g_slotBase[pd.slotLine.role];
             if (nowB.known != pd.slotAtQueue.known ||

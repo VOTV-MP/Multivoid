@@ -1,8 +1,7 @@
-// coop/npc_pose_host.cpp -- HOST-side NPC transform egress (v37).
+// coop/npc_pose_host.cpp -- HOST-side NPC transform egress.
 //
-// Extracted from npc_sync.cpp (2026-06-07) per the 800-LOC soft cap; npc_sync.cpp
-// had grown to 869 once the pose stream landed. Owns the two host-only paths that
-// READ live NPC actor transforms + push them onto the wire:
+// Owns the two host-only paths that READ live NPC actor transforms and push them
+// onto the wire:
 //   - TickPoseStream():            per-tick EntityPose batch (unreliable, ~sendHz)
 //                                  so client mirrors MOVE between spawn + destroy.
 //   - QueueConnectBroadcastForSlot: connect-edge EntitySpawn re-send (reliable) so
@@ -18,7 +17,7 @@
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
 #include "coop/element/npc.h"
 #include "coop/creatures/kerfur_entity.h"  // scope A: GetOriginOffEidForEid -- carry the off->active retire eid
-#include "coop/creatures/npc_world_enum.h" // 2026-07-03: DrainPendingExSpawns (EX_CallMath catch)
+#include "coop/creatures/npc_world_enum.h" // DrainPendingExSpawns (EX_CallMath catch)
 #include "coop/dev/kerfur_census.h"        // [dev] kerfur_census=1: periodic HOST census (5-vs-6 measurement)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -48,7 +47,7 @@ using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_ma
 void QueueConnectBroadcastForSlot(int peerSlot) {
     // HOST-only: re-send EntitySpawn (class + CURRENT transform) for every already-spawned NPC
     // to the freshly-connected client `peerSlot`, so a joiner mirrors NPCs that spawned BEFORE it
-    // joined (user 2026-06-04). The client's npc_mirror::OnEntitySpawn materializes each; the
+    // joined. The client's npc_mirror::OnEntitySpawn materializes each; the
     // MirrorManager::Install is idempotent so a re-send to an already-mirroring peer is a no-op.
     auto* s = GetSession();
     if (!s || s->role() != coop::net::Role::Host) return;
@@ -100,22 +99,22 @@ void TickPoseStream() {
     // HOST-only: read each live NPC's transform + CMC velocity each tick + publish ONE EntityPose
     // batch for the net thread to fan out, so the client mirrors MOVE + animate (they otherwise sit
     // at the spawn pose). Always publishes (an EMPTY batch clears it -> stop sending when NPCs vanish).
-    // dev-spawned NPCs bind in POST (verified 2026-06-07) so they stream like any real game NPC.
+    // dev-spawned NPCs bind in POST, so they stream like any real game NPC.
     // Game thread (the net-pump tick asserts GT) -> the scratch statics below are single-threaded.
     // LIFECYCLE runs while HOSTING (alone included); only the batch PUBLISH is peer-dependent
-    // (RULE 1 root fix 2026-07-05, the 0s pyramid failure): the EX-catch drain must enroll
-    // event creatures spawned while the host is alone, and a tracked NPC that self-destroys
-    // while alone must dead-retire then -- the join connect-snapshot replays what remains.
+    // -- the EX-catch drain must enroll event creatures spawned while the host is alone, and a
+    // tracked NPC that self-destroys while alone must dead-retire then; the join
+    // connect-snapshot replays what remains.
     auto* s = GetSession();
     if (!s || s->role() != coop::net::Role::Host) return;
     const bool connected = s->connected();
 
-    // 2026-07-03 wisp lane: enroll EX_CallMath-caught spawns queued since the last tick (the
+    // Wisp lane: enroll EX_CallMath-caught spawns queued since the last tick (the
     // Func-thunk fires PRE-Finish; by this tick FinishSpawningActor ran -> real transform).
     coop::npc_world_enum::DrainPendingExSpawns();
 
     // DIAGNOSTIC ([dev] kerfur_census=1): periodic HOST kerfur census so a hands-on can diff host vs client
-    // counts after the world settles (the 5-vs-6 measurement -- the host had no self-census before 2026-06-30).
+    // counts after the world settles.
     // No-op unless the flag is set; throttled internally. Read-only.
     coop::kerfur_census::Tick();
 
@@ -127,7 +126,7 @@ void TickPoseStream() {
     static std::vector<coop::net::EntityPoseSnapshot> batch;
     batch.clear();
 
-    // 2026-07-03: fair-share rotation for >kMaxNpcBatchEntries tracked NPCs (the 32-wisp swarm
+    // Fair-share rotation for >kMaxNpcBatchEntries tracked NPCs (the 32-wisp swarm
     // overflows the 31-entry MTU cap). Without it Snapshot's stable order starves the SAME tail
     // NPCs every tick (frozen mirrors); rotating the start index spreads the loss evenly
     // (~31/N of ticks each -- the MTA far-sync rotation shape). No wire change.
@@ -143,19 +142,17 @@ void TickPoseStream() {
         void* actor = el->GetActor();
         if (!actor) continue;  // never-bound (POST pending) -- not a death
         if (!R::IsLiveByIndex(actor, el->GetInternalIdx())) {
-            // 2026-07-03: a BOUND actor that is no longer live died through a path the
+            // A BOUND actor that is no longer live died through a path the
             // K2_DestroyActor PRE cannot see (the wisp's EX_VirtualFunction self-destroy at
             // dawn/proximity). Without this the Element leaks and the client mirror ghosts
             // forever. Eid-keyed retire + EntityDestroy broadcast; deferred teardown.
             //
             // EXCEPT kerfur-family: their PE-invisible death edge is OWNED by
-            // kerfur_convert's 5 Hz conversion poll ([[feedback-one-owner-order-axis]]) --
-            // it must see the mirror Element + its dead actor to distinguish a radial-menu
-            // CONVERSION (converge: release old form + silent-enroll the new form) from a
-            // plain death. This per-tick retire raced ahead of the 200 ms poll and erased
-            // the evidence (latent since the 2026-07-03 dead-retire; surfaced by the
-            // 2026-07-05 hosting-gate fix review). The poll's converge releases the
-            // Element either way, so kerfurs do not leak from this skip.
+            // kerfur_convert's 5 Hz conversion poll, which must see the mirror Element and
+            // its dead actor to tell a radial-menu CONVERSION (converge: release the old
+            // form, silent-enroll the new one) from a plain death. A per-tick retire here
+            // would race ahead of the 200 ms poll and erase that evidence. The poll's
+            // converge releases the Element either way, so kerfurs do not leak from the skip.
             if (el->GetTypeName().find("kerfurOmega") == std::string::npos)
                 coop::npc_sync::SyncDestroyedNpcByEid(el->GetId(), actor);
             continue;
