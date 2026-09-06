@@ -1,11 +1,9 @@
 // coop/session/world_load_episode.cpp -- see coop/session/world_load_episode.h.
-//
-// The episode latch + the load-tail quiescence probe (moved from join_membership_sweep 2026-07-12,
-// join-barrier redesign: the probe now gates the ClientWorldReady ANNOUNCE, not just the sweep).
+// The episode latch plus the load-tail quiescence probe that gates the ClientWorldReady announce.
 
 #include "coop/session/world_load_episode.h"
 
-#include "coop/config/config.h"  // ReadEnv (R-4a RED-calibration drill switch)
+#include "coop/config/config.h"  // ReadEnv, for the drill switch
 
 #include "coop/creatures/npc_sync.h"          // IsAllowlistedClass (the NPC load tail)
 #include "coop/props/prop_element_tracker.h"  // HasSeededOnce / InPurgeEpisode (purge-aware progress)
@@ -25,26 +23,23 @@ namespace R = ue_wrap::reflection;
 
 namespace {
 
-// g_inEpisode is atomic (relaxed): Arm() runs on the harness TimelineThread (the client join
-// bringup, harness.cpp DriveMenuModeJoinWorldBoot), the destroy seam reads on the GT, and the
-// rng_roll_census probe TAGS records from ProcessEvent-dispatching worker threads (advisory,
-// staleness fine).
+// g_inEpisode is atomic: Arm() runs on the harness timeline thread, the destroy seam reads on the
+// game thread, and the roll census tags records from ProcessEvent worker threads. Advisory, so
+// staleness is fine.
 std::atomic<bool> g_inEpisode{false};
 
-// The join probe-session OPEN request (audit CRITICAL 2026-07-12): Arm() itself may NOT touch the
-// plain probe-session fields below -- it runs OFF the game thread (TimelineThread), and the fields
-// race the GT-driven TickQuiesceProbe (incl. a std::string = UB). Arm only raises this atomic
-// request; the GT ticker consumes it and opens the session ON the GT. HasQuiesced() treats a
-// pending request as "session open" (false) so the vacuous-true window between the off-GT Arm and
-// the first GT tick cannot leak an early announce (belt on top of the worldUp/seed gates).
+// The probe-session open request. Arm() may NOT touch the plain probe fields below: it runs off the
+// game thread and would race the game-thread ticker, one of those fields being a std::string. Arm
+// raises this atomic only; the ticker consumes it and opens the session on the game thread.
+// HasQuiesced() reads a pending request as "session open", so the window between an off-thread Arm
+// and the first tick cannot leak an early announce.
 std::atomic<bool> g_joinProbeRequested{false};
 
-// ---- Quiescence-probe session state (game-thread only; no mutex) ----
-bool g_probeOpen  = false;     // a session is open (probing)
-bool g_everOpened = false;     // any session opened since Reset -- while false, HasQuiesced() is
-                               // VACUOUSLY true: a flow that never observed a world-load (the
-                               // env/.bat already-in-world dev client, a reconnect without a world
-                               // change) has nothing to wait for and must announce immediately
+// ---- Quiescence-probe session state (game thread only; no mutex) ----
+bool g_probeOpen  = false;     // a session is open, probing
+bool g_everOpened = false;     // any session opened since Reset. While false,
+                               // HasQuiesced() is VACUOUSLY true: a flow that never
+                               // saw a world load has nothing to wait for
 bool g_quiesced   = false;     // the latch of the most recent session
 std::chrono::steady_clock::time_point g_probeArmedAt{};      // absolute-ceiling base
 std::chrono::steady_clock::time_point g_lastProgressAt{};    // no-progress deadline base (reset on purge drain / moving population)
@@ -54,33 +49,32 @@ int  g_lastUnsettledCount = -1;
 int  g_stableScans        = 0;
 std::string g_probeReason;     // logged at arm + latch
 
-// The probe cadence + stability window + two-tier deadline: the SAME constants the divergence
-// sweep trusted for its DESTRUCTIVE adjudication gate since 2026-06-15/25 (docs/piles/10). Moved
-// here verbatim -- the announce may not use a looser gate than the doom sweep did.
+// The probe cadence, stability window and two-tier deadline: the same constants the divergence
+// sweep has trusted for its destructive adjudication gate. The announce may not use a looser gate
+// than that sweep does.
 constexpr int kScanIntervalMs   = 200;    // 5 Hz while a session is open
-constexpr int kQuiesceScans     = 10;     // population stable across 10 scans (~2 s) = the async
-                                          // loadObjects pass has drained (the kerfur NPCs load with
-                                          // multi-hundred-ms gaps AFTER the props -- a short window
-                                          // false-signals mid-load, the 2026-06-15 kerfur-dupe)
-constexpr int kNoProgressMs     = 45000;  // NO-PROGRESS deadline (since last progress, not since arm):
-                                          // fires only after this long with NOTHING happening -- a
-                                          // genuine stall, never a legitimate ~50 s purge drain
-constexpr int kAbsoluteCeilingMs = 120000; // absolute ceiling since arm (stuck-purge backstop); on
-                                          // this latch the announce/sweep proceed in DEGRADED mode
+constexpr int kQuiesceScans     = 10;     // a stable population across this many scans means
+                                          // the async load pass has drained. The NPCs load
+                                          // well after the props, so a shorter window
+                                          // false-signals mid-load
+constexpr int kNoProgressMs     = 45000;  // since the last progress, not since the arm:
+                                          // fires only after this long with nothing
+                                          // happening, never during a draining purge
+constexpr int kAbsoluteCeilingMs = 120000;  // since the arm, the stuck-purge backstop; the announce then goes degraded
 
-// ---- The RECONCILE WINDOW (R-4a end-condition, 2026-08-23) -- see the header block. ----------
-// `up` + `kindIsLoad` are atomics: Arm() raises off-GT (TimelineThread); every other writer and
-// BOTH readers (destroy seam, drop intent) are GT. raisedAt + completeSinceArm are GT-only;
-// Arm's raise materializes its GT half via g_reconRaiseRequested (the g_joinProbeRequested
-// shape -- the ceiling starting one tick late is harmless).
+// ---- The reconcile window; see the header block ----
+// `up` and `kindIsLoad` are atomics because Arm() raises off the game thread; every other writer
+// and both readers are on it. raisedAt and completeSinceArm are game-thread only, so Arm's raise
+// materialises its game-thread half through g_reconRaiseRequested. The ceiling starting one tick
+// late is harmless.
 std::atomic<bool> g_reconUp{false};
 std::atomic<bool> g_reconKindLoad{true};
 std::atomic<bool> g_reconRaiseRequested{false};
-std::chrono::steady_clock::time_point g_reconRaisedAt{};  // GT; rising-edge only (never restamped by Begin)
-bool g_reconCompleteSinceArm = false;                     // GT; the kind classifier
-constexpr int kReconCeilingMs = 180000;  // 4.7x the field's measured 38 s Arm->Complete on the 9-fps box
+std::chrono::steady_clock::time_point g_reconRaisedAt{};  // game thread; rising edge only, never restamped by Begin
+bool g_reconCompleteSinceArm = false;                     // game thread; the kind classifier
+constexpr int kReconCeilingMs = 180000;  // well clear of the slowest measured arm-to-complete
 
-// GT rising-edge raise (shared by the GT raise sites + the Arm-request consume).
+// Game-thread rising-edge raise, shared by the raise sites and the Arm-request consume.
 void ReconRaiseGT_(bool kindLoad, const char* who) {
     g_reconKindLoad.store(kindLoad, std::memory_order_relaxed);
     if (!g_reconUp.exchange(true, std::memory_order_relaxed)) {
@@ -96,21 +90,14 @@ void ReconLowerGT_(const char* why) {
     }
 }
 
-// Load-tail population census: counts two populations whose sum settles exactly when the async
-// loadObjects pass finishes materializing the world.
-//   (a) ALLOWLISTED NPCs (the kerfur load tail) -- live, non-CDO, tracked OR untracked; only
-//       loadObjects spawning a new twin perturbs the count.
-//   (b) keyless, in-universe, non-per-player, non-chipPile props reading Key=None -- the prop load
-//       tail (a straggler that has not minted its key yet).
-//   (b') live chipPiles, counted unconditionally (docs/piles/10 purge-aware gate): a join-time
-//       world-reload purge DROPS the field and the async reload CLIMBS it back, so the gate refuses
-//       to quiesce through EITHER half of the reload -- including the <=4 s window where the purge
-//       has physically started but InPurgeEpisode is not yet flagged.
-// ONE GUObjectArray walk (pure pointer-compare class filters before any key/name read), throttled
-// to 5 Hz, only while a session is open. Moved verbatim from join_membership_sweep 2026-07-12 with
-// ONE change: the old `g_claimedActors` skip is dropped -- the probe now (also) runs PRE-snapshot
-// where no claims exist, and stability is about population CHANGE, not membership: a claimed
-// still-keyless actor contributes a constant term that cannot block the latch.
+// Load-tail population census: two populations whose sum settles exactly when the async load pass
+// finishes materialising the world -- the allowlisted NPCs, and the keyless in-universe props that
+// have not minted a key yet. Live chipPiles count unconditionally, because a join-time world reload
+// drops the field and the async reload climbs it back, so the gate refuses to quiesce through
+// either half of that reload, including the window where the purge has started but is not yet
+// flagged. One GUObjectArray walk, pure pointer-compare class filters before any key or name read,
+// throttled and only while a session is open. Stability is about population CHANGE, not membership:
+// a claimed still-keyless actor contributes a constant term that cannot block the latch.
 int CountLoadTailUnsettled_() {
     const int32_t n = R::NumObjects();
     int unsettled = 0;
@@ -118,19 +105,19 @@ int CountLoadTailUnsettled_() {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
-        // (a) allowlisted-NPC load tail (lineage test first; NameOf/IsLive only run for the handful
-        // that pass). A false return (allowlist not yet resolved) degrades to prop-only quiescence.
+        // (a) The allowlisted-NPC load tail. Lineage test first, so NameOf and IsLive run only for
+        // the handful that pass. An unresolved allowlist degrades to prop-only quiescence.
         if (coop::npc_sync::IsAllowlistedClass(cls)) {
             if (!R::IsLive(obj)) continue;
             if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO
             ++unsettled;
             continue;
         }
-        // (b) keyless-prop load tail.
+        // (b) The keyless-prop load tail.
         if (!ue_wrap::prop::IsClassKeyedInteractable(cls)) continue;
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // CDO (alloc-free)
-        // (b') chipPile field, counted even mid-purge (see the header comment above).
+        // (b') The chipPile field, counted even mid-purge.
         if (ue_wrap::prop::IsChipPile(obj)) { ++unsettled; continue; }
         if (coop::prop_lifecycle::IsPerPlayerPropClass(R::ClassNameOf(obj))) continue;
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
@@ -169,13 +156,13 @@ void Latch_(const char* how) {
 }  // namespace
 
 void Arm() {
-    // OFF-GT SAFE (TimelineThread): touches ONLY the atomics. The probe session opens on the
-    // next GT TickQuiesceProbe via g_joinProbeRequested (audit CRITICAL 2026-07-12 -- the first cut
-    // opened it inline and raced the GT ticker on eight plain fields incl. a std::string).
-    if (g_inEpisode.load(std::memory_order_relaxed)) return;  // idempotent -- one arm per world-load
+    // Off-game-thread safe: touches only the atomics. The probe session opens on the next
+    // game-thread tick through the request flag. Opening it inline here would race the ticker on
+    // eight plain fields.
+    if (g_inEpisode.load(std::memory_order_relaxed)) return;  // idempotent: one arm per world load
     g_inEpisode.store(true, std::memory_order_relaxed);
-    // R-4a: raise the reconcile window kind=load. Atomics here; the GT half (raisedAt stamp +
-    // completeSinceArm=false reset) materializes on the next GT tick via the request below.
+    // Raise the reconcile window, kind load. Atomics here; the game-thread half, the raisedAt stamp
+    // and the classifier reset, materialises on the next tick through the request below.
     g_reconKindLoad.store(true, std::memory_order_relaxed);
     g_reconUp.store(true, std::memory_order_relaxed);
     g_reconRaiseRequested.store(true, std::memory_order_release);
@@ -192,19 +179,17 @@ void ArmQuiesceProbe(const char* reason) {
 
 bool TickQuiesceProbe() {
     UE_ASSERT_GAME_THREAD("world_load_episode::TickQuiesceProbe");
-    // R-4a: materialize a pending off-GT reconcile raise (Arm) -- stamp the rising edge + reset
-    // the kind classifier ON the GT. BEFORE the !probeOpen early-return: this and the ceiling
-    // below must run every tick (TickClientReconcile drives us unconditionally).
+    // Materialise a pending off-thread raise: stamp the rising edge and reset the classifier here
+    // on the game thread. Before the early return below, since this and the ceiling must run every
+    // tick.
     if (g_reconRaiseRequested.exchange(false, std::memory_order_acq_rel)) {
         g_reconCompleteSinceArm = false;
         g_reconRaisedAt = std::chrono::steady_clock::now();
-        g_reconUp.store(true, std::memory_order_relaxed);  // audit MINOR-1: re-assert (a stale
-        // >180 s raisedAt could let the ceiling force-lower between Arm's store and this consume)
+        g_reconUp.store(true, std::memory_order_relaxed);  // re-assert, so a stale raisedAt cannot force-lower the ceiling here
         UE_LOGI("world_load_episode: reconcile window RAISED (kind=load by=Arm completeSinceArm=0)");
     }
-    // R-4a ceiling: rising-edge-anchored (Begin never restamps). Bounds every stuck shape --
-    // lost bracket on the reload path, Begin-without-Complete abort loops. Field headroom:
-    // Arm->Complete measured ~38 s on the 9-fps box vs 180 s.
+    // The ceiling, anchored to the rising edge since Begin never restamps. It bounds every stuck
+    // shape: a lost bracket on the reload path, and Begin-without-Complete abort loops.
     if (g_reconUp.load(std::memory_order_relaxed) &&
         g_reconRaisedAt.time_since_epoch().count() != 0 &&
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -214,24 +199,23 @@ bool TickQuiesceProbe() {
                 "patience)", kReconCeilingMs / 1000);
         ReconLowerGT_("ceiling");
     }
-    // Consume a pending join-session request (raised off-GT by Arm) -- the session opens HERE, on
-    // the GT, so the plain probe fields below are single-thread-owned.
+    // Consume a pending session request: the session opens here, on the game thread, so the plain
+    // probe fields below are single-thread-owned.
     if (g_joinProbeRequested.exchange(false, std::memory_order_acq_rel))
         OpenProbeSession_("join world-load");
-    if (!g_probeOpen) return HasQuiesced();  // steady state / latched / vacuous: bool reads only
+    if (!g_probeOpen) return HasQuiesced();  // steady, latched or vacuous: bool reads only
     const auto now = std::chrono::steady_clock::now();
     const auto msSince = [now](std::chrono::steady_clock::time_point t) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(now - t).count();
     };
-    // Throttle to ~5 Hz (skip on the very first scan after arming, when g_lastScanAt is epoch 0).
+    // Throttle the scan; the first scan after arming is not skipped, its timestamp being the epoch.
     if (g_lastScanAt.time_since_epoch().count() != 0 &&
         msSince(g_lastScanAt) < kScanIntervalMs) return false;
     g_lastScanAt = now;
 
-    // Two-tier deadline (docs/piles/10 purge-aware gate): the NO-PROGRESS timer OR the ABSOLUTE
-    // ceiling. The ceiling fires even through a stuck purge so the announce/sweep can never defer
-    // forever; the no-progress timer never pre-empts a legitimately-draining purge (which keeps
-    // resetting g_lastProgressAt below).
+    // The two-tier deadline: the no-progress timer or the absolute ceiling. The ceiling fires even
+    // through a stuck purge, so the announce can never defer forever; the no-progress timer never
+    // pre-empts a legitimately draining purge, which keeps resetting the progress stamp below.
     if (msSince(g_probeArmedAt) >= kAbsoluteCeilingMs) {
         UE_LOGW("world_load_episode: probe ABSOLUTE ceiling (%d s) -- latching DEGRADED (stuck "
                 "purge / pathological load; the settled-world guarantee does NOT hold for this join)",
@@ -246,9 +230,9 @@ bool TickQuiesceProbe() {
         Latch_("no-progress deadline -- DEGRADED");
         return true;
     }
-    // REGISTRY MID-PURGE (or never seeded) -> the loading world is INCOMPLETE; a draining purge IS
-    // progress (reset the no-progress base). The population-stability run restarts once the world
-    // re-seeds (!InPurgeEpisode is the clean "registry re-seeded" edge).
+    // A registry mid-purge, or one never seeded, means the loading world is incomplete. A draining
+    // purge IS progress, so reset the no-progress base; the stability run restarts once the world
+    // re-seeds.
     if (!coop::prop_element_tracker::HasSeededOnce() ||
         coop::prop_element_tracker::InPurgeEpisode()) {
         g_lastProgressAt = now;
@@ -285,11 +269,11 @@ void Reset() {
     g_inEpisode.store(false, std::memory_order_relaxed);
     g_joinProbeRequested.store(false, std::memory_order_relaxed);
     g_probeOpen = false;
-    g_everOpened = false;  // back to the vacuous state -- a reconnect without a world change announces freely
+    g_everOpened = false;  // back to vacuous: a reconnect with no world change announces freely
     g_quiesced = false;
     g_lastUnsettledCount = -1;
     g_stableScans = 0;
-    // R-4a: session teardown lowers the reconcile window + clears its classifier.
+    // Session teardown lowers the reconcile window and clears its classifier.
     g_reconRaiseRequested.store(false, std::memory_order_relaxed);
     ReconLowerGT_("Reset");
     g_reconCompleteSinceArm = false;
@@ -298,50 +282,50 @@ void Reset() {
 
 bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
 
-// ---- R-4a reconcile window (see the header block + the design doc) -----------------------
+// ---- The reconcile window; see the header block ----
 
 void RaiseReconcileForReload() {
     UE_ASSERT_GAME_THREAD("world_load_episode::RaiseReconcileForReload");
-    g_reconCompleteSinceArm = false;  // a world reload restarts the classifier (a reload IS a load)
+    g_reconCompleteSinceArm = false;  // a reload restarts the classifier; a reload IS a load
     ReconRaiseGT_(/*kindLoad*/ true, "reload-arm");
 }
 
 void NoteReconcileBegin() {
     UE_ASSERT_GAME_THREAD("world_load_episode::NoteReconcileBegin");
     if (g_reconUp.load(std::memory_order_relaxed)) {
-        // Refresh: kind KEPT, ceiling NOT restamped (rising edge only). A normal join's bracket
-        // Begins with the window already up from Arm() -> stays kind=load through the bracket.
+        // Refresh: the kind is kept and the ceiling is not restamped, the rising edge owning it. A
+        // normal join's bracket begins with the window already up from Arm, so it stays kind load
+        // throughout.
         UE_LOGI("world_load_episode: reconcile Begin (window up, kind=%s kept, completeSinceArm=%d)",
                 g_reconKindLoad.load(std::memory_order_relaxed) ? "load" : "midSessionBracket",
                 g_reconCompleteSinceArm ? 1 : 0);
         return;
     }
-    // Down -> raise. kind==load iff NO SnapshotComplete since Arm -- on the join path exactly
-    // "the curtain never dropped" (a late bracket after the flake backstop, or a join-bracket
-    // abort re-bracket, both classify load: the player could still only act blindly).
+    // Down, so raise. The kind is load exactly when no snapshot completed since the arm -- on the
+    // join path, "the curtain never dropped". A late bracket after the flake backstop and an
+    // aborted re-bracket both classify as load: the player could still only act blindly.
     ReconRaiseGT_(/*kindLoad*/ !g_reconCompleteSinceArm, "Begin");
 }
 
 void NoteReconcileComplete() {
     UE_ASSERT_GAME_THREAD("world_load_episode::NoteReconcileComplete");
-    // UNCONDITIONAL: a Complete arriving after a ceiling force-lower must still flip the
-    // classifier, or the NEXT mid-session bracket would misclassify as load.
+    // Unconditional: a Complete arriving after a ceiling force-lower must still flip the
+    // classifier, or the next mid-session bracket would misclassify as a load.
     g_reconCompleteSinceArm = true;
     ReconLowerGT_("SnapshotComplete");
 }
 
 void NoteBracketFlake() {
     UE_ASSERT_GAME_THREAD("world_load_episode::NoteBracketFlake");
-    // The lost-bracket flake backstop (audit IMPORTANT-1: this lower was in the spec but not
-    // wired). Lowers WITHOUT touching completeSinceArm -- no Complete happened, so a LATE real
-    // bracket's Begin must still classify kind=load (the curtain never dropped).
+    // The lost-bracket flake backstop. It lowers WITHOUT touching the classifier: no Complete
+    // happened, so a late real bracket's Begin must still classify as a load.
     ReconLowerGT_("bracket-flake backstop");
 }
 
 bool InReconcileWindow() {
-    // [drill] RED calibration: disabling the window reproduces the OLD close edge (the field
-    // bug) so the EPISODE_DRILL's 5 destroys BROADCAST -- the instrument must be shown able to
-    // see the phenomenon before a green run counts. Never set outside a drill.
+    // Drill calibration: disabling the window reproduces the old close edge, so the drill's
+    // destroys broadcast. The instrument must be shown able to see the phenomenon before a green
+    // run counts. Never set outside a drill.
     static const bool sDisabled =
         !coop::config::ReadEnv("VOTVCOOP_RECON_DISABLE").empty();
     if (sDisabled) return false;
