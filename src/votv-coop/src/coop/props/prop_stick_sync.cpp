@@ -70,16 +70,16 @@ constexpr int32_t kStickCommitEntry = 45;
 // worker) only RECORDS the commit; Tick() (game thread) verifies + broadcasts
 // on the NEXT net-pump pass. Same record-then-act shape as kerfur_convert.
 //
-// NO settle delay: frozen/static are already final when the POST observer
-// fires (the commit body ran inside the observed dispatch), the commit pose is
-// exactly where the trace succeeded (the receiver only pre-positions its own
-// re-trace from it), and the receiver's forceStick replay re-derives the
-// settled pose and plays its own glide/VFX. A delay would re-open the
-// release-beats-stick window: the sender's hold breaks 0-100 ms after the
-// commit, and its PropRelease must NOT reach peers before the PropStickState.
-// Both are ReliableKind values (protocol.h), so one ordered lane keeps them
-// FIFO. Draining next pass makes the order STRUCTURAL: TickGameplay (this
-// drain) runs before local_streams' release edge within one net-pump pass.
+// NO settle delay: frozen/static are already final when the POST observer fires
+// (the commit body ran inside the observed dispatch), the commit pose is where
+// the trace succeeded (the receiver only pre-positions its own re-trace), and
+// the receiver's forceStick replay re-derives the settled pose and plays its
+// own glide/VFX. A delay re-opens the release-beats-stick window: the hold
+// breaks 0-100 ms after the commit and that PropRelease must not arrive before
+// the PropStickState. GNS orders reliable delivery WITHIN a lane, so the pair
+// is FIFO only because LaneForKind pins both to Lane::Normal (see the note on
+// that pin in coop/net/session_lanes.h). Draining next pass makes the order
+// structural as well: TickGameplay runs before local_streams' release edge.
 struct PendingStick {
     void*   prop = nullptr;
     int32_t internalIdx = -1;

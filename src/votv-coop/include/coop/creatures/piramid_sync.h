@@ -20,7 +20,7 @@ struct PyramidGatherPayload;
 
 namespace coop::piramid_sync {
 
-// CLIENT brain suppression, armed here: PRE-cancel the mirror's FOUR STATE-WRITING timer
+// CLIENT brain suppression, armed lazily by Tick below: PRE-cancel the FOUR STATE-WRITING timer
 // handlers -- seeWisps / checkIfReached / randLoc (every walkTo caller), plus changeLook, the
 // 1 Hz RANDOM head-wander re-roll, which is a STREAMED axis because left free the heads and
 // searchlight diverge visibly between peers. ReceiveTick stays ALIVE, deliberately: the
@@ -33,9 +33,10 @@ namespace coop::piramid_sync {
 // element exists (host: interceptor-allocated; client: wire-materialized).
 void Install(coop::net::Session* session);
 
-// HOST gather detect: a POST observer on checkIfReached (timer-fired, so ProcessEvent-VISIBLE)
-// edge-detects `gathering` false->true and relays PyramidGather{pyramidEid, wispEid} -- the
-// WorldActor eid and the Npc eid, each lane's own identity.
+// Tick also arms and maintains the HOST gather detect. The work is the observer's: a POST
+// observer on checkIfReached (timer-fired, so ProcessEvent-VISIBLE) edge-detects `gathering`
+// false->true and relays PyramidGather{pyramidEid, wispEid} -- the WorldActor eid and the Npc
+// eid, each lane's own identity. Tick's own host job is the 1 Hz stale-edge sweep.
 //
 // Both roles, every gameplay tick (cheap internal gates):
 //  pre-arm  -- 250 ms element-presence probe, then one-shot resolve+register (latched LOUD).
@@ -48,8 +49,9 @@ void Tick();
 // HOST, game thread, at a joiner's world-ready edge (subsystems::ConnectReplayForSlot, AFTER
 // world_actor_sync/npc_sync queued their snapshots so the mirrors will exist): if a gather is
 // in flight RIGHT NOW (edge map holds gathering=true and the actor still points at a live
-// wispTarget), re-send PyramidGather ToSlot -- the lane's late-join answer (COOP_EVENT_JOIN
-// 3.4; without it a join DURING the ~10 s gather missed the whole choreography, because the
+// wispTarget), re-send PyramidGather ToSlot -- the lane's late-join answer
+// (docs/events-and-weather.md); without it a join DURING the ~10 s gather misses the whole
+// choreography, because the
 // commit relay is edge-triggered and fired before this peer connected).
 void QueueConnectBroadcastForSlot(int slot);
 
@@ -62,7 +64,8 @@ void OnDisconnect();
 // thread (event_dispatch_entity posts it).
 //
 // The replay stages the native inputs the host held at ITS commit (wispTarget + isWalking,
-// staged only once the mirrors interp within the native 10000-unit arrive radius) and
+// staged once the mirrors interp inside a 10500-unit pre-gate, deliberately WIDER than the
+// native 10000-unit arrive radius, the re-dispatched native check being the real arbiter) and
 // re-dispatches checkIfReached through a TLS allow slot, so the game's OWN bytecode runs the
 // whole choreography -- montage, proxy delegate binds, notifies, beams, timelines, wisp
 // freeze. Nothing is reimplemented. The 'del' notify's local wisp destroy CONVERGES with the

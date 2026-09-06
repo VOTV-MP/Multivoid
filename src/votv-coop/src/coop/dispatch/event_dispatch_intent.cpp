@@ -3,10 +3,13 @@
 // is authoritative for (OrderRequest, DoorOpenRequest, KerfurConvertRequest,
 // KerfurCommand, GrabIntent, ThrowIntent, PileResyncRequest, PropDropIntent).
 //
-// The intent family is a distinct concept from keyed device-STATE mirrors: every case
-// here validates role()==Host + a client sender slot at the trust boundary,
-// then hands the request to the authoritative module. Family contract per
-// coop/event_dispatch.h: returns true iff msg.kind is in this family.
+// The intent family is a distinct concept from keyed device-STATE mirrors. MOST cases are
+// CLIENT->HOST and gate on role()==Host plus a client sender slot (1..kMaxPeers-1) at the
+// trust boundary before handing the request to the authoritative module -- but not all of
+// them, so read the case: CoinGunResult and OrderRefused are HOST->CLIENT answers and drop
+// on the host instead, CoinCollect checks only the sender slot, and RoachConsumed defers its
+// gate to roach_sync::OnConsumedIntent. Family contract per coop/event_dispatch.h: returns
+// true iff msg.kind is in this family.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 

@@ -174,7 +174,7 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
         UE_LOGE("boot: STANDING DOWN -- %d SDK health check(s) failed. The mod targets "
                 "VOTV %s; this game build does not match it, so ProcessEvent will NOT "
                 "be hooked and no session can start. Re-derive sdk_profile.h "
-                "(docs/VERSION_MIGRATION.md).", healthFails, coop::version::kGameTarget);
+                "(docs/versioning.md).", healthFails, coop::version::kGameTarget);
         ue_wrap::log::Flush();
         bootstrap::ShowRefuseDialog(
             L"Multivoid -- unsupported game build",
