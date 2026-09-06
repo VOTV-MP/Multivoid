@@ -190,9 +190,6 @@ FRotator GetCameraRotation();
 // viewport, input or camera. Game thread.
 bool SpawnDefaultController(void* pawn);
 
-// APawn::DetachFromControllerPendingDestroy: unpossess; the pawn keeps existing. Game thread.
-bool DetachFromController(void* pawn);
-
 // AActor::K2_DestroyActor. Game thread.
 bool DestroyActor(void* actor);
 
@@ -337,15 +334,11 @@ bool SetWidgetVisibility(void* widget, uint8_t slateVis);
 bool SetWidgetRenderOpacity(void* widget, float opacity);
 
 // World Z of the lowest bone of the evaluated pose. A diagnostic: the kerfur skeleton mixes
-// humanoid foot bones with a 'wheels_R_end', so this is not where a human skin's feet are
-// (GetBoneWorldZByName is).
+// humanoid foot bones with a 'wheels_R_end', so this is not where a human skin's feet are.
 bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ);
 
 // Diagnostic: log every bone's name and world location. Game thread.
 void DumpAllBonesWorldZ(void* skelMeshComp);
-
-// World Z of one bone by name; false if not found. Game thread.
-bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ);
 
 // World position of one bone: one GetSocketLocation dispatch per call (the FName cached per name),
 // anchoring to the component transform when the bone is missing. False only on resolution failure.

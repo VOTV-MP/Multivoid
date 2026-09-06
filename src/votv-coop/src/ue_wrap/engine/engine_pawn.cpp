@@ -5,7 +5,7 @@
 // pawn/controller/camera-related functions in `namespace ue_wrap::engine`.
 //
 // Covers:
-//   - APawn: GetController, DetachFromController, SpawnDefaultController
+//   - APawn: GetController, SpawnDefaultController
 //   - AActor: DestroyActor (sharing the same resolver cache as pawn)
 //   - AController: GetControlRotation, SetControlRotation (direct field write)
 //   - APlayerController: SetViewTargetWithBlend
@@ -33,7 +33,6 @@ namespace R = reflection;
 void* g_pawnClass = nullptr;
 void* g_actorClass = nullptr;  // shared by destroy + checks; engine_actor caches its own
 void* g_getControllerFn = nullptr;
-void* g_detachFn = nullptr;
 void* g_destroyActorFn = nullptr;
 void* g_spawnDefControllerFn = nullptr;
 
@@ -41,12 +40,11 @@ bool ResolvePawnFns() {
     if (!g_pawnClass) g_pawnClass = R::FindClass(P::name::PawnClassName);
     if (g_pawnClass) {
         if (!g_getControllerFn) g_getControllerFn = R::FindFunction(g_pawnClass, P::name::GetControllerFn);
-        if (!g_detachFn) g_detachFn = R::FindFunction(g_pawnClass, P::name::DetachFromControllerFn);
         if (!g_spawnDefControllerFn) g_spawnDefControllerFn = R::FindFunction(g_pawnClass, P::name::SpawnDefaultControllerFn);
     }
     if (!g_actorClass) g_actorClass = R::FindClass(P::name::ActorClassName);
     if (g_actorClass && !g_destroyActorFn) g_destroyActorFn = R::FindFunction(g_actorClass, P::name::DestroyActorFn);
-    return g_getControllerFn && g_detachFn && g_destroyActorFn;
+    return g_getControllerFn && g_destroyActorFn;
 }
 
 // Controller + camera caches.
@@ -158,12 +156,6 @@ FRotator GetCameraRotation() {
     if (!Call(mgr, f)) return rot;
     f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
     return rot;
-}
-
-bool DetachFromController(void* pawn) {
-    if (!pawn || !ResolvePawnFns()) return false;
-    ParamFrame f(g_detachFn);  // DetachFromControllerPendingDestroy: no params
-    return Call(pawn, f);
 }
 
 bool DestroyActor(void* actor) {

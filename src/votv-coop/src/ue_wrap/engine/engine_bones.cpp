@@ -153,31 +153,6 @@ void DumpAllBonesWorldZ(void* skelMeshComp) {
     UE_LOGI("engine: DumpAllBonesWorldZ comp=%p (%d bones):\n%s", skelMeshComp, n, acc.c_str());
 }
 
-bool GetBoneWorldZByName(void* skelMeshComp, const wchar_t* boneName, float& outZ) {
-    if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
-    // Find the bone INDEX whose FName matches the requested name. We can't pass an
-    // FName directly without looking up its (ComparisonIndex, Number) -- enumerate
-    // bones once, match by string, then call GetSocketLocation with the matched FName.
-    int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
-    if (n <= 0) return false;
-    for (int32_t i = 0; i < n; ++i) {
-        uint8_t name[8] = {};
-        { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
-          if (!Call(skelMeshComp, nf)) continue;
-          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
-        const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
-        if (s == boneName) {
-            ParamFrame lf(g_socketLocFn);
-            lf.SetRaw(L"InSocketName", name, sizeof(name));
-            if (!Call(skelMeshComp, lf)) return false;
-            outZ = lf.Get<FVector>(L"ReturnValue").Z;
-            return true;
-        }
-    }
-    return false;
-}
-
 int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
     out.clear();
     if (!skelMeshComp || !ResolveBoneFns()) return 0;
@@ -207,8 +182,8 @@ bool GetBoneWorldLocationByName(void* skelMeshComp, const wchar_t* boneName, FVe
     // The HOT-PATH-SAFE by-name variant: ONE GetSocketLocation dispatch per call. The
     // bone FName comes from the global name table (Conv_StringToName, cached per
     // distinct name below -- 'head' etc. are single GNames entries shared by every
-    // mesh), NOT from a skeleton enumeration (GetBoneWorldZByName above walks the
-    // whole skeleton per call and is only for one-shot diagnostics). NOTE:
+    // mesh), NOT from a skeleton enumeration, which would walk the whole skeleton
+    // per call. NOTE:
     // GetSocketLocation silently falls back to the COMPONENT transform when the mesh
     // has no such bone -- for HUD/audio anchors that "still glued to the mesh"
     // fallback is desirable. Returns false only when resolution fails outright.
@@ -234,7 +209,7 @@ bool GetBoneWorldLocationByName(void* skelMeshComp, const wchar_t* boneName, FVe
 bool GetBoneWorldRotationByName(void* skelMeshComp, const wchar_t* boneName, FRotator& outRot) {
     if (!skelMeshComp || !boneName || !ResolveBoneFns()) return false;
     // SceneComponent::GetSocketRotation (a bone name is a valid socket name) -- resolved
-    // lazily here so GetBoneWorldZByName (location-only) stays unaffected.
+    // lazily here so the location-only readers stay unaffected.
     static void* g_socketRotFn = nullptr;
     if (!g_socketRotFn) {
         if (void* sc = R::FindClass(P::name::SceneComponentClass))
