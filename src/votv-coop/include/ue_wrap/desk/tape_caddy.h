@@ -4,16 +4,13 @@
 // engine-wrapper layer -- NO network logic; coop/tape_caddy_sync (the L7
 // slot/corrector lanes) drives the unit through here.
 //
-// RE (votv-tape-caddy-daily-task-RE-2026-07-16.md SS1-2): reelBig @0x0288 /
-// reelSmall @0x028C DOUBLE as slot state (-1.0 = slot empty, >= 0 = reel
-// present at that progress); Active @0x0290 (already wire-synced by the
-// ApplianceState family -- ue_wrap/appliance.cpp); upd() applies mesh
-// visibility + SetActorTickEnabled(Active). The reel prop's Progress lives on
-// the Aprop_reel_C BASE @0x0364 (declared there; FindPropertyOffset is
-// exact-owner -- resolve on the base). NOTE: the wallunit's `Active` toggle is
-// NOT surfaced here (RULE 2 -- one owner: the appliance adapter).
-//
-// Design of record: votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
+// reelBig / reelSmall DOUBLE as slot state (-1.0 = slot empty, >= 0 = reel
+// present at that progress); Active is already wire-synced by the ApplianceState
+// family (ue_wrap/appliance.cpp); upd() applies mesh visibility +
+// SetActorTickEnabled(Active). The reel prop's Progress lives on the Aprop_reel_C
+// BASE (declared there; FindPropertyOffset is exact-owner -- resolve on the
+// base). NOTE: the wallunit's `Active` toggle is NOT surfaced here (RULE 2 --
+// one owner: the appliance adapter).
 
 #pragma once
 
@@ -54,7 +51,7 @@ bool CallUpd();
 // True if `cls` is Aprop_reel_C or a subclass (the eject-birth whitelist).
 bool IsReelClass(void* cls);
 
-// Read/write Aprop_reel_C::Progress @0x0364 (reflected offset, base-declared).
+// Read/write Aprop_reel_C::Progress (reflected offset, base-declared).
 bool ReadProgress(void* reelActor, float& out);
 bool WriteProgress(void* reelActor, float value);
 

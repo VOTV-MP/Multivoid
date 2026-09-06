@@ -11,10 +11,8 @@
 // (not a physics body), so actor-level GetActorLocation/SetActorLocation is the transform.
 //
 // Identity = SINGLETON (resolve via FindObjectByClass(drone_C); both peers load the same placed
-// drone). It has no top-level Key (its key lives inside Data@0x0410) -- but a singleton needs no
-// key. State we read: Active@0x0370 (dormant<->flying).
-//
-// RE: research/findings/vehicles/votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+// drone). It has no top-level Key (its key lives inside Data) -- but a singleton needs no key.
+// State we read: Active (dormant<->flying).
 
 #pragma once
 
@@ -29,7 +27,7 @@ bool EnsureResolved();
 // the underlying FindObjectByClass scan is throttled (the per-frame-scan ban). Game thread.
 void* Find();
 
-// Active@0x0370 -- TRUE while the drone is flying a delivery (false = dormant/parked).
+// Active -- TRUE while the drone is flying a delivery (false = dormant/parked).
 bool IsActive(void* drone);
 
 // Root actor world transform (loc + full rotation -- the drone leans/pitches in flight).
@@ -46,19 +44,18 @@ void SuppressTick(void* drone);
 // Restore the drone's ReceiveTick (on disconnect, so single-player flight works again). Game thread.
 void RestoreTick(void* drone);
 
-// ---- FX mirroring (Phase 2, 2026-06-09; dust reworked v69 2026-06-12) -------------------------
+// ---- FX mirroring ----------------------------------------------------------------------------
 // The CLIENT suppresses the drone's ReceiveTick, which also kills the tick-driven FX: the
-// rotor-wash DUST (eff_droneDust @0x0278) and the delivery "items ready" alarm cue (audio_alarm
-// @0x0230 + light_alarm @0x0240). Bytecode RE (research/pak_re/drone_dust_notes.md): the drone's
-// tick sphere-traces 2000uu down each tick and (1) SetActive(hit, false) on an IsActive!=hit edge,
+// rotor-wash DUST (eff_droneDust) and the delivery "items ready" alarm cue (audio_alarm +
+// light_alarm). The drone's tick sphere-traces 2000uu down each tick and
+// (1) SetActive(hit, false) on an IsActive!=hit edge,
 // (2) K2_SetWorldLocation's eff_droneDust to the ground hit -- the component is bAbsoluteLocation
 // with NO relative offset, so unmoved it sits at WORLD ORIGIN (invisible: frustum-culled fixed
 // bounds), and (3) SetFloatParameter('dust', 1 - dist/2000) (a [0,1] RateScale). The PS is
 // EmitterLoops=1/20s -- it self-completes and needs the per-tick IsActive!=want re-arm. So the
 // HOST streams the FX bits + the dust component's world location in DroneState (20 Hz while
 // Active) and the CLIENT replays the BP's exact three calls per packet (ApplyDustMirror). The
-// alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop). Pose RE:
-// votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+// alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop).
 
 // stateBits packing (DroneStatePayload.stateBits): bit0 = dust active, bit1 = canTakeOff (arrived /
 // the interaction gate), bit2 = hasSack (cargo aboard / the action-option prerequisite).
@@ -86,12 +83,12 @@ void PlayArrivalCue(void* drone);
 // CLIENT mirror: show/hide the arrival signal light (light_alarm). On while parked-with-cargo. GT.
 void SetSignalLight(void* drone, bool on);
 
-// CLIENT mirror: write the interaction-gate fields (canTakeOff@0x0500, hasSack@0x0501) onto the
+// CLIENT mirror: write the interaction-gate fields (canTakeOff, hasSack) onto the
 // mirror drone so a PARKED drone is interactable (else the gate prints "drone is in motion" + offers
 // no options -- the suppressed tick never sets them). Game thread.
 void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 
-// CLIENT mirror: point the mirror drone's container@0x04F8 at the already-prop-mirrored cargo
+// CLIENT mirror: point the mirror drone's container field at the already-prop-mirrored cargo
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);
 

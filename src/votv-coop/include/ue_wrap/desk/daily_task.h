@@ -1,23 +1,17 @@
 // ue_wrap/daily_task.h -- standalone engine access for saveSlot.taskNew (the daily
-// tape/signal delivery task, Fstruct_taskNew @0x0CA8 size 0x48). Principle-7 engine-
-// wrapper layer -- NO network logic; coop/daily_task_sync (the L7 host mirror) drives
-// the struct through here.
+// tape/signal delivery task, Fstruct_taskNew). Principle-7 engine-wrapper layer --
+// NO network logic; coop/daily_task_sync (the L7 host mirror) drives the struct
+// through here.
 //
-// Layout (CXXHeaderDump/struct_taskNew.hpp, byte-validated in the L7 RE):
-//   active            bool           @0x00
-//   sigRequired       TArray<int32>  @0x08  (indexed by process LEVEL; fixed MakeArray)
-//   sigCompleted      TArray<int32>  @0x18
-//   requiredDishes    TArray<int32>  @0x28  (dish INDICES; Shuffle(gamemode.dishs) subset)
-//   rewardSig         int32          @0x38
-//   rewardSat         int32          @0x3C
-//   reel_big          float          @0x40  (best-SENT -- written by sell/rollover only)
-//   reel_small        float          @0x44
-// The taskNew offset itself is reflected (FindPropertyOffset on saveSlot_C; fallback
-// 0x0CA8); the INNER offsets are the measured struct layout (GUID-suffixed member names
-// defeat exact-name reflection; the struct is byte-stable within the targeted game
-// version, which the mod's version tag mirrors by policy).
+// The struct carries: active; sigRequired, indexed by process LEVEL (a fixed MakeArray);
+// sigCompleted; requiredDishes, holding dish INDICES (a Shuffle(gamemode.dishs) subset);
+// rewardSig; rewardSat; and the reel_big / reel_small best-SENT pair, which only sell and
+// rollover write.
 //
-// Design of record: votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md (D3).
+// The taskNew offset itself is reflected (FindPropertyOffset on saveSlot_C, with a numeric
+// fallback); the INNER field offsets are the measured struct layout and live as named
+// constants in daily_task.cpp, because GUID-suffixed member names defeat exact-name
+// reflection and the struct is byte-stable within the targeted game version.
 
 #pragma once
 

@@ -1,29 +1,18 @@
 // ue_wrap/atv.h -- standalone engine access for the VOTV ATV/quadbike (AATV_C).
-// Principle-7 engine-wrapper layer (NO network/coop state). coop::atv_sync drives the
-// kinematic pose-stream sync through here.
+// Principle-7 engine-wrapper layer (NO network/coop state); coop::atv_sync drives the sync.
 //
 // AATV_C : APawn is a CUSTOM physics rig (NOT a UWheeledVehicleMovementComponent vehicle):
-// the root Mesh@0x0570 simulates PhysX, the four wheels are SEPARATE simulating bodies held by
-// UPhysicsConstraintComponents (sus_*/ax_*). Identity = the save-placed Key@0x0618 (cross-peer
-// stable).
+// the root Mesh simulates PhysX, the four wheels are SEPARATE simulating bodies held by
+// UPhysicsConstraintComponents (sus_*/ax_*). Identity = the save-placed Key (cross-peer
+// stable). Mesh IS the actor ROOT component, so the actor transform == the physics body
+// transform: we read/drive at the ACTOR level, reusing ue_wrap::engine.
 //
-// MIRROR MODEL (arc 1, 2026-08-29 -- REPLACES the freeze/teleport model this file used to
-// describe). A non-authoring peer runs the rig NATIVELY -- physics ON, tick ON -- and is CORRECTED
-// toward the authority. The sync layer changes NOTHING about the actor itself; what a mirror may
-// not do is author COLLISION damage, and that is cancelled at the seven UFunctions below rather
-// than by parking anything. That inversion is not a preference: the rig's
-// entire visible output IS suspension travel, and a kinematic root teleported 20x/s drags four
-// constrained bodies behind it. Measured native travel is 2-4 cm (docs/vehicles/ATV.md 13); the
-// shipped freeze model put the other peer's copy at 29.58 cm and 1.1 m away. So: no
-// PrepareMirror/ReleaseMirror, no SetActorSimulatePhysics from the sync layer at all.
-// MTA precedent: CClientVehicle::UpdateTargetPosition + CNetAPI::ReadVehiclePuresync.
-//
-// Mesh@0x0570 IS the actor ROOT component, so the actor transform == the physics body transform
-// -- we read/drive at the ACTOR level (GetActorLocation/Rotation/Velocity, SetActorLocation/
-// Rotation), reusing ue_wrap::engine; no component-transform plumbing needed.
-//
-// RE: research/findings/vehicles/votv-ATV-quadbike-RE-and-coop-sync-design-2026-06-08.md +
-//     votv-ATV-Phase1-pose-stream-blueprint-2026-06-08.md.
+// A non-authoring peer runs the rig NATIVELY -- physics ON, tick ON -- and is CORRECTED toward
+// the authority: the sync layer changes NOTHING about the actor itself, because the rig's entire
+// visible output IS suspension travel and a kinematic root teleported 20x/s drags four
+// constrained bodies behind it. What a mirror may not do is author COLLISION damage, cancelled
+// at the seven UFunctions below. The model: docs/vehicles.md. MTA: CClientVehicle::Update-
+// TargetPosition + CNetAPI::ReadVehiclePuresync.
 
 #pragma once
 
@@ -39,18 +28,18 @@ bool EnsureResolved();
 // True iff `obj`'s class is ATV_C or a subclass. False if not yet resolved.
 bool IsAtv(void* obj);
 
-// The ATV's save-persistent Key@0x0618 as a wide string ("" on failure, L"None" if unkeyed).
+// The ATV's save-persistent Key as a wide string ("" on failure, L"None" if unkeyed).
 std::wstring GetKeyString(void* atv);
 
 // Root body world transform (loc + FULL rotation -- the ATV tips/flips). The pose-stream read.
 // False on null/unresolved.
 bool GetRootTransform(void* atv, FVector& loc, FRotator& rot);
 
-// The current driver AmainPlayer_C* (Player@0x05B0), or nullptr if unoccupied. The COOP layer
+// The current driver AmainPlayer_C* (the Player field), or nullptr if unoccupied. The COOP layer
 // (atv_sync) resolves this raw pointer to a peer slot -- ue_wrap owns no coop state (principle 7).
 void* GetOccupantPlayer(void* atv);
 
-// isDriven@0x05F7 -- TRUE while a player is seated (the master "occupied" flag).
+// isDriven -- TRUE while a player is seated (the master "occupied" flag).
 bool IsDriven(void* atv);
 
 // Phase-2 display state (cheap field reads; exposed now for the state payload). 0/false on failure.
@@ -77,14 +66,13 @@ bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot);
 // own copy of a vehicle the authority still has. Game thread.
 int ResolveHitDelegates(void** out, int max);
 
-// v77 runtime-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
+// Runtime-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
 // via GameplayStatics BeginDeferred + FinishSpawning, leaving physics ON -- the result is a NATIVE
-// idle ATV the local player can grab/drive (NOT a frozen mirror). coop::atv_sync uses this when the
-// host announces a RUNTIME-SPAWNED ATV (AtvSpawn) that this client has no save-twin of. (Premise
-// corrected 2026-08-29: the old text said "purchased ... the order economy delivers only on the
-// host"; nothing sells an ATV. The real source is list_props row 'atv' -> spawnAsObject = ATV_C,
-// reached from ui_spawnmenu -- docs/vehicles/ATV.md 11.4.) `className` is validated to descend from ATV_C (trust boundary -- a
-// peer could send any string). Returns the spawned actor, or nullptr on resolve/spawn failure.
+// idle ATV the local player can grab/drive (NOT a frozen mirror). coop::atv_sync uses this when
+// the host announces a RUNTIME-SPAWNED ATV (AtvSpawn) that this client has no save-twin of.
+// Nothing sells an ATV: the source is the list_props row 'atv' -> spawnAsObject = ATV_C, reached
+// from ui_spawnmenu. `className` is validated to descend from ATV_C (trust boundary -- a peer
+// could send any string). Returns the spawned actor, or nullptr on resolve/spawn failure.
 // Game thread only.
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot);
 

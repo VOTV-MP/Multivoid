@@ -9,17 +9,9 @@
 // lights/garage), driven by the generic Channel's state poll (the activation verbs are
 // BP-internal and bypass our ProcessEvent detour, so we never observe the switch -- we poll
 // the resulting bool, exactly as doors/lights/garage do). Identity = the inherited
-// Aactor_save_C::Key @0x0230 (save-persistent, cross-peer stable).
-//
-// Per-class state field + apply verb (SDK CXXHeaderDump, Alpha 0.9.0-n):
-//   faucet_C         turnon       @0x0278  upd()
-//   sink_C           isOn         @0x0278  updIsOn() then upd()  (BP fires both; mirror both)
-//   prop_shower_C    running_cold @0x0298  upd()
-//   kitchen_C        Active       @0x02E1  upd()       (the oven on/off)
-//   serverBox_C      Active       @0x03D5  SetActive(bool bNewActive)
-//   wallunit_tapes_C Active       @0x0290  upd()
-//
-// RE: research/findings/props-lifecycle/votv-all-interactables-sweep-catalog-2026-06-08.md.
+// Aactor_save_C::Key (save-persistent, cross-peer stable). The per-class bool name, its
+// fallback offset and the apply verb live in ONE table, appliance.cpp's g_descs: sink fires
+// updIsOn() then upd() because its BP fires both, serverBox goes through SetActive(bool).
 
 #pragma once
 
