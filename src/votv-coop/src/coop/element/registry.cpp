@@ -1,42 +1,30 @@
-// coop/element/registry.cpp -- the unified ElementId allocator + O(1) resolver.
-//
-// See coop/element/registry.h for the public interface.
-//
-// Allocation: pop the top of the per-range free stack (LIFO). On construction
-// both stacks are pre-populated with every id in their range (descending,
-// so the FIRST pop returns the LOWEST id -- aesthetically tidy for log
-// inspection during early bring-up). Host range starts at id 1 (id 0 is
-// reserved as the wire-protocol "invalid" sentinel); local range starts at
-// kHostRangeSize.
-//
-// Lookup: m_byId is a fixed-size array of 65536 pointers (~512 KB on 64-bit).
-// Indexed access is O(1) with no hashing. Memory cost is bounded and trivial
-// relative to engine working set.
+// coop/element/registry.cpp -- the unified element-id allocator and O(1) resolver. See the
+// header for the public interface. Allocation pops the top of the per-range free stack. On
+// construction both stacks are pre-populated with every id in their range, descending, so
+// the first pop returns the lowest id (tidy for log inspection). The host range starts at
+// id 1 (id 0 is the wire's invalid sentinel); the local range starts at the host range size.
+// Lookup: a fixed array of 65536 pointers (about 512 KB), indexed with no hashing.
 
 #include "coop/element/registry.h"
 
-#include "coop/player/players_registry.h"  // kMaxPeers (peer-band count, D9-2)
+#include "coop/player/players_registry.h"  // kMaxPeers, the peer-band count
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"       // IsLiveByIndex (LivePropActor)
 
 namespace coop::element {
 
 namespace {
-// D9-2 (PR-FOUNDATION Tier 2): the peer range [kHostRangeSize, kMaxElements)
-// is split into kMaxPeers equal bands. Band index 0 is the "pre-slot" band
-// used during the boot/seed window before a client knows its slot; band
-// indices 1..kMaxPeers-1 are the per-client-slot exclusive bands. Slot 0
-// (kPeerIdHost) reuses band 0 as the pre-slot scratch -- safe because the
-// host NEVER calls AllocLocalId (it allocates its own elements from the
-// host range via AllocHostId), so band 0 is only ever consumed by
-// pre-slot-window allocations on a client.
+// The peer range is split into one equal band per peer slot. Band 0 is the pre-slot band
+// used during the boot and seed window before a client knows its slot; bands 1 and up are
+// the per-client-slot exclusive bands. Slot 0 (the host) reuses band 0 as the pre-slot
+// scratch, which is safe because the host never allocates local ids (its own elements come
+// from the host range), so band 0 is only ever consumed by a client's pre-slot allocations.
 constexpr uint32_t kPeerBandCount = coop::players::kMaxPeers;
 constexpr uint32_t kSlotBandSize  =
     (kMaxElements - kHostRangeSize) / kPeerBandCount;  // 32768/4 = 8192
 
-// [base, end) of the band for the given band index (0 = pre-slot,
-// 1..kMaxPeers-1 = client slots). The last band absorbs any remainder so
-// the union exactly covers the peer range.
+// The [base, end) of the band for a band index (0 is pre-slot, 1 and up are client slots).
+// The last band absorbs any remainder so the union exactly covers the peer range.
 constexpr ElementId BandBase(uint8_t band) {
     return kHostRangeSize + static_cast<ElementId>(band) * kSlotBandSize;
 }
@@ -46,7 +34,7 @@ constexpr ElementId BandEnd(uint8_t band) {
 }
 }  // namespace
 
-// Forward decl of the latch-flipper in element.cpp (audit fix 2026-05-28).
+// The latch flipper in element.cpp.
 void NotifyRegistryShuttingDown();
 
 Registry::Registry() {
@@ -54,36 +42,29 @@ Registry::Registry() {
 }
 
 Registry::~Registry() {
-    // Tell every Element destructor running AFTER this point (i.e. during
-    // process-exit teardown of namespace-scope owner containers) to skip
-    // FreeId on this now-dead storage. UAF prevention -- audit fix 2026-05-28.
+    // Tell every element destructor running after this point (during process-exit teardown of
+    // namespace-scope owner containers) to skip the free on this now-dead storage.
     NotifyRegistryShuttingDown();
 }
 
 Registry& Registry::Get() {
-    // Meyers singleton -- thread-safe init since C++11.
+    // A function-local static: thread-safe initialisation.
     static Registry instance;
     return instance;
 }
 
 void Registry::RefillFreeStacks_() {
-    // Descending push so the first pop returns the lowest id in each range
-    // (ergonomic for log readability when only a handful of ids are live).
-    //
-    // Host range starts at 1, NOT 0 (audited 2026-05-28): ElementId 0 is
-    // reserved as the wire-protocol "invalid" sentinel matching
-    // protocol.h's EntitySpawnPayload.sessionId contract. Inc3 receiver
-    // code can defensively drop sessionId==0 without losing real elements.
+    // Descending push so the first pop returns the lowest id in each range (readable logs when
+    // only a handful of ids are live). The host range starts at 1, not 0: id 0 is the wire's
+    // invalid sentinel, so receivers can drop a zero id without losing a real element.
     m_hostFree.clear();
     for (ElementId id = kHostRangeSize; id-- > 1;) {
         m_hostFree.push_back(id);
     }
-    // D9-2: seed m_localFree with the PRE-SLOT band (band 0) only -- NOT the
-    // whole peer range. A client switches to its exclusive slot band via
-    // SetLocalPeerBand once AssignPeerSlot delivers its slot. Pre-filling the
-    // whole range would let a pre-slot id (e.g. 32768) later be re-issued from
-    // the slot band [32768, ...) while the pre-slot element still holds it ->
-    // intra-process m_byId collision.
+    // Seed the local free stack with the pre-slot band only, not the whole peer range. A client
+    // switches to its exclusive slot band once its slot is assigned. Pre-filling the whole range
+    // would let a pre-slot id later be re-issued from the slot band while the pre-slot element
+    // still holds it: an in-process id collision.
     m_localFree.clear();
     m_activeBand = 0;
     for (ElementId id = BandEnd(0); id-- > BandBase(0);) {
@@ -101,15 +82,12 @@ void Registry::SetLocalPeerBand(uint8_t slot) {
     }
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_activeBand == slot) return;  // idempotent re-assign on the same slot
-    // Replace m_localFree with the slot's exclusive band. Pre-slot ids still
-    // alive in m_byId are NOT on the free stack (they were popped at alloc and
-    // not yet freed), so clearing the stack here cannot orphan a live element;
-    // their eventual FreeId pushes them back onto m_localFree (now the slot
-    // band) where they recycle harmlessly (FreeId clears m_byId before the
-    // push, so a re-issue finds an empty slot). Already-freed pre-slot ids
-    // sitting on the old m_localFree are simply discarded -- a bounded
-    // one-time leak of at most the pre-slot allocations destroyed before the
-    // handshake completed (rare; world-load props normally outlive it).
+    // Replace the local free stack with the slot's exclusive band. Pre-slot ids still alive are
+    // not on the free stack (popped at allocation and not yet freed), so clearing the stack
+    // cannot orphan a live element; their eventual free pushes them onto the new stack, where
+    // they recycle harmlessly (the free nulls the slot before the push, so a re-issue finds it
+    // empty). Already-freed pre-slot ids on the old stack are discarded: a bounded one-time leak
+    // of at most the pre-slot allocations destroyed before the handshake completed.
     m_localFree.clear();
     m_activeBand = slot;
     const ElementId base = BandBase(slot);
@@ -132,14 +110,12 @@ ElementId Registry::AllocHostId(Element* e) {
     const ElementId id = m_hostFree.back();
     m_hostFree.pop_back();
     if (m_byId[id]) {
-        // Defensive (PR-FOUNDATION-3 review 2026-05-30): a free-stack id whose
-        // m_byId slot is already occupied means the free stack diverged from
-        // m_byId (a lifetime / double-free bug upstream). Do NOT clobber the
-        // existing element or hand out a doubly-owned id -- fail the alloc; the
-        // caller (e.g. MirrorManager::AllocAndInstall) treats kInvalidId as
-        // failure and drops its new element WITHOUT freeing this foreign id. The
-        // corrupt id is dropped (not re-pushed). NEVER fires in correct
-        // operation: FreeId nulls the slot before it pushes the id.
+        // Defensive: a free-stack id whose slot is already occupied means the free stack diverged
+        // from the table (a lifetime or double-free bug upstream). Do not clobber the existing
+        // element or hand out a doubly owned id: fail the allocation; the caller treats an invalid
+        // id as failure and drops its new element without freeing this foreign id. The corrupt id
+        // is dropped, not re-pushed. Never fires in correct operation: the free nulls the slot
+        // before it pushes the id.
         UE_LOGE("element::Registry: AllocHostId popped id=%u but its slot is "
                 "occupied (free-stack/m_byId divergence) -- failing alloc", id);
         return kInvalidId;
@@ -161,9 +137,8 @@ ElementId Registry::AllocLocalId(Element* e) {
     const ElementId id = m_localFree.back();
     m_localFree.pop_back();
     if (m_byId[id]) {
-        // Defensive (PR-FOUNDATION-3 review 2026-05-30): see AllocHostId. A
-        // popped peer-range id whose slot is occupied = free-stack/m_byId
-        // divergence; fail the alloc rather than clobber. Never fires normally.
+        // Defensive, see AllocHostId: a popped peer-range id whose slot is occupied is a
+        // divergence; fail the allocation rather than clobber. Never fires normally.
         UE_LOGE("element::Registry: AllocLocalId popped id=%u but its slot is "
                 "occupied (free-stack/m_byId divergence) -- failing alloc", id);
         return kInvalidId;
@@ -182,18 +157,15 @@ void Registry::FreeId(ElementId id) {
         return;
     }
     m_byId[id] = nullptr;
-    // FIFO REUSE (v52, 2026-06-09): push the freed id to the FRONT (bottom) of the stack, NOT the
-    // back. Alloc pops the back, so a freed id is only re-issued AFTER the entire never-allocated
-    // pool above it is exhausted (~28k host / ~8k peer ids). This DEFERS reuse by hours of normal
-    // allocation -- long enough that every in-flight cross-peer message referencing the old id
-    // (the unreliable PropPose stream, a reliable PropDestroy/PropConvert) has drained before the
-    // id is handed to a new entity. The prior LIFO push_back re-issued a just-freed id IMMEDIATELY,
-    // which let a transient trash CLUMP grab a low eid (e.g. 126) still bound to another prop's
-    // mirror on the peer -> the held-clump pose stream drove the WRONG actor = the "grabbed pile
-    // turns into a bottle then a cassette then a clump" morphing + cross-peer dupes (proven from
-    // the 2026-06-09 logs: GRAB-IN eid=126 resolved to an Aprop mirror, not the clump).
-    // push_front on the std::deque free-list is O(1) (perf audit W-1 2026-06-10: an earlier
-    // comment described a discarded vector-shift iteration).
+    // FIFO reuse: push the freed id to the front (bottom) of the stack, not the back. Allocation
+    // pops the back, so a freed id is only re-issued after the entire never-allocated pool above
+    // it is exhausted, which defers reuse by hours of normal allocation, long enough for every
+    // in-flight cross-peer message referencing the old id (the unreliable pose stream, a
+    // reliable destroy or convert) to drain before the id is handed to a new entity. Immediate
+    // reuse let a transient trash clump take a low id still bound to another prop's mirror on
+    // the peer, so the held-clump pose stream drove the wrong actor: a grabbed pile morphing
+    // into a bottle, a cassette, a clump, and cross-peer duplicates. The front push on the deque
+    // is O(1).
     if (IsHostId(id)) {
         m_hostFree.push_front(id);
     } else {
@@ -227,16 +199,16 @@ void Registry::UnregisterMirror(ElementId id) {
     if (id == kInvalidId || id >= kMaxElements) return;
     std::lock_guard<std::mutex> lk(m_mutex);
     if (!m_byId[id]) {
-        // Acceptable: OnDisconnect may have drained the mirror table before
-        // the Element dtor ran. Log at info-level so a true double-free is
-        // still visible if the table is not in disconnect-drain mode.
+        // Acceptable: the disconnect may have drained the mirror table before the element
+        // destructor ran. Logged at info level so a true double-free is still visible outside a
+        // drain.
         UE_LOGI("element::Registry: UnregisterMirror(%u) -- slot already empty (drained by OnDisconnect?)",
                 id);
         return;
     }
     m_byId[id] = nullptr;
-    // Intentionally NO free-stack push: the id is in the host's allocation
-    // space and was never popped from this peer's free stack.
+    // Intentionally no free-stack push: the id is in the host's allocation space and was never
+    // popped from this peer's free stack.
 }
 
 Element* Registry::Get(ElementId id) const {
@@ -257,8 +229,8 @@ void Registry::NoteActorRebind(ElementId id, void* oldActor, void* newActor) {
     std::lock_guard<std::mutex> lk(m_mutex);
     if (oldActor) {
         auto it = m_byActor.find(oldActor);
-        // Only erase if it still points at US -- a recycled address already
-        // re-pointed to a newer Element must not be clobbered by our teardown.
+        // Only erase if it still points at us: a recycled address already re-pointed to a newer
+        // element must not be clobbered by our teardown.
         if (it != m_byActor.end() && it->second == id) m_byActor.erase(it);
     }
     if (newActor) m_byActor[newActor] = id;  // newest live binding wins
@@ -266,19 +238,18 @@ void Registry::NoteActorRebind(ElementId id, void* oldActor, void* newActor) {
 
 size_t Registry::HostCount() const {
     std::lock_guard<std::mutex> lk(m_mutex);
-    // Host range owns ids [1, kHostRangeSize) -- that's kHostRangeSize - 1
-    // allocatable ids. (id 0 is reserved as wire-invalid; never on the
-    // free stack.) Allocated count = capacity - free.
+    // The host range owns ids from 1 to the range size, exclusive: the range size minus one
+    // allocatable ids (id 0 is the wire's invalid sentinel, never on the free stack). Allocated
+    // is capacity minus free.
     return (kHostRangeSize - 1) - m_hostFree.size();
 }
 
 size_t Registry::LocalCount() const {
     std::lock_guard<std::mutex> lk(m_mutex);
-    // D9-2: m_localFree holds the currently-active band only, so the
-    // allocated count is that band's capacity minus the free remainder.
-    // Clamp at 0: after a band switch, freed pre-slot ids recycle onto
-    // m_localFree and can transiently push its size above the band
-    // capacity (a bounded, harmless overshoot) -- avoid size_t underflow.
+    // The local free stack holds the currently active band only, so the allocated count is that
+    // band's capacity minus the free remainder. Clamped at 0: after a band switch, freed pre-slot
+    // ids recycle onto the stack and can transiently push its size above the band capacity (a
+    // bounded, harmless overshoot), so avoid the unsigned underflow.
     const size_t bandCapacity = BandEnd(m_activeBand) - BandBase(m_activeBand);
     return m_localFree.size() >= bandCapacity ? 0
                                               : bandCapacity - m_localFree.size();
