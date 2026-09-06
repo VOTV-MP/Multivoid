@@ -6,13 +6,13 @@
 // design, and prop_C.thrown() is a no-op on the base class (uber @465 POP->ret), so driving it
 // alone produces no audio at all. The receiver therefore plays the SAME cooked cues at the
 // synced edges -- the flashlight-click shape, and MTA's precedent that remote-entity sounds are
-// the game's own cues played locally at synced events. Each declaration below names its cue,
-// the native volume and pitch, and where the bytecode carries it.
+// the game's own cues played locally at synced events. Each declaration below names its cue
+// and, where the RE recorded them, the native volume, pitch and bytecode offset.
 //
-// One deliberate divergence: the whoosh is spatialized with att_default rather than played 2D,
-// because it is a "look at me" event. Every LMB throw plays `swing` regardless of prop type, so
-// one whoosh implementation covers Aprop_C and clumps alike. Game thread only (reflection +
-// PlaySoundAtLocation).
+// Two deliberate divergences from native, both in the .cpp beside the call that makes them:
+// every natively-2D cue is SPATIALIZED through att_default, and the use click plays at 0.5
+// rather than the native in-ear 0.25, because a world source rolls off. Game thread only
+// (reflection + PlaySoundAtLocation).
 
 #pragma once
 

@@ -74,7 +74,9 @@ seen, so a message full of unfamiliar ones costs work in the frame that draws it
 alphabet a peer may introduce is therefore capped where text arrives rather than where it is
 drawn, because three surfaces draw remote text and a cap in one would miss the other two
 (`coop/text/novelty_ledger`). The cap bounds a stutter, not what anyone may eventually write:
-the budget keeps refilling, and the whole character set fits the atlas with room to spare. While any interactive surface is up the overlay
+the budget keeps refilling, and the arithmetic says the whole character set fits the atlas at
+about 86% of it, with a detector watching for the packing failure that arithmetic would miss
+(`ui/atlas_watch`). While any interactive surface is up the overlay
 captures input, suppresses the game's cursor recentring and hands the pointer back on close
 (`ui/input_focus`, `ui/overlay_cursor`); a keystroke typed into a text field never also fires a
 game bind.

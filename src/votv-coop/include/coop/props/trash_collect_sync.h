@@ -22,26 +22,31 @@ namespace coop::net { class Session; }
 
 namespace coop::trash_collect_sync {
 
-// Install the pile-grab observer (a PRE observer on AmainPlayer_C::InpActEvt_use). Caches
-// `session` (re-cached every call for reconnect) and registers the observer once mainPlayer_C is
-// loaded (idempotent; retries on later calls until the class resolves). Call from the
-// world-gated subsystem install. This PRE observer is the HOST-GRAB seam: it records the aimed
-// pile's eid as diagnostics, the binding itself riding the spawn thunk's birth certificate, and
-// the held-object edge adopts the spawned clump onto that eid. (The clump's BeginDeferred spawn
-// is EX_CallMath, so it is invisible to a spawn-POST hook.) Game thread.
+// Install. Caches `session` (re-cached every call for reconnect) and arms two seams, each
+// idempotent and retried on later calls until its class resolves. First, a POST Func patch on
+// BeginDeferredActorSpawnFromClass: that is the deterministic clump-to-pile converter, and it
+// is a Func patch because the clump's own spawn is EX_CallMath and invisible to ProcessEvent.
+// Second, the InpActEvt_use family -- the client-grab bridge, the use-deny suppressors and the
+// hard-throw bridge -- which lives in trash_use_intercept and is a PRE INTERCEPTOR, not an
+// observer: it returns true to CANCEL the native use on a client grab or throw. Call from the
+// world-gated subsystem install. Game thread.
 void Install(coop::net::Session* session);
 
 // Game thread. If `heldActor` is a live, UNKEYED (Key=None) Aprop_C, force-mint a stable Key on
 // it and broadcast a PropSpawn under that Key, so peers spawn a mirror the held-pose stream can
-// then drive into the collector's hands. Returns true iff it minted and broadcast. A no-op
-// (false) for null/dead actors, for already-keyed actors (an ordinary world-prop grab the peer
-// already has), for the host-authoritative garbageClump (trash_channel owns it through the
-// grabbed pile's eid and it is never authored here), and for any other non-Aprop_C. That last
-// one is CRASH SAFETY: a transient chip/clump is broadcast but never physics-driven on the
-// receiver -- GetStaticMesh returns null for a non-Aprop_C, so the mirror spawns physics-free
-// and is driven KINEMATICALLY by per-tick SetActorLocation. Resolving their real mesh and
-// physics-driving a self-morphing actor is a use-after-free. Idempotent: once minted the Key is
-// non-None, so a repeat call returns false.
+// then drive into the collector's hands. Returns true iff it minted and broadcast.
+//
+// The gate is IsKeyedInteractable, so the non-Aprop_C chipPile, trashBitsPile and garbageClump
+// DO pass and ARE broadcast; crash safety lives on the RECEIVER, which spawns them physics-free
+// (GetStaticMesh returns null for a non-Aprop_C) and drives them kinematically. Resolving their
+// real mesh and physics-driving a self-morphing actor is a use-after-free.
+//
+// A no-op (false) for: a null or dead actor; anything that is not a keyed interactable at all;
+// an actor that is both keyed AND already tracker-known, since the pose stream alone mirrors it
+// -- "has a key" is not "the peer has it", and a keyed-but-untracked prop IS expressed; a
+// kerfur, whose lane is KerfurConvert; the host-authoritative garbageClump on a client, which
+// trash_channel owns through the grabbed pile's eid; a pending sweep candidate; and anything at
+// all before quiescence. Idempotent: once minted the Key is non-None, so a repeat returns false.
 bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* session);
 
 // Drop the cached session (full session teardown / aggregate disconnect). The trash entity ctx

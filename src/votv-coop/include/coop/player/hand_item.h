@@ -35,11 +35,11 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp);
 
 // Receiver side, per tick (same site): lazily spawn/replace/destroy the display mirrors, so a
 // state arriving before the puppet exists (join) or a puppet respawn are absorbed without event
-// ordering. A mirror has physics and collision off and its spawn echo suppressed, and it
-// attaches to the puppet's `weapon` component at the NATIVE hold transform -- updateHold @1628
-// attaches holding_actor to `weapon`, socket weapon_R of the FP arms rig, camera-anchored
-// through the arms_lag spring arm, at rel loc(0,0,0) rot(0,180,0). Attaching to the puppet ROOT
-// with an offset instead reads as a carry or a grab.
+// ordering. A mirror has physics and collision off and its spawn echo suppressed, and it is
+// RE-COMMANDED every tick onto the puppet's head anchor and synced view basis with the
+// owner-measured view-relative transform. It is never attached to a component: the native arms
+// chain (socket weapon_R, camera-anchored through the arms_lag spring arm) is hidden and does
+// not tick on a puppet, so the look has to be reproduced rather than inherited.
 void TickMirrors();
 
 // event_feed router entry. Parses, forgery-guards, stores, host-rebroadcasts.
@@ -51,19 +51,19 @@ bool HandleHandItem(coop::net::Session& session,
 void ReplayPeerStatesToSlot(int slot);
 
 // The axis boundary for the world-prop census: the LOCAL player's live hotbar hand actor (a
-// fresh mainPlayer.holding_actor read, Aprop_C-gated), or nullptr. prop_element_tracker's seed
-// walk skips this actor -- it is player expression, never a world entity, and adopting it makes
-// the safety census express an incremental PropSpawn that lands on the peer as a frozen duplicate
+// fresh mainPlayer.holding_actor read, Aprop_C-gated), or nullptr. prop_census's seed walk
+// skips this actor -- it is player expression, never a world entity, and adopting it makes the
+// safety census express an incremental PropSpawn that lands on the peer as a frozen duplicate
 // at the puppet. Fresh read rather than the announce latch: the census runs earlier in the pump
 // tick than TickOwner, and updateHold can have respawned the actor in between.
 void* LocalHandActor();
 
 // The FULL hand-axis boundary, ONE owner: true for the local hand actor AND for every live
-// remote mirror. LocalHandActor above answers only for the local half, and a census that asks it
-// alone adopts the mirrors. Callers: prop_element_tracker's seed walk (through
-// CollectHandAxisActors, hoisted once per walk) and prop_drop_intent on both enqueue AND drain --
-// the drain-time re-check is load-bearing, because holding_actor is not yet written when
-// FinishSpawn returns. Game thread only.
+// remote mirror. LocalHandActor above answers only for the local half, and a census that asks
+// it alone adopts the mirrors. Callers: prop_drop_intent on both enqueue AND drain -- the
+// drain-time re-check is load-bearing, because holding_actor is not yet written when
+// FinishSpawn returns -- and rng_roll_census's channel exclusion. prop_census's seed walk takes
+// the same set the cheaper way, hoisting CollectHandAxisActors once per walk. Game thread only.
 bool IsHandAxisActor(void* actor);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)

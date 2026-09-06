@@ -38,15 +38,15 @@ namespace {
 // wheels' burn tire durability and eject a wheel at zero, the capsule's pops a hint. With the
 // rig simulating on every peer, a non-owner running them would blow up a vehicle its authority
 // still has. But the five wheel delegates also maintain the rig's own SHAPE, so cancelling
-// them suppressed a notification carrying two unrelated things and took the second: parked-ATV
-// runs differing in one variable each showed the pose corrector innocent and this guard the
-// cause of a mirror resting tens of centimetres low, visible only as ride height (the body
-// above the mean of its own rig bodies), never in the suspension distances. What a non-owner's
-// dispatched wheel hits cost instead: it burns its own tire durability and can eject a tire
-// its author still has, a narrower divergence whose fix is durability on the wire, not
-// re-suppression. The predicate cannot read the ATV table, since the interceptor contract does
-// not promise the game thread, so Tick publishes the ATVs this peer owns into this atomic
-// array and the callback scans it. The default is cancel, the safe direction. Sized for every
+// them suppressed a notification carrying two unrelated things and took the second: it left a
+// mirror resting tens of centimetres low, visible only as ride height and never in the
+// suspension distances. What a non-owner's dispatched wheel hits cost instead: it burns its
+// own tire durability and can eject a tire its author still has, a narrower divergence whose
+// fix is durability on the wire, not re-suppression. The predicate cannot read the ATV table,
+// since the interceptor contract does not promise the game thread, so Tick publishes the ATVs
+// this peer owns into this atomic array and the callback scans it. For an ATV absent from the
+// table the guard ZEROES the impulse and dispatches anyway -- it never cancels a hit
+// notification, because the handler's other effects are the ones being kept. Sized for every
 // ATV a host can own at once; overflow is not graceful, so it logs once.
 std::atomic<void*> g_ownedAtvs[kMaxOwned];
 std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage

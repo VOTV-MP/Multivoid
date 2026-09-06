@@ -171,7 +171,7 @@ void EnsurePerInstanceDevice(size_t i) {
 // FORMAT BUDGET: the key must fit WireKey.data (31 chars) BY CONSTRUCTION -- WireKeyFromString
 // truncates silently, and a truncated wire key would mismatch the receiver's locally-computed
 // full key, silently disabling the deny gate for that device. Prefixes are 4 chars ("arc_" /
-// "tfm_", no "t_" infix): worst case 4 + 3x(7-digit signed coord) + 2 separators = 27 chars at
+// "tfm_", no "t_" infix): worst case 4 + 3x(8-char signed coord) + 2 separators = 30 chars at
 // +/-100 km world coords, beyond any UE4 float world. The defensive WARN below catches the
 // impossible anyway.
 constexpr double kPosGrid = 10.0;  // cm

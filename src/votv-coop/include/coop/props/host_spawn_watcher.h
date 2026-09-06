@@ -25,39 +25,40 @@ void SetSession(coop::net::Session* session);
 
 // Idempotent: resolve the GameplayStatics spawn UFunctions + offsets + the ambient-prop class
 // set, then arm TWO seams. BeginDeferredActorSpawnFromClass POST observer -> the KEYLESS
-// ambient set (pinecone/stick/crystal): keyless PropSpawn + death-watch, the transform read off
-// the PARAMS, which only a PE observer provides. FinishSpawningActor UFunction::Func patch ->
-// the KEYED spawn seam for EVERY dispatch route, including the EX_CallMath spawns a PE observer
-// can never see (propInventory::takeObj's R-drop and quick-slot place); that callback only
-// ENQUEUES, and DrainPendingSpawns adopts ~1 tick later, once the BP call's loadData key
-// restore has completed. Non-fatal per seam, called every net-pump tick until resolved.
+// ambient set (pinecone/stick/crystal): keyless PropSpawn + death-watch, the transform read
+// off the PARAMS, which only a PE observer provides. FinishSpawningActor UFunction::Func
+// patch -> the KEYED spawn seam for EVERY dispatch route, including the EX_CallMath spawns a
+// PE observer can never see; that callback only ENQUEUES, and DrainPendingSpawns adopts on
+// the next tick. Non-fatal per seam, called every net-pump tick until resolved.
 //
 // OWNER-SYMMETRIC, not host-only: pineconeSpawner measurably anchors at the LOCAL player's
 // camera (bytecode: GetPlayerCameraManager -> GetActorLocation plus a 3-10k offset), so every
 // peer runs its OWN spawner and broadcasts over the same keyless PropSpawn, a client through
-// the host's relay fan-out. Echo protection: a receiver's mirror spawn dispatches BeginDeferred
-// through ProcessEvent, so this POST fires INSIDE it, and prop_echo_suppress::ScopedMirrorSpawn
+// the host's relay fan-out. The broadcast mirror spawns SIMULATING and falls under its own
+// physics, deliberately not synced. Echo protection: a receiver's mirror spawn dispatches
+// BeginDeferred through ProcessEvent, so this POST fires INSIDE it, and ScopedMirrorSpawn
 // is the guard -- a MarkIncomingSpawn cannot exist before the actor does.
 void Install(coop::net::Session* session);
 
-// Drain the FinishSpawningActor pending queue: express (prop_lifecycle::
-// ExpressSpawnedProp) every finished keyed Aprop_C spawn that is live, still
-// untracked, and NOT the local hotbar hand actor (the hand-edge in
-// coop/player/hand_item owns that actor's eventual world release). Entries
-// retry a bounded number of ticks (key may mint late), then drop to the
-// periodic safety census. Host-side express; game thread (net-pump tick).
+// Drain the FinishSpawningActor pending queue: express (prop_lifecycle::ExpressSpawnedProp)
+// every finished keyed Aprop_C spawn that is live, still untracked, and NOT the local hotbar
+// hand actor (the hand edge in coop/player/hand_item owns that actor's eventual world release).
+// ONE express attempt per entry -- the queue is cleared unconditionally, so a still-unkeyed
+// actor falls to the periodic safety census rather than being retried here. Host-side express;
+// game thread (net-pump tick).
 void DrainPendingSpawns(coop::net::Session* session);
 
-// Per-tick death-watch: any mirrored ambient prop whose actor the engine has destroyed
-// (SetLifeSpan expiry or consumption -- a spawner-spawned actor has no observable
-// K2_DestroyActor) broadcasts PropDestroy(eid) so the client drops its mirror. The mirror
-// itself spawns SIMULATING and falls under its own physics, which is deliberately not synced.
-// Host-only; cheap (IsLiveByIndex over a small bounded set). Game thread (net-pump tick).
+// Per-tick death-watch. PEER-SYMMETRIC, like the broadcaster: each peer watches the ambient
+// props IT broadcast, and the list only ever holds its own spawns. When the engine has
+// destroyed one (SetLifeSpan expiry or consumption -- a spawner-spawned actor has no observable
+// K2_DestroyActor) it broadcasts PropDestroy(eid) so the other peers drop their mirrors. Cheap
+// (IsLiveByIndex over a small bounded set). Game thread (net-pump tick).
 void TickWatchedProps(coop::net::Session* session);
 
-// Clear per-session state (the death-watch list + session pointer). The POST
-// observer stays registered (it self-gates on connected() + role==Host).
-// Net disconnect.
+// Clear per-session state: the death-watch list, the pending queue and the session pointer. The
+// POST observer stays registered -- it self-gates on connected() and on not being inside a
+// mirror-spawn scope, which is all it needs, since every connected peer broadcasts its own
+// ambient spawns. Net disconnect.
 void OnDisconnect();
 
 }  // namespace coop::host_spawn_watcher

@@ -34,10 +34,12 @@ void NoteGameCursorWrite();
 // the un-detoured entry (writes must bypass our own suppression, exactly as MTA's
 // `CallSetCursorPos` does); `hwnd` supplies the client rect for the exit recentre.
 //
-// The shape is MTA's `CLocalGUI::Draw` (reference/mtasa-blue/Client/core/CGUI.cpp): entering,
-// restore the stored position, then suppress the game; leaving, store the position, recentre,
-// re-enable and clear the system keys. Does nothing while the state is unchanged, and nothing
-// at all outside gameplay -- see the world gate in overlay_cursor.cpp.
+// This performs two steps of MTA's transition (CLocalGUI::UpdateCursor, reached per frame from
+// CLocalGUI::Draw): restore the stored position on ENTER, store it and recentre on EXIT. MTA's
+// Enable/DisableSetCursorPos and ClearSystemKeys have no counterpart here, because the
+// overlay's own detour owns suppression and keys on captureActive itself. Does nothing while
+// the state is unchanged, and nothing at all outside gameplay -- see the world gate in
+// overlay_cursor.cpp.
 void FrameTransition(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursorPos);
 
 }  // namespace ui::overlay_cursor

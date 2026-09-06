@@ -48,12 +48,12 @@ bool AdmitRemoteText(uint8_t peerSlot, const std::wstring& text);
 // deliberately NOT cleared on a session end -- what it models is what this PROCESS's atlas has
 // been asked to rasterise, which does not un-happen.
 //
-// THE LEDGER IS OURS, NOT ImGui's, and asking the atlas what it has already baked would be
-// wrong twice. THREAD: the receive boundary runs on the GAME thread while
-// ImFontBaked::IndexLookup is render-thread state that ClearOutputData reallocates from inside
-// the packer's own MakeSpace. SEMANTICS: a pressure-triggered discard ERASES "already seen",
-// so an atlas-backed budget would forget precisely under the pressure it exists to bound, and a
-// cooperative peer's next message would be refused after an unrelated repack.
+// The set being reset here is OURS, and asking ImGui's atlas what it has already baked would be
+// wrong twice. THREAD: AdmitRemoteText runs on the GAME thread while ImFontBaked::IndexLookup
+// is render-thread state that ClearOutputData reallocates from inside the packer's own
+// MakeSpace. SEMANTICS: a pressure-triggered discard ERASES "already seen", so an atlas-backed
+// budget would forget precisely under the pressure it exists to bound, and a cooperative peer's
+// next message would be refused after an unrelated repack.
 void ResetForTests();
 
 // Machine-asserted at boot beside the codec and repertoire selftests: the budget

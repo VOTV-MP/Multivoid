@@ -21,14 +21,14 @@ namespace coop::prop_snapshot {
 void SetSession(coop::net::Session* session);
 
 // PHASE 1. Per-slot snapshot replay; `peerSlot` is a coop::players::Registry slot index
-// (1..kMaxPeers-1 for clients on the host). With no drain in progress it snapshot-copies
-// prop_lifecycle's maintained known-keyed-props set into the internal candidate vector and
-// sets the drain target; with a drain to a DIFFERENT slot in progress it queues `peerSlot` for
-// afterwards. That set is seeded ONCE at Install by a single GUObjectArray walk and kept
-// current by the Init POST insert and the K2_DestroyActor PRE evict, so the per-reconnect cost
-// is an O(set-size) pointer copy (~2000) rather than an O(GUObjectArray) walk (~150k), with no
-// ProcessEvent dispatch. Host-only sender (no-op + log on a client); the drain is pumped one
-// chunk per NetPumpTick.
+// (1..kMaxPeers-1 for clients on the host). With no drain in progress it copies the element
+// Registry's Prop rows -- actor, eid and internal index -- under the registry mutex, skipping
+// the dead and the dying, and sets the drain target; with a drain to a DIFFERENT slot in
+// progress it queues `peerSlot` for afterwards. The dying test is IsLiveByIndex on the
+// GUObjectArray slot rather than IsLive on the pointer, because a mass purge fires no
+// K2_DestroyActor and reading a freed pointer faults. So the per-reconnect cost is a bounded
+// copy out of a tracked structure, not a GUObjectArray walk, and no ProcessEvent dispatch.
+// Host-only sender (no-op + log on a client); the drain is pumped one chunk per NetPumpTick.
 void TriggerForSlot(int peerSlot);
 
 // PHASE 2. Drain up to kSnapshotChunkSize=100 candidates per call: read the transform, build

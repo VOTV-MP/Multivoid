@@ -83,7 +83,7 @@ bool ResolveFromClass(void* cls) {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
     // FName lookups are case-SENSITIVE -- the names below match the live CXXHeaderDump member
-    // spellings exactly (note LEG_R is upper-case).
+    // spellings exactly (note Target is upper-case).
     const int32_t tryGrabOff   = ResolveOff(cls, L"tryGrab",       kTryGrabFallback);
     const int32_t grabOff      = ResolveOff(cls, L"grab",          kGrabFallback);
     const int32_t killedOff    = ResolveOff(cls, L"killed",        kKilledFallback);

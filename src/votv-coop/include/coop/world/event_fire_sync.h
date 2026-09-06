@@ -1,13 +1,14 @@
 // coop/world/event_fire_sync.h -- HOST-AUTHORITATIVE scheduled-event replay channel.
 // VOTV's scripted story events (list_events DataTable, 69 rows) fire through saveSlot::settime
 // -> eventer.runEvent, a BP->BP EX_LocalVirtualFunction chain invisible to every hook we own,
-// and level-placed event flips ride no other lane. Three mechanisms carry the channel, each
-// bytecode-verified: the HOST polls saveSlot.passEvents for GROWTH, because settime appends
-// each fired row there while runEvent never touches the array; the CLIENT holds
-// saveSlot.allEvents.Num at 0, because settime's walk iterates that array and not the
-// DataTable, which mainGamemode's boot ubergraph rebuilds unconditionally at every world load,
-// so it can never poison a save; and the client REPLAYS the same native verb for allowlisted
-// rows only. The replay policy and its reasoning are in docs/events-and-weather.md.
+// and level-placed event flips ride no other lane. Three mechanisms carry the channel, the
+// first two bytecode-verified: the HOST polls saveSlot.passEvents for GROWTH, because settime
+// appends each fired row there while runEvent never touches the array; the CLIENT holds
+// saveSlot.allEvents.Num at 0, because settime's walk iterates that array rather than the
+// DataTable, and mainGamemode's boot ubergraph rebuilds allEvents FROM that DataTable
+// unconditionally at every world load, so the zeroed count self-heals and can never poison a
+// save; and the client REPLAYS the same native verb for allowlisted rows only, which is our own
+// per-row policy -- it and its reasoning are in docs/events-and-weather.md.
 // One owner: this module owns the whole scheduled-event authority axis -- suppression,
 // observation, the native-fire primitive and replay. The F1 dev menu (coop/dev/event_trigger)
 // dispatches THROUGH HostFire, so dev depends on coop/world and never the reverse.
@@ -39,15 +40,15 @@ void Install(coop::net::Session* session);
 //
 // The client assert is what closes the sleep-accelerate hole: during an accelerate the client
 // clock free-runs at TimeScale=1 and its own settime walk RUNS, so day-boundary rows would
-// otherwise fire natively there. Restored on disconnect, and the local world resumes its own
-// scheduling.
+// otherwise fire natively there. Restored on disconnect; the local world resumes scheduling.
 //
-// Two classes of fire this poll cannot see, both deliberate: a trigger-volume fire (bedEvent,
-// a scare armed by TBoxActivator) executes per-peer natively when THAT peer overlaps, which is
-// per-viewer by the game's own design; and the game's internal runSpecialEvent picks append no
-// passEvents row, so their outputs ride the prop lane. A dev fire appends nothing to the HOST's
-// passEvents either -- the native ui_eventRun behaves the same -- so the scheduler may re-fire
-// that row at its scheduled time, and the client's replayed-set dedupes its side.
+// Three classes of fire this poll cannot see, all deliberate. A trigger-volume fire (bedEvent,
+// a scare armed by TBoxActivator) executes per-peer natively when THAT peer overlaps, which
+// is per-viewer by the game's own design. The game's internal runSpecialEvent picks append
+// no passEvents row, so their outputs ride the prop lane. And a dev fire appends nothing to
+// the HOST's passEvents -- the native ui_eventRun behaves the same -- which is why HostFire
+// broadcasts at dispatch, and why the scheduler may still re-fire that row at its scheduled
+// time with the client's replayed-set deduping its side.
 void Tick();
 
 // The ONE native-fire primitive + the dev broadcast seam. Posts the reflected
