@@ -63,7 +63,12 @@ int neverCalledAnywhere() { return calledOnce(); }
 int hiddenByAComment() { return 0; }
 int sameNameAsALiveOne() { return 0; }
 int useTheLiveTwin() { return sameNameAsALiveOne(); }
-int f() { return 0; } // trailing comments are code lines
+int f() { return 0; } // trailing comments are code lines for the VOLUME counters
+// POSITION: a citation is a citation wherever it sits, so the MARKER counters read the tail of a
+// code line too. One marker per line, so dropping the tails cannot stay green on a survivor.
+int t1() { return 0; } // WP-4 names a work package from a trailing comment
+int t2() { return 0; } // this one was settled by an audit nobody outside can read
+int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
 /* a block
@@ -134,10 +139,15 @@ MUTANTS = [
     # A DEAF explainer: it still prints each counter and its number, and names no line under it.
     # That is the failure the agreement arms exist for, so breaking either half must turn them red.
     ("--lines: names no source line",
-     "        for no, line in comments:\n", "        for no, line in []:\n"),
+     "        for no, line in comments + tails:\n", "        for no, line in []:\n"),
     ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
                                    "                out.append((no, k, line))\n",
      "            pass\n"),
+    # The markers must read the comment TRAILING a code line. Blinding them to it is what the
+    # gate did until the tails were threaded through, and it hid 54 citations plus 98 pinned
+    # offsets while calling their files swept.
+    ("markers: blind to trailing comments",
+     "        for _no, line in comments + tails:\n", "        for _no, line in comments:\n"),
 ]
 
 
@@ -195,13 +205,13 @@ def main():
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 47, "src.files": 5, "src.files_not_swept": 3,
-              "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "src.comment_lines": 49, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_blocks_over_15": 1, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
-              "src.comment_review": 2, "src.comment_evidence": 4,
-              "src.comment_label": 9}
+              "src.comment_review": 3, "src.comment_evidence": 4,
+              "src.comment_label": 10}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to

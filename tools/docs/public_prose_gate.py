@@ -214,9 +214,14 @@ def comment_lines(text):
     string is code. `long_blocks` LISTS the first line of each run of more than LONG_COMMENT_BLOCK
     consecutive comment lines (blank lines do not break a run; a code line does), so its length is
     the count the gate wants and its contents are the essays `--lines` points a human at. The line
-    number rides along with each comment for the same reason."""
+    number rides along with each comment for the same reason.
+
+    `tails` is the fourth value: the comment TRAILING a code line, which is a comment the marker
+    rules apply to and the volume rules do not. A citation is a citation wherever it sits, so the
+    markers read these; the ratio counters measure comment MASS as whole lines, because the rule
+    they serve is about essays and a trailing `// why` is part of its own code line's statement."""
     lines = text.split("\n")
-    comments, code, long_blocks, run = [], 0, [], 0
+    comments, code, long_blocks, tails, run = [], 0, [], [], 0
     in_block = False
 
     def comment(line):
@@ -259,14 +264,16 @@ def comment_lines(text):
             elif c in "\"'":
                 q = c
             elif s.startswith("//", i):
+                tails.append((no, s[i:]))
                 break
             elif s.startswith("/*", i):
+                tails.append((no, s[i:]))
                 if "*/" not in s[i + 2:]:
                     in_block = True
                 break
             i += 1
         code += 1
-    return comments, code, long_blocks
+    return comments, code, long_blocks, tails
 
 
 def measure(repo):
@@ -363,7 +370,7 @@ def measure(repo):
             for name in set(DECL.findall(bare)):
                 if name not in DECL_SKIP and len(name) > 3:
                     declared[name].append(p)
-        comments, code, long_blocks = comment_lines(text)
+        comments, code, long_blocks, tails = comment_lines(text)
         c["src.comment_lines"] += len(comments)
         code_total += code
         who["src.comment_lines"][p] = len(comments)
@@ -373,7 +380,7 @@ def measure(repo):
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
-        for _no, line in comments:
+        for _no, line in comments + tails:
             for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
                 key = "src.comment_" + k
                 if key in c and rx.search(line):
@@ -490,11 +497,11 @@ def explain(repo, path, tracked_set, subs=()):
         bare = code_only(text)
         read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
         owns_offsets = any(o in os.path.basename(path) for o in OFFSET_OWNERS)
-        comments, _code, long_blocks = comment_lines(text)
+        comments, _code, long_blocks, tails = comment_lines(text)
         for start in long_blocks:
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
-        for no, line in comments:
+        for no, line in comments + tails:
             for k, (rx, _) in list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()):
                 if rx.search(line):
                     out.append((no, "src.comment_" + k, line))
