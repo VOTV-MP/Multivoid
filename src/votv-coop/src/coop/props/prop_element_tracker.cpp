@@ -223,7 +223,7 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     // Any existing binding for this actor, local or mirror, means it is tracked, so never mint a
     // second local on top; this also blocks a local over a live mirror actor. The early-out makes
     // the key-uniqueness detector below first-enrolment only: a flow that enrols keyed props before
-    // the role reads Host must be audited against it (today's only path sets the session before the
+    // the role reads Host has to be checked against it (today's only path sets the session before the
     // boot census).
     if (coop::element::Registry::Get().EidForActor(actor) != coop::element::kInvalidId) return key;
     auto* s = LoadSession();

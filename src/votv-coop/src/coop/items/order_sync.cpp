@@ -1,17 +1,16 @@
-// coop/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: client->host order
-// forward, and (v136) the host-authoritative CHARGE for it.
+// coop/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: a client forwards
+// its order to the host, and the host performs and charges for it.
 //
-// CLIENT: polls saveSlot.orders.Num (a WATERMARK -- the commit verb is BP-internal/unobservable);
-// on an increment reads the new order's list_store ROW NAMES, chunks them to fit
-// kMaxReliablePayload, forwards to the host, and resets the mirror drone's self-takeoff (RE Q2). It
-// never mutates its own orders array (removeOrderCart needs the laptop UI and pops index 0
-// unconditionally; the client is ephemeral and never saves -- save_block holds disableSave -- so the
-// retained local entries are harmless and leak-free, and the panel they feed is security A46).
+// CLIENT: polls saveSlot.orders.Num as a watermark (the commit verb is blueprint-internal and
+// unobservable); on an increment it reads the new order's list_store row names, chunks them to
+// fit kMaxReliablePayload, forwards them, and quiets the mirror drone's self-takeoff. It never
+// mutates its own orders array: removeOrderCart needs the laptop UI and pops index 0
+// unconditionally, and a client never saves, so the retained local entries are harmless.
 //
-// HOST: assembles chunks per (slot, orderId), then PRICES the order from its own store table, checks
-// its OWN balance, commits via the native makeAnOrder, confirms the commit by an orders.Num +1 edge,
-// and only then charges. A refusal tells the ordering client, corrects its balance, and restores its
-// cart. All GT-only.
+// HOST: assembles the chunks per (slot, orderId), prices the order from its own store table,
+// checks its OWN balance, commits through the native makeAnOrder, confirms by an orders.Num +1
+// edge, and only then charges. A refusal tells the ordering client, corrects its balance and
+// restores its cart. All game-thread only.
 
 #include "coop/items/order_sync.h"
 
@@ -46,7 +45,8 @@ namespace net = coop::net;
 
 std::atomic<net::Session*> g_session{nullptr};
 
-// Per-item wire prefix: nameLen(1). v136: price/size/category/objLen are GONE from the wire.
+// Per-item wire prefix: nameLen(1). Price, size, category and class are not on the wire; the
+// host resolves all of them from the row name in its own table.
 constexpr int      kItemFixed         = 1;
 constexpr uint64_t kAssemblyTimeoutMs = 15000;  // drop a partial order whose chunks stop arriving
 constexpr uint64_t kPendingTimeoutMs  = 60000;  // drop a completed order the world never lets us commit
@@ -77,16 +77,13 @@ struct Pending {
     int      tries   = 0;
 };
 
-// PER SLOT, and that is load-bearing (security A49). These used to be two globals keyed by
-// (senderSlot<<32)|orderId with only a session-wide reset -- but a client leaving is NOT a session
-// teardown on the host, slots recycle LOWEST-FREE with no absence between occupants, and a fresh
-// occupant's g_orderIdCounter restarts at 1. So a departed peer's partial assembly absorbed the
-// newcomer's chunks and a departed peer's completed order committed under the newcomer's name.
-// Harmless while the goods were free; a CHARGE against the shared balance attributed to someone who
-// never ordered, once they are not. PerSlotState registers its own clear on the occupant-change edge
-// -- the one edge no per-slot boolean can observe -- so this is coverage by construction rather than
-// a check somebody has to remember. It also makes the two caps PER SLOT, so one client flooding
-// partial orders can no longer deny every other peer's orders for the assembly timeout.
+// PER SLOT, and that is load-bearing. Slots recycle lowest-free with no absence between
+// occupants and a fresh occupant's orderId counter restarts at 1, so state keyed by
+// (slot, orderId) alone would let a departed peer's partial assembly absorb the newcomer's
+// chunks and its completed order commit -- and be CHARGED to the shared balance -- under the
+// newcomer's name. PerSlotState clears on the occupant-change edge, the one edge no per-slot
+// boolean can observe. It also makes the two caps per slot, so one client flooding partial
+// orders cannot deny every other peer's orders for the assembly timeout.
 struct SlotOrders {
     std::unordered_map<uint32_t, Assembly> assembly;
     std::vector<Pending>                   pending;
@@ -98,18 +95,18 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// The host rolls the delivery ETA itself -- `[V]` the game's own Button_order does
-// RandomFloatInRange(120,180), and shared-world RNG is host-authoritative
-// (docs/COOP_RNG_AUTHORITY.md). The client's number is not on the wire.
+// The host rolls the delivery ETA itself: the game's own Button_order draws
+// RandomFloatInRange(120, 180) and shared-world randomness is host-authoritative. The client's
+// number is not on the wire.
 float RollEta() {
     static std::mt19937 s_rng{static_cast<uint32_t>(NowMs())};
     static std::uniform_real_distribution<float> s_dist(120.f, 180.f);
     return s_dist(s_rng);
 }
 
-// Reset all per-session state. Called by BOTH Install (session start) and OnDisconnect (teardown)
-// so a reconnect that re-Installs without a preceding OnDisconnect can't retain a stale client
-// watermark and double-forward last session's queued orders (audit I-2). One path, RULE 2.
+// Reset all per-session state. Called by BOTH Install (session start) and OnDisconnect
+// (teardown), so a reconnect that re-Installs without a preceding OnDisconnect cannot retain a
+// stale client watermark and double-forward last session's queued orders.
 void ResetState() {
     g_forwardedThrough = -1;
     g_orderIdCounter   = 0;
@@ -146,9 +143,9 @@ void ForwardOrder(net::Session* s, int32_t idx) {
     if (total > static_cast<size_t>(net::kMaxOrderItems)) {
         // Do NOT truncate. The client has already been debited locally for ALL of these, so
         // forwarding the first 64 would have the host price and deliver a DIFFERENT basket than the
-        // one the player paid for, silently. `[V]` The game's own cart caps at 50 ("<n>/50" in the
-        // shop UI), so a legitimate order can never reach this; refusing the whole thing is correct
-        // for the only case that can, and the player is told rather than left guessing.
+        // one the player paid for, silently. The game's own cart caps at 50, so a legitimate order
+        // can never reach this; refusing the whole thing is right for the only case that can, and
+        // the player is told.
         UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- NOT forwarding (a partial basket "
                 "would be priced and delivered differently from the one that was paid for)",
                 idx, total, net::kMaxOrderItems);
@@ -232,7 +229,7 @@ void TickClient(net::Session* s) {
     if (count == g_forwardedThrough) return;
     for (int32_t idx = g_forwardedThrough; idx < count; ++idx) ForwardOrder(s, idx);
     g_forwardedThrough = count;
-    OE::QuietLocalDrone();  // reset the mirror drone's self-takeoff once after forwarding (RE Q2)
+    OE::QuietLocalDrone();  // reset the mirror drone's self-takeoff once after forwarding
 }
 
 // ---- HOST: tell one client its order was not performed, and undo what its local run already did ----
@@ -278,10 +275,10 @@ bool ResolveOne(net::Session* s, uint8_t slot, Pending& pe) {
     int32_t points = 0;
     if (!E::ReadPoints(&points)) return false;  // world still resolving -- retry next tick
     if (static_cast<int64_t>(points) < total) {
-        // CLIENT-SCOPED BY CONSTRUCTION: the host's own orders never reach this code at all, so this
-        // is not a rule the host applies to itself (docs/security/THREAT_MODEL.md -- the host may
-        // cheat and we relay it). `[V]` The game's own gate does the same test at Button_order @5990,
-        // silently; what the client gets extra is a reason, because its local debit already happened.
+        // CLIENT-SCOPED BY CONSTRUCTION: the host's own orders never reach this code, so this is
+        // not a rule the host applies to itself. The game's own gate does the same test at
+        // Button_order and says nothing; what the client gets extra is a reason, because its local
+        // debit already happened.
         Refuse(s, slot, pe.orderId, net::OrderRefusedReason::Unaffordable,
                L"the shared balance is short");
         return true;
@@ -294,9 +291,9 @@ bool ResolveOne(net::Session* s, uint8_t slot, Pending& pe) {
     const bool dispatched = OE::CommitOrder(pe.od, RollEta(), /*automatic*/ true);
     const int32_t after = OE::OrderCount();
 
-    // `dispatched` only says ProcessEvent ran. The ORDER is what we charge for, so the post-condition
-    // is the artifact: exactly one new row in saveSlot.orders. `[V]` That edge is exact -- nothing
-    // pops synchronously inside the commit (drone::checkOrders has no removeOrderCart/Array_Remove).
+    // `dispatched` only says ProcessEvent ran. The ORDER is what we charge for, so the
+    // post-condition is the artifact: exactly one new row in saveSlot.orders. That edge is exact --
+    // nothing pops synchronously inside the commit.
     if (!dispatched || before < 0 || after != before + 1) {
         UE_LOGW("order_sync: commit did not queue an order (dispatch=%d orders %d -> %d, try %d)",
                 dispatched ? 1 : 0, before, after, pe.tries);
@@ -378,9 +375,9 @@ void OnRefused(const void* payload, int len) {
         g_inFlight.erase(it);
     }
 
-    // Say it, then put the cart back. `[V]` The base game's own affordability gate pops BEFORE
-    // Array_Clear(cart), so a refused purchase leaves the cart intact -- our refusal arrives after
-    // the local run already cleared it, and not restoring would invent a punishment SP lacks.
+    // Say it, then put the cart back. The base game's own affordability gate pops BEFORE it clears
+    // the cart, so a refused purchase leaves the cart intact; our refusal arrives after the local
+    // run already cleared it, and not restoring would invent a punishment single-player lacks.
     const std::wstring line = std::wstring(L"could not order: ") + ReasonText(p.reason);
     coop::peer_action_feed::AnnounceDirect(
         static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
@@ -392,11 +389,10 @@ void OnRefused(const void* payload, int len) {
 }  // namespace
 
 void Install(net::Session* session) {
-    // NOTE: Install is the per-net-pump-tick idempotent "ensure" path (like every sync subsystem's
-    // Install), NOT a once-per-session call -- so it must NOT reset state here (that would re-prime
-    // the client watermark every tick and never forward). Per-session reset lives in OnDisconnect,
-    // which net_pump calls on every session-teardown edge (the invariant all 10 sibling subsystems
-    // rely on). (Reverts a wrong audit-I-2 suggestion made without the per-tick call-site context.)
+    // Install is the per-net-pump-tick idempotent "ensure" path, as in every sync subsystem, NOT a
+    // once-per-session call, so it must not reset state here -- that would re-prime the client
+    // watermark every tick and never forward. Per-session reset lives in OnDisconnect, which
+    // net_pump calls on every session-teardown edge.
     g_session.store(session, std::memory_order_release);
 }
 

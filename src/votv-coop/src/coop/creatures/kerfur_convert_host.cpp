@@ -1,9 +1,8 @@
 // coop/kerfur_convert_host.cpp -- the HOST executor half of the kerfur
 // conversion feature: KerfurConvertRequest execution (verb dispatch + the
 // request-verb bracket) and the post-verb converge (new-form search/register,
-// BindFormActor -> KerfurConvert, floppy express). Extracted VERBATIM from
-// kerfur_convert.cpp (2026-07-19 s27 cut); the feature narrative + kismet
-// ground truth live in kerfur_convert.h / votv-kerfur-convert-RE-2026-06-12.md.
+// BindFormActor -> KerfurConvert, floppy express). The feature narrative and the
+// blueprint ground truth live in kerfur_convert.h.
 // Interfaces: kerfur_convert_host.h. Class pointers arrive via SetClasses
 // every Install attempt; verb refs + the request latch via SetVerbs at the
 // Install SUCCESS site only (two-layer handoff -- see the header, incl. the
@@ -122,10 +121,10 @@ void* PickDropPropFn(void* cls) {
 // explicit ConvergeAfterConversion a second time right after the verb returns -- and the fresh
 // NPC, now tracked by the seam converge, would read as "no new kerfur NPC near" (a spurious
 // release + WARN). g_requestVerbEid brackets the CallFunction; the capture records into
-// g_seamConvergedEid ONLY when it fires inside the matching bracket (audit 2026-07-13 finding 3:
-// an unconditional write left one stale eid per host-OWN toggle with nobody to consume it -- a
-// later request whose recycled eid matched would skip its converge AND its reject echo). Verbs
-// are synchronous on the GT, so single slots cannot be raced.
+// g_seamConvergedEid ONLY when it fires inside the matching bracket: an unconditional write
+// would leave one stale eid per host-OWN toggle with nobody to consume it, and a later request
+// whose recycled eid matched would skip its converge AND its reject echo. Verbs are
+// synchronous on the game thread, so single slots cannot be raced.
 uint32_t g_requestVerbEid   = 0xFFFFFFFFu;  // eid of the request-path verb currently executing; GT-only
 uint32_t g_seamConvergedEid = 0xFFFFFFFFu;  // set by the capture inside that bracket; GT-only
 
@@ -164,12 +163,11 @@ void ExpressConversionFloppies(float x, float y, float z) {
         UE_LOGI("kerfur_convert: expressed %d dropped floppy prop(s) (normal keyed PropSpawn)", ingested);
 }
 
-// `capturedForm` (2a-capture, 2026-07-14): the DETERMINISTIC successor B captured in-bracket at
-// its FinishSpawningActor (coop/creatures/kerfur_form_assembler) -- when supplied + live it REPLACES
-// the probabilistic FindNewFormKerfurActor(position) search (the take-8/10 crutch). nullptr = the
-// legacy position search (retired once the deterministic path is proven). Everything downstream
-// (RegisterHost*Silent mint, ReleaseSilent, BindFormActor -> KerfurConvert) is UNCHANGED -- the
-// capture only fixes WHICH B, not the converge.
+// `capturedForm` is the DETERMINISTIC successor B, captured in-bracket at its
+// FinishSpawningActor (coop/creatures/kerfur_form_assembler); when supplied and live it replaces
+// the probabilistic FindNewFormKerfurActor(position) search. nullptr falls back to that search.
+// Everything downstream -- the silent mint, the silent release, BindFormActor -> KerfurConvert --
+// is the same either way: the capture only fixes WHICH B, not the converge.
 void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid,
                              uint8_t toProp, float px, float py, float pz,
                              void* capturedForm, int32_t capturedIdx) {
@@ -268,13 +266,13 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
     // event_feed drain) -- ProcessEvent calls are legal here, and because the
     // drain runs INSIDE the pump task (t_inPump set), the verb's nested
     // dispatches cannot re-enter the pump: the converge below always runs
-    // strictly after the verb returns (audit C2, request-path analysis).
+    // strictly after the verb returns.
     if (!g_ready.load(std::memory_order_acquire)) {
         UE_LOGW("kerfur_convert: request before install resolved -- dropped");
         return;
     }
-    // Audit I5: every legit target is a host-range element (host props/NPCs
-    // are AllocHostId'd); reject out-of-range ids loudly (spoof/bug).
+    // Every legitimate target is a host-range element (host props and NPCs are
+    // AllocHostId'd); reject out-of-range ids loudly (a spoof or a bug).
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(
             static_cast<coop::element::ElementId>(payload.elementId))) {
         UE_LOGW("kerfur_convert: request eid=%u outside the host range -- dropped (slot %u)",
@@ -360,9 +358,8 @@ coop::element::ElementId ActiveRequestVerbEid() {
 
 // Record the converge for OnConvertRequest ONLY when we are inside ITS verb bracket -- a
 // host-OWN toggle has no consumer and an unconditional write would leave a stale eid that a
-// later recycled-eid request could falsely consume (audit finding 3). One-way owner API for
-// the residual destroy seam (the s21b MarkDirtyFromVerb shape); the bracket predicate lives
-// here, next to the state.
+// later recycled-eid request could falsely consume. One-way owner API for the residual destroy
+// seam; the bracket predicate lives here, next to the state.
 void RecordSeamConvergedInBracket(coop::element::ElementId dyingEid) {
     if (g_requestVerbEid == static_cast<uint32_t>(dyingEid))
         g_seamConvergedEid = static_cast<uint32_t>(dyingEid);

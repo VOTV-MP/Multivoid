@@ -1,11 +1,10 @@
 // ue_wrap/vm_dispatch.cpp -- see ue_wrap/vm_dispatch.h.
 //
-// Increment 1 of docs/COOP_VM_DISPATCH_PLAN.md: the PERMANENT GNatives[0x45]
-// swap + name-keyed registration API + the game-thread name-first filter that
-// fires consumer bracket callbacks. Only opcode 0x45 (EX_LocalVirtualFunction) is
-// swapped -- 0x46 (EX_LocalFinalFunction) has no measured customer yet (plan R11),
-// so its slot is left untouched. Hardening (coverage-gated validation, 1/s slot-
-// integrity re-check, loud latches) + the self-bracket TLS opener are increment 1b.
+// The permanent GNatives[0x45] swap, the name-keyed registration API and the game-thread
+// name-first filter that fires consumer bracket callbacks. Only opcode 0x45
+// (EX_LocalVirtualFunction) is swapped; 0x46 (EX_LocalFinalFunction) has no customer, so its
+// slot is left untouched. Coverage-gated validation, a once-a-second slot-integrity re-check,
+// loud latches and the self-bracket TLS opener harden it.
 
 #include "ue_wrap/core/vm_dispatch.h"
 
@@ -35,16 +34,16 @@ using ExecFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result)
 
 // FFrame +0x20 = Code (bytecode cursor). At wrapper entry for op 0x45 it points AT
 // the 12-byte FScriptName operand {ComparisonIndex@0, DisplayIndex@4, Number@8}
-// (STEP 1.0 LIVE-MEASURED 2026-07-13). We peek it non-destructively -- a wrong
+// as measured live. We peek it non-destructively -- a wrong
 // decode only mis-FILTERS, never corrupts, because the original handler re-reads
 // its own operands from Code and advances the cursor itself.
 constexpr std::size_t kFFrameCodeOff = 0x20;
 constexpr int kOpcodeLocalVirtual = 0x45;
 // The verb table is a fixed array walked linearly per matched-name test, so it is sized rather than
-// grown. 2026-08-25: it was 16 and B2's collect verb took the FIFTEENTH slot -- one registration from
-// a full table, whose failure mode is `UE_LOGE` + a lane that silently never observes anything. 32 is
-// the same shape with room; the walk is over registered entries, not the capacity, so an unused slot
-// costs one pointer and nothing per dispatch.
+// grown. A full table's failure mode is one `UE_LOGE` and a lane that silently never observes
+// anything, and the count has come within one registration of the old size of 16, so the
+// capacity is set well clear of it. The walk is over registered entries, not the capacity, so
+// an unused slot costs one pointer and nothing per dispatch.
 constexpr int kMaxVerbs = 32;
 
 std::uintptr_t* g_gnatives = nullptr;   // GNatives[256], the exec-handler table base.
@@ -75,7 +74,7 @@ std::mutex g_regMutex;  // registration only -- NEVER taken on the dispatch hot 
 // the verb body can attribute a spawn/destroy to it (CurrentThreadVerb()).
 //
 // t_currentVerbName IS THE ONLY GLOBALLY UNIQUE HANDLE, and the ambient read MUST key
-// on it (2026-08-24, /qf round 46-47). `verbId` is a CALLER-CHOSEN int echoed back --
+// on it. `verbId` is a CALLER-CHOSEN int echoed back --
 // container_contents_sync (kVerbDirty), meadow_db_sync (kVerbMark) and drive_sync
 // (kVerbPutDriveIn) all publish 1, which kerfur_form_assembler reads as its own
 // kVerbTurnOff, and drive_sync's kVerbPulledOut=2 collides with kVerbTurnOn. An id is
@@ -215,9 +214,9 @@ bool ValidateTable(const std::uintptr_t* tbl) {
 bool EnsureInstalled() {
     if (g_installed.load(std::memory_order_acquire)) return true;
 
-    // v119 perf-audit F-1: AOB resolution is process-immutable -- a failed
-    // resolve can never succeed later, so LATCH the failure (log-once) or a
-    // per-tick registration retry re-runs the full-image scan forever.
+    // AOB resolution is process-immutable: a failed resolve can never succeed
+    // later, so LATCH the failure (logged once) or a per-tick registration retry
+    // re-runs the full-image scan forever.
     static std::atomic<bool> s_installFailed{false};
     if (s_installFailed.load(std::memory_order_relaxed)) return false;
 
@@ -284,11 +283,10 @@ bool RegisterVirtualVerb(const wchar_t* verbName, int verbId, EntryFn cb) {
     // g_allResolved fast-out is a PERMANENT latch: every verb registered after the first
     // "all N resolved" moment stays pending FOREVER, its callback never fires, and nothing
     // says so -- registration returns true and the consumer's own success banner prints.
-    // Measured 2026-07-22: container_contents registers from its Tick (i.e. after session
-    // start, later than the install-time consumers), so it landed in slots 8/9 immediately
-    // AFTER "all 8 verb(s) resolved -- ARMED" and was inert for two whole hands-on takes --
-    // the R11 RED. Registration is dynamic by contract ("Any thread", "installs on the FIRST
-    // successful registration"), so the latch must be per-pass, not per-process.
+    // container_contents registers from its Tick, later than the install-time consumers, so it
+    // lands in a slot right after the "all N verb(s) resolved -- ARMED" line and would stay
+    // inert. Registration is dynamic by contract (any thread, installs on the FIRST successful
+    // registration), so the latch has to be per-pass, not per-process.
     g_allResolved.store(false, std::memory_order_relaxed);
     UE_LOGI("[vm_dispatch] registered verb %ls id=%d (slot %d) -- pending GT FName resolve",
             verbName, verbId, n);

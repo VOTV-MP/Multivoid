@@ -1,12 +1,10 @@
 // coop/props/pile_spawn_bind.cpp -- the pile spawn-time native-bind mechanism (see header).
 //
-// EXTRACTED from coop/props/pile_reconcile.cpp 2026-06-30 (anti-smear refactor): this is
-// pile_reconcile's group A -- the bracket-scoped GUObjectArray pile-bind index + the two
-// spawn-time bind paths (TryDestroyTwin / FindAndConsumeAdoptCandidate) + the [PILE-DELTA]
-// dark probe. Behavior preserved byte-for-byte; the ONLY change is that the save-time-key
-// MISS now ARMS the order owner (coop::element::quiescence_drain::ArmPendingSaveTimeTwin)
-// across modules instead of writing a local pending map (which moved to quiescence_drain).
-// [[feedback-one-owner-order-axis]]
+// It holds the bracket-scoped GUObjectArray pile-bind index, the two spawn-time bind paths
+// (TryDestroyTwin / FindAndConsumeAdoptCandidate) and the [PILE-DELTA] dark probe. A
+// save-time-key MISS arms the order owner across modules
+// (coop::element::quiescence_drain::ArmPendingSaveTimeTwin) rather than keeping a pending map
+// of its own, so one module owns the order axis.
 
 #include "coop/props/pile_spawn_bind.h"
 
@@ -31,13 +29,13 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// ---- Keyless-pile position-bind index (v56 follow-up, 2026-06-10) --------
-// With the save-transfer join the client's world is LOADED FROM THE HOST'S
-// OWN SAVE: its chipPiles are the same piles, settled at the same positions.
-// Binding the host's keyless eid expression to the client's OWN local pile
-// (instead of sweep-destroying all ~870 and fresh-spawning mirrors) is now
-// SOUND. Pre-save-transfer worlds had per-peer RNG pile layouts -- the very
-// reason the eidOnly lane historically skipped local matching.
+// ---- Keyless-pile position-bind index -----------------------------------
+// The save-transfer join loads the client's world FROM THE HOST'S OWN SAVE,
+// so its chipPiles are the same piles settled at the same positions. That is
+// what makes it sound to bind the host's keyless eid expression to the
+// client's OWN local pile instead of sweep-destroying all ~870 and
+// fresh-spawning mirrors: without it the layouts are per-peer and only an
+// eid can match.
 //
 // Bracket-scoped, built lazily ONCE per bracket on the first keyless-pile
 // expression (one GUObjectArray walk -- NOT one walk per pile; the ~870-
@@ -143,9 +141,8 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
         // be destroyed even if it bound late (cheap -- one map lookup on the single matched candidate).
         if (coop::prop_element_tracker::IsBoundMirrorNative(native)) return;
         // Retire the superseded client-minted twin. The kernel marks the destroy as local
-        // bookkeeping so the K2_DestroyActor PRE observer does not broadcast it -- this comment
-        // used to claim the Unmark alone achieved that "keyless + no eid" silence, and the
-        // 2026-08-23 field logs measured 940 PropDestroys escaping anyway. See the kernel.
+        // bookkeeping so the K2_DestroyActor PRE observer does not broadcast it; the Unmark
+        // alone does not buy that silence.
         coop::save_time_retire_util::UnmarkAndDestroy(native);
         if (g_pileBindCount < 8 || (g_pileBindCount % 200) == 0)
             UE_LOGI("[PILE] DESTROY native level-pile twin eid=%u at (%.1f,%.1f,%.1f) chipType=%u -- "
@@ -235,25 +232,22 @@ void* FindAndConsumeAdoptCandidate(const coop::net::PropSpawnPayload& payload,
 }
 
 void LogCensus() {
-    // ALWAYS log when the index was built this bracket -- even 0 orphans. A CLEAN join drains the index
-    // to EMPTY (every twin matched within 1cm), and gating on non-empty made a 0-orphan join SILENT --
-    // indistinguishable from a census that never ran (the exact ambiguity the 2026-06-23 clean same-machine
-    // smoke hit: 869 built, all matched, no [PILE-CENSUS] line -> looked broken). The summary line is the
-    // proof the census ran + the count; N=0 on a clean join is the expected, INFORMATIVE result.
-    // FRESH walk at the sweep (GC-ROBUST) -- do NOT re-use g_pileBindIndex's build-time internal indices.
-    // The 2026-06-23 calibration proved why: a mass-purge runs right at the sweep (prop_element_tracker
-    // reaps 256 dead Prop Elements/call, draining the join-tail backlog -- log-confirmed at the SAME second
-    // as the sweep, repeating every ~4s), churning the GUObjectArray so every stored internalIdx goes STALE
-    // -> IsLiveByIndex(actor, idx) false-negatives on every survivor -> "0 live of 17" while the drift had
-    // seeded 8 orphans. So re-enumerate live native chipPiles with FRESH indices: the burst's 1cm twin-
-    // destroy already removed every MATCHED native, so the live survivors ARE the orphan set directly.
-    // One GUObjectArray walk, once per join (cold path), pointer-compare class filter before any read.
+    // ALWAYS log when the index was built this bracket, even at 0 orphans. A clean join drains the
+    // index to empty (every twin matched within 1 cm), so gating on non-empty would make that join
+    // silent and indistinguishable from a census that never ran. The summary line is the proof the
+    // census ran, and N=0 on a clean join is the expected result.
+    // FRESH walk at the sweep: do NOT re-use g_pileBindIndex's build-time internal indices. A
+    // mass-purge runs right at the sweep (prop_element_tracker reaps 256 dead Prop Elements per
+    // call, draining the join-tail backlog every few seconds), churning the GUObjectArray so every
+    // stored internalIdx goes stale and IsLiveByIndex false-negatives on every survivor. Re-
+    // enumerating live native chipPiles with fresh indices is exact instead: the burst's 1 cm
+    // twin-destroy already removed every MATCHED native, so the live survivors ARE the orphan set.
+    // One GUObjectArray walk, once per join, pointer-compare class filter before any read.
     if (!g_pileBindIndexBuilt) return;
     int live = 0, le5 = 0, mid = 0, gt30 = 0, none = 0;
-    int totalLive = 0, proxyMatched = 0;   // DIAGNOSTIC: distinguish "0 orphans because all natives DIED"
-                                           // (totalLive==0) from "0 because every survivor is 1cm-proxy-matched"
-                                           // (totalLive==proxyMatched). The 2026-06-23 same-machine drift hit
-                                           // census=0 -- this says which: consumed (incl. wrong-consumption) vs no-divergence.
+    int totalLive = 0, proxyMatched = 0;   // tells "0 orphans because every native DIED" (totalLive==0)
+                                           // apart from "0 because every survivor is 1cm-proxy-matched"
+                                           // (totalLive==proxyMatched): consumption vs no divergence.
     const bool verbose = DeltaProbeOn();
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
