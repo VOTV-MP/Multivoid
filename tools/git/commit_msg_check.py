@@ -68,9 +68,16 @@ VOCABULARY = [
      "not in the repository"),
     (re.compile(r"\bdocs/security/"), "docs/security/",
      "not in the repository"),
-    (re.compile(r"\bverbatim\b", re.I), "verbatim",
-     "quoted conversations stay in the maintainer's notes"),
-    (re.compile(r"(?<![$\w])USER\b"), "USER",
+    # "verbatim" is refused as a QUOTING cue -- near a speech verb -- and not as a word.
+    # "follow the spec verbatim" is ordinary English, and a contributor should not have to
+    # discover that we refuse it, so the speech verb is what the pattern looks for.
+    (re.compile(r"\b(?:said|says|say|told|asked|wrote|writes|quote[sd]?)\b[^.\n]{0,40}"
+                r"\bverbatim\b"
+                r"|\bverbatim\b[^.\n]{0,40}\b(?:said|says|told|asked|wrote)\b", re.I),
+     "verbatim",
+     "quoted conversations stay in the maintainer's notes; state what was decided"),
+    # Standalone USER, the shouted attribution. USER-facing and USER_ID are ordinary words.
+    (re.compile(r"(?<![$\w-])USER\b(?![-_])"), "USER",
      "quoted decisions stay in the maintainer's notes; state the decision itself"),
     (re.compile(r"\bDocs-Census\b"), "Docs-Census",
      "machine trailers from the close ritual are not part of the change"),
