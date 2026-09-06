@@ -230,9 +230,9 @@ tools/workflows/
 docs/AGENT_SPAWNING.md
 
 # ---- RESEARCH CORPUS -- private in place -----------------------------------------------------
-# Point-in-time reverse-engineering notes, raw session logs, crash dumps and screenshots, none of
-# it audited for host addresses or machine details. It follows the site/ pattern: the files stay on
-# disk with their own inner git repo, so local pointers resolve and nothing is lost.
+# Point-in-time reverse-engineering notes, raw session logs, crash dumps and screenshots. It
+# follows the site/ pattern: the files stay on disk with their own inner git repo, so local
+# pointers resolve and nothing is lost.
 research/
 
 # Security working notes. A public security document belongs in a root SECURITY.md instead.
