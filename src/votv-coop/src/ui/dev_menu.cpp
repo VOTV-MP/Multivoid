@@ -45,7 +45,7 @@ using ui::scale::S;
 // item can be a button, a checkbox reflecting live state, a slider, etc. `dev`
 // hides it unless the dev switch is on; `host` hides it unless the local peer
 // is the HOST of a live coop session (a ROLE gate, not a dev gate -- the
-// Administration category; user 2026-07-05).
+// Administration category).
 struct Item { void (*render)(); bool dev; };
 struct Sub  { const char* name; std::vector<Item> items; bool dev; bool host = false; };
 struct Cat  { const char* name; std::vector<Sub> subs;  bool dev; bool host = false; };
@@ -394,11 +394,11 @@ void RenderNameplatePref() {
     }
     if (coop::nick_color::IsCustom(coop::nick_color::LocalPacked())) {
         ImGui::SetNextItemWidth(S(220.f));
-        // Commit DEBOUNCED on the picker's own value-changed signal (user bug
-        // 2026-07-05: IsItemDeactivatedAfterEdit on the composite picker never
-        // fired reliably -- the color only applied after re-toggling the
-        // checkbox). Every edit re-arms a short timer; ~0.35 s after the last
-        // change the pref persists + announces ONCE (no per-drag-frame wire spam).
+        // Commit DEBOUNCED on the picker's own value-changed signal, because
+        // IsItemDeactivatedAfterEdit does not fire reliably on a composite picker and
+        // the colour would only apply after re-toggling the checkbox. Every edit
+        // re-arms a short timer; ~0.35 s after the last change the pref persists +
+        // announces ONCE (no per-drag-frame wire spam).
         if (ImGui::ColorPicker3("##nickcolor", sCol,
                                 ImGuiColorEditFlags_PickerHueWheel |
                                     ImGuiColorEditFlags_NoSidePreview |
@@ -417,8 +417,8 @@ void RenderNameplatePref() {
     ImGui::TextDisabled("on every peer's screen. Synced live and to late joiners; persists.");
 }
 
-// Overlay fonts -- GRANULAR per surface (2026-07-09, user ask): chat, the net-stats
-// widget, the nameplates and the menu/panels each pick their OWN family. SetRoleFamily
+// Overlay fonts -- GRANULAR per surface: chat, the net-stats widget, the nameplates
+// and the menu/panels each pick their OWN family. SetRoleFamily
 // persists multivoid.ini ui.font.<role> + requests the atlas rebuild (next frame).
 void RenderFontPref() {
     namespace F = ui::fonts;
@@ -440,9 +440,9 @@ void RenderFontPref() {
     ImGui::TextDisabled("each with its own default). Fixedsys (VOTV) = game terminal pixel");
     ImGui::TextDisabled("font; JetBrains/Cascadia monospace; Roboto proportional.");
 
-    // UI size (2026-07-04, user: "все менюшки и тексты ПОБОЛЬШЕ"): a multiplier
-    // on top of the resolution factor. Applied on slider RELEASE, not per drag
-    // frame -- each apply re-bakes the font atlas (a one-frame ~100 ms hitch).
+    // UI size: a multiplier on top of the resolution factor. Applied on slider
+    // RELEASE, not per drag frame -- each apply re-bakes the font atlas (a
+    // one-frame ~100 ms hitch).
     ImGui::Spacing();
     ImGui::SeparatorText("UI size");
     static float sPending = -1.f;   // -1 = mirror the live value
@@ -474,11 +474,10 @@ void RenderAdminPlayers() { ui::admin_panel::Render(); }
 void RenderWorldRules() { ui::world_rules_panel::Render(); }
 
 // ---- the strict nested taxonomy (refined as features land) -------------------
-// Reorganized by the GAME'S OWN DOMAINS (user ask 2026-07-10): Player (the
-// person) ; World (the simulation state: rules/weather/clock/economy) ;
-// Content (the game's spawnable/triggerable content: entities + events --
-// the old "Game" catch-all dissolved per the folder-concept rule) ; Network ;
-// Administration ; Cosmetics. Network subs are still placeholders.
+// Organized by the GAME'S OWN DOMAINS: Player (the person) ; World (the simulation
+// state: rules/weather/clock/economy) ; Content (the game's spawnable/triggerable
+// content: entities + events) ; Network ; Administration ; Cosmetics -- there is no
+// catch-all category, per the folder-concept rule. Network subs are placeholders.
 const std::vector<Cat>& Tree() {
     static const std::vector<Cat> kTree = {
         { "Player", {
@@ -489,18 +488,17 @@ const std::vector<Cat>& Tree() {
         { "World", {
             // Rules is for EVERYONE (host+clients+solo): a read-only view of the
             // world rules this peer runs under (mainGameInstance.gameRules) +
-            // gamemode. Non-dev, non-host. User ask 2026-07-08.
+            // gamemode. Non-dev, non-host.
             { "Rules",    { { &RenderWorldRules, false } }, false },
             { "Weather",  { { &RenderSnow, true } }, true },
             { "Clock",    { { &RenderSetClock, true } }, true },
             { "Economy",  { { &RenderGivePoints, true } }, true },
         }, false },
         { "Content", {
-            // The game's spawnable/triggerable content (user ask 2026-07-10):
-            // Entities = creature/entity test spawns (incl. the v108 owner-entity
-            // eyer); Props = prop-content tools (the Q spawn-menu unlock -- its
-            // own subsection per the user 2026-07-10: it spawns PROPS, not
-            // entities); Events = the full event board.
+            // The game's spawnable/triggerable content. Entities = creature/entity
+            // test spawns (the owner-entity eyer included); Props = prop-content
+            // tools, the Q spawn-menu unlock among them, which is its own subsection
+            // because it spawns PROPS rather than entities; Events = the event board.
             { "Entities", { { &RenderSpawnNpc, true } }, true },
             { "Props",    { { &RenderSpawnMenuUnlock, true } }, true },
             { "Events",   { { &RenderEvents, true } }, true },

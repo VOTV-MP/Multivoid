@@ -42,6 +42,26 @@ roll, owns the entity it rolled, and broadcasts it so every other peer renders a
 (`coop/creatures/owner_entity_sync`). The first member is the night stalker, the eyes that watch
 from the dark.
 
+### Which spawners a client parks
+
+A connected client ticks no shared-world spawner and rolls no shared-world spawn RNG: shared
+content arrives over the wire, or it is not shared. `coop/world/spawn_authority` is the single
+owner of that suppression, in two tiers — an instance whose tick is parked outright (re-parked
+once a second, with a fifteen-second walk for instances that stream in late), and a spawner
+reached through `ProcessEvent`, whose entry function is cancelled before it runs. Suppression is
+a loan: leaving a session restores every tick it parked.
+
+| Spawner | On a client | Why |
+|---|---|---|
+| insomniac, fossilhound | tick parked | the host mirrors the product |
+| cockroach master and summoner | tick parked | its tick also drains and destroys shared food props; `coop/creatures/roach_sync` drives the client's population |
+| mushroom master and spawner | cancelled | they spawn at their own world transform |
+| yellow wisp spawner | cancelled | anchors on a random navmesh point; the product is host-mirrored |
+| sky wisp spawner | cancelled | absolute map coordinates, not player-anchored |
+| firefly, pinecone | left running | anchored on the local player's camera: each peer owns its roll and the others render a mirror |
+| underground garbage | left running | per-peer loot mounds; parking one would delete a client's loot with no host replacement |
+| deer, bp7, hexahive, eyers, walking tree, sus hole, beehive, bush, tick, mannequin | left running | the product has no mirror yet, and parking a spawner whose output nothing replaces would just remove the content |
+
 ### The killer wisp
 
 The host's killer wisp always grabs and kills the host's own body: its verbs address the main
@@ -135,6 +155,7 @@ wisp in flight is transient and owes nothing.
 | The Omega's floppy state is not synced, so a relayed get-reports diverges on its result; its accessories and carried object likewise | `[V]` no lane under `coop/creatures` carries them |
 | Only one stalker class is owned per peer so far | `[V]` `coop/creatures/owner_entity_sync`, the member table |
 | The conversion is detected by a poll, five times a second, not at the verb | `[V]` `coop/creatures/kerfur_convert`; the verb is invisible to every seam that can cancel |
+| Ten ambient spawner families are neither mirrored nor parked, so each peer grows its own deer, hexahives, walking trees and the rest | `[V]` they appear in no lane under `coop/creatures` and in no row of `coop/world/spawn_authority` |
 
 ## Code map
 

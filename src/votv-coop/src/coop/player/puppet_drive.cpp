@@ -1,9 +1,7 @@
 // coop/player/puppet_drive.cpp -- see coop/player/puppet_drive.h.
-// Bodies verbatim from net_pump.cpp's old drive block (2026-07-18 extraction);
-// the only non-verbatim lines are the function heads, the `isHost` ->
-// session.role() substitution at the host self-register, and the
-// worldReadyAnnounced parameter replacing the old in-loop atomic load (both
-// enumerated in the extraction design doc's wrapper table).
+// The per-slot drive step: spawn a puppet on a peer's first pose, apply the
+// interpolated stream to it, and retire it when the slot goes away. net_pump
+// owns the loop that calls in here; this file owns what happens per slot.
 
 #include "coop/player/puppet_drive.h"
 
@@ -45,8 +43,8 @@ coop::RemotePlayer& Puppet(int slot) {
 
 bool DestroySlot(int slot) {
     UE_ASSERT_GAME_THREAD("g_puppets (puppet_drive::DestroySlot)");
-    // N-3 (2026-05-29 audit): UnregisterPuppet drops the Player Element
-    // from players::Registry. If the puppet was never spawned (peer
+    // UnregisterPuppet drops the Player Element from players::Registry.
+    // If the puppet was never spawned (peer
     // disconnected after Join but before any PoseSnapshot), g_puppets[
     // slot].valid() is false but playerBySlot_[slot] may still hold a
     // mirror Element installed by EstablishMirrorForSlot. Calling
@@ -64,7 +62,7 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
     UE_ASSERT_GAME_THREAD("g_puppets (puppet_drive::DriveTick)");
     namespace PP = coop::dev::perf_probe;
 
-    // Pose-apply diagnostic (lag hunt 2026-06-06): the wire is proven clean (net-diag), so
+    // Pose-apply diagnostic: the wire is measured clean by net-diag, so this
     // measure the APPLY side. Per remote puppet, accumulate the FRESH-pose count (isNew/sec)
     // and the latest stream target below, then log once/sec the target vs the puppet's rendered
     // position + the trailing distance. Healthy = ~sendHz fresh/s + a small trail; a big/growing
@@ -116,8 +114,8 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // after a failure (RULE 1: don't crutch the engine, just wait).
                 if (now < sNextSpawnAttempt[slot]) continue;
                 UE_LOGI("net: first remote pose on slot %d -> auto-spawning puppet", slot);
-                // v93 skins (docs/COOP_CLIENT_MODEL.md): the puppet wears the skin
-                // this peer announced (Join field / SkinChange), any slot incl. the
+                // The puppet wears the skin this peer announced (the Join field
+                // or a later SkinChange), any slot incl. the
                 // host. Empty (not yet announced) -> kel baseline; the skin re-applies
                 // live when it lands (player_handshake::StoreSkinForSlot).
                 if (!g_puppets[slot].Spawn(coop::player_handshake::SkinForSlot(slot))) {
@@ -137,14 +135,14 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
                 // identity has landed yet; the handler re-applies on arrival.
                 g_puppets[slot].SetNickname(
                     coop::player_handshake::NicknameForSlot(slot));
-                // Join announcement at the APPEARANCE seam: the puppet just spawned, which is
-                // the moment the user actually sees the peer (2026-07-03: the old host announce
-                // on ClientWorldReady+5s ran ~6 s before the puppet in the measured live flow).
+                // Join announcement at the APPEARANCE seam: the puppet just spawned, which
+                // is the moment a player actually sees the peer -- announcing on world-ready
+                // instead runs seconds ahead of the puppet in the measured live flow.
                 // CLIENT: announce here -- "Joined <host>'s game" (slot 0, +5s: own loading
-                // screen) or cross-peer "<nick> joined the game" (immediate); the whole block is
-                // gated on the client's own g_worldReadyAnnounced (the `continue` above). HOST:
-                // announce here only once the slot is world-ready -- a pre-world menu/loading
-                // pose can spawn the puppet early (user 2026-06-17), and in that order
+                // screen) or cross-peer "<nick> joined the game" (immediate); the whole block
+                // is gated on the client's own g_worldReadyAnnounced (the `continue` above).
+                // HOST: announce here only once the slot is world-ready, because a pre-world
+                // menu or loading pose can spawn the puppet early; in that order
                 // OnClientWorldReady announces instead (both funnel through the same latch).
                 if (session.role() == coop::net::Role::Client ||
                     session.IsSlotWorldReady(slot))

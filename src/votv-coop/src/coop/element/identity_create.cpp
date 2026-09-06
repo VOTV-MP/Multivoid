@@ -1,9 +1,7 @@
 // coop/element/identity_create.cpp -- CreateOrAdopt implementation (the prop-mirror bind keystone).
 //
-// Moved 2026-06-28 from remote_prop::RegisterPropMirror (sync-consolidation
-// refactor, plan section 1). Behavior IDENTICAL to the prior RegisterPropMirror:
-// idempotent-adopt / morph-reskin / Install-new with the HEAD live-conflict
-// reject. remote_prop::RegisterPropMirror is now a thin forwarder.
+// CreateOrAdopt is idempotent-adopt / morph-reskin / Install-new, with the HEAD
+// live-conflict reject; remote_prop::RegisterPropMirror is a thin forwarder onto it.
 
 #include "coop/element/identity_create.h"
 
@@ -28,7 +26,7 @@
 #include "ue_wrap/engine/engine.h"                    // GetActorLocation (identity logs carry loc -- user rule)
 
 namespace coop::element {
-// The friended gateway to the sealed MirrorManager::Install (Inc C, 2026-06-29).
+// The friended gateway to the sealed MirrorManager::Install.
 // Defined here in coop::element so a wire-mirror bind can ONLY originate from this
 // module; the CreateOrAdopt* funnels are its only users. mirror_manager.h friends
 // exactly this struct -- Install is private to everyone else (the compile wall).
@@ -113,14 +111,14 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
             }
             return;
         }
-        // HOST RE-ASSERT REBIND (2026-07-03, docs/piles/12 -- the deny-heal receive half). A HOST-
-        // authoritative PropSpawn (senderSlot==0) naming an eid whose MIRROR row here resolves a DIFFERENT
-        // actor is the host re-asserting the row's truth: either the row's actor is DEAD (GC churn -- the
-        // eid=2947 shape: the row kept a freed pointer) or LIVE-but-foreign (address recycle smeared the row
-        // onto another entity -- the eid=3129 shape: 8 identical grab denies, pile wedged until host restart).
-        // The old flow fell through to Install, whose duplicate-eid reject made the host's re-assert a silent
-        // client-side NO-OP (the 8c13858f audit finding). The host is the identity authority (MTA shape:
-        // Packet_EntityAdd for an existing id re-links it, server word absolute) -> re-point the row.
+        // HOST RE-ASSERT REBIND -- the deny-heal receive half. A HOST-authoritative PropSpawn
+        // (senderSlot==0) naming an eid whose MIRROR row here resolves a DIFFERENT actor is the host
+        // re-asserting the row's truth: either the row's actor is DEAD (GC churn left it holding a
+        // freed pointer) or LIVE-but-foreign (an address recycle smeared the row onto another entity,
+        // which reads to a player as repeated grab denies and a wedged pile). Falling through to
+        // Install instead would meet the duplicate-eid reject and make the host's re-assert a silent
+        // client-side no-op. The host is the identity authority (MTA shape: Packet_EntityAdd for an
+        // existing id re-links it, server word absolute) -> re-point the row.
         // 1:1 guard: never steal an actor already bound to a DIFFERENT row -- draining that row on the host's
         // word about THIS eid would smear the other identity; the PropDestroy deny lane owns stale-row drains.
         // The displaced actor is NEVER destroyed (it may be another identity's rendering; the re-bind /
@@ -151,26 +149,21 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
         }
         // else: fall through to Install, which rejects the duplicate eid (HEAD live-conflict guard).
     }
-    // (A') v122 ONE-ACTOR-ONE-ROW invariant (stable-ID root fix,
-    // votv-stable-id-no-passive-mint-DESIGN-2026-07-18). The Install below would happily
-    // stack a SECOND row onto an actor already bound elsewhere and steal the unified
-    // reverse (RegisterMirror overwrites m_byActor) -- the measured zombie/reverse-steal
-    // class. Adjudicate by AUTHORITY before Install:
-    //   HOST + live local row      -> the host's own element is authoritative; REFUSE.
-    //                                 (The corrective -- enroll + re-express under the
-    //                                 host eid -- lives at the OnSpawn resolution seam,
-    //                                 remote_prop_spawn HostAuthorityHandback_; this wall
-    //                                 catches every OTHER path.)
-    //   CLIENT + host word (slot 0) -> the DESIGNED identity handback receiver: the
-    //                                 provisional client-band local dissolves (wire-silent
-    //                                 Take -> ElementDeleter; ~Element's reverse clear is
-    //                                 ownership-gated so the mirror's reverse survives the
-    //                                 deferred dtor) and the host eid becomes the sole
-    //                                 identity. Key index intentionally KEPT (the actor
-    //                                 remains its key's live occupant).
+    // (A') ONE-ACTOR-ONE-ROW. Install would otherwise stack a SECOND row onto an actor
+    // already bound elsewhere and steal the unified reverse (RegisterMirror overwrites
+    // m_byActor) -- the measured zombie/reverse-steal class. Adjudicate by AUTHORITY:
+    //   HOST + live local row       -> the host's own element wins; REFUSE. (The
+    //                                  corrective, enroll + re-express under the host eid,
+    //                                  is remote_prop_spawn's HostAuthorityHandback_ at the
+    //                                  OnSpawn seam; this wall catches every other path.)
+    //   CLIENT + host word (slot 0) -> the DESIGNED handback receiver: the provisional
+    //                                  client-band local dissolves (wire-silent Take ->
+    //                                  ElementDeleter, and ~Element's reverse clear is
+    //                                  ownership-gated so the mirror's reverse survives the
+    //                                  deferred dtor) and the host eid becomes the sole
+    //                                  identity. Key index KEPT: the actor still occupies it.
     //   CLIENT + peer word          -> never let a peer steal a local row; REFUSE.
-    //   prior row is a MIRROR       -> 1:1 conflict (unreachable in 2-peer flows); REFUSE.
-    // Every exit logs LOUD (a firing is evidence, not noise -- dead-guard-logs rule).
+    //   prior row is a MIRROR       -> 1:1 conflict; REFUSE. Every exit logs LOUD.
     {
         const coop::element::ElementId prior = Registry::Get().EidForActor(actor);
         if (prior != coop::element::kInvalidId && prior != eid) {
