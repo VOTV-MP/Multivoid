@@ -1,15 +1,7 @@
-// coop/props/trash_channel.h -- the host-authoritative trash-entity sync-time context, the
-// pile sync's identity and freshness core. A trash entity is a host-minted eid that re-skins
-// in place across pile, clump and pile again (the old and new eids are the same); position is
-// never identity, so a dense pile cluster can never mis-bind. This module owns the per-eid
-// sync-time context: the host bumps it on every transition (grab, throw, land) and stamps it
-// on every convert, carry and throw packet, and receivers drop any packet whose context is
-// older than the eid's known generation, so a carry or land packet still in flight when the
-// entity transitions can never be re-applied to the re-skinned entity. MTA's per-element
-// sync-time context is the precedent. The clump-to-pile link is driven from the Func thunk on
-// the deferred spawn, which fires for every dispatch route including the ones ProcessEvent
-// cannot see: the grab direction records a clump birth certificate the held-object edge
-// consumes, and the land direction converts the re-piled clump in place. Game thread only.
+// coop/props/trash_channel.h -- the host-authoritative trash entity: one eid that re-skins in
+// place across pile, clump and pile again, and the sync-time context that keeps a packet in
+// flight from landing on the re-skinned entity. Position is never identity. Game thread only.
+// See docs/piles.md for the model.
 
 #pragma once
 
@@ -22,177 +14,120 @@ namespace ue_wrap { struct FVector; struct FRotator; }
 
 namespace coop::trash_channel {
 
-// Host: a trash entity re-skinned (a grab, pile to clump; or a land, clump to pile). E is the
-// host-minted eid of the entity; kind is to-clump or to-pile; newActor is the new rendering,
-// already positioned; loc and rot are its transform; chipType is the trash variant, carried
-// across both edges. Bumps E's context, re-skins E onto the new actor locally and broadcasts
-// the convert to all peers. Host only, driven from the clump adoption (a grab) and the re-pile
-// thunk (a land). Game thread.
+// Host: E re-skinned. `kind` is to-clump or to-pile, `newActor` the new rendering already
+// positioned. Bumps E's context, rebinds E onto the new actor and broadcasts the convert.
 void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind, void* newActor,
                    const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType);
 
-// Grab adoption, the deterministic clump birth certificate. Every garbage clump is born from a
-// chipPile's deferred spawn, and the source object of that dispatch is the pile, still alive at
-// the POST. The Func thunk records the birth here: clump to the source pile's eid and chip
-// type. It fires for every grab route, the press and the use-hold (which repeats with no new
-// input dispatch), so the held edge consumes the certificate instead of guessing; a heuristic
-// that bound a new clump to the open carry mis-bound a foreign clump with two clumps in
-// flight, and the eid stuck held forever.
+// Grab adoption. Every clump is born from a chipPile's deferred spawn, whose source object is
+// the pile; the Func thunk records that link here so the held edge consumes a certificate
+// instead of guessing which clump is which.
 
-// Host, from the thunk: `clump` was just spawned by the pile owning eid E; the chip type is
-// read off the pile. Entries expire after a short TTL (a grab that never reaches the hand:
-// hands full, or denied). Game thread.
+// Host, from the thunk: `clump` was spawned by the pile owning E. Entries expire on a short
+// TTL, for a grab that never reaches the hand.
 void NoteClumpBorn(void* clump, coop::element::ElementId E, uint8_t chipType);
 
-// Host, at the held edge: consume the birth certificate for `clump`. True, with E and the chip
-// type filled, if the thunk recorded it. Game thread.
+// Host, at the held edge: consume `clump`'s birth certificate. True, with E and the chip type
+// filled, if the thunk recorded one.
 bool TakeClumpBorn(void* clump, coop::element::ElementId* outE, uint8_t* outChipType);
 
-// Host: bind `heldClump` onto trash entity E and open the carry through OnHostConvert (the
-// context bump, the rebind, the to-clump broadcast). Used by the held edge for a certificate
-// clump (a fresh grab) and for a re-grabbed existing tracked clump (a gate-aborted rest clump
-// picked back up). Returns E. Game thread.
+// Host: bind `heldClump` onto E and open the carry. Serves both a fresh certificate clump and a
+// re-grabbed tracked one. Returns E.
 coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::ElementId E,
                                         void* heldClump, const ue_wrap::FVector& clumpLoc,
                                         const ue_wrap::FRotator& clumpRot, uint8_t chipType);
 
-// The client-grab direction, the host arm of the door-style request. A client sends a
-// GrabIntent (the native grab suppressed, then the request). The host validates and executes
-// the real grab on the client's puppet (the grab engages on an unpossessed puppet, with no
-// controller dependency), broadcasts the authoritative to-clump convert, then registers the
-// puppet carry drive, since the puppet's tick does not drive its physics handle and the host
-// drives the hold pose.
+// The client-grab direction: an intent the host validates and performs on the requester's
+// puppet, then drives, since a puppet's own tick does not move its physics handle.
 
-// Client: send a GrabIntent for the eid to the host, the client-grab request. The pile-grab
-// observer's client arm calls this after suppressing the native grab; the synthetic harness
-// test calls it to exercise the wire. A no-op unless `s` is a running client. Game thread.
+// Client: request the grab of `eid`. Called after the native grab is suppressed. A no-op unless
+// `s` is a running client.
 void SendGrabIntent(coop::net::Session& s, uint32_t eid);
 
-// Host: a client at `senderSlot` requested to grab trash entity `eid`. The gates mirror the
-// door request's: the eid not already carrying, the sender not already holding any eid. On
-// pass: resolve the puppet and the pile actor, run playerGrabbed with the puppet as the
-// player, read grabbing_actor synchronously, open the carry and broadcast through
-// OnHostConvert, record the holder, and register the per-tick hand drive. A no-op, logged as
-// denied, on any gate failure or a dead puppet or pile. Host only. Game thread.
+// Host: `senderSlot` asked to grab `eid`. Gated on the eid not already carrying and the sender
+// not already holding one. On pass: grab on the puppet, open the carry, record the holder and
+// register the per-tick hand drive. Denied is a logged no-op.
 void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot);
 
-// Client: send a ThrowIntent to the host. The release mode is the use-press toggle drop, its
-// direction ignored; the hard-throw mode is the native throw, with the client's camera-forward
-// unit vector at the press. A no-op unless `s` is a running client. Game thread.
+// Client: request the throw of `eid`. The release mode is the use-press drop and ignores `dir`;
+// the hard-throw mode carries the camera-forward unit vector at the press.
 void SendThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode, const ue_wrap::FVector& dir);
 
-// Host: a client at `senderSlot` requested to throw the puppet-held trash entity `eid`. The
-// gate: the sender must currently hold the eid. On pass: release the puppet's grab (clearing
-// grabbing_actor and the physics handle, required so the clump's re-pile gate reads not held),
-// enable physics and apply the throw velocity (the release mode: the puppet's hand motion,
-// capped; the hard throw: the native camera-forward speed over the clump's mass plus the
-// puppet's velocity, uncapped), and note the throw, so the host streams the flight rather than
-// the hand. A no-op, logged as denied, on a gate failure or a dead puppet or clump. Host only.
-// Game thread.
+// Host: `senderSlot` asked to throw the `eid` it holds. Releases the puppet's grab (required, or
+// the clump's re-pile gate still reads held), enables physics, applies the throw velocity for the
+// mode, and notes the throw so the host streams the flight rather than the hand.
 void OnThrowIntent(coop::net::Session& s, uint32_t eid, uint8_t mode,
                    const ue_wrap::FVector& camFwd, uint8_t senderSlot);
 
-// The client carry state, the use-press grab-or-throw toggle. The client tracks the single
-// trash eid its own puppet is carrying (a player holds one thing), so a press is a throw when
-// carrying and a grab when aimed at a pile proxy. The state is driven by the convert stream the
-// client already receives: the request marks a pending grab, the matching inbound to-clump
-// confirms the carry, and the matching to-pile (or a throw send) clears it.
+// The client carry state: the one trash eid this client's puppet holds, so a use press is a
+// throw while carrying and a grab otherwise. Driven by the convert stream the client already
+// receives.
 
-// Client: an inbound convert for `eid` was observed. Reconcile the carry state: a to-clump
-// matching our pending grab confirms the carry; a to-pile for our carried eid clears it.
-// Called from the convert receiver, client only; a no-op on the host. Game thread.
+// Client: reconcile the carry state against an observed convert. A to-clump matching our pending
+// grab confirms the carry; a to-pile for the carried eid clears it. A no-op on the host.
 void NoteClientConvertObserved(uint32_t eid, bool toClump);
 
-// Client: the trash eid the local player is carrying through its puppet, or the invalid id.
-// The pile-grab observer's toggle reads it: carrying means throw, otherwise grab the aimed
-// proxy. Game thread.
+// Client: the trash eid this player carries, or the invalid id. The use-press toggle reads it.
 coop::element::ElementId ClientCarryEid();
 
-// Host: peer `senderSlot` disconnected. Clear any hold it owns, so the eid becomes
-// re-grabbable; the puppet vanishes on disconnect, so the clump is already physics-released,
-// and this is the state cleanup plus a forget, so a stranded carry latch cannot keep the
-// entity in limbo. Game thread.
+// Host: `senderSlot` disconnected. Release any hold it owns so the eid is re-grabbable; its
+// puppet is gone, so the clump is already physics-released.
 void OnGrabHolderLeft(uint8_t senderSlot);
 
-// Host: the puppet-held clump for E was lost without a normal land (the clump died, or the
-// puppet went not-live). Clear E's client hold and carry latch, and broadcast a destroy for E,
-// so every client retires the frozen proxy and clears its carry toggle; otherwise a client
-// that loses a clump mid-carry is stuck in throw mode forever. The trash entity genuinely
-// vanished on the host, so a destroy is the honest authoritative edge. Idempotent. Game
-// thread.
+// Host: E's puppet-held clump was lost with no land. Clear the hold and latch and broadcast a
+// destroy, so no client is stuck carrying a dead eid. The entity really did vanish here, so a
+// destroy is the honest edge. Idempotent.
 void ReleaseClientHold(coop::net::Session& s, coop::element::ElementId E);
 
-// Client: clear the local carry toggle. Called from the client destroy path when the carried
-// proxy is retired (the host aborted the carry), so the next press grabs instead of throwing a
-// dead eid. A no-op if not carrying that eid. Game thread.
+// Client: clear the carry toggle when the carried proxy is retired, so the next press grabs. A
+// no-op if not carrying that eid.
 void ClearClientCarry(uint32_t eid);
 
-// The carry latch and the land settle, host side. A trash entity is carrying from the real
-// grab (a to-clump convert while not carrying) until the real land. During the carry the
-// game's stock churn (the held clump re-piles on cluster contact about once a second and the
-// game auto-re-grabs it) is suppressed: the re-pile is not broadcast and the context is not
-// bumped, so the client renders one clump, pose-streamed, rather than a pile stuck at the
-// cluster re-skinned and teleported every cycle. The churn re-grab rebinds E onto the new
-// clump, so the carry stream stays alive. The real land is a re-pile not followed by a re-grab
-// within the settle window: the settle holds the to-pile broadcast that long, a re-grab
-// cancels it (churn), and the timeout commits it (the one land) and closes the latch.
-// Graceful either way: too short a window commits a churn re-pile early and the re-grab
-// re-opens it, a brief self-correcting flicker; too long lags the land morph a few frames.
-// Neither strands E. Per eid.
+// The carry latch and the land settle, host side, per eid: the latch spans the real grab to the
+// real land, the game's churn re-piles inside it are suppressed, and a re-pile opens a settle
+// window that a re-grab cancels and a timeout commits. docs/piles.md carries the model.
 
-// Host: a garbage clump re-entered the hand during an active carry of E (the churn re-grab,
-// observed at the held-object edge; not a fresh player grab, so no pending grab). Rebind E
-// onto the new clump, so the carry pose stream keeps tracking it, and cancel E's pending land
-// settle, since a re-grab proves the preceding re-pile was churn. No broadcast, no context
-// bump. A no-op if E is not carrying. Game thread.
+// Host: a churn re-grab during E's carry. Rebind E onto the new clump so the pose stream keeps
+// tracking it, and cancel E's pending settle, since a re-grab proves the re-pile was churn. No
+// broadcast, no context bump. A no-op if E is not carrying.
 void OnHostRegrab(coop::element::ElementId E, void* newClump);
 
-// Host: is E mid-carry, the latch open? The local streams gate the held-edge re-grab rebind on
-// this. Game thread.
+// Host: is E mid-carry? The local streams gate the held-edge rebind on it.
 bool IsCarrying(coop::element::ElementId E);
 
-// Host: is a land settle pending for E (a re-pile observed, not yet committed or cancelled)?
-// The release edge uses it to tell a churn flicker (the held slot empties right after a
-// re-pile, so a settle is pending) from a real drop or throw (an alive clump and no pending
-// settle; a re-grab cancels the settle before any throw, so a real release never coincides
-// with one). The release edge is suppressed only when carrying and this is true. Game thread.
+// Host: is a settle pending for E -- a re-pile seen, not yet committed or cancelled? The release
+// edge uses it to tell a churn flicker from a real drop or throw, and suppresses itself only
+// while carrying and this is true.
 bool HasPendingSettle(coop::element::ElementId E);
 
-// Host: the single currently carried trash eid, or the invalid id; there is at most one
-// carried clump at a time. The drop thunk logs it to cross-check that a real drop or throw is
-// the carried clump rather than an equip drop before the flip closes the latch. Game thread.
+// Host: the one carried trash eid, or the invalid id. The drop thunk logs it to cross-check that
+// a real drop is the carried clump and not an equip drop.
 coop::element::ElementId AnyCarryingEid();
 
-// Host, per gameplay tick: prune expired birth certificates; count down the land settles,
-// committing a settled land (the held to-pile broadcast and the latch close) when no re-grab
-// arrived within the window; and guarantee carry termination, since every open carry lane
-// must eventually close: a lane whose Registry actor died with no re-pile (a consumed clump)
-// closes and broadcasts a destroy after a short grace, and a lane whose clump lies at rest
-// un-held (the native re-pile gate aborted because the thrower's hand was busy at the land)
-// closes silently, the clump staying world-tracked and re-grabbable, the single-player end
-// state. `localHeldActor` is the local player's currently held actor, a rest exclusion: a still
-// player holding a clump must not read as at rest un-held. Game thread.
+// Host, per gameplay tick: expire birth certificates, count down the land settles and commit a
+// settled land, and terminate any carry the normal path would leave open -- a clump destroyed
+// mid-carry closes with a destroy, one left lying un-held closes silently and stays
+// world-tracked. `localHeldActor` excludes the local player's own held clump from that rest test.
 void TickCarry(coop::net::Session& s, void* localHeldActor);
 
-// Drop E's carry latch and land settle: E's entity was destroyed or retired, so the latch can
-// never close on a land. A safety against a stranded latch; idempotent. Game thread.
+// Drop E's latch and settle: its entity is gone, so the latch can never close on a land.
+// Idempotent.
 void ForgetEid(coop::element::ElementId E);
 
-// The current per-eid sync-time context, for the local streams to stamp on each carry pose. 0
-// means untracked or non-trash, no enforcement. Game thread.
+// E's current sync-time context, for the local streams to stamp on each carry pose. 0 means
+// untracked or non-trash: no enforcement.
 uint8_t CtxForEid(coop::element::ElementId E);
 
-// Receiver: a convert for E arrived with sync-time context `ctx`. True if fresh (apply, and
-// adopt the host's context as the new known generation); false if stale (an out-of-order or
-// duplicate convert, dropped). A context of 0 is legacy or non-trash, always fresh, nothing
-// adopted. Game thread.
+// Receiver: a convert for E arrived with context `ctx`. True if fresh -- apply it and adopt
+// `ctx` as the known generation; false if stale, an out-of-order or duplicate convert. A `ctx`
+// of 0 is always fresh and adopts nothing.
 bool AdoptInboundConvertCtx(coop::element::ElementId E, uint8_t ctx);
 
-// Receiver: a pose or release for E arrived with `ctx`. `requireCurrentGen` picks the gate by
-// packet kind: a carry pose passes true (apply only the current generation, holding a pose
-// ahead of its convert and dropping a stale one); a release passes false (apply if not stale,
-// since a throw legitimately leads the last convert, not being a re-skin). A context of 0, or
-// an E with no convert seen yet, means no enforcement. Game thread.
+// Receiver: a pose or release for E arrived with `ctx`. `requireCurrentGen` picks the gate: a
+// carry pose passes true and applies only on the current generation, holding a pose that leads
+// its convert; a release passes false and applies unless stale, since a throw legitimately leads
+// the last convert rather than re-skinning. A `ctx` of 0, or an E with no convert seen, is
+// unenforced.
 bool IsInboundStreamCtxFresh(coop::element::ElementId E, uint8_t ctx, bool requireCurrentGen);
 
 // Drop all per-eid state at disconnect.
