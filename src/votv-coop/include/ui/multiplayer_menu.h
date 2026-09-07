@@ -14,14 +14,14 @@
 // while the menu is up, since net_pump does not run pre-gameplay; it mirrors
 // save_button_disable, the isPause main-versus-pause discriminator included.
 //
+#pragma once
+
 // A bind IS reachable -- OnClicked is a plain delegate array, and a
 // delegate-dispatched event is ProcessEvent-visible -- and is still not the answer,
 // because it needs a no-param UFunction to point at. RegisterInterceptor keys on
 // the UFUNCTION, so borrowing one the game already provides would route every other
 // caller in the game through our callback, and minting our own means building a
 // UFunction from a DLL that owns no UClass.
-
-#pragma once
 
 namespace coop::multiplayer_menu {
 

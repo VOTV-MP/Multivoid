@@ -1,24 +1,18 @@
-// ue_wrap/save_browser.h -- VOTV save enumeration + creation.
+// ue_wrap/save_browser.h -- VOTV save enumeration + creation. Engine-wrapper layer
+// (principle 7): NO coop, network or gameplay state lives here. The UFunction-driven
+// parts -- create, exists, and the scan's stage A -- are GAME THREAD ONLY.
 //
-// Engine-wrapper layer (principle 7): NO coop / network / gameplay state lives here.
-//   - EnumerateSaves (2026-07-11 rework): lists <SavedDir>/SaveGames/*.sav (dir via
-//     the native GetProjectSavedDirectory; subsaves excluded via VOTV's own
-//     lib_C::processSaveNameIntoSubsave) and reads each row's metadata DIRECTLY from
-//     the file's GVAS tag stream (ue_wrap/gvas_meta) with saveSlot_C CDO defaults for
-//     delta-omitted properties. The prior loadSlots drive did N x LoadGameFromSlot --
-//     a full 15-20 MB deserialize per save ON THE GAME THREAD = a multi-second
-//     picker-open freeze once real saves accumulated. Filter parity ground-truthed
-//     against the native list 2026-07-11 (subsaves + non-saveSlot_C excluded; b_* is
-//     the SANDBOX prefix, never filtered).
-//   - CreateNamedSave mirrors VOTV's create primitive: CreateSaveGameObject(saveSlot_C)
-//     + SaveGameToSlot(obj, "<prefix><name>", 0) -> a persisted-at-creation blank save.
+// EnumerateSaves lists <SavedDir>/SaveGames/*.sav -- directory from the native
+// GetProjectSavedDirectory, subsaves excluded through lib_C::processSaveNameIntoSubsave
+// -- and reads each row's metadata DIRECTLY from the file's GVAS tag stream
+// (ue_wrap/gvas_meta), taking saveSlot_C CDO defaults for delta-omitted properties.
+// Driving loadSlots instead means N calls to LoadGameFromSlot, a full 15-20 MB
+// deserialize per save on the game thread, which froze the picker for seconds once
+// real saves accumulated. Non-saveSlot_C slots and subsaves are excluded; b_* is the
+// SANDBOX prefix and is never filtered.
 //
-// The ImGui Host-Game save picker (ui/host_save_picker) sits on top of this. The
-// UFunction-driven parts (create/exists + the scan's stage A) are GAME THREAD ONLY.
-// The async RefreshAsync/CopySaves/Status trio lets the render-thread picker trigger
-// a scan + read a cached snapshot without blocking (mirrors coop/net/lobby_client).
-//
-// RE: research/findings/saves/votv-save-picker-{enumerate-load,create-new}-RE-2026-06-06.md.
+// CreateNamedSave mirrors VOTV's create primitive: CreateSaveGameObject(saveSlot_C)
+// + SaveGameToSlot(obj, "<prefix><name>", 0), a persisted-at-creation blank save.
 
 #pragma once
 
@@ -58,16 +52,16 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
 // The same creation, from a BASE name the caller does not need to have checked: probes
 // "<base>", "<base> 2", "<base> 3" ... and creates the first one free.
 //
-// WHY IT EXISTS. `CreateNamedSave` refusing a taken name is correct -- a caller naming an
-// exact slot deserves the truth rather than a silent rename. But the native hosting lane
-// has no name field, so its base name is a CONSTANT, and a constant can be created exactly
-// once: the second New Game a player ever hosted died on "already exists", aborted the boot
-// and dropped them back on the server browser with no world made. Found by the user on a
-// fresh r2modman rig, 2026-09-01, where `s_Coop` had survived the first session.
+// WHY IT EXISTS. `CreateNamedSave` refusing a taken name is correct -- a caller naming
+// an exact slot deserves the truth rather than a silent rename. But the native hosting
+// lane has no name field, so its base name is a CONSTANT, and a constant can be created
+// exactly once: the second New Game a player ever hosted died on "already exists",
+// aborted the boot and dropped them back on the server browser with no world made.
 //
-// Uniqueness is resolved HERE, against LIVE slots at the moment of creation, rather than by
-// a picker filtering its save list: an enumeration a menu is holding can be minutes old, and
-// a name that was free when it was CHOSEN is exactly the failure this closes. Game thread.
+// Uniqueness is resolved HERE, against LIVE slots at the moment of creation, rather
+// than by a picker filtering its save list: an enumeration a menu is holding can be
+// minutes old, and a name that was free when it was CHOSEN is exactly the failure this
+// closes. Game thread.
 bool CreateNamedSaveUnique(const std::wstring& baseName, uint8_t mode, std::wstring& outSlot);
 
 // True iff a save slot already exists on disk (UGameplayStatics::DoesSaveGameExist).

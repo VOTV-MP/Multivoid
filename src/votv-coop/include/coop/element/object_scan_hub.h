@@ -1,43 +1,18 @@
-// coop/element/object_scan_hub.h -- THE shared GUObjectArray discovery pass (R-2, 2026-08-23).
+// coop/element/object_scan_hub.h -- THE shared GUObjectArray discovery pass. All
+// game-thread.
 //
-// WHY (design of record: research/findings/architecture-audits/
-// votv-shared-scan-hub-R2-DESIGN-2026-08-23.md, 8-round /qf "that holds"): thirteen *_sync
-// consumers each full-walked ~270k GUObjectArray objects on their own 2 s cadence while
-// unsettled -- ~220 full walks x 270k per session start, and settleScans=15 turned ANY
-// index-count change into 15 more full walks PER CONSUMER. On the b133 field reporter's
-// machine that stacked into the felt once-per-1-2 s stutter (sync:interactable median 74 ms).
-// The class-level fix (MTA CClientStreamer shape -- the shared iterator lives in the mod
-// layer, elements register into it): ONE shared pass serves every consumer, each object pays
-// ONE ObjectAt + ONE ClassOf + one memoized class-verdict lookup instead of 13 predicate
-// chains, and the pass is SLICED (~1 ms/frame) so even the single shared walk never lands
-// whole on one frame.
+// Thirteen *_sync consumers each full-walked ~270k GUObjectArray objects on their
+// own 2 s cadence while unsettled -- about 220 full walks per session start -- and
+// a settle window of 15 turned ANY index-count change into 15 more full walks PER
+// CONSUMER, which stacked into a felt once-per-second stutter in the field.
 //
-// CONTRACT (all game-thread):
-//   - Consumers register ONCE (Register during an active pass queues to the next pass start).
-//   - IsInstance MUST be class-pure (verdict depends only on ClassOf(obj)) -- all 13 migrated
-//     predicates are (ClassOf + IsDescendantOfAny / class-desc tables); the memo caches the
-//     verdict per distinct UClass* per pass, re-verified per hit by {InternalIndex, SlotSerial}
-//     (a recycled UClass* fails the compare and re-derives; the memo dies with the pass).
-//   - OnPassBegin clears the consumer's pass scratch; OnMatch runs the consumer's own filter
-//     tail (Default__ skip, IsLive, GetKey) and pushes scratch; OnPassComplete swaps the index
-//     under the consumer's existing mutex, stamps `worldGen` into it, and returns the live
-//     count for the settle gate. An ABORTED pass never calls OnPassComplete -- scratch is
-//     cleared by the next OnPassBegin.
-//   - WORLD-STAMPED passes: the pass records world_identity::Generation() at start and aborts
-//     on a flip; consumers MUST treat an index whose stamped gen != current gen as EMPTY on
-//     every read path (one int compare per Tick). Together with the per-MATCH WorldOf() ==
-//     CurrentWorld() term in the pass (audit W-3), this closes the pre-existing 44-s
-//     dead-world window (R-1 class) for the whole family on BOTH halves: the stale-index
-//     half (gen stamp) and the re-admission half (a slot+serial-live actor of the DYING
-//     world matched during world coexistence -- slot+serial liveness is world-blind).
-//   - Settle semantics preserved verbatim from the retired SettledObjectScan: a consumer's
-//     count change (or zero) re-arms full passes; `settleScans` consecutive unchanged non-zero
-//     counts settle it; the pass runs FULL while ANY consumer is unsettled (each consumer's
-//     settleScans is a term of the shared demand function); all-settled -> tail passes +
-//     one full backstop every kBackstopEvery passes (~60 s).
-//
-// Retired by this arc (RULE 2): ue_wrap/core/settled_object_scan.h +
-// incremental_object_scan.h and all 13 per-consumer walks (zero other users, grep-verified).
+// The fix is class-level, in the shape of MTA's CClientStreamer: the shared
+// iterator lives in the mod layer and elements register into it. ONE shared pass
+// serves every consumer, each object pays one ObjectAt, one ClassOf and one
+// memoized class-verdict lookup instead of thirteen predicate chains, and the pass
+// is SLICED at about a millisecond a frame, so even the single shared walk never
+// lands whole on one frame.
+
 #pragma once
 
 #include <cstddef>
@@ -45,14 +20,22 @@
 
 namespace coop::element::scan_hub {
 
+// CONTRACT (all game-thread). A pass calls OnPassBegin, then OnMatch per hit, then
+// OnPassComplete; an ABORTED pass never reaches OnPassComplete, and the next
+// OnPassBegin clears the scratch it left. IsInstance MUST be class-pure, because
+// the memo caches its verdict per distinct UClass* for the whole pass, re-verified
+// per hit by {InternalIndex, SlotSerial} so that a recycled UClass* fails the
+// compare and re-derives; the memo dies with the pass.
+
 struct Consumer {
     const char* name;                          // diag + parity attribution (string literal)
     void* ctx;                                 // consumer instance (nullptr for file-static modules)
     bool (*EnsureResolved)();                  // class resolution attempt; false -> sits out this pass
-    bool (*IsInstance)(void* obj);             // CLASS-PURE predicate (see contract)
-    void (*OnPassBegin)(void* ctx, bool isFull);
-    void (*OnMatch)(void* ctx, void* obj);
-    size_t (*OnPassComplete)(void* ctx, bool isFull, uint32_t worldGen);  // swap + return count
+    bool (*IsInstance)(void* obj);             // CLASS-PURE predicate (see the contract)
+    void (*OnPassBegin)(void* ctx, bool isFull);  // clears the pass scratch
+    void (*OnMatch)(void* ctx, void* obj);  // the consumer's own filter tail
+                                            // (Default__ skip, IsLive, GetKey), pushing scratch
+    size_t (*OnPassComplete)(void* ctx, bool isFull, uint32_t worldGen);  // swap + stamp + count
     int settleScans;                           // demand term (2 = churny, 15 = static classes;
                                                // 0 = DEMAND-EXEMPT: 0<0 is false at every settle
                                                // site, so the consumer never forces full passes
@@ -60,9 +43,22 @@ struct Consumer {
                                                // reseed consumer, which builds no hub index)
 };
 
+// WORLD-STAMPED passes: a pass records world_identity::Generation() at its start
+// and aborts on a flip, and consumers MUST treat an index whose stamped generation
+// is not the current one as EMPTY on every read path -- one int compare per Tick.
+// Together with the per-MATCH WorldOf() == CurrentWorld() term inside the pass,
+// that closes both halves of the dead-world window: the stale index, and the
+// re-admission of a DYING world's actor during world coexistence, since
+// slot-and-serial liveness is world-blind.
+
 // Register a consumer (game thread). During an active pass the registration is QUEUED and
 // joins at the next pass start (the pass-scoped memo makes set changes otherwise hazard-free).
 void Register(const Consumer& c);
+
+// SETTLE: a consumer's count change, or a zero, re-arms full passes; settleScans
+// consecutive unchanged non-zero counts settle it; the pass runs FULL while ANY
+// consumer is unsettled; once all are settled it runs tail passes with one full
+// backstop every kBackstopEvery passes (about a minute).
 
 // The per-frame driver: runs at most ~1 ms of slice work, starts passes on cadence, feeds the
 // settle gates. Call once per net-pump tick (game thread).
