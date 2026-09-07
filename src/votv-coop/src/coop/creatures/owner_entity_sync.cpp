@@ -135,7 +135,7 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
         return;
     }
     // The actor is NOT positioned at Begin POST -- read the SpawnTransform
-    // param (the host_spawn_watcher lesson; ue_wrap::FTransform IS the layout).
+    // param -- ue_wrap::FTransform IS the engine's layout, so the cast is exact.
     const auto* xt = reinterpret_cast<const ue_wrap::FTransform*>(
         reinterpret_cast<const uint8_t*>(params) + g_xformParamOff);
     Owned o{};
@@ -234,7 +234,7 @@ void Tick() {
             d.seq = o.seq;
             if (!s->SendReliable(coop::net::ReliableKind::OwnerEntityDestroy, &d, sizeof(d))) {
                 ++i;  // send failed (channel exhaustion): keep the entry, retry
-                continue;  // next tick (audit F-5: a lost death = permanent ghost)
+                continue;  // next tick -- a lost death is a permanent ghost
             }
             UE_LOGI("owner_entity: OWN seq=%u died locally -- destroy announced", o.seq);
             g_owned.erase(g_owned.begin() + i);
@@ -242,7 +242,7 @@ void Tick() {
         }
         const ue_wrap::FVector loc = E::GetActorLocation(o.actor);
         const float yaw = E::GetActorRotation(o.actor).Yaw;
-        // Keepalive FIRST (audit F-3): a continuously-moving entity must not
+        // Keepalive FIRST: a continuously-moving entity must not
         // starve the Spawn re-announce -- it IS the late-joiner delivery, and
         // it carries the pose anyway.
         if (now - o.lastAnnounceMs >= kKeepaliveMs) {
@@ -281,7 +281,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (senderPeerSlot < 0 || senderPeerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    if (!FiniteVec(p.x, p.y, p.z, p.yaw)) return;  // wire NaN/Inf guard (audit F-8)
+    if (!FiniteVec(p.x, p.y, p.z, p.yaw)) return;  // wire NaN/Inf guard
     if (p.classId >= kOwnerEntityClassCount) {
         UE_LOGW("owner_entity: OnSpawnMsg unknown classId=%u -- dropping", p.classId);
         return;
@@ -297,7 +297,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
         }
         g_mirrors.erase(it);   // dead mirror (engine reclaim) -- respawn below
     }
-    // SECURITY (W5, docs/security/TRACKER.md): kMaxOwned bounds the SEND side (g_owned at :129) --
+    // SECURITY: kMaxOwned bounds the SEND side (g_owned above) --
     // it constrains OUR sender, not a hostile peer's. The receive path spawned a REAL actor for
     // every unseen (slot, seq), so one peer could walk seq and force 65 536 spawns; and this kind is
     // on the relay whitelist, so it froze every client too. Enforce the same intent where the actor
@@ -349,7 +349,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
             UE_LOGW("owner_entity: mirror BeginDeferred null for slot=%d seq=%u", senderPeerSlot, p.seq);
             return;
         }
-        // Collision OFF in the DEFERRED window (audit F-4): BeginPlay + the
+        // Collision OFF in the DEFERRED window: BeginPlay and the
         // initial overlap update run INSIDE FinishSpawningActor -- a viewer
         // standing at the wire transform must not be overlap-killed by the
         // killsphere during that one frame.
@@ -374,7 +374,7 @@ void OnSpawnMsg(const coop::net::OwnerEntitySpawnPayload& p, int senderPeerSlot)
 
 void OnPoseMsg(const coop::net::OwnerEntityPosePayload& p, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
-    if (!FiniteVec(p.x, p.y, p.z, p.yaw)) return;  // wire NaN/Inf guard (audit F-8)
+    if (!FiniteVec(p.x, p.y, p.z, p.yaw)) return;  // wire NaN/Inf guard
     auto it = g_mirrors.find(Key(senderPeerSlot, p.seq));
     if (it == g_mirrors.end()) return;  // unknown: the keepalive Spawn re-delivers
     if (!R::IsLiveByIndex(it->second.actor, it->second.idx)) { g_mirrors.erase(it); return; }
@@ -384,7 +384,7 @@ void OnPoseMsg(const coop::net::OwnerEntityPosePayload& p, int senderPeerSlot) {
 
 void OnDestroyMsg(const coop::net::OwnerEntityDestroyPayload& p, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
-    // HOST-fanned leaver teardown (audit F-1): a client has no transport edge
+    // HOST-fanned leaver teardown: a client has no transport edge
     // for ANOTHER client's slot, so the host re-keys the teardown via
     // originSlot. Only the HOST (transport slot 0) may speak for another slot.
     int slot = senderPeerSlot;
