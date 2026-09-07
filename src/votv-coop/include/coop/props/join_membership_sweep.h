@@ -1,5 +1,4 @@
-// coop/props/join_membership_sweep.h -- the join-window world-membership claim and divergence
-// sweep.
+// coop/props/join_membership_sweep.h -- the join-window membership claim and divergence sweep.
 //
 // ONE concept: at join time TRACK which world members the host expressed in the snapshot bracket
 // (the claim set), then at load-tail quiescence SWEEP away the locals the host's snapshot did NOT
@@ -11,8 +10,9 @@
 // gates OnSpawn's level-pile twin-destroy on an open bracket.
 //
 // The sweep CALLS the downstream join modules and is their driver, not their owner: pile_spawn_bind
-// (the pile spawn-bind index reset) and quiescence_drain (the deferred-reconcile sequence, OnTick
-// and the teardown reset).
+// (the pile spawn-bind index reset), quiescence_drain (the deferred-reconcile sequence, OnTick and
+// the teardown reset), and kerfur_reconcile and mirror_defer on the teardown path. Its own claim
+// set takes no lock: it is game-thread-only by convention, like the tables hot_path_guard names.
 
 #pragma once
 
