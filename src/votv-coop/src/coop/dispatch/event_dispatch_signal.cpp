@@ -1,32 +1,29 @@
-// coop/event_dispatch_signal.cpp -- the SIGNAL-PIPELINE reliable-kind case
-// bodies (the workstation chain: sky-signal set/catch, dish pose/arm/calib,
-// desk input/state/log/audio, saved-signal + comp stores, tape caddy + daily
-// task, the stationary PC), extracted VERBATIM from event_dispatch_state.cpp
-// (2026-07-18 soft-cap extraction: the state router hit 791/800 LOC; every
-// remaining signal-chain lane L6/L8/L5/L9 lands its case HERE). Same family
-// contract as the siblings: returns true iff msg.kind is in this family
-// (processed or validation-dropped) -- the switch IS the single membership
-// declaration (see coop/event_dispatch.h).
+// The signal-pipeline reliable-kind case bodies -- the workstation chain: the
+// sky-signal set and catch, dish pose, arm and calibration, desk input, state, log
+// and audio, the saved-signal and comp stores, the tape caddy and daily task, the
+// stationary PC. Same family contract as the sibling routers: returns true iff
+// msg.kind is in this family (processed or validation-dropped), so the switch IS
+// the single membership declaration (see coop/event_dispatch.h).
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
-#include "coop/interactables/deck_play_sync.h"    // v117 (L6): PlayDeckEvent
+#include "coop/interactables/deck_play_sync.h"    // PlayDeckEvent
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/dish_sync.h"
-#include "coop/interactables/laptop_sync.h"      // v116: LaptopState (+ v121 LaptopBlob)
-#include "coop/interactables/laptop_buffer_sync.h"  // v121: LaptopQuad
-#include "coop/interactables/floppybox_sync.h"   // v121: FloppyBoxState
-#include "coop/interactables/meadow_db_sync.h"   // v120 (L9): MeadowAppend/MeadowDelete
-#include "coop/interactables/physmods_sync.h"    // v118 (L8): PhysModsState
-#include "coop/interactables/drive_sync.h"       // v119 (L5): DriveSlotState/DrivePayload
-#include "coop/interactables/drive_rack_sync.h"  // v119 (L5): RackState (extracted 2026-07-18)
+#include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
+#include "coop/interactables/laptop_buffer_sync.h"  // LaptopQuad
+#include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
+#include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
+#include "coop/interactables/physmods_sync.h"    // PhysModsState
+#include "coop/interactables/drive_sync.h"       // DriveSlotState/DrivePayload
+#include "coop/interactables/drive_rack_sync.h"  // RackState
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/signal_sync.h"
-#include "coop/interactables/tape_caddy_sync.h"  // v114 (L7): ReelSlot
-#include "coop/world/daily_task_sync.h"          // v114 (L7): TaskNewState
+#include "coop/interactables/tape_caddy_sync.h"  // ReelSlot
+#include "coop/world/daily_task_sync.h"          // TaskNewState
 
 #include "ue_wrap/core/log.h"
 
@@ -38,9 +35,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
                        const net::Session::ReliableMessage& msg) {
     switch (msg.kind) {
     case net::ReliableKind::SkySignalState: {
-        // v64 (2026-06-12): HOST-authoritative sky-signal SET snapshot parts. The
-        // client-only apply + the slot-0 trust gate + part assembly live in
-        // console_state_sync::OnSkySignalState.
+        // HOST-authoritative sky-signal SET snapshot parts. The client-only apply, the
+        // slot-0 trust gate and part assembly live in console_state_sync::OnSkySignalState.
         if (msg.payloadLen < sizeof(net::SkySignalStatePayload)) {
             UE_LOGW("event_feed: SkySignalState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::SkySignalStatePayload));
@@ -56,9 +52,9 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::SkySignalCatch: {
-        // v70: the signal-catch consume replay. HOST validates the claim holder,
-        // replays + rebroadcasts; CLIENTS replay (transport-trusted). The gates
-        // live in signal_catch_sync::OnReliable.
+        // The signal-catch consume replay. HOST validates the claim holder, replays and
+        // rebroadcasts; CLIENTS replay (transport-trusted). The gates live in
+        // signal_catch_sync::OnReliable.
         if (msg.payloadLen < sizeof(net::SkySignalCatchPayload)) {
             UE_LOGW("event_feed: SkySignalCatch payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::SkySignalCatchPayload));
@@ -74,8 +70,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::LaptopState: {
-        // v116: the stationary PC power/floppy lane. HOST applies + re-fans
-        // (origin excluded); the gates live in laptop_sync::OnLaptopState.
+        // The stationary PC power/floppy lane. HOST applies and re-fans (origin excluded);
+        // the gates live in laptop_sync::OnLaptopState.
         if (msg.payloadLen < sizeof(net::LaptopStatePayload)) {
             UE_LOGW("event_feed: LaptopState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::LaptopStatePayload));
@@ -91,8 +87,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::PlayDeckEvent: {
-        // v117 (L6): a deck playback edge (presser-authored; host relays; the
-        // gen guard + gate prechecks live in deck_play_sync::OnPlayDeck).
+        // A deck playback edge (presser-authored; host relays; the gen guard and gate
+        // prechecks live in deck_play_sync::OnPlayDeck).
         if (msg.payloadLen < sizeof(net::PlayDeckEventPayload)) {
             UE_LOGW("event_feed: PlayDeckEvent payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PlayDeckEventPayload));
@@ -108,8 +104,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::PhysModsState: {
-        // v118 (L8): value-ops (peer->host) / canonical array (host->all) /
-        // deny. Role + trust gates live in physmods_sync::OnPhysMods.
+        // Value-ops (peer->host) / canonical array (host->all) / deny. Role and trust gates
+        // live in physmods_sync::OnPhysMods.
         if (msg.payloadLen < sizeof(net::PhysModsStatePayload)) {
             UE_LOGW("event_feed: PhysModsState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PhysModsStatePayload));
@@ -125,8 +121,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DriveSlotState: {
-        // v119 (L5): an idempotent drive-slot FSM state line (any-peer
-        // announced; pre-check + host-canonical logic in drive_sync).
+        // An idempotent drive-slot FSM state line (any-peer announced; pre-check and
+        // host-canonical logic in drive_sync).
         if (msg.payloadLen < sizeof(net::DriveSlotStatePayload)) {
             UE_LOGW("event_feed: DriveSlotState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DriveSlotStatePayload));
@@ -142,7 +138,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DrivePayload: {
-        // v119 (L5): chunked drive data_0 rows (writer-authored, host-relayed).
+        // Chunked drive data_0 rows (writer-authored, host-relayed).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: DrivePayload payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -158,7 +154,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::RackState: {
-        // v119 (L5): rack index ops (peer->host) / canonical + deny (host->peer).
+        // Rack index ops (peer->host) / canonical + deny (host->peer).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: RackState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -174,7 +170,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::MeadowAppend: {
-        // v120 (L9): chunked meadow-DB row (presser-symmetric, host-relayed).
+        // Chunked meadow-DB row (presser-symmetric, host-relayed).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: MeadowAppend payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -190,7 +186,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::MeadowDelete: {
-        // v120 (L9): content-keyed meadow-DB delete (player-symmetric, host-relayed).
+        // Content-keyed meadow-DB delete (player-symmetric, host-relayed).
         if (msg.payloadLen < sizeof(net::ContentHashPayload)) {
             UE_LOGW("event_feed: MeadowDelete payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ContentHashPayload));
@@ -206,8 +202,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::MeadowOrder: {
-        // v120 (L9): chunked order-as-state line (client->host op, host-canonical back;
-        // NOT relayed -- receivers drop non-host authors themselves).
+        // Chunked order-as-state line (client->host op, host-canonical back; NOT relayed --
+        // receivers drop non-host authors themselves).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: MeadowOrder payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -223,8 +219,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::LaptopBlob: {
-        // v121 (OPEN-10): laptop content chunks (slot/disc; host refans
-        // verbatim inside laptop_sync with the origin byte).
+        // Laptop content chunks (slot/disc; the host re-fans them byte-for-byte inside
+        // laptop_sync with the origin byte).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: LaptopBlob payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -240,8 +236,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::LaptopQuad: {
-        // v121 (OPEN-10): quad edit-script batches (client->host) + canonicals
-        // (host->clients; receivers enforce senderSlot==0).
+        // Quad edit-script batches (client->host) + canonicals (host->clients; receivers
+        // enforce senderSlot==0).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: LaptopQuad payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -257,8 +253,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::FloppyBoxState: {
-        // v121 (OPEN-10): box push/pop ops (client->host) + deny/canonical
-        // (host->clients; receivers enforce senderSlot==0).
+        // Box push/pop ops (client->host) + deny/canonical (host->clients; receivers
+        // enforce senderSlot==0).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: FloppyBoxState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -274,7 +270,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishArm: {
-        // v113 (L4): the download-ARM state edge (host-authored; host polarity).
+        // The download-ARM state edge (host-authored; host polarity).
         if (msg.payloadLen < sizeof(net::DishArmPayload)) {
             UE_LOGW("event_feed: DishArm payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishArmPayload));
@@ -290,7 +286,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishSnapshot: {
-        // v113 (L4): the joiner's full-24 dish pose/state seed.
+        // The joiner's full-24 dish pose/state seed.
         if (msg.payloadLen < sizeof(net::DishSnapshotPayload)) {
             UE_LOGW("event_feed: DishSnapshot payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishSnapshotPayload));
@@ -306,7 +302,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishCalib: {
-        // v113 (L4): the symmetric calibration batch (apply + prime; host relays).
+        // The symmetric calibration batch (apply + prime; host relays).
         if (msg.payloadLen < sizeof(net::DishCalibPayload)) {
             UE_LOGW("event_feed: DishCalib payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishCalibPayload));
@@ -322,7 +318,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::ReelSlot: {
-        // v114 (L7): a caddy slot sentinel edge (presser-authored; host relays).
+        // A caddy slot sentinel edge (presser-authored; host relays).
         if (msg.payloadLen < sizeof(net::ReelSlotPayload)) {
             UE_LOGW("event_feed: ReelSlot payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ReelSlotPayload));
@@ -338,7 +334,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::TaskNewState: {
-        // v114 (L7): the host's saveSlot.taskNew mirror (host-authored; trust-gated in the handler).
+        // The host's saveSlot.taskNew mirror (host-authored; trust-gated in the handler).
         if (msg.payloadLen < sizeof(net::TaskNewStatePayload)) {
             UE_LOGW("event_feed: TaskNewState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::TaskNewStatePayload));
@@ -354,7 +350,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskLogLine: {
-        // v70: one coords-terminal event line (producer-symmetric, host-relayed).
+        // One coords-terminal event line (producer-symmetric, host-relayed).
         if (msg.payloadLen < sizeof(net::DeskLogLinePayload)) {
             UE_LOGW("event_feed: DeskLogLine payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskLogLinePayload));
@@ -370,9 +366,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskState: {
-        // v112: ADOPT-ONLY (the host->joiner connect seed). The live claimed/
-        // unclaimed lanes retired to DeskInput; the adopt gate lives in
-        // OnDeskState.
+        // ADOPT-ONLY (the host->joiner connect seed): the live desk lanes ride DeskInput,
+        // and the adopt gate lives in OnDeskState.
         if (msg.payloadLen < sizeof(net::DeskStatePayload)) {
             UE_LOGW("event_feed: DeskState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskStatePayload));
@@ -388,9 +383,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskInput: {
-        // v112: the claim-free field-granular desk INPUT delta (presser-
-        // authored; host relays to all except the originator). The apply +
-        // echo-prime live in desk_input_sync.
+        // The claim-free field-granular desk INPUT delta (presser-authored; the host relays
+        // to all except the originator). The apply and echo-prime live in desk_input_sync.
         if (msg.payloadLen < sizeof(net::DeskInputPayload)) {
             UE_LOGW("event_feed: DeskInput payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskInputPayload));
@@ -406,8 +400,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskScanEvent: {
-        // v112: the SHIFT quick-scan happened on a peer -- replay the
-        // accepted-branch effects (spawnDirs + beep) on this mirror.
+        // The quick-scan happened on a peer -- replay its arrow visual on this mirror. The
+        // beep rides the desk sound-effect lane.
         if (msg.payloadLen < sizeof(net::DeskScanEventPayload)) {
             UE_LOGW("event_feed: DeskScanEvent payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskScanEventPayload));
@@ -423,8 +417,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskSndFx: {
-        // v115: a peer's desk audio effect (organic Play/SetActive caught at the
-        // native seam) -- replay on this mirror. Symmetric, relayed.
+        // A peer's desk audio effect (an organic Play/SetActive caught at the native seam)
+        // -- replay on this mirror. Symmetric, relayed.
         if (msg.payloadLen < sizeof(net::DeskSndFxPayload)) {
             UE_LOGW("event_feed: DeskSndFx payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskSndFxPayload));
@@ -440,8 +434,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishAimState: {
-        // v64: the claim owner's dish-aim stream (host-relayed). The holder gate
-        // lives in OnDishAim.
+        // The claim owner's dish-aim stream (host-relayed). The holder gate lives in
+        // OnDishAim.
         if (msg.payloadLen < sizeof(net::DishAimStatePayload)) {
             UE_LOGW("event_feed: DishAimState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishAimStatePayload));
@@ -457,7 +451,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::SavedSignalAppend: {
-        // v65: chunked saved-signal rows (producer-symmetric, host-relayed).
+        // Chunked saved-signal rows (producer-symmetric, host-relayed).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: SavedSignalAppend payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -473,7 +467,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::SavedSignalDelete: {
-        // v65: content-keyed saved-signal delete (player-symmetric, host-relayed).
+        // Content-keyed saved-signal delete (player-symmetric, host-relayed).
         if (msg.payloadLen < sizeof(net::ContentHashPayload)) {
             UE_LOGW("event_feed: SavedSignalDelete payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ContentHashPayload));
@@ -489,7 +483,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::CompState: {
-        // v65: the decode-pane scalar stream (simulator-authoritative).
+        // The decode-pane scalar stream (simulator-authoritative).
         if (msg.payloadLen < sizeof(net::CompStatePayload)) {
             UE_LOGW("event_feed: CompState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::CompStatePayload));
@@ -505,7 +499,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::CompData: {
-        // v65: chunked comp_data_0 (change edges + host adopt).
+        // Chunked comp_data_0 (change edges + host adopt).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: CompData payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
