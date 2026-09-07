@@ -2,11 +2,11 @@
 //
 // It exists because a player reported 60 fps on a 120 fps machine, and a whole session went into
 // instrumenting Multivoid for a cost that was never ours. A controlled measurement has since named
-// the cause, and it is not the other mods: on one save, one build and one install, swapping only
-// the UE4SS build moved the dev rig from ~70 to ~118 fps, while disabling the one Lua mod that
-// build fails to start moved it ~5. The loader is worth about ten times its own mod set, and the
-// installer now lays down the fast build -- so this module raises NOTHING to the player and only
-// logs. What it can name is which foreign mods are present, which is what a bug report needs.
+// the cause, and it is not the other mods: swapping only the UE4SS build moved the dev rig from ~70
+// to ~118 fps, while disabling -- on the old build -- the single Lua mod the newer one fails to
+// start moved it ~5. No arm priced the whole enabled set on its own. The frames belong to the
+// loader, which the installer now pins, so this module raises NOTHING to the player and only logs
+// which foreign mods are present, which is what a bug report needs.
 //
 // Detection is pure file-system reading next to the exe -- no engine calls, no reflection -- so it
 // is safe from the boot thread before any world exists. It must work on BOTH install lanes: a hand

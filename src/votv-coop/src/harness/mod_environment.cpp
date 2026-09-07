@@ -17,9 +17,9 @@ namespace {
 
 namespace fs  = std::filesystem;
 
-// UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. The newer shimloader build has
-// no mods.txt at all, and that is the faster configuration, so its absence is the good case and
-// never an error.
+// UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. A managed profile lane can have
+// no mods.txt at all, which is a valid install and never an error -- the file's presence is not
+// what the frame-rate measurement turned on.
 std::vector<std::string> EnabledLuaMods(const std::wstring& exeDir) {
     std::vector<std::string> out;
     const std::wstring path = exeDir + L"\\Mods\\mods.txt";
@@ -159,9 +159,9 @@ void Run() {
     //
     // The advice it once carried is refuted. It said the foreign mod set costs frames; a controlled
     // measurement then moved the same rig from ~70 to ~118 fps by swapping the UE4SS build alone,
-    // and found the whole enabled Lua set worth about 5 of those. The frames belong to the loader,
-    // which the installer now pins, and telling a player to disable their other mods would buy them
-    // almost nothing.
+    // and found the one Lua mod that build fails to start worth about 5 of those. The frames belong
+    // to the loader, which the installer now pins, so telling a player to disable their other mods
+    // would be advice for a cost nothing has attributed to them.
     //
     // And it was the wrong surface: boot_warning_dialog is, by its own header, the mod-install
     // problem modal -- a fixed MOD INSTALL PROBLEM title over a frame-rate notice, blocking the
