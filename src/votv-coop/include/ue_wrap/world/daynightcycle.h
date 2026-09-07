@@ -1,19 +1,17 @@
-// ue_wrap/daynightcycle.h -- standalone engine access for VOTV's world clock
-// (AdaynightCycle_C, the singleton that owns time-of-day + the weather scheduler).
-// Principle-7 engine-wrapper layer: it wraps the reflection / struct-offset details
-// of the cycle's CLOCK fields. NO network logic, NO coop state -- coop::time_sync owns
-// those and reads/writes the clock through here.
+// ue_wrap/world/daynightcycle.h -- standalone engine access for VOTV's world clock
+// (daynightCycle_C, the singleton owning time of day and the weather scheduler). A principle-7
+// engine wrapper over the cycle's CLOCK fields: no network logic, no coop state, both of which
+// coop/world/time_sync owns and drives through here.
 //
-// The clock is three floats on the cycle: `totalTime` (absolute elapsed game time, the
-// authoritative continuous clock), `Day` (the day number), `TimeScale` (the advance
-// rate). The SUN/MOON position -- hence world brightness -- is a pure function of
-// `totalTime` recomputed every `ReceiveTick` (setSunAndMoonRotation), so syncing the
-// clock makes the sun follow; we never drive the sun/light fields directly (the
-// purple-light lesson). The native `loadtime(totalTime, Day)` setter disassembles to
-// just `totalTime=...; if(!skipDaySet) Day=...` (no fan-out), so a direct field write is
-// the equivalent, unconditional, UFunction-free drive.
-//
-// RE: research/findings/architecture-audits/votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
+// The clock is three floats. `day` is the WITHIN-day accumulator, advanced each tick by
+// deltaSeconds * timeScale (times the difficulty and sleep multipliers) and wrapped modulo
+// `maxTime` at the roll; `totalTime` takes the same increment and is never wrapped, so it is
+// the absolute elapsed clock; `timeScale` is the rate. Sun and moon are a pure function of
+// `day`: the cycle recomputes phase = ((day + offset) % maxTime) / maxTime every tick and
+// rotates both lights phase * 360 degrees, so writing `day` makes the sun follow and we never
+// drive the light fields ourselves. The native loadtime(totalTime, day) setter writes BOTH
+// members, and only while `skipDaySet` is false -- with that flag set it writes nothing -- and
+// fans out to nothing else, so a direct field write is the same drive without the flag.
 
 #pragma once
 
@@ -34,42 +32,39 @@ void* Cycle();
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);
 
-// Read MaxTime -- the length of ONE day in `totalTime` units (the within-day clock runs [0, MaxTime),
-// wrapping to advance Day; the sun angle is totalTime/MaxTime of a full rotation). Lets a caller map a
-// time-of-day FRACTION (0..1) to a totalTime (frac * MaxTime). False if unresolved. Game thread.
+// Read maxTime -- the length of ONE day in `day` units (the within-day clock runs [0, maxTime)
+// and wraps at the midnight roll; the sun angle is that fraction of a full rotation). Lets a
+// caller map a time-of-day FRACTION (0..1) onto a `day` value. False if unresolved. Game thread.
 bool ReadMaxTime(float& maxTime);
 
-// Overwrite the cycle's clock (direct field writes -- the loadtime equivalent, no
-// UFunction, unconditional). The client applies the host's authoritative clock here; the
-// cycle's own ReceiveTick then re-derives the sun. No-op if not resolved. Game thread.
+// Overwrite the cycle's clock by direct field write -- what loadtime does on its unguarded
+// path, minus the skipDaySet test. The client applies the host's authoritative clock here and
+// the cycle's own tick re-derives the sun from `day`. No-op if unresolved. Game thread.
 void ApplyClock(float totalTime, float day, float timeScale);
 
-// ---- the NAMED clock: `timeZ` (FIntVector @0x02D0: X=hour, Y=minute, Z=day) ----
-// This is the game's own running (hour, minute, day) triple -- the cycle's minute pulse
-// calls saveSlot.settime(timeZ) and rebuilds timeZ from settime's incremented outs
-// (bytecode: ExecuteUbergraph_daynightCycle settime call region; getNamedTime is a pure
-// unpacker of this triple). The DAY NUMBER lives here (timeZ.Z) -- NOT in the float `Day`
-// field, which is a within-day accumulator (the midnight cascade threshold `day > MaxTime`).
-// Reads/writes are plain FIntVector field access (BP writes it via Let, no setter); a
-// WRITE is picked up by the next minute pulse -> settime(newTriple) -> savedtime persists
-// + the scheduled-event walk runs natively. Game thread. False/no-op if unresolved.
+// ---- the NAMED clock: `timeZ` (FIntVector: X=hour, Y=minute, Z=day number) ----
+// The game's own running triple. The cycle rebuilds it every tick -- hour and minute derived
+// from `day` and `maxTime`, Z copied from saveSlot.savedtime.Z, which is where the DAY NUMBER
+// actually lives -- and hands it to saveSlot.settime, whose out flags drive the new-minute,
+// new-hour and new-day cascades. The float `day` is NOT the day number: it is the within-day
+// accumulator that the midnight threshold `day > maxTime` fires on. Reads and writes here are
+// plain FIntVector field access; the Blueprint writes it with a Let and offers no setter. Game
+// thread; false or a no-op if unresolved.
 bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day);
 void WriteTimeZ(int32_t hour, int32_t minute, int32_t day);
 
-// ---- U6 day-roll suppression (v65; coop/time_sync drives these) ----
-// RE (2026-06-12 daynight agent pass): the midnight task/email/points cascade
-// is a TICK-THRESHOLD trigger (`day > MaxTime` inside ReceiveTick), armed on
-// every peer -- a connected client would roll its OWN task batch (different
-// RNG) and the 6am `func_newHour` would place a DUPLICATE automatic drone
-// order (incl. an instant one at join when the first clock snap crosses
-// 06:00 with dailyDelivery=false). Suppression is state-level, not a timer
-// kill: the client's day only advances via our corrections (always < MaxTime
-// -- the host wraps in-tick), so writing TimeScale=0 makes the whole cascade
-// structurally unreachable client-side while sun/sky visuals keep deriving
-// from the corrected `day`.
+// ---- day-roll suppression (coop/world/time_sync drives these) ----
+// The midnight task, email and points cascade is a tick threshold, `day > maxTime` inside the
+// cycle's own tick chain, and it is armed on every peer: a connected client would roll its OWN
+// task batch on different RNG, and func_newHour would place a duplicate automatic drone order
+// (hour >= 6 while dailyDelivery is false), including an instant one at a join whose first
+// clock snap crosses 06:00. The suppression is state-level rather than a timer kill: a
+// client's `day` advances only through our corrections, always below maxTime because the host
+// wraps in-tick, so writing timeScale = 0 puts the whole cascade structurally out of reach
+// while the sky keeps deriving from the corrected `day`.
 
-// Write TimeScale alone (1.0f = the game's own restore value, uber @10703;
-// used by the disconnect restore). No-op if unresolved.
+// Write timeScale alone (1.0f is the value the cycle's own tick restores); used by the
+// disconnect restore. No-op if unresolved.
 void WriteTimeScale(float scale);
 
 // saveSlot.dailyDelivery := true -- the game's OWN 6am-order latch (its only
