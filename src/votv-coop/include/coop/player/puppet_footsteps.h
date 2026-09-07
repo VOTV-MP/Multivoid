@@ -3,19 +3,16 @@
 // VOTV's footsteps are a tick-driven distance accumulator in mainPlayer's ubergraph: while
 // |velocity| > 10 cm/s it accumulates how far the foot location moved and calls lib_C::step every
 // 150 cm. The puppet cannot inherit that, because its actor tick is off from spawn
-// (puppet_spawn.cpp) to keep mainPlayer_C's ReceiveTick -- HUD, look traces, hunger and thirst --
-// from running a second single-player brain, and from writing the puppet's own camera into the
-// GLOBAL params_global collection, where the local player's view is what belongs.
+// (puppet_spawn.cpp) to stop mainPlayer_C's ReceiveTick running a second single-player brain and
+// writing the puppet's own camera into the GLOBAL params_global collection. Anim notifies are no
+// way round it: kerfur is audible through one, but that interface is not among the four
+// mainPlayer_C implements, and adding it would mean editing the asset.
 //
 // So this reproduces the CALLER, the stride accumulator, and dispatches the same callee the local
 // player's own tick does: lib_C::step, which sphere-traces the ground, picks the per-material cue
 // and spatializes it, and last raises the world's steppedOn reactions. Nothing is re-implemented.
-// Anim notifies are not an option: kerfur is audible through one, but that interface is not among
-// the four mainPlayer_C implements, and adding it would mean editing the asset.
-//
-// Header-only: one small struct per RemotePlayer, ticked from ApplyToEngine right after the CMC
-// drive. Float math per frame plus ONE lib_C::step dispatch per ~150 cm walked (2-4 Hz per moving
-// puppet). Game thread only.
+// Header-only: one struct per RemotePlayer, ticked from ApplyToEngine after the CMC drive, costing
+// float math per frame plus ONE dispatch per ~150 cm walked. Game thread only.
 
 #pragma once
 

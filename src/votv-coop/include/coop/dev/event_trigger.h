@@ -1,20 +1,17 @@
 // coop/dev/event_trigger.h -- DEV: trigger any game event from the F1 menu. The full event list, in
-// strict categories, host-only, each row carrying the event's native trigger time of day.
+// strict categories, host-only, each row carrying its native trigger time of day.
 //
-// The event system funnels through TWO FName dispatchers on the single placed trigger_eventer_C:
-// runEvent(event, special) carries the bulk, and runSpecialEvent(name)->bool is a FLAT per-name
-// switch with no reputation or random gating, so an ariral prank the switch names is INDIVIDUALLY
+// The event system funnels through TWO FName dispatchers on the single placed trigger_eventer_C.
+// runEvent(event, special) carries the bulk; runSpecialEvent(name)->bool is a FLAT per-name switch
+// with no reputation or random gating, so an ariral prank the switch names is INDIVIDUALLY
 // addressable -- one it does not, such as a bare `arirGraff` against its seven per-variant cases,
-// falls through to a silent return. The
-// game's own normal prank path is runEvent(_, "ariralPrank") -> summonArirPrank, which randomizes
-// over a reputation-tier pool and discards the incoming name; the table keeps one random-prank row
-// for that beside the addressable ones. Ambient weather is a third route, fired by daynightCycle
-// and mainGamemode timers rather than by either dispatcher, so the menu calls the same UFunction on
-// the live instance.
-//
-// HOST-ONLY by design: clients never dispatch, dev_gate refusing as it does for every dev verb, and
-// the spawned actors and NPCs mirror through the existing coop pipelines -- which is what these
-// triggers exist to test.
+// falls through to a silent return. The game's own normal prank path is runEvent(_, "ariralPrank")
+// -> summonArirPrank, which randomizes over a reputation-tier pool and discards the incoming name;
+// the table keeps one random-prank row for that. Ambient weather is a third route, fired by
+// daynightCycle and mainGamemode timers rather than by either dispatcher, so the menu calls the
+// same UFunction on the live instance. HOST-ONLY by design: clients never dispatch, dev_gate
+// refusing as for every dev verb, and the spawned actors and NPCs mirror through the existing coop
+// pipelines, which is what these triggers exist to test.
 
 #pragma once
 

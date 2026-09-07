@@ -3,16 +3,16 @@
 //
 // A host that moves a keyed prop while a client joins can leave the client rendering it at the SAVE
 // position, and two paths produce that: the client's own loadObjects recreating the prop on top of
-// the snapshot's host position, or the host HOLDING it when the snapshot went out, which
+// the snapshot's host position, or the prop being HELD when the snapshot went out, which
 // drive-skips the express so nothing is placed. They want different fixes, so the probe separates
 // them by recorded ORDER rather than by inference.
 //
-// Per key it stamps the snapshot express (host position, the actor's position then, whether the
-// host held it) and the keyed-churn re-bind onto the recreate; a re-bind stamp above the express
-// stamp is what proves the recreate landed second. At load quiescence it resolves each key's final
-// actor by eid and classifies it: clobbered, snapshot-won, host-held, dead (a rock's pickup
-// destroys the world actor, so a grab in the window reads this way), no-snapshot, or unresolved.
-// Piles are not traced -- the pile bind path logs its own arm and apply. Game-thread only.
+// Per key it stamps the snapshot express (host position, the actor's position then, whether it was
+// held) and the keyed-churn re-bind onto the recreate; a re-bind stamp above the express stamp is
+// what proves the recreate landed second. At load quiescence it resolves each key's final actor by
+// eid and classifies it: clobbered, snapshot-won, held at the snapshot by the host or by us, dead
+// (a rock's pickup destroys the world actor), no-snapshot, or unresolved. Piles are not traced.
+// Game-thread only.
 #pragma once
 
 #include <cstdint>
