@@ -35,9 +35,9 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 coop::voice::Capture g_capture;
 coop::voice::Playback g_playback;
 
-// Atomic: Enabled() is read from the RENDER thread (hud::IsActive each Present)
-// while the game thread writes at Install/OnDisconnect (audit I-1). All other
-// access is game-thread; the implicit seq_cst ops are fine on these paths.
+// Atomic: Enabled() is read from the RENDER thread (hud::IsActive on each Present) while the
+// game thread writes at Install and OnDisconnect. All other access is game-thread, and the
+// implicit seq_cst ops are fine on these paths.
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_started{false};  // devices opened this session
 // Install's OWN idempotency latch, separate from g_started on purpose. g_started means
@@ -46,8 +46,8 @@ std::atomic<bool> g_started{false};  // devices opened this session
 // double as "Install has already decided". It never could: with voice.enabled=0 Install
 // returned BEFORE setting g_started, so every tick of subsystems::Install re-entered the
 // whole body -- re-resolving the config, clearing every peer's WireState, resetting
-// g_sendSeq, and printing "voice_chat: disabled" dozens of times a second (measured
-// 2026-08-31: it was the single most frequent line in a client log).
+// g_sendSeq, and printing "voice_chat: disabled" dozens of times a second -- the most
+// frequent line in a client log.
 bool g_installed = false;
 bool g_loopback = false;
 int  g_muteVk = 0;
@@ -83,10 +83,9 @@ int ParseKey(const std::string& s, int def) {
     return static_cast<int>(std::strtol(s.c_str(), nullptr, 0));
 }
 
-// (EnvOrIniBool + ParseF retired 2026-07-25, ini rework arc 2: the typed
-// registry reads own the env twin + the garbage->default rule. The old pair
-// accepted any non-"0" env as true and atof'd garbage to 0.0 -- voice.volume=abc
-// literally meant SILENCE.)
+// The typed registry reads own the env twin and the garbage-to-default rule. A hand-rolled
+// pair took any non-"0" env as true and atof'd garbage to 0.0, so voice.volume=abc meant
+// SILENCE.
 
 void SendLocalState(coop::net::Session* s) {
     coop::net::VoiceStatePayload p{};
@@ -106,8 +105,8 @@ void StartDevices() {
     // _THRESHOLD_DB / _TEST_TONE / _LOOPBACK -- the autonomous tone smoke's
     // overrides) ride the registry rows inside Resolve*.
     cc.activationMode = CFG::ResolveEnum(coop::config_registry::rows::voice_mode) == "activation";
-    // Default PTT 'G' (user 2026-06-12; was X -- clashed with VOTV binds). An
-    // explicit voice.ptt_key in the ini still wins.
+    // Default PTT 'G'; X clashes with the game's own binds. An explicit voice.ptt_key in the
+    // ini still wins.
     cc.pttVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_ptt_key), 'G');
     cc.whisperVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_whisper_key), 0);
     cc.thresholdDb = CFG::ResolveFloat(coop::config_registry::rows::voice_threshold_db);
@@ -193,7 +192,7 @@ void Tick() {
 
     // Mute-key toggle edge (GT poll, GetAsyncKeyState -- foreground-gated: the key is
     // global across processes, same hazard as the capture-thread PTT gate). Also
-    // text-capture-gated (2026-07-09): no mute toggle while typing the key into chat.
+    // text-capture-gated: no mute toggle while typing the key into chat.
     if (g_muteVk != 0) {
         const bool down = ui::input_focus::IsOurWindowForeground() &&
                           !ui::input_focus::IsOverlayCapturingText() &&
@@ -221,8 +220,8 @@ void Tick() {
             g_playback.OnFrame(localSlot != coop::players::kPeerIdUnknown ? localSlot : 0, f);
     }
 
-    // Inbound: session voice inbox -> jitter buffers. One batch drain = one
-    // lock per tick (audit I-3/M-3); the buffer covers every ring full.
+    // Inbound: the session voice inbox into the jitter buffers. One batch drain is one lock per
+    // tick, and the buffer is sized so every ring can be full.
     coop::net::Session::VoiceFrameMsg
         inbox[coop::net::kMaxPeers * coop::net::Session::kVoiceRingPerSlot];
     const int got = s->DrainVoiceFrames(inbox, static_cast<int>(coop::net::kMaxPeers) *
@@ -235,11 +234,10 @@ void Tick() {
     }
     g_playback.TickDecode();
 
-    // Listener/speaker positions for the spatial mixer, throttled to ~20 Hz (audit
-    // I-2): the block costs 2 reflected PE calls + up to kMaxPeers-1 head reads, and
-    // sub-50ms position freshness is inaudible in the attenuation/pan math (voice
-    // frames themselves arrive at 20 ms). The mixer interpolates nothing -- it just
-    // reads the latest atomics.
+    // Listener and speaker positions for the spatial mixer, throttled to about 20 Hz: the block
+    // costs two reflected dispatches plus a head read per other peer, and position freshness
+    // under 50 ms is inaudible in the attenuation and pan maths, when the frames themselves
+    // arrive every 20 ms. The mixer interpolates nothing; it reads the latest atomics.
     static Clock::time_point s_lastPosAt{};
     const auto now = Clock::now();
     if (now - s_lastPosAt >= std::chrono::milliseconds(50)) {
@@ -268,9 +266,9 @@ void Tick() {
     }
 
     // VoiceState edges (display-only; first connected tick sends the baseline).
-    // voiceDisabled is part of the edge (audit I-4): today it is constant inside this
-    // gate (Tick early-returns when disabled), but the edge must stay correct if a
-    // runtime enable toggle ever lands.
+    // voiceDisabled is part of the edge. It is constant inside this gate today, since Tick
+    // early-returns when disabled, but the edge must stay correct if a runtime enable toggle
+    // ever lands.
     if (s->connected()) {
         const bool muted = g_capture.Muted();
         const bool disabled = !g_enabled;

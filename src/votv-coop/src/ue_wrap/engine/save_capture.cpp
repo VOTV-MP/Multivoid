@@ -1,4 +1,4 @@
-// ue_wrap/save_capture.cpp -- see header.
+// ue_wrap/engine/save_capture.cpp -- see the header.
 
 #include "ue_wrap/engine/save_capture.h"
 
@@ -37,22 +37,20 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     UE_ASSERT_GAME_THREAD("save_capture::CaptureLiveWorldToScratchSlot");
     if (scratchSlotName.empty()) return false;
 
-    // 1. The host gamemode owns the live world + the save container.
+    // 1. The host gamemode owns the live world and the save container.
     //
-    // IT MUST BE THIS WORLD'S GAMEMODE. `FindObjectByClass` skips only nulls and the CDO -- no
-    // liveness test, no world filter -- and returns the FIRST match in GUObjectArray index
-    // order. A dying world's actors are not kill-flagged until the GC purge (measured 44+ s in
-    // `world_identity.h`, which exists for exactly this), and after a menu -> game cycle the OLD
-    // `mainGamemode` sits at a LOWER index than the new one. So the capture could serialize a
-    // gamemode belonging to a world that no longer exists.
+    // IT MUST BE THIS WORLD'S GAMEMODE. FindObjectByClass skips only nulls and the CDO -- no
+    // liveness test, no world filter -- and returns the FIRST match in GUObjectArray index order.
+    // A dying world's actors are not kill-flagged until the GC purge, which world_identity.h
+    // exists to measure and can be tens of seconds, and after a menu-to-game cycle the OLD
+    // mainGamemode sits at a LOWER index than the new one. Unfiltered, the capture serialises a
+    // gamemode whose world no longer exists.
     //
-    // `[V]` 2026-09-01 that is what a user hit: joining the instant a re-hosted lobby appeared
-    // produced a 1284-byte "world" for the joiner, who then kept its own -- two ATVs, every door
-    // disagreeing. The blob was NOT a torn write; a post-ship audit hexdumped the surviving file
-    // and found a structurally COMPLETE GVAS save with its terminator intact. It was a faithful
-    // serialization of a `saveSlot` whose object arrays were empty, which is what saving a stale
-    // gamemode produces. Our own tracker saw 2,197 live keyed props at the same instant because
-    // it walks GUObjectArray and found the NEW world; `saveObjects` was looking at the old one.
+    // What that produces is not a torn write but a structurally complete save describing nothing:
+    // a faithful serialisation of a saveSlot whose object arrays are empty, terminator intact, a
+    // kilobyte or so long. A joiner given it keeps its own world instead, and the two disagree on
+    // every door and vehicle. The prop tracker sees the live world at the same instant, because it
+    // walks GUObjectArray; saveObjects was looking at the old one.
     void* gm = nullptr;
     void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
     for (void* cand = R::FindObjectByClass(P::name::GamemodeClass); cand;) {
@@ -129,11 +127,11 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         UE_LOGI("save_capture: objectsData repopulated %d -> %d live world object(s)",
                 objCountBefore, objCountAfter);
     }
-    // AN EMPTY CONTAINER IS NOT A WORLD, and this is the exact discriminator -- an integer at
-    // the producer, versus the byte-size ratio a consumer was left to guess with. A healthy
-    // capture reads 3385 -> 3397; the stub that shipped to a joiner on 2026-09-01 would have
-    // read 0 -> 0. Refusing here means the caller falls back to the canonical slot instead of
-    // streaming a world nobody lives in.
+    // AN EMPTY CONTAINER IS NOT A WORLD, and this count is the exact discriminator: an integer
+    // read at the producer, rather than the byte-size ratio a consumer would be left to guess
+    // with. A healthy capture repopulates a few thousand objects; the stale-gamemode stub reads
+    // zero. Refusing here means the caller falls back to the canonical slot instead of streaming
+    // a world nobody lives in.
     if (objCountAfter == 0) {
         UE_LOGW("save_capture: saveObjects produced an EMPTY objectsData (%d -> 0) -- refusing "
                 "this capture. The container serialized fine; it just describes no world.",
