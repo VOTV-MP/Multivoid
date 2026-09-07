@@ -4,42 +4,21 @@
 
 namespace ue_wrap {
 
-// ---------------------------------------------------------------------------------
-// GcPin -- an OWNED GC pin. The only supported way to keep a runtime-constructed
-// UObject alive from C++.
+// GcPin -- an OWNED GC pin: the only supported way to keep a runtime-constructed UObject alive
+// from C++, a raw pointer being invisible to UE's reachability scan.
 //
-// WHY IT EXISTS (measured 2026-09-01, rooting the rejoin crash):
+// Release is UNCONDITIONAL -- no liveness test, no world test -- because un-rooting a dead
+// object is the entire point. Guarding it on liveness inverts the intent exactly where it
+// matters: at a world teardown every mirror is already PendingKill, so the guard skips and the
+// objects stay ROOTED. A rooted PendingKill object is the worst of both states, dead to every
+// caller and immortal to the collector, and through its Outer chain it still anchors the world
+// it was spawned in -- which then never collects. That world stays PendingKill with
+// BeginDestroy never called, and the next map open in the same process adopts the corpse and
+// dies on its null WorldSettings.
 //
-// A C++ pointer is invisible to UE's reachability scan, so a runtime spawn we mean to
-// keep must be added to the root set. Until this class, that was a bare pair of flag
-// writes -- `reflection::AddToRoot` at the spawn, `reflection::RemoveFromRoot` written
-// out again by hand at each teardown -- and the release was guarded by a liveness test:
-//
-//     void* liveActor = entry.actor.Get();   // null unless Alive()
-//     if (liveActor) { E::DestroyActor(liveActor); R::RemoveFromRoot(liveActor); }
-//
-// The destroy needs liveness. THE UN-ROOT DOES NOT, and pairing them under one guard
-// inverted the intent exactly when it mattered: at a world teardown every mirror is
-// PendingKill (and its stamped world is no longer current), so `Get()` returns null,
-// the whole branch is skipped, and the actors stay ROOTED. `[V]` 871 spawned trash
-// proxies, 871 root-set actors still reaching the departed world through their Outer
-// chain, and the world therefore never collected -- it stayed PendingKill with
-// BeginDestroy never called, so the next `open <map>` in the same process adopted the
-// corpse and died dereferencing its null WorldSettings
-// (research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md).
-//
-// A rooted PendingKill object is the worst of both states: dead to every caller, immortal
-// to the collector, and still an Outer-chain anchor for the entire world it was spawned in.
-//
-// THE INVARIANT THIS CLASS ENFORCES: the pin is released by the destructor, so the pin
-// lives exactly as long as the C++ object that owns it, and no teardown path can forget
-// it or condition it on anything. Release is UNCONDITIONAL -- no liveness test, no world
-// test -- because un-rooting a dead object is not merely safe, it is the entire point.
-//
-// Hold one BY VALUE inside whatever structure owns the engine object (MTA shape:
-// CClientEntity owns its engine entity and drops it in ~CClientEntity). Erasing that
-// structure then releases the pin with no extra line of teardown.
-// ---------------------------------------------------------------------------------
+// So the destructor releases it: the pin lives exactly as long as the C++ object holding it,
+// and no teardown path can forget or condition it. Hold one BY VALUE in whatever structure
+// owns the engine object (the MTA shape, CClientEntity), and erasing that structure is enough.
 class GcPin {
 public:
     GcPin() = default;
@@ -84,11 +63,10 @@ public:
     // Total pins outstanding, across every owner.
     static size_t Outstanding();
 
-    // How many outstanding pins are stamped to a WORLD (as opposed to process-lifetime
-    // pins on assets/CDOs, which stamp null). Called after a session teardown, this is
-    // the assertion the old hand-written releases had no way to make: a non-zero answer
-    // means somebody's mirror is still anchoring a world that is on its way out. Logs a
-    // WARN naming the count and the classes when it is non-zero; returns the count.
+    // How many outstanding pins are stamped to a WORLD, as opposed to the process-lifetime pins on
+    // assets and CDOs, which stamp null. Called after a session teardown, a non-zero answer means
+    // some mirror is still anchoring a world on its way out -- the assertion a hand-written release
+    // pair has no way to make. Logs a WARN naming the count and the classes; returns the count.
     static size_t ReportWorldScopedPins(const char* tag);
 
 private:
