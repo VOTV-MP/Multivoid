@@ -1,29 +1,16 @@
-// ue_wrap/devices/atv_condition.h -- engine access for the ATV's CONDITION state: the four
-// tires' presence/durability/dirt/fixes/types, the spare trio, the body dirt scalar, fuel and
-// health -- plus the game's own per-facet reducers (updTires / updDirt / updSpareTire /
-// updHealth) as callable verbs.
+// ue_wrap/devices/atv_condition.h -- engine access for the ATV's CONDITION state: the four tires'
+// presence, durability, dirt, fix countdown and type, the spare trio, the body dirt scalar, fuel
+// and health -- plus the game's own per-facet reducers (updTires, updDirt, updSpareTire, updHealth)
+// as callable verbs.
 //
-// Principle-7 engine-wrapper layer: NO network/coop state, no authority decisions. The coop
-// half (coop/interactables/atv_condition_sync) decides WHAT to write and WHEN a verb fires;
-// this file only knows the class layout and the dispatch.
+// Principle-7 engine-wrapper layer: NO network or coop state, and no authority decisions. The coop
+// half, coop/interactables/atv_condition_sync, decides WHAT to write and WHEN a verb fires; this
+// file knows only the class layout and the dispatch.
 //
-// Layout facts (all [V], ATV.md 17.7/17.17 + the SDK dump the tire probe quotes):
-//   tires            TArray<bool>   (1-byte elems; CDO Num=4 by construction)
-//   tiresDurability  TArray<float>
-//   tiresDirt        TArray<float>
-//   tiresFixes       TArray<int32>  (countdown; -1 legally reachable -- ejectWheel writes
-//                                    fixes-1 uncapped and putTire copies it back)
-//   tiresTypes       TArray<uint8>  (zero runtime writers in ATV_C bytecode; reducer input)
-//   dirt / fuel / health / spareTire_durability / spareTire_dirt  FloatProperty
-//   spareTire_fixes  IntProperty;  hasSpareTire  BoolProperty
-//   skipTireUpdate   BoolProperty  (zero writers, no CDO override => permanently FALSE; read
-//                                   anyway -- a TRUE means some future external writer exists
-//                                   and the caller must defer its verbs, not no-op silently)
-//
-// The write primitives are WRITE-IN-PLACE: bounded to min(Num, 4) elements, never touching an
-// FScriptArray's Data/Num/Max (no allocation from our side, ever). The tire PROBE
-// (coop/dev/atv_tire_probe) deliberately keeps its own independent reads --
-// [[lesson-an-instrument-that-shares-the-defect-cancels-it]].
+// The write primitives are WRITE-IN-PLACE: bounded to min(Num, 4) elements, and they never touch an
+// FScriptArray's Data, Num or Max, so nothing here allocates. The tire probe in
+// coop/dev/atv_tire_probe deliberately keeps its own independent reads, since an instrument that
+// shares the defect it hunts cancels it out.
 
 #pragma once
 
@@ -31,8 +18,8 @@
 
 namespace ue_wrap::atv_condition {
 
-// One peer's view of the condition state, in wire order. Plain data; the coop layer moves it
-// to/from AtvStatePayload verbatim.
+// One peer's view of the condition state, in wire order. Plain data; the coop layer moves it to and
+// from AtvStatePayload field for field.
 struct Snapshot {
     float   dur[4]  = {};
     float   dirt[4] = {};
@@ -48,13 +35,22 @@ struct Snapshot {
     uint8_t types[4] = {};
 };
 
-// The game's per-facet reducers, resolvable as verbs. All BlueprintCallable [V] ATV.md CFG row.
+// The game's per-facet reducers, resolvable as verbs. All four are BlueprintCallable.
 enum class Verb : uint8_t { UpdTires, UpdDirt, UpdSpareTire, UpdHealth };
 
-// Resolve ATV_C's 13 property offsets + the 4 verb UFunctions. Idempotent, one attempt per
-// process (the class is resident for the game's lifetime). Returns true iff EVERYTHING
-// resolved -- the caller treats a partial resolve as "this build cannot run the lane" and the
-// producer then ships tiresValid=0 rather than a zeroed block.
+// Resolve ATV_C's 13 property offsets and the 4 verb UFunctions. Idempotent, one attempt per
+// process, since the class is resident for the game's lifetime. Returns true only if EVERYTHING
+// resolved: the caller treats a partial resolve as "this build cannot run the lane", and the
+// producer then ships tiresValid=0 rather than a zeroed block. The layout:
+//   tires TArray<bool> (1-byte elements, CDO Num 4)    tiresDurability, tiresDirt  TArray<float>
+//   tiresFixes TArray<int32> -- a countdown, and -1 is legally reachable: ejectWheel writes fixes-1
+//     uncapped and putTire copies it back
+//   tiresTypes TArray<uint8> -- no runtime writer in ATV_C's bytecode; reducer input only
+//   dirt, fuel, health, spareTire_durability, spareTire_dirt   FloatProperty
+//   spareTire_fixes  IntProperty         hasSpareTire  BoolProperty
+//   skipTireUpdate BoolProperty -- no writer and no CDO override, so permanently false; read
+//     anyway, because a true would mean a future external writer exists and the caller must defer
+//     its verbs
 bool Resolve();
 bool Resolved();
 

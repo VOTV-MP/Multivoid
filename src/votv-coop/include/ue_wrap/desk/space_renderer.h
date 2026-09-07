@@ -3,7 +3,7 @@
 // the client roller suppression. Principle-7 engine-wrapper layer -- NO
 // network logic; coop::console_state_sync drives the mirror through here.
 //
-// RE (votv-base-computers-RE-2026-06-11.md SS5.4 + the phase-2 impl pass):
+// How the screen works:
 // spaceRenderer is a singleton placed actor. `signals` (TArray<Fstruct_
 // signal_spawn>, 0x2C rows) pairs BY INDEX with `signals_a` (TArray<
 // ui_signal_C*>, the sky-dome widgets, each carrying its own LifeTime/
@@ -76,7 +76,7 @@ bool KillClientSpawnTimer();
 // signal; the world is back to SP behavior).
 bool RestoreRoller();
 
-// v115 cursor mirror: zero the glide integrator state (`movement`, a raw
+// Cursor mirror: zero the glide integrator state (`movement`, a raw
 // EX_Let-written FVector2D -- NOT setter-managed) so a residual local glide
 // never co-writes against an incoming remote cursor stream. One write at the
 // receiver's stream-start edge (desk_cursor_sync).
