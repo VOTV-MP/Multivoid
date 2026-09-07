@@ -1,19 +1,18 @@
 // ue_wrap/space_renderer.cpp -- see ue_wrap/space_renderer.h.
 //
-// Bytecode ground truth (research/bp_reflection/_spacerenderer_uber_full.txt):
-//   @3819 BIND spawnSignal -> K2_SetTimerDelegate(delegate, rand(20,60), looping=false)
-//     -- the self-re-arming roller. spawnSignal's body (@4010-4250) rolls a
-//     random point in the coords-screen area and calls addSignal(MakeVector(
-//     rx, ry, 0)) -- so addSignal's InVec IS the screen-space position. A
-//     mirror passing the WIRE coords therefore places the row + widget at the
-//     native position; only addSignal's internal rolls (type/strength/
-//     frequency/spreads/polarity/objectName + the widget's lifetime pair)
-//     need overwriting afterwards.
-//   K2_ClearTimer(self, "spawnSignal") is the exact inverse of the
-//     K2_SetTimerDelegate arm (UE4 ClearTimer builds the delegate from
-//     object+fname); spawnSignal is the ONLY re-armer, so one kill silences
-//     the roller for the instance's lifetime. Reflect-calling spawnSignal()
-//     once rolls one signal AND re-arms the native loop (the restore path).
+// What the blueprint does, read off its bytecode. spawnSignal is the self-re-arming roller:
+// entering it binds a delegate back to itself, rolls a 20-60 s delay and hands both to
+// K2_SetTimerDelegate with looping=false, so every firing schedules the next one. It then rolls a
+// random point inside the coords screen's area (getAreaSize, two RandomFloatInRange) and calls
+// addSignal(MakeVector(rx, ry, 0)) -- so addSignal's InVec IS the screen-space position, and a
+// mirror passing the WIRE coords places the row and widget at the native position. Only addSignal's
+// internal rolls (type, strength, frequency, the spreads, polarity, objectName, and the widget's
+// lifetime pair) need overwriting afterwards. The roll, but not the re-arm, is skipped while global
+// time dilation exceeds 1.
+//
+// K2_ClearTimer(self, "spawnSignal") is the exact inverse of that arm (UE4's ClearTimer builds the
+// delegate from object plus fname), and it is the blueprint's only timer arm, so one kill silences
+// the roller for the instance's lifetime.
 
 #include "ue_wrap/desk/space_renderer.h"
 
@@ -196,12 +195,11 @@ bool IdentityEq(uint8_t* rp, float x, float y, float z, float frequency) {
            ReadAt<float>(rp, kRow_frequency) == frequency;
 }
 
-// After an ADD, correct the widget visuals Construct derived from addSignal's
-// ROLLED values (phase-2 impl RE SS1.4: no spaceRenderer verb re-derives
-// widget visuals from rows; the non-self-correcting pieces are the dynmat
-// 'dir'/'pingSpeed' scalars and the RenderScale-from-strength). Kept rows
-// never need this -- their visuals were built from their own wire add, and
-// the host never mutates a rolled row's strength/direction.
+// After an ADD, correct the widget visuals Construct derived from addSignal's ROLLED values: no
+// spaceRenderer verb re-derives widget visuals from rows, and the non-self-correcting pieces are
+// the dynamic material's 'dir' and 'pingSpeed' scalars and the RenderScale taken from strength.
+// Kept rows never need this -- their visuals were built from their own wire add, and the host never
+// mutates a rolled row's strength or direction.
 void PushAddedWidgetVisuals(void* widget, const SignalRow& w) {
     if (!widget || !R::IsLive(widget)) return;
     if (g_offWidgetDynmat >= 0 && g_dynmatSetScalarFn) {
@@ -219,7 +217,8 @@ void PushAddedWidgetVisuals(void* widget, const SignalRow& w) {
         }
     }
     if (g_widgetSetRenderScaleFn) {
-        // SS1.4 step 10: SetRenderScale(MakeVector2D(strength, strength)).
+        // The widget's own scale-from-strength step: SetRenderScale(MakeVector2D(strength,
+        // strength)).
         ue_wrap::ParamFrame f(g_widgetSetRenderScaleFn);
         if (f.valid()) {
             struct { float X, Y; } sc{ w.strength, w.strength };
@@ -331,10 +330,9 @@ bool ApplySignalSet(const std::vector<SignalRow>& want, ApplyStats& stats) {
         rows = Rows(inst);
         wids = Widgets(inst);
         n = rows->num < wids->num ? rows->num : wids->num;
-        // Audit C-1: the dispatch succeeding does NOT prove addSignal appended
-        // (a BP-internal cap / allocation no-op leaves the count unchanged);
-        // overwriting n-1 then would corrupt the LAST EXISTING row. Require
-        // exactly +1 growth before touching the tail.
+        // The dispatch succeeding does NOT prove addSignal appended -- a BP-internal cap or an
+        // allocation no-op leaves the count unchanged, and overwriting n-1 then would corrupt the
+        // LAST EXISTING row. Require exactly +1 growth before touching the tail.
         if (n != nBefore + 1) {
             UE_LOGW("space_renderer: addSignal did not append (before=%d after=%d) -- "
                     "skipping overwrite for this row", nBefore, n);
@@ -382,11 +380,11 @@ bool KillClientSpawnTimer() {
 }
 
 bool ZeroMovement() {
-    // v115 cursor mirror: kill a residual local glide when a REMOTE stream
-    // takes cursor authority (qf R5 Q4 -- the integrator adds `movement` to
-    // the cursor every tick with NO focus gate, so a stale glide co-writes
-    // against the wire stream). `movement` is a raw EX_Let-written Vector2D
-    // (NOT setter-managed) -- the same write class as WriteCursorOnly.
+    // Kill a residual local glide when a REMOTE stream takes cursor authority: the blueprint's tick
+    // integrator adds `movement` to the cursor location with no focus gate of any kind (only a
+    // movementVelocity >= 0 test), so a stale glide would co-write against the wire stream.
+    // `movement` is a raw Vector2D written by EX_Let rather than through a setter -- the same write
+    // class as WriteCursorOnly.
     void* inst = Instance();
     if (!inst || g_offMovement < 0) return false;
     float* v = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(inst) + g_offMovement);
@@ -398,7 +396,7 @@ bool ZeroMovement() {
 bool RestoreRoller() {
     void* inst = Instance();
     if (!inst || !g_spawnSignalFn) return false;
-    // One native roll + the BP's own 20-60 s re-arm (uber @3819).
+    // One native roll plus the blueprint's own 20-60 s re-arm.
     ue_wrap::ParamFrame f(g_spawnSignalFn);
     if (!f.valid()) return false;
     return ue_wrap::Call(inst, f);
