@@ -1,7 +1,7 @@
 // harness/autotest_clump.cpp -- garbage-clump autonomous tests: the held-clump
 // ATTACH e2e (VOTVCOOP_RUN_CLUMP_TEST) + the clump VISIBILITY probe
-// (VOTVCOOP_RUN_CLUMPVIS_PROBE). Extracted verbatim from harness/autotest.cpp
-// (2026-07-19 dissolve); interfaces + per-routine docs in harness/autotest.h.
+// (VOTVCOOP_RUN_CLUMPVIS_PROBE). The interfaces and the per-routine docs live
+// in harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -29,20 +29,19 @@ namespace cfg = coop::config;
 
 // --- Autonomous held-clump ATTACH e2e test (VOTVCOOP_RUN_CLUMP_TEST=1) --------
 //
-// Verifies the v26 MANNEQUIN-model clump sync on a real LAN pair. The clump is
-// non-keyable (autotest 33e7f25), so it rides the existing prop pose pipeline
-// identified by our EID, not a Key. The real trash-collect (trashBitsPile::
-// playerTryToCollect) is BP-internal so a UFunction call can't trigger it; instead
-// the HOST spawns a prop_garbageClump_C and writes it to the LOCAL player's
-// grabbing_actor -- net_pump's held-edge then broadcasts a PropSpawn (key=None +
-// eid) + streams PropPose keyed by that eid, exactly as a real grab would. On
-// release (grabbing_actor cleared) it sends PropRelease. CLIENT is scan-only (the
-// spawn + drive + release arrive via the wire). PASS = the CLIENT log shows
-// "remote_prop::OnSpawn: spawned ... 'prop_garbageClump_C'" + "GRAB-IN key='None'
-// eid=N -> ... clump kinematic" + "drive #N", and NEITHER peer crashes (the whole
-// point after the 2a UAF). The HOST log shows "prop-mirror=BROADCAST" + "PropPose
-// emit ... eid=N". (The synthetic cold-grab clump self-frees after ~1s, so the
-// drive is brief; a real grabbed clump persists -- hands-on for the full visual.)
+// Verifies the mannequin-model clump sync on a real LAN pair. The clump is non-keyable, so it rides
+// the prop pose pipeline identified by our eid rather than by a Key. The real trash collect,
+// trashBitsPile::playerTryToCollect, is blueprint-internal and no UFunction call can trigger it, so
+// the HOST instead spawns a prop_garbageClump_C and writes it to the LOCAL player's grabbing_actor;
+// net_pump's held edge then broadcasts a PropSpawn (key None, plus the eid) and streams PropPose
+// keyed by that eid, exactly as a real grab would, and clearing grabbing_actor sends PropRelease.
+// The CLIENT is scan-only: the spawn, the drive and the release all arrive over the wire.
+//
+// It passes when the CLIENT log shows "remote_prop::OnSpawn: spawned ... 'prop_garbageClump_C'",
+// "GRAB-IN key='None' eid=N -> ... clump kinematic" and "drive #N", the HOST log shows
+// "prop-mirror=BROADCAST" and "PropPose emit ... eid=N", and neither peer crashes -- the whole
+// point, after the use-after-free this test was written for. The synthetic cold-grab clump frees
+// itself after about a second, so the drive is brief; only a person can see the full visual.
 void RunAutonomousClumpTest() {
     const bool isHost = !IsClientRole();
     if (!isHost) {

@@ -1,36 +1,18 @@
-// coop/dev/object_overlay.h -- dev 3D-projected world-object debug labels (layered).
-//
-// The "what IS this object" diagnostic: every nearby world object gets a
-// screen-space label projected at its world position, so a misbehaving actor
-// (a white-cube mirror, a falling wall, a local-only prop that never syncs)
-// can be identified with certainty instead of guessed at. Layers:
-//   1. Object names -- class leaf + the Aprop_C list_props Name row (the visual
-//      identity; 'cube' vs 'cubicleP_0' is THE white-cube discriminator).
-//   2. Net identity -- ElementId (hex, matches the logs), wire-mirror vs
-//      local-owned, key suffix. A label with NO eid is an UNTRACKED local-only
-//      actor -- exactly the objects that break cross-peer mirroring.
-//   3. Physics state -- live sim vs at-rest + the static/frozen/sleep save flags
-//      (the falling-walls discriminator).
-//   4. Health (2026-07-11) -- live hp for creatures (any class-chain float
-//      'health', + 'maxHealth' when present) and props (comp_physicsImpact:
-//      live pool vs damageData.health max). With this layer on, the candidate
-//      walk also admits ACharacter-lineage actors (creatures/puppets; the
-//      local player is skipped), so damage testing reads directly off screen.
-// Master checkbox + per-layer checkboxes + radius live in the F1 menu
-// (Player > HUD); `[dev] object_overlay=1` force-enables at boot so the
-// autonomous smoke can exercise it without clicking.
-//
-// Same split as coop::nameplate -> ui::hud: THIS module is the GAME-THREAD half.
-// Update() (called from the harness pumps next to nameplate::Update) rebuilds a
-// cached candidate set every ~2 s -- element-registry Prop/Npc entries PLUS a
-// GUObjectArray walk for UNTRACKED prop-lineage actors -- then re-projects the
-// capped, distance-sorted set each tick and publishes a POD snapshot. ui::hud
-// copies the snapshot and draws it (render thread).
-//
-// Dev tool: defaults OFF; when off the per-tick cost is one atomic load. The
-// refresh walk + per-candidate location reads have the ue_wrap/prop.h
-// FindNearest cost profile -- acceptable at the 2 s cadence behind an explicit
-// dev toggle, never on by default. Nothing here crosses the wire.
+// coop/dev/object_overlay.h -- dev 3D-projected world-object debug labels, in layers. The
+// "what IS this object" diagnostic: every nearby world object gets a screen-space label projected
+// at its world position, so a misbehaving actor -- a white-cube mirror, a falling wall, a
+// local-only prop that never syncs -- is identified with certainty instead of guessed at.
+//   1. Object names -- the class leaf plus the Aprop_C list_props Name row, the visual identity,
+//      and 'cube' against 'cubicleP_0' is THE white-cube discriminator.
+//   2. Net identity -- the ElementId in hex, matching the logs, wire-mirror against local-owned,
+//      and the key suffix. A label with NO eid is an UNTRACKED local-only actor, exactly the kind
+//      of object that breaks cross-peer mirroring.
+//   3. Physics state -- live simulation against at-rest, plus the static, frozen and sleep save
+//      flags, which is the falling-walls discriminator.
+//   4. Health -- live hp for creatures (any class-chain float 'health', and 'maxHealth' when
+//      present) and for props (comp_physicsImpact: the live pool against damageData.health). With
+//      this layer on, the candidate walk also admits ACharacter-lineage actors -- creatures and
+//      puppets, the local player skipped -- so damage testing reads directly off the screen.
 
 #pragma once
 
@@ -38,6 +20,20 @@
 
 namespace coop::dev::object_overlay {
 
+// A master checkbox, a checkbox per layer and the radius live in the F1 menu, under Player > HUD;
+// `[dev] object_overlay=1` force-enables at boot, so an autonomous run can exercise it without
+// anything being clicked.
+//
+// The same split as coop::nameplate and ui::hud: THIS module is the GAME-THREAD half. Update(),
+// called from the harness pumps beside nameplate::Update, rebuilds a cached candidate set every ~2
+// s -- the element registry's Prop and Npc entries plus a GUObjectArray walk for untracked
+// prop-lineage actors -- then re-projects the capped, distance-sorted set each tick and publishes a
+// plain-data snapshot. ui::hud copies the snapshot and draws it on the render thread.
+//
+// A dev tool: it defaults OFF, and while off the per-tick cost is one atomic load. The refresh walk
+// and its per-candidate location reads have the ue_wrap/prop.h FindNearest cost profile, which is
+// acceptable at a 2 s cadence behind an explicit toggle and never on by default. Nothing here
+// crosses the wire.
 inline constexpr int kMaxLabels = 64;
 
 // One projected label (plain data; the render thread reads it). Identity text is
