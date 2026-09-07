@@ -1,28 +1,18 @@
-// coop/weather_redsky.h -- Phase 5W red-sky discrete-event sync.
+// coop/weather_redsky.h -- red-sky discrete-event sync.
 //
-// Red sky is a story event: AmainGamemode_C::spawnRedSky() instantiates an
-// AredSkyEvent_C actor whose .set(bool isred) swaps the world color curves.
+// Red sky is a story event: AmainGamemode_C::spawnRedSky() instantiates an AredSkyEvent_C actor
+// whose .set(bool isred) swaps the world colour curves. The ORGANIC trigger is in daynightCycle: on
+// a new-hour edge, when the hour is 12, a 1% roll calls gamemode.spawnRedSky through EX_Context and
+// EX_LocalVirtualFunction -- invisible to the ProcessEvent detour
+// (docs/COOP_DISPATCH_VISIBILITY.md), so POST observers on spawnRedSky and set never saw a native
+// red sky, only our own reflected calls. They are gone.
 //
-// Architecture (REROOTED 2026-08-29, the arigalit red-mist field report):
-//   The ORGANIC trigger is a 1% roll in daynightCycle's newDay handler that
-//   calls gamemode.spawnRedSky via EX_Context + EX_LocalVirtualFunction --
-//   PE-INVISIBLE (measured in research/bp_reflection/daynightCycle.json; the
-//   docs/COOP_DISPATCH_VISIBILITY.md class). The original POST observers on
-//   spawnRedSky/set therefore NEVER fired for a native red sky (zero
-//   "host broadcast RedSky" lines across every log on disk) -- they observed
-//   only OUR OWN reflected Calls. Retired whole (RULE 2).
-//
-//   HOST now POLLS the state field-level (the proven weather_fog shape, MTA
-//   CBlendedWeather::DoPulse): gamemode.redSky actor liveness + its `isred`
-//   bool, edge -> broadcast RedSkyPayload. Robust regardless of which
-//   dispatch path (or which caller) flipped the state.
-//   CLIENT receives (via event_feed) and replays spawn + set locally, with
-//   an echo-suppress flag; its OWN organic 1% roll is killed at birth by
-//   coop/weather_event_births (the FinishSpawningActor class-catch).
-//
-// Resolution is lazy -- redSkyEvent_C is a content BP class that may not
-// be loaded until first spawn. The set UFunction can resolve later via the
-// spawned actor's runtime class (ResolveSetFn).
+// The HOST POLLS the state field-level instead (the weather_fog shape; MTA's
+// CBlendedWeather::DoPulse): gamemode.redSky actor liveness and its `isred` bool, with an edge
+// broadcasting a RedSkyPayload -- robust whichever dispatch path, and whichever caller, flipped it.
+// The CLIENT receives through event_feed and replays spawn and set locally behind an echo-suppress
+// flag; its OWN roll is killed at birth by coop/world/weather_event_births, the FinishSpawningActor
+// class-catch.
 
 #pragma once
 
@@ -34,10 +24,10 @@ namespace coop::weather_redsky {
 // weather_sync::Install on every re-entry.
 void SetSession(coop::net::Session* session);
 
-// Resolve mainGamemode_C CDO + spawnRedSky UFunction + (best-effort)
-// redSkyEvent.set UFunction. Idempotent. Returns true if at least the
-// gamemode CDO + spawnRedSky are resolved (set fn may resolve lazily on
-// first call via the spawned actor's class).
+// Resolve mainGamemode_C's CDO, the spawnRedSky UFunction and, best-effort, redSkyEvent.set.
+// Idempotent. True once the CDO and spawnRedSky are resolved; `set` may resolve later, because
+// redSkyEvent_C is a content BP class that need not be loaded before the first spawn, and
+// ResolveSetFn takes it off the spawned actor's runtime class.
 bool TryResolve();
 
 // HOST poll: read the live gamemode's redSky state (actor live && isred),
