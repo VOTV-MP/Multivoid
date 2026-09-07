@@ -1,28 +1,18 @@
-// coop/interactable_sync.h -- generic "keyed interactable open/close/on-off
-// state" sync (Phase 5D, protocol v27). ONE engine of replication drives three
-// features through a shared Channel (RULE 2 -- no per-feature duplication):
-//   - DoorState (9):      base doors   (Adoor_C::doorOpen / doorClose)
-//   - LightState (10):    light groups (Atrigger_lightRoot_C::SetActive)
-//   - ContainerState (11):container lids (Aprop_swinger_C::Open / Close)
+// coop/interactable_sync.h -- generic "keyed interactable open/close/on-off state" sync. ONE
+// replication engine drives three features through a shared Channel, with no per-feature copy:
+//   - DoorState (9):       base doors     (Adoor_C::doorOpen / doorClose)
+//   - LightState (10):     light groups   (Atrigger_lightRoot_C::SetActive)
+//   - ContainerState (11): container lids (Aprop_swinger_C::Open / Close)
 //
-// Gameplay/network layer (principle 7): owns the wire protocol, the sender
-// observers, the receiver apply, the per-channel key->actor index, the deferred-
-// apply retry, and the connect-snapshot. Talks to the engine ONLY through the
-// ue_wrap engine wrappers (ue_wrap::door / ::lightswitch / ::swinger / ::prop).
+// Gameplay/network layer (principle 7): owns the wire protocol, the sender observers, the receiver
+// apply, the per-channel key-to-actor index, the deferred-apply retry and the connect snapshot,
+// and talks to the engine ONLY through ue_wrap::door, ::lightswitch, ::swinger and ::prop.
 //
-// Model (SYMMETRIC for all three): each peer POLLS every indexed instance's state
-// field once per tick (NOT a UFunction observer -- the open/close/toggle verbs are
-// BP-internal and bypass our ProcessEvent detour, IDA-proven 2026-06-04). On a
-// delta it broadcasts the new state + the instance's cross-peer-stable Key; polling
-// catches EVERY writer (player E-press, NPC-proximity auto-open, keypad-unlock,
-// scripts), which a per-verb observer cannot. The host RELAYS a client-originated
-// edge to the other clients. The receiver resolves the live instance by Key (self-
-// healing index; deferred + retried if it has not streamed in yet) and idempotently
-// applies, updating the poll baseline so it never echoes. On a new client's connect
-// edge the HOST snapshots the FULL current state (open AND closed) of every indexed
-// instance, so a joiner that loaded its own save converges to the host.
-//
-// RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
+// The model is SYMMETRIC: each peer POLLS every indexed instance's state field once per tick and,
+// on a delta, broadcasts the new state with the instance's cross-peer-stable Key. Polling, not a
+// UFunction observer, because the open, close and toggle verbs are BP-internal and bypass our
+// ProcessEvent detour -- and because it catches EVERY writer (an E-press, an NPC auto-open, a
+// keypad unlock, a script), which a per-verb observer cannot.
 
 #pragma once
 
@@ -40,10 +30,10 @@ namespace coop::interactable_sync {
 // session pointer (tracks reconnects). Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a DoorState / LightState / ContainerState packet arrived.
-// `kind` is the ReliableKind (uint8). Routes to the matching channel, which
-// applies on the game thread (deferring if the instance has not streamed in).
-// Called from event_feed's reliable drain loop.
+// Receiver entry: a DoorState / LightState / ContainerState packet arrived. Resolves the live
+// instance by Key -- a self-healing index, deferred and retried when the instance has not streamed
+// in yet -- and applies idempotently, updating the poll baseline so the apply never echoes. On the
+// host this also RELAYS a client-originated edge to the other clients.
 void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
 
 // HOST receiver entry for a client's DoorOpenRequest (doors are host-authoritative).
