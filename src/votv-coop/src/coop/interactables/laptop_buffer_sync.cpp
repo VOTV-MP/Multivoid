@@ -1,4 +1,4 @@
-// coop/interactables/laptop_buffer_sync.cpp -- see the header. v121 (OPEN-10).
+// coop/interactables/laptop_buffer_sync.cpp -- see the header.
 
 #include "coop/interactables/laptop_buffer_sync.h"
 
@@ -74,7 +74,7 @@ bool g_announced = false;
 
 coop::blob_chunks::Assembler g_asm;
 uint32_t g_nextSeq = 1;
-bool g_canonRetry = false;  // CRIT-1: a refused canonical send retries each poll
+bool g_canonRetry = false;  // a refused canonical send retries each poll
 
 bool IsHost() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -183,10 +183,10 @@ std::vector<uint8_t> PackCanonical(const L::BufferQuad& q) {
     return b;
 }
 
-// CRIT-1: the transport hard-caps a blob at MaxBlobBytes() and a failed send
-// on the canonical path is a SILENT divergence. Bound the canonical BELOW the
-// cap deterministically (drop TAIL buffer rows first, then tail fd rows) with
-// a WARN -- the same accepted-residual class as the OPEN-9 content cap.
+// The transport hard-caps a blob at MaxBlobBytes(), and a failed send on the
+// canonical path is a SILENT divergence. Bound the canonical BELOW the cap
+// deterministically (drop TAIL buffer rows first, then tail fd rows) with a WARN --
+// the same accepted-residual class as the laptop content cap.
 std::vector<uint8_t> PackCanonicalBounded(L::BufferQuad q) {
     std::vector<uint8_t> b = PackCanonical(q);
     int dropped = 0;
@@ -255,9 +255,9 @@ void HostBroadcastCanonical(coop::net::Session* s) {
         g_canonRetry = false;
         return;
     }
-    // CRIT-1: the canonical IS the ack -- a refused send must NOT prime (the
-    // detector re-fires) and arms the per-poll retry. Bounded pack cannot hit
-    // the oversize false; a false here is backpressure.
+    // The canonical IS the ack, so a refused send must NOT prime (the detector
+    // re-fires) and arms the per-poll retry. A bounded pack cannot hit the oversize
+    // false; a false here is backpressure.
     if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad,
                                     g_nextSeq++, PackCanonicalBounded(q))) {
         PrimeFrom(q);
@@ -326,14 +326,14 @@ void HostApplyBatch(Reader& r, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
     } else if (const size_t packed = PackCanonical(q).size();
                packed > coop::blob_chunks::MaxBlobBytes()) {
-        // SECURITY W8 (docs/security/TRACKER.md): appendTail had NO cap, so a wire batch
-        // could grow the host's engine arrays without bound. The bound is NOT invented
-        // here -- it already exists one function away: PackCanonicalBounded drops TAIL
-        // rows to fit MaxBlobBytes(), so any state past that point is one the canonical
-        // cannot carry. Applying it would grow the engine array into a region the ack
-        // silently truncates, which is unbounded growth AND permanent divergence at once.
-        // Refuse the WHOLE batch (a partially-applied edit script is not an edit anyone
-        // authored) and let the unconditional canonical below heal the sender.
+        // appendTail has NO cap of its own, so a wire batch could grow the host's engine
+        // arrays without bound. The bound is NOT invented here -- it already exists one
+        // function away: PackCanonicalBounded drops TAIL rows to fit MaxBlobBytes(), so any
+        // state past that point is one the canonical cannot carry. Applying it would grow
+        // the engine array into a region the ack silently truncates, which is unbounded
+        // growth AND permanent divergence at once. Refuse the WHOLE batch (a
+        // partially-applied edit script is not an edit anyone authored) and let the
+        // unconditional canonical below heal the sender.
         UE_LOGW("laptop_buffer: batch from slot %u REFUSED -- the applied quad would pack "
                 "to %zu B, past the %zu B transport cap; nothing written, canonical follows",
                 static_cast<unsigned>(senderSlot), packed, coop::blob_chunks::MaxBlobBytes());
@@ -342,7 +342,7 @@ void HostApplyBatch(Reader& r, uint8_t senderSlot) {
         UE_LOGI("laptop_buffer: batch from slot %u applied (%d op(s), %d skipped, rwDelta=%d)",
                 static_cast<unsigned>(senderSlot), applied, skipped, rwDelta);
     }
-    // R10-1: the UNCONDITIONAL post-batch canonical (the ack) -- also primes.
+    // The UNCONDITIONAL post-batch canonical (the ack) -- also primes.
     HostBroadcastCanonical(s);
 }
 
@@ -358,7 +358,7 @@ void ClientAdoptCanonical(Reader& r) {
         UE_LOGW("laptop_buffer: malformed canonical -- dropped");
         return;
     }
-    DeriveAndSendLocal(s);  // drain-before-adopt (v119 drive_sync:674 shape)
+    DeriveAndSendLocal(s);  // drain before adopt, the shape drive_sync uses
     const uint64_t wireHash = QuadSeqHash(wire);
     L::BufferQuad local;
     if (L::ReadQuad(local) && QuadSeqHash(local) == wireHash) {
@@ -515,7 +515,7 @@ void Tick() {
 
     if (s->connected()) {
         if (IsHost()) {
-            // CRIT-1 retry: a backpressure-refused canonical re-sends here.
+            // Retry: a backpressure-refused canonical re-sends here.
             if (g_canonRetry) HostBroadcastCanonical(s);
             // Host organic: any quad change -> canonical on-change (no host
             // derivation exists -- R5-2). Int pre-filter first (R3): string
@@ -583,8 +583,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         UE_LOGI("laptop_buffer: connect canonical -> slot %d (fd=%zu fb=%zu rw=%d)",
                 peerSlot, q.data.size(), q.buffer.size(), q.readWrites);
     } else {
-        // CRIT-1: heal via the broadcast retry (the joiner is ready -- a
-        // broadcast canonical reaches it too).
+        // Heal via the broadcast retry -- the joiner is ready, and a broadcast canonical
+        // reaches it too.
         g_canonRetry = true;
         UE_LOGW("laptop_buffer: connect canonical -> slot %d REFUSED -- broadcast retry armed",
                 peerSlot);
