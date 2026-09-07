@@ -81,10 +81,10 @@ void Tick(bool connected, bool isHost) {
         return;
     }
 
-    // Reproduce Button_order's LOCAL debit. `[V]` @6122 Multiply(storePrice,-1) -> @6168
-    // lib_C::addPoints. This is the debit the host's verdict has to correct -- on a commit by the
-    // change-polled broadcast, on a refusal by a direct send -- so a drill that skipped it would be
-    // testing the easy half only.
+    // Reproduce Button_order's LOCAL debit: the button multiplies the store price by -1 and hands
+    // that to lib_C::addPoints. This is the debit the host's verdict has to correct -- on a commit
+    // by the change-polled broadcast, on a refusal by a direct send -- so a drill that skipped it
+    // would be testing the easy half only.
     E::AddPoints(-total);
 
     UE_LOGI("[order_selftest] placed a real shop order (%ls, %ls, %ls) costing %d; local balance "
