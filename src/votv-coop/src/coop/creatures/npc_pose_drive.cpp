@@ -3,7 +3,7 @@
 // speed + stateBits; no pitch/headYawDelta/vitals/ragdoll/mesh-offset).
 //
 // The interp is the proven advance-before-rebase shape (the interp-starvation fix,
-// [[project-puppet-lag-interp-starvation]]): SetTargetNpcPose advances the open window FIRST,
+// the mirror starved of interpolation): SetTargetNpcPose advances the open window FIRST,
 // then rebases. The drive writes the mirror's transform + CMC.Velocity/MovementMode so the
 // NPC's OWN AnimBP animates natively (NPCs are ACharacter subclasses with the same CMC layout
 // as the player puppet). The mirror's CMC tick is parked at spawn (npc_mirror) so this drive
@@ -13,10 +13,10 @@
 
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/actors/kerfur.h"   // v74: DriveKerfurState (host-authoritative command/spooky on the mirror)
+#include "ue_wrap/actors/kerfur.h"   // DriveKerfurState -- host-authoritative command and spooky flag
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/actors/wisp.h"     // 2026-07-03: DriveWispLanding (fade-in edge on the wisp_C mirror)
+#include "ue_wrap/actors/wisp.h"     // DriveWispLanding -- the fade-in edge on a wisp_C mirror
 
 #include <algorithm>
 #include <chrono>
@@ -52,20 +52,20 @@ constexpr float kSnapPerSpeedSec = 0.5f;
 void Npc::SetTargetNpcPose(const coop::net::EntityPoseSnapshot& snap) {
     const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
 
-    // v39 head-look: store the streamed lookAt (a WORLD target, independent of the pos interp --
+    // Head-look: store the streamed lookAt (a WORLD target, independent of the pos interp --
     // the native FAnimNode_LookAt node smooths it via its own InterpSpeed, so no LERP here).
     // Refreshed on EVERY packet (incl. a head-only turn with a stationary body), so the mirror
     // tracks the host kerfur's gaze at ~sendHz. Cleared when the host stops sending it.
     hasLookAt_ = (snap.stateBits & coop::net::kEntityPoseBitHasLookAt) != 0;
     if (hasLookAt_) curLookAt_ = ue_wrap::FVector{snap.lookAtX, snap.lookAtY, snap.lookAtZ};
 
-    // v40 body-facing: the visible-body (ACharacter::Mesh) world yaw, interpolated like the actor
+    // Body-facing: the visible-body (ACharacter::Mesh) world yaw, interpolated like the actor
     // yaw (shortest-arc) and driven onto the mirror mesh in ApplyToEngine. Cleared -> body interp
     // term goes to a no-op when the host stops sending it (non-kerfur NPCs never set the bit).
     hasBodyYaw_ = (snap.stateBits & coop::net::kEntityPoseBitHasBodyYaw) != 0;
     if (!hasBodyYaw_) errorBodyYaw_ = 0.f;
 
-    // v74 host-authoritative kerfur command/spooky (snapped, not interpolated -- it selects the
+    // Host-authoritative kerfur command and spooky (snapped, not interpolated -- they select the
     // AnimBP state, not a pose). Applied in ApplyToEngine onto the parked mirror (which runs no AI
     // so nothing fights the write). Non-kerfur NPCs never set the bit -> hasKerfState_ stays false.
     hasKerfState_ = (snap.stateBits & coop::net::kEntityPoseBitHasKerfurState) != 0;
@@ -119,7 +119,7 @@ void Npc::AdvanceInterp() {
     curPos_.Y += errorPos_.Y * dAlpha;
     curPos_.Z += errorPos_.Z * dAlpha;
     curYaw_     += errorYaw_     * dAlpha;
-    curBodyYaw_ += errorBodyYaw_ * dAlpha;  // v40 (no-op when errorBodyYaw_==0 i.e. not tracking)
+    curBodyYaw_ += errorBodyYaw_ * dAlpha;  // no-op when errorBodyYaw_ == 0, i.e. not tracking
     dirty_ = true;
     if (arrived) {
         curPos_ = targetPos_;  // exact arrival (kills float drift over the window)
@@ -150,23 +150,23 @@ void Npc::ApplyToEngine() {
     const ue_wrap::FVector vel{ std::cos(yawRad) * curSpeed_, std::sin(yawRad) * curSpeed_, 0.f };
     const bool inAir = (curStateBits_ & coop::net::kStateBitInAir) != 0;
     Pup::DriveCharacterMovement(actor, vel, inAir);
-    // 2026-07-03 wisp mirror: replay the native landing edge (landed=true + dir(true) -> the
+    // Wisp mirror: replay the native landing edge (landed=true + dir(true) -> the
     // fade-in the wisp gates behind a CMC-tick-computed CurrentFloor read its parked CMC can
     // never produce). Grounded-per-host = drive; retried per frame until wisp_C resolves (also
     // covers a joiner mirroring an already-landed wisp: its first pose reads grounded).
     if (isWispMirror_ && !wispLanded_ && !inAir)
         wispLanded_ = ue_wrap::wisp::DriveWispLanding(actor);
-    // v39: aim the mirror's head/neck at the host's streamed look target. Writes the kerfur
+    // Aim the mirror's head and neck at the host's streamed look target. Writes the kerfur
     // AnimBP `lookAt` + sets customLookAt=true so the mirror's own BUA stops auto-aiming at the
     // LOCAL player camera (the desync this fixes). Class-gated inside -> safe no-op on non-kerfur
     // NPCs. Re-asserted each drive so a moving gaze tracks (customLookAt persists once set).
     if (hasLookAt_) Pup::DriveKerfurLookAt(actor, curLookAt_);
-    // v40: drive the VISIBLE body facing -- set the mirror's ACharacter::Mesh WORLD yaw to the
+    // Drive the VISIBLE body facing -- set the mirror's ACharacter::Mesh WORLD yaw to the
     // host's streamed (interpolated) value. MUST be AFTER SetActorRotation above (moving the actor
     // root re-bases this child mesh's world transform). The mirror's actor tick is off, so the
     // kerfur BP never overwrites it -> no gate flag needed. Class-gated inside -> safe on non-kerfur.
     if (hasBodyYaw_) Pup::DriveKerfurBodyYaw(actor, curBodyYaw_);
-    // v74: write the host-authoritative kerfur command + spooky flag so the parked mirror's AnimBP
+    // Write the host-authoritative kerfur command and spooky flag so the parked mirror's AnimBP
     // state machine matches the host (the mirror runs no AI -> it can't pick its own). Class-gated
     // inside -> safe no-op on non-kerfur NPCs.
     if (hasKerfState_) ue_wrap::kerfur::DriveKerfurState(actor, kerfState_, kerfSpooky_);
