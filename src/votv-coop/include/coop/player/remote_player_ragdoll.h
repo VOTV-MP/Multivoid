@@ -1,32 +1,18 @@
 // coop/player/remote_player_ragdoll.h -- the remote player's ragdoll DISPLAY.
+// Gameplay layer (principle 7): engine access via ue_wrap only. Game thread only.
 //
-// Extracted from RemotePlayer 2026-07-02 (audit: remote_player.cpp past the
-// 800-LOC soft cap; the ragdoll display is a self-contained lifecycle with its
-// own state). Gameplay layer (principle 7): engine access via ue_wrap only.
+// When a remote player ragdolls (wire kStateBitRagdoll), spawn VOTV's own
+// playerRagdoll_C body VISIBLE -- the game's plushie ragdoll, whose mesh is
+// natively rigged to the full six-bone physics chain and is what single-player
+// shows in mirrors -- and HIDE the puppet's two kel body meshes for the flop.
+// Hiding is SetVisibility only, never a mesh-asset clear, so a pak-loaded
+// custom-skin asset keeps its component reference and cannot be collected
+// mid-flop. The puppet actor stays pelvis-attached to the body as the position
+// anchor for the nameplate and the recover hand-off. The spawn is DEATH-FREE:
+// ragdollMode is globally scoped and would kill the host, so it is never called.
 //
-// Mechanism (2026-07-03 VISIBLE-PLUSHY rework): when a remote player ragdolls
-// (wire kStateBitRagdoll), spawn VOTV's own playerRagdoll_C body VISIBLE -- the
-// game's plushie ragdoll, whose mesh is natively rigged to the full 6-bone
-// physics chain (lowlegs-thighs-pelvis-chest-head-head_end); it IS what SP
-// shows in mirrors -- and HIDE the puppet's two kel body meshes for the flop
-// (SetVisibility only: no mesh-asset clearing, so a pak-loaded custom-skin
-// asset keeps its component reference and cannot be GC'd mid-flop). The puppet
-// actor stays pelvis-attached to the body as the position anchor (nameplate +
-// recover hand-off). Spawn is DEATH-FREE (ragdollMode is globally scoped and
-// kills the host -- never called). v22 physics sync: the body's pelvis
-// velocity is slaved to the sender's real ragdoll so the visible flop TRACKS
-// it (the streamed pelvis ROTATION is unused since the rework -- it existed to
-// tumble the kel-attached actor; it stays on the wire untouched).
-//
-// History: v22 hid the body and tumbled the pelvis-attached kel instead (rigid
-// one-piece look); a master-pose probe (2026-07-03 AM) slaved the kel meshes
-// to the body but only 4/6 bones mapped (the visible skin's skeleton has no
-// thighs/lowlegs -- name-based master-pose cannot couple the legs) and the
-// user refuted it by eye. Both retired per RULE 2.
-//
-// Owned by RemotePlayer (composition). The owner keeps its glue side effects
-// (presentation-yaw re-base, pose-dirty) keyed off the return values so this
-// class never reaches back into RemotePlayer state. Game thread only.
+// Owned by RemotePlayer (composition): the owner keeps its glue side effects keyed
+// off the return values, so this class never reaches back into its state.
 
 #pragma once
 
@@ -47,11 +33,12 @@ public:
     // (the get-up is a visual discontinuity anyway).
     bool OnWireBit(bool ragdollBit, void* puppetActor, int32_t puppetIdx);
 
-    // v22 ragdoll PHYSICS sync (RemotePlayer::SetRagdollPose): slave the live
-    // body's pelvis velocity to the sender's streamed state so the plushie
-    // tumbles to TRACK the sender's real ragdoll. Returns true when applied to
-    // a live body; a packet racing ahead of the spawn edge is dropped harmless
-    // -- the next one applies.
+    // Ragdoll PHYSICS sync (RemotePlayer::SetRagdollPose): slave the live body's
+    // pelvis velocity to the sender's streamed state so the plushie tumbles to TRACK
+    // the sender's real ragdoll. The snapshot's pelvis ROTATION is not read -- it
+    // tumbled an earlier, kel-attached display -- and stays on the wire untouched.
+    // Returns true when applied to a live body; a packet racing ahead of the spawn
+    // edge is dropped harmless, and the next one applies.
     bool SetPose(const coop::net::RagdollPoseSnapshot& snap);
 
     // ApplyToEngine head. While ragdolled the VISIBLE plushie body is the whole
