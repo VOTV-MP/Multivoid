@@ -58,10 +58,9 @@ RingEntry g_ring[kRingCap];
 int  g_ringN = 0;
 bool g_ringOverflowWarned = false;
 
-// Seam-fire evidence (the probe-first instrument, qf R5/R6): logged every
-// 60 s when nonzero -- the smoke reads the ambient Deactivate rate; the
-// take reads the real-world one. Same always-on shape as the shipped v115
-// counters (one line/min max; NOT the closed-measurement diag-battery class).
+// Seam-fire evidence, logged every 60 s when nonzero, so a live run shows whether
+// the detours fire at all and at what rate. Always on, at most one line a minute:
+// the same shape the desk sound counters use, not the closed-measurement probes'.
 std::atomic<uint64_t> g_firesDeactivate{0};
 std::atomic<uint64_t> g_sigHits{0};
 Clock::time_point g_nextCounterLog{};
@@ -77,7 +76,7 @@ Clock::time_point g_selfTestDue{};
 // ---- the two seam detours (GT, deep inside engine dispatch) ----
 
 void OnDeckActivate(void* context, void* /*sourceObject*/, void* /*result*/) {
-    // (Total Activate fires are already counted by the v115 desk_snd counter.)
+    // (Total Activate fires are already counted by the desk sound counter.)
     if (coop::desk_snd_fx::InWireApply() || !g_armed.load(std::memory_order_relaxed)) return;
     if (!DA::IsSignalSound(context)) return;
     g_sigHits.fetch_add(1, std::memory_order_relaxed);
@@ -157,9 +156,9 @@ void Tick() {
         if (!DA::EnsureResolved()) return;
         void* finFn = CD::DeckFinFn();
         if (!finFn) {
-            // Dead-guard discipline (perf-audit WARN): a game recook renaming
-            // fin() would leave the whole lane silently dormant -- surface it
-            // once instead of early-returning forever without a trace.
+            // A game recook renaming fin() would leave the whole lane silently
+            // dormant, so surface it once rather than early-returning forever
+            // without a trace.
             static bool s_finWarned = false;
             if (!s_finWarned && CD::Instance()) {  // desk resolved but fin absent
                 s_finWarned = true;
@@ -229,7 +228,7 @@ void Tick() {
         }
     }
 
-    // Seam-fire evidence, 60 s cadence when nonzero (the v115 counter shape).
+    // Seam-fire evidence, on a 60 s cadence when nonzero.
     const auto now = Clock::now();
     if (g_nextCounterLog == Clock::time_point{}) g_nextCounterLog = now + std::chrono::seconds(60);
     if (now >= g_nextCounterLog) {
@@ -274,8 +273,8 @@ void OnPlayDeck(const coop::net::PlayDeckEventPayload& p, uint8_t senderSlot) {
                     p.selectIndex, p.gen, sc.activePlay ? 1 : 0, count);
             return;
         }
-        // selectIndex rides through the v112 apply author: guarded field
-        // write + echo-prime (the scroll-then-play race close, qf R3-Q4).
+        // selectIndex rides through the desk-input apply author: a guarded field write
+        // and an echo prime, which is what closes the scroll-then-play race.
         coop::net::DeskInputPayload ip{};
         ip.field = static_cast<uint8_t>(coop::net::DeskInputField::PlaySelectIndex);
         ip.intVal = p.selectIndex;

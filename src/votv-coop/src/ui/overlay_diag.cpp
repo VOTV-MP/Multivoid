@@ -1,8 +1,8 @@
 // ui/overlay_diag.cpp -- see ui/overlay_diag.h.
 //
-// Extracted VERBATIM from imgui_overlay.cpp on 2026-07-31 (it had reached 901 LOC, past
-// the 800 soft cap). The two probe bodies are unchanged apart from taking their gate
-// state as parameters instead of calling the overlay's file-local predicates.
+// The overlay's two diagnostic probes, kept out of imgui_overlay.cpp so neither file carries
+// the other's weight. Each takes its gate state as parameters rather than reading the
+// overlay's file-local predicates.
 
 #include "ui/overlay_diag.h"
 
@@ -84,15 +84,13 @@ void NoteKeyMsg(UINT msg, WPARAM wParam, const char* verdict, KeyGates gates) {
             (int)gates.capture, (int)gates.chat, (int)gates.pause);
 }
 
-// DIAGNOSTIC (VOTVCOOP_CURSOR_PROBE=1): the "no cursor over the server browser" bug,
-// reproduced 2026-07-28 and rooted 2026-07-31. Called at the END of the frame,
-// immediately before ImGui::Render() -- i.e. reading exactly the state Render() itself
-// will read at imgui.cpp:6229-6230. One line per ~2s while a capturing surface is up; it
-// names every term of that guard and of RenderMouseCursor's own early-outs, so ONE run
-// discriminates all three candidates in the REPRO doc (MousePos never valid /
-// MouseDrawCursor clobbered / drawn outside the viewport rect) plus the atlas-side one it
-// did not list (ImFontAtlasGetMouseCursorTexData returning false). It did: every ImGui
-// term reads healthy and io.MousePos is the failing one.
+// DIAGNOSTIC (VOTVCOOP_CURSOR_PROBE=1): why no cursor draws over a capturing surface.
+// Called at the END of the frame, immediately before ImGui::Render(), so it reads exactly
+// the state Render() will. One line per couple of seconds while a capturing surface is up,
+// naming every term of the draw guard and of RenderMouseCursor's own early-outs, so one run
+// separates the candidates: MousePos never valid, MouseDrawCursor clobbered, the cursor
+// drawn outside the viewport rect, or the atlas returning no cursor texture data. Every
+// ImGui term reads healthy; io.MousePos is the one that fails.
 void CursorFrame(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursorPos) {
     static int sArmed = -1;
     if (sArmed == -1) sArmed = ArmedOnce("VOTVCOOP_CURSOR_PROBE") ? 1 : 0;
@@ -156,17 +154,15 @@ void CursorFrame(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursorPos)
     // decidable rather than being re-filed as an anomaly.
     const DPI_AWARENESS_CONTEXT dpiCtx = ::GetThreadDpiAwarenessContext();
     const DPI_AWARENESS dpiAware = ::GetAwarenessFromDpiAwarenessContext(dpiCtx);
-    // C1 (2026-07-31): the terms the 2026-07-31 §7 write-up reasoned about WITHOUT ever
-    // printing them. `overlaps=0` was recorded alongside numbers that, recomputed against
-    // the pinned v1.92.9 `FONT_ATLAS_DEFAULT_TEX_CURSOR_DATA` (Arrow offset is (0,0)),
-    // say it should have been 1 -- so at least one input to that conclusion was wrong and
-    // the raw line no longer exists. Print every input to the predicate, not the verdict:
-    // `[[lesson-an-instrument-must-report-its-inputs-not-only-its-verdict]]`. FramebufferScale
-    // and MouseCursorScale in particular appeared in NONE of the original arithmetic, and
-    // this build runs a 0.83 UI scale.
-    // GetCursorInfo, not a screenshot: `flags` separates HIDDEN from RE-CENTRED, which a
-    // photo cannot, and no capture path in this repo composites an OS cursor at all
-    // (docs/LESSONS.md, "AN INSTRUMENT BLIND TO THE PHENOMENON ALWAYS REPORTS NOT PRESENT").
+    // Print every INPUT to the overlap predicate, not its verdict. A bare `overlaps=0` cannot
+    // be rechecked: recomputed against the pinned cursor texture data, whose Arrow offset is
+    // (0,0), the same numbers say it should have been 1, and with only the verdict recorded
+    // there is no way to tell which input was wrong. FramebufferScale and MouseCursorScale
+    // matter most here, since the UI runs at a fractional scale and neither is obvious from
+    // the box coordinates alone.
+    // GetCursorInfo, not a screenshot: `flags` separates HIDDEN from RE-CENTRED, which a photo
+    // cannot, and no capture path here composites an OS cursor at all -- an instrument blind to
+    // the phenomenon always reports it absent.
     CURSORINFO ci{}; ci.cbSize = sizeof(ci);
     const BOOL ciOk = ::GetCursorInfo(&ci);
     UE_LOGI("cursor_terms: box=(%.1f,%.1f)-(%.1f,%.1f) vp=(%.1f,%.1f)-(%.1f,%.1f) "

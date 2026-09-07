@@ -1,6 +1,5 @@
 // coop/dev/desk_diag.cpp -- see header. Read-only desk/console divergence census.
 //
-// Built from a 6-round /qf DESIGN pass (2026-07-15, scratchpad/qf_thread.md).
 // Every field is FindPropertyOffset-resolved BY NAME (recook-robust); every read
 // is FAIL-LOUD (a missing surface/offset logs UNRESOLVED, never a silent zero) so
 // a zero at runtime means "genuinely empty" not "watching the wrong field". Each
@@ -92,10 +91,9 @@ bool IsPrefix(const std::vector<std::wstring>& pre, const std::vector<std::wstri
 
 constexpr size_t kMaxDumpLines = 24;  // bound a REWRITE burst
 
-// SAT-console cross-surface fail-loud line count. The SAT command terminal
-// (Uui_console_C.LogText@0x02E0) is a SEPARATE surface from the coords panel;
-// the coord lines do NOT go here (bytecode-confirmed 2026-07-15). We count its
-// lines so a zero is provably "this terminal is empty" not "we're blind to it".
+// SAT-console cross-surface fail-loud line count. The SAT command terminal's LogText is a
+// SEPARATE surface from the coords panel and the coord lines do not go there, so count its
+// lines: a zero then means "this terminal is empty", not "we are blind to it".
 // Returns line count; sets found=false when no live ui_console (so the caller
 // logs the distinction). Returns -1 on UNRESOLVED class/offset (fail loud).
 struct FStringView { wchar_t* data; int32_t num; int32_t max; };
@@ -139,10 +137,9 @@ void Install(coop::net::Session* session) {
     // idempotent: each subsystem's Install latches its
     // expensive/noisy work and no-ops on repeat. Keep g_session current each call (cheap;
     // picks up a fresh session ptr on re-host), but LATCH the banner so it logs once per
-    // process instead of ~1/tick. Prior runs logged the ENABLED line ~37k times/session
-    // (2026-07-15) purely because this Install did not honor the sibling idempotency
-    // contract. The banner is the only side effect gated -- the census's BASELINE/q-tag
-    // state lives entirely in Tick(), untouched here, so the collected samples were valid.
+    // process rather than once a tick -- unlatched it reached tens of thousands of lines in a
+    // session. The banner is the only side effect gated: the census's baseline and q-tag state
+    // live entirely in Tick(), untouched here.
     g_session.store(session, std::memory_order_release);
     static bool s_banner = false;
     if (s_banner) return;
@@ -222,8 +219,8 @@ void Tick() {
     //   - The filter-knob offsets are NOT a delta-gate input: the game drifts
     //     dlFr/PoFilterOffset continuously even at rest (MEASURED, console_state_sync.cpp:194-206),
     //     so a "knobs unchanged" input would pin q=N forever.
-    //   - BUT while a filter is ACTIVE the offset is MID-RAMP (offset += speed*dt every
-    //     tick -- RE 2026-07-15 desk-download-machine [2122-2128]); a mid-ramp offset is
+    //   - BUT while a filter is ACTIVE the offset is MID-RAMP (the Blueprint advances it by
+    //     speed * dt every tick); a mid-ramp offset is
     //     NOT single-sample comparable across peers (no shared clock -> phase-skew), and
     //     that is THE field the freq/pol redesign hangs on. So gate on the clean discrete
     //     active flags: quiescent requires BOTH filters inactive (ramp settled).
