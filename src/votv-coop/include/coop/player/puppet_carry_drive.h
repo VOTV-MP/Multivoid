@@ -1,4 +1,4 @@
-// coop/puppet_carry_drive.h -- HOST-side per-tick drive of a PUPPET-held trash clump to its hand.
+// coop/player/puppet_carry_drive.h -- HOST-side per-tick drive of a PUPPET-held trash clump to its hand.
 //
 // Increment 2 (chipPile CLIENT-grab, docs/piles/08): when a client grabs a pile, the host executes
 // playerGrabbed on puppet-N. The probe (research/findings/votv-puppet-grab-feasibility-RE-2026-06-22)

@@ -1,4 +1,4 @@
-// coop/desk_snd_fx.cpp -- see coop/interactables/desk_snd_fx.h.
+// coop/interactables/desk_snd_fx.cpp -- see coop/interactables/desk_snd_fx.h.
 
 #include "coop/interactables/desk_snd_fx.h"
 

@@ -1,30 +1,15 @@
-// coop/session/join_seed.h -- the shared ready-edge SEED for shadow-diff lanes
-// (signal_sync + email_sync; the third instance of the meadow_db_sync v120 idiom,
-// extracted per the extract-on-third rule).
+// coop/session/join_seed.h -- the shared ready-edge SEED for shadow-diff lanes (signal_sync and
+// email_sync).
 //
-// THE GAP IT CLOSES: SendReliable and the host relay skip !IsSlotWorldReady slots
-// with no queue (B2, by design -- queueing pre-world lines would dupe the connect
-// replay), so every line broadcast during a joiner's 30-60 s load window was
-// silently NEVER delivered to it, and a no-reconcile shadow lane made that a
-// PERMANENT divergence (b125 R-A shape (b)). The cure is a per-slot SEED:
-//   - CAPTURE at the save_transfer OnRequest scratch-serialize (the same GT
-//     callback that decides what the joiner's save will contain): a content-hash
-//     MULTISET of the lane's array. Unreadable array => fail the WHOLE capture
-//     (meadow :763 precedent) -- no seed beats a wrong seed.
-//   - SEED at the ready edge (subsystems::ConnectReplayForSlot, which runs in the
-//     SAME GT drain case that flips MarkSlotWorldReady -- event_feed.cpp:230-231,
-//     so no GT-authored broadcast can interleave): seedDelta(h) = cur(h) - snap(h)
-//     over the union; d>0 sends d append copies, d<0 sends -d hash-keyed deletes.
-//   - Consume-once; the no-snapshot warn fires once per slot (cave-travel
-//     re-announces re-run the replay with no snapshot -- normal, not a failure).
+// THE GAP IT CLOSES: SendReliable and the host relay skip a slot that is not world-ready, and by
+// design do not queue for it, since queueing pre-world lines would duplicate the connect replay. So
+// every line broadcast during a joiner's 30-60 s load window was silently never delivered, and a
+// shadow lane with no reconcile made that a PERMANENT divergence. The cure is a per-slot SEED:
+// capture what the joiner's save will contain, then at the ready edge send it whatever has changed
+// since. Capture and seed are the two calls below.
 //
-// Design of record (9-round /qf "that holds"):
-// research/findings/network/votv-signal-email-ready-seeds-DESIGN-2026-08-23.md
-// Meadow does NOT migrate here: its pending-mask + order-channel legs are
-// meadow-specific (measured absent in the twins).
-//
-// Game thread throughout (capture rides the OnRequest GT callback, seed rides the
-// event_feed drain).
+// Meadow does NOT use this: its pending-mask and order-channel legs are absent in the twins. Game
+// thread throughout.
 
 #pragma once
 
@@ -61,13 +46,21 @@ public:
 
     explicit Seeder(const LaneAdapter& a) : a_(a) {}
 
-    // save_transfer OnRequest: snapshot what the joiner's save will contain.
+    // save_transfer OnRequest: snapshot what the joiner's save will contain, as a content-hash
+    // MULTISET of the lane's array. It runs in the same game-thread callback that decides the
+    // save's contents, and an unreadable array fails the WHOLE capture -- no seed beats a wrong
+    // seed.
     void Capture(int peerSlot);
 
     // Teardown (save_transfer's cancel site + the lane's OnDisconnect).
     void Cancel(int peerSlot);
 
-    // The ready edge: send seedDelta to the joiner. Consumes the snapshot.
+    // The ready edge: send seedDelta to the joiner, consuming the snapshot. Called from
+    // subsystems::ConnectReplayForSlot, which runs in the SAME drain case that flips
+    // MarkSlotWorldReady, so no game-thread-authored broadcast can interleave. seedDelta(h) =
+    // cur(h) - snap(h) over the union of hashes: d>0 sends d append copies, d<0 sends -d hash-keyed
+    // deletes. The no-snapshot warning fires once per slot, because a cave-travel re-announce
+    // re-runs the replay with no snapshot.
     void SeedForSlot(coop::net::Session* s, int peerSlot);
 
     void Reset();  // whole-session teardown

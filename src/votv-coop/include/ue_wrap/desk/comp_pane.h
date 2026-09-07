@@ -6,8 +6,8 @@
 // engine-wrapper layer -- NO network logic; coop::comp_sync drives the
 // mirror through here.
 //
-// RE (2026-06-12 comp agent pass): the decode ticker is gated ONLY on
-// active_comp + comp_isDecodeActive -- NO occupancy condition -- so any
+// The decode ticker is gated on isDreaming, active_comp and comp_isDecodeActive,
+// and on nothing else -- no occupancy condition -- so any awake
 // machine with the flag latched SIMULATES (and completion fires world
 // triggers incl. the level-3 theEvil_C spawn). Mirrors therefore stay
 // passive: raw scalar writes + direct paints + cue edges; the flag is never

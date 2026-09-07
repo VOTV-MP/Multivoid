@@ -23,14 +23,15 @@ bool g_suppressedClient = false;  // we zeroed the local TimeScale (client)
 // world is already dilated 20x, so 1.0 advances the clock at the host's 20x rate -- instead of the
 // usual 0. Otherwise the sky only moves on the corrections and the timelapse pans in visible
 // 40-game-second steps. Corrections keep landing throughout, so drift stays bounded;
-// coop/sleep_sync toggles this at the phase edges.
+// coop/player/sleep_sync toggles this at the phase edges.
 std::atomic<bool> g_sleepAccelerate{false};
 
 float ClientTimeScale() { return g_sleepAccelerate.load(std::memory_order_acquire) ? 1.0f : 0.0f; }
 
 // The client daynightCycle is a PURE host-authoritative mirror frozen at TimeScale=0 and never
-// free-runs, which is what makes the load-bearing invariant hold: client totalTime never wraps
-// MaxTime locally, so the midnight cascade stays unreachable. The host's clock streams as an
+// free-runs, which is what makes the load-bearing invariant hold: the client's `day` advances
+// only when an apply writes it, so it never crosses maxTime locally and the midnight cascade,
+// which the cycle's own tick fires on `day > maxTime`, stays unreachable. The host's clock streams as an
 // UNRELIABLE ClockPose snapshot about twice a second off the session net thread, refreshing the
 // frozen mirror at HH:MM display granularity. The RELIABLE TimeSync is kept only for the
 // connect-edge guaranteed initial sync -- there is no periodic reliable push.
@@ -139,7 +140,7 @@ void Tick() {
 void OnDisconnect() {
     g_sleepAccelerate.store(false, std::memory_order_release);
     if (g_suppressedClient) {
-        // Restore: 1.0 is the game's own TimeScale restore value (daynightCycle ubergraph @10703).
+        // Restore: 1.0 is the game's own TimeScale restore value, the one its cycle writes back.
         // Single-player day-rolling resumes from the last synced clock, and the dailyDelivery latch
         // self-heals at the next local midnight.
         g_suppressedClient = false;

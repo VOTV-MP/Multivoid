@@ -159,10 +159,9 @@ bool LatchDailyDelivery() {
         g_offDailyDelivery = R::FindPropertyOffset(g_saveSlotCls, L"dailyDelivery");
     if (g_offGmSaveSlot < 0 || g_offDailyDelivery < 0) return false;
     if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        // Throttle the miss-path GUObjectArray walk (audit I-4: this is
-        // caller-rate-driven at every 2 s clock correction; a world
-        // transition would otherwise re-scan on each one -- the Cycle()
-        // throttle pattern).
+        // Throttle the miss-path GUObjectArray walk: this is caller-rate-driven,
+        // once per streamed clock correction, so a world transition would
+        // otherwise re-scan on every one of them.
         static std::chrono::steady_clock::time_point s_lastScan{};
         const auto now = std::chrono::steady_clock::now();
         if (now - s_lastScan < std::chrono::seconds(2)) return false;

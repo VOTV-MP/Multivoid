@@ -48,10 +48,10 @@ void SetClock(int day, int hour, int minute) {
         }
         const int rawZ = day - 1;  // displayed day -> the scheduler/save day-Z
         // INSTANT and COMPLETE. A timeZ-only write leaves the sun where it was and does not even
-        //   hold: the cycle rebuilds timeZ from the accumulator on its next tick, so the write
-        //                snaps back. All three pieces move together: day       -- the within-day
-        //                accumulator the sun derives from AND the midnight cascade fires on, so
-        //                writing it moves the lighting;
+        // hold: the cycle rebuilds timeZ from the accumulator on its next tick, so the write snaps
+        // back. All three pieces move together:
+        //   day       -- the within-day accumulator the sun derives from AND the midnight
+        //                cascade fires on, so writing it moves the lighting;
         //   totalTime -- the absolute elapsed clock, kept equal to day so the two never
         //                disagree about where in the day we are;
         //   timeZ     -- the NAMED clock (the HUD, settime's scheduler, save persistence).

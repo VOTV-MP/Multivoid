@@ -10,9 +10,10 @@
 // in [0, kMaxPeers), because wire packets carry senderElementId and the receiver resolves it to a
 // Player and reads PeerSlot() to key the per-slot maps: item_activate's pending applies,
 // flashlight_click_sound's last-state array, the nameplate's nick slots. Lifetime: owned by
-// coop::players::Registry as a fixed unique_ptr<Player>[kMaxPeers], built by RegisterPuppet or the
-// local-init path in SetLocalPeerId, destroyed by UnregisterPuppet or by replacement in
-// EnsurePlayerElement_ when a slot's puppet changes. There is no global reset.
+// coop::players::Registry as a fixed unique_ptr<Player>[kMaxPeers], built by RegisterPuppet, by
+// EstablishMirrorForSlot when the wire names a slot before its puppet exists, or by the local-init
+// path in SetLocalPeerId; destroyed by UnregisterPuppet or by replacement whenever a slot's puppet
+// pointer changes. There is no global reset.
 
 #pragma once
 

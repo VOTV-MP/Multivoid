@@ -3,7 +3,9 @@
 //
 // The event system funnels through TWO FName dispatchers on the single placed trigger_eventer_C:
 // runEvent(event, special) carries the bulk, and runSpecialEvent(name)->bool is a FLAT per-name
-// switch with no reputation or random gating, so each ariral prank is INDIVIDUALLY addressable. The
+// switch with no reputation or random gating, so an ariral prank the switch names is INDIVIDUALLY
+// addressable -- one it does not, such as a bare `arirGraff` against its seven per-variant cases,
+// falls through to a silent return. The
 // game's own normal prank path is runEvent(_, "ariralPrank") -> summonArirPrank, which randomizes
 // over a reputation-tier pool and discards the incoming name; the table keeps one random-prank row
 // for that beside the addressable ones. Ambient weather is a third route, fired by daynightCycle

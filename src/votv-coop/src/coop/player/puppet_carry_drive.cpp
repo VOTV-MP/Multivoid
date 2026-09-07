@@ -1,8 +1,8 @@
-// coop/puppet_carry_drive.cpp -- see coop/puppet_carry_drive.h.
+// coop/player/puppet_carry_drive.cpp -- see coop/player/puppet_carry_drive.h.
 
 #include "coop/player/puppet_carry_drive.h"
 
-#include "coop/props/active_drive.h"       // NowMs -- timestamp the hand-velocity samples (L4 inherit-velocity throw)
+#include "coop/props/active_drive.h"       // NowMs -- timestamp the hand-velocity samples
 #include "coop/net/protocol.h"       // TrashClumpPoseSnapshot (the carry pose batch entry)
 #include "coop/net/session.h"        // SetLocalTrashCarryBatch (host publish)
 #include "coop/player/players_registry.h"
@@ -37,7 +37,7 @@ struct PuppetHeld {
     // (physics) pose each tick so every client renders the throw ARC, until the clump re-piles (the latch
     // closes / a settle commits) -> the entry is dropped + the ToPile convert snaps the proxy.
     bool     flying = false;
-    // L4 (inherit-hand-velocity throw): the hold point last drive tick + its timestamp, and an EMA of the
+    // Inherit-hand-velocity throw: the hold point last drive tick + its timestamp, and an EMA of the
     // per-tick hand velocity (cm/s). At a ThrowIntent the host releases with THIS velocity (the kinematic
     // analog of the native PHC's inherited tracked velocity) instead of a fixed impulse -- a still player ->
     // ~0 -> a soft drop; a flick -> a real throw. EMA-smoothed here + clamped at release (a raw teleport
@@ -46,7 +46,7 @@ struct PuppetHeld {
     uint64_t         lastHoldMs  = 0;
     bool             hasLastHold = false;
     ue_wrap::FVector handVel{0.f, 0.f, 0.f};   // EMA of the hand velocity, cm/s
-    float            maxDriftCm  = 0.f;        // L3 harness metric: worst inter-tick drift of the clump from
+    float            maxDriftCm  = 0.f;        // harness metric: worst inter-tick drift of the clump from
                                                // its commanded hold (kinematic -> ~0; a physics-fought body
                                                // drifts = the carry-shake signature the host would publish)
 };
@@ -133,7 +133,7 @@ void Tick(coop::net::Session& s) {
                 it = g_held.erase(it);
                 continue;
             }
-            // L3 jitter metric (harness): how far did the clump DRIFT from last tick's commanded hold,
+            // Jitter metric (harness): how far did the clump DRIFT from last tick's commanded hold,
             // measured BEFORE we re-command it? A kinematic body stays exactly where we put it -> ~0; a
             // simulating body fought by the PHC spring + gravity drifts between ticks = the carry-shake the
             // host would otherwise publish. The autonomous harness asserts maxDriftCm < a small threshold.
@@ -152,7 +152,7 @@ void Tick(coop::net::Session& s) {
                                          head.Y + fwd.Y * kGrabLenCm,
                                          head.Z + fwd.Z * kGrabLenCm };
             E::SetActorLocation(it->clump, hold);
-            // L4: track the hold point's SMOOTHED velocity (cm/s) so a ThrowIntent can release with the
+            // Track the hold point's SMOOTHED velocity (cm/s) so a ThrowIntent can release with the
             // inherited hand motion. EMA damps the single-frame teleport-delta spikes (emulates the native
             // PHC spring's damped response); direction is the real hand motion, not the aim.
             const uint64_t nowMs = coop::active_drive::NowMs();

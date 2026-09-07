@@ -39,7 +39,7 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // net-pump tick on the game thread.
 void Tick();
 
-// Sleep gate (coop/sleep_sync): while the accelerate phase runs, the CLIENT clock free-runs at
+// Sleep gate (coop/player/sleep_sync): while the accelerate phase runs, the CLIENT clock free-runs at
 // TimeScale=1 -- its world is dilated 20x, which matches the host's advance rate -- instead of the
 // frozen 0. Otherwise the timelapse sky only moves on the streamed corrections and pans in visible
 // steps. Toggled at the phase edges, applied immediately and on every subsequent correction.

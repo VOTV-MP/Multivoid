@@ -1,4 +1,4 @@
-// coop/snapshot_census.cpp -- see header.
+// coop/props/snapshot_census.cpp -- see header.
 
 #include "coop/props/snapshot_census.h"
 

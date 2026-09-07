@@ -35,7 +35,7 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- the cue registry (B1: cosmetic emitter cues) -----------------------------------------
+// ---- the cue registry: cosmetic emitter cues -----------------------------------------
 // cueId == index. APPEND-ONLY -- the id is on the wire. starRain is bytecode-verified
 // (trigger_eventer @4709: SpawnEmitterAtLocation(eff_shootingStar_rain, (0,0,6000))). Add the
 // other PSC-based cosmetic cues here (Eye Moon, Pink Beam, TriFO, Blinking Lights, Green-Fire) --

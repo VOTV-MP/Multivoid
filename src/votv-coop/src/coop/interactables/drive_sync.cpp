@@ -1,4 +1,4 @@
-// coop/drive_sync.cpp -- see coop/interactables/drive_sync.h.
+// coop/interactables/drive_sync.cpp -- see coop/interactables/drive_sync.h.
 //
 // Two lanes over this module (the rack lane lives in drive_rack_sync):
 //   DriveSlotState -- idempotent any-peer slot FSM lines, host canonical.

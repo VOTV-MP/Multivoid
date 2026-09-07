@@ -1,11 +1,11 @@
 // coop/moderation/ban_list.h -- persistent host-side IP banlist.
 //
 // MTA precedent: CBanManager / CBan
-// (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.{h,cpp} + CBan.h). MTA keys bans
-// by IP, serial and nick, persists them to banlist.xml, and rejects a banned one inside
-// Packet_PlayerJoinData before the player spawns. We follow the same SHAPE, trimmed to our model:
-// GNS LAN-direct carries no hardware serial, so we key by IP alone, and the nick and ban time are
-// stored for the admin's reference rather than for matching.
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.{h,cpp} + CBan.h). MTA records a ban's
+// IP, serial and nick, persists them to banlist.xml, and matches the serial then the IP inside
+// Packet_PlayerJoinData before the player spawns; the nick is the admin's reference and is never
+// matched. We follow the same SHAPE, trimmed to our model: GNS LAN-direct carries no hardware
+// serial, so the IP is the only key left.
 //
 // HOST-ONLY: a client never accepts incoming connections, so the banlist is meaningless off-host
 // and never loaded there. A ban is permanent and survives host restarts. Persistence is a

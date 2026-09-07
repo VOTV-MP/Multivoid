@@ -1,4 +1,4 @@
-// coop/wisp_grab_hold.cpp -- see coop/wisp_grab_hold.h.
+// coop/creatures/wisp_grab_hold.cpp -- see coop/creatures/wisp_grab_hold.h.
 
 #include "coop/creatures/wisp_grab_hold.h"
 
@@ -109,7 +109,7 @@ void Tick() {
         }
     }
     // Puppet holds: snap each held puppet to its wisp's socket. Runs AFTER the puppet
-    // pose apply (net_pump ordering), so this write is the one the frame renders.
+    // pose apply (puppet_drive::DriveTick ordering), so this write is the one the frame renders.
     if (g_holds.empty()) return;
     for (auto it = g_holds.begin(); it != g_holds.end();) {
         void* wisp = ResolveWispActor(it->wispEid);

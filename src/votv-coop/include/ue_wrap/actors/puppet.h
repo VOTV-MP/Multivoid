@@ -124,8 +124,8 @@ void DriveKerfurBodyYaw(void* npcActor, float yaw);
 // Park an ACharacter-derived puppet so the network SetActorLocation drive is authoritative: the
 // CharacterMovement tick off (no gravity or velocity integration fighting the drive) and the
 // actor tick off (no BP ReceiveTick; for an NPC mirror that is its AI). The AnimBP still ticks on
-// the mesh and reads the CMC velocity we write. Applied to the player puppet at spawn and to NPC
-// mirrors. No-op on a null or dead actor.
+// the mesh and reads the CMC velocity we write. Applied to NPC mirrors; the player puppet's own
+// spawn parks its ticks directly (puppet_spawn.cpp). No-op on a null or dead actor.
 void DisableCharacterTicks(void* actor);
 
 // The CMC-only park: the movement tick off, the actor tick left on, for a mirror whose

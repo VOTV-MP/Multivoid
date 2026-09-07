@@ -1,21 +1,18 @@
 // coop/props/native_pile_mirror.h -- materialize a host-authoritative trash PILE mirror as a ROOTED
-// real actorChipPile_C native (replacing the bare AStaticMeshActor proxy for the pile form).
+// real actorChipPile_C native, in place of a bare AStaticMeshActor proxy.
 //
-// WHY (2026-06-30, the proxy->native nativization): the bare proxy (coop/trash_proxy) can NEVER be the
-// game's lookAtActor (no int_player_C) and has no collision -> no native hover GUI, no movement-block,
-// no occlusion-correct aim, wrong rotation. The proxy existed only because a client-SPAWNED real pile
-// died on its own within ~10s (the 2026-06-21 dup). An inertness probe (2026-06-30) PROVED that death
-// was GC (unrooted): a runtime-spawned actorChipPile_C with the recipe below stayed live + inert (no
-// self-destruct, no self-morph) for 60s WITH collision ON, and showed the native hover GUI on aim. So a
-// rooted runtime native is a safe, fully-native mirror. [[lesson-runtime-staticmeshactor-must-be-movable]]
+// A bare proxy can never be the game's lookAtActor, having no int_player_C, and has no collision --
+// so no native hover GUI, no movement block, no occlusion-correct aim and the wrong rotation. It
+// existed only because a client-SPAWNED real pile used to die on its own within about ten seconds.
+// That death was GC, from being unrooted: a runtime-spawned actorChipPile_C built by the recipe
+// below stays live and inert -- no self-destruct, no self-morph -- for a minute with collision ON,
+// and shows the native hover GUI on aim.
 //
-// A materialized native is BOUND + MARKED save-native (Element::SetSaveNative) so it rides the EXACT
-// same proven machinery as a save-loaded bound native -- pose drive (ResolveLiveActorByEid), b3
-// position-correction, the grab route (OnPileGrabPre reads lookAtActor + GrabIntent), the morph hand-off
-// (OnConvert pile->clump), the divergence-sweep exemption, and retire. The CLUMP form stays a bare proxy
-// (it has a LifeSpan + autonomous re-pile-on-contact -> too live to keep as a native).
-//
-// GAME-THREAD only.
+// A materialized native is BOUND and MARKED save-native (Element::SetSaveNative), so it rides the
+// same machinery as a save-loaded bound native: the pose drive through ResolveLiveActorByEid,
+// position correction, the grab route, the morph hand-off in OnConvert from pile to clump, the
+// divergence-sweep exemption, and retire. The CLUMP form stays a bare proxy -- it has a LifeSpan
+// and re-piles on contact by itself, too live to keep as a native. GAME-THREAD only.
 
 #pragma once
 

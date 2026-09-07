@@ -1,7 +1,7 @@
 // coop/dispatch/event_dispatch.h -- INTERNAL per-domain reliable-message handlers for
-// coop::event_feed::Update's dispatch switch. The case BODIES live in the per-domain files; the
-// exhaustive switch itself stays in event_feed.cpp, so the kind->handler table is greppable in one
-// place.
+// coop::event_feed::Update's dispatch switch. event_feed.cpp handles the session and handshake
+// kinds inline and chains these five families from its default case; each family's own switch is
+// where its kinds are declared.
 //
 // Sibling-internal header, the coop/net/session_lanes.h shape: not part of the public coop/ include
 // surface, and only event_feed.cpp and the event_dispatch_*.cpp translation units include it.
@@ -43,24 +43,27 @@ bool HandleStateEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg,
                       void* localPlayer);
 
-// Signal-pipeline family: the sky-signal chain, the laptop and its blobs, the dish and its aim, the
-// play deck and drive slots, the rack, the desk with its input, log and scans, the meadow store,
-// and the saved-signal list.
+// Signal-pipeline family: the sky-signal chain, the laptop with its blobs and floppy box, the dish
+// and its aim, the play deck, the drive slots and their rack, the desk with its input, log, scans
+// and physics mods, the refiner's decode pane, the task board, the meadow store and the
+// saved-signal list.
 bool HandleSignalEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg);
 
 // CLIENT->HOST intent and request family: a client asks the host to perform something it alone is
-// authoritative for. Most cases gate on role()==Host plus a client sender slot before handing the
-// request to the authoritative module, but not all of them, so read the case: CoinGunResult and
-// OrderRefused are HOST->CLIENT answers that drop on the host; OrderRequest, CoinGunSell and
-// CoinCollect check the slot here and leave the role gate to their module; RoachConsumed defers
-// both to roach_sync::OnConsumedIntent.
+// authoritative for. Read the case for its gate rather than assuming one. GrabIntent, ThrowIntent,
+// PropDropIntent and ReelEjectIntent check role()==Host AND a client sender slot; DoorOpenRequest,
+// KerfurConvertRequest and KerfurCommand check the role only, mapping an out-of-range slot to the
+// 0xFF sentinel and handing it on; OrderRequest, CoinGunSell and CoinCollect check the slot here
+// and leave the role gate to the module they call; CoinGunResult and OrderRefused are
+// HOST->CLIENT answers that drop on the host; RoachConsumed defers both gates to
+// roach_sync::OnConsumedIntent.
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer);
 
 // Ambient and world-event family: fireflies, scheduled events with their cues and snapshots,
-// alarms, the server rack, roaches, inventory pickups, chat, and the time, sky and weather stream.
+// alarms, the server box, roaches, inventory pickups, chat, and the time, sky and weather stream.
 bool HandleWorldEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg);
 

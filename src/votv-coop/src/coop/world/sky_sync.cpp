@@ -1,5 +1,5 @@
-// coop/sky_sync.cpp -- see coop/sky_sync.h. Host-authoritative night-sky sync (star-dome
-// world rotation + moon phase). A near-verbatim clone of coop/time_sync.cpp.
+// coop/world/sky_sync.cpp -- see coop/world/sky_sync.h. Host-authoritative night-sky sync
+// (star-dome world rotation + moon phase), built on the same shape as coop/world/time_sync.cpp.
 
 #include "coop/world/sky_sync.h"
 
@@ -23,9 +23,8 @@ namespace SKY = ue_wrap::skysphere;
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::chrono::steady_clock::time_point g_lastBroadcast{};
 
-// The dome spins very slowly (dt/32 deg/frame ~ 0.03 deg/s) + moonPhase is near-static, so a
-// ~1 Hz push keeps both visually locked while staying quiet on the wire (a bit faster than the
-// 2 s clock push since orientation is more salient than a small time drift).
+// The dome spins very slowly (dt/32 deg/frame ~ 0.03 deg/s) and moonPhase is near-static, so a
+// ~1 Hz push keeps both visually locked while staying quiet on the wire.
 constexpr auto kPushInterval = std::chrono::milliseconds(1000);
 
 bool Finite(const coop::net::SkyStatePayload& p) {

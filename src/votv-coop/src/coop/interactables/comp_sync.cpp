@@ -1,4 +1,4 @@
-// coop/comp_sync.cpp -- see coop/comp_sync.h.
+// coop/interactables/comp_sync.cpp -- see coop/interactables/comp_sync.h.
 
 #include "coop/interactables/comp_sync.h"
 
