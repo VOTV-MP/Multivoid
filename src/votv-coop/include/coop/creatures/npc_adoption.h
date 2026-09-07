@@ -1,27 +1,18 @@
-// coop/npc_adoption.h -- v75 deferred CLASS-MATCH adoption of save-persisted NPCs (the kerfur) +
-// the post-snapshot ghost sweep. Ground truth:
-// research/findings/kerfur/votv-kerfurOmega-coop-double-and-camera-RE-2026-06-14.md (sec "CORRECTION" + 11).
+// coop/creatures/npc_adoption.h -- a joiner's deferred class-match adoption of save-persisted
+// NPCs (the kerfur above all), and the ghost sweep that follows it.
 //
-// PROBLEM: a save-persisted NPC (the kerfur) is materialized on a save-transfer joining client by
-// the game's native EX_CallMath save-load spawn -- invisible to our PE suppressor, at an
-// unpredictable time. The host ALSO broadcasts it as an EntitySpawn (savePersisted=1). If the
-// client fresh-spawned a mirror it would DOUBLE with its own local copy. v74 tried to ADOPT the
-// local copy by matching the int_save Key, but kerfurOmega::loadData OVERRIDES the int_save base
-// and drops the key restore, so each peer's UCS mints a RANDOM key -- key-equality could never
-// match (bytecode-proven; this is why v74 "changed nothing").
-//
-// FIX: ADOPT the client's own local twin by CLASS (the only portable identity -- both peers loaded
-// the same save, so the same exact skin class), found by a DEFERRED POLL of GUObjectArray (we
-// cannot hook the EX_CallMath spawn). Adopting the REAL local actor (vs a fresh mirror parked at
-// spawn, before its `cam` UChildActorComponent child initializes) is also camera-safe: the local
-// twin is fully initialized before we park it, so its destroy cascade tears the cam child down like
-// the host's. A genuine ORPHAN (an untracked NPC with no host EntitySpawn -- e.g. a kerfur turned
-// OFF after the save, so the host's world has only the prop form) is removed by the ghost sweep,
-// fired ONCE after the connect snapshot is delivered (SnapshotComplete) AND adoption has converged.
-//
-// Principle 7: gameplay/network module; engine access via ue_wrap + npc_mirror; GAME THREAD ONLY
-// (no mutex -- the pending table + latches are touched only from the net-pump game-thread tick and
-// the game-thread reliable-dispatch path).
+// The game's own save load materialises a save-persisted NPC on a joining client where no hook
+// fires and at an unpredictable moment, while the host also announces it as a save-persisted
+// spawn; a mirror spawned for that announcement would leave the client with two. The stored key
+// cannot pair them -- the kerfur's load overrides the base restore and every peer mints a random
+// one -- so the portable identity is the CLASS, both peers having loaded the same save, and a
+// deferred poll of GUObjectArray finds the twin and binds it. Adopting the real actor rather
+// than parking a fresh one is also camera-safe: it is fully initialised before it is parked, so
+// its destroy cascade tears down the `cam` child the way the host's does. An NPC that no
+// announcement claims -- a kerfur turned OFF after the save, whose host world holds only the
+// prop form -- is a genuine orphan, and the ghost sweep takes it once the snapshot is delivered
+// and every adoption has converged. Game thread only, so no mutex: the pending table and the
+// latches are touched from the net-pump tick and the reliable-dispatch path, both on it.
 
 #pragma once
 
