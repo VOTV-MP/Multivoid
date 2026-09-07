@@ -1,41 +1,18 @@
-// coop/signal_sync.h -- v65: the desk SIGNAL-LIBRARY mirror
-// (gamemode.savedSignals_0): appends + deletes, the email_sync shadow shape.
+// coop/signal_sync.h -- the desk SIGNAL-LIBRARY mirror (gamemode.savedSignals_0): appends and
+// deletes, in the email_sync shadow shape (coop/email_sync.h carries the invariant discussion; a
+// deliberate second instance, to be extracted on a third). Game thread throughout.
 //
-// USER ASK (binding phase-2 design): the desk screens mirror -- the saved
-// signals list (play pane) is the desk's core content.
-//
-// Mechanism (the audited email_sync pattern -- see coop/email_sync.h for the
-// invariant discussion; deliberate second instance, extract on a third):
-//   - Every peer shadows the array: per-row POD instance key (raw bytes,
-//     zero reflected calls at cadence; ue_wrap::saved_signals::RowKey) + the
-//     row's cross-peer identity = signal_wire::ContentHash of its serialized
-//     blob (image-free).
-//   - 1 Hz positional diff under the append-at-tail invariant (saveSignal /
-//     copySignal append; deleteSignal removes):
-//       APPEND -> serialize + BlobChunk broadcast (SavedSignalAppend,
-//                 host-relayed); receivers re-play the native
-//                 gamemode.saveSignal (append + pane rebuild + specials/
-//                 forceObjects bookkeeping; validity-gated).
-//       SHRINK -> removed hashes broadcast (SavedSignalDelete); receivers
-//                 resolve their index by hash + reflected deleteSignal.
-//                 Covers the plain delete AND the export-to-drive MOVE's
-//                 list side (drive CONTENT sync is a documented gap).
-//   - Wire applies register (key -> wire hash) marks; the next poll adopts
-//     them as sent (echo-proof). Tombstones close delete-beats-append.
-//   - World-down drops the shadow; re-prime silently at world-up.
-//
-// A user RENAME (slot widget edit box) reallocs the row's name FString ->
-// instance-key change -> the diff re-broadcasts the row as delete+append --
-// renames converge (the row moves to the tail on mirrors; cosmetic).
-//
-// Join: savedSignals_comp_0 rides the v56 save transfer, and rows authored
-// DURING a joiner's load window ride the READY-EDGE SEED (2026-08-23, the
-// shared coop/session/join_seed helper -- see the seed API below; before it
-// they were silently lost, b125 R-A shape (b)). The image PNG (laptop photo)
-// is a deferred bulk-lane increment -- live-mirrored rows carry an empty
-// image until then.
-//
-// Game thread throughout.
+// Every peer shadows the array with a per-row POD instance key (raw bytes, no reflected call at
+// cadence; ue_wrap::saved_signals::RowKey), and a row's cross-peer identity is
+// signal_wire::ContentHash over its serialized, image-free blob. A 1 Hz positional diff runs under
+// the append-at-tail invariant -- saveSignal and copySignal append, deleteSignal removes. An APPEND
+// broadcasts the serialized row (SavedSignalAppend, host-relayed) and receivers replay the native
+// gamemode.saveSignal, which rebuilds the pane and the specials and forceObjects bookkeeping. A
+// SHRINK broadcasts the removed hashes (SavedSignalDelete) and receivers resolve their own index by
+// hash, then call deleteSignal; that covers the plain delete and the list side of the
+// export-to-drive MOVE, while the drive's CONTENT is a known gap. A wire apply registers a
+// key-to-hash mark the next poll adopts as sent, so an apply never echoes, and tombstones close
+// delete-beats-append. World-down drops the shadow; it re-primes silently at world-up.
 
 #pragma once
 
@@ -49,12 +26,13 @@ namespace coop::signal_sync {
 
 void Install(coop::net::Session* session);
 
-// --- Seeds arc (2026-08-23): the ready-edge join seed -- state authored during a
-// joiner's 30-60 s load window was silently never delivered (B2 skip, no queue).
-// Design: research/findings/network/votv-signal-email-ready-seeds-DESIGN-2026-08-23.md.
-// HOST, game thread. Capture at save_transfer's OnRequest scratch-serialize;
-// seed (both signs, multiset) at subsystems::ConnectReplayForSlot; cancel at the
-// transfer-teardown site. Per-slot; consume-once.
+// --- The ready-edge join seed: state authored during a joiner's 30-60 s load window would
+// otherwise never be delivered, the joiner being past the save transfer and not yet replaying.
+// savedSignals_comp_0, the save mirror of the live array, rides the save transfer; rows authored
+// after that snapshot ride this seed instead, through the shared coop/session/join_seed helper.
+// HOST, game thread. Capture at save_transfer's OnRequest scratch-serialize; seed (both signs, as a
+// multiset) at subsystems::ConnectReplayForSlot; cancel at the transfer-teardown site. Per-slot;
+// consume-once.
 void CaptureJoinSnapshot(int peerSlot);
 void CancelJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
@@ -63,11 +41,15 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // seed bracket so a recycled occupant can never inherit them.
 void OnDisconnectSlot(int peerSlot);
 
-// Per-tick: apply-park drain + throttled resolve + the 1 Hz shadow poll +
-// tombstone retry.
+// Per-tick: apply-park drain, throttled resolve, the 1 Hz shadow poll and the tombstone retry.
+//
+// A user RENAME (the slot widget's edit box) reallocates the row's name FString, so its instance
+// key changes and the diff re-broadcasts the row as a delete plus an append. Renames converge; the
+// row moves to the tail on the mirrors, which is cosmetic.
 void Tick();
 
-// Wire ingest: one chunk of an appended row.
+// Wire ingest: one chunk of an appended row. The image PNG (the laptop photo) is not carried yet,
+// so a live-mirrored row arrives with an empty image.
 void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Wire ingest: one content-keyed delete.
