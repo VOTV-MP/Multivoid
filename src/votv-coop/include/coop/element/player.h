@@ -1,40 +1,18 @@
 // coop/element/player.h -- the Player Element subclass.
 //
-// Second subclass of `coop::element::Element` (after Npc). Each remote peer
-// gets a Player Element whose ElementId is the unified runtime address used
-// by future event_feed dispatch (`Registry::Get(id) -> Element*` resolves
-// uniformly across Player/Npc/Prop without per-type switch cases).
+// Each remote peer gets a Player Element whose ElementId is the unified runtime address event_feed
+// dispatch resolves against: Registry::Get(id) -> Element* answers uniformly across Player, Npc and
+// Prop with no per-type switch. Local and remote are the same class here, discriminated by
+// m_puppet, which is what IsLocal() reads.
 //
-// The Player Element does NOT own the engine actor or the `coop::RemotePlayer`
-// puppet object -- those stay in `coop::players::Registry` and `harness.cpp`
-// respectively. The Element carries:
-//   - `m_peerSlot` (uint8_t): the legacy peer-slot id [0, kMaxPeers). Kept on
-//     the Element for diagnostic logs and as the routing key into per-puppet
-//     state maps (item_activate's pending-apply table, flashlight_click_sound's
-//     last-state array, nameplate's nick slots). After A4 (v13 protocol bump
-//     2026-05-29) wire packets carry `senderElementId` (uint32_t) instead of
-//     `peerSessionId`; the receiver resolves senderElementId via
-//     `coop::element::Registry::Get` -> `coop::element::Player*` and reads
-//     `PeerSlot()` to feed those existing per-peerSlot maps. `m_id`
-//     (Element::GetId()) is the wire-side unified ElementId.
-//   - `m_puppet` (RemotePlayer*): the puppet for this peer, OR nullptr for
-//     the local peer's own Player Element (the local doesn't have a puppet
-//     -- it IS the local player).
-//
-// Lifecycle: owned by `coop::players::Registry` keyed by peerSlot via a
-// fixed-size `std::unique_ptr<Player>[kMaxPeers]`. Constructed by
-// `RegisterPuppet` (or by the local-init path for the local peer in
-// `SetLocalPeerId`). Destroyed by `UnregisterPuppet` (or by replacement
-// in `EnsurePlayerElement_` when the puppet pointer changes for the same
-// slot). There is no global `Registry::Reset` -- per-subsystem drain only.
-//
-// Per the audit (`research/findings/mta/votv-mta-cclientelement-audit-2026-05-28.md`
-// section 4.3): MTA's `CClientPlayer` is just a refinement of `CClientPed`.
-// Local and remote are the same class; the discriminator is `IsLocalPlayer()`.
-// Our scope keeps the local-vs-puppet split inside `coop::players::Registry`
-// (the local is tracked via `localCached_`; puppets via `puppetByPeer_`).
-// `Player` here is the Element shadow of EITHER -- the m_puppet pointer
-// distinguishes them.
+// The Element owns neither the engine actor nor the coop::RemotePlayer puppet -- those live in
+// coop::players::Registry and in puppet_drive's g_puppets array. It carries m_peerSlot, the slot id
+// in [0, kMaxPeers), because wire packets carry senderElementId and the receiver resolves it to a
+// Player and reads PeerSlot() to key the per-slot maps: item_activate's pending applies,
+// flashlight_click_sound's last-state array, the nameplate's nick slots. Lifetime: owned by
+// coop::players::Registry as a fixed unique_ptr<Player>[kMaxPeers], built by RegisterPuppet or the
+// local-init path in SetLocalPeerId, destroyed by UnregisterPuppet or by replacement in
+// EnsurePlayerElement_ when a slot's puppet changes. There is no global reset.
 
 #pragma once
 
@@ -59,12 +37,10 @@ public:
     bool                 IsLocal() const  { return m_puppet == nullptr; }
 
 private:
-    // A4 (2026-05-29): puppet pointer is mutable so the players::Registry
-    // can bind a real puppet onto a MIRROR Player Element that was created
-    // before RegisterPuppet ran. This avoids dropping the mirror (and its
-    // wire-bound ElementId) when the AssignPeerSlot/Join handshake landed
-    // before the puppet's first PoseSnapshot did. Only `Registry` is
-    // expected to drive this transition.
+    // The puppet pointer is mutable so players::Registry can bind a real puppet onto a MIRROR
+    // Player Element created before RegisterPuppet ran. Without it the mirror, and the wire-bound
+    // ElementId it holds, would be dropped whenever the AssignPeerSlot/Join handshake landed ahead
+    // of the puppet's first PoseSnapshot. Only Registry is expected to drive that transition.
     friend class coop::players::Registry;
     void SetPuppet_(coop::RemotePlayer* p) { m_puppet = p; }
 

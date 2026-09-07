@@ -1,28 +1,18 @@
 // coop/net/link_kind.h -- how one player's traffic reaches the session.
 //
-// Gameplay/network layer (principle 7). Its own header because BOTH the net
-// layer (which MEASURES it) and the roster ledger (which CARRIES and publishes
-// it) need the type, and the ledger must not pull in all of session.h.
+// Gameplay/network layer, in its own header because the net layer that MEASURES the kind and the
+// roster ledger that publishes it both need the type, and the ledger must not pull in all of
+// session.h.
 //
-// THE ONE QUESTION. Every player-list row answers exactly one thing: "how is
-// THIS PLAYER connected to the session?" Before v131 the answer was computed
-// from "what can I measure about you", which is a different question per viewer
-// -- so a client's board showed the transport of the peers it happened to hold
-// a connection to and the ROUTE ("VIA HOST") for the rest, two axes in one
-// column (user, 2026-07-27: "why it says via host on 2 clients and lan on one
-// client. It should be all the same, no special treatment"). Now the HOST
-// measures every link and publishes the answer on RosterRow, so every board
-// renders the same value for the same player.
-//
-// EVERY KIND IS MEASURED FROM THE CONNECTION, never asserted from config. The
-// pre-v131 code returned "LAN" whenever cfg_.topology was LanDirect -- a config
-// assertion, so a port-forwarded WAN peer was labelled LAN. A value nobody
-// measured is the same defect as "VIA HOST" wearing a truer-looking word.
-//
-// The kinds deliberately do NOT distinguish LanDirect from P2P: that describes
-// how a connection was ESTABLISHED (our config), not how the player is
-// CONNECTED. A hole-punched P2P route and a port-forwarded direct route are the
-// same thing from a player's seat.
+// THE ONE QUESTION every player-list row answers is "how is THIS PLAYER connected to the session?"
+// It has one answer, not one per viewer, so the HOST measures every link and publishes it on
+// RosterRow and every board renders the same value. Measuring locally puts two axes in one column:
+// the transport of the peers a viewer happens to hold a connection to, and a route word for the
+// rest. Every kind is MEASURED FROM THE CONNECTION, never asserted from config -- reading "LAN" off
+// a LanDirect topology setting labels a port-forwarded WAN peer LAN. For the same reason the kinds
+// do not separate LanDirect from P2P: that is how a connection was ESTABLISHED, not how the player
+// is CONNECTED, and a hole-punched route and a port-forwarded one are one thing from a player's
+// seat.
 
 #pragma once
 
