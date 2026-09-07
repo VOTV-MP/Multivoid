@@ -197,12 +197,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
     void* hotbarProp = nullptr;  // holding_actor when it is the HAND item (Aprop_C)
     if (ue_wrap::engine::ReadMainPlayerGrabState(local, gs)) {
         heldActor = gs.grabbingActor;
-        // A chipPile or clump pickup sets holding_actor, not grabbing_actor (its morph path does
-        // not use the physics handle), so holding_actor is the fallback, gated on
-        // IsKeyedInteractable since it can point at other carry targets. An Aprop_C in
-        // holding_actor is the hotbar hand item, player expression rather than a world entity
-        // (updateHold respawns it per switch), and goes to coop::hand_item; only the trash lineage
-        // stays here.
+        // grabbing_actor is the physics-handle grab and comes first; holding_actor is the
+        // fallback, gated on IsKeyedInteractable since it can point at other carry targets. An
+        // Aprop_C in holding_actor is the hotbar hand item, player expression rather than a world
+        // entity (updateHold respawns it per switch), and goes to coop::hand_item; only the trash
+        // lineage stays here.
         if (gs.holdingActor && R::IsLive(gs.holdingActor) &&
             ue_wrap::prop::IsKeyedInteractable(gs.holdingActor)) {
             if (ue_wrap::prop::IsDescendantOfProp(gs.holdingActor))
