@@ -56,7 +56,8 @@ void* CueFromPhysMat(void* physmat, void* worldCtx, PhysCue which) {
     f.Set<void*>(L"PhysMat", physmat);
     f.Set<void*>(L"__WorldContext", worldCtx);
     if (!ue_wrap::Call(sLibCdo, f) || !f.Get<bool>(L"return")) return nullptr;
-    // Fstruct_physSound out-param head: step@0, impact@8, soft_30@0x10.
+    // The head of the Fstruct_physSound out-param, in field order: three cue rows,
+    // of which we read the impact one and the soft one (soft_30).
     struct PhysSoundHead { void* step; void* impact; void* soft; };
     const PhysSoundHead head = f.Get<PhysSoundHead>(L"Data");
     void* cue = (which == PhysCue::kImpact) ? head.impact : head.soft;
@@ -70,11 +71,11 @@ void PlayGrabSound(void* propActor) {
     void* soft = nullptr;
     const char* path = nullptr;
     if (ue_wrap::prop::IsDescendantOfProp(propActor)) {
-        // prop_C path: physicsImpact @0x0230 caches both the material row and the
-        // PhysMat. Tier 1 (fast): the CACHED physSoundData.soft_30. Hands-on
-        // 2026-06-11 falsified "filled at init": a never-impacted prop's cache
-        // can be EMPTY (it fills lazily), so a null cache is NOT a row miss --
-        // tier 2 redoes the fresh lookup from the component's own PhysMat @0x0290.
+        // prop_C path: the physicsImpact component caches both the material row and the
+        // PhysMat. Tier 1 (fast) reads the CACHED physSoundData.soft_30 -- but a
+        // never-impacted prop's cache can be EMPTY, since it fills lazily, so a null
+        // cache is NOT a row miss and tier 2 redoes the fresh lookup from the
+        // component's own PhysMat.
         void* impactComp = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(propActor) + P::off::Aprop_physicsImpact);
         if (!impactComp || !R::IsLive(impactComp)) {
@@ -92,11 +93,11 @@ void PlayGrabSound(void* propActor) {
             soft = CueFromPhysMat(physmat, propActor, PhysCue::kSoft);
         }
     } else {
-        // Generic-actor path (hands-on 2026-06-11: the trash clump derives from
-        // plain Actor DESPITE the prop_ name -- pile/clump grabs were silent on
-        // peers while the grabber natively hears the garbage soft cue). Resolve
-        // the physmat the way the grabber's trace did -- root surface material ->
-        // physical material -- and feed the same physSound lookup.
+        // Generic-actor path: the trash clump derives from plain Actor DESPITE the prop_
+        // name, so pile and clump grabs were silent on peers while the grabber natively
+        // heard the garbage soft cue. Resolve the physmat the way the grabber's trace
+        // did -- root surface material -> physical material -- and feed the same
+        // physSound lookup.
         path = "root-mat";
         soft = CueFromPhysMat(
             ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kSoft);
@@ -117,14 +118,14 @@ void PlayGrabSound(void* propActor) {
 void PlayUseClick(void* propActor) {
     if (!propActor || !R::IsLive(propActor)) return;
     // SoundWave /Game/audio/effects/use -- THE fixed E-action feedback. Native:
-    // useAction plays PlaySound2D(use, 0.25, 1.0) on the GRABBER only, right
-    // after pickupObject (useAction @2181/@305/@3156/@3337 -- every successful
-    // E branch ends in it). It is the "always the same single sound" of a grab;
-    // 2D collector-only, so peers natively hear nothing -- this spatializes it
-    // at the grabbed prop (the throw-whoosh synthesis pattern, user-driven
-    // 2026-06-11). Volume 0.5 not 0.25: the native figure is in-ear 2D; a world
-    // source rolls off through att_default, so 0.5 lands a bystander at grab-
-    // watching range near the grabber's perceived loudness.
+    // useAction plays PlaySound2D(use, 0.25, 1.0) on the GRABBER only, right after
+    // pickupObject (useAction @2181/@305/@3156/@3337 -- every successful E branch
+    // ends in it). It is the "always the same single sound" of a grab; 2D and
+    // collector-only, so peers natively hear nothing -- this spatializes it at the
+    // grabbed prop, the same synthesis the throw whoosh uses. Volume 0.5 not 0.25:
+    // the native figure is in-ear 2D, and a world source rolls off through
+    // att_default, so 0.5 lands a bystander at grab-watching range near the
+    // grabber's perceived loudness.
     static void* sUse = nullptr;
     if (!sUse) {
         sUse = R::FindObject(L"use", P::name::SoundWaveClass);
@@ -165,13 +166,13 @@ void PlayThrowWhoosh(void* propActor) {
 
 void PlayLandSound(void* propActor) {
     if (!propActor || !R::IsLive(propActor)) return;
-    // The pile's landed-material IMPACT cue (physSound.impact) -- the sibling of
-    // the grab's soft cue. A pile is a plain actor (not Aprop_C), so resolve the
-    // physmat the same way the generic-actor grab path does: root surface
-    // material -> physical material -> the physSound row. Silent on a row miss
-    // (native parity, the @100067 gate). RE (2026-07-01): the clump->pile
-    // conversion + the pile's BeginPlay/init play NO explicit sound; the native
-    // "thud" is this material impact.
+    // The pile's landed-material IMPACT cue (physSound.impact) -- the sibling of the
+    // grab's soft cue. A pile is a plain actor (not Aprop_C), so resolve the physmat
+    // the same way the generic-actor grab path does: root surface material ->
+    // physical material -> the physSound row. Silent on a row miss (native parity,
+    // the @100067 gate). Neither the clump-to-pile conversion nor the pile's
+    // BeginPlay and init play an explicit sound; the native "thud" IS this material
+    // impact.
     void* impact = CueFromPhysMat(
         ue_wrap::engine::GetActorRootPhysicalMaterial(propActor), propActor, PhysCue::kImpact);
     if (!impact || !R::IsLive(impact)) {
@@ -188,12 +189,11 @@ void PlayLandSound(void* propActor) {
 void PlayDenyClick(void* playerActor) {
     if (!playerActor || !R::IsLive(playerActor)) return;
     // SoundWave /Game/audio/effects/button_keypad_deny -- THE game's own
-    // save-denied/failed click (analogDScreenTest uber @23927 plays it
-    // PlaySound2D vol 0.5 / pitch 1.0 on the play-screen save deny; the
-    // keypad deny is the same asset). v63 device occupancy plays it on the
-    // peer whose E-press hit a busy device (user design: "deny + the
-    // existing fail sound"). Spatialized AT the denied player = full volume
-    // in their own ears (distance ~0), matching the native 2D loudness.
+    // save-denied/failed click (analogDScreenTest uber @23927 plays it PlaySound2D
+    // vol 0.5 / pitch 1.0 on the play-screen save deny; the keypad deny is the same
+    // asset). Device occupancy plays it on the peer whose E-press hit a busy device.
+    // Spatialized AT the denied player, so it is full volume in their own ears
+    // (distance ~0), matching the native 2D loudness.
     static void* sDeny = nullptr;
     if (!sDeny) {
         sDeny = R::FindObject(L"button_keypad_deny", P::name::SoundWaveClass);
