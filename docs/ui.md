@@ -25,13 +25,14 @@ and is not pretending to be part of the game.
 
 A native MULTIPLAYER button is injected into the game's main menu above NEW GAME
 (`ui/multiplayer_menu`); its click is detected by polling the button's hovered state on the menu's
-own tick, because binding a delegate was not available when it was built. The button opens the
-native server browser (`ui/server_browser_native`): the master server's lobby list with name,
-players, version, world and age, an amber mark on a version pair that differs from ours, which
-always means the connect will be refused, a Host button and a Join. The address and the nickname
-are typed in their own small windows rather than inline (`ui/browser_input_screens`). The old
-ImGui browser stays as a fallback chosen by an ini row and needing a restart
-(`ui/server_browser`, `ui/server_browser_surface`).
+own tick, which needs no new engine primitive; binding the button's delegate would need a
+no-parameter function of our own to point at, and the mod owns no class to mint one on. The
+button opens the native server browser (`ui/server_browser_native`): the master server's lobby
+list with name, players, version, world and age, an amber mark on a version pair that differs
+from ours, which always means the connect will be refused, a Host button and a Join. The address
+and the nickname are typed in their own small windows rather than inline
+(`ui/browser_input_screens`). The old ImGui browser stays as a fallback chosen by an ini row
+and needing a restart (`ui/server_browser`, `ui/server_browser_surface`).
 
 Hosting is two windows. The first chooses the world (a save, or a new game through the game's
 own save creation) and how the session is reachable, direct or brokered through the master

@@ -358,7 +358,7 @@ void ClientAdoptCanonical(Reader& r) {
         UE_LOGW("laptop_buffer: malformed canonical -- dropped");
         return;
     }
-    DeriveAndSendLocal(s);  // drain before adopt, the shape drive_sync uses
+    DeriveAndSendLocal(s);  // drain before adopt, the shape drive_rack_sync uses
     const uint64_t wireHash = QuadSeqHash(wire);
     L::BufferQuad local;
     if (L::ReadQuad(local) && QuadSeqHash(local) == wireHash) {

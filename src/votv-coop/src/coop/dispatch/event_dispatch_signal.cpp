@@ -52,8 +52,10 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::SkySignalCatch: {
-        // The signal-catch consume replay. HOST validates the claim holder, replays and
-        // rebroadcasts; CLIENTS replay (transport-trusted). The gates live in
+        // The signal-catch consume replay. HOST: dedup through the recent-catch TTL, replay,
+        // rebroadcast. There is deliberately NO holder check -- the desk hold releases in the
+        // same second as the catch edge, so a holder-equals-sender test raced exactly as the
+        // detector's claim gate did. CLIENTS replay (transport-trusted). The gates live in
         // signal_catch_sync::OnReliable.
         if (msg.payloadLen < sizeof(net::SkySignalCatchPayload)) {
             UE_LOGW("event_feed: SkySignalCatch payload too short (%zu < %zu)",
@@ -366,8 +368,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DeskState: {
-        // ADOPT-ONLY (the host->joiner connect seed): the live desk lanes ride DeskInput,
-        // and the adopt gate lives in OnDeskState.
+        // ADOPT-ONLY (the host->joiner connect seed): live desk INPUT rides DeskInput and the
+        // simulation rides DeskSimPose. The adopt gate lives in OnDeskState.
         if (msg.payloadLen < sizeof(net::DeskStatePayload)) {
             UE_LOGW("event_feed: DeskState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeskStatePayload));

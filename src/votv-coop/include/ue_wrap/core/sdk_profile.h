@@ -376,9 +376,11 @@ inline constexpr size_t Aprop_frozen        = 0x02DA;  // bool
 inline constexpr size_t Aprop_sleep         = 0x02DD;  // bool (prop settled/sleeping -> physics NOT simulating). SDK dump prop.hpp:19 `bool sleep; // 0x02DD`. SP: init() = SetSimulatePhysics(NOT(static||frozen||sleep)).
 inline constexpr size_t Aprop_Key           = 0x02E0;  // FName (ComparisonIndex @ +0, Number @ +4)
 inline constexpr size_t Aprop_StaticMesh    = 0x0238;  // UStaticMeshComponent*
-// The per-material prop sound set: prop.physicsImpact -> physSoundData (filled at prop init from
-// the lib_C::physSound DataTable row) -> soft_30, the cue the native E grab plays (mainPlayer
-// ubergraph @100337, volume 0.5, pitch 1.0).
+// The per-material prop sound set: prop.physicsImpact -> physSoundData -> soft_30, the cue
+// the native E grab plays (mainPlayer ubergraph @100337, volume 0.5, pitch 1.0). The cache
+// fills LAZILY, from the lib_C::physSound DataTable row on an impact, so a never-impacted
+// prop reads empty and a caller must fall back to a fresh lookup rather than treat the
+// empty cache as a row miss.
 inline constexpr size_t Aprop_physicsImpact          = 0x0230;  // Ucomp_physicsImpact_C*  prop.hpp:8
 inline constexpr size_t CompPhysImpact_physSoundData = 0x00C8;  // Fstruct_physSound (inline, 0x98)  comp_physicsImpact.hpp:9
 inline constexpr size_t CompPhysImpact_PhysMat       = 0x0290;  // UPhysicalMaterial*  comp_physicsImpact.hpp (the comp's cached physmat -- input for a fresh lib_C::physSound lookup)

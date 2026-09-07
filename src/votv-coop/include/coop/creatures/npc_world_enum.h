@@ -47,16 +47,18 @@ enum class NpcEnumOrigin { ConnectEdge, MidSessionConverge };
 int RegisterExistingWorldNpcs(NpcEnumOrigin origin);
 
 // Patch the ufunction_hook Func-thunk onto the (already-resolved)
-// BeginDeferredActorSpawnFromClass UFunction so EX_CallMath spawns of allowlisted classes are
-// CAUGHT (queued; see DrainPendingExSpawns). SOURCE-GATED by the spawning actor's class
-// (FFrame::Object) to the event-swarm spawners (trigger_wispSwarm_C -> wisp_C), so the per-peer
-// AMBIENT spawners -- ticker_wispSpawner's wisp_C, weight 100 of ~108 in its cooked table --
-// stay local by design, the same standing decision as the coloured wisp siblings. The catch
-// fires PRE-Finish, with the transform still unset, which is why it only QUEUES; the drain
-// enrolls next pump tick, when FinishSpawningActor has run and the transform is real. Called by
-// npc_sync::Install once the UFunction and the allowlist resolve and the lifecycle observers are
-// live (the same gate as the interceptor -- an Element enrolled here gets the same
-// K2_DestroyActor close). Idempotent. Game thread.
+// BeginDeferredActorSpawnFromClass UFunction so EX_CallMath spawns of allowlisted classes
+// are CAUGHT (queued; see DrainPendingExSpawns). SOURCE-GATED by the spawning actor's class
+// (FFrame::Object) to the spawners whose output is host-authoritative and mirrored: the
+// wisp event swarm, the piramid chain, the ambient sky-wisp ticker -- which anchors at
+// absolute map coordinates rather than around a player, so the host rolls it and the
+// client's own ticker is cancelled in the spawn authority -- and the sell gun's coin mint,
+// whose deferred spawn is bytecode-internal and invisible to the world-actor interceptor.
+// The catch fires PRE-Finish, with the transform still unset, which is why it only QUEUES;
+// the drain enrolls next pump tick, when FinishSpawningActor has run and the transform is
+// real. Called by npc_sync::Install once the UFunction and the allowlist resolve and the
+// lifecycle observers are live (the same gate as the interceptor -- an Element enrolled
+// here gets the same K2_DestroyActor close). Idempotent. Game thread.
 void InstallExSpawnCatch(void* beginDeferredFn);
 
 // Drain the EX-spawn catch queue: enroll each still-live, still-untracked queued actor as a host

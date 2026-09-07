@@ -42,8 +42,11 @@ public:
     bool SetPose(const coop::net::RagdollPoseSnapshot& snap);
 
     // ApplyToEngine head. While ragdolled the VISIBLE plushie body is the whole
-    // display and the attachment owns the puppet transform -- pose-driving
-    // would fight it; there is nothing to drive per frame.
+    // display and the attachment owns the puppet transform -- pose-driving would fight
+    // it; there is nothing to drive per frame. Keeping the kel meshes visible and
+    // slaving them to the body with a master pose is not an option either: name-based
+    // master-pose couples only four of the six bones, because the visible skin's
+    // skeleton has no thighs or lowlegs, so the legs would not follow.
     enum class Drive {
         Inactive,   // not ragdolling -- the owner pose-drives as normal
         Attached,   // attachment owns the transform this tick -- owner returns
