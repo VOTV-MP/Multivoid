@@ -18,12 +18,12 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// UE4.27 EObjectFlags. RF_WasLoaded is set on an object deserialised from a package, so
-// it discriminates "my name came from the cooked level asset and is therefore identical
-// on every machine running this build" from "my name carries a per-process allocation
-// counter". Measured 2026-09-05: every one of the 85 name-resolvable instances carries
-// 0x00280008 (RF_LoadCompleted|RF_WasLoaded|RF_Transactional); every serverBox_dish --
-// whose name is per-process -- carries 0x00000000 or 0x00000008 and never RF_WasLoaded.
+// UE4.27 EObjectFlags. RF_WasLoaded is set on an object deserialised from a package, so it
+// discriminates "my name came from the cooked level asset and is therefore identical on every
+// machine running this build" from "my name carries a per-process allocation counter". Measured
+// over a loaded world: every one of the 85 name-resolvable instances carries 0x00280008
+// (RF_LoadCompleted|RF_WasLoaded|RF_Transactional), while every serverBox_dish -- whose name is
+// per-process -- carries 0x00000000 or 0x00000008 and never RF_WasLoaded.
 constexpr uint32_t kRfWasLoaded = 0x00080000u;
 
 // A child-actor chain deeper than this is a cycle or a layout misread; either way the
@@ -51,16 +51,14 @@ std::wstring PortableIdentity(void* actor) {
     for (int depth = 0; depth < kMaxChainDepth; ++depth) {
         if (!ue_wrap::engine::IsChildActor(cur)) {
             // The anchor.
-            // ORDER: the KEY first, then the name. Measured 2026-09-05 and it is not a
-            // preference -- a level-placed anchor is DESTROYED and replaced by its
-            // save-loaded twin during the world load (host.log:10404 indexes a cap under
-            // `prop_garbageBin5_7`, flags 0x00280008; :11367 indexes the SAME location and
-            // component under `prop_garbageBin_blue_C_2147471853`, flags 0x00000008, six
-            // seconds later). The NAME dies with the incarnation; the KEY survives it --
-            // both rows read `pkey='AEj2DU4rJjAUkwOg8rDGQQ'` -- and all 25 anchor keys in
-            // this world are present verbatim in the .sav, so the key is the persisted
-            // quantity and the name is the transient one. Preferring the name would hand
-            // the same physical object two identities inside one session.
+            // ORDER: the KEY first, then the name. That is not a preference. A level-placed anchor
+            // is DESTROYED during the world load and replaced by its save-loaded twin, so the same
+            // physical object is indexed first under a loaded name (flags 0x00280008) and seconds
+            // later under a per-process one (flags 0x00000008) at the same location and component.
+            // The NAME dies with the incarnation; the KEY survives it -- both incarnations read the
+            // same pkey -- and every anchor key in the world is present in the .sav, so the key is
+            // the persisted quantity and the name the transient one. Preferring the name would hand
+            // one physical object two identities inside a single session.
             std::wstring anchor;
             std::wstring key = ue_wrap::prop::GetInteractableKeyString(cur);
             if (key.empty() || key == L"None")
@@ -70,17 +68,16 @@ std::wstring PortableIdentity(void* actor) {
             } else if (WasLoaded(cur)) {
                 anchor = L"n:" + R::ToString(R::NameOf(cur));
             } else {
-                // NO IDENTITY -- and say so loudly ONCE per class rather than returning a
-                // guess. Two different things land here and the log must not hide either: an
-                // actor whose Key really is None, and an actor of a class
-                // `ue_wrap::prop::GetInteractableKey` cannot read AT ALL -- it covers the
-                // Aprop_C lineage, trashBitsPile and chipPile/clump, and returns FName{0,0}
-                // for everything else, which `ToString` renders as the string "None", byte
-                // identical to a genuinely keyless actor (prop.cpp:250-266). `AtriggerBase_C`
-                // is outside it. Deliberately NOT widened: that reader has 33 call sites, all
-                // in the prop lanes, and widening it changes what every one of them sees
-                // (OPUS 8 -- the firing set changes even though the code does not). So the
-                // line names the CLASS, which is what tells the two cases apart later.
+                // NO IDENTITY -- and say so loudly ONCE per class rather than returning a guess.
+                // Two different things land here and the log must not hide either: an actor whose
+                // Key really is None, and an actor of a class `ue_wrap::prop::GetInteractableKey`
+                // cannot read AT ALL. That reader covers the Aprop_C lineage, trashBitsPile and
+                // chipPile/clump, and returns FName{0,0} for everything else, which `ToString`
+                // renders as the string "None", byte identical to a genuinely keyless actor
+                // (prop.cpp:250-266); `AtriggerBase_C` is outside it. Deliberately NOT widened: the
+                // reader has 33 call sites, all in the prop lanes, and widening it changes what
+                // every one of them sees even though none of their code changes. So the line names
+                // the CLASS, which is what tells the two cases apart.
                 static std::mutex sSeenMu;
                 static std::set<std::wstring> sSeen;
                 const std::wstring cls = R::ClassNameOf(cur);
