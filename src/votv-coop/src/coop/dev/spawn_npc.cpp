@@ -35,8 +35,8 @@ namespace {
 // hooks, so on the HOST the interceptor runs the full sync path (AllocAndInstall an Npc
 // Element + broadcast EntitySpawn + let the spawn proceed) and connected clients
 // materialize a mirror. This is the ONLY programmatic NPC-spawn trigger (VOTV NPCs spawn
-// only from purchase/scripted events). Game thread only. (Extracted from npc_sync.cpp
-// 2026-05-30; the spawn refs come from npc_sync::GetDevSpawnRefs.)
+// only from purchase/scripted events). Game thread only. The spawn refs come from
+// npc_sync::GetDevSpawnRefs.
 void SpawnNpcAt(const wchar_t* className, const ue_wrap::FTransform& xform) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
@@ -121,7 +121,7 @@ void SpawnNpcInFront(const wchar_t* className) {
     SpawnNpcAt(className, xform);
 }
 
-// v72 Killer Wisp TEST hook: spawn `className` ON the first connected client puppet so it
+// Killer Wisp TEST hook: spawn `className` ON the first connected client puppet so it
 // immediately acquires the PUPPET as Target -- the only easy way to exercise the cross-peer
 // kill (the wisp normally targets whoever is nearest, = the host). Host-side; no-op + warns
 // if no client puppet is present. Game thread.
@@ -196,7 +196,7 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
                 ::DeleteFileW(triggerPath);  // one-shot per file creation
             }
         }
-        ::Sleep(16);  // 60 Hz (user-set 2026-06-04, was 125)
+        ::Sleep(16);  // 60 Hz
     }
     return 0;
 }
@@ -206,7 +206,7 @@ DWORD WINAPI FileTriggerThread(LPVOID) {
 void SpawnKerfurOmega() { PostSpawnKerfur(); }
 void SpawnKillerWisp()  { PostSpawnClass(P::name::NpcClass_KillerWisp); }
 void SpawnVentCrawler() { PostSpawnClass(P::name::NpcClass_VentCrawler); }
-// v108 OWNER-ENTITY test: eyer_C is NOT in the npc allowlist by design -- the
+// OWNER-ENTITY test: eyer_C is NOT in the npc allowlist by design -- the
 // interceptor passes the spawn through and owner_entity_sync's own BeginDeferred
 // POST observer catches it as a LOCALLY-OWNED entity + announces it to peers
 // (the per-peer-owned + cross-peer-visible lane). Spawning it here is the F1
@@ -214,7 +214,7 @@ void SpawnVentCrawler() { PostSpawnClass(P::name::NpcClass_VentCrawler); }
 void SpawnEyer()        { PostSpawnClass(L"eyer_C"); }
 
 void SpawnKillerWispOnClient() {
-    // v72 Killer Wisp cross-peer-kill test: spawn the wisp ON the first client puppet so it
+    // Killer Wisp cross-peer-kill test: spawn the wisp ON the first client puppet so it
     // grabs the PUPPET (routes the kill to that client) rather than the host. Host-side only.
     if (!coop::dev_gate::Allowed()) {
         UE_LOGW("spawn_npc: REFUSED -- dev features are disabled while connected as a client");

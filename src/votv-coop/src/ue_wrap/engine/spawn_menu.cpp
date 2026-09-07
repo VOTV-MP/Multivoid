@@ -76,7 +76,7 @@ bool Open(void* localPlayer) {
         }
     }
 
-    // ROOT CAUSE (2026-06-15, verified live): calling the native input-event UFunction
+    // ROOT CAUSE: calling the native input-event UFunction
     // (InpActEvt_spawnmenu_..._2) directly is a NO-OP -- the engine's input system wires the
     // forward to the open ubergraph, not the stub body, so the dispatch left the widget Collapsed
     // (Visibility 1 -> 1). And UWidget::SetVisibility is native (not reachable via FindFunction on

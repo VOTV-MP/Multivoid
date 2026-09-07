@@ -1,32 +1,15 @@
-// coop/puppet_body_yaw.h -- receiver-side body-yaw presentation
-// (turn-in-place) for the remote-player puppet.
+// coop/player/puppet_body_yaw.h -- receiver-side body-yaw presentation (turn-in-place) for the
+// remote-player puppet.
 //
-// WHY (hands-on 2026-06-11, "whole body snaps with the camera, head never
-// leads"): the wire streams the SOURCE's actor yaw, but VOTV's first-person
-// pawn turns its body with the camera almost immediately -- so on foot the
-// streamed yaw IS the camera yaw (headYawDelta ~= 0) and replaying it verbatim
-// snaps the whole puppet with every camera move; the head's world-space lookAt
-// target then sits dead ahead of the body, so it can never visibly lead. The
-// "head first, then body" behavior the source never produces is synthesized
-// HERE, on the receiver:
+// The wire streams the SOURCE's actor yaw, but VOTV's first-person pawn turns its body with the
+// camera almost immediately, so on foot the streamed yaw IS the camera yaw -- headYawDelta near
+// zero. Replaying it as-is snaps the whole puppet with every camera move, and the head's lookAt
+// target then sits dead ahead of the body, where it can never visibly lead. The "head first, then
+// body" behaviour the source never produces is synthesized HERE, by Update below.
 //
-//   STANDING (speed <= kMoveSpeedCmS): yaw HOLDS; the head leads via the
-//     kerfur lookAt clamp (driven elsewhere from the camera yaw). Once the
-//     camera leads >= kTurnStartDeg (just inside the head 45 + neck ~22 deg
-//     LookAt reach) the body turns toward the camera at kTurnRateDegSec until
-//     within kTurnStopDeg (hysteresis latch).
-//   MOVING: rate-follow the STREAMED actor yaw (true body facing --
-//     controller-yaw-as-body was a user-confirmed sideways-strafe regression)
-//     at kFollowRateDegSec: fast enough to track the hardest real flick, yet
-//     smooths the hold->move pop.
-//
-// MTA precedent: reference/mtasa-blue CClientPed.cpp:3450-3474 -- a remote
-// ped's body rotation is its own interpolated presentation state, never
-// slammed from the wire.
-//
-// Header-only: one small struct owned per RemotePlayer (the
-// puppet_footsteps::Stride pattern), advanced once per game-thread tick from
-// RemotePlayer::Tick. Pure float math; the caller supplies the clock.
+// MTA precedent: reference/mtasa-blue Client/mods/deathmatch/logic/CClientPed.cpp:3450-3474, where
+// a remote ped's body rotation is its own interpolated presentation state, never slammed from the
+// wire.
 
 #pragma once
 
@@ -57,11 +40,19 @@ public:
         lastMs_ = 0;
     }
 
-    // Advance one tick. Returns true when yaw_ changed (the caller pushes the
-    // new value to the engine). nowMs: the caller's steady clock -- passed in
-    // so this struct stays clock-free (single clock lives in remote_player).
-    // NormalizeAxis(to - from) is the shortest-arc delta in (-180, 180]
-    // (MTA's GetOffsetDegrees shape).
+    // Advance one tick. Returns true when yaw_ changed, and the caller pushes the new value to the
+    // engine. nowMs is the caller's steady clock, passed in so this struct stays clock-free, the
+    // single clock living in remote_player. NormalizeAxis(to - from) is the shortest-arc delta in
+    // (-180, 180], MTA's GetOffsetDegrees shape.
+    //
+    // STANDING (speed <= kMoveSpeedCmS): yaw HOLDS and the head leads via the kerfur lookAt clamp,
+    // driven elsewhere from the camera yaw. Once the camera leads by kTurnStartDeg -- just inside
+    // the head's 45 plus the neck's ~22 degrees of LookAt reach -- the body turns toward it at
+    // kTurnRateDegSec until within kTurnStopDeg, a hysteresis latch.
+    //
+    // MOVING: rate-follow the STREAMED actor yaw, the true body facing, at kFollowRateDegSec --
+    // fast enough for the hardest real flick, slow enough to smooth the hold-to-move pop.
+    // Controller yaw as body facing produces a sideways strafe.
     bool Update(uint64_t nowMs, float speedCmS, float wireYawDeg, float headYawDeltaDeg) {
         const float dtRaw = (lastMs_ != 0) ? static_cast<float>(nowMs - lastMs_) * 0.001f : 0.f;
         lastMs_ = nowMs;
