@@ -1,22 +1,18 @@
-// ui/host_session_choices.h -- the two-row CHOICE selector the session-settings screen is
-// built out of, and the one place its row kit lives.
+// ui/host_session_choices.h -- the two-row CHOICE selector the session-settings screen is built out
+// of, and the one place its row kit lives. Game thread only, like every native-screen module.
 //
-// WHY THIS IS A MODULE AND NOT A THIRD COPY. `host_session_settings.cpp` grew two of these
-// by hand -- WHO MAY JOIN and SERVER LIST -- as structurally identical blocks: a heading, a
-// const table of two {title, detail} answers, two hand-built `UImage` rows, a chosen index,
-// a hover index, an editability predicate, and a repaint that drives TWO independent style
-// channels. The connection-type rework adds a THIRD (who may connect), and the kit's own
-// rule -- no new shared framework before three working cases (OPUS_48_DISCIPLINE:196) -- is
-// satisfied exactly here. A third copy would also have been the third place to get the
-// two-channel style wrong, and the second place to re-derive that a hand-built `UImage`
-// answers `IsHovered()` with 0 and must be hit-tested by GEOMETRY.
+// WHY THIS IS A MODULE AND NOT A THIRD COPY. host_session_settings.cpp grew two of these by hand --
+// WHO MAY JOIN and SERVER LIST -- as structurally identical blocks: a heading, a const table of two
+// {title, detail} answers, two hand-built `UImage` rows, a chosen index, a hover index, an
+// editability predicate, and a repaint driving TWO independent style channels. The connection-type
+// rework adds a third, who may connect, which is where the kit's rule -- no shared framework before
+// three working cases -- is satisfied, and a third copy would have been the third place to get the
+// two-channel style wrong.
 //
-// THE STYLE IS `docs/VOTV_UI_STYLE.md` (the State section) AND IS NOT A CHOICE THIS MODULE MAKES:
-// selection is a row FILL change, hover is a TEXT colour change, and they are independent.
-// Porting ImGui's HeaderHovered (one channel, fill-on-hover) would look foreign in VOTV's
-// own menus, which is measured, not taste.
-//
-// Game thread only, like every other native-screen module.
+// The style is docs/VOTV_UI_STYLE.md's State section and is not a choice this module makes:
+// selection is a row FILL change, hover is a TEXT colour change, and the two are independent.
+// ImGui's HeaderHovered shape -- one channel, fill on hover -- would look foreign in VOTV's own
+// menus.
 
 #pragma once
 
@@ -58,9 +54,10 @@ bool Build(void* column, const wchar_t* heading, const Answer (&answers)[2], Sel
 // Apply both style channels for the current `chosen` / `hover` / `editable`.
 void Repaint(const Selector& s);
 
-// Which row the cursor is over, or -1. `hx`/`hy` are cursor-in-widget-space, resolved ONCE
-// by the caller for the whole sweep: the conversion reaches an uncached GUObjectArray walk,
-// so resolving it per row cost one walk per row per tick.
+// Which row the cursor is over, or -1. Hit-tested by GEOMETRY, because a hand-built `UImage`
+// answers IsHovered() with 0. `hx`/`hy` are cursor-in-widget-space, resolved ONCE by the caller
+// for the whole sweep: the conversion reaches an uncached GUObjectArray walk, so resolving it per
+// row costs one walk per row per tick.
 //
 // Answers -1 for a non-editable selector by design -- lighting up a row the player cannot
 // move promises a control that is not there.

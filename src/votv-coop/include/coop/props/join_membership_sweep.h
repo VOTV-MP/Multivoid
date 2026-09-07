@@ -1,29 +1,18 @@
-// coop/props/join_membership_sweep.h -- the join-window world-membership claim + divergence sweep.
+// coop/props/join_membership_sweep.h -- the join-window world-membership claim and divergence
+// sweep.
 //
-// ONE concept: at join time, TRACK which world members the host expressed in the snapshot bracket (the claim
-// set), then at load-tail quiescence SWEEP away the locals the host's snapshot did NOT claim (the client's
-// save-loaded world minus the host's = the divergence). This is MTA's deletion-by-tracked-membership
-// (CElementGroup): we only ever adjudicate what THIS client loaded, never a GUObjectArray scan of the world.
+// ONE concept: at join time TRACK which world members the host expressed in the snapshot bracket
+// (the claim set), then at load-tail quiescence SWEEP away the locals the host's snapshot did NOT
+// claim -- the client's save-loaded world minus the host's is the divergence. This is MTA's
+// deletion-by-tracked-membership (CElementGroup): we only ever adjudicate what THIS client loaded,
+// never a GUObjectArray scan of the world. The wire PropSpawn RECEIVER stays in
+// coop/props/remote_prop_spawn.cpp, a separate concept; the seam between them is
+// RecordClaimIfTracking, which OnSpawn calls for each bound actor, and IsClaimTrackingActive, which
+// gates OnSpawn's level-pile twin-destroy on an open bracket.
 //
-// EXTRACTED from coop/props/remote_prop_spawn.cpp 2026-06-30 (anti-smear: that file held TWO concepts -- the
-// wire PropSpawn RECEIVER (OnSpawn, which stays) AND this membership-claim-and-sweep -- and was over the 1500
-// LOC hard cap). The cut is clean: the only seam is RecordClaimIfTracking (OnSpawn records each bound actor
-// into the claim set) + IsClaimTrackingActive (OnSpawn gates a level-pile twin-destroy on an open bracket).
-// [[feedback-folder-per-domain-concept-rule]]
-//
-// LIFECYCLE (all game-thread only -- the event_feed drain + the client reconcile tick + the net_pump
-// disconnect edge; no mutex):
-//   BeginClaimTracking()  -- SnapshotBegin: arm a fresh bracket (clear the claim set, cancel a stale sweep).
-//   RecordClaimIfTracking(actor) -- each PropSpawn / self-announce binds an actor -> it survives the sweep.
-//   ArmDivergenceSweep()  -- SnapshotComplete: defer the sweep to load-tail quiescence (NOT inline).
-//   TickClientReconcile() -- every client tick: drives quiescence_drain::OnTick, then (when a sweep pends +
-//                            the load tail has quiesced) fires the one-shot RunDivergenceSweep_.
-//   OnClientWorldReadyResetSweep() -- a within-session world change cancels a pending sweep.
-//   ResetClaimTracking()  -- session teardown: clear the claim set + cancel the sweep + Reset the downstream
-//                            join modules (pile_spawn_bind / quiescence_drain / kerfur_reconcile / mirror_defer).
-//
-// The sweep CALLS the downstream join modules (it is their driver, not their owner): pile_spawn_bind (the pile
-// spawn-bind index Reset), quiescence_drain (the deferred-reconcile sequence + OnTick + the teardown Reset).
+// The sweep CALLS the downstream join modules and is their driver, not their owner: pile_spawn_bind
+// (the pile spawn-bind index reset) and quiescence_drain (the deferred-reconcile sequence, OnTick
+// and the teardown reset).
 
 #pragma once
 
