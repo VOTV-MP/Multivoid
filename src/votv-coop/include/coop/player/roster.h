@@ -47,9 +47,9 @@ struct Row {
     bool connected = false;
     // BOTH connection facts are the HOST's measurement, republished on RosterRow
     // and read straight out of the ledger -- identical on every board, for every
-    // row, with no role branching (v131). They answer ONE question: "how is THIS
-    // PLAYER connected to the session". Before v131 they answered "how do I
-    // reach them", which is a different question per viewer.
+    // row, with no role branching. They answer ONE question: "how is THIS
+    // PLAYER connected to the session", which is not "how do I reach them" --
+    // that one has a different answer per viewer.
     int  ping = -1;   // RTT ms to the SESSION (-1 = not sampled / not applicable, 0 = sub-ms)
     coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
 };

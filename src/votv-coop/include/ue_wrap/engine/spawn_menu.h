@@ -1,37 +1,29 @@
-// ue_wrap/spawn_menu.h -- open VOTV's sandbox prop-spawn menu (the Q-key menu).
+// ue_wrap/engine/spawn_menu.h -- open VOTV's sandbox prop-spawn menu, the Q-key menu. The
+// engine-wrapper layer (principle 7): no gameplay, network or coop state. The dev toggle deciding
+// WHEN to open it lives in coop/dev/spawn_menu_unlock.
 //
-// Engine-wrapper layer (principle 7). NO gameplay/network/coop state lives here;
-// this just reproduces the engine path the Q key fires. The dev toggle that
-// decides WHEN to open it (client-lock, ini flag) is coop/dev/spawn_menu_unlock.
+// The game's own Q handler cannot be replayed in story mode. Its open block is guarded on two
+// things: activeInterface must be null, so the menu never stacks over another UI, and
+// lib_C::isBuoyant must return true. That one is not what its name suggests -- it is a capability
+// check, answering `hasWeapon` normally and, when the gamemode is flying, comparing a key file on
+// disk against a derived string. In story mode it is false, so the block bails -- and one branch of
+// it quits the game outright, which is reason enough not to drive it.
 //
-// RE ground truth (research/findings/world-systems/votv-spawnmenu-storymode-RE-2026-06-14.md):
-// the Q key fires mainPlayer's UFunction
-//   InpActEvt_spawnmenu_K2Node_InputActionEvent_2(FKey Key)   [the PRESSED edge]
-// which forwards into ExecuteUbergraph_mainPlayer @12077. That open block has NO
-// enum_gamemode gate -- its ONLY guards are IsValid(activeInterface) (don't open
-// over another UI) and lib.isBuoyant (don't open while swimming). The spawnmenu
-// widget + propRenderer exist in every gamemode (created unconditionally at
-// propProcessor startup). So opening the menu in STORY mode is exactly: invoke
-// that same UFunction. No asset edit (RULE 3), no GameMode flip (which would
-// perturb weapons/flight/backrooms/save-paths -- those branch on gamemode==4).
-//
-// Why call the input UFunction rather than re-create the widget ourselves:
-// it reuses the game's own open logic verbatim (SetVisibility + SetInputMode_
-// GameAndUIEx + Button_search + spawnmenu.opened()) INCLUDING the activeInterface
-// / isBuoyant guards, so the menu behaves identically to a real Q press and can
-// never double-spawn the (already-existing) widget.
+// So this opens the menu itself, on the widget the game already created: honour the activeInterface
+// guard, set the widget visible through the NATIVE UWidget::SetVisibility, run the widget's own
+// opened(), then SetInputMode_GameAndUIEx and show the cursor so it is clickable. No asset edit
+// (RULE 3), and no gamemode flip -- that branch drives weapons, flight, the backrooms, save paths.
 
 #pragma once
 
 namespace ue_wrap::spawn_menu {
 
-// Open the prop-spawn menu exactly as pressing Q does in sandbox, for the given local
-// mainPlayer_C pawn (`localPlayer` -- the caller injects it; this engine layer does not
-// resolve the local player, per principle 7). Resolves + caches the widget / UFunctions
-// on first call. Returns false (and logs) if `localPlayer` is null, or the widget can't
-// be resolved. GAME THREAD ONLY (drives ProcessEvent + UMG + input mode). Subject to the
-// game's own guards: a no-op if another interface is already open or the player is
-// swimming (matching vanilla Q).
+// Open the prop-spawn menu for the given local mainPlayer_C pawn (`localPlayer` -- the caller
+// injects it; this engine layer does not resolve the local player, per principle 7). Resolves
+// and caches the widget and UFunctions on first call. Returns false, and logs, if `localPlayer`
+// is null, if the widget cannot be resolved, or if another interface is already open -- the one
+// vanilla guard this reproduces. GAME THREAD ONLY (drives ProcessEvent, UMG and the input
+// mode).
 bool Open(void* localPlayer);
 
 // Close the spawn menu for `localPlayer`: the INVERSE of Open(). Restores

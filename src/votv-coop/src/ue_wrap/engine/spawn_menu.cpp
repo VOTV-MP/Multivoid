@@ -1,4 +1,4 @@
-// ue_wrap/spawn_menu.cpp -- see header.
+// ue_wrap/engine/spawn_menu.cpp -- see the header.
 
 #include "ue_wrap/engine/spawn_menu.h"
 
@@ -17,7 +17,7 @@ namespace P = ue_wrap::profile;
 
 namespace {
 
-// Cached refs for the open-state diagnostic (the open itself runs via ExecuteUbergraph; see Open()).
+// Cached refs for the widget and its visibility byte; Open() drives both.
 void*   g_spawnMenuCls = nullptr;  // ui_spawnmenu_C
 int32_t g_visOff       = -2;       // UWidget.Visibility byte offset (-2 unresolved, -1 none)
 
@@ -56,9 +56,9 @@ bool Open(void* localPlayer) {
         return false;
     }
 
-    // The vanilla open guard: the BP open ubergraph (@12104) NO-OPs if `activeInterface` is valid
-    // (another UI is up). Honour it so we never stack the spawn menu over another menu. Reflection
-    // offset cached; a miss just skips the guard.
+    // The vanilla open guard: the game's own open block no-ops when `activeInterface` is valid,
+    // another UI being up. Honour it so we never stack the spawn menu over another menu. The
+    // reflection offset is cached; a miss just skips the guard.
     {
         static int32_t sActiveIfaceOff = -2;
         if (sActiveIfaceOff == -2) {
@@ -76,17 +76,15 @@ bool Open(void* localPlayer) {
         }
     }
 
-    // ROOT CAUSE: calling the native input-event UFunction
-    // (InpActEvt_spawnmenu_..._2) directly is a NO-OP -- the engine's input system wires the
-    // forward to the open ubergraph, not the stub body, so the dispatch left the widget Collapsed
-    // (Visibility 1 -> 1). And UWidget::SetVisibility is native (not reachable via FindFunction on
-    // the BP class). The reliable fix is the engine's OWN dispatch mechanism: a BP event IS a call
-    // to ExecuteUbergraph_<BP>(EntryPoint), so invoke ExecuteUbergraph_mainPlayer at the spawn-menu
-    // OPEN entry (@12077, from the kismet -- the exact target the InpActEvt event forwards to). That
-    // runs the FULL native open block: the activeInterface/isBuoyant guards, SetVisibility(Visible),
-    // SetInputMode_GameAndUIEx (cursor) and opened() (content) -- exactly as a real Q press, no asset
-    // edit (RULE 3). The block copies the (unused-for-gating) input Key from a zeroed frame, so the
-    // empty FKey is fine.
+    // Two routes into the game's own open path are dead ends, so this opens the menu directly.
+    // Calling the input-event UFunction (InpActEvt_spawnmenu_..._2) is a no-op: the engine's input
+    // system wires the forward to the open ubergraph, not to the stub body, so the dispatch left
+    // the widget collapsed. And driving ExecuteUbergraph_mainPlayer at the open entry runs the
+    // game's own guards, one of which is lib_C::isBuoyant -- a capability check that is false in
+    // story mode and whose failing branch can quit the game (see the header). What follows
+    // therefore reproduces the open block's effects on the widget the game already created:
+    // visibility, the widget's own opened(), then the input mode and cursor. No asset edit
+    // (RULE 3).
     void* widget = FindSpawnMenuWidget();
     if (!widget) {
         UE_LOGW("spawn_menu::Open: no live ui_spawnmenu_C widget in this world yet -- cannot open");
@@ -97,7 +95,7 @@ bool Open(void* localPlayer) {
     // on the BP class doesn't reach inherited native UFunctions) so the change propagates to the live
     // Slate widget (a raw byte write to Visibility leaves the cached SWidget collapsed -- proven: the
     // byte went 1->0 but the menu still didn't render). Then run the widget's own opened() content
-    // setup. The input-stub / ExecuteUbergraph-by-kismet-offset routes are no-ops -- see the doc.
+    // setup.
     static void* sSetVisFn = nullptr;
     if (!sSetVisFn) {
         void* widgetCls = R::FindClass(L"Widget");  // UWidget

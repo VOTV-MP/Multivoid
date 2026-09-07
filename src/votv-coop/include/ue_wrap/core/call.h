@@ -65,9 +65,9 @@ public:
     // then reused as a read-only pointer by subsequent ParamFrames -- so
     // steady-state ParamFrame construction allocates ONLY buf_ (the
     // per-call zeroed frame), not the offsets vector or per-param wstrings.
-    // Audit fix 2026-05-29 D4-1: prior ctor allocated 2 vectors + per-param
-    // wstrings on every call, churning malloc/free on the per-snapshot
-    // Drive() / per-tick observer dispatch paths.
+    // Without the cache the constructor allocates two vectors and a wstring
+    // per parameter on every call, churning malloc and free on the
+    // per-snapshot Drive() and the per-tick observer dispatch paths.
     struct Metadata {
         int32_t frameSize = -1;  // < 0 => malformed UFunction; ParamFrame stays invalid
         std::vector<std::pair<std::wstring, int32_t>> offsets;

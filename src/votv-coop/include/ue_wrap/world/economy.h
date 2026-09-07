@@ -1,25 +1,10 @@
-// ue_wrap/economy.h -- player credit balance (saveSlot.Points) accessor + AddPoints.
+// ue_wrap/economy.h -- player credit balance (saveSlot.Points) accessor and AddPoints.
 //
-// Resolves AmainGamemode_C -> saveSlot (UsaveSlot_C* @0x04B0, the canonical ONE-per-
-// machine store) and reads/writes the int32 Points by reflected field NAME (RE
-// 2026-06-03). Game-thread only (UObject access + a UFunction dispatch). Principle 7: NO
-// coop/network logic -- coop/balance_sync owns the wire encoding + host-authoritative
-// policy. The mainGamemode pointer + the field offsets are resolved by name (cooked
-// offsets shift across recooks) and cached; revalidated via IsLive.
-//
-// CORRECTION 2026-08-24 (bytecode census, security A13/A35): this header used to say
-// "AmainGamemode_C::AddPoints @mainGamemode.hpp:447 is the single credit-writer". It is
-// NOT. `[V]` mainGamemode's `addPoints` is a THREE-STATEMENT FORWARDER --
-// `Default__lib_C->addPoints(Add, self)`. The real and sole writer in the whole cooked
-// corpus is **`lib_C::addPoints(int32 Add, Object __WorldContext)`**, which does the
-// VictoryIntPlusEquals on saveSlot.points plus the text_points SetText and the
-// save_main.stats totals. AddPoints() below still WORKS (it dispatches the forwarder), so
-// this is a documentation defect, not a code one -- but it mattered: the false "single
-// writer" claim is why a census of OUR AddPoints callers looked like a census of the
-// game's earnings. `[V]` All 19 real call sites are EX_LocalVirtualFunction, i.e.
-// PE-INVISIBLE, so no ProcessEvent hook can observe an earning; the one choke point is
-// lib_C::addPoints and it is reachable only through the 0x45 vm_dispatch substrate
-// (docs/COOP_VM_DISPATCH_PLAN.md). That is what blocks host-authoritative economy.
+// Resolves AmainGamemode_C -> saveSlot, the canonical one-per-machine store, and reads and
+// writes the int32 Points by reflected field NAME. Cooked offsets shift across recooks, so the
+// gamemode pointer and the field offsets are resolved by name, cached, and revalidated through
+// IsLive. Game-thread only (UObject access plus a UFunction dispatch). Principle 7: no coop or
+// network logic -- coop/balance_sync owns the wire encoding and the host-authoritative policy.
 
 #pragma once
 
@@ -27,7 +12,16 @@
 
 namespace ue_wrap::economy {
 
-// v114 (L7): the live UsaveSlot_C* (gamemode.saveSlot), or nullptr while unresolvable.
+// The sole credit writer in the cooked corpus is lib_C::addPoints(int32 Add, UObject
+// __WorldContext). It adds to saveSlot.points, sets the player interface's points text, and adds
+// to save_main.stats -- total_points for a gain, points_spent for a spend. mainGamemode's own
+// addPoints is a forwarder into it, which is what AddPoints() below dispatches.
+//
+// No hook can observe an earning: every call site dispatches through the blueprint VM, below
+// ProcessEvent. The one choke point is lib_C::addPoints itself, reachable only through the
+// vm_dispatch substrate, and that is what blocks a host-authoritative economy.
+
+// The live UsaveSlot_C* (gamemode.saveSlot), or nullptr while unresolvable.
 // Exposed for sibling ue_wrap accessors of OTHER saveSlot fields (daily_task) so the
 // gamemode->saveSlot resolve lives in exactly one place. Game thread.
 void* SaveSlotPtr();
