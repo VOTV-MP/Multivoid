@@ -212,7 +212,7 @@ void PlayDenyClick(void* playerActor) {
 void PlayInventoryBlipAt(void* worldCtx, const ue_wrap::FVector& loc) {
     if (!worldCtx || !R::IsLive(worldCtx)) return;
     // SoundCue /Game/audio/effects/inventory_Cue -- THE native collect blip
-    // (putObjectInventory2 @659 plays it PlaySound2D vol 1.0 / pitch 1.1).
+    // (putObjectInventory2 plays it through PlaySound2D, vol 1.0 / pitch 1.1).
     // Resident on every peer via mainPlayer's import table; latched resolve.
     static void* sCue = nullptr;
     if (!sCue) {

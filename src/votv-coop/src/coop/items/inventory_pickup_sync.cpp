@@ -1,4 +1,4 @@
-// coop/inventory_pickup_sync.cpp -- see coop/inventory_pickup_sync.h.
+// coop/items/inventory_pickup_sync.cpp -- see coop/items/inventory_pickup_sync.h.
 
 #include "coop/items/inventory_pickup_sync.h"
 
@@ -33,16 +33,17 @@ int32_t g_offWco   = -1;
 bool    g_observerRegistered = false;
 uint32_t g_resolveN = 0;  // ~1 Hz throttle on the resolve walk (Install runs per pump tick)
 
-// POST observer on UGameplayStatics::PlaySound2D. Dispatches at human-event
-// rate game-wide (UI clicks, 2D cues); the body is three cached-offset reads
-// + compares, exiting on the first mismatch. The predicate (RE 2026-06-11,
-// votv-inventory-pickup-seam-RE: complete game-wide cue census):
-//   Sound == inventory_Cue   -- pointer compare vs the resolved cue object
-//   pitch in (1.05, 1.2)     -- the collect plays 1.1; dream-wake 0.9 and
-//                               customWall 2.0 rejected
-//   WorldContextObject == the LOCAL player -- the collector (a puppet has no
-//                               input stack / tick; it can never dispatch this)
-// -> fires exactly once per successful inventory collect.
+// POST observer on UGameplayStatics::PlaySound2D, which dispatches at human-event rate game-wide
+// (UI clicks, 2D cues); the body is three cached-offset reads and compares, exiting on the first
+// mismatch. The predicate:
+//   Sound == inventory_Cue    pointer compare against the resolved cue object
+//   1.05 < pitch < 1.2        the collect plays 1.1; the same cue on waking from a dream, 0.9
+//   WorldContext == LOCAL     the collector. A puppet has no input stack and can never dispatch
+//                             this; and the gamemode's own collect helper plays the same cue at
+//                             the same pitch with ITSELF as the context, so this test is what
+//                             makes the cue-and-pitch pair unambiguous.
+// The game plays the cue once, on the single success path of putObjectInventory2, so one matching
+// dispatch is one collect.
 void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread() || !params) return;
     if (!g_inventoryCue) return;  // cue not resolved yet -> predicate undecidable
