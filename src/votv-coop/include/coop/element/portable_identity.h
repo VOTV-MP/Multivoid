@@ -1,42 +1,18 @@
 // coop/element/portable_identity.h -- WHAT NAMES AN ENGINE ACTOR ACROSS TWO PROCESSES.
 //
-// The game's own instance Key is NOT a portable identity. `lib_C::assignKey` mints a
-// random 16-byte -> base64url FName for any `triggerBase` whose Key is None at load
-// (research/bp_reflection/cpp/lib.cpp:5558-5623, :8698), and `Aprop_C`'s UCS mints a
-// NewGuid on the same condition -- both PER PROCESS. Measured 2026-09-05 on a two-peer
-// rig: 110 interactables per peer carry a Key the other peer has never heard of (door
-// 31 of 50, light 27 of 42, lightgroup 27 of 42, container 25 of 56), which is field
-// defect B2 -- a client's radiotelescope door that no host state can ever open.
-// Full RE: research/findings/join-identity/votv-portable-interactable-identity-RE-2026-09-05.md
+// The game's own instance Key is NOT a portable identity. `lib_C::assignKey` mints a random 16-byte
+// base64url FName for any `triggerBase` whose Key is None at load, and `Aprop_C`'s
+// UserConstructionScript mints a NewGuid on the same condition -- both PER PROCESS. On a two-peer
+// rig, 110 interactables per peer carry a Key the other peer has never heard of (31 doors of 50, 27
+// lights of 42, 27 light groups of 42, 25 containers of 56), which is what leaves a client's
+// radiotelescope door unopenable by any host state.
 //
-// This module answers the identity question at OUR layer (principle 3: our parallel
-// hierarchy owns network identity, the engine object owns rendering/physics/state). It
-// NEVER writes the game's Key -- that route was measured shut twice over: the mint runs
-// inside a UserConstructionScript at map load so it cannot be pre-empted, and rewriting
-// it afterwards collides with prop_element_tracker's host-only re-key invariant
-// (`CLIENT never re-keys`) and with the take-7 child-actor exclusion (docs/LESSONS.md).
-//
-// THE RULE (recursive, total, structural):
-//
-//   portable(a) = a is a CHILD ACTOR -> portable(parent(a)) + "/" + <component name>
-//                 RF_WasLoaded(a)    -> "n:" + <UObject name>     // baked into the cooked level
-//                 Key(a) != None     -> "k:" + <Key>              // top-level: save-persisted
-//                 otherwise          -> ""                        // NO identity; say so, never guess
-//
-// Uniqueness is STRUCTURAL, not measured: UE requires component names unique within an
-// actor, so two children of one parent differ by component and two children of different
-// parents differ by the parent's identity. (Measured anyway: 73 parents with children,
-// 34 with more than one, ZERO duplicate component names, on both peers.)
-//
-// Measured outcome of the rule on the b2ident3 run: 109 of the 110 broken instances
-// resolve, host and client each map 272 instances to 272 DISTINCT identities with zero
-// collisions, and ZERO of the 163 already-working instances change meaning. The one that
-// does not resolve is reported as "" -- a crematorium door whose parent is itself
-// top-level, runtime-created and keyless; closing it needs the element/eid layer.
-//
-// Game thread only: the reads are array-slot and property reads, but `ParentActorOf`
-// resolves a weak pointer against GUObjectArray and the caller is expected to hold the
-// engine still (the scan hub's pass, an input observer).
+// This module answers the identity question at OUR layer -- principle 3, where our parallel
+// hierarchy owns network identity and the engine object owns rendering, physics and state. It NEVER
+// writes the game's Key: that route is shut twice over, since the mint runs inside a
+// UserConstructionScript at map load and so cannot be pre-empted, and rewriting it afterwards
+// collides with prop_element_tracker's host-only re-key invariant and with the child-actor
+// exclusion.
 
 #pragma once
 
@@ -45,20 +21,32 @@
 
 namespace coop::element {
 
-// The readable portable identity of `actor`, or "" when it has none.
-// Diagnosis-facing: this is what goes in the log beside the wire token.
+// The readable portable identity of `actor`, or "" when it has none. Diagnosis-facing: this is what
+// goes in the log beside the wire token. THE RULE is recursive, total and structural:
+//
+//   portable(a) = a is a CHILD ACTOR -> portable(parent(a)) + "/" + <component name>
+//                 RF_WasLoaded(a)    -> "n:" + <UObject name>     // baked into the cooked level
+//                 Key(a) != None     -> "k:" + <Key>              // top-level: save-persisted
+//                 otherwise          -> ""                        // NO identity; say so, never
+//                 guess
+//
+// Uniqueness is STRUCTURAL rather than measured: UE requires component names to be unique within an
+// actor, so two children of one parent differ by component and two children of different parents
+// differ by the parent's identity. The residual case that returns "" is an actor which is itself
+// top-level, runtime-created and keyless -- a crematorium door is one -- and naming that needs the
+// element and eid layer instead.
 std::wstring PortableIdentity(void* actor);
 
-// The wire form: "mv_" + 16 lowercase hex of FNV-1a-64 over the readable identity.
-// 19 characters, so it fits the 31-char WireKey with room to spare, and it is derived
-// by pure computation -- two peers with the same world produce the same token without
-// exchanging anything. "" when the actor has no portable identity.
+// The wire form: "mv_" + 16 lowercase hex of FNV-1a-64 over the readable identity. 19 characters,
+// so it fits the 31-char WireKey with room to spare, and it is derived by pure computation: two
+// peers with the same world produce the same token without exchanging anything. "" when the actor
+// has no portable identity. Game thread, like PortableIdentity, whose `ParentActorOf` resolves a
+// weak pointer against GUObjectArray and so needs the engine held still.
 //
-// The prefix is deliberate and diagnosable: a `mv_` key in a log is OURS, an `rk_`/`cs_`
-// key is prop_synth_key's, and anything else is the game's. NOTE the contrast with
-// prop_synth_key's `rk_`, which is RANDOM on purpose because it PERSISTS into the save;
-// ours is DETERMINISTIC on purpose because it must be identical on two machines and is
-// never written into the game at all.
+// The prefix is deliberate and diagnosable: a `mv_` key in a log is OURS, an `rk_` or `cs_` key is
+// prop_synth_key's, and anything else is the game's. Note the contrast with prop_synth_key's `rk_`,
+// which is RANDOM on purpose because it PERSISTS into the save; ours is DETERMINISTIC on purpose
+// because it must be identical on two machines and is never written into the game at all.
 std::wstring PortableWireKey(void* actor);
 
 // The hash, exposed for a caller that already holds the readable form.
