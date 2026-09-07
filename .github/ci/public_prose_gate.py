@@ -80,6 +80,11 @@ DOC_SECTIONED = re.compile(r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"
                            r"\s+(?:section\b|par\.|paragraph\b|Tier-|S\d)")
 # A document with no name at all, which no lookup can resolve for the reader either.
 DOC_UNNAMED = re.compile(r"\bdesign doc\b", re.I)
+# A citation of a LINE of one of our own sources. This one is judged by resolution rather than by
+# shape, because the shape is identical whether it works or not: `session_streams.cpp :198` is a
+# pointer a reader can follow and `pe_detour.cpp:645` is not, in a file of 601 lines. Counted only
+# when the file is untracked or the line is past its end.
+SRC_LINE_CITE = re.compile(r"\b([A-Za-z0-9_]+\.(?:cpp|h|inc))\s*:(\d{1,5})")
 LONG_COMMENT_BLOCK = 15
 # A struct offset pinned in prose. The offset CONTEXT is required, not merely a hex literal: the
 # tree is full of correct hex that is not an offset -- bytecode opcodes (0x45), sentinels (0xFF),
@@ -166,11 +171,15 @@ SRC_EXTRA = collections.OrderedDict([
     # `the pre-cut :869 gate`, `the pre-extraction :404 correlation`. A version marker has to open
     # it, because the bare ` :NNN` notation is also how a port is written -- `a deliberate :7777`,
     # `never the default :80/:443` are correct prose and a sweep obeying a detector that flagged
-    # them would delete the reason a migration exists.
+    # them would delete the reason a migration exists. A MARKED port -- "the old :80 default" --
+    # would still be flagged, since a marker plus a bare number is one shape whether the number is
+    # a line or a port; there is none in this tree, and the answer if one appears is to write the
+    # port without the marker. The `<file>.ext:NNN` form needs no such heuristic, because it is
+    # judged by whether it RESOLVES.
     ("doc_row", (re.compile(r"\brows?\s+[\w./-]*:\d+"
                             r"|\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"
                             r"\s+(?:[\w'-]+\s+)?:\d{2,5}"),
-                 "comment lines citing a row of a document outside the tree")),
+                 "comment lines citing a row, or a line, a reader cannot open")),
 ])
 
 
@@ -231,13 +240,71 @@ def code_only(text):
     return "\n".join(out)
 
 
-def doc_index(tracked_set):
-    """-> the set a document citation resolves against: every tracked path AND every tracked
-    basename, because a comment names a doc by its filename as often as by its path."""
-    return set(tracked_set) | {t.rsplit("/", 1)[-1] for t in tracked_set}
+def measured_md(path):
+    return path.endswith(".md") and os.path.basename(path) not in MD_EXEMPT
 
 
-def src_comment_faults(line, doc_set, read_offsets, owns_offsets):
+def measured_src(path):
+    return path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT)
+
+
+def measured_other(path):
+    return (not path.endswith(".md") and path.endswith(OTHER_EXT)
+            and not path.startswith(SRC_ROOTS) and not path.startswith(OTHER_SKIP)
+            and not path.startswith(OTHER_MARKER_OWNERS)
+            and not any(x in os.path.basename(path) for x in OTHER_EXEMPT))
+
+
+def measured(path):
+    """One definition of what this gate reads, used by `measure` AND by the unstaged guard.
+
+    They were two definitions once: the guard diffed `SRC_ROOTS` and `*.md` only, so every file
+    R-P8 brought in -- the build files, the workflows, the ignore rules, the scripts -- could be
+    modified-but-unstaged while a baseline was written from their contents. That is the incident
+    R-P12 exists to prevent, and it was open for a whole counter family."""
+    return measured_md(path) or measured_src(path) or measured_other(path)
+
+
+class DocIndex:
+    """What a citation resolves against: tracked paths, tracked basenames, and how long each
+    source is, since a line citation past a file's end resolves no better than an absent file."""
+
+    def __init__(self, repo, tracked):
+        self.names = set(tracked) | {t.rsplit("/", 1)[-1] for t in tracked}
+        self.lengths = {}
+        for t in tracked:
+            if not t.endswith(SRC_EXT):
+                continue
+            text = read(repo, t)
+            if text is not None:
+                base = t.rsplit("/", 1)[-1]
+                self.lengths[base] = max(self.lengths.get(base, 0), text.count("\n") + 1)
+
+    def resolves(self, ref):
+        return ref in self.names or ref.rsplit("/", 1)[-1] in self.names
+
+    def line_resolves(self, name, first):
+        """A `<file>:NNN` citation resolves when the tree carries that file AND it is that long.
+        Both halves matter: 13 of the tree's citations name a file that is gone, and 4 more name
+        a line a shortened file no longer has."""
+        if name not in self.lengths:
+            return False
+        return first <= self.lengths[name]
+
+
+def doc_faults(line, docs):
+    """True when one line cites a document a reader cannot open, in any of its four spellings.
+
+    One implementation, so the same habit is counted the same wherever it sits -- our C++
+    comments, a build file's comment, a workflow's. It was the source counter's alone once, and
+    33 lines in ten tracked scripts and workflows named an absent document with nothing reading
+    them, two of those in a `print()` a contributor sees at runtime."""
+    cited = (DOC_PATH.findall(line) + DOC_BARE.findall(line)
+             + [m + ".md" for m in DOC_SECTIONED.findall(line)])
+    return any(not docs.resolves(m) for m in cited) or bool(DOC_UNNAMED.search(line))
+
+
+def src_comment_faults(line, docs, read_offsets, owns_offsets):
     """-> the counter key for every rule one line of source COMMENT breaks.
 
     One implementation, called by the counting pass and by the line explainer, for the same reason
@@ -245,14 +312,13 @@ def src_comment_faults(line, doc_set, read_offsets, owns_offsets):
     A key the caller does not count is still returned here -- `measure` filters, so retiring a
     counter cannot leave the explainer naming lines for a number nobody prints.
 
-    `doc_set` is `doc_index`'s union, not the bare tracked set: the doc rules resolve by basename."""
+    `docs` is the DocIndex: the doc rules resolve by basename, and a line citation by length."""
     faults = ["src.comment_" + k for k, (rx, _) in
               list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if rx.search(line)]
-    cited = (DOC_PATH.findall(line) + DOC_BARE.findall(line)
-             + [m + ".md" for m in DOC_SECTIONED.findall(line)])
-    if any(m not in doc_set and m.rsplit("/", 1)[-1] not in doc_set for m in cited) \
-            or DOC_UNNAMED.search(line):
+    if doc_faults(line, docs):
         faults.append("src.comment_dead_docpath")
+    if any(not docs.line_resolves(n, int(k)) for n, k in SRC_LINE_CITE.findall(line)):
+        faults.append("src.comment_doc_row")
     if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
         faults.append("src.comment_pinned_offset")
     return faults
@@ -366,11 +432,11 @@ def measure(repo):
     `--lines` can name them without a second implementation of the analysis that found them."""
     files, subs = tracked(repo)
     tracked_set = set(files)
-    docs_set = doc_index(tracked_set)
+    docs = DocIndex(repo, files)
     c = collections.OrderedDict()
     who = collections.defaultdict(collections.Counter)
     detail = collections.defaultdict(lambda: collections.defaultdict(list))
-    md = [p for p in files if p.endswith(".md") and os.path.basename(p) not in MD_EXEMPT]
+    md = [p for p in files if measured_md(p)]
     c["md.files"] = len(md)
     c["md.lines"] = 0
     c["md.over_%d" % MD_HARD_CAP] = 0
@@ -408,14 +474,11 @@ def measure(repo):
     # the ignore file alone carried 31 dated lines, a user quote and a paragraph that counted the
     # open rows in an unpublished security register. Whole lines are measured, not just comments:
     # in a config file the distinction does not hold, and a marker anywhere in one is the problem.
-    other = [p for p in files
-             if not p.endswith(".md") and p.endswith(OTHER_EXT)
-             and not p.startswith(SRC_ROOTS) and not p.startswith(OTHER_SKIP)
-             and not p.startswith(OTHER_MARKER_OWNERS)
-             and not any(x in os.path.basename(p) for x in OTHER_EXEMPT)]
+    other = [p for p in files if measured_other(p)]
     c["other.files"] = len(other)
     for k in LINE_MARKERS:
         c["other." + k] = 0
+    c["other.dead_docpath"] = 0
     for p in other:
         text = read(repo, p)
         if text is None:
@@ -429,7 +492,10 @@ def measure(repo):
                 if rx.search(line):
                     c["other." + k] += 1
                     who["other." + k][p] += 1
-    src = [p for p in files if p.startswith(SRC_ROOTS) and p.endswith(SRC_EXT)]
+            if doc_faults(line, docs):
+                c["other.dead_docpath"] += 1
+                who["other.dead_docpath"][p] += 1
+    src = [p for p in files if measured_src(p)]
     c["src.comment_lines"] = 0
     code_total = 0
     for k in list(LINE_MARKERS) + list(SRC_EXTRA):
@@ -467,7 +533,7 @@ def measure(repo):
             who["src.files_half_comment"][p] = len(comments)
         owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
-            for k in src_comment_faults(line, docs_set, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
                 if k in c:
                     c[k] += 1
                     who[k][p] += 1
@@ -549,6 +615,7 @@ FIXED_DESCRIPTIONS = {
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
     "src.comment_dead_docpath": "comment lines naming a document that is not in the repository",
+    "other.dead_docpath": "lines naming a document that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
     "src.files": "tracked sources in the mod's own C++",
@@ -574,13 +641,13 @@ def explain(repo, path, tracked_set, subs=()):
         bare = code_only(text)
         read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
         owns_offsets = any(o in os.path.basename(path) for o in OFFSET_OWNERS)
-        docs_set = doc_index(tracked_set)
+        docs = DocIndex(repo, sorted(tracked_set))
         comments, _code, long_blocks, tails = comment_lines(text)
         for start in long_blocks:
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
         for no, line in comments + tails:
-            for k in src_comment_faults(line, docs_set, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
                 out.append((no, k, line))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False
@@ -598,6 +665,8 @@ def explain(repo, path, tracked_set, subs=()):
         for k, (rx, _) in LINE_MARKERS.items():
             if rx.search(line):
                 out.append((no, prefix + k, line))
+        if prefix == "other." and doc_faults(line, DocIndex(repo, sorted(tracked_set))):
+            out.append((no, "other.dead_docpath", line))
         if prefix == "md.":
             for k in md_link_faults(line, base, tracked_set, subs):
                 out.append((no, k, line))
@@ -623,8 +692,8 @@ def unstaged_measured(repo):
     baseline lands one commit before the change that made it true, and every commit in between
     fails a gate that has not regressed. So a write refuses while a measured file is unstaged.
     """
-    out = git(["diff", "--name-only", "--"] + list(SRC_ROOTS) + ["*.md"], repo)
-    return [p for p in out.split("\n") if p.strip()]
+    out = git(["diff", "--name-only"], repo)
+    return [p for p in out.split("\n") if p.strip() and measured(p)]
 
 
 def unstaged_message(dirty):

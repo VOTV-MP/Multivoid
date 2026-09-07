@@ -104,6 +104,9 @@ int r2() { return 0; } // plural too, as census rows a_file:192/:196
 // PRECISION: a row that is a MIRROR -> a 1:1, rows 1 and 2, and a ratio of 3:4 are all prose
 // a line of a file version that no longer exists, as x.cpp's old :436-783 block is
 // PRECISION: a deliberate :7777 and the default :80/:443 are ports, not a line of anything
+// a citation of a line a file no longer has, as x.cpp:9000 is in a file this short
+// a citation of a file the tree does not carry at all, as gone.cpp:12 is
+// PRECISION: x.cpp:1 resolves -- the file is here and it is that long, so it is not debt
 // one document spelling per line, so dropping any one of them turns this drill red
 // COOP_EVENT_JOIN.md names a document with no directory in front of it and none in the tree
 // DEATH_ARC section 3.1 is the same name with the extension dropped and a locator in its place
@@ -116,6 +119,9 @@ int r2() { return 0; } // plural too, as census rows a_file:192/:196
 # The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
 # are measured here, except in an ignore file where only the # comments are. One marker per line.
 OTHER_PY = """# a script
+# see NOWHERE.md, a document this tree does not carry
+# the design doc says so, which names one that cannot even be looked up
+# PRECISION: docs/a.md and a bare TRACKED.md both resolve and are not debt
 # dated 2026-09-05
 # the USER asked for it
 # said verbatim
@@ -241,8 +247,29 @@ MUTANTS = [
     # A citation resolves by BASENAME: `COOP_EVENT_JOIN.md` and `docs/COOP_EVENT_JOIN.md` name the
     # same file. Resolving by path alone flags every doc a comment names without its directory.
     ("dead_docpath: resolves by path only",
-     "    return set(tracked_set) | {t.rsplit(\"/\", 1)[-1] for t in tracked_set}",
-     "    return set(tracked_set)"),
+     "        self.names = set(tracked) | {t.rsplit(\"/\", 1)[-1] for t in tracked}",
+     "        self.names = set(tracked)"),
+    # The rotted line citation. It is judged by RESOLUTION, not by shape, so both halves of the
+    # judgement need an arm: a file the tree does not carry, and a line past the end of one it
+    # does. Accepting either would call a pointer live that leads nowhere.
+    ("doc_row: an absent file resolves",
+     "        if name not in self.lengths:\n            return False",
+     "        if name not in self.lengths:\n            return True"),
+    ("doc_row: any line number resolves",
+     "        return first <= self.lengths[name]", "        return True"),
+    ("doc_row: line citations unread",
+     'SRC_LINE_CITE = re.compile(r"\\b([A-Za-z0-9_]+\\.(?:cpp|h|inc))\\s*:(\\d{1,5})")',
+     'SRC_LINE_CITE = re.compile(r"ZZZZNOMATCH()()")'),
+    # The dead-document predicate in the other.* family: it ran only over our C++ once, while 33
+    # lines in ten tracked scripts and workflows named an absent doc with nothing reading them.
+    ("other: dead documents unread",
+     "            if doc_faults(line, docs):\n                c[\"other.dead_docpath\"] += 1",
+     "            if False:\n                c[\"other.dead_docpath\"] += 1"),
+    # The unstaged guard. It had no arm at all, and diffed two of the three measured families, so
+    # a baseline could be written from an unstaged build file -- the very incident R-P12 names.
+    ("guard: reads only part of what is measured",
+     '    return [p for p in out.split("\\n") if p.strip() and measured(p)]',
+     '    return [p for p in out.split("\\n") if p.strip() and measured_src(p)]'),
     ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
     ("label: build tag from one digit", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r"|v\\d+"'),
     # Both notations of the memory pointer. Reading only the path form is what the gate did while
@@ -332,9 +359,10 @@ def main():
               "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
               "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
+              "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 65, "src.files": 5, "src.files_not_swept": 3,
-              "src.comment_doc_row": 4,
+              "src.comment_lines": 68, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_doc_row": 6,
               "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
@@ -447,6 +475,19 @@ def main():
     # --init over an existing baseline is refused without --force
     r = run(["--repo", repo, "--baseline", baseline, "--init"])
     arm("--init over an existing baseline is refused", r.returncode == 1 and "--force" in r.stdout)
+    # A baseline describes a COMMIT, so a write refuses while ANY measured file is unstaged --
+    # one arm per family, because the guard once read two of the three and a build file could be
+    # modified-but-unstaged under a baseline written from its contents.
+    for rel, family in (("src/votv-coop/src/x.cpp", "src"),
+                        ("docs/a.md", "md"),
+                        ("tools/x.py", "other")):
+        with open(os.path.join(repo, *rel.split("/")), "a", encoding="utf-8") as f:
+            f.write("\n" if family == "md" else "\n// probe\n" if family == "src" else "\n# probe\n")
+        r = run(["--repo", repo, "--baseline", baseline, "--update"])
+        arm("an unstaged {} file refuses a baseline write".format(family),
+            r.returncode == 1 and "modified but not staged" in r.stdout and rel in r.stdout,
+            r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
+        git(["checkout", "--", rel], repo, env)
     # a 601-line doc crosses the cap; a 600-line one does not (counted above)
     with open(os.path.join(repo, "docs", "six.md"), "a", encoding="utf-8") as f:
         f.write("one more\n")
