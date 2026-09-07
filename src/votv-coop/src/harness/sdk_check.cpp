@@ -266,8 +266,6 @@ const FunctionCheck kFunctions[] = {
     {P::name::MainPlayerClass,          P::name::MainPlayerGrabFinishedFn,   Severity::Important, "grab Timeline end observer"},
 };
 
-// ---- NPC class allowlist -------------------------------------------------
-
 // ---- Asset catalog ------------------------------------------------------
 const AssetCheck kAssets[] = {
     {P::name::Widget3DTranslucentMatName,         P::name::MaterialInstanceConstantClass, Severity::Important, "nameplate transparent material (2-sided)"},
@@ -335,8 +333,8 @@ void RunFunctionChecks(int& ok, int& fail, int& failPriority, int& skipped) {
 }
 
 void RunNpcAllowlistCheck(int& ok, int& fail, int& failPriority) {
-    UE_LOGI("sdk-check: --- Phase 5N1 NPC ALLOWLIST (12 classes) ---");
-    g_report << "--- Phase 5N1 NPC ALLOWLIST (12 classes) ---\n";
+    UE_LOGI("sdk-check: --- NPC ALLOWLIST (%zu classes) ---", P::name::kNpcAllowlistSize);
+    g_report << "--- NPC ALLOWLIST (" << P::name::kNpcAllowlistSize << " classes) ---\n";
     constexpr Severity kNpcSev = Severity::Important;
     int npcOk = 0;
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
