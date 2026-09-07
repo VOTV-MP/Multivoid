@@ -29,18 +29,19 @@ namespace coop::weather_sync {
 // host observer can SendReliable; nullptr disables broadcasting.
 void Install(coop::net::Session* session);
 
-// Per-slot connect-edge sender. Snapshots the LOCAL cycle's current state and queues a forced
-// broadcast, so a newly joined client sees the state it arrives into -- mid-storm, say --
-// instead of waiting for the next scheduler fire.
+// Per-slot connect-edge sender, HOST ONLY (a no-op on a client). Snapshots the LOCAL cycle and
+// sends it to that ONE slot at once -- SendReliableToSlot, no queue and no retry -- so a joiner
+// arriving mid-storm sees the current state instead of waiting for the next scheduler fire. Per
+// slot rather than an aggregate broadcast on the first connect, which would skip every later
+// joiner.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick worker. Drains the pending broadcast queue (retries SendReliable
-// each tick until the reliable channel accepts). Cheap when no pending
-// state. Game thread only.
+// Per-tick worker. Drains the deferred APPLY -- a receive-side state defer, held until the local
+// cycle is live, not a channel retry. Cheap when nothing is pending. Game thread only.
 void TickConnect();
 
-// Disconnect hook: clears pending broadcast + dedup state. The stashed
-// payload belonged to the dead session.
+// Disconnect hook: clears the deferred apply and the dedup state. The stashed payload belonged to
+// the dead session.
 void OnDisconnect();
 
 // Receiver-side apply: the host reported a weather state change. Applied through the mutator

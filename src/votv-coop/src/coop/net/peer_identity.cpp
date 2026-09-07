@@ -227,7 +227,7 @@ bool InstallInto(ISteamNetworkingSockets* sockets) {
     // UNSIGNED cert cannot work: `CertStore_CheckCert` returns at its first line for a cert with
     // no CA signature (`steamnetworkingsockets_certstore.cpp:603`, "No signature") and never
     // reaches `outMsgCert.ParseFromString`, so `InternalSetCertificate` reads an EMPTY message and
-    // rejects it with "Cert has invalid public key" (`csteamnetworkingsockets.cpp:748-752`).
+    // rejects it with "Cert has invalid public key" (`csteamnetworkingsockets.cpp:752-755`).
     // Signing it would need a trusted CA key in the store, which is the whole apparatus this
     // design removes.
     //

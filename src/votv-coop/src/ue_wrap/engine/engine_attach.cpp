@@ -2,9 +2,10 @@
 // wrapper; no network or gameplay state).
 //
 // These operate on an actor's ROOT primitive component via K2_GetRootComponent, NEVER the
-// Aprop_C-specific StaticMesh, so they work on the non-Aprop_C trash clump as well --
-// `ue_wrap::prop::GetStaticMesh` returns null for it, and reaching through that null was a
-// use-after-free. The held-clump mirror (coop::remote_prop) uses these to go kinematic while
+// Aprop_C-specific StaticMesh, so they work on the non-Aprop_C trash clump as well.
+// `ue_wrap::prop::GetStaticMesh` returns null for that lineage on purpose -- the mesh offset is a
+// stray byte there, and running physics on what it reads was a use-after-free. The held-clump
+// mirror (coop::remote_prop) uses these to go kinematic while
 // held (SetSimulatePhysics false) and to re-enable physics and apply the throw velocity on
 // release: the mannequin model for the non-keyable clump.
 

@@ -122,9 +122,10 @@ whole arrival at once: the stored row, the list entry, the ding at the physical 
 tab highlight, with the date re-stamped from the synced clock.
 
 Each peer keeps a shadow of the array and diffs it once a second. The array only ever grows at
-the tail, so the diff is positional. A new row is broadcast; a removed row is broadcast as the
-row's content HASH, never its index, because a producer writes its own row before that row
-reaches anyone and two peers therefore hold the same messages in different orders.
+the tail, so the diff is positional. A new row is broadcast by the host -- see below -- and a
+removed row is broadcast by whoever deleted it, as the row's content HASH and never its index,
+because a producer writes its own row before that row reaches anyone and two peers therefore hold
+the same messages in different orders.
 
 Writing a mail is the host's alone: nothing in the game authors a mail from a player action, so a
 client that started producing them could only be a diverged simulation writing into everyone's

@@ -192,7 +192,8 @@ void DrainApplyPark() {
     while (!g_applyPark.empty()) {
         ParkedRow& front = g_applyPark.front();
         // Pace the stuck-front retry at 1 Hz REAL time. Counting per frame burned all 30 retries in
-        // ~0.4 s, so a transient AddEmail failure right after settle earned the malformed verdict.
+        // ~0.4 s, so a transient native-apply failure right after settle earned the malformed
+        // verdict (measured on the email lane, whose park this one mirrors).
         if (front.retries > 0 && now - front.lastAttempt < std::chrono::seconds(1)) break;
         const ApplyVerdict v = ApplyRowBlob(front.blob, front.senderSlot);
         if (v == ApplyVerdict::NotAppliable) {

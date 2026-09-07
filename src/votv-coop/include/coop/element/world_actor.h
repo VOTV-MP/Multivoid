@@ -3,16 +3,16 @@
 // several per-type siblings sharing one stream manager; this is that shape. The lane that owns
 // these elements, and the wire they ride, is `coop::world_actor_sync`.
 //
-// It mirrors the roughly fourteen NON-Character event actors -- gray saucers, the Rozital
-// mothership, ariral ships, the sky UFO, the space jellyfish, the firetank -- that the
-// Character-only NPC mirror cannot replicate. `npc_pose_drive` drives position, YAW-ONLY rotation
-// and DriveCharacterMovement, all ACharacter-only, so a raw AActor would lose pitch and roll AND
-// the Character parking would misread the non-Character layout. WorldActor is therefore its own
-// element: position plus FULL rotation, no movement component, no kerfur, no save persistence.
-//
-// The HOST WorldActor never interpolates: it READS the live actor. On a client the interp TIMING is
-// the shared coop::LerpWindow that RemotePlayer and Npc own too, and this class applies its dAlpha
-// to its own position and its three angle errors.
+// It mirrors the 18 allowlisted NON-Character actors that the Character-only NPC mirror cannot
+// replicate: the event bodies (gray saucers, the Rozital mothership, ariral ships, the sky UFO,
+// the space jellyfish, the firetank) plus the sell-gun coin and the sandbox sub-pawn.
+// `npc_pose_drive` drives position, YAW-ONLY rotation and DriveCharacterMovement -- the last
+// ACharacter-only -- so a raw AActor would lose pitch and roll AND the Character parking would
+// misread the non-Character layout. WorldActor is therefore its own element: position plus FULL
+// rotation, no movement component, no kerfur, no save persistence. The HOST WorldActor never
+// interpolates, since it READS the live actor; on a client the interp TIMING is the shared
+// coop::LerpWindow that RemotePlayer and Npc own too, and this class applies its dAlpha to its own
+// position and its three angle errors.
 
 #pragma once
 

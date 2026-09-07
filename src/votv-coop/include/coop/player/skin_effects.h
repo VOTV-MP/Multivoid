@@ -61,9 +61,10 @@ float DefaultStepVolume(void* bodyActor, float fallback);
 // The FX mirror the variant's own step routing. A REPLACE variant (mynet) calls lib_C::step with
 // volume 0, which mutes the default surface footstep, and plays its own sound instead -- boltrix at
 // the actor location, volume 1, att_default -- plus the eff_mynetEmitterStep burst. An ADDITIVE
-// variant (keljoy) overrides no step at all: the base class's stepped() runs, layering
-// footstepSound over the audible default at volume/4 and pitch volume/2 + 1, where volume is
-// clamp(MaxWalkSpeed / 400, 0.5, 2) as lib_C::step scales it.
+// variant (keljoy) declares no step of its own, so the base class's stepped() runs and this layers
+// footstepSound over the audible default with the same math: scaled = clamp(MaxWalkSpeed / 400,
+// 0.5, 2) * the volume our puppet feeds the library step, attached at scaled/4 volume and
+// scaled/2 + 1 pitch.
 void OnStep(void* bodyActor, const ue_wrap::FVector& pos);
 
 // Own-body variant WITH the stride gate built in: the LOCAL player's native

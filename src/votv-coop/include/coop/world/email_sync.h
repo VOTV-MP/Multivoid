@@ -5,7 +5,8 @@
 // `saveSlot.emails`; that same reflected call on a RECEIVER reproduces everything at once --
 // persistence append, list row, the ding at the physical laptop, tab highlight -- and re-stamps the
 // date from the host-synced clock. The only remover, pak-wide, is the player's own
-// `ui_laptop.delEmail(Index)`, which is why the game's "You deleted" attribution stays correct.
+// `ui_laptop.delEmail(Index)`, which is why our peer-action feed line, "<nick> deleted an email",
+// can never misattribute one.
 // Appends are HOST-AUTHORED, deletes are peer-symmetric, and what a delete carries is a content
 // hash rather than an index. Game thread throughout.
 

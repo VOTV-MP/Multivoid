@@ -161,8 +161,9 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
 
 }  // namespace
 
-// takeObj-in-flight bracket (declared in prop_lifecycle_detail.h; the nested Init POST reads it,
-// and the POST observer here clears it).
+// takeObj-in-flight bracket (declared in prop_lifecycle_detail.h). The nested Init POST reads it;
+// the POST observer here clears it per dispatch, and prop_lifecycle's OnDisconnect clears it at
+// teardown.
 //
 // It is a std::atomic<bool> rather than a plain one: the PRE and POST observers and the nested Init
 // POST all run from parallel-anim worker threads, per game_thread.cpp's header, so plain-bool

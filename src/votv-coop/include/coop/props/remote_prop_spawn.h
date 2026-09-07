@@ -5,8 +5,8 @@
 // coop/remote_prop_spawn.h -- the wire-driven PropSpawn receiver: the OnSpawn pipeline that
 // materializes a wire-received Prop on the receiving side. It validates the payload, then tries an
 // EXACT-KEY dedup, then a FUZZY-POSITION one (a same-class actor within 30 cm, rekeyed through
-// Aprop_C.setKey), and only then a fresh spawn; either way it ends by registering the actor as a
-// Prop mirror at the sender's eid. A dedup hit converges the transform and restores collision for
+// Aprop_C.setKey), and only then a fresh spawn; it ends by registering the actor as a Prop mirror
+// at the sender's eid, unless `skipBind` below hands that job to the caller. A dedup hit converges the transform and restores collision for
 // the classes that want it, but skips the convergence write while the actor is under active
 // PropPose drive, because the stream owns position while a prop is held.
 //

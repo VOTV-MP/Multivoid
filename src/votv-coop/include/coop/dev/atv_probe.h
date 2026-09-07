@@ -40,10 +40,10 @@ void Install();
 // it -- and an authored but STATIONARY one is not enough either, since the two peers agree to
 // 0.3 cm at rest. Only a moving rig puts the corrector under load, so the arm seats a player,
 // releases the handbrake and drives. It is the ONLY write the probe makes, it is off by default,
-// and it belongs on exactly ONE peer: two armed peers race for the same rig. Set it on the client
-// rather than the host, since the seat verb refuses a player whose hands are full. The seat verb,
-// its three gates and the five terms that decide whether the throttle produces torque are in
-// coop/dev/atv_probe.cpp.
+// and it belongs on exactly ONE peer: two armed peers race for the same rig. Either peer may
+// take it; prefer the client, because the seat verb refuses a full-handed player and the host's
+// test save starts him holding a prop_coingun_C. That verb, its three gates and the five terms
+// deciding whether the throttle produces torque are in coop/dev/atv_probe.cpp.
 void Tick(coop::net::Session& session, bool isHost);
 
 }  // namespace coop::dev::atv_probe

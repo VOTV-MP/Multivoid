@@ -14,10 +14,12 @@
 
 namespace ue_wrap::device_screen {
 
-// Resolve the mainPlayer interface offsets + the 7 enterable widget classes + the 8 device actor
-// classes + setActiveInterface. Operational once the player offsets and AT LEAST the player class
-// resolve; widget and device classes keep resolving lazily, since several only load with their
-// sublevel. Idempotent; game thread.
+// Resolve the mainPlayer interface offsets and setActiveInterface, and latch once they are in.
+// The 7 widget and 8 device CLASSES are deliberately not resolved here: each fills from a live
+// instance's ClassOf at the interaction edge, which is walk-free and safe for a device bought
+// late, since you cannot aim at or enter one that does not exist. Polling for them instead
+// name-walked the whole object array every two seconds forever for anything unbought.
+// Idempotent; game thread.
 //
 // The enterable census is CLOSED at 8 device assets. Five of them show ONE SHARED widget instance
 // each -- the desk-coords atlas, the SAT console, the radar, the reactor, and the gamemode.laptop
