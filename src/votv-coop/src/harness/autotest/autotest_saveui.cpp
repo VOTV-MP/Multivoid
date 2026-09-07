@@ -1,13 +1,11 @@
-// harness/autotest_saveui.cpp -- autonomous tests for the save-safety UI/UX.
+// harness/autotest_saveui.cpp -- autonomous tests for the save-safety UI.
 //
-// Extracted from harness/autotest.cpp (2026-05-30, soft-cap discipline): the two
-// PR-FOUNDATION-2 save tests pushed autotest.cpp past 800 LOC. They form a cohesive
-// pair (the host-only-persistence client guarantees) so they get their own file.
-//   - RunAutonomousSaveBlockTest  (Inc B part 1): drives saveSlot.saveToSlot so the
-//     native SaveGameToSlot BLOCK is observable without an autosave/menu trigger.
-//   - RunAutonomousSaveBtnDisableTest (Inc B part 2): drives mainPlayer_C::InpActEvt_Escape
-//     so the pause-menu Save-button grey-out is observable without a real ESC press.
-// Both client-only; both verify in-log (the modules log the read-back).
+// The pair belongs together: both are the client-side half of host-only persistence, and both are
+// client-only and verify from the log the module itself writes.
+//   - RunAutonomousSaveBlockTest drives saveSlot.saveToSlot, so the native SaveGameToSlot block is
+//     observable without waiting for an autosave or a menu trigger.
+//   - RunAutonomousSaveBtnDisableTest drives mainPlayer_C::InpActEvt_Escape, so the pause-menu
+//     Save-button grey-out is observable without a real ESC press.
 
 #include "harness/autotest.h"
 
@@ -38,21 +36,20 @@ std::string ReadEnv(const char* name) {
 
 }  // namespace
 
-// ---- PR-FOUNDATION-2 (B part 1) autonomous client save-block test ---------
+// ---- the autonomous client save-block test ---------------------------------
 //
-// CLIENT-ONLY. Proves the SaveGameToSlot native hook (coop/save_block.cpp) actually
-// CANCELS a world save on the client -- not merely that it installed. Within a short smoke
-// neither autosave (timer, minutes) nor a menu save (needs input) fires, so we drive the
-// exact write path by reflection: resolve the live saveSlot_C world-save object and call
-// its saveToSlot UFunction directly (the BP funnel closest to the hook, no gamemode-level
-// gates in the way). saveToSlot's body invokes UGameplayStatics::SaveGameToSlot -- our hook
-// target -- once per slot/subsave; on the client the detour returns false WITHOUT calling
-// the trampoline, so nothing reaches disk.
+// CLIENT-ONLY. Proves the SaveGameToSlot native hook (coop/save/save_block.cpp) actually CANCELS a
+// world save on the client, not merely that it installed. Over a short run neither the autosave
+// timer nor a menu save fires, so the exact write path is driven by reflection: resolve the live
+// saveSlot_C world-save object and call its saveToSlot UFunction directly -- the blueprint funnel
+// closest to the hook, with no gamemode-level gate in the way. saveToSlot's body invokes
+// UGameplayStatics::SaveGameToSlot, our hook target, once per slot and subsave; on the client the
+// detour returns false WITHOUT calling the trampoline, so nothing reaches disk.
 //
-// Verification (client log): a `saveblock_test: invoking ...` line immediately followed by
-// `save_block: BLOCKED client world-save ...`. The host neither runs this routine nor
-// installs the hook, so its log shows no save_block line at all -- its save path is
-// byte-for-byte untouched. Gated by env VOTVCOOP_RUN_SAVEBLOCK_TEST="1".
+// The client log shows `saveblock_test: invoking ...` immediately followed by `save_block: BLOCKED
+// client world-save ...`. The host neither runs this routine nor installs the hook, so its log
+// carries no save_block line at all and its save path is byte-for-byte untouched. Gated by
+// VOTVCOOP_RUN_SAVEBLOCK_TEST="1".
 void RunAutonomousSaveBlockTest() {
     const bool isHost = !IsClientRole();
     if (isHost) {
@@ -110,21 +107,20 @@ DWORD WINAPI SaveBlockTestThread(LPVOID /*arg*/) {
     return 0;
 }
 
-// ---- PR-FOUNDATION-2 (B part 2) autonomous Save-button grey-out test ------
+// ---- the autonomous Save-button grey-out test ------------------------------
 //
-// CLIENT-ONLY. Proves coop/save_button_disable.cpp's InpActEvt_Escape POST observer
-// actually DISABLES the pause-menu Save button -- not merely that it installed. The pause
-// menu is input-driven (a real ESC press is impossible autonomously), so we drive the
-// hooked input event by reflection: find the live GameInstance-owned ui_menu_C, force its
-// isPause flag true (so the observer treats it as the pause menu without a real
-// PlayerController/SetGamePaused), then CallFunction(mainPlayer_C::InpActEvt_Escape) --
-// which routes through ProcessEvent and fires OnEscapePost exactly as a real ESC does. The
-// module logs the read-back (GetIsEnabled now=0) on apply.
+// CLIENT-ONLY. Proves that the InpActEvt_Escape POST observer in coop/save/save_button_disable.cpp
+// actually DISABLES the pause-menu Save button, not merely that it installed. The pause menu is
+// input-driven and a real ESC press cannot be produced autonomously, so the hooked input event is
+// driven by reflection: find the live GameInstance-owned ui_menu_C, force its isPause flag true so
+// the observer treats it as the pause menu without a real PlayerController or SetGamePaused, then
+// CallFunction(mainPlayer_C::InpActEvt_Escape), which routes through ProcessEvent and fires
+// OnEscapePost exactly as a real ESC does. The module logs its read-back on apply.
 //
-// Verification (client log): `save_button_disable: ... INSTALLED` then, after this drives
-// the event, `save_button_disable: greyed button_Save ... GetIsEnabled now=0`. The VISUAL
-// grey + that the ESC menu still OPENS need one human glance (hands-on play).
-// Gated by env VOTVCOOP_RUN_SAVEBTN_TEST="1".
+// The client log shows `save_button_disable: ... INSTALLED` and then, once this drives the event,
+// `save_button_disable: greyed button_Save ... GetIsEnabled now=0`. That the button is visibly grey
+// and that the ESC menu still OPENS are the two things only a person can see. Gated by
+// VOTVCOOP_RUN_SAVEBTN_TEST="1".
 void RunAutonomousSaveBtnDisableTest() {
     if (IsClientRole()) {
         UE_LOGI("savebtn_test: starting on client (waiting 18 s: connect + possession + "
