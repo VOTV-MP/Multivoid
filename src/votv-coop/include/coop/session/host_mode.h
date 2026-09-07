@@ -1,37 +1,17 @@
-// coop/session/host_mode.h -- HOW a hosted session is reachable. Two answers, because
-// measurement showed there were never three.
+// coop/session/host_mode.h -- HOW a hosted session is reachable. Two answers, Direct and Brokered,
+// because there were never three: they differ only in who introduces the peers, and the enum below
+// says how each of them does it.
 //
-// WHAT THIS REPLACED, and why it is smaller. Hosting used to be three booleans --
-// `directConnection`, `hideFromBrowser`, `lanOnly` -- and three UI rows labelled AUTO /
-// DIRECT / LAN ONLY. That presentation says the three are three TRANSPORTS. Measured
-// 2026-09-01, they are not:
-//
-//   `[V]` DIRECT and LAN ONLY called the SAME `Session::StartLanDirect`, did the same
-//   `addr.Clear()`, and bound the same socket. Live reading of the host's own endpoints:
-//   `:::47621` -- the any-address, every interface, dual-stack (which is why an IPv4 peer
-//   dialling 127.0.0.1 reaches it in every LAN run we do). There was NO bind difference
-//   between them, and neither was ever loopback-only.
-//
-// So "LAN ONLY" was two things, neither of them a transport: an ACCEPT FILTER that refused
-// remotes outside loopback / RFC1918 / link-local / ULA, and never announcing to the
-// master. The second is the `listed` axis, which already exists as its own control. The
-// first is DELETED, and the reason is the user's (2026-09-01):
-//
-//   "our job is to open session, what they want to restrict is their job on the router".
-//
-// That is right, and the sharpest form of it is physical: IF THE PORT IS NOT FORWARDED,
-// LOCAL-ONLY IS WHAT YOU ALREADY HAVE -- NAT does it, for free, with no help from us. The
-// filter could therefore only ever act on a host who had DELIBERATELY forwarded a port and
-// then asked us to refuse the reachability they had just arranged. Its stated purpose ("a
-// forwarded port cannot quietly turn a LAN party into an internet host") describes someone
-// who forwarded a port for something else and forgot -- and the honest control for that is
-// the lobby password and the admission challenge, both of which apply to every lane. A
-// filter that sits in front of them adds no boundary; it only adds a third name for a thing
-// that was never a third thing.
+// Whether the session is ANNOUNCED to the master is a SEPARATE axis, `listed`, with its own field.
+// There is deliberately no third mode and no accept filter that refuses remote addresses: a port
+// that is not forwarded is already local-only, for free, so such a filter could only act on a host
+// who had forwarded a port and then asked us to refuse the reachability they had just arranged. Who
+// may actually join is the lobby password and the admission challenge, and those apply to every
+// lane.
 //
 // THE INDEPENDENCE PROPERTY, which is the point of the Direct family: a Direct host with
-// `listed == false` makes ZERO master calls -- no announce, no heartbeat, no signaling.
-// `Brokered` cannot make that promise, because the master is a relay game's only rendezvous.
+// `listed == false` makes ZERO master calls -- no announce, no heartbeat, no signaling. `Brokered`
+// cannot promise that, because the master is a relay game's only rendezvous.
 
 #pragma once
 
