@@ -46,17 +46,14 @@ char g_newName[64] = "";
 std::string g_hostName = "My VOTV Server";
 bool g_hostLocked = false;
 int  g_hostMax = 4;
-// Connection selector (user 2026-06-11): false = AUTO (recommended; P2P/ICE --
-// direct when the NAT allows it, relay automatically otherwise; nothing to
-// configure), true = DIRECT (LanDirect UDP listen; needs the port forwarded;
-// friends join via Direct Connect or the browser). AUTO is ALWAYS listed -- the
-// master is a relay game's only rendezvous, so a hidden AUTO game is unjoinable
-// (hide it in-game via the scoreboard once friends are in). g_hideDirect is the
-// DIRECT-only "don't list me" toggle (friends still Direct Connect by IP).
-// 2026-09-01: TWO-state -- 0 = AUTOMATIC, 1 = DIRECT (you forward a port). It was
-// tri-state for three days; the third mode's private-address accept gate is DELETED, not
-// merely unreachable, and describing a removed control in the present tense is the class
-// the same day's audit fold hunted one file over and missed here.
+// Connection selector: 0 = AUTOMATIC (P2P/ICE -- direct when the NAT allows it,
+// relay automatically otherwise; nothing to configure), 1 = DIRECT (LanDirect UDP
+// listen; needs the port forwarded, and friends join through Direct Connect or the
+// browser). Two states, and there is no third: "LAN only" was never a transport of
+// its own. AUTOMATIC is ALWAYS listed -- the master is a relay game's only
+// rendezvous, so a hidden AUTOMATIC game is unjoinable (hide it in-game through
+// the scoreboard once friends are in). g_hideDirect is the DIRECT-only "don't list
+// me" toggle; friends can still Direct Connect by IP.
 int  g_connMode = 0;
 bool g_hideDirect = false;
 
@@ -131,12 +128,11 @@ void Open(const std::string& hostName, bool locked, int playersMax) {
     g_hostLocked = locked;
     g_hostMax = playersMax > 0 ? playersMax : 4;
     g_selected = -1;
-    // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which takes
-    // a global mutex and OPENS AND LINE-SCANS multivoid.ini -- and `Render()` is an ImGui
-    // draw, so reading it there is file I/O every frame the window is up. The first version
-    // of the port hint did exactly that (2026-09-01, caught in this session's own post-ship
-    // audit pass). The port cannot change while this window is open, so once is enough --
-    // the same contract `RefreshAsync` states on the line below.
+    // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which
+    // takes a global mutex and OPENS AND LINE-SCANS multivoid.ini -- and `Render()` is
+    // an ImGui draw, so reading it there is file I/O every frame the window is up. The
+    // port cannot change while this window is open, so once is enough -- the same
+    // contract `RefreshAsync` states on the line below.
     g_directPort = coop::config::ResolveInt(coop::config_registry::rows::net_port);
     g_open.store(true, std::memory_order_relaxed);
     sb::RefreshAsync();  // on-open scan (per the RefreshAsync contract: not per-frame)
@@ -210,8 +206,8 @@ void Render() {
         ImGui::TextUnformatted("New Game (Story):");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220.0f));
-        // Enter in the name field = the primary action (the chat-input lesson
-        // 2026-07-04: a text field with one obvious action submits on Enter).
+        // Enter in the name field = the primary action: a text field with one obvious
+        // action submits on Enter.
         const bool nameEnter = ImGui::InputTextWithHint(
             "##newname", "save name", g_newName, sizeof(g_newName),
             ImGuiInputTextFlags_EnterReturnsTrue);
@@ -221,25 +217,23 @@ void Render() {
         if (ImGui::Button("New Game & Host") || (nameEnter && canNew)) DoHostNew();
         if (!canNew) ImGui::EndDisabled();
 
-        // Connection type + visibility (user 2026-06-11; WP10 plain labels,
-        // technical depth in the hint lines). TURN is deliberately NOT a
-        // choice: it is the automatic fallback inside AUTO's ICE.
+        // Connection type + visibility. Plain labels, with the technical depth in the hint
+        // lines. TURN is deliberately NOT a choice: it is the automatic fallback inside
+        // AUTOMATIC's ICE.
         ImGui::Separator();
         ImGui::TextUnformatted("Connection:");
         ImGui::SameLine();
-        // TWO, since 2026-09-01 -- "LAN only" was never a third transport. See
+        // Two, not three -- "LAN only" was never a third transport. See
         // coop/session/host_mode.h; the fallback surface tracks the native one so a player
         // who switches between them is not offered a different set of choices.
         if (ImGui::RadioButton("AUTOMATIC (recommended)", g_connMode == 0)) g_connMode = 0;
         ImGui::SameLine();
         if (ImGui::RadioButton("DIRECT (you forward a port)", g_connMode == 1)) g_connMode = 1;
         if (g_connMode == 1) {
-            // THE PORT IS RESOLVED, NOT SPELLED. This line used to carry a literal 47621,
-            // which was right for a default install and a LIE for anyone who set net.port
-            // -- and it is the number the player is about to type into a router. It is the
-            // same defect the direct-connect box had with 7777 (coop::net::kDefaultDirectAddr),
-            // one file over and pointing the other way, so it gets the same treatment.
-            // From the ON-OPEN cache, not a live resolve: see Open().
+            // THE PORT IS RESOLVED, NOT SPELLED. A literal here would be right for a default
+            // install and a lie for anyone who set net.port -- and it is the number the player
+            // is about to type into a router. From the ON-OPEN cache, not a live resolve: see
+            // Open().
             ImGui::TextDisabled("Requires UDP port %ld forwarded to this PC. Friends join from",
                                 g_directPort);
             ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
