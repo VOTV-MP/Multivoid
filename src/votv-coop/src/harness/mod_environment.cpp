@@ -17,9 +17,9 @@ namespace {
 
 namespace fs  = std::filesystem;
 
-// UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. The newer
-// shimloader lane has no mods.txt at all -- that is the CONFIGURATION THAT WAS
-// MEASURED AT 120 fps, so its absence is the good case, never an error.
+// UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. The newer shimloader build has
+// no mods.txt at all, and that is the faster configuration, so its absence is the good case and
+// never an error.
 std::vector<std::string> EnabledLuaMods(const std::wstring& exeDir) {
     std::vector<std::string> out;
     const std::wstring path = exeDir + L"\\Mods\\mods.txt";
@@ -154,21 +154,21 @@ void Run() {
             lua.empty()  ? "none" : Join(lua).c_str(),
             paks.empty() ? "none" : Join(paks).c_str());
 
-    // NO PLAYER-FACING NOTICE: the census logs and tells the player nothing, for two
-    // independent reasons.
+    // NO PLAYER-FACING NOTICE: the census logs and tells the player nothing, for two independent
+    // reasons.
     //
-    // There is no supported claim to make. The advice this once carried said the
-    // foreign set costs frames; the same six Lua mods and the same DebugMod.pak cost
-    // nothing detectable on one r2modman install (~120 fps) and about 45 fps on the dev
-    // rig. Those rigs differ in their UE4SS build, so the suspect is the LOADER, and
-    // every Thunderstore player is on the lane where the advice did not hold.
+    // The advice it once carried is refuted. It said the foreign mod set costs frames; a controlled
+    // measurement then moved the same rig from ~70 to ~118 fps by swapping the UE4SS build alone,
+    // and found the whole enabled Lua set worth about 5 of those. The frames belong to the loader,
+    // which the installer now pins, and telling a player to disable their other mods would buy them
+    // almost nothing.
     //
-    // And it was the wrong surface: `boot_warning_dialog` is, by its own header, the
-    // mod-install problem modal -- a fixed MOD INSTALL PROBLEM title over a frame-rate
-    // notice, blocking the menu until dismissed.
+    // And it was the wrong surface: boot_warning_dialog is, by its own header, the mod-install
+    // problem modal -- a fixed MOD INSTALL PROBLEM title over a frame-rate notice, blocking the
+    // menu until dismissed.
     //
-    // The CENSUS stays and always logs: one directory read at boot, and it is what a
-    // bug report needs. A notice can come back once a cause is named.
+    // The CENSUS stays and always logs: one directory read at boot, and it is what a bug report
+    // needs.
 }
 
 }  // namespace harness::mod_environment
