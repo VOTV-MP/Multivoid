@@ -1,21 +1,18 @@
-// ue_wrap/desk_audio.h -- standalone engine access for the desk's unit-1
-// AUDIO components (v115 desk sound-effect mirror). Principle-7
-// engine-wrapper layer: NO network logic; coop::desk_snd_fx drives the
-// forward/replay through here.
+// ue_wrap/desk_audio.h -- standalone engine access for the desk's unit-1 AUDIO components.
+// Principle-7 engine-wrapper layer: no network logic; coop::desk_snd_fx drives the forward and the
+// replay through here.
 //
-// The desk plays every unit-1 click/beep/loop through SIX audio components
-// on AanalogDScreenTest_C (RE 2026-07-17, exhaustive structural opcode
-// census over all 286 dumped assets): audio_coordKeyPress / audio_coordFail
-// (one-shots with preset cues), audio_coordButtonSound / audio_coord_pingSound
-// (SetSound+Play channels behind the playButtonSound/playPingSound helpers),
-// corrds_loop / audio_coord_pingLoop (loops driven by SetActive/Activate).
-// Every call site dispatches EX_VirtualFunction on a NATIVE target, so the
-// dispatch funnels through UFunction->Func -- catchable by the Func-patch
-// (docs/COOP_DISPATCH_VISIBILITY.md; K2_DestroyActor precedent), NEVER by
-// the ProcessEvent detour.
+// The desk plays every unit-1 click, beep and loop through SIX audio components on
+// AanalogDScreenTest_C: audio_coordKeyPress and audio_coordFail (one-shots with preset cues),
+// audio_coordButtonSound and audio_coord_pingSound (SetSound+Play channels behind the
+// playButtonSound / playPingSound helpers), and corrds_loop and audio_coord_pingLoop (loops driven
+// by SetActive / Activate). Every call site dispatches EX_VirtualFunction on a NATIVE target, so
+// the dispatch funnels through UFunction->Func and is catchable by the Func-patch
+// (docs/COOP_DISPATCH_VISIBILITY.md; the K2_DestroyActor precedent), NEVER by the ProcessEvent
+// detour.
 //
-// The component INDEX (0..5) is a wire contract (protocol.h DeskSndComp):
-// kCompNames below is frozen in that order on both peers.
+// The component INDEX (0..5) is a wire contract (protocol.h DeskSndComp); kCompNames in the .cpp is
+// frozen in that order on both peers.
 
 #pragma once
 
@@ -39,19 +36,18 @@ bool EnsureResolved();
 void* PlayFn();
 void* SetActiveFn();
 void* ActivateFn();
-void* DeactivateFn();  // L6: ActorComponent:Deactivate (the deck stop edge)
+void* DeactivateFn();  // ActorComponent:Deactivate -- the deck's stop edge
 
-// L6 deck playback: is `comp` the desk's signalSound (unit-3 world-audible
-// playback component)? NOT part of the 6-comp DeskSndFx wire table -- its
-// edges route to coop::deck_play_sync instead. Same cache lifecycle +
-// liveness discipline as IndexOfComp (one re-resolve owner); a pointer
-// collision with the whitelist would be logged at refresh (never observed --
-// 7 distinct ObjectProperties).
+// Deck playback: is `comp` the desk's signalSound, the unit-3 world-audible playback component? It
+// is NOT part of the six-component DeskSndFx wire table -- its edges route to coop::deck_play_sync
+// instead. Same cache lifecycle and liveness discipline as IndexOfComp (one re-resolve owner); a
+// pointer collision with the whitelist would be logged at refresh, and there are seven distinct
+// ObjectProperties, so one has never been seen.
 bool IsSignalSound(void* comp);
 
-// L6 dev self-test: reflected Activate(bReset=true) / Deactivate on the
-// desk's signalSound, dispatched UNGUARDED so the Func-patch seam sees an
-// organic edge (proves patch -> routing -> classify -> wire pre-hands-on).
+// Dev self-test: reflected Activate(bReset=true) / Deactivate on the desk's signalSound, dispatched
+// UNGUARDED so the Func-patch seam sees an organic edge and the whole chain -- patch, routing,
+// classify, wire -- can be exercised without a person at the desk.
 bool SelfTestSignalSound(bool on);
 
 // Index of `comp` in the 6-comp whitelist of the CURRENT desk instance, or
