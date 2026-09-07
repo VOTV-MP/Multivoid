@@ -2,17 +2,19 @@
 // and floor dirt), on ReliableKind::GrimeState.
 //
 // Gameplay and network layer (principle 7): the wire protocol, the poll, the minimum-wins
-// apply, the position-to-actor index, the death-watch, the deferred-apply retry and the connect
-// snapshot, reaching the engine only through ue_wrap::grime and ue_wrap::engine.
+// apply, the position-to-actor index, the death-watch, the deferred-apply retry and the
+// connect snapshot. Its engine reads go through ue_wrap::grime and ue_wrap::engine, with
+// reflection for the liveness and class tests the index needs.
 //
 // A monotone minimum register, the window_sync shape keyed differently. A grime decal is
 // level-placed with a saved transform, so both peers put each one at an identical world
 // position, and that position IS its cross-peer identity: the key is a quantised
-// world-position string. `process` only ever falls, so the receiver's MIN(local, wire)
-// converges concurrent wipes without oscillation, and a streamed-out decal changes nothing and
-// so broadcasts nothing. A one-hit super-sponge outruns the poll -- the actor destroys itself
-// inside the Blueprint before the next read -- so a decal vanishing NEAR the local camera is
-// taken as wiped and broadcast as 0, while one vanishing far is a sublevel stream-out.
+// world-position string. Only a FALL is propagated -- a rise means the decal reloaded, and
+// the poll resyncs its baseline silently -- so the receiver's MIN(local, wire) converges
+// concurrent wipes without oscillation, and a streamed-out decal broadcasts nothing. A
+// one-hit super-sponge outruns the poll, the actor destroying itself inside the Blueprint
+// before the next read, so a decal vanishing NEAR the local camera is taken as wiped and
+// broadcast as 0, and one vanishing far is a sublevel stream-out.
 
 #pragma once
 

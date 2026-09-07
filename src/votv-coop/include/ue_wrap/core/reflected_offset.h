@@ -4,10 +4,11 @@
 // property is added or reordered, so a hardcoded offset into that surface is a landmine the
 // next update trips. Each accessor below resolves its (class, field) pair through reflection
 // at first use and caches it, so the offset follows layout drift for as long as the field
-// keeps its name. -1 means the class has not loaded yet, or the field was renamed; a caller
-// checks the result before using it as an offset. The cache memorises only on SUCCESS, so a
-// call that fires before the BP class loads is retried by the next one and late-loading
-// content resolves without the call site owning a retry.
+// keeps its name. -1 means the class has not loaded yet, or the field was renamed, and a
+// caller MUST test for it before using the result as an offset -- several do not, and one
+// path widens it to an unsigned type, where -1 becomes an enormous displacement. The cache
+// memorises only on SUCCESS, so a call that fires before the BP class loads is retried by
+// the next one and late-loading content resolves without the call site owning a retry.
 //
 // Engine-stable offsets -- UObject internals, the FProperty and FField chain, a component's
 // attach parent -- stay hardcoded in sdk_profile.h, since a BP recook does not move them.
@@ -29,11 +30,11 @@ int32_t MainPlayer_grabbing_component();
 int32_t MainPlayer_grabsHeavy();
 int32_t MainPlayer_grabLen();
 int32_t MainPlayer_Heavy();
-// holding_actor is the hotbar HAND ITEM pointer, and updateHold is what writes it: it
-// destroys the previous item, spawns the new one from the equip data and attaches it to
-// `weapon`. A chipPile or clump grab does not touch it -- the grab path writes
-// grabbing_actor from the aim hit result -- so the pose emit reads holding_actor only as a
-// fallback when grabbing_actor is null, for any other carry that might use it.
+// holding_actor is the hotbar HAND ITEM pointer. updateHold is what fills it: it destroys the
+// previous item, spawns the new one from the equip data and attaches it to `weapon`; the only
+// other writer clears it, on the place-and-undo path. A chipPile or clump grab does not touch
+// it -- the grab path writes grabbing_actor from the aim hit result -- so the pose emit reads
+// holding_actor only as a fallback when grabbing_actor is null, for any other carry.
 int32_t MainPlayer_holding_actor();
 // The actor the local player is aiming at. On an E-press (InpActEvt_use) this is the door or
 // interactable being used; the use observer reads it there to name the door for the

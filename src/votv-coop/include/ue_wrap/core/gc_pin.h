@@ -65,8 +65,9 @@ public:
 
     // How many outstanding pins are stamped to a WORLD, as opposed to the process-lifetime pins on
     // assets and CDOs, which stamp null. Called after a session teardown, a non-zero answer means
-    // some mirror is still anchoring a world on its way out -- the assertion a hand-written release
-    // pair has no way to make. Logs a WARN naming the count and the classes; returns the count.
+    // some mirror is still anchoring a world on its way out -- the assertion a hand-written
+    // release pair has no way to make. Returns the count, and logs a WARN naming it and the
+    // classes only when it is non-zero.
     static size_t ReportWorldScopedPins(const char* tag);
 
 private:

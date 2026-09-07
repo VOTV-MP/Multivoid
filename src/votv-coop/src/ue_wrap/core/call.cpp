@@ -22,9 +22,9 @@ namespace {
 // function costs one map lookup and a buffer assign; the zeroed frame itself is still per call.
 //
 // Thread safety: the lookup takes the mutex briefly, and the resolve work runs with it held
-// the first time a function is seen. ProcessEvent dispatch is game-thread-only in practice --
-// the parallel anim worker reaches it only through posted lambdas that dispatch back on the
-// game thread -- but the mutex keeps the cache safe under any caller.
+// the first time a function is seen. That is not belt and braces -- the engine dispatches
+// ProcessEvent from task-graph workers too, for parallel animation, which is why the detour
+// forwards off-thread rather than draining our queue there (ue_wrap/core/pe_detour.cpp).
 std::mutex g_metaMutex;
 std::unordered_map<void*, ParamFrame::Metadata> g_meta;
 

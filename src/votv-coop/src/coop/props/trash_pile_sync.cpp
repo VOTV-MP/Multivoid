@@ -234,9 +234,11 @@ void NotifyWireDestroy(const std::wstring& key) {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    // No forced rebuild here: the hub keeps the index at most one pass (about two seconds) stale,
-    // and a pile churned inside that window reaches the joiner through the depleted-key replay
-    // below or the claim sweep, both of which exist for this race already.
+    // No forced rebuild here. The hub's tail pass refreshes the index every couple of seconds, and
+    // its periodic FULL pass is what catches a pile born into a recycled slot behind the tail
+    // cursor, so the worst-case staleness is that longer cadence. A pile churned inside it reaches
+    // the joiner through the depleted-key replay below or the claim sweep, both of which exist for
+    // this race already.
     size_t sent = 0;
     for (auto& [key, e] : g_index) {
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
@@ -332,8 +334,8 @@ void Tick(bool inTransition) {
             }
             // No per-poll GetActorLocation here: it is a ProcessEvent dispatch, and a few hundred
             // piles at the 20 Hz poll would push several thousand dispatches a second through our
-            // own detour. Piles are save-placed and never move, so the position captured when the
-            // index is built (on the two second throttle) is the death-watch's proximity input.
+            // own detour. Piles are save-placed and never move, so the position the hub's pass
+            // captured when it matched the actor is the death-watch's proximity input.
         }
         ++it;
     }

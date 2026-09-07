@@ -1,10 +1,11 @@
 // coop/props/trash_pile_sync.h -- the trashBitsPile_C collect-counter mirror (the "uses 6 of
-// 7" dispenser piles), on ReliableKind::TrashPileState.
+// 7" dispenser piles). Counters ride TrashPileState; a depletion rides the ordinary keyed
+// PropDestroy, both live and in the connect replay.
 //
 // Gameplay and network layer (principle 7): the wire protocol, the per-tick counter poll, the
 // receiver's minimum-wins apply, the key-to-actor index, the depletion death-watch, the
-// deferred-apply retry and the connect snapshot. It reaches the engine only through
-// ue_wrap::prop and ue_wrap::engine.
+// deferred-apply retry and the connect snapshot. Its engine reads go through ue_wrap::prop
+// and ue_wrap::engine, with reflection for the liveness and class tests the index needs.
 //
 // The model is SYMMETRIC -- the grime_sync shape with an int PAIR and destroy semantics. Each
 // use dispenses one item and decrements amountA or amountB, and which side is per-peer RNG, so
