@@ -167,12 +167,11 @@ bool Load() {
         UE_LOGE("peer_identity: could not derive the guid from our own key");
         return false;
     }
-    // The routing form, built HERE rather than at each use so the P2P announce,
-    // the dial and the logs cannot drift from the bytes we sign with. Built by
-    // hand rather than through SteamNetworkingIdentityRender because Load() runs
-    // at boot, long before GNS is initialised; `[V]` the format is fixed at
-    // `steamnetworkingsockets_shared.cpp:234-247` and ParseString round-trips it
-    // at `:335-357`.
+    // The routing form, built HERE rather than at each use so the P2P announce, the dial and the
+    // logs cannot drift from the bytes we sign with. Built by hand rather than through
+    // SteamNetworkingIdentityRender because Load() runs at boot, long before GNS is initialised;
+    // the format is fixed at `steamnetworkingsockets_shared.cpp:234-247` and ParseString
+    // round-trips it at `:335-357`.
     g_identityString = "gen:" + ToHex(g_pub.data(), g_pub.size());
     if (minted) {
         if (WriteKeyFile(g_priv)) {
@@ -224,22 +223,20 @@ std::string GuidForPublicKey(const PubKey& pub) {
 bool InstallInto(ISteamNetworkingSockets* sockets) {
     if (!sockets) return false;
     if (!g_loaded && !Load()) return false;
-    // WHY THIS IS A ResetIdentity AND NOT A SetCertificate -- measured 2026-08-29,
-    // after the first build tried the cert route and the host refused to start.
-    // `SetCertificate` on a SELF-ISSUED UNSIGNED cert cannot work: `[V]`
-    // `CertStore_CheckCert` returns at its FIRST line for a cert with no CA
-    // signature (`certstore.cpp:600-605`, "No signature") and therefore never
-    // reaches `outMsgCert.ParseFromString` -- so `InternalSetCertificate` goes on
-    // to read an EMPTY message and rejects it with "Cert has invalid public key"
-    // (`csteamnetworkingsockets.cpp:748-752`). Signing it would need a trusted CA
-    // key in the store, which is the whole apparatus this design removed.
+    // WHY THIS IS A ResetIdentity AND NOT A SetCertificate. `SetCertificate` on a SELF-ISSUED
+    // UNSIGNED cert cannot work: `CertStore_CheckCert` returns at its first line for a cert with
+    // no CA signature (`steamnetworkingsockets_certstore.cpp:603`, "No signature") and never
+    // reaches `outMsgCert.ParseFromString`, so `InternalSetCertificate` reads an EMPTY message and
+    // rejects it with "Cert has invalid public key" (`csteamnetworkingsockets.cpp:748-752`).
+    // Signing it would need a trusted CA key in the store, which is the whole apparatus this
+    // design removes.
     //
-    // Nothing is lost by dropping it. GNS mints its own ephemeral session key and
-    // stamps our identity into the cert it sends (`connections.cpp:1316-1319`
-    // `SetLocalCertUnsigned`), so the remote's identity comparison still passes --
-    // and the durable key was never what GNS checked anyway: `[V]` a cert's
-    // identity and its key are unbound (see the header), which is exactly why the
-    // admission challenge, not the certificate, is what proves who we are.
+    // Nothing is lost by dropping it. GNS mints its own ephemeral session key and stamps our
+    // identity into the cert it sends (`steamnetworkingsockets_connections.cpp:1303-1319`,
+    // `SetLocalCertUnsigned`), so the remote's identity comparison still passes -- and the durable
+    // key was never what GNS checked anyway: a cert's identity and its key are unbound (see the
+    // header), which is why the admission challenge, not the certificate, is what proves who we
+    // are.
     SteamNetworkingIdentity self;
     self.Clear();
     if (!self.SetGenericBytes(g_pub.data(), g_pub.size())) {
@@ -326,11 +323,10 @@ bool RunSelftest() {
               "ed25519_sign_open ACCEPTED a tampered signature");
     }
 
-    // 10-13: the decision this module actually exports -- sign with our own key,
-    // verify against the identity bytes a receiver would read off a connection,
-    // and refuse both a flipped signature and a different signer's key. That last
-    // one is the attack: `[V]` GNS binds a cert's identity to nothing, so a peer
-    // CAN claim a victim's key -- and this is the check that refuses it.
+    // 10-13: the decision this module actually exports -- sign with our own key, verify against the
+    // identity bytes a receiver would read off a connection, and refuse both a flipped signature
+    // and a different signer's key. That last one is the attack: GNS binds a cert's identity to
+    // nothing, so a peer CAN claim a victim's key -- and this is the check that refuses it.
     if (g_loaded) {
         static const uint8_t kBlob[] = "multivoid-peer-identity-selftest";
         const Sig sig = SignBlob(kBlob, sizeof(kBlob) - 1);

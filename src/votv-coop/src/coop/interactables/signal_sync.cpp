@@ -54,20 +54,19 @@ std::vector<AppliedMark> g_applied;
 
 std::map<uint64_t, Clock::time_point> g_tombstones;
 
-// Seeds arc (2026-08-23): the receive-side apply PARK -- replaces the old
-// warn-and-drop when the engine is unresolved (world transition) or the native
-// apply fails transiently. FIFO-ONCE-NONEMPTY: while non-empty, every newly
-// completed blob appends behind it (a live row must never apply ahead of a
-// still-parked one); drained each Tick once the engine resolves. Event-anchored
-// on own world-up -- NO wall-clock TTL (a timer here is a drop one level up);
-// a row still rejected kMaxApplyRetries times WITH the engine resolved is
-// malformed-for-this-world and drops loudly (the deserialize-failure class).
-// Bound kParkCap escalates to the session inbox pause (pause-not-drop).
+// The receive-side apply PARK, for a blob that arrives while the engine is unresolved (a world
+// transition) or whose native apply fails transiently. FIFO-ONCE-NONEMPTY: while non-empty,
+// every newly completed blob appends behind it, so a live row can never apply ahead of a
+// still-parked one; drained each Tick once the lane settles. Event-anchored on our own
+// world-up, with NO wall-clock TTL -- a timer here would be a drop one level up. A row still
+// rejected kMaxApplyRetries times WITH the lane settled is malformed-for-this-world and drops
+// loudly, the deserialize-failure class. Reaching kParkCap escalates to the session inbox
+// pause: pause, not drop.
 struct ParkedRow {
     std::vector<uint8_t> blob;
     uint8_t senderSlot = 0;
     int retries = 0;
-    Clock::time_point lastAttempt{};  // audit F-3: retries pace at 1 Hz real time
+    Clock::time_point lastAttempt{};  // paced at 1 Hz real time
 };
 std::deque<ParkedRow> g_applyPark;
 bool g_parkBackpressure = false;
@@ -78,9 +77,8 @@ bool IsHostRole() {
     auto* s = g_session.load(std::memory_order_acquire);
     return s && s->role() == coop::net::Role::Host;
 }
-// The client lane is mute until its own world-ready announce (the meadow R6
-// gate: a pre-ready client line reaching the host before the flip rides the
-// seed back as a dup). The host is always ready.
+// The client lane is mute until its own world-ready announce: a pre-ready client line reaching
+// the host before the flip rides the seed back as a duplicate. The host is always ready.
 bool CanSend() {
     return IsHostRole() || coop::net_pump::HasAnnouncedWorldReady();
 }
@@ -119,10 +117,9 @@ bool ApplyDeleteByHash(uint64_t hash) {
     return false;
 }
 
-// The apply core. Tombstone/malformed/authority verdicts are TERMINAL (the row
-// is correctly dead or garbage); an unresolved engine or a failed native apply
-// is NOT-APPLIABLE (the caller parks + retries -- the old warn-and-drop here
-// was a measured silent loss, seeds-arc design doc par.1.3).
+// The apply core. Tombstone / malformed / authority verdicts are TERMINAL (the row is correctly
+// dead or garbage); an unresolved engine or a failed native apply is NOT-APPLIABLE, which the
+// caller parks and retries. Dropping with a warning here instead was a silent loss.
 enum class ApplyVerdict { Applied, Terminal, NotAppliable };
 
 ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
@@ -142,8 +139,8 @@ ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) 
         return ApplyVerdict::Terminal;
     }
     if (adopt && senderSlot != 0) {
-        // Audit I-3: adopt is host-only (no signal adopt path exists today --
-        // the latent trust gate matches comp_sync::ApplyData's).
+        // Adopt is host-only. No signal adopt path exists today, so this is a latent trust gate,
+        // matching comp_sync::ApplyData's.
         UE_LOGW("signal_sync: adopt from non-host slot %u -- dropped",
                 static_cast<unsigned>(senderSlot));
         return ApplyVerdict::Terminal;
@@ -175,10 +172,10 @@ void ParkRow(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 }
 
 void CompleteAssembly(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
-    // FIFO-once-nonempty: while rows are parked, a newly completed blob must
-    // apply BEHIND them, never ahead. Audit F-2: an UNSETTLED lane (!g_primed --
-    // join load, world travel, array still filling) parks every arrival too, so
-    // the park is the ONE ordering point for the whole unsettled window.
+    // FIFO-once-nonempty: while rows are parked, a newly completed blob must apply BEHIND them,
+    // never ahead. An UNSETTLED lane (!g_primed -- join load, world travel, array still filling)
+    // parks every arrival too, so the park is the ONE ordering point for the whole unsettled
+    // window.
     if (!g_applyPark.empty() || !g_primed) { ParkRow(blob, senderSlot); return; }
     if (ApplyRowBlob(blob, senderSlot) == ApplyVerdict::NotAppliable)
         ParkRow(blob, senderSlot);
@@ -186,18 +183,16 @@ void CompleteAssembly(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 
 // Drain the park in arrival order (called every Tick once resolve succeeds).
 void DrainApplyPark() {
-    // Audit F-2: the drain anchor is the lane's OWN settle predicate (g_primed
-    // encodes count-stability), not bare engine-resolve -- after a mid-session
-    // world travel the array RESOLVES while still asynchronously filling, and
-    // applying into that window is the loss class one level down. While
-    // unprimed the park only absorbs (FIFO), exactly like the join episode.
+    // The drain anchor is the lane's OWN settle predicate -- g_primed encodes count-stability --
+    // and not a bare engine-resolve: after a mid-session world travel the array RESOLVES while
+    // still asynchronously filling, and applying into that window is the loss class one level
+    // down. While unprimed the park only absorbs, in FIFO order, exactly like the join episode.
     if (!g_primed) return;
     const auto now = Clock::now();
     while (!g_applyPark.empty()) {
         ParkedRow& front = g_applyPark.front();
-        // Audit F-3: pace the stuck-front retry at 1 Hz REAL time (per-frame
-        // counting burned all 30 retries in ~0.4 s -- a transient AddEmail
-        // failure right after settle earned the malformed verdict).
+        // Pace the stuck-front retry at 1 Hz REAL time. Counting per frame burned all 30 retries in
+        // ~0.4 s, so a transient AddEmail failure right after settle earned the malformed verdict.
         if (front.retries > 0 && now - front.lastAttempt < std::chrono::seconds(1)) break;
         const ApplyVerdict v = ApplyRowBlob(front.blob, front.senderSlot);
         if (v == ApplyVerdict::NotAppliable) {
@@ -212,7 +207,7 @@ void DrainApplyPark() {
     if (g_parkBackpressure && g_applyPark.size() < kParkCap / 2) SetParkBackpressure(false);
 }
 
-// --- Seeds arc: the ready-edge join seed (shared helper + this lane's adapter) ---
+// --- the ready-edge join seed (shared helper + this lane's adapter) ---
 
 bool SeedHashArray(std::map<uint64_t, int32_t>& out) {
     if (!UE::EnsureResolved()) return false;
@@ -242,7 +237,7 @@ int SeedSendAppendToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int
         }
         return sent;
     }
-    return 0;  // raced away since capture -- fine (meadow :817 precedent)
+    return 0;  // raced away since capture -- fine
 }
 
 int SeedSendDeleteToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int32_t count) {
@@ -264,9 +259,9 @@ coop::join_seed::Seeder g_seeder{kSeedAdapter};
 
 void CaptureJoinSnapshot(int peerSlot) {
     if (!IsHostRole()) return;
-    // Drill mutate control (design doc par.3): with the capture disabled the
-    // in-window drill email must NOT arrive (RED) -- proving the seed, not a
-    // leftover retry, is the delivery mechanism. Env-gated, drill-only.
+    // Drill mutate control: with the capture disabled the in-window drill email must NOT arrive
+    // (RED), which proves the seed, and not a leftover retry, is the delivery mechanism.
+    // Env-gated, drill-only.
     if (coop::config::ReadEnv("VOTVCOOP_SEED_DISABLE") == "1") {
         UE_LOGW("%s: capture DISABLED by drill knob VOTVCOOP_SEED_DISABLE", "signal_sync");
         return;
@@ -297,22 +292,20 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     if (!UE::EnsureResolved()) return;
-    // Seeds arc: drain the apply park FIRST (every tick, not 1 Hz -- parked rows
-    // are already-delivered state waiting only on appliability).
+    // Drain the apply park FIRST, every tick and not at 1 Hz: parked rows are already-delivered
+    // state waiting only on appliability.
     DrainApplyPark();
     const auto now = Clock::now();
     if (now < g_nextPoll) return;
     g_nextPoll = now + kPollInterval;
 
-    // JOIN-EPISODE BOUNDARY (the email_sync 2026-07-11 precedent, retrofitted by
-    // the seeds arc): while THIS client is inside its own join world-load,
-    // savedSignals is being torn down/re-materialized by the LOAD, not by any
-    // player verb -- the shadow must never prime against nor diff across that
-    // window, or the mid-load positional diff broadcasts FALSE SavedSignalDelete
-    // for save rows the load then replaces (the email lane's measured 2026-06-19
-    // class: the host deletes its content-identical real rows). Placed BEFORE the
-    // TTL sweeps so a host delete arriving mid-load parks in g_tombstones un-swept
-    // and lands after the post-load re-prime. Host never arms the episode.
+    // JOIN-EPISODE BOUNDARY. While THIS client is inside its own join world-load, savedSignals is
+    // being torn down and re-materialized by the LOAD, not by any player verb -- so the shadow must
+    // never prime against that window nor diff across it, or the mid-load positional diff
+    // broadcasts a FALSE SavedSignalDelete for save rows the load then replaces, and the host
+    // deletes its content-identical real rows. Placed BEFORE the TTL sweeps so a host delete
+    // arriving mid-load parks in g_tombstones un-swept and lands after the post-load re-prime. The
+    // host never arms the episode.
     if (coop::world_load_episode::InEpisode()) {
         if (g_primed) {
             g_primed = false;
@@ -323,9 +316,8 @@ void Tick() {
     }
 
     g_assembler.Sweep(now, kAssemblyTTL);
-    // Audit F-4: a NON-EMPTY apply park is a live cross-dependency -- a parked
-    // append's tombstone must not wall-clock-expire before the park drains (the
-    // TTL is a leak-guard only, per the cross-lane-TTL lesson). Expiry resumes
+    // A NON-EMPTY apply park is a live cross-dependency: a parked append's tombstone must not
+    // wall-clock-expire before the park drains, the TTL being a leak-guard only. Expiry resumes
     // once the park is empty; entries merely age while it waits.
     if (g_applyPark.empty())
     for (auto it = g_tombstones.begin(); it != g_tombstones.end();) {
@@ -384,8 +376,8 @@ void Tick() {
                 next.push_back(srow);
                 ++j;
             } else if (srow.hash != 0) {
-                // hash 0 = was unreadable at shadow time (audit I-2: never
-                // broadcast the hash-unknown sentinel as a delete key).
+                // hash 0 = was unreadable at shadow time; never broadcast the hash-unknown sentinel
+                // as a delete key.
                 removed.push_back(srow.hash);
             }
         }
@@ -440,12 +432,10 @@ void Tick() {
                 continue;
             }
             if (!SendRowBlob(s, r)) {
-                // Seeds arc (design doc par.2.6): a fan-out refused with ZERO
-                // world-ready receivers is a VACUOUS success -- every absent peer
-                // gets this row via save+seed. Retrying it across a future ready
-                // edge was the measured pre-existing DUPLICATE (the row broadcast
-                // to a joiner whose save already contains it). A refusal WITH a
-                // ready peer present stays a real retry.
+                // A fan-out refused with ZERO world-ready receivers is a VACUOUS success -- every
+                // absent peer gets this row via save+seed. Retrying it across a future ready edge
+                // was the measured duplicate: the row broadcast to a joiner whose save already
+                // contains it. A refusal WITH a ready peer present stays a real retry.
                 if (!s->AnyWorldReadyPeer()) { srow.sent = true; continue; }
                 break;  // channel refused: retry next poll
             }
@@ -477,8 +467,8 @@ void OnDisconnect() {
     g_primed = false;
     g_nextSeq = 1;
     g_nextPoll = {};
-    // Seeds arc: parks + seed brackets are session-scoped (an aborted joiner's
-    // parked rows must never drain into a new session's world).
+    // Parks and seed brackets are session-scoped: an aborted joiner's parked rows must never drain
+    // into a new session's world.
     g_applyPark.clear();
     SetParkBackpressure(false);
     g_seeder.Reset();
