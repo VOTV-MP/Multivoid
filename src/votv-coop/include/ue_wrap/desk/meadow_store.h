@@ -1,25 +1,15 @@
-// ue_wrap/meadow_store.h -- standalone engine access for the MEADOW signal
-// DATABASE on the in-game stationary PC (game classes laptop_C / ui_laptop_C):
-// saveSlot.savedSignals_0 (TArray<Fstruct_signalDataDynamic>, 0x70 stride) and
-// its two id-preserving ui_laptop verbs. Principle-7 engine-wrapper layer;
-// coop::meadow_db_sync drives the mirror through here.
+// ue_wrap/desk/meadow_store.h -- standalone engine access for the MEADOW signal DATABASE on the
+// in-game stationary PC (game classes laptop_C / ui_laptop_C): saveSlot.savedSignals_0, a
+// TArray<Fstruct_signalDataDynamic> of 0x70 stride, and its two id-preserving ui_laptop verbs.
+// Principle-7 engine-wrapper layer; coop::meadow_db_sync drives the mirror through here.
 //
-// RE (votv-meadow-db-L9-impl-DESIGN-2026-07-19.md, 15-round /qf):
-// - The store LIVES on the saveSlot object (persistence free); the deck list's
-//   save mirror savedSignals_comp_0 is a different array (no lane).
-// - The ui_laptop widget is created ONCE at mainGamemode BeginPlay and stored
-//   in gamemode.laptop (persistent per-world, screen-open irrelevant); the
-//   laptop DEVICE's BeginPlay repoints widget.laptop := self. Apply gate =
-//   both pointers live.
-// - ui_laptop.addSignal(data) is id-PRESERVING (zero mint sites -- the re-mint
-//   lives upstream in the unit-2/unit-4 chain) and maintains the data array +
-//   the parallel widget array (`slots` + vb_signals children + recountChildren
-//   ind refresh) in ONE call. removeSignal(index) likewise; its playSignal
-//   tail STOPS audio (SetActive FALSE) -- wire deletes are audio-benign.
-// - NO pointer-based RowKey here (deliberate divergence from saved_signals.h):
-//   sortSignal moves rows via BP Array copies that deep-copy FStrings, so
-//   pointer identity dies at every move. Cross-peer identity is the
-//   signal_wire CONTENT hash alone; the lane keeps a content-hash multiset.
+// The store LIVES on the saveSlot object, so persistence is free; the deck list's save mirror
+// savedSignals_comp_0 is a different array with no lane of its own.
+//
+// There is NO pointer-based RowKey here, a deliberate divergence from saved_signals.h: sortSignal
+// moves rows through blueprint array copies that deep-copy FStrings, so pointer identity dies at
+// every move. Cross-peer identity is the signal_wire CONTENT hash alone, and the lane keeps a
+// content-hash multiset.
 
 #pragma once
 
@@ -33,14 +23,15 @@ namespace ue_wrap::meadow_store {
 // the ui_laptop verbs (throttled lazy retry). True when the core set is up.
 bool EnsureResolved();
 
-// The resolved ui_laptop_C class (nullptr until EnsureResolved succeeds). The
-// lane's 0x45 ctx class-check reads this instead of running its own FindClass
-// walk (perf audit C-1: an unthrottled per-tick FindClass retry is the exact
-// pre-world 60 Hz array-walk bomb the resolver throttle exists to prevent).
+// The resolved ui_laptop_C class (nullptr until EnsureResolved succeeds). The lane's 0x45 context
+// class-check reads this instead of running its own FindClass walk, which unthrottled per tick is
+// the pre-world 60 Hz array-walk the resolver throttle exists to prevent.
 void* LaptopWidgetClass();
 
-// The live ui_laptop widget (gamemode.laptop) with a live device back-pointer
-// (widget.laptop). nullptr when either is unresolved/dead -- the apply gate.
+// The live ui_laptop widget (gamemode.laptop) with a live device back-pointer (widget.laptop);
+// nullptr when either is unresolved or dead, which is the apply gate. The widget is created ONCE at
+// mainGamemode BeginPlay and stored on the gamemode, so it is persistent per world whether or not
+// the screen is open, and the laptop DEVICE's BeginPlay repoints widget.laptop := self.
 void* Widget();
 
 // Element count of saveSlot.savedSignals_0 (-1 if unresolved / no world).
@@ -48,12 +39,15 @@ int32_t Count();
 
 bool ReadRow(int32_t index, ue_wrap::signal_dynamic::Row& out);
 
-// Reflected ui_laptop.addSignal(data=row) on the live widget -- the native
-// id-preserving append (data + widget arrays coherent in one call).
+// Reflected ui_laptop.addSignal(data=row) on the live widget -- the native insert. It is
+// id-PRESERVING, minting nothing, since the re-mint lives upstream in the unit-2 and unit-4 chain,
+// and it maintains the data array and the parallel widget array (`slots`, the vb_signals children
+// and the recountChildren index refresh) in ONE call.
 bool ApplyAddSignal(const ue_wrap::signal_dynamic::Row& row);
 
-// Reflected ui_laptop.removeSignal(index) -- the native remove (both arrays +
-// selection re-point; audio-benign).
+// Reflected ui_laptop.removeSignal(index) -- the native remove, maintaining both arrays in one call
+// as addSignal does. Its playSignal tail STOPS audio by setting the component inactive, so a wire
+// delete is audio-benign.
 bool ApplyRemoveSignal(int32_t index);
 
 // Byte-permute the store rows in place: row i of the NEW order := old row
