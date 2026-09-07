@@ -52,24 +52,20 @@ void Reset();
 // the census tag).
 bool InEpisode();
 
-// The reconcile window. The episode above closes at load-tail quiescence, the same latch that
-// permits the world-ready announce, and the host's snapshot bracket only starts after the
-// announce, so by construction the episode always ends before the join reconcile it exists to
-// cover. This second window covers the whole teardown and rebuild: raised at Arm, at the
-// world-reload re-announce arm and at a snapshot begin; lowered at the snapshot complete, at
-// the sweep's lost-bracket backstop, at a rising-edge ceiling of 180 s, and at Reset. It does
-// not replace InEpisode: the lane parks (signal, email) must not follow it, since a
-// mid-session re-raise would absorb a legitimate local append into their re-prime, a lost
-// write. The kind: load means raised through Arm or the reload arm, or a begin with no
-// complete since Arm, which on the join path is the curtain never having dropped; a
-// mid-session bracket is a re-bracket after the first complete. The destroy seam suppresses
-// under any kind (a junk broadcast costs more than a suppressed destroy, which the bracket
-// re-expresses); the drop intent suppresses only the load kind, since a client's suppressed
-// place has no delivery channel and the re-bracket sweep would doom it.
+// --- the reconcile window ---
+//
+// A second, wider window than the episode above. The episode closes at load-tail quiescence,
+// the same latch that permits the world-ready announce, and the host's snapshot bracket only
+// starts after that announce, so by construction the episode always ends before the join
+// reconcile it exists to cover. This one covers the whole teardown and rebuild.
 
 // Raise the reconcile window, load kind, for a world-reload re-announce (the pump's
 // world-change path; it fires on the real join flow too). Does not touch the load episode or
 // the probe. Game thread.
+//
+// The window is raised here, at Arm and at a snapshot begin; it is lowered at the snapshot
+// complete, at the sweep's lost-bracket backstop, at a rising-edge ceiling of 180 s, and at
+// Reset.
 void RaiseReconcileForReload();
 
 // A client snapshot begin was received. With the window up, refresh (the kind kept, no
@@ -88,10 +84,21 @@ void NoteReconcileComplete();
 void NoteBracketFlake();
 
 // True while the reconcile window is up. Any thread (atomic).
+//
+// It does NOT replace InEpisode, and the lane parks (signal, email) must not follow it: a
+// mid-session re-raise would absorb a legitimate local append into their re-prime, which is a
+// lost write.
 bool InReconcileWindow();
 
 // True while the window is up with the load kind; meaningful only while InReconcileWindow.
 // Any thread (atomic).
+//
+// The kinds: LOAD means raised through Arm or the reload arm, or a begin with no complete
+// since Arm, which on the join path is the curtain never having dropped; a MID-SESSION
+// bracket is a re-bracket after the first complete. The destroy seam suppresses under either
+// kind -- a junk broadcast costs more than a suppressed destroy, which the bracket
+// re-expresses -- while the drop intent suppresses only the load kind, since a client's
+// suppressed place has no delivery channel and the re-bracket sweep would doom it.
 bool ReconcileWindowIsLoadKind();
 
 }  // namespace coop::world_load_episode

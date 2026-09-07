@@ -1,18 +1,12 @@
-// ue_wrap/engine_attach.cpp -- generic actor root-physics substrate (Principle 7
-// engine wrapper; no network/gameplay state).
+// ue_wrap/engine_attach.cpp -- generic actor root-physics substrate (Principle 7 engine
+// wrapper; no network or gameplay state).
 //
-// These operate on an actor's ROOT primitive component via K2_GetRootComponent --
-// NEVER the Aprop_C-specific StaticMesh @0x238 -- so they work on the non-Aprop_C
-// trash clump (ue_wrap::prop::GetStaticMesh returns null for it, the 2a-UAF safety
-// gate). The held-clump mirror (coop::remote_prop) uses these to go kinematic while
-// held (SetSimulatePhysics false) and re-enable physics + apply the throw velocity on
-// release -- the mannequin model for the non-keyable clump.
-// [[project-bug-trash-chippile-uaf-crash]]
-//
-// (History: this file also hosted a hand-attach model -- AttachActorToPuppetHand etc.
-// -- retired 2026-06-03 / v26 / RULE 2 when the clump moved to the prop pose pipeline.
-// The generic physics helpers below are the part that survived; only the receiver's
-// physics toggle needed them.)
+// These operate on an actor's ROOT primitive component via K2_GetRootComponent, NEVER the
+// Aprop_C-specific StaticMesh, so they work on the non-Aprop_C trash clump as well --
+// `ue_wrap::prop::GetStaticMesh` returns null for it, and reaching through that null was a
+// use-after-free. The held-clump mirror (coop::remote_prop) uses these to go kinematic while
+// held (SetSimulatePhysics false) and to re-enable physics and apply the throw velocity on
+// release: the mannequin model for the non-keyable clump.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -83,11 +77,11 @@ bool SetActorSimulatePhysics(void* actor, bool simulate) {
 }
 
 bool SetActorRootMovable(void* actor) {
-    // Force the root component Movable so a subsequent SetActorLocation/Rotation actually takes. A Static
-    // component silently no-ops the teleport (the K2 call still returns true) -- the b3 pos-correction bug:
-    // a save-loaded chipPile native rests at Static mobility, so the join-window snap to the host position
-    // did nothing (the "applied but drift unchanged" log). Movable also re-registers the render state.
-    // [[lesson-runtime-staticmeshactor-must-be-movable]] / SetComponentMobility's own note.
+    // Force the root component Movable so a subsequent SetActorLocation/Rotation actually takes. A
+    // Static component silently no-ops the teleport and the K2 call still returns true, which is
+    // how a save-loaded chipPile, resting at Static mobility, ignored its join-window snap to the
+    // host position and logged "applied" while the drift stayed. Movable also re-registers the
+    // render state; SetComponentMobility carries the same note.
     void* root = RootComponentOf(actor);
     if (!root) return false;
     return SetComponentMobility(root, /*EComponentMobility::Movable=*/2);
@@ -167,10 +161,10 @@ bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector&
     return true;
 }
 
-// Angular WITHOUT touching linear. Born 2026-08-30: assigning a linear velocity to a settled
-// constraint rig wakes it and it sinks (docs/vehicles/ATV.md 16), so the ATV mirror must be able
-// to follow an author that is TURNING while parked without being pushed. Two quantities, two
-// gates -- a single call that writes both forces the caller to choose one rule for both.
+// Angular WITHOUT touching linear: assigning a linear velocity to a settled constraint rig
+// wakes it and it sinks, so the ATV mirror must be able to follow an author that is TURNING
+// while parked without being pushed. Two quantities, two gates -- a single call that writes
+// both forces the caller to use one rule for both.
 bool SetActorRootPhysicsAngularVelocity(void* actor, const FVector& ang) {
     void* root = RootComponentOf(actor);
     if (!root) return false;

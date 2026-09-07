@@ -40,10 +40,9 @@ void* g_redSkyEventSetFn       = nullptr;
 // newDay roll). Atomic for the same reason as g_session.
 std::atomic<bool> g_echoSuppress{false};
 
-// HOST poll state (game-thread only). The 2026-08-29 reroot: the organic
-// spawnRedSky caller is EX_LocalVirtualFunction (PE-invisible; measured in
-// daynightCycle's newDay bytecode), so edge detection is FIELD-LEVEL like
-// weather_fog -- gamemode.redSky liveness + its `isred` bool, on a throttle.
+// HOST poll state (game-thread only). The organic spawnRedSky caller is an
+// EX_LocalVirtualFunction, invisible to ProcessEvent, so edge detection is FIELD-LEVEL the way
+// weather_fog's is: gamemode.redSky liveness plus its `isred` bool, on a throttle.
 ue_wrap::CachedObjRef g_gamemodeRef;         // world-stamped live gamemode cache
 long long g_lastGmResolveMs = 0;             // FindObjectByClass walk throttle (5 s)
 long long g_lastPollMs      = 0;             // edge-poll throttle (500 ms)
@@ -105,14 +104,13 @@ void* ResolveSetFn(void* redSkyActor) {
     return g_redSkyEventSetFn;
 }
 
-// Broadcast the host's red-sky state. (The 2026-05 POST observers on
-// spawnRedSky/set that used to author this send were RETIRED 2026-08-29,
-// RULE 2: the organic caller is EX_LocalVirtualFunction, PE-invisible, so
-// they fired only for our own reflected Calls -- zero organic broadcasts in
-// every log on disk. The HostPollEdge field poll below is the ONE detector.)
+// Broadcast the host's red-sky state. There is no observer on spawnRedSky or on set: the
+// organic caller is an EX_LocalVirtualFunction, so a POST observer fired only for our own
+// reflected Calls and never once organically in any log on disk. HostPollEdge below is the ONE
+// detector.
 bool SendState(coop::net::Session* s, int state) {
     coop::net::RedSkyPayload p{};
-    // v13 (A4 2026-05-29): host stamps its own local Player Element id.
+    // The host stamps its own local Player Element id.
     {
         const coop::element::ElementId selfEid =
             coop::players::Registry::Get().LocalPlayerElementId();
@@ -213,7 +211,7 @@ bool DebugForce(bool red) {
         UE_LOGW("weather: red-sky DebugForce no live mainGamemode_C");
         return false;
     }
-    // Lookup the existing redSky pointer at @0x0888.
+    // Look up the existing redSky pointer.
     void* redSky = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
 
@@ -227,7 +225,7 @@ bool DebugForce(bool red) {
             ue_wrap::ParamFrame f(g_spawnRedSkyFn);
             ue_wrap::Call(gm, f);
             UE_LOGI("weather: red-sky DebugForce -- spawnRedSky() called (actor instantiation)");
-            // Re-read the pointer (spawnRedSky stores it at @0x0888).
+            // Re-read the pointer, which spawnRedSky stores in that same field.
             redSky = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
         }
@@ -270,9 +268,8 @@ void Apply(const coop::net::RedSkyPayload& payload) {
         UE_LOGW("weather: red-sky Apply off-game-thread -- dropping");
         return;
     }
-    // v13 (A4 2026-05-29): the "is sender host?" trust-bound check moved
-    // up into event_feed::Update's RedSky dispatcher (validates
-    // msg.senderPeerSlot == 0 before posting here).
+    // The "is the sender the host?" trust bound lives one level up, in event_feed's world-event
+    // handler, which validates msg.senderPeerSlot == 0 before posting here.
     if (!TryResolve() || !g_spawnRedSkyFn) {
         UE_LOGW("weather: red-sky Apply spawnRedSky UFunction not yet resolved -- dropping");
         return;
@@ -326,10 +323,9 @@ void Apply(const coop::net::RedSkyPayload& payload) {
                 ue_wrap::Call(redSky, f);
                 UE_LOGI("weather: red-sky Apply -- redSky.set(false) called");
             }
-            // Full OFF mirror (2026-08-29): destroy the local actor + clear
-            // the gamemode slot, so "no red sky" is structural, not a dormant
-            // actor -- and the next ON re-spawns cleanly through the branch
-            // above. ReceiveDestroyed runs the actor's own teardown.
+            // Full OFF mirror: destroy the local actor and clear the gamemode slot, so "no red sky"
+            // is structural rather than a dormant actor, and the next ON re-spawns cleanly through
+            // the branch above. ReceiveDestroyed runs the actor's own teardown.
             ue_wrap::engine::DestroyActor(redSky);
             *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky) = nullptr;
@@ -341,7 +337,6 @@ void Apply(const coop::net::RedSkyPayload& payload) {
 }
 
 void OnDisconnect() {
-    // (The 2026-05 POST-observer unregister retired with the observers, RULE 2.)
     g_echoSuppress.store(false, std::memory_order_release);
     g_session.store(nullptr, std::memory_order_release);
     g_lastPolledState = -1;   // next session re-learns; first poll re-seeds an active red
