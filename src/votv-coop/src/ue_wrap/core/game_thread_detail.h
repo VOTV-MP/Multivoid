@@ -1,25 +1,18 @@
-// ue_wrap/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs.
-// NOT public API: nothing outside src/ue_wrap/{game_thread,pe_detour}.cpp may
-// include this (subsystems use ue_wrap/game_thread.h).
+// ue_wrap/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs. NOT public API:
+// nothing outside src/ue_wrap/{game_thread,pe_detour}.cpp may include this (subsystems use
+// ue_wrap/game_thread.h).
 //
-// The 2026-07-04 modularity extraction split the old 1065-LOC game_thread.cpp
-// along its one clean concept boundary:
-//   - pe_detour.cpp    -- the INTERPOSITION MECHANISM: the MinHook install, the
-//     detour body, the transparent bypass, the SEH crash firewalls + absorbed-
-//     fault localization, the PE re-entrancy depth probe, and the perf
-//     self-timing instrumentation.
-//   - game_thread.cpp  -- the DISPATCHER SERVICES the detour drives: the
-//     observer/interceptor/name-diagnostic registries (+ their Bloom presence
-//     probes) and the posted-task pump (+ the spawn-refusal drain gate).
+// The two TUs split along one concept boundary. pe_detour.cpp is the INTERPOSITION MECHANISM: the
+// MinHook install, the detour body, the transparent bypass, the SEH crash firewalls and
+// absorbed-fault localization, the re-entrancy depth probe and the self-timing instrumentation.
+// game_thread.cpp is the DISPATCHER SERVICES the detour drives: the observer, interceptor and
+// name-diagnostic registries with their Bloom presence probes, and the posted-task pump with its
+// spawn-refusal drain gate.
 //
-// HOT-PATH CONTRACT: the detour fires on EVERY ProcessEvent dispatch
-// (~85-100k/sec measured). The split must not add per-dispatch cost, so the
-// fast REJECTS stay inline in this header, reading extern atomics defined in
-// game_thread.cpp -- the exact same loads the pre-split code paid:
-//   - registry probes: active-count acquire load (+ Bloom word on a count hit);
-//     only a MATCHED dispatch (<1%) crosses the TU boundary into *Matched().
-//   - pump probe: t_inPump TLS + queue-depth acquire load + thread-id compare;
-//     only a non-empty queue crosses into DrainPostedTasksAtTopLevel().
+// HOT-PATH CONTRACT: the detour fires on EVERY ProcessEvent dispatch, measured at 85-100k a second,
+// so the split must add no per-dispatch cost. The fast REJECTS therefore stay inline in this
+// header, reading extern atomics defined in game_thread.cpp -- the same loads a single TU would
+// pay.
 
 #pragma once
 
@@ -31,10 +24,10 @@
 namespace ue_wrap::game_thread::detail {
 
 // ---- registry presence state (defined in game_thread.cpp) --------------------
-// O(1) observer/interceptor presence probe (perf, 2026-06-04): per-table Bloom
-// bitmask; bits only SET on register (never cleared per-Unregister), so a live
-// registrant's bit is ALWAYS set => no false negatives; stale bits are harmless
-// false positives that fall through to the count-bounded slot walk.
+// O(1) observer and interceptor presence probe: a per-table Bloom bitmask whose bits are only SET
+// on register and never cleared on unregister, so a live registrant's bit is ALWAYS set and there
+// are no false negatives; a stale bit is a harmless false positive that falls through to the
+// count-bounded slot walk.
 constexpr int kBloomWords = 64;  // 4096 bits; ~75 entries => ~2% false positive
 constexpr unsigned kBloomBits = kBloomWords * 64u;
 extern std::atomic<uint64_t> g_postBloom[kBloomWords];
@@ -64,15 +57,18 @@ extern std::atomic<unsigned long> g_gameThreadId;    // first-dispatch CAS recor
 // cancelled the original dispatch.
 bool FireInterceptorsMatched(void* self, void* function, void* params);
 void FireObserversMatched(bool post, void* self, void* function, void* params);
-// The queue drain at TOP-LEVEL game-thread context: checks the spawn-refusal
-// gate (defers + episode-logs while the world refuses spawns -- the 2026-07-04
-// join-window null-burst fix), else pumps under the t_inPump guard. Returns
-// true iff Pump() ran (the detour drops its self-time sample then).
+// The queue drain at TOP-LEVEL game-thread context: checks the spawn-refusal gate, deferring and
+// episode-logging while the world refuses spawns, and otherwise pumps under the t_inPump guard.
+// Returns true iff Pump() ran, which is when the detour drops its self-time sample.
 bool DrainPostedTasksAtTopLevel();
 // Registry teardown for Uninstall() (ClearAllObservers is public API already).
 void ClearAllInterceptors();
 
-// ---- inline hot-path fast rejects (same loads as the pre-split detour) --------
+// ---- inline hot-path fast rejects (the same loads a single TU would pay) --------
+// A registry probe is an active-count acquire load plus, on a count hit, one Bloom word, and only a
+// MATCHED dispatch -- under 1% of them -- crosses the TU boundary into *Matched(). The pump probe
+// is the t_inPump TLS plus a queue-depth acquire load and a thread-id compare, and only a non-empty
+// queue crosses into DrainPostedTasksAtTopLevel().
 inline bool FireInterceptors(void* self, void* function, void* params) {
     const int active = g_interceptorActive.load(std::memory_order_acquire);
     if (active <= 0) return false;
