@@ -1,12 +1,11 @@
-// coop/kerfur_convert_host.h -- the HOST executor half of the kerfur conversion
-// feature (extracted verbatim from kerfur_convert.cpp, 2026-07-19 s27 cut):
-// the KerfurConvertRequest execution (verb dispatch + the request-verb bracket)
-// and the post-verb CONVERGE (new-form search/registration, BindFormActor ->
-// KerfurConvert broadcast, floppy express). The DETECTION (death-watch poll +
-// first-refusal seams) stays in kerfur_convert.{h,cpp}; the CLIENT half lives
-// in kerfur_convert_client.h. Feature narrative: kerfur_convert.h.
+// coop/kerfur_convert_host.h -- the HOST executor half of the kerfur conversion feature: the
+// KerfurConvertRequest execution (verb dispatch plus the request-verb bracket) and the post-verb
+// CONVERGE (new-form search and registration, BindFormActor into a KerfurConvert broadcast, floppy
+// express). The DETECTION -- the death-watch poll and the first-refusal seams -- stays in
+// kerfur_convert.{h,cpp}, and the CLIENT half lives in kerfur_convert_client.h. Feature narrative:
+// kerfur_convert.h.
 //
-// Principle 7: gameplay/network module; engine access via ue_wrap only.
+// Principle 7: gameplay/network module; engine access through ue_wrap only.
 
 #pragma once
 
@@ -20,22 +19,18 @@ struct KerfurConvertPayload;
 
 namespace coop::kerfur_convert_host {
 
-// Resolved kerfur class pointers (npc base / prop base / floppy). Pushed by
-// kerfur_convert::Install every attempt right after its opportunistic resolve
-// block (idempotent overwrite) -- the converge machinery (poll-driven
-// ConvergeAfterConversion / ExpressConversionFloppies) works as soon as the
-// classes resolve, including in the DISABLED install state, exactly like the
-// pre-cut single-TU statics.
+// Resolved kerfur class pointers (npc base, prop base, floppy). Pushed by kerfur_convert::Install
+// on every attempt, right after its opportunistic resolve block, as an idempotent overwrite: the
+// converge machinery (poll-driven ConvergeAfterConversion and ExpressConversionFloppies) works as
+// soon as the classes resolve, including in the DISABLED install state.
 void SetClasses(void* npcClass, void* propClass, void* floppyClass);
 
-// Resolved verb refs + the request latch. Pushed ONLY at the Install SUCCESS
-// site (the same instant the residual's g_installed latches) -- so
-// OnConvertRequest's gate flips at exactly the pre-cut moment. Deliberate
-// fail-closed deviation (s27 cut, documented): the DISABLED install state
-// (signature-changed verbs) no longer reaches this, so a request in that state
-// is DROPPED instead of CallFunction-ing a signature-changed verb over a
-// zeroed 16-byte frame (the gate this replaced passed it -- a latent over-read;
-// unreachable on the current game build where the verbs take no params).
+// Resolved verb refs and the request latch. Pushed ONLY at the Install SUCCESS site, the same
+// instant the residual's g_installed latches, so OnConvertRequest's gate flips exactly when the
+// feature is live. This is deliberately fail-closed: the DISABLED install state, where a verb's
+// signature changed, never reaches here, so a request in that state is DROPPED rather than
+// CallFunction-ing a signature-changed verb over a zeroed 16-byte frame. That would be an over-read
+// -- latent on the current game build, where the verbs take no params.
 void SetVerbs(void* dropPropFnBase, void* dropPropFnCol, void* dropPropFnColGamer,
               void* colClass, void* colGamerClass, void* spawnKerfuroFn, int32_t killOff);
 
@@ -60,20 +55,19 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
 // first refusal (TryAdoptFreshKerfurProp). Game thread.
 void ExpressConversionFloppies(float x, float y, float z);
 
-// OBSERVE (2026-07-14, G1 increment): the host-range eid of the conversion request the host is
-// CURRENTLY executing via R::CallFunction inside OnConvertRequest, or kInvalidId when not inside one
-// (the g_requestVerbEid bracket). The host-exec-client-request path runs the verb via CallFunction,
-// which is ASSEMBLER-BLIND -- the 0x45 substrate only catches the local EX_Local menu toggle, never a
-// CallFunction dispatch. The kerfur_form_assembler consults this to recognize the CallFunction bracket
-// as a SECOND capture scope (else a CallFunction-route B lands in formOut, indistinguishable from a
-// world-load spawn). Game-thread only marker (no lock needed).
+// The host-range eid of the conversion request the host is CURRENTLY executing through
+// R::CallFunction inside OnConvertRequest, or kInvalidId when it is inside none. The
+// host-executes-client-request path runs the verb through CallFunction, which is ASSEMBLER-BLIND:
+// the 0x45 substrate only catches the local EX_Local menu toggle, never a CallFunction dispatch.
+// kerfur_form_assembler consults this to recognize the CallFunction bracket as a SECOND capture
+// scope, without which a CallFunction-routed form lands in formOut indistinguishable from a
+// world-load spawn. A game-thread-only marker, so no lock is needed.
 coop::element::ElementId ActiveRequestVerbEid();
 
-// One-way owner API for the residual destroy seam (s21b MarkDirtyFromVerb shape):
-// record the seam's inline converge for OnConvertRequest ONLY when the seam fired
-// inside ITS verb bracket -- a host-OWN toggle has no consumer and an unconditional
-// write would leave a stale eid that a later recycled-eid request could falsely
-// consume (audit finding 3). The bracket predicate lives HERE, next to the state.
+// One-way owner API for the residual destroy seam: record the seam's inline converge for
+// OnConvertRequest ONLY when the seam fired inside ITS verb bracket. A host-own toggle has no
+// consumer, and an unconditional write would leave a stale eid that a later recycled-eid request
+// could falsely consume. The bracket predicate lives HERE, next to the state.
 void RecordSeamConvergedInBracket(coop::element::ElementId dyingEid);
 
 // Clear the request-verb bracket pair. Net disconnect (fanned from

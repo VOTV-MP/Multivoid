@@ -42,10 +42,10 @@ void* GetOccupantPlayer(void* atv);
 // isDriven -- TRUE while a player is seated (the master "occupied" flag).
 bool IsDriven(void* atv);
 
-// Phase-2 display state (cheap field reads; exposed now for the state payload). 0/false on failure.
-float GetFuel(void* atv);    // fuel@0x05D4   (0..100)
-float GetHealth(void* atv);  // health@0x05E4 (0..100)
-bool  GetBrake(void* atv);   // Brake@0x05D9  (handbrake)
+// Display state (cheap field reads, resolved by name). 0 or false on failure.
+float GetFuel(void* atv);    // fuel, 0..100
+float GetHealth(void* atv);  // health, 0..100
+bool  GetBrake(void* atv);   // the handbrake
 
 // The game's OWN rig-consistent teleport: ATV_C::teleportVehicle(NewLocation, NewRotation) --
 // K2_SetActorLocation(bTeleport=true) + K2_SetActorRotation(bTeleportPhysics=true), and THEN it
@@ -76,8 +76,9 @@ int ResolveHitDelegates(void** out, int max);
 // Game thread only.
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot);
 
-// v77: tear down a SpawnMirror'd runtime-ATV mirror (K2_DestroyActor on the actor) when the host
-// announces it gone (AtvDestroy) or on disconnect. No-op-safe on null/already-dead. Game thread.
+// Tear down a SpawnMirror'd runtime-ATV mirror -- K2_DestroyActor on the actor -- when the host
+// announces it gone (AtvDestroy), or on disconnect. No-op-safe on a null or already-dead actor.
+// Game thread.
 void DestroyMirror(void* atv);
 
 }  // namespace ue_wrap::atv
