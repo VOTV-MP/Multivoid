@@ -1,24 +1,18 @@
-// coop/time_sync.h -- host-authoritative WORLD CLOCK sync (time-of-day) (protocol v36).
+// coop/world/time_sync.h -- host-authoritative WORLD CLOCK sync (time of day).
 //
-// Gameplay/network layer (principle 7): owns the wire protocol + the host poll + the
-// client apply + the connect-snapshot. Talks to the engine ONLY through
-// ue_wrap::daynightcycle.
+// Gameplay/network layer: owns the wire protocol, the host poll, the client apply and the connect
+// snapshot. Talks to the engine ONLY through ue_wrap::daynightcycle. Distinct from weather_sync
+// (rain, fog, lightning, red sky) on purpose -- the clock is its own subsystem.
 //
-// WHY: the cycle's clock is NOT otherwise replicated, so a fresh joiner free-runs its own
-// day-zero night clock while the host is at midday and the client world renders DARK. The sun
-// follows the cycle's within-day accumulator, so syncing the clock fixes the brightness.
+// WHY: the cycle's clock is not otherwise replicated, so a fresh joiner free-runs its own day-zero
+// night clock while the host is at midday, and the client world renders DARK. The sun is re-derived
+// from the cycle's within-day accumulator, so syncing the clock fixes the brightness.
 //
-// MODEL (host-authoritative, MTA single-syncer): the HOST polls its cycle and broadcasts
-// the clock on a throttle (the clock is continuous -> push periodically, not on-change) +
-// on a joiner's connect edge. The CLIENT direct-writes the three floats; writing TimeScale
-// lets the client free-run between pushes so the sun doesn't step. The client never drives
-// the sun/light fields (the purple-light lesson) -- only the clock.
-//
-// Distinct from weather_sync (rain/fog/lightning/redsky) on purpose: the clock is its own
-// subsystem (modular rule -- weather_sync is already over the soft cap). The migration
-// roadmap's coop::WorldState would later consolidate both; this is the focused clock fix.
-//
-// RE: research/findings/architecture-audits/votv-coop-class-clone-migration-roadmap-2026-06-06.md §2.
+// MODEL (host-authoritative, single-syncer): the HOST polls its cycle and streams the clock on a
+// throttle -- it is continuous, so it is pushed periodically rather than on change -- plus a
+// reliable push on a joiner's connect edge. The CLIENT direct-writes the three floats and stays
+// FROZEN at TimeScale=0 between pushes, so its `day` never wraps maxTime locally and the midnight
+// cascade stays unreachable. The client never drives the sun or light fields, only the clock.
 
 #pragma once
 
@@ -45,12 +39,12 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // net-pump tick on the game thread.
 void Tick();
 
-// v71 sleep gate (coop/sleep_sync): while the accelerate phase runs, the CLIENT clock
-// free-runs at TimeScale=1 (its world is dilated 20x, matching the host's advance rate)
-// instead of the U6 TimeScale=0 -- otherwise the timelapse sky only moves on the 2 s
-// corrections and pans in visible steps. Toggled at the phase edges; applies immediately
-// and on every subsequent correction. time_sync stays the ONLY TimeScale writer (one
-// authority). No-op on the host. Game thread.
+// Sleep gate (coop/sleep_sync): while the accelerate phase runs, the CLIENT clock free-runs at
+// TimeScale=1 -- its world is dilated 20x, which matches the host's advance rate -- instead of the
+// frozen 0. Otherwise the timelapse sky only moves on the streamed corrections and pans in visible
+// steps. Toggled at the phase edges, applied immediately and on every subsequent correction.
+// time_sync is the only decider of the client's TimeScale, so there is one authority. No-op on the
+// host. Game thread.
 void SetSleepAccelerate(bool on);
 
 // Session teardown: reset the throttle. Game thread.
