@@ -1,31 +1,17 @@
-// coop/chat_sync.h -- the T-chat wire half (v133: HOST-AUTHORED).
+// coop/chat_sync.h -- the T-chat wire half, HOST-AUTHORED.
 //
-// User req 2026-06-11 ("chat on T, per rule 1"): a REAL peer chat. The UI half
-// (ui/chat_input: the T-opened input bar, Enter sends, ESC closes) hands typed text to
-// QueueSend; every receiver renders "<nick>: <text>" through coop::chat_feed.
+// The UI half, ui/chat_input -- the T-opened input bar, Enter sends, ESC closes -- hands typed text
+// to QueueSend, and every receiver renders "<nick>: <text>" through coop::chat_feed.
 //
-// v133 INVERTS THE AUTHORITY. Chat used to be peer-symmetric and host-RELAYED. It is
-// now host-AUTHORED: a client's line reaches the host as an INTENT (ChatMessage,
-// client->host only), the host commits it to the lobby's record (coop::chat_log) with a
-// monotone lineSeq, and broadcasts an authored ChatLine -- preceded by a ChatSpeaker --
-// to every ready client INCLUDING the origin.
-//
-// The reason is the ORDER, and it is a threading fact rather than a preference: the
-// relay fires on the NET thread at receive time, before the reliable inbox drains on
-// the game thread. There is no point on the relay path where a lineSeq exists to stamp.
-// The commit and the broadcast therefore have to be ONE act, at ONE authority, on ONE
-// thread. MTA reaches the same shape from the other direction --
-// CConsoleCommands.cpp:404-406 broadcasts a player's own line back to them with no
-// exclude argument, exactly as this does.
-//
-// The cost, stated: a client's own line now appears after one round trip instead of
-// instantly. No optimistic echo is drawn. The alternative (echo locally, reconcile
-// against the authored row by a client-side message id) is purely additive and stays
-// unbuilt -- every piece of extra state this store grew during design produced a defect.
-//
-// Threading: QueueSend is callable from the RENDER thread (the ImGui input bar submits
-// there) -- it GT::Post()s onto the game thread. Every OnReliable runs on the game
-// thread (event_feed drain).
+// The authority is the host, not the peers. A client's line reaches the host as an INTENT
+// (ChatMessage, client to host only); the host commits it to the lobby's record in coop::chat_log
+// with a monotone lineSeq and broadcasts an authored ChatLine -- preceded by a ChatSpeaker -- to
+// every ready client INCLUDING the origin. The reason is the ORDER, and it is a threading fact
+// rather than a preference: a relay fires on the NET thread at receive time, before the reliable
+// inbox drains on the game thread, so there is no point on a relay path where a lineSeq exists to
+// stamp. The commit and the broadcast have to be ONE act, at ONE authority, on ONE thread. MTA
+// reaches the same shape from the other direction: CConsoleCommands.cpp broadcasts a player's own
+// line back to them with no exclude argument, exactly as this does.
 
 #pragma once
 
@@ -48,9 +34,14 @@ void Install(coop::net::Session* session);
 // input during a coop session (chat is meaningless solo). Any thread.
 bool SessionActive();
 
-// Queue a chat line. UTF-8 in, trimmed + length-capped inside; empty/whitespace-only
-// lines are dropped. On the HOST this commits and broadcasts; on a CLIENT it sends the
-// intent and waits for the host's authored row. RENDER-thread safe.
+// Queue a chat line. UTF-8 in, trimmed and length-capped inside; an empty or whitespace-only line
+// is dropped. On the HOST this commits and broadcasts; on a CLIENT it sends the intent and waits
+// for the host's authored row, so a client's own line appears after one round trip rather than
+// instantly. No optimistic echo is drawn: echoing locally and reconciling against the authored row
+// by a client-side message id is purely additive, and stays unbuilt.
+//
+// RENDER-thread safe -- the ImGui input bar submits there, and this posts onto the game thread.
+// Every OnReliable below runs on the game thread, in the event_feed drain.
 void QueueSend(const std::string& utf8Text);
 
 // HOST receiver: a client's chat INTENT. Validates, commits, broadcasts. A client that
