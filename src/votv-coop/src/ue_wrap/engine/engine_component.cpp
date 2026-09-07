@@ -1,16 +1,7 @@
 // ue_wrap/engine_component.cpp -- Scene/Actor component operations.
 //
-// Extracted from ue_wrap/engine.cpp (2026-05-25 modular refactor).
-// Public API lives in ue_wrap/engine.h; this TU implements the
-// component-related functions in `namespace ue_wrap::engine`.
-//
-// Covers:
-//   - USceneComponent: GetComponentLocation/Forward, GetComponentRelativeLocation
-//     (raw field read), SetComponentVisible
-//   - UActorComponent: DestroyComponent, SetComponentTickEnabled
-//   - USkinnedMeshComponent: SetAnimTickAlways (raw byte write),
-//     SetSkeletalMesh, SetAnimClass
-//   - Character helpers: GetCharacterMovementComponent (via ChildObjectsOf)
+// Public API lives in ue_wrap/engine.h; this TU implements the component-related functions in
+// `namespace ue_wrap::engine`.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -141,12 +132,11 @@ FVector GetComponentLocation(void* component) {
 
 FVector GetComponentRelativeLocation(void* component) {
     if (!component) return {};
-    // Raw field read at USceneComponent::RelativeLocation @ +0x011C (FVector,
-    // 12 bytes). NOT a UFunction call -- this is intentional: K2_GetComponent
-    // Location returns the computed WORLD transform which composes RelLoc with
-    // the parent's world transform AND any transient mid-init state, defeating
-    // the whole point of capturing the BP-authored static offset. The raw
-    // field carries the value the BP construction script wrote.
+    // Raw field read of USceneComponent::RelativeLocation, not a UFunction call, and that is
+    // deliberate: K2_GetComponentLocation returns the computed WORLD transform, which composes the
+    // relative location with the parent's world transform and with any transient mid-init state,
+    // defeating the whole point of capturing the BP-authored static offset. The raw field carries
+    // the value the BP construction script wrote.
     return *reinterpret_cast<FVector*>(
         reinterpret_cast<uint8_t*>(component) + P::off::USceneComponent_RelativeLocation);
 }

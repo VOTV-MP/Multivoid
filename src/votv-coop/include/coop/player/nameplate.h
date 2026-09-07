@@ -24,11 +24,9 @@ namespace coop::net { class Session; }
 
 namespace coop::nameplate {
 
-// One projected label (plain data; the render thread reads it). nick is a fixed
-// UTF-8 buffer sized by the display policy (coop::text::kNickBufBytes) -- the same alphabet the
-// roster board and the chat bubble already carry. It was an ASCII buffer filled through a
-// `c < 127 ? c : '?'` squash, which made the FLOATING NAMEPLATE -- the surface the whole
-// nickname arc exists for -- the one place a Cyrillic name still rendered as '????????'.
+// One projected label (plain data; the render thread reads it). nick is a fixed UTF-8 buffer sized
+// by the display policy (coop::text::kNickBufBytes) -- the same alphabet the roster board and the
+// chat bubble carry, so a non-Latin name renders here as it does everywhere else.
 struct Plate {
     float x = 0.f;           // screen px (viewport pixels, top-left origin) -- the head anchor
     float y = 0.f;
@@ -36,18 +34,18 @@ struct Plate {
     float scale = 1.f;       // distance SIZE scale: 1 = base size up close, shrinks ~1/dist far away
     bool  onScreen = false;  // projected in FRONT of the camera AND within fade range
     bool  occluded = false;  // world geometry between the camera and the head -> the plate
-                             // renders GRAY (minecraft nametag shape; user 2026-07-04)
+                             // renders GRAY
     bool  flash = false;     // hurt-flash red (read from RemotePlayer::IsHurtFlashing)
     int   healthPct = 100;   // 0..100 streamed-vitals health (display-only)
     int   ping = -1;         // RTT to the SESSION in ms (0 = sub-ms LAN -> "<1ms")
-    // v131: carried so the plate does not have to INFER "no number to show"
-    // from ping == -1. The host has no link to the session, and a plate has only
-    // suffix/no-suffix -- no room for the scoreboard's "n/a". Passing the kind
-    // makes that structural instead of an agreement between two files.
+    // Carried so the plate does not have to INFER "no number to show" from ping == -1. The host has
+    // no link to the session, and a plate has only suffix or no suffix -- no room for the
+    // scoreboard's "n/a". Passing the kind makes that structural instead of an agreement between
+    // two files.
     coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
-    uint8_t voiceIcon = 0;   // v66: coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
-    uint32_t colorRGB = 0;   // v103 (12f): packed custom nick color (coop::nick_color; 0 = white)
-    float bubbleAlpha = 0.f; // 12g: overhead chat bubble fade (0 = none; rides the plate anchor)
+    uint8_t voiceIcon = 0;   // coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
+    uint32_t colorRGB = 0;   // packed custom nick color (coop::nick_color; 0 = white)
+    float bubbleAlpha = 0.f; // overhead chat bubble fade (0 = none; rides the plate anchor)
     char  bubble[208] = {};  // 12g: the peer's last chat message, UTF-8 (chat_bubbles)
     char  nick[coop::text::kNickBufBytes] = {};
 };
@@ -70,14 +68,13 @@ void GetSnapshot(Snapshot& out);
 // to decide whether to run the always-on HUD pass. Any thread.
 bool HasAny();
 
-// ---- per-player visibility pref (v94; user 2026-07-02: any peer can hide its
-// OWN plate, synced so every peer -- including late joiners -- agrees) ----
-// The VISIBILITY AXIS is owned HERE (the nameplate domain); the wire layer
-// (player_handshake) parses Join/PlayerJoined/NameplateChange and stores into
-// this module, exactly like skins store into RemotePlayer::ApplySkin. The whole
-// store is ATOMIC (any-thread): writers span the game thread (wire handlers),
-// the render thread (the F1 checkbox request path) and the bringup thread
-// (session-start reset via player_handshake::Reset on the TimelineThread).
+// ---- per-player visibility pref: any peer can hide its OWN plate, synced so every peer, late
+// joiners included, agrees ----
+// The VISIBILITY AXIS is owned HERE, in the nameplate domain; the wire layer (player_handshake)
+// parses Join, PlayerJoined and NameplateChange and stores into this module, exactly as skins store
+// into RemotePlayer::ApplySkin. The whole store is ATOMIC and any-thread: writers span the game
+// thread (the wire handlers), the render thread (the F1 checkbox request path) and the bringup
+// thread (the session-start reset through player_handshake::Reset on the TimelineThread).
 
 // Boot-time init from multivoid.ini nameplate= (harness, before the pump ticks).
 void SetInitialLocalVisible(bool visible);
