@@ -31,14 +31,11 @@ CD::Scalars g_baseline;
 bool g_primed = false;
 
 // HOST: the slot whose ping FSM is currently running (0 = the host itself,
-// 0xFF = none). v116 root fix: coord_isPing is a RUN-FLAG -- the native ping
-// FSM is a latent tick machine gated on it (analogd uber @82980 IFNOT(
-// coord_isPing) -> the @80105 stage engine), so a wire apply into the machine
-// WAKES a phantom parallel sim on the receiver (measured 2026-07-17: the
-// host's phantom armed at 14:47:38 while the client's real ping failed).
-// The wire delta is BOOKKEEPING ONLY now: rising arms this attribution +
-// the desk-claim deny (device_occupancy consults PingActiveSlot()); falling
-// clears it. The machine field is written ONLY by the local native FSM.
+// 0xFF = none). The wire delta is bookkeeping only -- rising arms this attribution
+// and the desk-claim deny (device_occupancy reads PingActiveSlot()), falling
+// clears it -- because the flag it carries is the run-flag of a latent tick
+// machine, and writing it into a receiver would wake a phantom parallel sim there.
+// The machine field is written only by the local native FSM.
 uint8_t g_pingSetterSlot = 0xFF;
 
 bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
@@ -92,9 +89,9 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     case DeskInputField::ActiveDownload:  sc.activeDownload = p.boolVal != 0; break;
     case DeskInputField::ActiveCoords:    sc.activeCoords = p.boolVal != 0; break;
     case DeskInputField::ActiveComp:      sc.activeComp = p.boolVal != 0; break;
-    // CoordIsPing deliberately ABSENT (v116): it is the ping FSM's run-flag --
-    // patching it into any scalar set that reaches WriteScalars would wake the
-    // phantom sim. OnDeskInput intercepts it as bookkeeping before ApplyField.
+    // CoordIsPing is deliberately absent: it is the ping FSM's run-flag, and patching
+    // it into a scalar set that reaches WriteScalars would wake the phantom sim.
+    // OnDeskInput intercepts it as bookkeeping before ApplyField.
     case DeskInputField::CooldownCharge:  sc.coordCooldown = p.floatVal; break;
     default: return false;
     }
@@ -102,8 +99,8 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
 }
 
 // Apply ONE field onto the local desk: patch the scalar set + run the proven
-// WriteScalars upd* chain, then the field's native setter side effects where
-// the chain doesn't cover them (hums/lights/live volume; measured [1113-1156]).
+// WriteScalars upd* chain, then the field's native setter side effects where the
+// chain doesn't cover them (hums, lights, live volume).
 bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!PatchScalar(p, sc)) return false;
     if (!CD::WriteScalars(sc)) return false;
@@ -208,12 +205,11 @@ void OnDeskInput(const coop::net::DeskInputPayload& p, uint8_t senderSlot) {
     if (p.field >= static_cast<uint8_t>(DeskInputField::Count)) return;
     if (!std::isfinite(p.floatVal)) return;
 
-    // v116 ROOT FIX: CoordIsPing is NEVER applied to the machine. The native
-    // ping FSM is a latent tick machine gated on coord_isPing (@82980) with
-    // ==1.0 stage latches inside (@79979) -- a raw write here woke a PHANTOM
-    // parallel sim on every observer (divergent verdicts, double coordLog
-    // authorship, the 14:47:38 phantom ARM). The delta is bookkeeping only:
-    // ping attribution for the leaver clear + the desk-claim deny.
+    // CoordIsPing is NEVER applied to the machine. The native ping FSM is a latent
+    // tick machine gated on that flag, so a raw write here woke a phantom parallel sim
+    // on every observer -- divergent verdicts, double coordLog authorship. The delta
+    // is bookkeeping only: the ping attribution for the leaver clear, and the
+    // desk-claim deny.
     if (static_cast<DeskInputField>(p.field) == DeskInputField::CoordIsPing) {
         if (s->role() == coop::net::Role::Host) {
             if (p.boolVal) g_pingSetterSlot = senderSlot;
@@ -226,8 +222,8 @@ void OnDeskInput(const coop::net::DeskInputPayload& p, uint8_t senderSlot) {
     CD::Scalars sc;
     if (!CD::ReadScalars(sc)) return;
     {
-        // v115: wire-caused engine writes hold the audio-seam echo guard --
-        // any sound a setter side effect plays must not re-forward.
+        // Wire-caused engine writes hold the audio-seam echo guard -- any sound a setter
+        // side effect plays must not re-forward.
         coop::desk_snd_fx::ScopedWireApply guard;
         if (!ApplyField(p, sc)) return;
     }
@@ -242,7 +238,7 @@ void OnDeskScan(const coop::net::DeskScanEventPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
-    coop::desk_snd_fx::ScopedWireApply guard;  // v115: the spawnDirs replay is wire-caused
+    coop::desk_snd_fx::ScopedWireApply guard;  // the spawnDirs replay is wire-caused
     if (!CD::PlayScanEffects()) {
         if (!g_scanWidgetWarned) {
             g_scanWidgetWarned = true;
@@ -270,8 +266,8 @@ void SeedPingAttributionFromMachine() {
     CD::Scalars sc;
     if (!CD::EnsureResolved() || !CD::Instance() || !CD::ReadScalars(sc)) return;
     if (!sc.coordIsPing) return;
-    // Only the host's own FSM can be running here: no peer was connected to
-    // author a delta, and receivers never write the machine field (v115b).
+    // Only the host's own FSM can be running here: no peer was connected to author a
+    // delta, and receivers never write the machine field.
     g_pingSetterSlot = 0;
     UE_LOGI("desk_input: ping attribution seeded from machine ground truth "
             "(solo-host ping caught at the connect edge)");
@@ -281,18 +277,17 @@ void OnPeerLeft(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     if (g_pingSetterSlot != static_cast<uint8_t>(slot)) return;
-    // v116 (RULE 2): the machine-field clear is GONE -- no receiver wire-writes
-    // coord_isPing anymore, so no peer's machine can hold a leaver's dangling
-    // TRUE. Only the attribution (the desk-claim deny input) needs clearing;
-    // the leaver's OWN machine died with its session.
+    // No machine-field clear: no receiver wire-writes the ping flag, so no peer's
+    // machine can hold a leaver's dangling TRUE. Only the attribution -- the
+    // desk-claim deny's input -- needs clearing; the leaver's own machine died with
+    // its session.
     g_pingSetterSlot = 0xFF;
     UE_LOGI("desk_input: ping attribution cleared -- setter slot %d left mid-ping", slot);
 }
 
 void OnDisconnect() {
-    // v116 (RULE 2): the session-end machine clear is GONE with the raw wire
-    // write that made it necessary (audit 2026-07-16 WARN-3 covered a state
-    // that can no longer exist -- a LOCAL organic ping ends itself natively).
+    // No session-end machine clear either: nothing wire-writes the flag, and a local
+    // organic ping ends itself natively.
     g_baseline = {};
     g_primed = false;
     g_pingSetterSlot = 0xFF;
