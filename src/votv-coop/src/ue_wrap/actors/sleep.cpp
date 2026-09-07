@@ -20,8 +20,8 @@ void* g_gmCls = nullptr;
 void* g_gm = nullptr;
 int32_t g_gmIdx = -1;
 
-int32_t g_offIsSleep = -1;     // mainGamemode.isSleep        @0x04EC
-int32_t g_offDreamProb = -1;   // mainGamemode.dreamProbability @0x1030 (-1 sentinel)
+int32_t g_offIsSleep = -1;     // mainGamemode.isSleep
+int32_t g_offDreamProb = -1;   // mainGamemode.dreamProbability (-1 = the SP sentinel)
 int32_t g_offSaveSlot = -1;    // mainGamemode.saveSlot (UsaveSlot_C*)
 void* g_wakeupFn = nullptr;    // gamemode.wakeup() -- the timelapse END
 void* g_sleepFn = nullptr;     // gamemode.sleep(bed, dropItem, ignoreRagdoll)
@@ -35,8 +35,8 @@ void* g_getDilationFn = nullptr;    // GetGlobalTimeDilation(WorldContextObject)
 
 void* g_bedCls = nullptr;           // bed_C (probe helper)
 
-int32_t g_offSleepCam = -1;         // mainGamemode.sleepCam     @0x04F0
-int32_t g_offSleepingPawn = -1;     // mainGamemode.sleepingPawn @0x1258
+int32_t g_offSleepCam = -1;         // mainGamemode.sleepCam (ACameraActor)
+int32_t g_offSleepingPawn = -1;     // mainGamemode.sleepingPawn (the body in bed)
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
