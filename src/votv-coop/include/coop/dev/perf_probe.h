@@ -77,11 +77,11 @@ void Init();
 void NoteFrame();
 
 // Called once per net-pump tick (~125 Hz). Self-throttles to ~1 Hz: snapshots the counters, logs
-//   four lines and resets the window. [perf] PE=<n>/s (GT=<g> wk=<w>) frames=<f>/s =>
-//   PE/frame=<n/f> GT/frame=<g/f> [perf] detour self avg=<ns>/dispatch (<m> samp) => ~<x.x>
-//   ms/frame [perf] obs/intc body total=<x.x> ms/frame worst='<Fn>' <y.y> ms | post=<p> pre=<q>
-//   intc=<r> [perf] net_pump::Tick=<x.x> ms/frame | interactable=.. weather=.. remoteProp=..
-//   reaper=.. ...
+// four lines and resets the window.
+//   [perf] PE=<n>/s (GT=<g> wk=<w>) frames=<f>/s => PE/frame=<n/f> GT/frame=<g/f>
+//   [perf] detour self avg=<ns>/dispatch (<m> samp) => ~<x.x> ms/frame
+//   [perf] obs/intc body total=<x.x> ms/frame worst='<Fn>' <y.y> ms | post=<p> pre=<q> intc=<r>
+//   [perf] net_pump::Tick=<x.x> ms/frame | interactable=.. weather=.. remoteProp=.. reaper=.. ...
 void Sample();
 
 }  // namespace coop::dev::perf_probe

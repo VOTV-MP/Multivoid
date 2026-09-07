@@ -70,15 +70,14 @@ void LogHookChainSnapshot(const char* when) {
     UE_LOGI("pe_diag[%-9s] tramp   %p : %s", when, (void*)tramp,
             tramp ? HexBytes(tramp, 48).c_str() : "(null)");
     // Classify the relay. It lives inside the trampoline slot BEHIND MinHook's own jump-back stub
-    //   (FF25 00000000 + abs64 -> PE+len(stolen)), which shares the legacy relay's encoding, so a
-    //   blind first-match scan reads the jump-back and mislabels every boot. The abs64 payload is
-    //                                  what discriminates: only the relay targets &detour. Locate
-    //                                  it ONCE at the install snapshot, before anything has patched
-    //                                  it, remember the offset, and classify THAT offset in every
-    //                                  later snapshot: FF25 00000000 <&detour>      LEGACY-RELAY
-    //                                  INTACT FF25 00000000 <other>        LEGACY-RELAY CORRUPT --
-    //                                  PolyHook clobbered the pointer slot, the old double-detour
-    //                                  crash
+    // (FF25 00000000 + abs64 -> PE+len(stolen)), which shares the legacy relay's encoding, so a
+    // blind first-match scan reads the jump-back and mislabels every boot. The abs64 payload is
+    // what discriminates: only the relay targets &detour. Locate it ONCE at the install snapshot,
+    // before anything has patched it, remember the offset, and classify THAT offset in every later
+    // snapshot:
+    //   FF25 00000000 <&detour>      LEGACY-RELAY INTACT
+    //   FF25 00000000 <other>        LEGACY-RELAY CORRUPT -- PolyHook clobbered the
+    //                                  pointer slot, the old double-detour crash
     //   48 B8 <&detour> FF E0        IMMUNE-RELAY INTACT (UE4SS has not armed its PE
     //                                  hook this session)
     //   48 B8 <other> FF E0          IMMUNE-RELAY PTR-MISMATCH
