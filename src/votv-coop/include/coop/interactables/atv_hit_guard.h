@@ -1,15 +1,14 @@
 // coop/interactables/atv_hit_guard.h -- the ONE thing that makes a mirrored ATV differ from a
 // native one: it may not author collision damage.
 //
-// Extracted verbatim from atv_sync.cpp (2026-08-30, cut 2 of the >800 LOC reduction). ONE
-// concept: seven ComponentHit delegates, intercepted PRE-dispatch, cancelled on a peer that does
-// not own the rig's tick. Everything about WHO owns it stays in atv_sync.cpp -- this module is
-// handed the owned set and answers yes/no.
+// ONE concept: seven ComponentHit delegates, intercepted PRE-dispatch, cancelled on a peer that
+// does not own the rig's tick. Everything about WHO owns it stays in atv_sync.cpp -- this module is
+// handed the owned set and answers yes or no.
 //
-// It is deliberately the whole difference. The freeze/park model that used to distinguish a
-// mirror is gone (RULE 2, ATV.md 14): a mirror runs the rig natively, so the only asymmetry left
-// is authorship of damage, and a ComponentHit delegate is dispatched by the physics scene where
-// no tick switch can reach it.
+// It is deliberately the whole difference. The freeze-and-park model that used to distinguish a
+// mirror is gone: a mirror runs the rig natively, so the only asymmetry left is authorship of
+// damage, and a ComponentHit delegate is dispatched by the physics scene, where no tick switch can
+// reach it.
 
 #pragma once
 
@@ -56,10 +55,9 @@ void SetActive(bool active);
 // an accident the header would have invited a reader to break.
 bool Armed();
 
-// Session totals, for the teardown log. `armed` says whether all seven registered -- a guard that
-// never armed and a guard that armed but never fired look identical in a counter alone, and the
-// 2026-08-30 run needed to tell them apart. atv_sync's OnDisconnect PRINTS it; a field this
-// comment justifies and nothing reads is the failure the same run's lessons are about.
+// Session totals, for the teardown log. `armed` says whether all seven registered: a guard that
+// never armed and a guard that armed but never fired look identical in a counter alone. atv_sync's
+// OnDisconnect prints every field here.
 struct Counters {
     unsigned long long neutered   = 0;  // a non-owner's hit, dispatched with a ZEROED NormalImpulse
     unsigned long long allowed    = 0;  // this peer OWNS the rig, so the hit is its business
