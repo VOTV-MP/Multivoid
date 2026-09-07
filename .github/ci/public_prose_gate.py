@@ -64,7 +64,22 @@ CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
-DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")   # a doc named in a source comment
+# A document named in a source comment, in the three spellings the tree uses. All resolve the
+# same way -- by BASENAME against the tracked set -- because a comment cites `COOP_EVENT_JOIN.md`
+# as readily as `docs/COOP_EVENT_JOIN.md`, and both point at the same absent file.
+DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")
+# The bare filename, with no directory. The leading `-` in the lookbehind is what keeps this off
+# the TAIL of a research finding's name: `votv-x-DESIGN-2026-08-21.md` ends in a token this would
+# otherwise read as a document of its own, and that pointer belongs to `ptr_research`.
+DOC_BARE = re.compile(r"(?<![\w/.-])([A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)*\.md)\b")
+# The same name with the extension dropped and a locator in its place -- `DEATH_ARC section 3.1`,
+# `COOP_SYNCER_MODEL par.2b`. The locator is required: without it the shape is indistinguishable
+# from an environment variable, and `COOP_MASTER_PORT` / `COOP_TURN_SECRET` are configuration a
+# contributor needs, not prose to sweep away.
+DOC_SECTIONED = re.compile(r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"
+                           r"\s+(?:section\b|par\.|paragraph\b|Tier-|S\d)")
+# A document with no name at all, which no lookup can resolve for the reader either.
+DOC_UNNAMED = re.compile(r"\bdesign doc\b", re.I)
 LONG_COMMENT_BLOCK = 15
 # A struct offset pinned in prose. The offset CONTEXT is required, not merely a hex literal: the
 # tree is full of correct hex that is not an offset -- bytecode opcodes (0x45), sentinels (0xFF),
@@ -146,7 +161,15 @@ SRC_EXTRA = collections.OrderedDict([
     # open, and ten of the eighteen files carrying one were reported swept, because neither
     # `review` nor `label` reads this shape. The row number must follow the word directly, with
     # at most a slug between, so `the row is a MIRROR -> a 1:1` and other prose stay clear.
-    ("doc_row", (re.compile(r"\brows?\s+[\w./-]*:\d+"),
+    # The second half of the same shape is a line of a FILE VERSION that no longer exists, which
+    # a reader can resolve even less than a row of an absent document: `net_pump's old :436-783`,
+    # `the pre-cut :869 gate`, `the pre-extraction :404 correlation`. A version marker has to open
+    # it, because the bare ` :NNN` notation is also how a port is written -- `a deliberate :7777`,
+    # `never the default :80/:443` are correct prose and a sweep obeying a detector that flagged
+    # them would delete the reason a migration exists.
+    ("doc_row", (re.compile(r"\brows?\s+[\w./-]*:\d+"
+                            r"|\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"
+                            r"\s+(?:[\w'-]+\s+)?:\d{2,5}"),
                  "comment lines citing a row of a document outside the tree")),
 ])
 
@@ -208,16 +231,27 @@ def code_only(text):
     return "\n".join(out)
 
 
-def src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+def doc_index(tracked_set):
+    """-> the set a document citation resolves against: every tracked path AND every tracked
+    basename, because a comment names a doc by its filename as often as by its path."""
+    return set(tracked_set) | {t.rsplit("/", 1)[-1] for t in tracked_set}
+
+
+def src_comment_faults(line, doc_set, read_offsets, owns_offsets):
     """-> the counter key for every rule one line of source COMMENT breaks.
 
     One implementation, called by the counting pass and by the line explainer, for the same reason
     `md_link_faults` is: the two disagreeing is the failure `--lines` exists to make impossible.
     A key the caller does not count is still returned here -- `measure` filters, so retiring a
-    counter cannot leave the explainer naming lines for a number nobody prints."""
+    counter cannot leave the explainer naming lines for a number nobody prints.
+
+    `doc_set` is `doc_index`'s union, not the bare tracked set: the doc rules resolve by basename."""
     faults = ["src.comment_" + k for k, (rx, _) in
               list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if rx.search(line)]
-    if any(m not in tracked_set for m in DOC_PATH.findall(line)):
+    cited = (DOC_PATH.findall(line) + DOC_BARE.findall(line)
+             + [m + ".md" for m in DOC_SECTIONED.findall(line)])
+    if any(m not in doc_set and m.rsplit("/", 1)[-1] not in doc_set for m in cited) \
+            or DOC_UNNAMED.search(line):
         faults.append("src.comment_dead_docpath")
     if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
         faults.append("src.comment_pinned_offset")
@@ -332,6 +366,7 @@ def measure(repo):
     `--lines` can name them without a second implementation of the analysis that found them."""
     files, subs = tracked(repo)
     tracked_set = set(files)
+    docs_set = doc_index(tracked_set)
     c = collections.OrderedDict()
     who = collections.defaultdict(collections.Counter)
     detail = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -432,7 +467,7 @@ def measure(repo):
             who["src.files_half_comment"][p] = len(comments)
         owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
-            for k in src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs_set, read_offsets, owns_offsets):
                 if k in c:
                     c[k] += 1
                     who[k][p] += 1
@@ -513,7 +548,7 @@ FIXED_DESCRIPTIONS = {
     "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
-    "src.comment_dead_docpath": "comment lines naming a docs/*.md that is not in the repository",
+    "src.comment_dead_docpath": "comment lines naming a document that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
     "src.files": "tracked sources in the mod's own C++",
@@ -539,12 +574,13 @@ def explain(repo, path, tracked_set, subs=()):
         bare = code_only(text)
         read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
         owns_offsets = any(o in os.path.basename(path) for o in OFFSET_OWNERS)
+        docs_set = doc_index(tracked_set)
         comments, _code, long_blocks, tails = comment_lines(text)
         for start in long_blocks:
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
         for no, line in comments + tails:
-            for k in src_comment_faults(line, tracked_set, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs_set, read_offsets, owns_offsets):
                 out.append((no, k, line))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False

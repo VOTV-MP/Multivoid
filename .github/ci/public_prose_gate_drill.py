@@ -102,6 +102,15 @@ int g() { return 1; }
 int r1() { return 0; } // and the same citation carrying its slug, as census row a_file:138 does
 int r2() { return 0; } // plural too, as census rows a_file:192/:196
 // PRECISION: a row that is a MIRROR -> a 1:1, rows 1 and 2, and a ratio of 3:4 are all prose
+// a line of a file version that no longer exists, as x.cpp's old :436-783 block is
+// PRECISION: a deliberate :7777 and the default :80/:443 are ports, not a line of anything
+// one document spelling per line, so dropping any one of them turns this drill red
+// COOP_EVENT_JOIN.md names a document with no directory in front of it and none in the tree
+// DEATH_ARC section 3.1 is the same name with the extension dropped and a locator in its place
+// the design doc settled it, which is a document with no name a reader can look up at all
+// PRECISION: docs/TRACKED.md named bare, as TRACKED.md, resolves by BASENAME and is not debt
+// PRECISION: MY_PORT (10001) is configuration, and the tail of votv-x-design-SOMEWHERE.md
+// belongs to the pointer that names the finding, not to a document of its own
 """
 
 # The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
@@ -206,6 +215,34 @@ MUTANTS = [
     ("doc_row: singular only", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brow\s+[\w./-]*:\d+"'),
     ("doc_row: number may drift from the word", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\b.*:\d+"'),
     ("doc_row: slug not optional", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\s+[\w./-]+:\d+"'),
+    # The version-marker half of the row citation, and its precision. Reading only the `row`
+    # spelling is what the gate did while `net_pump's old :436-783` named a file version that has
+    # not existed for months; requiring no marker at all instead flags a port, and a sweep obeying
+    # that would delete the reason a migration exists.
+    ("doc_row: version marker unread",
+     'r"|\\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"', 'r"|\\bZZZZ"'),
+    ("doc_row: marker not required",
+     'r"|\\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"\n'
+     '                            r"\\s+(?:[\\w\'-]+\\s+)?:\\d{2,5}"',
+     'r"|:\\d{2,5}"'),
+    # The three spellings of a document citation, and the two carve-outs that keep them off correct
+    # prose. Each alternative is the only thing its fixture line trips, so a mutant that blinds one
+    # lowers the count; each precision mutant raises it, which fails the same arm from the other
+    # side.
+    ("dead_docpath: bare filename unread",
+     'r"(?<![\\w/.-])([A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)*\\.md)\\b"', 'r"ZZZZNOMATCH"'),
+    ("dead_docpath: reads a research finding's tail as a document",
+     'r"(?<![\\w/.-])([A-Z]', 'r"(?<![\\w/.])([A-Z]'),
+    ("dead_docpath: sectioned name unread",
+     'r"\\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"', 'r"\\bZZZZNOMATCH([A-Z0-9]*)"'),
+    ("dead_docpath: locator not required",
+     'r"\\s+(?:section\\b|par\\.|paragraph\\b|Tier-|S\\d)"', 'r"\\b"'),
+    ("dead_docpath: unnamed document unread", 'r"\\bdesign doc\\b", re.I', 'r"\\bZZZZ\\b", re.I'),
+    # A citation resolves by BASENAME: `COOP_EVENT_JOIN.md` and `docs/COOP_EVENT_JOIN.md` name the
+    # same file. Resolving by path alone flags every doc a comment names without its directory.
+    ("dead_docpath: resolves by path only",
+     "    return set(tracked_set) | {t.rsplit(\"/\", 1)[-1] for t in tracked_set}",
+     "    return set(tracked_set)"),
     ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
     ("label: build tag from one digit", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r"|v\\d+"'),
     # Both notations of the memory pointer. Reading only the path form is what the gate did while
@@ -255,6 +292,9 @@ def main():
         f.write("# spaced\n")
     with open(os.path.join(repo, "docs", "six.md"), "w", encoding="utf-8") as f:
         f.write("# exactly six hundred lines\n" + "x\n" * 599)
+    # A tracked doc one directory down, so the fixture can cite it by basename alone.
+    with open(os.path.join(repo, "docs", "TRACKED.md"), "w", encoding="utf-8") as f:
+        f.write("# tracked\n")
     with open(os.path.join(repo, "src", "votv-coop", "src", "x.cpp"), "w", encoding="utf-8") as f:
         f.write(SRC)
     with open(os.path.join(repo, "src", "votv-coop", "src", "clean.cpp"), "w", encoding="utf-8") as f:
@@ -286,19 +326,19 @@ def main():
     arm("init writes a baseline", r.returncode == 0 and os.path.isfile(baseline), r.stdout.strip())
     with open(baseline, encoding="utf-8") as f:
         counters = json.load(f)["counters"]
-    expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
+    expect = {"md.files": 5, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 2, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
               "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 56, "src.files": 5, "src.files_not_swept": 3,
-              "src.comment_doc_row": 3,
+              "src.comment_lines": 65, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_doc_row": 4,
               "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
-              "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 1,
+              "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
               "src.comment_label": 12}
     for k, v in expect.items():
