@@ -264,18 +264,29 @@ bool DebugForceRain(bool isRaining, float rainStrength) {
         return false;
     }
 
-    // The invocation sequence. setRainProperties alone has two latent risks: its body is not
-    // visible in the header dump, so it cannot be shown to start the visible particle system
-    // itself, and causeRain's body may guard on the rain-enable flag.
+    // The invocation sequence. The game itself starts rain with ONE call, causeRain, whose body
+    // rolls all five scalars and ends by calling setRainProperties with them. This entrypoint
+    // wants a SPECIFIC strength and no auto-stop, so it drives the pieces explicitly -- and the
+    // order matters, because causeRain's own tail call would otherwise overwrite them.
 
-    // Step 1, the precondition: the rain-enable flag, one byte, a belt against any internal guard
-    // in causeRain's body.
+    // Step 1, the precondition: the rain-enable flag the cycle's scheduler chain reads. The
+    // blueprint never writes it, so the forced state has to.
     *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(cycle) +
                              P::off::AdaynightCycle_enable_rain) = isRaining;
 
-    // Step 2: setRainProperties first, writing the scalars, including a zero deactivate chance so
-    // the scheduler's per-tick auto-stop roll cannot end the rain mid-test; with causeRain first,
-    // a stray scheduler tick could deactivate it before the scalars tighten.
+    // Step 2: causeRain drives the blueprint transition, the particle activate, the audio cue and
+    // the flag flip with its fan-out. It also rolls its own strength and a 0.2-0.3 deactivate
+    // chance, which step 3 then replaces.
+    {
+        ue_wrap::ParamFrame f(g_causeRainFn);
+        f.Set<bool>(L"isRaining", isRaining);
+        ue_wrap::Call(cycle, f);
+    }
+
+    // Step 3: pin the scalars the test needs -- the caller's strength, and a zero deactivate
+    // chance so the scheduler's auto-stop roll cannot end the rain mid-test. AFTER causeRain, not
+    // before: setRainProperties writes the four scalars only when isRaining is true, so on an OFF
+    // call this leaves them alone and only restates the flag.
     {
         ue_wrap::ParamFrame f(g_setRainPropertiesFn);
         f.Set<bool>(L"isRaining",            isRaining);
@@ -283,15 +294,6 @@ bool DebugForceRain(bool isRaining, float rainStrength) {
         f.Set<float>(L"rainLightningChance", 0.f);
         f.Set<float>(L"rainDeactivateChance",0.f);
         f.Set<float>(L"rainWindSpeed",       0.f);
-        ue_wrap::Call(cycle, f);
-    }
-
-    // Step 3: causeRain drives the blueprint transition, the particle activate, the audio cue and
-    // the flag flip with its fan-out; setRainProperties wrote the flag already, and calling
-    // causeRain with the same value is the edge trigger.
-    {
-        ue_wrap::ParamFrame f(g_causeRainFn);
-        f.Set<bool>(L"isRaining", isRaining);
         ue_wrap::Call(cycle, f);
     }
 
@@ -303,7 +305,7 @@ bool DebugForceRain(bool isRaining, float rainStrength) {
     }
 
     UE_LOGI("weather: DebugForceRain isRaining=%d strength=%.2f -- "
-            "wrote enable_rain + setRainProperties + causeRain + setWindParameters; "
+            "wrote enable_rain + causeRain + setRainProperties + setWindParameters; "
             "POST observers on the mutators broadcast WeatherState",
             isRaining ? 1 : 0, rainStrength);
     return true;

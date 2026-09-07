@@ -27,7 +27,7 @@ namespace cfg = coop::config;
 // ---- autonomous weather sync test ------------------------------
 // Host-only. Once the session is connected and the pose has settled, the host calls
 // coop::weather_rain::DebugForceRain through GT::Post, which writes enable_rain=true and calls
-// setRainProperties, causeRain and setWindParameters -- the order the game uses. Each forced change
+// causeRain, setRainProperties and setWindParameters. Each forced change
 // broadcasts a WeatherState packet, caught by the host's POST observer on setRainProperties and
 // causeRain, and the client applies it through the mutator UFunctions on its own cycle.
 //

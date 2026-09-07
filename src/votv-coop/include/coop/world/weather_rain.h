@@ -51,10 +51,11 @@ struct ApplyOutcome {
 void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload,
                    const coop::net::WeatherStatePayload& cur, ApplyOutcome& outcome);
 
-// Test entrypoint (host only): force rain the way the game does it -- an enable_rain write, then
-// setRainProperties, causeRain and setWindParameters. The host's own POST observers, registered by
-// weather_sync on its own resolves of the same UFunctions, catch the calls and broadcast. False if
-// the cycle is not live or the mutators are unresolved. Game thread only.
+// Test entrypoint (host only): force rain. The game starts rain with causeRain alone, which rolls
+// its own scalars; this drives enable_rain, causeRain, then setRainProperties to pin the caller's
+// strength, and setWindParameters. The host's own POST observers, registered by weather_sync on
+// its own resolves of the same UFunctions, catch the calls and broadcast. False if the cycle is
+// not live or the mutators are unresolved. Game thread only.
 bool DebugForceRain(bool isRaining, float rainStrength);
 
 // Test entrypoint (host only): intComs_triggerSnow(isSnow), the visually unambiguous signal, which
