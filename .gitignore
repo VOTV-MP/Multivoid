@@ -48,6 +48,9 @@ build/
 out/
 bin/
 obj/
+# what deploy-all.ps1 lays down and what package.ps1 wraps up
+/Mods/
+/Pelmentor-Multivoid-*.zip
 *.obj
 *.lib
 *.exp
