@@ -1,4 +1,4 @@
-// ue_wrap/ufunction_hook.cpp -- see ue_wrap/ufunction_hook.h.
+// ue_wrap/core/ufunction_hook.cpp -- see ue_wrap/core/ufunction_hook.h.
 
 #include "ue_wrap/core/ufunction_hook.h"
 
@@ -16,10 +16,9 @@ namespace {
 
 namespace P = ue_wrap::profile;
 
-// The native exec-thunk ABI (UE4): (Context->*Func)(Stack, Result) -- RCX=Context,
-// RDX=FFrame*, R8=Result. IDA-confirmed in UFunction::Invoke (0x141302DC0):
-// `(*(Function+0xD8))(Object, &Frame, Result)`. Func is void-returning (the out-value
-// flows through *Result, not the return), so a void thunk preserves the contract.
+// The native exec-thunk ABI (UE4): (Context->*Func)(Stack, Result), so RCX is the context,
+// RDX the FFrame and R8 the result, as UFunction::Invoke calls it. Func returns void -- the
+// out value flows through *Result -- so a void thunk preserves the contract.
 using NativeFuncPtr = void(__fastcall*)(void* context, void* stack, void* result);
 
 struct Slot {
@@ -28,24 +27,19 @@ struct Slot {
     PostNativeCallback cb        = nullptr;
 };
 
-// This facility is the STANDARD seam for every dispatch our ProcessEvent detour cannot
-// see (EX_* inner calls, post-BUA AnimBP overrides -- docs/COOP_DISPATCH_VISIBILITY.md),
-// so its user count GROWS with the mod. Each slot owns a distinct STAMPED thunk
-// (NativeThunk<N>) so it closes over its slot index as a compile-time constant -- no
-// per-call table lookup, no dependence on FFrame::CurrentNativeFunction (@+0x88).
-// Writes happen on the game thread (install) and the thunks run on the game thread
-// (native dispatch is GT) -> no cross-thread race.
+// This facility is the STANDARD seam for every dispatch our ProcessEvent detour cannot see
+// (the EX_* inner calls, the post-BUA AnimBP overrides), so its user count grows with the mod.
+// Each slot owns a distinct STAMPED thunk that closes over its slot index as a compile-time
+// constant: no per-call table lookup, and no dependence on FFrame's current-native-function
+// field. Installs happen on the game thread and native dispatch is on the game thread, so
+// there is no cross-thread race.
 //
-// Capacity is a compile-time bound (stamped thunks require one); the thunk table below
-// is GENERATED from this constant, so growing capacity = editing this ONE line. Born
-// 2026-07-02: at 4 slots the puppet head-gate hook was the HOST's 5th install (save-
-// indicator x2 + host-only trash-collect x2 filled the table; the client had a free
-// slot) -> "table full" -> the head fix silently worked on one peer and not the other.
-// Asymmetric peers = asymmetric slot pressure: size for the whole roster, not "a
-// handful".
-// 16 -> 40 (2026-07-10, rng_roll_census): the T1 probe Func-patches 6 driver natives + QuitGame on
-// top of ~15 standing installs -- 16 was one asymmetric-peer table-full away from the half-working-
-// fix lesson repeating. Same sizing rule as the interceptor table (whole roster, not "a handful").
+// Capacity is a compile-time bound, since stamped thunks need one, and the thunk table below
+// is GENERATED from this constant, so growing it means editing this one line. Size it for the
+// whole roster rather than a handful: peers install asymmetrically, so a table that fits one
+// role can be full on the other, and a hook that cannot install makes a fix work on one peer
+// and not the other. The count here covers the standing installs plus the driver natives and
+// QuitGame that a probe patches on top.
 constexpr int kMaxNativeHooks = 40;
 Slot g_slots[kMaxNativeHooks];
 int  g_slotCount = 0;
@@ -63,24 +57,25 @@ int RunCbSEH(PostNativeCallback cb, void* context, void* src, void* result) {
     }
 }
 
-// Re-entrancy guard: the gameplay cb (a host convert) must NOT spawn an actor synchronously -- it doesn't
-// (OnHostConvert only re-binds the Element + queues a reliable packet) -- but if a future cb ever did, its
-// BeginDeferred would re-enter THIS thunk. Skip the cb on re-entry so a nested spawn can never double-fire
-// the convert. Thread-local (native dispatch is game-thread, but the guard stays correct regardless). The
-// forward ALWAYS runs (a re-entrant spawn must still proceed).
-// NOTE (audit 2026-07-07): this guard is GLOBAL across ALL slots, not per-slot -- a hooked native
-// dispatched from INSIDE another slot's cb would have its cb silently skipped too. Safe today because
-// no cb dispatches a hooked native synchronously (sequential BP bytecode steps -- e.g. a pile's toClump
-// BeginDeferred cb returns, t_inCb resets, THEN the pile's K2_DestroyActor fires -- are NOT nested);
-// preserve that property when adding cbs, or make the guard per-slot.
+// Re-entrancy guard. A callback must not spawn an actor synchronously -- none does; the host
+// convert only re-binds the element and queues a reliable -- but if one ever did, its deferred
+// spawn would re-enter this thunk, so the callback is skipped on re-entry and a nested spawn
+// can never double-fire. The forward ALWAYS runs: a re-entrant spawn must still proceed.
+// Thread-local, though native dispatch is game-thread anyway.
+//
+// The guard is GLOBAL across ALL slots, not per-slot, so a hooked native dispatched from
+// inside another slot's callback would have its own callback skipped too. That is safe only
+// while no callback dispatches a hooked native synchronously -- sequential Blueprint bytecode
+// steps are not nested, since the first callback returns and clears the flag before the next
+// step runs. Preserve that when adding a callback, or make the guard per-slot.
 thread_local bool t_inCb = false;
 
 template <int N>
 void __fastcall NativeThunk(void* context, void* stack, void* result) {
     Slot& s = g_slots[N];
-    // FFrame::Object (@0x18) = the actor whose bytecode is executing = the SOURCE entity
-    // for a spawn issued from its ubergraph (the re-piling clump). Read BEFORE forwarding
-    // (the original steps params off the bytecode stream but never touches Object).
+    // FFrame::Object is the actor whose bytecode is executing -- the SOURCE entity for a spawn
+    // issued from its ubergraph. Read BEFORE forwarding: the original steps parameters off the
+    // bytecode stream, but never touches Object.
     void* srcObj = stack
         ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(stack) + P::off::FFrame_Object)
         : nullptr;
@@ -143,8 +138,9 @@ bool InstallPostHook(void* ufunction, PostNativeCallback cb) {
     g_slots[n].original  = original;
     g_slots[n].cb        = cb;
     g_slotCount = n + 1;     // slot fully populated before the thunk can be reached
-    // 8-byte aligned pointer swap (UFunction+0xD8 is 8-aligned; the UFunction lives in the
-    // writable UE4 object pool). Atomic on x64; GT-only dispatch means no torn read anyway.
+    // An 8-byte aligned pointer swap: the Func slot is 8-aligned and the UFunction lives in the
+    // writable UE4 object pool. Atomic on x64, and game-thread-only dispatch means no torn read
+    // in any case.
     *funcSlot = ThunkFor(n);
     UE_LOGI("ufunction_hook: patched ufn=%p Func @0x%zX (orig=%p -> thunk slot %d) -- standalone "
             "UFunction::Func hook (catches EX_CallMath calls invisible to ProcessEvent)",

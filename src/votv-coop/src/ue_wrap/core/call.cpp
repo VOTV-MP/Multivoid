@@ -11,25 +11,20 @@ namespace ue_wrap {
 
 namespace {
 
-// Process-wide cache of UFunction* -> ParamFrame::Metadata. Built lazily on
-// first construction for a given fn; entries live for the process lifetime
-// (UE4 UFunctions are class-static, never GC'd during a running game).
+// Process-wide cache of UFunction to ParamFrame::Metadata, built lazily the first time a given
+// function is framed; entries live for the process, since UE4 UFunctions are class-static and
+// never collected while the game runs.
 //
-// Audit fix 2026-05-29 D4-1: prior ParamFrame ctor walked the FProperty
-// chain + heap-allocated a wstring per param + emplaced into a fresh
-// std::vector<std::pair<std::wstring, int32_t>> on every call. With the
-// per-snapshot Drive() path dispatching N UFunctions per tick at 60 Hz,
-// that's tens of thousands of allocs/sec under load. The cache reduces
-// each subsequent ParamFrame for the same fn to a single std::unordered_
-// map::find + buf_.assign (the per-call zeroed frame remains).
+// It exists because the alternative is per-call: walking the FProperty chain, heap-allocating
+// a wstring per parameter and filling a fresh vector, on every frame construction. The
+// per-snapshot drive path dispatches many UFunctions per tick at 60 Hz, which puts that in the
+// tens of thousands of allocations a second under load. Cached, each later frame for the same
+// function costs one map lookup and a buffer assign; the zeroed frame itself is still per call.
 //
-// Thread safety: lookup acquires the mutex briefly; resolution work
-// (FunctionFrameSize + FunctionParams) happens with the mutex held the
-// first time a function is seen. UE4 ProcessEvent dispatch is game-
-// thread-only in practice (the parallel anim task-graph worker reaches
-// ProcessEvent only via Pump-posted lambdas which dispatch back to the
-// game thread per ue_wrap/game_thread.h:118-120), but the mutex makes
-// the cache safe under any caller pattern.
+// Thread safety: the lookup takes the mutex briefly, and the resolve work runs with it held
+// the first time a function is seen. ProcessEvent dispatch is game-thread-only in practice --
+// the parallel anim worker reaches it only through posted lambdas that dispatch back on the
+// game thread -- but the mutex keeps the cache safe under any caller.
 std::mutex g_metaMutex;
 std::unordered_map<void*, ParamFrame::Metadata> g_meta;
 
@@ -105,12 +100,11 @@ ParamFrame::ParamFrame(void* function) : fn_(function) {
 int32_t ParamFrame::OffsetOf(const wchar_t* name) const {
     if (!meta_) return -1;
     for (const auto& o : meta_->offsets) {
-        // Case-INSENSITIVE: param names are FNames (engine compares by
-        // ComparisonIndex; the rendered casing is whatever got registered
-        // FIRST in this process) -- the same load-order roulette as
-        // reflection::NameEquals. Found via the email mirror's addEmail
-        // frame: "unknown param 'item'" while the BP param rendered under a
-        // different first-registered casing (smoke 2026-06-12).
+        // Case-INSENSITIVE, because parameter names are FNames: the engine compares by comparison
+        // index and the rendered casing is whichever spelling was registered FIRST in this process,
+        // the same load-order roulette reflection::NameEquals handles. A frame whose parameter is
+        // rendered under another casing reads as an unknown parameter under a case-sensitive
+        // compare.
         if (::_wcsicmp(o.first.c_str(), name) == 0) return o.second;
     }
     return -1;
