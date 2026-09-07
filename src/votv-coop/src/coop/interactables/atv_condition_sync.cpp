@@ -26,7 +26,7 @@ constexpr size_t kCondOff = offsetof(coop::net::AtvStatePayload, tiresDurability
 constexpr size_t kCondBytes = sizeof(coop::net::AtvStatePayload) - kCondOff;
 static_assert(kCondBytes == 64, "v147 condition block must be 64 bytes (and AtvEntry::lastSentCond with it)");
 
-// Change-edge quanta (qf round 3: pure-visual quanta, not correctness bounds). Dirt domain is
+// Change-edge quanta -- purely visual, not correctness bounds. Dirt domain is
 // 0..1 (a 1% step is invisible in the shader lerp); health domain 0..100 drives smoke
 // freq/color.
 constexpr float kDirtEps = 0.01f;
@@ -63,7 +63,7 @@ bool DirtGroupChanged(const AC::Snapshot& in, const AC::Snapshot& expressed) {
 
 void FillPayload(void* actor, coop::net::AtvStatePayload& p) {
     // p arrives memset(0) from ReadPayload -- tiresValid is already 0, which IS the honest
-    // "producer carried nothing" value (the v143 birthLen rule). Only a COMPLETE read flips it.
+    // "producer carried nothing" value, as the birth length is. Only a COMPLETE read flips it.
     if (!AC::Resolved() && !AC::Resolve()) {
         static bool warned = false;
         if (!warned) { warned = true;
@@ -107,7 +107,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     void* actor = e.actor;
     if (!actor) return;
 
-    // Seed the last-expressed baseline FROM THE ACTOR (qf round 4): first apply for this
+    // Seed the last-expressed baseline FROM THE ACTOR: first apply for this
     // entry, or the entry repointed to a new actor after an index rebuild. A save-loaded
     // joiner whose world already matches the host thus fires NO verb on its first packet.
     if (!e.condExpressedSeeded || e.condExpressedActor != actor) {
@@ -115,7 +115,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
         if (!AC::Read(actor, seeded)) {
             // Cannot establish a baseline -> writing accumulators is still safe (values,
             // no verbs), but no verb may fire against an unknown rig state. Retry next apply.
-            // Audit MINOR-6: say so once -- a permanently unreadable receiver actor must not
+            // Say so once -- a permanently unreadable receiver actor must not
             // look healthy in the counters.
             static bool warned = false;
             if (!warned) { warned = true;
@@ -135,9 +135,9 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     AC::Snapshot in;
     PayloadToSnapshot(p, in);
 
-    // MAJOR-1 (audit): the 13 floats reach engine fields and the HOST SAVE raw, and a NaN
+    // The 13 floats reach engine fields and the HOST SAVE raw, and a NaN
     // would ALSO disable this lane's own edges forever (fabs(NaN-x)>eps is false) -- values
-    // poison while no verb re-derives. Non-finite is the SYMMETRIC garbage filter (v141
+    // poison while no verb re-derives. Non-finite is the SYMMETRIC garbage filter (the
     // precedent): refuse the BLOCK like tiresValid=0, keep the packet's pose half.
     {
         const float* fs[] = { &in.dur[0], &in.dur[1], &in.dur[2], &in.dur[3],
@@ -154,7 +154,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
             }
         }
     }
-    // CLIENT-SCOPED domain clamps (audit MINOR-1, the A54 family). Per the standing rule the
+    // CLIENT-SCOPED domain clamps. Per the standing rule the
     // HOST may cheat and we relay it -- so a bound on host-authored values would be a bug;
     // only client-authored values are clamped to the game's own domains before they can
     // reach the host's persisted fields.
@@ -168,7 +168,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     const AC::Snapshot& ex = e.condExpressed;
     const bool applyPresence = senderSlot == 0;
 
-    // Change groups vs the EXPRESSED baseline, over the WRITTEN set only (qf round 3: presence
+    // Change groups vs the EXPRESSED baseline, over the WRITTEN set only (presence
     // terms leave the groups entirely when presence is not applied, else updTires would refire
     // at 20 Hz through the whole deliberately-divergent client-eject window).
     const bool presenceDiffers = in.mask != ex.mask || in.hasSpare != ex.hasSpare;
@@ -200,7 +200,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
 
     if (!(groupTires || groupDirt || groupSpare || groupHealth)) return;
 
-    // The defer guard (qf round 2): skipTireUpdate is measured writer-less and default-FALSE,
+    // The defer guard: skipTireUpdate is measured writer-less and default-FALSE,
     // but if some future external writer sets it, the reducers no-op silently -- so defer
     // rather than dispatch into a no-op, and retry on the next apply (the expressed baseline
     // has not advanced, so the same edges recompute).
@@ -220,7 +220,7 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
     if (groupSpare) {
         if (AC::CallVerb(actor, AC::Verb::UpdSpareTire)) {
             g_updSpare.fetch_add(1, std::memory_order_relaxed);
-            // MAJOR-3 (audit): hasSpare is PRESENCE -- advancing its expression on a
+            // hasSpare is PRESENCE -- advancing its expression on a
             // non-host packet (groupSpare can fire via fixes/dirt alone) records a value
             // that was never WRITTEN, and the host's later legitimate edge then compares
             // equal and never lands. Advance presence expression only when presence applied.

@@ -44,7 +44,7 @@ RingEntry g_ring[kRingCap];
 int  g_ringN = 0;
 bool g_ringOverflowWarned = false;
 
-// fires/sec evidence counters (the qf R1 permanent-seam gate): total detour
+// fires/sec evidence counters, the proof the seam is permanent: total detour
 // entries per hooked fn + desk-comp hits. Logged every 60 s when nonzero.
 std::atomic<uint64_t> g_firesPlay{0}, g_firesSetActive{0}, g_firesActivate{0};
 std::atomic<uint64_t> g_deskHits{0};
@@ -58,7 +58,7 @@ Clock::time_point g_nextCounterLog{};
 bool    g_wireLoopOn[2] = {false, false};
 uint8_t g_loopFrom[2] = {0xFF, 0xFF};
 // Pending desired loop state while the desk is unresolved (join re-assert
-// arriving before the joiner's desk resolves -- qf R3): -1 none, 0 off, 1 on.
+// arriving before the joiner's desk resolves): -1 none, 0 off, 1 on.
 int g_pendingLoop[2] = {-1, -1};
 
 // Dev self-test ([dev] desk_snd_selftest=1): the host dispatches ONE organic
@@ -198,7 +198,7 @@ void Tick() {
 
     // Dev self-test arming (per-session: OnDisconnect clears the latch).
     // Armed from the CONNECTED edge + 20 s -- a joiner's desk resolves ~10 s
-    // after its transport connects (measured smoke 2026-07-17: fx at +5 s was
+    // after its transport connects (measured: an fx at +5 s was
     // dropped at the client's still-unresolved desk), so the probe must
     // outwait the peer's world load to be a valid e2e proof.
     static const bool s_selftest = coop::config::ResolveFlag(::coop::config_registry::rows::desk_snd_selftest);
@@ -244,7 +244,7 @@ void Tick() {
         }
     }
 
-    // fires/sec evidence (qf R1 gate): 60 s cadence, only when nonzero.
+    // fires/sec evidence: 60 s cadence, only when nonzero.
     const auto now = Clock::now();
     if (g_nextCounterLog == Clock::time_point{}) g_nextCounterLog = now + std::chrono::seconds(60);
     if (now >= g_nextCounterLog) {
@@ -273,7 +273,7 @@ void OnDeskSndFx(const DeskSndFxPayload& p, uint8_t senderSlot) {
 
     const bool isLoop = IsLoopComp(p.comp);
     if (!DA::EnsureResolved()) {
-        if (isLoop) {  // loops are STATE -- park + retry (qf R3); one-shots are missable
+        if (isLoop) {  // loops are STATE -- park + retry; one-shots are missable
             g_pendingLoop[p.comp - coop::net::kDeskSndFirstLoop] =
                 (static_cast<DeskSndOp>(p.op) == DeskSndOp::LoopOn) ? 1 : 0;
         }
@@ -308,7 +308,7 @@ void QueueConnectBroadcastForSlot(int slot) {
         bool on = false;
         if (!DA::ReadLoopActive(coop::net::kDeskSndFirstLoop + i, on) || !on) continue;
         // Component ground truth (covers host-pressed AND client-pressed loops
-        // alike -- qf R5); send as a normal LoopOn to just this joiner.
+        // alike); send as a normal LoopOn to just this joiner.
         DeskSndFxPayload p{};
         p.op = static_cast<uint8_t>(DeskSndOp::LoopOn);
         p.comp = static_cast<uint8_t>(coop::net::kDeskSndFirstLoop + i);
@@ -323,7 +323,7 @@ void OnPeerLeft(int slot) {
     for (int i = 0; i < 2; ++i) {
         if (g_loopFrom[i] != static_cast<uint8_t>(slot)) continue;
         g_loopFrom[i] = 0xFF;
-        // HOST-OWNED leaver teardown (qf R3): broadcast the OFF + apply locally.
+        // HOST-OWNED leaver teardown: broadcast the OFF + apply locally.
         DeskSndFxPayload p{};
         p.op = static_cast<uint8_t>(DeskSndOp::LoopOff);
         p.comp = static_cast<uint8_t>(coop::net::kDeskSndFirstLoop + i);
