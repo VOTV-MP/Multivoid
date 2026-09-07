@@ -8,7 +8,7 @@
 //
 // Fonts are baked at kPx * ui::scale::Ui(), the REAL rasterized size for the live resolution, never
 // through io.FontGlobalScale, which stretches the bitmap and blurs it. Load() is re-entrant:
-// imgui_overlay::MaybeRescale clears the atlas and re-runs it when the scale or the family changes,
+// ui::style::MaybeRescale clears the atlas and re-runs it when the scale or the family changes,
 // then invalidates the DX11 device objects so the backend re-bakes. It must run between
 // ImGui::CreateContext() and the first NewFrame, since the DX11 backend bakes the atlas lazily on
 // frame 1.

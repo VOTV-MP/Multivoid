@@ -14,7 +14,7 @@ namespace coop::text {
 std::string ToUtf8(const std::wstring& w) {
     // Hand-rolled rather than WideCharToMultiByte because it must be defined on
     // the two inputs the API is coy about: an UNPAIRED surrogate (dropped) and a
-    // C0 control (dropped). Promoted unchanged from chat_sync::NickUtf8, which has
+    // C0 control (dropped). Promoted unchanged out of the chat nick sanitiser, which has
     // carried every chat line since it was written.
     std::string s;
     s.reserve(w.size() * 2);

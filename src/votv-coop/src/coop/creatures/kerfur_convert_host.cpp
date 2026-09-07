@@ -262,7 +262,7 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
 
 void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
                       uint8_t senderPeerSlot) {
-    // Host-only (gated by the event_dispatch_state router). Game thread (the
+    // Host-only (gated by the event_dispatch_intent router). Game thread (the
     // event_feed drain) -- ProcessEvent calls are legal here, and because the
     // drain runs INSIDE the pump task (t_inPump set), the verb's nested
     // dispatches cannot re-enter the pump: the converge below always runs

@@ -1,5 +1,5 @@
 // coop/element/object_scan_hub.cpp -- the one sliced pass over GUObjectArray that every consumer
-// shares, in place of a full array walk per subsystem per frame.
+// shares, in place of a full array walk per subsystem on its own ~2 s cadence.
 #include "coop/element/object_scan_hub.h"
 
 #include "ue_wrap/core/log.h"

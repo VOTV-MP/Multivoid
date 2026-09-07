@@ -4,7 +4,7 @@
 // overlay -- fonts, windows, paddings -- shrank relative to the screen. Ui() is the
 // proportional factor clientHeight / 1080, quantized to sixths so the standard heights land
 // exactly (720p = 2/3, 1080p = 1, 1440p = 4/3, 2160p = 2) and a windowed drag-resize does not
-// re-bake the font atlas every frame. imgui_overlay::MaybeRescale() polls the client rect each
+// re-bake the font atlas every frame. ui::style::MaybeRescale() polls the client rect each
 // frame and performs the atlas/style rebuild when ConsumeRebuild() fires.
 //
 // All state is render-thread-only (the Present detour thread), like the rest of the overlay.
@@ -42,7 +42,7 @@ inline float S(float px) { return px * Ui(); }
 void RequestRebuild();
 
 // True exactly once after NoteViewport/RequestRebuild flagged a change; the
-// caller (imgui_overlay::MaybeRescale) then re-bakes fonts + rescales style.
+// caller (ui::style::MaybeRescale) then re-bakes fonts + rescales style.
 bool ConsumeRebuild();
 
 }  // namespace ui::scale
