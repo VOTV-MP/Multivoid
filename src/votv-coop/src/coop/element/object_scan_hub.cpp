@@ -1,6 +1,5 @@
-// coop/element/object_scan_hub.cpp -- the shared sliced GUObjectArray pass (R-2).
-// Design of record + /qf round map:
-// research/findings/architecture-audits/votv-shared-scan-hub-R2-DESIGN-2026-08-23.md
+// coop/element/object_scan_hub.cpp -- the one sliced pass over GUObjectArray that every consumer
+// shares, in place of a full array walk per subsystem per frame.
 #include "coop/element/object_scan_hub.h"
 
 #include "ue_wrap/core/log.h"
@@ -19,22 +18,23 @@ namespace {
 namespace R = ue_wrap::reflection;
 using steady_clock = std::chrono::steady_clock;
 
-// Pass cadence carried verbatim from the retired SettledObjectScan (L5 take-3).
-// Backstop 30 -> 10 (R-2b, 2026-08-23): ~20 s full-pass cadence, NOT 60 s -- the reseed
-// consumer's recycled-slot detection latency is field-load-bearing (the periodic SAFETY
-// census caught REAL NumObjects-flat spawns in both field logs: 1+1 on the host, 50/17/12
-// per 20 s window on the client; votv-reseed-hub-consumer-DESIGN-2026-08-23.md §0). Cost:
-// duty cycle of sliced fulls triples; the per-frame cap below is unchanged by construction.
+// Pass cadence, carried over from the retired settled-object scan. A full pass every tenth one is a
+// ~20 s full-pass cadence rather than 60 s, because the reseed consumer's recycled-slot detection
+// latency is load-bearing in the field: the periodic safety census caught real spawns that left
+// NumObjects flat -- one on a host, and 50, 17 and 12 in successive 20 s windows on a client. The
+// cost is that the duty cycle of sliced full passes triples; the per-frame cap below is unchanged
+// by construction.
 constexpr auto    kPassCadence   = std::chrono::seconds(2);
 constexpr int     kBackstopEvery = 10;
-// Slice budget: ~1 ms of GT time per frame, clock checked every kSliceCheck objects. Priced in
-// the design (~17 ns/object dev, ~43 ns/object on the field reporter's machine).
+// Slice budget: ~1 ms of game-thread time per frame, with the clock checked every kSliceCheck
+// objects. Measured at ~17 ns per object on the development machine and ~43 ns on a field
+// reporter's.
 constexpr int64_t kSliceBudgetUs = 1000;
 constexpr int32_t kSliceCheck    = 4096;
 
 struct Row {
     Consumer c;
-    // Settle state (semantics verbatim from SettledObjectScan::End).
+    // Settle state, carried over from the retired settled-object scan.
     size_t lastCount   = static_cast<size_t>(-1);
     int    stableScans = 0;
     bool   activeThisPass = false;   // EnsureResolved() succeeded at pass start
@@ -158,8 +158,8 @@ void CompletePass() {
     for (Row& r : g_rows) {
         if (!r.activeThisPass) continue;
         const size_t count = r.c.OnPassComplete(r.c.ctx, g_passFull, gen);
-        // Settle feed -- verbatim SettledObjectScan::End semantics (zero never settles; any
-        // change resets; see the retired component's 18:41 rationale, preserved).
+        // Settle feed, on the retired settled-object scan's rule: a count of zero never settles,
+        // and any change resets the run.
         if (count > 0 && count == r.lastCount) {
             if (r.stableScans < r.c.settleScans) ++r.stableScans;
         } else if (count != r.lastCount) {
@@ -177,8 +177,8 @@ void CompletePass() {
                 g_passFull ? "full" : "tail", g_passEnd - g_passBegin,
                 g_passSlices, static_cast<long long>(durUs));
     }
-    // Cadence: next pass due 2 s after this one STARTED, but never before it completed
-    // (max(2s, duration+eps) from the design -- a pass longer than the cadence back-to-backs).
+    // Cadence: the next pass is due 2 s after this one STARTED, but never before it completed --
+    // max(2 s, duration), so a pass longer than the cadence runs back-to-back.
     const auto due = g_passStart + kPassCadence;
     const auto now = steady_clock::now();
     g_nextPassDue = (due > now) ? due : now;
@@ -219,12 +219,12 @@ bool RunSlice() {
             g_memo[cls] = MemoEntry{bits, clsIdx, R::SlotSerial(clsIdx)};
         }
         if (bits) {
-            // Audit W-3: during the <=44 s old/new world coexistence after a travel, a
-            // slot+serial-live actor can still belong to the DYING world (IsLive is
-            // world-blind) -- without this term a pass run in the new world would re-admit
-            // it under the CURRENT gen stamp. One bounded outer-climb per MATCHING object
-            // per pass (never per object). WorldOf()==nullptr means "not world-scoped",
-            // which no actor a consumer indexes ever is -- exclude those too.
+            // During the old and new world's coexistence after a travel -- up to 44 s -- an actor
+            // whose slot and serial say it is live can still belong to the DYING world, because
+            // IsLive is world-blind. Without this term a pass run in the new world would re-admit
+            // it under the CURRENT gen stamp. One bounded outer-climb per MATCHING object per pass,
+            // never per object. A null WorldOf() means "not world-scoped", which no actor a
+            // consumer indexes ever is, so those are excluded too.
             if (ue_wrap::world_identity::WorldOf(obj) != ue_wrap::world_identity::CurrentWorld())
                 continue;
             for (size_t ci = 0; ci < g_rows.size(); ++ci) {
@@ -270,11 +270,10 @@ void Tick() {
 }
 
 void ForceSyncFullPass() {
-    // Parity drill mode A: one complete FULL pass inside this GT call (no slicing), so the
-    // caller can compare indexes against an independent probe walk with zero staleness.
-    // NOTE: settle counters are NOT touched -- the first GREEN run reset them here and the
-    // forced pass then dragged ~15 re-settle fulls behind it, contaminating the numeric gate
-    // (5.8x instead of >=10x). One flag = one extra full, nothing else.
+    // Parity drill mode A: one complete FULL pass inside this game-thread call, unsliced, so the
+    // caller can compare indexes against an independent probe walk with zero staleness. Settle
+    // counters are NOT touched: resetting them here drags a train of re-settle full passes behind
+    // the forced pass and contaminates the numeric gate. One flag = one extra full, nothing else.
     if (g_inPass) AbortPass("ForceSyncFullPass preempt");
     g_forceFullOnce = true;
     if (!StartPass()) return;
