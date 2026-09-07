@@ -40,7 +40,8 @@ inline constexpr float kNameplatePx = 16.f;
 // Persisted per role as multivoid.ini ui.font.<menu|chat|net|nameplate|toast>, each one of
 // fixedsys, roboto, jetbrains or cascadia, and switchable live in F1 > Cosmetics > Interface. The
 // defaults are Fixedsys for menu, chat and toast, and Roboto for nameplate and net. Fixedsys is the
-// game's own terminal pixel font (FSEX300, font_terminal), bundled from the VOTV assets.
+// game's own terminal pixel font (FSEX300, font_terminal), taken from the VOTV assets and
+// embedded as RCDATA like the rest.
 enum class Role : int { Menu = 0, Chat = 1, Net = 2, Nameplate = 3, Toast = 4 };
 inline constexpr int kRoleCount = 5;
 

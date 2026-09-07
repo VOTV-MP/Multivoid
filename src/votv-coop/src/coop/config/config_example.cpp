@@ -277,6 +277,7 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
             curSection = name;
             continue;
         }
+        // Grammar: a line is prose, a copyable key, a bare header or blank.
         failLog("line is neither prose, copyable, header nor blank: " + l.substr(0, 60));
     }
     if (headerIdx != config_registry::kSectionCount)

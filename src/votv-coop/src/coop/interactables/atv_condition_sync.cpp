@@ -63,7 +63,7 @@ bool DirtGroupChanged(const AC::Snapshot& in, const AC::Snapshot& expressed) {
 
 void FillPayload(void* actor, coop::net::AtvStatePayload& p) {
     // p arrives memset(0) from ReadPayload -- tiresValid is already 0, which IS the honest
-    // "producer carried nothing" value, as the birth length is. Only a COMPLETE read flips it.
+    // "producer carried nothing" value. Only a COMPLETE read flips it.
     if (!AC::Resolved() && !AC::Resolve()) {
         static bool warned = false;
         if (!warned) { warned = true;
@@ -137,8 +137,8 @@ void ApplyPayload(coop::atv_sync::AtvEntry& e, const coop::net::AtvStatePayload&
 
     // The 13 floats reach engine fields and the HOST SAVE raw, and a NaN
     // would ALSO disable this lane's own edges forever (fabs(NaN-x)>eps is false) -- values
-    // poison while no verb re-derives. Non-finite is the SYMMETRIC garbage filter (the
-    // precedent): refuse the BLOCK like tiresValid=0, keep the packet's pose half.
+    // poison while no verb re-derives. Non-finite is the same symmetric garbage filter the
+    // rest of the wire uses: refuse the BLOCK as tiresValid=0 does, keep the packet's pose half.
     {
         const float* fs[] = { &in.dur[0], &in.dur[1], &in.dur[2], &in.dur[3],
                               &in.dirt[0], &in.dirt[1], &in.dirt[2], &in.dirt[3],

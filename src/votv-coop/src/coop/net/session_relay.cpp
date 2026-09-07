@@ -31,8 +31,8 @@
 namespace coop::net {
 
 void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, int len) {
-    // Forward an unreliable pose the host just received from `originSlot` to every OTHER connected
-    // client.
+    // Forward an unreliable datagram -- a pose, a prop pose, a voice frame -- that the host just
+    // received from `originSlot` to every OTHER connected client.
     if (cfg_.role != Role::Host) return;
     if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
     auto* sockets = SteamNetworkingSockets();

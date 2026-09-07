@@ -56,8 +56,8 @@ void SetActive(bool active);
 bool Armed();
 
 // Session totals, for the teardown log. `armed` says whether all seven registered: a guard that
-// never armed and a guard that armed but never fired look identical in a counter alone. atv_sync's
-// OnDisconnect prints every field here.
+// never armed and a guard that armed but never fired look identical in a counter alone. atv_sync
+// prints every field here on a disconnect that cleared at least one ATV.
 struct Counters {
     unsigned long long neutered   = 0;  // a non-owner's hit, dispatched with a ZEROED NormalImpulse
     unsigned long long allowed    = 0;  // this peer OWNS the rig, so the hit is its business

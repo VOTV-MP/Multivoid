@@ -34,6 +34,7 @@ namespace coop::dev::object_overlay {
 // and its per-candidate location reads have the ue_wrap/prop.h FindNearest cost profile, which is
 // acceptable at a 2 s cadence behind an explicit toggle and never on by default. Nothing here
 // crosses the wire.
+
 inline constexpr int kMaxLabels = 64;
 
 // One projected label (plain data; the render thread reads it). Identity text is
