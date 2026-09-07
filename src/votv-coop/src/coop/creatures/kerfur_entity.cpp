@@ -1,16 +1,12 @@
-// coop/kerfur_entity.cpp -- see coop/kerfur_entity.h.
-//
-// K-3: the host-side KerfurId authority table + the class/eid predicates. No wire change; the
-// conversion still runs the old kerfur_convert path. K-4 wires BindFormActor + the KerfurConvert
-// broadcast; K-5 wires the client-mint class-gate + the CLIENT held-pose eid map (no new packet).
+// coop/creatures/kerfur_entity.cpp -- see coop/creatures/kerfur_entity.h.
 
 #include "coop/creatures/kerfur_entity.h"
 
-#include "coop/element/element_deleter.h"  // K's Element is parked, not freed at the seam
+#include "coop/element/element_deleter.h"  // the kerfur element is queued for deletion, not freed at the seam
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"   // KerfurConvertBroadcastPayload + ReliableKind (the BindFormActor wire)
 #include "coop/net/session.h"
-#include "coop/save/save_transfer.h"  // scope A: TryGetSaveTimeKerfurXformAnySlot (blob-instant off-prop pos)
+#include "coop/save/save_transfer.h"  // TryGetSaveTimeKerfurXformAnySlot -- the off-prop pose at the blob instant
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -28,45 +24,46 @@ namespace R = ue_wrap::reflection;
 std::atomic<coop::net::Session*> g_session{nullptr};
 coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
 
-// Resolved kerfur base classes (set by kerfur_convert::Install via SetKerfurClasses). Atomic so the
-// class-gate predicates can read them from any thread; written once on the game thread at resolve.
+// The resolved kerfur base classes, pushed by the conversion module's install as soon as it
+// resolves them. Atomic, so the class tests answer from any thread without taking the table
+// mutex below.
 std::atomic<void*> g_kerfurNpcClass{nullptr};
 std::atomic<void*> g_kerfurPropClass{nullptr};
 
-// HOST authority table. The KerfurEntity unique_ptr reserves K in the Registry (AllocHostId); ~Element
-// frees K when the record is erased. The reverse maps are leaf bookkeeping into the same K.
+// The host authority table. Each record's KerfurEntity holds the kerfur id reserved from the
+// host allocator for that kerfur's life, and the element destructor frees the id when the
+// record is erased. The reverse maps are leaf bookkeeping into the same id.
 struct KerfurRecord {
-    std::unique_ptr<coop::element::KerfurEntity> elem;  // reserves K (host range) for the kerfur's life
+    std::unique_ptr<coop::element::KerfurEntity> elem;  // reserves the host-range kerfur id for its life
     Form                     form        = Form::Npc;
     coop::element::ElementId currentEid  = coop::element::kInvalidId;  // the live Npc/Prop mirror eid
     void*                    actor       = nullptr;
     int32_t                  idx         = -1;
     std::string              npcClassName;
     std::string              propClassName;
-    // scope A (kerfur off->active dup retire, DETERMINISTIC v91): the HOST EID of the off-prop this kerfur
-    // was at when the host first turned it ON in the join window. Captured at the FIRST conversion (oldEid,
-    // gated on it being a tracked save off-prop via the blob map), then carried across every subsequent flip
-    // on the same K. The npc EntitySpawn builders stamp it as retireOffEid so the joining client retires its
-    // stale local off-prop MIRROR bound at that EXACT eid (no fuzzy 1cm position match). kInvalidId =
-    // always-active (never an in-window turn-on) -> nothing to retire on the joiner.
+    // The host eid of the off-prop this kerfur was at when the host turned it ON during a
+    // joiner's load window. Captured at the FIRST conversion (the old eid), gated on that eid
+    // being a tracked save off-prop in the blob map, then carried unchanged across every later
+    // flip. The NPC spawn builders stamp it as retireOffEid, and the joiner retires the off-prop
+    // mirror bound at that eid. Invalid for a kerfur that was never turned on in the window --
+    // nothing to retire there.
     coop::element::ElementId originOffEid = coop::element::kInvalidId;
-    // scope A (v91 deterministic turn-on ghost adopt): the host eid this kerfur most-recently converted FROM
-    // (the BindFormActor oldEid). The mid-session turn-on npc EntitySpawn carries it as convertFromEid so the
-    // INITIATING client adopts its parked conversion ghost (tagged with that eid) by EXACT eid in
-    // npc_mirror::OnEntitySpawn, replacing FindParkedGhostNpcNear's 500cm position match. kInvalidId until the
-    // first conversion.
+    // The host eid this kerfur most recently converted FROM (the form bind's old eid). The
+    // mid-session turn-on NPC spawn carries it as convertFromEid, so the initiating client adopts
+    // the conversion ghost it parked under that eid by exact eid instead of spawning a second
+    // kerfur beside it. Invalid until the first conversion.
     coop::element::ElementId lastConvertFromEid = coop::element::kInvalidId;
 };
 
-std::mutex g_mutex;  // guards every table below (game thread in practice; locked for the worker-thread predicates)
-// HOST authority table (the CLIENT is eid-based -- no KerfurId maps; redesign section 11).
+std::mutex g_mutex;  // guards every table below
+// A client holds none of these: it has no kerfur-id maps and works from wire eids alone.
 std::unordered_map<coop::element::ElementId, KerfurRecord> g_byKerfurId;
 std::unordered_map<void*, coop::element::ElementId>        g_actorToKerfurId;
-std::unordered_map<coop::element::ElementId, coop::element::ElementId> g_eidToKerfurId;  // currentEid -> K
+std::unordered_map<coop::element::ElementId, coop::element::ElementId> g_eidToKerfurId;  // currentEid -> kerfur id
 
-// K-5 CLIENT held-pose map: kerfur prop MIRROR actor -> its host-range eid (see the header). Distinct
-// from the host KerfurId table above -- this holds wire eids (not K), populated on the client only.
-// Guarded by g_mutex for uniformity (all access is game-thread, so contention is nil).
+// The client held-pose map: a kerfur prop MIRROR actor to its host-range eid (see the header).
+// Distinct from the host tables above -- these are wire eids, not kerfur ids, and only a client
+// fills it. Under g_mutex for uniformity; all access is on the game thread, so contention is nil.
 std::unordered_map<void*, coop::element::ElementId> g_kerfurMirrorActorToEid;
 
 std::string NarrowAscii(const std::wstring& w) {
@@ -114,7 +111,7 @@ coop::element::ElementId AllocKerfurId(void* actor, coop::element::ElementId cur
     auto* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) return coop::element::kInvalidId;  // host = sole authority
     std::lock_guard<std::mutex> lk(g_mutex);
-    // Idempotent per actor (a re-scan / repeated registration returns the existing K).
+    // Idempotent per actor: a repeated registration returns the id already reserved.
     auto ait = g_actorToKerfurId.find(actor);
     if (ait != g_actorToKerfurId.end()) return ait->second;
 
@@ -149,10 +146,6 @@ coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid) 
 }
 
 coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentEid) {
-    // scope A (v91 deterministic): the host EID of the off-prop the kerfur currently at `currentEid` replaced,
-    // IFF it was captured at a join-window turn-on (BindFormActor stored rec.originOffEid = the off-prop's
-    // save eid). A kerfur already ACTIVE at blob (never converted) has no anchor -> kInvalidId -> the npc
-    // EntitySpawn builder leaves retireOffEid=0 (nothing to retire). Host-side; HOST only in practice.
     if (currentEid == coop::element::kInvalidId) return coop::element::kInvalidId;
     std::lock_guard<std::mutex> lk(g_mutex);
     auto eit = g_eidToKerfurId.find(currentEid);
@@ -163,10 +156,6 @@ coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentE
 }
 
 coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid) {
-    // scope A (v91 deterministic turn-on ghost adopt): the host eid the kerfur currently at `currentEid` most
-    // recently converted FROM. The mid-session-turn-on npc EntitySpawn builder carries it as convertFromEid so
-    // the INITIATING client adopts its parked ghost by EXACT eid. kInvalidId for a never-converted kerfur (a
-    // save-active NPC) -> the builder leaves convertFromEid=0 (no ghost to adopt by eid). HOST only in practice.
     if (currentEid == coop::element::kInvalidId) return coop::element::kInvalidId;
     std::lock_guard<std::mutex> lk(g_mutex);
     auto eit = g_eidToKerfurId.find(currentEid);
@@ -176,7 +165,7 @@ coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId curren
     return rit->second.lastConvertFromEid;
 }
 
-// ---- K-5 CLIENT held-pose map -----------------------------------------------------------------------
+// ---- The client held-pose map ------------------------------------------------------------
 
 void NotifyKerfurPropMirrorBound(void* actor, coop::element::ElementId eid) {
     if (!actor || eid == coop::element::kInvalidId) return;
@@ -197,9 +186,10 @@ coop::element::ElementId GetKerfurMirrorEidForActor(void* actor) {
     auto it = g_kerfurMirrorActorToEid.find(actor);
     if (it == g_kerfurMirrorActorToEid.end()) return coop::element::kInvalidId;
     const coop::element::ElementId eid = it->second;
-    // Self-heal: an actor pointer can be GC-recycled after the mirror it named was torn down. Verify
-    // the eid's Element still binds THIS actor; if not, the entry is stale -> evict + miss. (g_mutex ->
-    // Registry::m_mutex is the established lock order -- AllocKerfurId/BindFormActor already nest it.)
+    // Self-heal: an actor pointer can be recycled after the mirror that named it was torn down, so
+    // verify the eid's element still binds THIS actor; a stale entry is evicted and reads as a
+    // miss. (g_mutex then the registry mutex is the lock order the alloc and bind paths already
+    // nest.)
     auto* el = coop::element::Registry::Get().Get(eid);
     if (el && el->GetActor() == actor) return eid;
     g_kerfurMirrorActorToEid.erase(it);
@@ -218,9 +208,9 @@ void ReleaseKerfurForEid(coop::element::ElementId currentEid) {
     Form form = Form::Npc;
     std::unique_ptr<coop::element::KerfurEntity> drained;
     {
-        // One critical section for the lookup AND the erase. Splitting them let a form bind
-        // between the two move the record to a new eid, and the release would then have taken a
-        // kerfur that had just converted; the currentEid re-check is what makes that impossible.
+        // One critical section for the lookup AND the erase: a form bind landing between them would
+        // move the record to a new eid, and this release would then take a kerfur that had just
+        // converted. The currentEid re-check below is what makes that impossible.
         std::lock_guard<std::mutex> lk(g_mutex);
         auto it = g_eidToKerfurId.find(currentEid);
         if (it == g_eidToKerfurId.end()) return;  // not a tracked kerfur's live form
@@ -241,13 +231,13 @@ void ReleaseKerfurForEid(coop::element::ElementId currentEid) {
 }
 
 void OnDisconnect() {
-    std::unordered_map<coop::element::ElementId, KerfurRecord> drained;  // free K Elements outside the lock
+    std::unordered_map<coop::element::ElementId, KerfurRecord> drained;  // free the kerfur elements outside the lock
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         drained.swap(g_byKerfurId);
         g_actorToKerfurId.clear();
         g_eidToKerfurId.clear();
-        g_kerfurMirrorActorToEid.clear();  // K-5 client held-pose map
+        g_kerfurMirrorActorToEid.clear();  // the client held-pose map
     }
     // drained's KerfurEntity dtors (FreeId) fire here, outside g_mutex.
 }
@@ -267,8 +257,9 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
         auto eit = g_eidToKerfurId.find(oldEid);
         if (eit != g_eidToKerfurId.end()) k = eit->second;
         if (k == coop::element::kInvalidId) {
-            // The dying form was never tracked (a save-loaded prop kerfur turned on for the first time
-            // -- prop first-sighting lands in K-5). Alloc a fresh stable K now; it carries forward.
+            // The dying form was never tracked -- a save-loaded prop kerfur the host turns on for
+            // the first time. Allocate a fresh stable id now; it carries forward across every later
+            // flip.
             auto ent = std::make_unique<coop::element::KerfurEntity>();
             k = coop::element::Registry::Get().AllocHostId(ent.get());
             if (k == coop::element::kInvalidId) {
@@ -286,7 +277,7 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
         if (rec.actor) g_actorToKerfurId.erase(rec.actor);
         if (rec.currentEid != coop::element::kInvalidId) g_eidToKerfurId.erase(rec.currentEid);
         g_eidToKerfurId.erase(oldEid);  // defensive: oldEid may differ from rec.currentEid
-        // Rebind the SAME K onto the NEW form IN PLACE (K preserved across the conversion).
+        // Rebind the SAME id onto the NEW form in place; the kerfur id survives the conversion.
         rec.form       = newForm;
         rec.actor      = newActor;
         rec.idx        = newIdx;
@@ -295,22 +286,21 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
         if (newForm == Form::Npc) rec.npcClassName = cn; else rec.propClassName = cn;
         g_actorToKerfurId[newActor] = k;
         g_eidToKerfurId[newEid]     = k;
-        // scope A (v91 deterministic): capture the off-prop's host eid at the FIRST conversion. oldEid IS
-        // that eid; the blob-map membership check (TryGetSaveTimeKerfurXformAnySlot) is the GATE that this is
-        // a genuine join-window turn-ON of a tracked SAVE off-prop (a turn-OFF's oldEid is an NPC eid, absent
-        // from the map -> not captured -> no spurious retire). Carried forward across every subsequent flip on
-        // this K. The connect-snapshot npc EntitySpawn builder reads it via GetOriginOffEidForEid and carries
-        // it to the joiner as retireOffEid (NOT the KerfurConvert, whose SendReliable is pre-world-gated
-        // mid-join -- v56 B2; hands-on 16:37 + 13:21). The joiner already binds its save-loaded off-prop to
-        // this host eid (save_identity_bind), so the retire is by EXACT eid -- no fuzzy 1cm position match.
+        // Capture the off-prop's host eid at the FIRST conversion. oldEid is that eid, and the
+        // blob-map lookup is the gate that this is a genuine join-window turn-ON of a tracked save
+        // off-prop: a turn-OFF's oldEid is an NPC eid, absent from the map, so nothing is captured
+        // and no spurious retire is sent. The connect-snapshot NPC spawn builder reads it back and
+        // carries it to the joiner as retireOffEid. The KerfurConvert below cannot: a
+        // world-mutating reliable does not flow to a slot that has not announced world-ready, which
+        // a joiner mid save-transfer has not.
         if (rec.originOffEid == coop::element::kInvalidId) {
             ue_wrap::FVector sv;
             if (coop::save_transfer::TryGetSaveTimeKerfurXformAnySlot(oldEid, sv))
                 rec.originOffEid = oldEid;
         }
-        // scope A (v91 deterministic turn-on ghost adopt): record the form we converted FROM. A mid-session
-        // turn-on's npc EntitySpawn carries this as convertFromEid so the INITIATING client adopts its parked
-        // ghost (tagged ClaimConversionGhosts(oldEid)) by EXACT eid -- not FindParkedGhostNpcNear's 500cm match.
+        // Record the form we converted FROM. A mid-session turn-on's NPC spawn carries this as
+        // convertFromEid, so the initiating client adopts the ghost it parked under this eid by
+        // exact eid instead of spawning a second kerfur beside it.
         rec.lastConvertFromEid = oldEid;
     }
 
