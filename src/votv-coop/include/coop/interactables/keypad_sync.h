@@ -5,14 +5,14 @@
 // to the engine ONLY through ue_wrap::passwordlock.
 //
 // It is its own module rather than an interactable_sync toggle Channel because a keypad is not a
-// two-state toggle: it carries a typed digit BUFFER plus three state bools, and its native accept
-// verb is unreachable from outside -- Open, open2, SetActive, isButtonUsed and processKeys are all
-// inert even with the buffer filled and focusOn set. Forcing it into the toggle Channel ("poll
-// isAcc, replay Open(want)") fail-cycles, because Open is a submit verb, not a state.
+// two-state toggle: it carries a typed digit BUFFER plus three state bools, and its accept verb
+// is a SUBMIT, not a state setter. Forcing it into that Channel -- poll isAcc, replay Open(want)
+// -- fail-cycles for that reason: replaying Open re-submits the buffer, it does not restore it.
 //
-// The mirror replicates INPUT, the shape MTA uses. SENDER, every peer, per net-pump tick: poll each
-// indexed keypad's {inPassword, active} and broadcast a KeypadSyncPayload on a change, classified
-// into a KeypadEvent.
+// Two things it deliberately does not drive. The door: a native accept UNLOCKS it by writing
+// door.active, never opens it, and opening an unlocked door is an ordinary E press. And
+// isAcc/isDeny, set from the component the crosshair hit to pick the prompt -- hover flags, not
+// state; both written onto a mirror render green and red. The LED is power-driven, needing none.
 
 #pragma once
 
@@ -29,21 +29,15 @@ namespace coop::keypad_sync {
 // Idempotent; retried every net-pump tick until the BP class loads. Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a KeypadState packet arrived (payload already memcpy'd and range-checked by
-// event_feed). Resolves the keypad by Key and applies on the game thread, deferring if it has not
-// streamed in yet. Called from event_feed's reliable drain loop.
+// Receiver entry: a KeypadState packet arrived (event_feed has memcpy'd and range-checked it).
+// Resolves the keypad by Key and applies on the game thread, deferring while it is still
+// streaming in. Called from event_feed's reliable drain loop.
 //
-// A None state mirror replays inputNumber(digit) for the typed-buffer DELTA, which gives the native
-// display, beep and auto-submit, then writes `active` and repaints with upd(). Accept or Deny runs
-// the keypad's OWN native Open(Active) chain through PL::CallOpen -- sound, LED, buffer clear, and
-// the lock-state propagation that writes pair.active and door.active -- which is what replicates
-// the press across peers. The echo is broken by priming lastKnown to the pre-chain state.
-//
-// Two things this deliberately does not drive. The door: a native accept UNLOCKS it by writing
-// door.active and never opens it, and opening an unlocked door is an ordinary E press, the door
-// channel's job. And isAcc/isDeny: the blueprint sets them from which component the crosshair hit,
-// to pick the interaction prompt, so they are hover flags rather than accept or deny state --
-// writing both onto a mirror is what once rendered a keypad green and red at once.
+// A None state mirror replays inputNumber(digit) for the typed-buffer DELTA -- the native display,
+// beep and auto-submit -- then writes `active` and repaints with upd(). Accept or Deny runs the
+// keypad's OWN native Open(Active) chain through PL::CallOpen (sound, LED, buffer clear, and the
+// lock-state propagation writing pair.active and door.active), which replicates the press across
+// peers. The echo breaks by priming lastKnown to the pre-chain state.
 void OnReliable(const coop::net::KeypadSyncPayload& payload, uint8_t senderPeerSlot);
 
 // HOST-only: snapshot the current state of every indexed keypad to a freshly connected
