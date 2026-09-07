@@ -1,8 +1,6 @@
-// harness/autotest_weather.cpp -- the Phase 5W weather-sync tests: forced
-// rain cycles (VOTVCOOP_RUN_WEATHER_TEST) + the red-sky variant
-// (VOTVCOOP_RUN_REDSKY_TEST). Both host-only drivers; clients apply via the
-// wire. Extracted verbatim from harness/autotest.cpp (2026-07-19 dissolve);
-// interfaces + docs in harness/autotest.h.
+// harness/autotest_weather.cpp -- the weather-sync tests: forced rain cycles
+// (VOTVCOOP_RUN_WEATHER_TEST) and the red-sky variant (VOTVCOOP_RUN_REDSKY_TEST). Both are
+// host-only drivers; clients apply through the wire. Interfaces and docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -26,27 +24,21 @@ namespace cfg = coop::config;
 
 }  // namespace
 
-// ---- Phase 5W autonomous weather sync test ------------------------------
+// ---- autonomous weather sync test ------------------------------
+// Host-only. Once the session is connected and the pose has settled, the host calls
+// coop::weather_rain::DebugForceRain through GT::Post, which writes enable_rain=true and calls
+// setRainProperties, causeRain and setWindParameters -- the order the game uses. Each forced change
+// broadcasts a WeatherState packet, caught by the host's POST observer on setRainProperties and
+// causeRain, and the client applies it through the mutator UFunctions on its own cycle.
 //
-// Host-only. After session-Connected + autotest-pose settle, the host calls
-// coop::weather_rain::DebugForceRain via GT::Post -- which writes
-// enable_rain=true + calls setRainProperties + causeRain + setWindParameters
-// per the proper-invocation RE pass (2026-05-27, RULE 1). Each forced
-// state change broadcasts a WeatherState packet (the host POST observer
-// on setRainProperties / causeRain catches the call). Client receives,
-// applies via mutator UFunctions on its local cycle.
+// What lands in the logs: `weather: DebugForceRain ...` and `weather: host broadcast ...` on the
+// host, `weather: applied flags 0x... ...` on the client, and an isRaining diagnostic on both --
+// read here on the host, and by the per-tick diagnostic in weather_sync.cpp's TickConnect path on
+// the client.
 //
-// Verification (logs only -- visual is for the user / OBS):
-//   - Host log: `weather: DebugForceRain ...` + `weather: host broadcast ...`
-//   - Client log: `weather: applied flags 0x... ...`
-//   - Both peers also log isRaining bool diagnostic each cycle (read by
-//     this routine on host, by a separate per-tick diagnostic on client --
-//     see the periodic state-read in weather_sync.cpp's TickConnect path).
-//
-// 4 cycles: ON / OFF / ON / OFF at 6-second spacing (rain particle
-// systems take ~1-2s to start + audio to ramp; 6s is comfortable for
-// screenshot capture mid-cycle). Final state = OFF so the next test run
-// starts clean.
+// Four cycles, ON / OFF / ON / OFF, six seconds apart, because the rain particle systems take a
+// second or two to start and the audio ramps behind them. The final state is OFF, so the next run
+// is clean.
 void RunAutonomousWeatherTest() {
     const bool isHost = !IsClientRole();
     if (!isHost) {
@@ -137,19 +129,14 @@ DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
     return 0;
 }
 
-// ---- Phase 5W Inc-fix-2 autonomous RED SKY test ------------------------
+// ---- autonomous RED SKY test ------------------------
+// Host-only. After stabilization it fires DebugForceRedSky(true), which spawns AredSkyEvent_C on
+// the gamemode and lets the blueprint swap the four colour-curve assets to the red set. The host's
+// field poll (weather_redsky::HostPollEdge) sees the edge within 500 ms and broadcasts; the client
+// applies the same chain, and the whole sky and ambient lighting turn red on both peers.
 //
-// Host-only. After stabilization, fires DebugForceRedSky(true) -- spawns
-// AredSkyEvent_C on the gamemode + the BP swaps the 4 color-curve assets
-// to the "red" set. The host's FIELD POLL (weather_redsky::HostPollEdge;
-// the 2026-08-29 reroot -- the old spawnRedSky POST observer was PE-blind
-// to the organic caller and is retired) detects the edge <=500 ms later +
-// broadcasts; the client applies the same chain. Both peers' subsequent
-// screenshots should show the entire sky / ambient lighting in red.
-//
-// 2 phases: ON / OFF (revert). Final state OFF so the next test run
-// starts clean. 10 s ON dwell gives the visual change ample time to
-// settle + the screenshot window to capture.
+// Two phases, ON then OFF, with the final state OFF so the next run starts clean. The ten-second ON
+// dwell gives the visual change time to settle.
 void RunAutonomousRedSkyTest() {
     const bool isHost = !IsClientRole();
     if (!isHost) {
@@ -159,10 +146,9 @@ void RunAutonomousRedSkyTest() {
     }
     UE_LOGI("redsky_test: starting autonomous routine on host (waiting for a "
             "WORLD-READY peer -- the broadcast needs a recipient; up to 180 s)");
-    // 2026-08-29: the blind 20 s always beat a cold client's join (double level
-    // load), so every RedSky send failed with zero ready peers and the run
-    // proved nothing. Wait like dmghazard does: the slot-1 puppet existing
-    // means the peer is connected, streaming, and world-ready.
+    // Wait for a peer that is actually world-ready rather than for a fixed delay: a cold client's
+    // join does a double level load, so a blind wait sends RedSky to zero ready peers and proves
+    // nothing. The slot-1 puppet existing means the peer is connected, streaming and world-ready.
     for (int attempt = 0; attempt < 180; ++attempt) {
         auto ready = std::make_shared<std::atomic<int>>(0);
         GT::Post([ready] {
