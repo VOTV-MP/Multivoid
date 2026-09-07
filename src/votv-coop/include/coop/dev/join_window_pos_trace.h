@@ -1,35 +1,18 @@
-// coop/dev/join_window_pos_trace.h -- F1 join-window KEYED-prop POSITION trace (read-only, dev-only, CLIENT-side).
+// coop/dev/join_window_pos_trace.h -- CLIENT read-only trace of where a KEYED prop ends up after a
+// join. Ini-gated [dev] join_window_pos_trace=1; absent or 0 makes every call an early return.
 //
-// THE QUESTION (docs/COOP F1 design, votv-F1-host-moved-prop-join-window-DESIGN-2026-07-09):
-// the HOST moves a KEYED world prop (rock) DURING a client's join window; after the join the client
-// renders it at the OLD SAVE position, not the host's moved position. The design's converged fix
-// (generalize the b3 pile reconcile into ONE host-auth live-pos reconcile for keyed props too) is
-// PROVISIONAL until this probe discriminates the root -- the two candidate roots need SEPARATING before
-// any reconcile is built (PROBE-DON'T-GUESS, [[feedback-probe-dont-guess-rule]]):
-//   (1) LOADOBJECTS-CLOBBER -- the snapshot delivers the host-moved pos FIRST, then the client's own
-//       loadObjects (host-blob save-load) RECREATES the keyed prop at its SAVE pos AFTER, overwriting it.
-//   (2) HOST-HELD-AT-SNAPSHOT -- the host was HOLDING the prop at snapshot time, so the snapshot
-//       DRIVE-SKIPPED placing it (remote_prop_spawn.cpp :410/:423) -> a different root, different fix.
-// The inferred hypothesis is (1) but the ORDER (snapshot vs loadObjects-recreate) is UNMEASURED; this
-// separates them with a monotonic sequence stamp per keyed prop.
+// A host that moves a keyed prop while a client joins can leave the client rendering it at the SAVE
+// position, and two paths produce that: the client's own loadObjects recreating the prop on top of
+// the snapshot's host position, or the host HOLDING it when the snapshot went out, which
+// drive-skips the express so nothing is placed. They want different fixes, so the probe separates
+// them by recorded ORDER rather than by inference.
 //
-// THE TRACE (read-only, CLIENT-side): per keyed prop, in tick order, record
-//   A) the snapshot expression (remote_prop_spawn.cpp exact-key branch): host-carried pos, the actor's
-//      pos at that moment, whether the host held it (drive-skip), and a monotonic seq stamp.
-//   B) the keyed-churn RE-BIND (join_membership_sweep.cpp): the loadObjects-recreate actor + its pos +
-//      a seq stamp (proves the recreate came AFTER the snapshot when recreateSeq > snapshotSeq).
-// At load quiescence (the sweep-fire point, alongside spawn_order_probe) resolve each key's FINAL bound
-// actor by eid and classify: LOADOBJECTS-CLOBBER (final at save-pos, recreate after snapshot) /
-// SNAPSHOT-WON (final at host-pos) / HOST-HELD-AT-SNAPSHOT (drive-skipped) / DEAD (grabbed/destroyed
-// in-window -- covers the grab-during-window edge case for a rock, whose grab DESTROYS the actor) /
-// UNRESOLVED. Observes + samples only; spawns nothing, binds nothing, mutates no game state.
-// RULE-2-exempt diagnostic ([[feedback-rule2-exempts-probes-diagnostics-tools]]). Ini-gated
-// [dev] join_window_pos_trace=1 on the CLIENT; absent/0 = every call is a cheap early-return.
-//
-// Piles are NOT probed here -- the b3 pile path already carries [PILE-B3] arm/apply logging; this probe
-// answers the KEYED-prop half the design must confirm before generalizing b3.
-//
-// Game-thread only (the snapshot OnSpawn, the sweep re-bind, and the quiescence verdict are all GT).
+// Per key it stamps the snapshot express (host position, the actor's position then, whether the
+// host held it) and the keyed-churn re-bind onto the recreate; a re-bind stamp above the express
+// stamp is what proves the recreate landed second. At load quiescence it resolves each key's final
+// actor by eid and classifies it: clobbered, snapshot-won, host-held, dead (a rock's pickup
+// destroys the world actor, so a grab in the window reads this way), no-snapshot, or unresolved.
+// Piles are not traced -- the pile bind path logs its own arm and apply. Game-thread only.
 #pragma once
 
 #include <cstdint>
