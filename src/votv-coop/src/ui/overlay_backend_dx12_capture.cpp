@@ -1,33 +1,18 @@
 // ui/overlay_backend_dx12_capture.cpp -- WHICH command queue presents this
-// swapchain.
+// swapchain. D3D12 exposes no API for that, so the presenting queue is captured by
+// hooking ID3D12CommandQueue::ExecuteCommandLists and watching which DIRECT
+// same-device queue is the last to submit before each Present. A candidate must
+// hold that position for a confirmation window before the renderer is brought up
+// on it, so a foreign same-device DIRECT writer cannot steal the capture and
+// nothing is drawn until the queue is confirmed.
 //
-// D3D12 exposes no API for that (unlike the device, which comes off the
-// swapchain directly), so the presenting queue is captured by hooking
-// ID3D12CommandQueue::ExecuteCommandLists and watching which DIRECT
-// same-device queue is the last to submit before each Present. A candidate
-// must hold that position for a confirmation window before the renderer is
-// brought up on it -- a foreign same-device DIRECT writer (another overlay)
-// cannot steal the capture, and nothing is drawn until the queue is confirmed.
+// The creation probes below would settle it with no ambiguity -- on D3D12 the
+// pDevice passed to CreateSwapChain IS the presenting queue -- but our boot does
+// not precede the game's swapchain creation, so they arm and never fire.
 //
-// This TU also carries the stage-1 instrumentation that MEASURED the pillars
-// the DX12 backend stands on (a real -dx12 run, 2026-07-26, rig CLIENT_3):
-//   P1  sc->GetDevice(ID3D12Device)  hr=0            -> TRUE
-//   P3  QI(IDXGISwapChain3)          hr=0            -> TRUE (backbuffer index)
-//   swapchain: 3 buffers, FLIP_DISCARD, format 24 (R10G10B10A2_UNORM) -- the
-//   renderer takes the RTV format from the desc, never a literal.
-//   queues: ONE DIRECT device-matched queue (2999 calls, last-before-Present
-//   600/600 = 100%), one COPY queue (5 calls) -- the known-positive proving
-//   the instrument can see foreign traffic; no ambiguity, no HALT.
-//   the creation probe (CreateSwapChain/ForHwnd, whose pDevice IS the
-//   presenting queue on D3D12) armed but NEVER fired -> our boot does not
-//   precede the game's swapchain creation, so that zero-ambiguity route is not
-//   available and the ECL capture is what ships.
-// OFF-edge: at confirmation (or at the tally cap, which HALTs) the summary is
-// flushed and the hooks are hook::Disable'd -- patch lifted, trampoline slot
-// retained on purpose (see ue_wrap/core/hook.h).
-//
-// Design of record:
-// research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md
+// At confirmation, or at the tally cap that HALTs, the summary is flushed and the
+// hooks are hook::Disable'd: patch lifted, trampoline slot retained on purpose
+// (see ue_wrap/core/hook.h).
 
 #include "overlay_backend_internal.h"
 
@@ -94,10 +79,9 @@ QueueSlot* FindOrRegister(ID3D12CommandQueue* q) {
     for (int i = 0; i < n; ++i)
         if (g_queues[i].q.load(std::memory_order_relaxed) == q) return &g_queues[i];
     // First sight of this queue: claim a slot (rare path).
-    // Payload FIRST, publish SECOND: another thread's detour reads desc/
-    // deviceMatch as soon as it sees a non-null q, and a half-written slot
-    // would classify a COPY queue as DIRECT (type DIRECT == 0 zero-init;
-    // perf audit MED-3, 2026-07-26).
+    // Payload FIRST, publish SECOND: another thread's detour reads desc and
+    // deviceMatch as soon as it sees a non-null q, and a half-written slot would
+    // classify a COPY queue as DIRECT, since a zero-initialised type IS DIRECT.
     const D3D12_COMMAND_QUEUE_DESC desc = q->GetDesc();
     const DWORD tid = ::GetCurrentThreadId();
     bool deviceMatch = false;
@@ -285,11 +269,10 @@ ID3D12Device* Device() { return g_device; }
 
 ID3D12CommandQueue* TryConfirmQueue(IDXGISwapChain* sc) {
     if (g_halted) return nullptr;
-    // Once confirmed, hand the SAME queue back on every call. Without this
-    // latch a bring-up failure after confirmation re-entered the confirmation
-    // path every present -- re-flushing the whole SUMMARY (n log lines + a
-    // disk flush) and re-baking the ImGui font atlas each frame (perf audit
-    // HIGH-2, 2026-07-26).
+    // Once confirmed, hand the SAME queue back on every call. Without this latch a
+    // bring-up failure after confirmation re-entered the confirmation path every
+    // present, re-flushing the whole SUMMARY (n log lines and a disk flush) and
+    // re-baking the ImGui font atlas each frame.
     if (g_confirmed) return g_confirmed;
     LogDetectionOnce(sc);
     if (!g_device) return nullptr;
@@ -381,11 +364,10 @@ void InstallCreationProbe() {
 }
 
 void Rearm() {
-    // A swapchain recreation invalidates the "this queue presents that chain"
-    // fact. Re-enable the capture hook and require a fresh confirmation; the
-    // previously confirmed queue is SEEDED as the candidate, so in the normal
-    // case (same queue) this costs one confirmation window and no blink beyond
-    // it. Design of record + correctness audit I-2.
+    // A swapchain recreation invalidates the "this queue presents that chain" fact.
+    // Re-enable the capture hook and require a fresh confirmation; the previously
+    // confirmed queue is SEEDED as the candidate, so in the normal case (the same
+    // queue) this costs one confirmation window and no blink beyond it.
     if (g_halted || !g_eclTarget) return;
     g_confirmed = nullptr;
     g_presents = 0;
