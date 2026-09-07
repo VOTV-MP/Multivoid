@@ -1,40 +1,39 @@
-// coop/kerfur_reconcile.h -- the join-window kerfur off->active dup RETIRE (scope A, 2026-06-24).
+// coop/kerfur_reconcile.h -- retire the join-window kerfur off-to-active duplicate. CLIENT-only,
+// game thread only: both the EntitySpawn apply and the quiescence sweep run on the game-thread
+// drain.
 //
-// THE forward off->active dup root (census-pinned 2026-06-24, docs/kerfur/03 + 07): a kerfur that was
-// OFF in the transferred save but the host turns ON in the join-load window. The host no longer expresses
-// it as an off-prop (it is now an active NPC on the npc channel), so the joining client's OWN save-loaded
-// local off-prop is never adopted/claimed as a host mirror -- it SURVIVES beside the active NPC (the dup,
-// census 15:43 + 16:37: an UNCLAIMED prop_kerfurOmega_C). The divergence sweep does NOT retire it. So we
-// retire it explicitly.
+// THE duplicate's root is a kerfur that was OFF in the transferred save and that the host turns ON
+// during the join-load window. The host no longer expresses it as an off-prop -- it is an active
+// NPC on the npc channel now -- so the joining client's own save-loaded local off-prop is never
+// adopted or claimed as a host mirror, and it SURVIVES beside the active NPC as an unclaimed
+// prop_kerfurOmega_C. The divergence sweep does not retire it, so this module does, explicitly.
 //
-// TRIGGER: the retire is armed from the kerfur's npc EntitySpawn (npc_mirror::OnEntitySpawn reads
-// payload.retireOffEid), NOT the KerfurConvert. A join-window turn-on's KerfurConvert SendReliable is
-// pre-world-gated mid save-transfer (v56 B2 invariant -- host log 16:37:10 + 13:21:20:54), so the convert
-// never reaches the joiner; the active form rides the npc EntitySpawn instead (which DOES reach it). The
-// host stamps the off-prop's HOST EID onto that EntitySpawn (kerfur_entity::GetOriginOffEidForEid, sourced
-// from BindFormActor's KerfurRecord.originOffEid = the off-prop's save eid).
-//
-// v91 DETERMINISTIC (replaces the position-fuzzy 1cm match): the joiner already binds its save-loaded
-// off-prop to that SAME host eid via save_identity_bind (Build 3 ordinal bind), so the off-prop is a Prop
-// MIRROR at retireOffEid. The retire is a direct MirrorManager<Prop>::Get(retireOffEid) lookup + teardown --
-// no GUObjectArray walk, no fuzzy 1cm position match, no collision class. The off-prop may not have
-// async-loaded/bound yet when the EntitySpawn arrives, so the retire runs at QUIESCENCE (the sweep below) and
-// a pending eid not yet bound is KEPT for the next sweep (never dropped early -> no duplicate-survives risk).
-//
-// THE RETIRE MECHANISM lives here; its SEQUENCING is owned by the ONE join-window order owner
-// (coop::element::quiescence_drain::RunReconcile drains it as a step, just as it calls save_identity_bind).
-// It is NOT driven from kerfur_convert::PollKerfurConversions any more -- that was a THIRD parallel order
-// owner for the join-window axis (anti-smear refactor 2026-06-30, [[feedback-one-owner-order-axis]]). The
-// order owner's steady-state tick fires bracket-INDEPENDENTLY (every tick, gated only on quiescence +
-// HasPendingWork, which ORs in HasPendingRetire), so the "no pile bracket armed" case is still covered.
-//
-// CLIENT-only. Game-thread only (the EntitySpawn apply + the quiescence sweep both run on the GT drain).
+// TRIGGER: the retire is armed from the kerfur's npc EntitySpawn, where npc_mirror::OnEntitySpawn
+// reads payload.retireOffEid -- NOT from the KerfurConvert, whose send is pre-world-gated mid
+// save-transfer and so never reaches the joiner, while the active form rides the EntitySpawn, which
+// does. The host stamps the off-prop's HOST eid onto that EntitySpawn through
+// kerfur_entity::GetOriginOffEidForEid, sourced from BindFormActor's KerfurRecord.originOffEid.
 
 #pragma once
 
 #include "coop/element/element.h"  // ElementId
 
 namespace coop::kerfur_reconcile {
+
+// The match is DETERMINISTIC, not positional. The joiner already binds its save-loaded off-prop to
+// that SAME host eid through save_identity_bind, so the off-prop is a Prop MIRROR at retireOffEid,
+// and the retire is a direct MirrorManager<Prop>::Get(retireOffEid) plus teardown: no GUObjectArray
+// walk, no fuzzy centimetre position match, no collision class. The off-prop may not have finished
+// loading and binding when the EntitySpawn arrives, so the retire runs at QUIESCENCE, in the sweep
+// below, and a pending eid that is not yet bound is KEPT for the next sweep rather than dropped
+// early -- a dropped one would leave the duplicate standing.
+//
+// THE RETIRE MECHANISM lives here; its SEQUENCING belongs to the one join-window order owner,
+// coop::element::quiescence_drain::RunReconcile, which drains it as a step just as it calls
+// save_identity_bind. It is not driven from kerfur_convert::PollKerfurConversions, which would be a
+// third parallel order owner on the same axis. The order owner's steady-state tick fires
+// independently of any bracket -- every tick, gated only on quiescence and HasPendingWork, which
+// ORs in HasPendingRetire -- so the case where no pile bracket is armed is still covered.
 
 // Drop all pending retires (session end). Mirrors quiescence_drain::Reset.
 void Reset();

@@ -1,43 +1,34 @@
-// coop/garbage_sync.h -- coop replication of VOTV's garbage/trash entities.
+// coop/garbage_sync.h -- coop replication of VOTV's garbage and trash entities.
 //
-// Phase 5G (2026-05-27). Garbage/trash interactions in VOTV are a class
-// family spanning Aprop_C derivatives (Aprop_garbageBag/Bin/Container/Gun)
-// AND non-Aprop_C actors (AtrashBitsPile_C : Aactor_save_C;
-// Aprop_garbageClump_C : AActor; AactorChipPile_C : AActor). Pickup is
-// per-class -- PHC grab for the bags/bins, "collect-and-morph" for
-// trashBitsPile (the pile destroys itself + spawns N individual Aprop_C
-// items at the player). State (itemsInside, amountA/B, typeA/B, ...) is
-// per-class and currently NOT synced -- which is fine until a client BP
-// walks a stale `itemsInside` array from a per-peer-divergent
-// undergroundGarbageSpawner roll, derefs a freed AActor*, and AVs. This
-// module replicates the family incrementally:
+// The family spans Aprop_C derivatives -- the garbage bag, bin, container and gun -- and actors
+// that are not Aprop_C at all: trashBitsPile, garbageClump, chipPile. Pickup is per-class: a
+// physics-handle grab for the bags and bins, and collect-and-morph for trashBitsPile, where the
+// pile destroys itself and spawns N individual items at the player. Per-class state (itemsInside,
+// the amounts and types) is NOT synced, which is fine right up until a client's blueprint walks a
+// stale itemsInside array left by a per-peer-divergent spawner roll, dereferences a freed actor and
+// crashes.
 //
-//   Inc 1 -- this file. Stop the crash without designing new packets.
-//            PRE-intercept Aprop_openContainer_C::ReceiveTick + checkPickup
-//            on the CLIENT, gated to garbage subclasses (substring match
-//            on "garbage" in class name), to skip the BP body that walks
-//            the stale itemsInside. Local pickup still works for the
-//            picker; the other peer just doesn't see the internal state
-//            update of the container.
-//   Inc 2 -- broadcast itemsInside diffs + non-Aprop_C trash entity state
-//            (trashBitsPile, garbageClump, chipPile) via a new
-//            ReliableKind::NonPropEntityState packet. Add Init POST hooks
-//            on the non-Aprop_C trash classes (host-broadcast / client-
-//            reproduce).
-//   Inc 3 -- host-authoritative gating of the garbage spawners
-//            (event_trashPiles, arirTrasher, baseCleaner_trashBits).
-//            tool_garbageSpawner deliberately allow-through (per-shot
-//            player action, principle 6). The undergroundGarbageSpawner
-//            row was DELETED Fork C 2026-06-10: bytecode-proven to mint
-//            only dirthole_item_C (outside the sync universe) -- the
-//            suppression deleted the client's per-peer loot mounds with
-//            no host replacement; dirtholes are per-peer LOCAL by doctrine.
-//
-// RE source: research/findings/piles-trash/votv-garbage-trash-interaction-RE-2026-05-27.md
+// The module replicates the family incrementally, and increment 1 is what this file holds: stop the
+// crash without designing new packets. PRE-intercept Aprop_openContainer_C::ReceiveTick and
+// checkPickup on the CLIENT, gated to the garbage subclasses by a substring match on "garbage" in
+// the class name, to skip the blueprint body that walks the stale array. Local pickup still works
+// for the picker; the other peer simply does not see the container's internal state update.
 
 #pragma once
 
 namespace coop::net { class Session; }
+
+// The increments after this one, for whoever picks the lane up:
+//
+//   2. Broadcast itemsInside diffs and the non-Aprop_C trash entity state (trashBitsPile,
+//      garbageClump, chipPile) through a NonPropEntityState packet, with Init POST hooks on those
+//      classes -- host broadcasts, client reproduces.
+//   3. Host-authoritative gating of the garbage spawners (event_trashPiles, arirTrasher,
+//      baseCleaner_trashBits). tool_garbageSpawner is deliberately let through, being a per-shot
+//      player action, per principle 6. The underground spawner is NOT gated: it is bytecode-proven
+//      to mint only dirthole_item_C, which is outside the sync universe, so suppressing it deleted
+//      the client's per-peer loot mounds with no host replacement -- dirtholes are per-peer local
+//      by doctrine.
 
 namespace coop::garbage_sync {
 
