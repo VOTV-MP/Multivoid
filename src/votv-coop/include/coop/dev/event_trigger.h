@@ -1,30 +1,18 @@
-// coop/dev/event_trigger.h -- DEV: trigger any game event from the F1 menu
-// (user directive 2026-06-13 + 2026-06-17: the FULL event list, strict
-// categories, host-only, with each event's NATIVE trigger time-of-day).
+// coop/dev/event_trigger.h -- DEV: trigger any game event from the F1 menu. The full event list, in
+// strict categories, host-only, each row carrying the event's native trigger time of day.
 //
-// RE (votv-event-system-RE-2026-06-13.md + the 2026-06-17 dispatcher sweep):
-// the event system funnels through TWO FName dispatchers on the single placed
-// trigger_eventer_C:
-//   - runEvent(FName event, FName special)  -- 65 SwitchName cases (the bulk).
-//   - runSpecialEvent(FName eventName1)->bool -- 36 cases (the ariral PRANKS),
-//     a FLAT per-name switch with NO rep/random gating, so each prank is
-//     INDIVIDUALLY addressable by name (2 of the 36 are no-ops -> 34 exposed).
-// The game's OWN normal prank path is runEvent(_, "ariralPrank") -> summonArirPrank,
-// which RANDOMIZES over a reputation-tier pool (the incoming name is discarded);
-// we keep one "random ariral prank" entry for that, PLUS the 24 prank-only names
-// via runSpecialEvent for deterministic per-prank testing.
+// The event system funnels through TWO FName dispatchers on the single placed trigger_eventer_C:
+// runEvent(event, special) carries the bulk, and runSpecialEvent(name)->bool is a FLAT per-name
+// switch with no reputation or random gating, so each ariral prank is INDIVIDUALLY addressable. The
+// game's own normal prank path is runEvent(_, "ariralPrank") -> summonArirPrank, which randomizes
+// over a reputation-tier pool and discards the incoming name; the table keeps one random-prank row
+// for that beside the addressable ones. Ambient weather is a third route, fired by daynightCycle
+// and mainGamemode timers rather than by either dispatcher, so the menu calls the same UFunction on
+// the live instance.
 //
-// NATIVE TRIGGER TIME: the daynightCycle clock decomposes as X=Hour, Y=Minute,
-// Z=Day (daynightCycle::getNamedTime, byte-verified). Each list_events row's
-// time.X:time.Y is the event's authored daily anchor (e.g. morningGay 10:50,
-// arirSignal 18:00). It is the correct "native trigger time" LABEL; the nightly
-// roller that compares the clock to it is native/undumped, so treat HH:MM as the
-// scheduled anchor, not a frame-exact fire moment. Story builds are trigger-driven
-// (no clock anchor); pranks are reputation-gated (no clock schedule).
-//
-// HOST-ONLY by design: clients never dispatch (dev_gate refuses, same as every
-// dev verb); the spawned actors/NPCs mirror through the existing coop pipelines --
-// which is precisely what these triggers exist to test.
+// HOST-ONLY by design: clients never dispatch, dev_gate refusing as it does for every dev verb, and
+// the spawned actors and NPCs mirror through the existing coop pipelines -- which is what these
+// triggers exist to test.
 
 #pragma once
 
@@ -39,8 +27,7 @@ enum class Risk : uint8_t {
     Dangerous = 2,  // story/save progression or player relocation -- Ctrl+click
 };
 
-// STRICT, CLOSED category set (the 2026-06-17 classification + dispatcher RE).
-// Every event maps to exactly one. The menu groups by this.
+// STRICT, CLOSED category set. Every event maps to exactly one; the menu groups by this.
 enum class Category : uint8_t {
     Story,     // narrative/save progression (treehouse, server breaks, obelisk/pyramid, looker arc, ending)
     Ariral,    // ariral-faction NPCs / reputation interactions + the addressable pranks
@@ -55,8 +42,8 @@ enum class Category : uint8_t {
     Dream,     // enters the sleep/dream subsystem
     World,     // mutates non-prop world/device state (ATV, keypad/console/lights devices)
     Weather,   // the AMBIENT layer: fog/rain/sky verbs fired by daynightCycle/mainGamemode timers+RNG,
-               // NOT by the eventer dispatchers -- the dev trigger calls the SAME UFunction the game's
-               // own timer calls on the live instance (the fogprobe-proven pattern). 2026-07-03.
+               // NOT by the eventer dispatchers -- the dev trigger calls the SAME UFunction the
+               // game's own timer calls, on the live instance.
     COUNT
 };
 
@@ -86,8 +73,14 @@ struct EventInfo {
     Risk        risk;
 };
 
-// The full table (static -- the dispatcher SwitchNames are fixed per game build).
-// Ordered BY CATEGORY (then day) so the menu's grouped layout reads cleanly.
+// The full table, static because the dispatcher SwitchNames are fixed per game build, ordered BY
+// CATEGORY then day so the menu's grouped layout reads cleanly.
+//
+// NATIVE TRIGGER TIME: the daynightCycle named clock decomposes as X=Hour, Y=Minute, Z=Day, and a
+// row's time.X:time.Y is the event's authored daily anchor. The nightly roller comparing the clock
+// to it is native and undumped, so read HH:MM as the scheduled anchor, not a frame-exact fire
+// moment. Story builds are trigger-driven and carry no clock anchor; pranks are reputation-gated
+// and carry no clock schedule.
 const std::vector<EventInfo>& Events();
 
 // Reflected dispatch on the host (runEvent / runSpecialEvent per ev.dispatch).

@@ -1,14 +1,12 @@
-// coop/session/player_handshake_version.cpp -- the v122 wire version gate.
+// coop/session/player_handshake_version.cpp -- the wire version gate.
 //
-// Third TU of the player_handshake module (see player_handshake_detail.h).
-// Owns the Paper-pair equality validation that runs at the TOP of the Join
-// handler: extract the peer's game target from the Join payload (pure
-// pre-pass, zero identity minting), byte-equality check against our own
-// coop::version::kGameTarget, and the refuse action on mismatch (host:
-// Kick-with-reason + deduped feed line; client: join_progress::Fail popup).
-// The identity's other half -- the build number -- IS the packet header's
-// protocol version: anything not byte-equal was cut upstream by ParseHeader,
-// so the gate only ever runs between same-build peers.
+// Third TU of the player_handshake module (see player_handshake_detail.h). Owns the Paper-pair
+// equality validation that runs at the TOP of the Join handler: extract the peer's game target from
+// the Join payload (pure pre-pass, zero identity minting), byte-equality check against our own
+// coop::version::kGameTarget, and the refuse action on mismatch -- host: Kick-with-reason plus a
+// deduped feed line; client: join_progress::Fail popup. The identity's other half, the build
+// number, IS the packet header's protocol version: anything not byte-equal was cut upstream by
+// ParseHeader, so this gate only ever runs between same-build peers.
 
 #include "player_handshake_detail.h"
 
@@ -26,21 +24,18 @@
 namespace coop::player_handshake {
 namespace {
 
-// Pure pre-pass over the Join payload chain (eid / nick / skin / flags / color /
-// game): extracts the trailing game-target field + the nick (for the host feed
-// line) WITHOUT any side effects. Returns false on a malformed chain (any length
-// prefix overruns the payload) -- fail-closed: a malformed Join is refused, not
-// tolerated (both peers are >=v122 by the header prologue, so the full chain is
-// always present when well-formed).
+// Pure pre-pass over the Join payload chain (eid, nick, skin, flags, colour, game): extracts the
+// trailing game-target field and the nick, for the host feed line, WITHOUT any side effects.
+// Returns false on a malformed chain -- any length prefix overrunning the payload -- fail-closed,
+// because both peers are the same build by the header prologue, so a well-formed Join always
+// carries the full chain.
 //
-// THIS IS THE SECOND WALKER OF THAT CHAIN, and the two must agree field for
-// field. `HandleJoinMessage` in player_handshake.cpp is the other. Measured
-// 2026-08-29 by the smoke, the hard way: v144 deleted the guid field from the
-// Join and this walker still consumed TWO length-prefixed fields where one
-// remained, so it read the flags byte as a length, ran off the end and refused
-// every Join with "version field missing" -- on BOTH peers, with the pose stream
-// then never starting. A field added or removed here must be changed in both, and
-// the failure is loud but names the wrong field, which is what cost the time.
+// THIS IS THE SECOND WALKER OF THAT CHAIN, and the two must agree field for field;
+// HandleJoinMessage in player_handshake.cpp is the other. When the guid field was deleted from the
+// Join, this walker still consumed TWO length-prefixed fields where one remained, read the flags
+// byte as a length, ran off the end and refused every Join with "version field missing" -- on BOTH
+// peers, with the pose stream then never starting. A field added or removed here must be changed in
+// both, and the failure is loud but names the wrong field.
 bool ExtractJoinVersionFields(const uint8_t* payload, size_t len,
                               std::string* outGame, std::wstring* outNick) {
     size_t off = 4;  // [u32 senderElementId] (caller already checked len >= 4)
@@ -53,8 +48,8 @@ bool ExtractJoinVersionFields(const uint8_t* payload, size_t len,
             *outNick = FromUtf8(payload + off + 1, static_cast<int>(n));
         off += 1 + n;
     }
-    // [u8 skinlen][skin] -- v144 deleted the [u8 guidlen][guid] field that used
-    // to precede it (the host derives the guid from the proved key instead).
+    // [u8 skinlen][skin] -- no guid field precedes it any more; the host derives the guid from the
+    // proved key instead.
     {
         if (off + 1 > len) return false;
         const size_t n = payload[off];
@@ -131,10 +126,9 @@ bool ValidateJoinVersionOrRefuse(coop::net::Session& session, int senderSlot,
         std::snprintf(reason, sizeof(reason), "%s", verdict.c_str());
         session.Kick(senderSlot, reason);  // close-with-reason -> their popup
     } else {
-        // We-the-client refused the HOST's Join: surface our own popup (a
-        // browser/direct join is Active -> Fail pops the dialog + aborts;
-        // env boot: log-only) and let the host's SYMMETRIC gate close the
-        // wire (mismatch is byte-symmetric, both ends are >=v122).
+        // We-the-client refused the HOST's Join: surface our own popup -- a browser or direct join
+        // is Active, so Fail pops the dialog and aborts, while an env boot is log-only -- and let
+        // the host's SYMMETRIC gate close the wire, since the mismatch is byte-symmetric.
         UE_LOGW("player_handshake: host's Join REFUSED (game='%s'): %s",
                 peerGame.c_str(), verdict.c_str());
         coop::join_progress::Fail(verdict);

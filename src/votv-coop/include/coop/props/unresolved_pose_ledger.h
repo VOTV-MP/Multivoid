@@ -1,34 +1,18 @@
 // coop/props/unresolved_pose_ledger.h -- tell a pose/spawn RACE apart from a real identity GAP.
 //
-// WHY THIS EXISTS (2026-09-04, from a player's field log -- doctaaaaa, Discord)
-// ---------------------------------------------------------------------------
-// An incoming PropPose whose key AND eid both fail to resolve used to log one WARN per
-// PACKET. In a 58-minute field session that produced 205 WARNs, and a WARN is a SYNCHRONOUS
-// fflush (`ue_wrap/core/log.cpp` flushes every non-INFO line), so the receive path paid 205
-// disk syncs -- for a condition that is USUALLY NOT A DEFECT.
+// An incoming PropPose whose key AND eid both fail to resolve used to log one WARN per PACKET, and
+// a WARN is a synchronous fflush -- ue_wrap/core/log.cpp flushes every non-INFO line -- so the
+// receive path paid a disk sync for what is usually a RACE: an unreliable pose overtakes its own
+// reliable spawn broadcast by milliseconds, the spawn lands, and the prop works from then on. In a
+// measured field session almost every such identity carried one packet, the worst benign one eight.
 //
-// It is usually not a defect because that log proves the common case is a RACE. `[V]` for key
-// `_95qO5xwv10Qw_Rx-8rElg` the line ORDER is: the unresolved warn (log line 47367), THEN
-// `OnSpawn` (47368), THEN the mirror bind (47372) -- the unreliable pose overtook its own
-// reliable spawn broadcast by milliseconds, after which the prop worked normally. `[V]` 69 of
-// the 83 unresolved keys in that session carried exactly ONE such packet; the worst benign
-// case carried 8.
-//
-// THE REAL DEFECT LOOKS COMPLETELY DIFFERENT AND WAS INVISIBLE INSIDE THAT NOISE. `[V]` key
-// `lSg9QVjeXGHDezEk96eOow` streamed 91 unresolvable poses over ~1.5 s with `eid=0` and NO
-// `OnSpawn` for the entire session -- a peer holding an item the receiver never received. The
-// same log line, ninety-one times, buried among 114 harmless ones. That is the reported
-// "the host does not see the items that fall out", from the other side.
-//
-// So this ledger separates the two by their MEASURED signature rather than by guesswork. The
-// thresholds sit in the empty band the field data leaves between the two populations: worst
-// benign 8 packets inside one second, the real one 91 packets over 1.5 s.
-//
-// IT IS NOT A SUPPRESSION. Nothing is filtered, every packet is still counted, and the
-// condition that matters becomes MORE visible than it was -- it now announces itself as
-// "sustained" instead of hiding inside its own repetitions.
-//
-// THREAD: game thread only. The prop receive path runs from `event_feed` on the game thread.
+// The condition that IS a defect looks nothing like that: one identity streaming dozens of
+// unresolvable poses with eid=0 and no spawn at all -- a peer holding an item the receiver never
+// received. Per packet it was invisible, the same line ninety times among a hundred harmless ones.
+// So the ledger separates the two by signature, with the thresholds in the empty band between those
+// populations. It is NOT a suppression: nothing is filtered, every packet is still counted, and the
+// condition that matters announces itself once as sustained rather than hiding in its own
+// repetitions. Game thread only.
 
 #pragma once
 
