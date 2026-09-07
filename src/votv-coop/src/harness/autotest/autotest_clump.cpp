@@ -30,18 +30,18 @@ namespace cfg = coop::config;
 // --- Autonomous held-clump ATTACH e2e test (VOTVCOOP_RUN_CLUMP_TEST=1) --------
 //
 // Verifies the mannequin-model clump sync on a real LAN pair. The clump is non-keyable, so it rides
-// the prop pose pipeline identified by our eid rather than by a Key. The real trash collect,
-// trashBitsPile::playerTryToCollect, is blueprint-internal and no UFunction call can trigger it, so
-// the HOST instead spawns a prop_garbageClump_C and writes it to the LOCAL player's grabbing_actor;
-// net_pump's held edge then broadcasts a PropSpawn (key None, plus the eid) and streams PropPose
-// keyed by that eid, exactly as a real grab would, and clearing grabbing_actor sends PropRelease.
-// The CLIENT is scan-only: the spawn, the drive and the release all arrive over the wire.
+// the prop pose pipeline identified by our eid rather than by a Key. The real collect,
+// trashBitsPile::playerTryToCollect, is blueprint-internal and no UFunction call reaches it, so the
+// HOST spawns a prop_garbageClump_C and writes it to the LOCAL player's grabbing_actor;
+// the held edge then broadcasts a PropSpawn (key None, plus the eid) and streams PropPose keyed by
+// that eid, as a real grab would; clearing grabbing_actor sends PropRelease. The CLIENT is
+// scan-only -- spawn, drive and release all arrive over the wire.
 //
 // It passes when the CLIENT log shows "remote_prop::OnSpawn: spawned ... 'prop_garbageClump_C'",
 // "GRAB-IN key='None' eid=N -> ... clump kinematic" and "drive #N", the HOST log shows
-// "prop-mirror=BROADCAST" and "PropPose emit ... eid=N", and neither peer crashes -- the whole
-// point, after the use-after-free this test was written for. The synthetic cold-grab clump frees
-// itself after about a second, so the drive is brief; only a person can see the full visual.
+// "NEW held actor ... eid=N -> BROADCAST" and "PropPose emit ... eid=N", and neither peer
+// crashes -- the whole point, after the use-after-free this test was written for. Both host emits
+// are throttled to the first three and every sixtieth, and the clump frees itself after a second.
 void RunAutonomousClumpTest() {
     const bool isHost = !IsClientRole();
     if (!isHost) {
@@ -78,7 +78,7 @@ void RunAutonomousClumpTest() {
         ue_wrap::engine::WriteMainPlayerGrabbingPair(player, clump, nullptr);
         rsv->ok = true;
         UE_LOGI("clump_test: HOST spawned clump=%p at (%.0f,%.0f,%.0f) + wrote grabbing_actor -- "
-                "expect 'NEW held actor cls=prop_garbageClump_C ... eid=N -> prop-mirror=BROADCAST' next",
+                "expect 'net: NEW held actor ... cls='prop_garbageClump_C' ... eid=N -> BROADCAST' next",
                 clump, rsv->base.X, rsv->base.Y, rsv->base.Z);
         done->store(1);
     });

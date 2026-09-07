@@ -19,20 +19,20 @@
 namespace ue_wrap::scs_rig {
 
 // Instantiate `bpClass`'s own SCS cosmetic nodes onto `actor` -- this class's SCS only; walk the
-// Super chain yourself for inherited rigs, as the kerfur skin caller does with an explicit base
-// pass and variant pass. A bone-anchored node (AttachToName, or a CharacterMesh0 parent) attaches
-// to `meshComp` at that bone with the template's relative transform; a root- or scene-anchored one
-// attaches to `rootComp`. Every created component is appended to `outComponents` and the count
-// returned; 0 when the class has no SCS or nothing passes the filter.
+// Super chain yourself for inherited rigs, as the kerfur skin caller does with a base pass and a
+// variant pass. A bone-anchored node attaches to `meshComp` at its AttachToName bone with the
+// template's relative transform; a root- or scene-anchored one attaches to `rootComp`. Created
+// components are appended to `outComponents` and counted.
 //
-// Cosmetic means pure presentation: a ParticleSystemComponent carrying a Template, a
-// DecalComponent, a PointLightComponent, and an AudioComponent named "eff_*" -- the game's own
-// effect-audio naming, which excludes its behavioural Audio and kerfurEXE machinery. Everything
-// else in the SCS is actor BEHAVIOUR and is skipped. A node the game authors OFF stays off, so a
-// particle with bAutoActivate=false or a light with bVisible=false is never instanced, and the
-// authored flags (absolute placement, tick-enabled, attenuation) are copied onto the instance.
-// Bitfield flags are read BIT-EXACTLY through reflection::FindBoolProperty, since a byte-level
-// heuristic cannot survive a template overriding two flags in one packed byte.
+// Cosmetic means pure presentation, and each kind has its own spawner in the .cpp:
+//   ParticleSystemComponent with a Template  -> SpawnEmitterAttached
+//   DecalComponent                           -> SpawnDecalAttached
+//   AudioComponent named "eff_*"             -> SpawnSoundAttached
+//   PointLightComponent                      -> AddComponentByClass, deferred
+// "eff_*" is the game's own effect-audio naming, excluding the behavioural Audio and kerfurEXE
+// machinery; everything else in the SCS is actor BEHAVIOUR and is skipped. A node authored OFF
+// stays off, and the authored flags are copied on by ApplyTemplateFidelity, whose bitfields
+// TemplateFlag resolves BY NAME -- a byte heuristic cannot survive two flags in one packed byte.
 int InstantiateCosmetics(void* actor, void* meshComp, void* rootComp,
                          void* bpClass, std::vector<void*>& outComponents);
 
