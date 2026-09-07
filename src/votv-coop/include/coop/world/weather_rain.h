@@ -1,19 +1,15 @@
-// coop/weather_rain.h -- Phase 5W rain+snow cycle-side sub-lane (2026-07-19).
+// coop/weather_rain.h -- the rain and snow half of the day-night cycle's weather lane.
 //
-// Extracted from weather_sync.cpp (1154 LOC > the 800 soft cap) in the shipped
-// family shape (weather_fog / weather_lightning / weather_redsky): the module
-// owns the rain+snow engine substrate on AdaynightCycle_C -- its OWN 5 mutator
-// UFunction resolves (causeRain / setRainProperties / setWindParameters /
-// intComs_triggerSnow / setRainParticles), its own latch, the causeRain
-// echo-suppress flag + PRE interceptor (registered in-module), and the
-// rain-side read/apply/debug bodies. weather_sync (the orchestrator) keeps
-// the scheduler observers/interceptors, the WeatherState broadcast + dedup
-// sig, the connect seed, TickConnect, and the composition ReadCycleState /
-// ApplyFromHost that call into this module the same way they call
-// weather_fog / directionalwind.
+// The module owns the rain and snow engine substrate on AdaynightCycle_C: its own five mutator
+// UFunction resolves (causeRain, setRainProperties, setWindParameters, intComs_triggerSnow,
+// setRainParticles), its own install latch, the causeRain echo-suppress flag and its PRE
+// interceptor, and the rain-side read/apply/debug bodies. weather_sync, the orchestrator, keeps the
+// scheduler observers and interceptors, the WeatherState broadcast and its dedup signature, the
+// connect seed, TickConnect, and the composition ReadCycleState / ApplyFromHost that call into this
+// module the same way they call weather_fog and directionalwind.
 //
-// P7: this module owns the rain/snow engine substrate (offsets + UFunction
-// thunks); weather_sync (gameplay/network) drives it. Mirrors weather_fog.
+// Principle 7: the substrate (offsets and UFunction thunks) lives here and weather_sync drives it,
+// the same shape as weather_fog, weather_lightning and weather_redsky.
 
 #pragma once
 
@@ -55,16 +51,14 @@ struct ApplyOutcome {
 void ApplyFromHost(void* cycle, const coop::net::WeatherStatePayload& payload,
                    const coop::net::WeatherStatePayload& cur, ApplyOutcome& outcome);
 
-// Phase 5W test entrypoint (host only). Proper-invocation rain force per the
-// 2026-05-27 RE pass: enable_rain write + setRainProperties + causeRain +
-// setWindParameters. The host's POST observers (registered by weather_sync
-// on its own resolves of the same UFunctions) catch the calls + broadcast.
-// Returns false if the cycle is not live or the mutators aren't resolved.
-// Game thread only.
+// Test entrypoint (host only): force rain the way the game does it -- an enable_rain write, then
+// setRainProperties, causeRain and setWindParameters. The host's own POST observers, registered by
+// weather_sync on its own resolves of the same UFunctions, catch the calls and broadcast. False if
+// the cycle is not live or the mutators are unresolved. Game thread only.
 bool DebugForceRain(bool isRaining, float rainStrength);
 
-// Phase 5W hands-on test entrypoint (host only). intComs_triggerSnow(isSnow)
-// -- the visually-unambiguous signal (53 BP listeners). Game thread only.
+// Test entrypoint (host only): intComs_triggerSnow(isSnow), the visually unambiguous signal, which
+// is why it is the one a person can check by looking. Game thread only.
 bool DebugForceSnow(bool isSnow);
 
 // Diagnostic: read the local cycle's isRaining bool. `outFound` distinguishes
