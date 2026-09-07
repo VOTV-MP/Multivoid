@@ -1,15 +1,14 @@
-// ue_wrap/kerfur.h -- engine substrate for the kerfurOmega NPC: save-key read,
-// host-authoritative cosmetic state (command/spooky/face), thorough mirror parking
-// (timer neutralize) and deterministic owned-child teardown. Pure reflection /
-// UFunction access; NO net / gameplay logic (Principle 7).
+// ue_wrap/actors/kerfur.h -- engine substrate for the kerfurOmega NPC: the save-key read,
+// host-authoritative cosmetic state (command, spooky, face), thorough mirror parking (timer
+// neutralise) and deterministic owned-child teardown. Pure reflection and UFunction access;
+// no net or gameplay logic (principle 7).
 //
-// Ground truth: research/findings/kerfur/votv-kerfurOmega-coop-double-and-camera-RE-2026-06-14.md.
-// The kerfur pet NPC is kerfurOmega_C (+ ~20 skin subclasses; the "base/less-intelligent"
-// vs "upgraded" tiers are the same class's sentient/Type/upgrade flags, NOT a separate
-// class -- so the kerfurOmega_C class gate + the subclass walk cover every tier/skin).
+// The pet is kerfurOmega_C plus about twenty skin subclasses. The base and upgraded tiers are
+// the same class's sentient, Type and upgrade flags rather than separate classes, so the
+// class gate plus the subclass walk covers every tier and skin.
 //
-// The kerfur head-look / body-yaw pose reads live in ue_wrap/puppet.cpp (the per-tick pose
-// stream); this file owns the lifecycle/state substrate the coop NPC-mirror path needs.
+// The head-look and body-yaw pose reads live in ue_wrap/actors/puppet.cpp, with the per-tick
+// pose stream; this file owns the lifecycle and state substrate the NPC-mirror path needs.
 
 #pragma once
 
@@ -38,10 +37,10 @@ bool HasSaveKey(void* actor);
 // to a byte). Hot path (per-tick per-NPC) -> offsets are resolved ONCE + cached.
 bool ReadKerfurState(void* actor, uint8_t& state, bool& spooky, uint8_t& face);
 
-// Drive the host-authoritative command/spooky onto a PARKED mirror kerfur (plain field
-// writes; the mirror runs no AI so nothing fights them -> the AnimBP state machine selects
-// the right body animation). No-op on non-kerfur. Face material is intentionally NOT applied
-// here (it needs the kerfur's own setFace UFunction; deferred -- see the findings doc).
+// Drive the host-authoritative command and spooky flag onto a PARKED mirror kerfur, by plain
+// field write: the mirror runs no AI, so nothing fights them and the AnimBP state machine
+// picks the body animation. No-op on a non-kerfur. The face material is deliberately not
+// applied here, since it needs the kerfur's own setFace UFunction.
 void DriveKerfurState(void* actor, uint8_t state, bool spooky);
 
 // THOROUGH-PARK companion to puppet::DisableCharacterTicks. DisableCharacterTicks stops the
@@ -52,7 +51,7 @@ void DriveKerfurState(void* actor, uint8_t state, bool spooky);
 // exact inverse of the BP's K2_SetTimerDelegate arm). No-op on non-kerfur.
 void NeutralizeAiTimers(void* actor);
 
-// ---- Inc-3: host-authoritative menu command relay + ownership-aware follow ----------------
+// ---- host-authoritative menu command relay + ownership-aware follow ----------------------
 
 // Read the kerfur's `kill` (murderfur-mode) guard. actionName refuses the whole radial menu
 // when kill==true; the relay replicates that guard before executing. false if unresolvable.
