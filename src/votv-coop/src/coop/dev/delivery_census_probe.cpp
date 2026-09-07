@@ -1,38 +1,18 @@
-// coop/dev/delivery_census_probe.cpp -- COUNT the delivery-path actors over time.
+// coop/dev/delivery_census_probe.cpp -- COUNT the delivery-path actors over time. Diagnostic only,
+// ini-gated off by default ([dev] delivery_census=1); it never ships behaviour.
 //
-// Diagnostic only, ini-gated OFF by default ([dev] delivery_census=1). Never ships behavior.
-// (RULE 2 exempts probes/diagnostics/tools -- [[feedback-rule2-exempts-probes-diagnostics-tools]].)
-//
-// WHY THIS EXISTS (gate O-1, research/findings/inventory-items/
-// votv-order-delivery-pipeline-RE-2026-07-22.md): the v124 R11 take came back RED because the
-// lane synced the WRONG actor. Measured: the drone's BeginPlay resolves its container with
-// getObjectFromKey(n'droneContainer'), but the world-placed container's save key is
-// 'drone_InventoryContainer' -- and 'droneContainer' occurs in exactly ONE cooked asset, the
-// drone's own. getObjectFromKey is an exact Array_Find over keyObj_key whose only writer is
-// lib_C::assignKey, so that lookup MISSES and the drone spawns its own container. Meanwhile
-// compileOrder writes through (drone.container)->propInventory.
-//
-// Three questions must be settled BEFORE any lane redesign, and each is a COUNT or a POINTER
-// COMPARISON -- never a hypothesis confirmation. This probe enumerates BY CLASS
-// (FindObjectsByClass) rather than looking anything up by key, because looking up by key is
-// precisely the operation that is broken:
-//
-//   Q-A  HOW MANY containers exist?  One (and I misread its key), or two (saved + spawned),
-//        or more? -> the row COUNT per class, per sample.
-//   Q-B  WHICH one receives the delivery?  -> the per-row contents count
-//        (GObjStack[propInventory.Index].obj.Num) watched across the delivery. The SACK is not
-//        assumed to be a third holder: measured, Aprop_dronesack_C::container @0x0380 is a
-//        POINTER to an Aprop_inventoryContainer_drone_C, i.e. the sack REFERENCES a container
-//        rather than holding contents. So "is the sack a third receiver?" reduces to a pointer
-//        comparison: is sack.container == drone.container, == the saved one, or neither?
-//   Q-C  Is the receiving container STABLE across deliveries, or does it CHURN per delivery?
-//        -> run two consecutive deliveries and compare actor ptr / eid / propInventory.Index
-//        between them. This decides whether stable element-key addressing is applicable at all
-//        or whether the lane belongs in birth-channel territory (the R14/15/16 shape).
-//
-// Output discipline: a full census line set is emitted on the FIRST sample and thereafter ONLY
-// when the census CHANGES (a hash over the rows). So the log shows EDGES -- a spawn, a destroy,
-// a contents delta, an Index repoint -- instead of a 0.5 Hz wall of identical rows.
+// The lane it exists for synced the wrong actor: a drone's BeginPlay resolves its container by the
+// save key n'droneContainer', which occurs in exactly one cooked asset -- the drone's own -- while
+// the world-placed container is keyed 'drone_InventoryContainer'. That lookup is an exact
+// Array_Find over keyObj_key whose only writer is lib_C::assignKey, so it misses, the drone spawns
+// its own container, and compileOrder writes through (drone.container)->propInventory. The probe
+// therefore enumerates BY CLASS, never by key, and answers three questions with a count or a
+// pointer comparison rather than a hypothesis: Q-A how many containers exist (the row count per
+// class, per sample); Q-B which one receives a delivery (the per-row contents count watched across
+// one); Q-C whether that receiver is stable across two deliveries or churns. A full census is
+// logged on the first sample and thereafter only when a hash over the rows changes, so the log
+// shows edges -- a spawn, a destroy, a contents delta, an Index repoint -- rather than a wall of
+// identical rows.
 
 #include "coop/dev/delivery_census_probe.h"
 
@@ -69,12 +49,12 @@ uint64_t NowMs() {
 uint64_t g_nextSample = 0;
 uint64_t g_lastHash = 0;
 
-// Per-GObjStack-slot occupancy from the previous sample. The census answered Q-A/Q-B but
-// exposed a NEW fact it could not explain: on the host the delivery landed (slot count 0 -> 2)
-// and then the SAME slot went back to 0 within 8 seconds, while the player-facing sack was
-// never observed as an actor at all. So the contents LEAVE the container we sync. This tracks
-// EVERY slot's count and reports the deltas, which turns "where did the burgers go" into a
-// direct reading (one slot loses N, another gains N) instead of another inference.
+// Per-GObjStack-slot occupancy from the previous sample. The census answered Q-A and Q-B but
+// exposed a fact it could not explain: on the host a delivery landed (slot count 0 -> 2) and the
+// SAME slot went back to 0 within eight seconds, while the player-facing sack was never observed as
+// an actor at all. So the contents LEAVE the container we sync. This tracks EVERY slot's count and
+// reports the deltas, which turns "where did they go" into a direct reading -- one slot loses N,
+// another gains N -- instead of another inference.
 std::vector<int32_t> g_prevSlots;
 bool     g_first = true;
 int      g_sampleNo = 0;
@@ -172,12 +152,13 @@ void Tick(bool isHost) {
     const std::vector<void*> drones = R::FindObjectsByClass(L"drone_C");
     for (void* d : drones) {
         if (!d || !R::IsLive(d)) continue;
-        const int32_t off = Off(R::ClassOf(d), L"container");   // Adrone_C::container @0x04F8
+        const int32_t off = Off(R::ClassOf(d), L"container");
         if (off >= 0) droneContainer = ReadAt<void*>(d, off);
     }
 
-    // Q-B: the sack REFERENCES a container (Aprop_dronesack_C::container @0x0380), it does not
-    // hold contents. Enumerate sacks so "is the sack a third receiver" becomes a ptr compare.
+    // Q-B: a sack REFERENCES a container through its own `container` field rather than holding
+    // contents, so enumerating the sacks turns "is the sack a third receiver" into a pointer
+    // compare.
     const std::vector<void*> sacks = R::FindObjectsByClass(L"prop_dronesack_C");
     for (void* s : sacks) {
         if (!s || !R::IsLive(s)) continue;
