@@ -1,18 +1,13 @@
-// ue_wrap/laptop.h -- the stationary base PC (Alaptop_C) engine wrapper.
+// ue_wrap/devices/laptop.h -- the stationary base PC (Alaptop_C) engine wrapper. Offsets are
+// resolved live via reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 //
-// RE ground truth: research/findings/computers-devices/votv-laptop-pc-RE-2026-07-17.md
-// (bytecode-cited offsets + chains). Offsets resolved live via reflection
-// (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
-//
-// Scope (v1, laptop_sync): the power/boot axis (isOpened / powered /
-// actionOptionIndex b8) + the floppy slot axis (floppyType / zip /
-// readWrites / nametype / objectData JSON / data[] scalar apply)
-// + the disc prop content accessors (Aprop_floppyDisc_C .data/.readWrites).
-// v121 (OPEN-10, laptop_buffer_sync): the file-buffer QUAD accessors
-// (floppyData/floppyBuffer/floppyBufferUIDs/floppyReadwrites) + the widget
-// rebuild (per-row teardown = native removeBuffer semantics; rebuild = native
-// loadData recipe genFloppyBuffer + updFloppy) + the widget-side buffer
-// mirror digest (selftest discrimination of a stale rebuild).
+// What the wrapper reaches:
+//   - the power and boot axis: isOpened, powered, and the native power-button press
+//   - the floppy slot: floppyType, zip, readWrites, nametype, the objectData JSON, the data array
+//   - the disc props themselves (Aprop_floppyDisc_C, its data array and readWrites)
+//   - the file-buffer quad (floppyData, floppyBuffer, floppyBufferUIDs, floppyReadwrites), the
+//     widget rebuild a write to it must be followed by, and a digest of the widget's own mirror
+//     of that buffer
 //
 // No network logic, no coop state (principle 7). Game thread only.
 
@@ -38,8 +33,9 @@ struct PowerState {
 };
 bool ReadPower(PowerState& out);
 
-// Reflected actionOptionIndex(player=null, hit={}, action=b8, lookAt=null) --
-// the native power-button press (empty-frame proof: beginplayTurnOn@815).
+// Reflected actionOptionIndex(player=null, hit={}, action=b8, lookAt=null) -- the native
+// power-button press. The empty hit frame is what the game itself passes: its own self-call
+// hands actionOptionIndex a zeroed FHitResult with the same action byte.
 bool CallPowerToggle();
 
 // ---- floppy slot axis ----
@@ -69,12 +65,12 @@ bool ClearSlot();  // floppyType=-1 + arrays/strings emptied + widget refresh
 bool  IsDiscClass(void* cls);      // any prop_floppyDisc variant
 struct DiscContent {
     int32_t readWrites = -1;
-    std::vector<std::wstring> data;  // .data @0x368-equivalent (resolved)
+    std::vector<std::wstring> data;  // the disc's own .data array
 };
 bool ReadDiscContent(void* discActor, DiscContent& out);
 bool WriteDiscContent(void* discActor, const DiscContent& in);
 
-// ---- the file-buffer quad (v121, OPEN-10) ----
+// ---- the file-buffer quad ----
 struct BufferQuad {
     std::vector<std::wstring> data;      // floppyData (also slot-owned; quad reads it whole)
     std::vector<std::wstring> buffer;    // floppyBuffer
@@ -83,9 +79,8 @@ struct BufferQuad {
 };
 bool ReadQuad(BufferQuad& out);
 
-// The cheap int pre-filter (R3 proof: EVERY native buffer verb changes at
-// least one of these; rw is monotone-decreasing between inserts): array nums
-// + rw without any string copies.
+// The cheap int pre-filter: the three array counts and rw, without any string copies. Measured:
+// every native buffer verb changes at least one of them, and rw only decreases between inserts.
 bool ReadQuadInts(int32_t& fdNum, int32_t& fbNum, int32_t& uidNum, int32_t& rw);
 
 // Receiver-side quad apply: raw-write the four fields, then the WIDGET REBUILD

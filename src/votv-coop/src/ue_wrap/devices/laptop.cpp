@@ -1,6 +1,5 @@
-// ue_wrap/laptop.cpp -- see ue_wrap/laptop.h. Offsets resolved live via
-// reflection; Alpha 0.9.0-n fallbacks from CXXHeaderDump/laptop.hpp via the
-// RE doc (votv-laptop-pc-RE-2026-07-17.md section 1).
+// ue_wrap/devices/laptop.cpp -- see ue_wrap/devices/laptop.h. Offsets resolved live via
+// reflection; the Alpha 0.9.0-n fallbacks come from the CXX header dump.
 
 #include "ue_wrap/devices/laptop.h"
 
@@ -17,9 +16,8 @@ namespace {
 
 namespace R = reflection;
 
-// Field IO extracted to ue_wrap/core/field_io at v121 (floppybox needed the
-// same helpers -- RULE 2, one implementation; the free-what-we-replaced
-// doctrine lives there now).
+// Field IO lives in ue_wrap/core/field_io, shared with floppybox -- one implementation, and the
+// free-what-we-replaced doctrine is documented there.
 using field_io::FStringView;
 using field_io::TArrayView;
 using field_io::ReadFStringAt;
@@ -45,7 +43,7 @@ int32_t g_offDiscData = -1, g_offDiscReadWrites = -1;
 void*   g_fnAction = nullptr;      // actionOptionIndex
 void*   g_fnUpdButton = nullptr;   // updButton
 void*   g_fnWidgetUpdFloppy = nullptr;  // ui_laptop.updFloppy
-// v121 (OPEN-10 quad): buffer fields + the widget rebuild seam.
+// The buffer fields and the widget rebuild seam.
 int32_t g_offFloppyBuffer = -1;     // laptop.floppyBuffer (TArray<FString>)
 int32_t g_offFloppyBufUids = -1;    // laptop.floppyBufferUIDs (TArray<int32>)
 int32_t g_offWidgetBufferSlots = -1;  // ui_laptop.bufferSlots (TArray<UUserWidget*>)
@@ -112,7 +110,7 @@ bool EnsureResolved() {
     if (!g_fnAction)
         UE_LOGW("laptop: actionOptionIndex not found -- power replay disabled");
 
-    // v121 quad: laptop buffer fields + the widget rebuild seam.
+    // The buffer fields and the widget rebuild seam.
     g_offFloppyBuffer  = R::FindPropertyOffset(cls, L"floppyBuffer");
     g_offFloppyBufUids = R::FindPropertyOffset(cls, L"floppyBufferUIDs");
     if (g_offFloppyBuffer < 0)  { UE_LOGW("laptop: floppyBuffer offset -- fallback 0x4B8"); g_offFloppyBuffer = 0x4B8; }
@@ -123,8 +121,9 @@ bool EnsureResolved() {
     }
     void* bufRowCls = R::FindClass(L"ui_bufferDatablock_C");
     g_offBufRowData = bufRowCls ? R::FindPropertyOffset(bufRowCls, L"data") : -1;
-    // RemoveFromParent is DECLARED on the engine UWidget class -- FindFunction
-    // is exact-owner (no SuperStruct climb, the FindFunction lesson).
+    // RemoveFromParent is DECLARED on the engine UWidget class, and FindFunction matches on the
+    // exact owner -- it never climbs SuperStruct -- so the lookup has to name UWidget, not the row
+    // class.
     void* uwidgetCls = R::FindClass(L"Widget");
     g_fnWidgetRemoveFromParent = uwidgetCls ? R::FindFunction(uwidgetCls, L"RemoveFromParent") : nullptr;
     if (g_offWidgetBufferSlots < 0 || !g_fnWidgetGenFloppyBuffer ||
@@ -262,7 +261,7 @@ bool WriteDiscContent(void* discActor, const DiscContent& in) {
     return WriteFStringArrayField(discActor, g_offDiscData, in.data);
 }
 
-// ---- the file-buffer quad (v121, OPEN-10) ----------------------------------
+// ---- the file-buffer quad --------------------------------------------------
 
 namespace {
 
