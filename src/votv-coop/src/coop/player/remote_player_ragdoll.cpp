@@ -16,13 +16,13 @@ namespace E = ue_wrap::engine;
 
 namespace {
 
-// Show/hide the puppet's TWO kel body meshes (native slot @0x0280 + its child
-// mesh_playerVisible @0x04F8 -- both render, [[lesson-attachparent-visibility-two-body]]).
-// VISIBILITY only (SetVisibility, propagate=false): the mesh ASSETS are untouched, so a
-// pak-loaded custom-skin asset keeps its component reference and cannot be GC'd during
-// the flop (mesh-clearing would drop the only strong ref). Forcing visible=true on the
-// restore side is a safe no-op when nothing was hidden -- visible IS the puppet's normal
-// state (spawn forces it), so the restore needs no bookkeeping.
+// Show/hide the puppet's TWO kel body meshes -- the native mesh slot and its
+// mesh_playerVisible child, both of which render. VISIBILITY only (SetVisibility,
+// propagate=false): the mesh ASSETS are untouched, so a pak-loaded custom-skin asset keeps its
+// component reference and cannot be GC'd during the flop, which clearing the mesh would risk by
+// dropping the only strong ref. Forcing visible=true on the restore side is a safe no-op when
+// nothing was hidden -- visible IS the puppet's normal state, forced at spawn -- so the restore
+// needs no bookkeeping.
 void SetPuppetKelMeshesVisible(void* puppetActor, bool visible) {
     E::SetSceneComponentVisibility(
         ue_wrap::puppet::GetNativeBodyMeshComponent(puppetActor), visible, /*propagate=*/false);
@@ -44,10 +44,10 @@ bool RagdollDisplay::OnWireBit(bool ragdollBit, void* puppetActor, int32_t puppe
 }
 
 bool RagdollDisplay::SetPose(const coop::net::RagdollPoseSnapshot& snap) {
-    // Velocity half of the v22 stream only: slave the plushie's pelvis rigid body to
-    // the sender so the visible flop TRACKS the real ragdoll. The streamed pelvis
-    // ROTATION is unused since the visible-plushy rework (it existed to tumble the
-    // kel-attached actor); it stays on the wire untouched -- protocol stability.
+    // Velocity half of the pose stream only: slave the plushie's pelvis rigid body to the sender so
+    // the visible flop TRACKS the real ragdoll. The streamed pelvis ROTATION is unused since the
+    // visible-plushy rework -- it existed to tumble the kel-attached actor -- and stays on the wire
+    // untouched, for protocol stability.
     if (active_ && body_ && R::IsLiveByIndex(body_, bodyIdx_)) {
         E::DriveRagdollBodyPelvisVelocity(
             body_,
@@ -65,10 +65,9 @@ RagdollDisplay::Drive RagdollDisplay::DriveAttached(void* puppetActor, int32_t p
         // just rides the pelvis attach. Nothing to drive per frame.
         return Drive::Attached;
     }
-    // Self-heal (audit 2026-06-01): the body was GC-killed mid-ragdoll (e.g. a
-    // level transition reaped it) -- recover NOW (un-hide + detach + clear) so the
-    // puppet isn't stuck invisible on a dead attachment; the owner resumes pose-drive
-    // this same tick. See [[project-ragdoll-sync]].
+    // Self-heal: the body was GC-killed mid-ragdoll, a level transition having reaped it. Recover
+    // NOW -- un-hide, detach, clear -- so the puppet is not stuck invisible on a dead attachment;
+    // the owner resumes pose-drive this same tick.
     Stop(puppetActor, puppetIdx);
     return Drive::StoppedNow;
 }
@@ -88,11 +87,10 @@ void RagdollDisplay::TeardownForDestroy() {
 void RagdollDisplay::Start(void* puppetActor, int32_t puppetIdx) {
     if (!puppetActor || !R::IsLiveByIndex(puppetActor, puppetIdx)) return;
 
-    // Spawn VOTV's own playerRagdoll_C VISIBLE, co-located with the puppet -- the
-    // game's plushie ragdoll (full 6-bone chain physics, the exact body SP shows in
-    // mirrors). If it fails, leave the puppet UPRIGHT + pose-driving (active_ stays
-    // false) -- graceful. The body's Player @0x248 = this puppet; the spawn is
-    // DEATH-FREE (no ragdollMode).
+    // Spawn VOTV's own playerRagdoll_C VISIBLE, co-located with the puppet: the game's plushie
+    // ragdoll, the full six-bone chain physics and the exact body single-player shows in mirrors.
+    // If it fails, leave the puppet UPRIGHT and pose-driving (active_ stays false) -- graceful. The
+    // body's Player field points at this puppet, and the spawn is DEATH-FREE: no ragdollMode.
     const ue_wrap::FVector loc = E::GetActorLocation(puppetActor);
     const ue_wrap::FRotator rot = E::GetActorRotation(puppetActor);
     void* body = E::SpawnPlayerRagdollBody(puppetActor, loc, rot);

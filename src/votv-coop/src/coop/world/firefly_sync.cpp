@@ -76,7 +76,7 @@ void OnFireflyTickPre(void* /*self*/, void* /*function*/, void* /*params*/) {
     if (!Connected()) return;  // nothing to share when solo / not yet connected
     // Defensive: the firefly ReceiveTick is TickInterval=30 s, so this walk is inherently
     // rare. But if a future recook ever made it tick hot, an unbounded FindObjectsByClass
-    // (a GUObjectArray walk) here would be the CLAUDE.md per-frame-scan footgun -- so cap
+    // (a GUObjectArray walk) here would be the per-frame-scan footgun the project bans -- so cap
     // the capture to ~1 Hz. Real (30 s) firefly ticks are never blocked.
     const long long now = NowMs();
     if (now - g_lastCaptureMs < 1000) return;
@@ -104,7 +104,7 @@ void OnFireflyTickPost(void* /*self*/, void* /*function*/, void* /*params*/) {
     // The firefly tick spawns EXACTLY ONE emitter per successful roll, so broadcast at most
     // one new PSC (the first) and WARN if more than one appeared -- a >1 count means a nested
     // call spawned an unrelated transient PSC (a recook change), and blindly broadcasting it
-    // would paint a stray firefly on every other peer. (audit I-3 2026-06-09.)
+    // would paint a stray firefly on every other peer.
     int newCount = 0;
     bool sent = false;
     for (void* psc : R::FindObjectsByClass(kPscClass)) {

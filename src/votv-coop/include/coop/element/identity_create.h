@@ -19,22 +19,18 @@
 
 namespace coop::element {
 
-// CreateOrAdopt for a wire-received PROP MIRROR. Resolves `eid` against the
-// registry and CLAIMs / ADOPTs / REJECTs:
-//   - eid already bound to `actor`            -> ADOPT (idempotent no-op).
-//   - eid bound to a DIFFERENT live actor:
-//        morph=true   -> RE-SKIN the Element onto `actor` (a MIRROR rebinds via
-//                        SetActor; a LOCAL element routes through
-//                        RebindLocalElementActor so the forward map stays
-//                        consistent). The caller retires the old actor.
-//        morph=false  -> REJECT (the HEAD live-conflict guard); the existing
-//                        binding is left intact (a re-spawn convergence packet
-//                        for a still-live eid is absorbed, not duplicated).
-//   - eid free                                -> CREATE a fresh Prop mirror
-//                                                Install'd at `eid`.
-// `eid == 0` (wire sentinel "sender had no Element minted") and `kInvalidId` are
-// rejected. `senderSlot` tags the owner peer slot for per-slot disconnect
-// eviction. Subsumes remote_prop::RegisterPropMirror (now a thin caller).
+// CreateOrAdopt for a wire-received PROP MIRROR. Resolves `eid` against the registry, then:
+//   - eid already bound to `actor` -> ADOPT, an idempotent no-op.
+//   - eid bound to a DIFFERENT live actor, morph=true -> RE-SKIN the Element onto `actor`. A
+//     mirror rebinds through SetActor; a LOCAL element routes through RebindLocalElementActor
+//     so the forward map stays consistent. The caller retires the old actor.
+//   - the same, morph=false -> REJECT, the head live-conflict guard. The existing binding is
+//     left intact, so a re-spawn convergence packet for a still-live eid is absorbed rather
+//     than duplicated.
+//   - eid free -> CREATE a fresh Prop mirror, Install'd at `eid`.
+// `eid == 0`, the wire sentinel for "the sender had no Element minted", and `kInvalidId` are
+// both rejected. `senderSlot` tags the owner peer slot for per-slot disconnect eviction.
+// remote_prop::RegisterPropMirror is a thin forwarder onto this.
 void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                              const std::wstring& key, const std::wstring& cls,
                              int senderSlot, bool morph);
