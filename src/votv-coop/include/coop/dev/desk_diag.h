@@ -1,37 +1,30 @@
 // coop/dev/desk_diag.h -- read-only desk/console/dish DIVERGENCE census probe.
 //
-// READ-ONLY diagnostic (RULE-2-exempt, dev-tool). Instruments the 2026-07-15
-// desk/console/computer DIVERGENCE CLUSTER so the holder-owned sync fix is
-// designed from MEASURED per-peer drift, not guesses (PROBE-DON'T-GUESS,
-// [[feedback-probe-dont-guess-rule]]). ONE root: the desk OUTPUT + SIMULATION
-// is generated PER-PEER, not owned by the holder/host and mirrored -- so the
-// coordLog (host 78 lines vs client 13), the decode needle (017.77 vs 017.84),
-// the freq/polarity filters (unsynced), and the dishes drift between peers.
-// This probe dumps every peer's full readable desk state at a fixed cadence +
-// the coordLog line-delta on every change, tagged role + desk-claim holder, so
-// the HOST and CLIENT logs diff line-by-line and pin exactly which field each
-// peer self-simulates.
+// A read-only diagnostic (RULE-2-exempt dev tool). It instruments the desk/console/computer
+// divergence cluster so a holder-owned sync fix is designed from MEASURED per-peer drift rather
+// than from guesses. One root: the desk's output and simulation are generated PER-PEER instead
+// of being owned by the holder and mirrored, so the coordLog, the decode needle, the frequency
+// and polarity filters and the dishes all drift between peers. The probe dumps every peer's
+// readable desk state at a fixed cadence, plus the coordLog line delta on every change, tagged
+// with role and desk-claim holder, so the host and client logs diff line by line and pin which
+// field each peer self-simulates.
 //
-// Scope: covers 4 of the 5 divergence symptoms -- the analogDScreenTest main
-// signal desk (scalars incl. DL_frData/DL_poData / comp / per-dish aim targets /
-// coordLog / caught-signal) + the SAT-console LogText line-count (cross-surface
-// fail-loud). The 5th symptom -- the STATIONARY PC -- is NOT covered: its device
-// class is UNRESOLVED. Alaptop_C was ruled OUT by reflection (it is a GRABBABLE
-// portable laptop: canPickup/playerGrabbed, not the system-block-powered
-// stationary PC); the real class (candidates pcWASDtest / prop_computerpanels)
-// needs its own surface-resolution pass before a reader is aimed. Until then this
-// instrument is 4/5 -- it does NOT sample the stationary PC and a clean diff there
-// is a guaranteed false negative, NOT evidence of parity.
-//
-// Ini-gated `[dev] desk_diag=1` (interval `[dev] desk_diag_ms`, default 1000);
-// zero cost when off (one memoized bool early-out). Game thread only (every CD::
-// read dispatches / reads engine state on the game thread).
+// Ini-gated `[dev] desk_diag=1` (interval `[dev] desk_diag_ms`, default 1000); zero cost when
+// off, one memoized bool early-out. Game thread only -- every read dispatches to, or reads,
+// engine state on the game thread.
 
 #pragma once
 
 namespace coop::net { class Session; }
 
 namespace coop::dev::desk_diag {
+
+// Scope: four of the five divergence symptoms -- the analogDScreenTest main signal desk (its
+// scalars, comp, per-dish aim targets, coordLog and caught signal) and the SAT console's LogText
+// line count as a cross-surface fail-loud. The fifth, the STATIONARY PC, is NOT sampled: no reader
+// has been aimed at it. Its class is laptop_C, which ue_wrap/devices/laptop.h already wraps, so
+// aiming one is a matter of choosing fields rather than of finding the class. Until that happens a
+// clean diff for the PC is a guaranteed false negative, not evidence of parity.
 
 // Memoized `[dev] desk_diag` ini flag.
 bool IsEnabled();

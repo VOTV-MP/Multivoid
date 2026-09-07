@@ -1,31 +1,18 @@
-// harness/autotest_grab.cpp -- Autonomous grab test (no user E-press required).
+// harness/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. The
+// public interface is in harness/autotest.h.
 //
-// Extracted from harness/harness.cpp (2026-05-25 modular refactor).
-// See harness/autotest.h for the public interface.
+// Expected on the host: grab_hook[PHC.Grab] once at the GrabComponentAtLocation call,
+// grab_hook[PHC.SetTarget] once a second (throttled one in thirty), and grab_hook[PHC.Release
+// PRE] once at the ReleaseComponent call, logging the component read off the handle.
 //
-// Expected log lines (on host) after this runs:
-//   grab_hook[PHC.Grab]       (once, at GrabComponentAtLocation call)
-//   grab_hook[PHC.SetTarget]  (once per second, throttled to 1-in-30)
-//   grab_hook[PHC.Release PRE](once, at ReleaseComponent call -- logs the
-//                              GrabbedComponent we read off the handle)
+// A green run establishes that FindClass and FindFunction resolve engine-native UFunctions,
+// that reflection::CallFunction dispatches through ProcessEvent, and that our observer detour
+// catches engine-native UFunctions and not only blueprint ones. It does NOT establish that the
+// game's own graph reacted: we call the native UFunction, so the blueprint never learns of the
+// grab and mainPlayer.grabbing_actor stays null.
 //
-// Pieces this verifies:
-//   1. FindClass + FindFunction resolution for engine-native UFunctions
-//   2. ProcessEvent dispatch path through reflection::CallFunction
-//   3. Our observer detour catches engine-native UFunctions (not just BP)
-//   4. The +176 GrabbedComponent field read in PHC.Release PRE
-//
-// What this does NOT verify (still requires hands-on or further code):
-//   - VOTV BP-graph reaction to the forced grab (the BP doesn't know we
-//     called the native UFunction so mainPlayer.grabbing_actor stays null)
-//   - Heavy drag path (UPhysicsConstraintComponent) -- different setup
-//   - Receiver-side reception (no wire shipped yet -- Stage 4 blocker)
-//
-// Pass-2 verification: when run on BOTH peers (host AND client), each does
-// a prop scan; comparing their nearest-prop Key.ComparisonIndex tells us
-// whether cooked-content FNames are stable cross-peer (which is the
-// hypothesis Stage 4's wire serialization depends on). Only the HOST does
-// the actual grab/move/release calls -- client is scan-only.
+// Run on BOTH peers, each scans props; comparing their nearest prop's Key.ComparisonIndex says
+// whether cooked FNames are stable across peers. Only the HOST grabs; the client is scan-only.
 
 #include "harness/autotest.h"
 

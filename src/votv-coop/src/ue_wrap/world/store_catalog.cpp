@@ -53,17 +53,16 @@ int32_t g_subcatOff = -1;
 int32_t g_nameOff   = -1;
 bool    g_valid     = false;  // a build produced a usable catalog
 
-// A failed build is not one thing, and treating it as one was wrong in BOTH directions (audit
-// 2026-08-24):
-//   HARD -- a verdict about LAYOUT or DATA (the price gate disagreed, duplicate row keys, row-struct
-//           members missing). Retrying cannot change the answer, so latch it forever.
+// A failed build is not one thing, and treating it as one is wrong in BOTH directions:
+//   HARD -- a verdict about LAYOUT or DATA (the price gate disagreed, duplicate row keys,
+//           row-struct members missing). Retrying cannot change the answer, so latch it forever.
 //   SOFT -- something was not resolvable YET (the table, the function library, the RowMap head).
-//           Retrying is right... but the retry runs `FindObject`, a full GUObjectArray walk that
-//           renders an FName per object, and the first cut had NO latch on this path at all, so a
-//           host with a pending order could re-walk ~237k objects per order per frame. Retry, on a
+//           Retrying is right, but the retry runs FindObject, a full GUObjectArray walk that
+//           renders an FName per object; with no latch at all on this path a host with a pending
+//           order can re-walk the whole array once per order per frame. So: retry, on a
 //           wall-clock throttle.
-// The first cut also latched SOFT failures permanently, which would have refused every client order
-// for the rest of a session because a UFunction happened to be unresolved for one tick.
+// Latching a SOFT failure permanently is the opposite error -- it refuses every client order for
+// the rest of the session because a UFunction happened to be unresolved for one tick.
 enum class Outcome { Never, Soft, Hard };
 Outcome  g_outcome      = Outcome::Never;
 uint64_t g_lastAttemptMs = 0;
@@ -84,9 +83,8 @@ std::wstring Key(const std::wstring& s) {
 }
 
 // Drill knob: read a NEIGHBOURING field instead of `price`, so the gate below disagrees and the
-// fail-closed path can be shown RED. Without this the refusal branch can never fire in a healthy
-// build, which makes it an instrument that always passes
-// ([[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]).
+// fail-closed path can be shown RED. Without it the refusal branch can never fire in a healthy
+// build, leaving an instrument that cannot see the failure it guards and therefore always passes.
 bool BreakDrillEnabled() {
     wchar_t buf[8]{};
     const DWORD n = ::GetEnvironmentVariableW(L"VOTVCOOP_STORE_CATALOG_BREAK", buf, 8);
