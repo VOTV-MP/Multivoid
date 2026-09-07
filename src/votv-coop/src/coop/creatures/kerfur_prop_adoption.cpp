@@ -1,5 +1,5 @@
-// coop/kerfur_prop_adoption.cpp -- see coop/kerfur_prop_adoption.h. The PROP-form analogue of
-// coop/npc_adoption.cpp (deferred class+pose adoption), specialized for prop_kerfurOmega_C.
+// coop/creatures/kerfur_prop_adoption.cpp -- see coop/creatures/kerfur_prop_adoption.h. The
+// PROP-form analogue of npc_adoption, specialised for prop_kerfurOmega_C.
 
 #include "coop/creatures/kerfur_prop_adoption.h"
 
@@ -13,7 +13,7 @@
 #include "coop/player/players_registry.h"     // Local()
 #include "coop/props/remote_prop.h"          // RegisterPropMirror
 #include "coop/props/remote_prop_spawn.h"    // OnSpawn (fresh-spawn fallback) + RecordClaimIfTracking + HasLoadTailQuiesced
-#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
+#include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced -- the claim and sweep half of the join window
 #include "ue_wrap/engine/engine.h"            // GetActorLocation + SetActorSimulatePhysics
 #include "ue_wrap/actors/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)
 #include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
@@ -37,10 +37,9 @@ struct Pending {
     void*        actorClass;              // client-resolved UClass (stable; classes are not GC'd)
     float        x, y, z;                 // host pose at announce (multi-twin disambiguation)
     std::chrono::steady_clock::time_point armedAt;
-    // ANTI-SMEAR EVIDENCE (2026-07-12, join-barrier follow-up): scans this entry survived. Under the
-    // barrier a join-path twin is materialized BEFORE the PropSpawn arrives, so every adoption should
-    // bind on poll #1 -- the bind/fresh-spawn logs carry this count so a kerfur-present live log can
-    // prove (or refute) the K-6 join-wait branch collapse before any retirement.
+    // How many scans this entry has survived. The bind and fresh-spawn logs carry it, so a live
+    // log shows whether adoption bound on the first poll -- which is what the join barrier is
+    // meant to guarantee, the twin being materialised before the PropSpawn arrives.
     int polls = 0;
 };
 
@@ -126,21 +125,18 @@ void ResolvePending() {
             g_pending.pop_back();
             continue;
         }
-        // ANTI-COLLISION GATE (2026-06-24, fuzzy-gate fix#1; doc kerfur/06 + the 14:05 RCA). The
-        // class+pose match below is a 500cm fuzzy fallback. A candidate that carries its OWN real,
-        // cross-peer-stable Aprop_Key exact-BELONGS to the host kerfur with that key (it WILL exact-key
-        // bind to it -- save-loaded kerfur keys are persisted + identical on both peers, log-proven 14:05:
-        // the 4 save-off neighbors all `resolves to live actor` by key). A kerfur whose own broadcast key
-        // is a DIFFERENT key (e.g. a runtime-turned-off kerfur with a fresh per-load key, or any keyless
-        // pending) must NOT steal that neighbor via fuzzy -- that WAS the 14:05 5-vs-4 collision (xXPHX
-        // [eid 3147] grabbed Nrby's actor 206cm away BEFORE Nrby's exact bind claimed it -> two host eids
-        // on one client actor -> 4 visible). Skip any candidate whose key is real (non-empty/non-None) AND
-        // != this pending kerfur's broadcast key. Ordering-INDEPENDENT (we gate on the candidate's identity
-        // key, not its current bind state -> the "poll ran before the exact bind" race is closed). A legit
-        // twin is NOT skipped: same save key (candKey == pendKey -> a class+pose retry of the exact match)
-        // or a not-yet-minted late twin (candKey empty). A pending kerfur left with no valid candidate then
-        // falls through to fresh-spawn/defer (fix#1 turns the collision into a clean "no body yet" =
-        // symptom 2; the body is fix#2 active-at-blob->off). [[project-kerfur-off-state-no-replicate-backlog-2026-06-24]].
+        // The anti-collision gate in front of the fuzzy match below. The prop form is an ordinary
+        // keyed prop, so a save-loaded one restores the SAME key on both peers and binds by exact
+        // key; only a keyless or freshly-minted one reaches this class-and-pose fallback. A
+        // candidate that carries a real key of its own therefore already belongs to the host kerfur
+        // with that key, and a pending kerfur whose broadcast key differs must not take it: without
+        // this gate the nearer pending steals the neighbour's actor before its exact bind claims
+        // it, and two host eids end up on one actor. So skip any candidate whose key is real
+        // (non-empty, not None) and differs from this pending kerfur's. The test is the candidate's
+        // identity key, never its current bind state, so it does not depend on whether the exact
+        // bind has run yet. A legitimate twin still passes: the same save key, or a key not yet
+        // minted. A pending kerfur left with no candidate falls through to the fresh-spawn or the
+        // defer below.
         const std::wstring pendKey = KeyToW(e.payload.key);
         int   bestIdx = -1;
         float bestD2  = kMaxBindDist2;
@@ -173,9 +169,10 @@ void ResolvePending() {
             // deferKerfur=false so it does NOT re-arm here (one-shot fresh spawn, no defer loop).
             const bool quiesced = coop::join_membership_sweep::HasLoadTailQuiesced();
             if (!quiesced) {
-                // TRIPWIRE (2026-07-12, join-barrier follow-up): under the barrier every join-path
-                // PropSpawn arrives post-settle and the sweep latch fires seconds later -- reaching the
-                // 60 s timeout BEFORE quiescence means the probe/sweep chain wedged. Report, never trim.
+                // Tripwire, never a trim: under the join barrier every join-path PropSpawn arrives
+                // after the settle and the sweep latch fires seconds later, so reaching the
+                // last-resort timeout BEFORE quiescence means the probe-and-sweep chain wedged.
+                // Report it.
                 UE_LOGW("kerfur-prop-adopt: TRIPWIRE -- last-resort timeout fired BEFORE load-tail "
                         "quiescence (eid=%u, %d polls) -- structurally unexpected under the join "
                         "barrier; report this log",
@@ -186,13 +183,12 @@ void ResolvePending() {
                     e.payload.elementId, e.classW.c_str(),
                     quiesced ? "load tail quiesced" : "last-resort timeout",
                     e.polls, MsSince(e.armedAt));
-            // OBS-2 ROOT FIX (2026-06-24): pass deferKerfur in the CORRECT slot. The prior call
-            // `OnSpawn(e.payload, 0, localPlayer, /*deferKerfur=*/false)` bound `false` to param #4
-            // (fromConvert), leaving deferKerfur at its DEFAULT true -> the "fresh-spawn" re-entered the
-            // K-6 defer, Arm()'d the already-pending eid (silent refresh+return), spawned nothing, and
-            // ResolvePending then popped the entry -> the kerfur was DROPPED forever (host broadcasts each
-            // prop once; no retry). Explicit fromConvert=false + deferKerfur=false re-enables the one-shot
-            // fresh-spawn fallback the comment always intended.
+            // Both trailing flags are passed explicitly. OnSpawn's fourth parameter is fromConvert
+            // and the fifth is deferKerfur, which DEFAULTS to true: a single positional false binds
+            // fromConvert and leaves the defer on, so the fresh spawn would re-enter this module,
+            // refresh the already- pending eid and spawn nothing, and the entry below would then be
+            // popped -- dropping the kerfur for good, since the host announces each prop once.
+            // deferKerfur=false makes this the one-shot fallback it has to be.
             coop::remote_prop_spawn::OnSpawn(e.payload, /*senderSlot=*/0, localPlayer,
                                              /*fromConvert=*/false, /*deferKerfur=*/false);
             resolved = true;
