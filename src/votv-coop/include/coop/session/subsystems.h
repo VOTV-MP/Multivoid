@@ -1,22 +1,17 @@
-// coop/subsystems.h -- the sync-module wiring registry.
+// coop/session/subsystems.h -- the sync-module wiring registry.
 //
-// One place that knows EVERY coop sync module and fans the five lifecycle
-// moments out to them: observer Install, per-joiner connect replay, per-slot
-// disconnect cleanup, aggregate session teardown, and the per-tick gameplay
-// chain. Extracted from net_pump.cpp 2026-06-12 (1290 LOC, past the modular
-// soft cap): the fan-out lists are what every new feature edits, and the
-// disconnect-edge vs death-teardown lists had already drifted into two
-// near-identical hand-maintained copies (RULE 2 -- one list, one owner).
+// The one place that knows EVERY coop sync module, fanning the five lifecycle moments out to
+// them: the observer install, the per-joiner connect replay, the per-slot disconnect cleanup,
+// the aggregate session teardown and the per-tick gameplay chain. The fan-out lists are what
+// every new feature edits, and they belong to one owner: kept in the pump, the
+// disconnect-edge and death-teardown lists drifted into two near-identical hand-maintained
+// copies.
 //
-// net_pump.cpp stays the per-tick ORCHESTRATOR (connection edges, death
-// policy, reaper, puppet drive) and calls into this registry at the right
-// moments. A new sync feature wires in HERE (Install + TickGameplay +
-// DisconnectAll + optionally ConnectReplayForSlot) and never touches
-// net_pump again.
-//
-// MTA shape: CClientManager owns the sub-manager list and fans DoPulse /
-// connect / disconnect out to them (reference/mtasa-blue
-// Client/mods/deathmatch/logic/CClientManager.cpp); the pump stays thin.
+// net_pump stays the per-tick ORCHESTRATOR -- connection edges, death policy, the reaper, the
+// puppet drive -- and calls in here at the right moments. A new sync feature wires itself in
+// HERE (Install and TickGameplay, plus DisconnectAll and optionally ConnectReplayForSlot) and
+// never touches net_pump. The MTA shape: CClientManager owns the sub-manager list and fans
+// DoPulse, connect and disconnect out to them, keeping the pump thin.
 
 #pragma once
 
@@ -34,10 +29,10 @@ namespace coop::subsystems {
 // parity with networked play). Game thread only.
 void Install(coop::net::Session& session);
 
-// v56: the HOST's per-joiner connect replay (snapshot bracket + every
-// connect-time state broadcast), fired by the joiner's ClientWorldReady
-// (event_feed) -- NOT by the connect edge: a menu-mode joiner is connected
-// long before it has a world to land this on. Game thread (event_feed drain).
+// The HOST's per-joiner connect replay (the snapshot bracket and every connect-time state
+// broadcast), fired by the joiner's ClientWorldReady in event_feed and NOT by the connect
+// edge: a menu-mode joiner is connected long before it has a world to land this on. Game
+// thread, on the event_feed drain.
 void ConnectReplayForSlot(int slot);
 
 // CLIENT -> HOST (slot 0) connect edge: announce LOCAL flashlight state so
@@ -47,13 +42,12 @@ void ConnectReplayForSlot(int slot);
 // for host->joiner traffic).
 void ClientConnectEdge(coop::net::Session& session);
 
-// Per-slot disconnect cleanup: abort in-flight per-slot streams (snapshot
-// drain, save transfer), close the slot's world-ready send gate, and drain
-// subsystems with per-slot state. Shared by the per-slot disconnect edge AND
-// the local-death teardown (which previously omitted the save-transfer cancel
-// + world-ready gate close -- a host dying mid-save-transfer kept the
-// in-flight stream armed across the session; unified 2026-06-12).
-// Does NOT touch the slot's puppet -- the caller owns g_puppets.
+// Per-slot disconnect cleanup: abort the slot's in-flight streams (the snapshot drain, the
+// save transfer), close its world-ready send gate, and drain the subsystems holding per-slot
+// state. Shared by the per-slot disconnect edge AND the local-death teardown, which is why it
+// is one function: as two, the death path omitted the save-transfer cancel and the gate close,
+// so a host dying mid-transfer left the stream armed for the rest of the session. Does NOT
+// touch the slot's puppet -- the caller owns those.
 void DisconnectSlot(coop::net::Session& session, int slot);
 
 // Aggregate teardown: every subsystem with session-wide state (the per-slot
