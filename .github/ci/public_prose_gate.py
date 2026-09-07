@@ -272,6 +272,7 @@ class DocIndex:
     def __init__(self, repo, tracked, subs=()):
         self.names = set(tracked) | {t.rsplit("/", 1)[-1] for t in tracked}
         self.repo, self.subs, self._vendored = repo, list(subs), None
+        self._subs_readable = 0
         self.lengths = {}
         for t in tracked:
             if not t.endswith(SRC_EXT):
@@ -293,19 +294,35 @@ class DocIndex:
         if self._vendored is None:
             self._vendored = set()
             for sub_path in self.subs:
+                here = os.path.join(self.repo, sub_path)
+                # A checked-out submodule has a `.git` of its own. Without that test an EMPTY
+                # placeholder directory answers `ls-files` with the PARENT repository's list, exit
+                # 0, and this loop believes it read a submodule it never opened.
+                if not os.path.exists(os.path.join(here, ".git")):
+                    continue                      # not checked out; see vendored_known()
                 try:
-                    out = git(["ls-files"], os.path.join(self.repo, sub_path))
+                    out = git(["ls-files"], here)
                 except Exception:
                     continue
+                self._subs_readable += 1
                 self._vendored |= {p.rsplit("/", 1)[-1] for p in out.split("\n") if p.strip()}
         return self._vendored
+
+    def vendored_known(self):
+        """False when a declared submodule is not on disk, which is every plain CI checkout.
+
+        The carve-out below then has no input, and an empty set is not the same answer as "this
+        name is not vendored" -- reading it as one turned every GNS, imgui and MTA citation into
+        debt, 0 locally and 13 in CI. A counter that cannot tell must not accuse."""
+        self.vendored()
+        return self._subs_readable == len(self.subs)
 
     def line_resolves(self, name, first):
         """A `<file>:NNN` citation resolves when the tree carries that file AND it is that long.
         Both halves matter: some of the tree's citations name a file that is gone, and others name
         a line a shortened file no longer has. A vendored file resolves on its name alone."""
         if name not in self.lengths:
-            return name in self.vendored()
+            return name in self.vendored() or not self.vendored_known()
         return first <= self.lengths[name]
 
 

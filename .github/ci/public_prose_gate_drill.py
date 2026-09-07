@@ -257,6 +257,13 @@ MUTANTS = [
     # does. Accepting either would call a pointer live that leads nowhere.
     # A citation into a submodule is not a rotted one: the tree is pinned by SHA and checked out
     # beside us, so it cannot be shortened under the citation the way one of ours can.
+    # A submodule that is not checked out is not a submodule full of absent files. Without the
+    # `.git` presence test, `git -C <empty dir> ls-files` answers with the PARENT repository's
+    # list and exit 0, so the loop believes it read a tree it never opened -- which is what made
+    # this counter read 0 locally and 13 in CI.
+    ("doc_row: an unopened submodule reads as read",
+     '                if not os.path.exists(os.path.join(here, ".git")):\n                    continue',
+     '                if False:\n                    continue'),
     ("doc_row: a vendored file does not resolve",
      "            return name in self.vendored()", "            return False"),
     ("doc_row: an absent file resolves",
@@ -512,6 +519,19 @@ def main():
             r.returncode == 1 and "modified but not staged" in r.stdout and rel in r.stdout,
             r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
         git(["checkout", "--", rel], repo, env)
+    # THE CI SHAPE: a checkout with no submodule working copy. Every plain `actions/checkout` is
+    # this, and a carve-out that reads a vendored tree has no input here -- it must decline to
+    # accuse rather than call every vendored citation dead.
+    r_with = run(["--repo", repo, "--baseline", baseline])
+    shutil.move(os.path.join(repo, "third_party", "vend", ".git"),
+                os.path.join(tmp, "vend_dotgit"))
+    r_without = run(["--repo", repo, "--baseline", baseline])
+    shutil.move(os.path.join(tmp, "vend_dotgit"),
+                os.path.join(repo, "third_party", "vend", ".git"))
+    arm("an unchecked-out submodule gives the same verdict as a checked-out one",
+        r_with.returncode == r_without.returncode
+        and "doc_row" not in r_without.stdout.split("FAIL")[-1],
+        (r_without.stdout.strip().splitlines() or [""])[-1])
     # a 601-line doc crosses the cap; a 600-line one does not (counted above)
     with open(os.path.join(repo, "docs", "six.md"), "a", encoding="utf-8") as f:
         f.write("one more\n")
