@@ -42,11 +42,9 @@ void Tick();
 //   than detouring sleep() covers EVERY entry path -- interaction, a probe, a host already asleep
 //   when a client connects -- with no new hook surface and at most a tick of lag.
 // TALLY -- each peer's isSleep edge reports inBed (op=Report); the host counts world-ready peers
-// and
-//   broadcasts "N/M sleeping" as a chat feed line.
+//   and broadcasts "N/M sleeping" as a chat feed line.
 // ACCELERATE -- everyone in bed: the host broadcasts, each sleeping peer sets its own dilation to
-// 20
-//   so vitals refill natively, and the client clock free-runs (time_sync::SetSleepAccelerate).
+//   20 so vitals refill natively, and the client clock free-runs (time_sync::SetSleepAccelerate).
 // END -- ANY peer's isSleep falling edge ends the night for everyone. Natural wake, manual exit,
 //   hunger (food <= 20), an active event and a nightmare all funnel through gamemode.wakeup, so one
 //   edge catches every case: the host broadcasts End{natural} and receivers reflect wakeup().

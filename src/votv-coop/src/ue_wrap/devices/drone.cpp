@@ -246,9 +246,8 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
     if (ComponentIsActive(dust) != on) SetComponentActive(dust, on);
     if (!on) return;
     // 2. Pin the component to the host's ground-trace hit. eff_droneDust is bAbsoluteLocation with
-    // NO
-    //    relative offset, so unmoved it renders at WORLD ORIGIN and its fixed relative bounding box
-    //    is frustum-culled -- the other half of the invisible dust. Same call form as the
+    //    NO relative offset, so unmoved it renders at WORLD ORIGIN and its fixed relative bounding
+    //    box is frustum-culled -- the other half of the invisible dust. Same call form as the
     //    blueprint: sweep=false, teleport=false. The blueprint VInterpTo's toward the hit; we do
     //    not, because the host streams its already-interpolated component location at 20 Hz.
     if (g_setWorldLocFn) {
@@ -261,8 +260,7 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
         }
     }
     // 3. The blueprint's intensity formula: 'dust' = 1 - distance(trace start, hit) / 2000, clamped
-    // to
-    //    [0,1]. Lazy-resolve the FName -- it needs Kismet up, which post-boot it is.
+    //    to [0,1]. Lazy-resolve the FName -- it needs Kismet up, which post-boot it is.
     if (g_setFloatParamFn) {
         if (g_dustFName.ComparisonIndex == 0 && g_dustFName.Number == 0)
             g_dustFName = ue_wrap::fname_utils::StringToFName(L"dust");
