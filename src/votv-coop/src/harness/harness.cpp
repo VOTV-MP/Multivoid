@@ -133,7 +133,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // reviewed; it arms the settings-check panel at the main menu and never rewrites.
     coop::config_review::RunBootSweep();
 
-    // The census of the other mods in this process, warning when the player pays frames for them:
+    // The census of the other mods in this process, logged and never raised to the player:
     // file-system reads, posted so a slow disk cannot stall the boot thread. Above the scenario
     // branch, since every scenario reaches this line; inside the autotest branch it never ran for a
     // real player, and its own verification could not see that.

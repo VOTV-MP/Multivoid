@@ -138,14 +138,14 @@ that remainder was measured — at the time — not to be the mod: Multivoid's o
 per-frame cost came out under a millisecond. The report was still worth every
 hour; none of the five would have been found without it.
 
-**The remainder was measured again and it was still not the mod.** On one save, one Multivoid
-build and one windowed launch, the developer machine's own tooling cost the frames: a debug pak
-and UE4SS's bundled Lua mods took the machine from about 119 fps to about 75, and the same build
-ran a stable 120 through r2modman. Two things are worth keeping from that detour, because they
-are what made a wrong answer plausible for a day: every counter the mod owns times **its own
-code**, so none of them can price the engine work that code provokes, and a comparison between
-two installs is worthless until you have diffed the installs. Multivoid now ships a boot notice
-naming any frame-costly mods it finds beside it, so no player has to repeat this.
+**The remainder was measured again and it was still not the mod.** The first answer -- that a
+debug pak and the loader's bundled Lua mods cost the frames -- did not survive a controlled
+follow-up. Changing nothing but `UE4SS.dll` took one machine from about 70 to about 118 fps,
+while disabling a Lua mod on the old build was worth about 5, so the frames belong to the
+**loader build**, and Multivoid now pins the fast one for you. Two things are worth keeping from
+that detour, because they are what made a wrong answer plausible for a day: every counter the mod
+owns times **its own code**, so none of them can price the engine work that code provokes, and a
+comparison between two installs is worthless until you have diffed the installs.
 
 ---
 
