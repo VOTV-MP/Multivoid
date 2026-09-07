@@ -90,22 +90,14 @@ bool IsOurPakDir(const std::wstring& dirName) {
 
 // Foreign Blueprint mods: any .pak under Content/Paks/LogicMods that is not ours.
 //
-// CORRECTED 2026-08-29, first run on a real managed install. This used to list the
-// TOP LEVEL only, reasoning that "ours live one level down in LogicMods\multivoid\,
-// so the flat listing is the discriminator and no name matching is needed". That
-// holds for a hand-install and is exactly backwards for r2modman, where shimloader
-// maps EVERY package's paks into LogicMods\<Team>-<Name>\ -- so on the lane where
-// a player is most likely to have other mods, DebugMod.pak sat one level down and
-// the census reported "no foreign paks" while BPModLoaderMod was demonstrably
-// mounting it (the run's own UE4SS.log: "Loading mod: DebugMod").
-//
-// `skin_registry.cpp` already knew this about the SAME directory and says so in
-// its own comment. Two modules reading one directory on opposite assumptions is
-// the actual defect; the shared fact is now written down in both.
-//
-// Naming a directory is not the fragile "name test" the old comment rejected --
-// that was about pak FILEnames, which a player can rename freely. The containing
-// directory is derived from the package identity, which is ours to fix.
+// BOTH depths are listed, and the containing DIRECTORY is the discriminator. On a
+// hand-install foreign paks sit at the top level; on the r2modman lane shimloader
+// maps EVERY package's paks into LogicMods\<Team>-<Name>\, so a foreign pak sits
+// one level down exactly where ours does, and a top-level-only listing reports
+// "none" while the loader is demonstrably mounting one. Naming the directory is
+// not the fragile name test that argument rejected: a pak FILEname is a player's
+// to rename, while the containing directory is derived from the package identity.
+// skin_registry.cpp reads the same directory on the same assumption.
 std::vector<std::string> ForeignBpPaks(const std::wstring& exeDir) {
     std::vector<std::string> out;
     std::error_code ec;
@@ -162,28 +154,21 @@ void Run() {
             lua.empty()  ? "none" : Join(lua).c_str(),
             paks.empty() ? "none" : Join(paks).c_str());
 
-    // NO PLAYER-FACING NOTICE, and this is a RETIREMENT rather than a default flip
-    // (2026-08-29, same day it shipped). Two independent reasons, either of which alone
-    // would be enough:
+    // NO PLAYER-FACING NOTICE: the census logs and tells the player nothing, for two
+    // independent reasons.
     //
-    // 1. THE ADVICE IS NOT SUPPORTED. It told the player this set costs frames and to
-    //    switch it off. Measured hours later: the SAME six Lua mods and the SAME
-    //    DebugMod.pak cost nothing detectable on the user's r2modman install (~120 fps)
-    //    while costing ~45 on the dev rig. The rigs differ in their UE4SS build, so the
-    //    suspect is the LOADER, not the mods -- and every Thunderstore player is on the
-    //    lane where the advice did not hold. See the header's second honesty bound.
-    // 2. IT WAS THE WRONG SURFACE. `boot_warning_dialog` is, by its own header, "the
-    //    mod-install problem modal" -- a fixed title that read MOD INSTALL PROBLEM above
-    //    a frame-rate notice, and a modal that must be dismissed before the menu can be
-    //    used at all. It takes the mouse through the ImGui overlay, which is how it was
-    //    caught: the native browser's own close-button self-test started failing, and
-    //    the failure was briefly mis-attributed to a five-day-old commit before a
-    //    screenshot showed the modal sitting on top of the screen under test.
+    // There is no supported claim to make. The advice this once carried said the
+    // foreign set costs frames; the same six Lua mods and the same DebugMod.pak cost
+    // nothing detectable on one r2modman install (~120 fps) and about 45 fps on the dev
+    // rig. Those rigs differ in their UE4SS build, so the suspect is the LOADER, and
+    // every Thunderstore player is on the lane where the advice did not hold.
     //
-    // The CENSUS stays and always logs: it costs one directory read at boot, it is what
-    // a bug report needs, and it is the only reason any of the above was measurable. When
-    // the UE4SS-swap measurement names a real cause, a notice can come back -- on a
-    // surface that does not block the menu, with a claim that survives both lanes.
+    // And it was the wrong surface: `boot_warning_dialog` is, by its own header, the
+    // mod-install problem modal -- a fixed MOD INSTALL PROBLEM title over a frame-rate
+    // notice, blocking the menu until dismissed.
+    //
+    // The CENSUS stays and always logs: one directory read at boot, and it is what a
+    // bug report needs. A notice can come back once a cause is named.
 }
 
 }  // namespace harness::mod_environment
