@@ -1,37 +1,18 @@
-// ue_wrap/hot_path_guard.h -- enforce the game-thread-only invariant on
-// side-tables that are GT-only BY CONVENTION (no lock), making the implicit
-// rule explicit and catching the first future violator.
+// ue_wrap/hot_path_guard.h -- assert the game-thread-only invariant on side-tables that are GT-only
+// BY CONVENTION rather than by a lock (g_drives, g_puppets, players::Registry's playerBySlot_ and
+// their kind), so the implicit rule is explicit and the first future violator is caught.
+// Engine-substrate layer (principle 7): all it knows is which thread is the game thread.
 //
-// Engine-substrate layer (principle 7): the only thing it knows is "which
-// thread is the game thread" (ue_wrap/game_thread.h). No coop/gameplay state.
+// A TRIPWIRE, NOT A LOCK: a mutex over single-thread state would mask the real bug -- an access
+// that should never have left the game thread -- instead of surfacing it, so the guard neither
+// synchronizes nor changes behaviour. It logs a per-site-bounded ERROR and, in DEBUG builds only,
+// breaks into the debugger, so a violation in a shipping build is loud but never fatal.
 //
-// WHY THIS EXISTS (audit theme #4, research/findings/votv-architecture-audit-
-// 2026-05-29.md): a class of side-tables (g_drives, g_remoteNickBySlot,
-// g_puppets, players::Registry's playerBySlot_; threats T-7/T-8/T-10) is
-// touched only from the game thread and is therefore safe WITHOUT a mutex --
-// but nothing ENFORCES that. Every new subsystem inherits the implicit rule
-// and can introduce a silent off-thread access that data-races these tables.
-//
-// THE FIX IS A TRIPWIRE, NOT A LOCK. Adding a mutex to single-thread state
-// would be a RULE-1 crutch: it would mask the real bug (an access that should
-// never have left the game thread) instead of surfacing it. So this guard does
-// NOT synchronize and does NOT change behaviour. On a PROVEN off-game-thread
-// access it:
-//   - emits a bounded ERROR log (first kMaxFiresPerSite per call site, then
-//     goes silent so a hot loop can't spam the log), and
-//   - in DEBUG builds, breaks into the debugger (hard stop for the developer).
-// In Release (NDEBUG, our shipping/smoke config) the break compiles out, so a
-// violation is a loud-but-non-fatal log line -- exactly what we want in a LAN
-// smoke: it shows up without killing the host.
-//
-// It fires on ue_wrap::game_thread::IsDefinitelyOffGameThread(), which is true
-// ONLY when the game thread id is already known AND the caller differs -- never
-// for "don't know yet" (boot, before the first ProcessEvent dispatch). So a
-// guard placed on a boot-time path that runs before the detour does not
-// false-fire; conversely, a boot-time path that runs AFTER the detour on a
-// non-game thread (e.g. the harness session-bringup thread) WOULD fire, which
-// is why guards go on the per-message/per-tick GT hot path, not on one-shot
-// session-start helpers that run on the bringup thread.
+// The test is game_thread::IsDefinitelyOffGameThread(), true ONLY once the game thread's id is
+// known AND the caller differs -- never for "not known yet". A guard on a boot path that runs
+// before the detour cannot false-fire, while one on a path running AFTER the detour on another
+// thread (the session-bringup thread) would: guards belong on per-tick and per-message game-thread
+// work, not on one-shot session-start helpers.
 
 #pragma once
 
@@ -42,33 +23,32 @@
 
 namespace ue_wrap::hot_path {
 
-// Per-site log budget: enough to confirm a violation (and a small burst) in a
-// smoke log without ever spamming. Correct operation never trips this at all.
+// Per-site log budget: enough to confirm a violation and the small burst that follows it, without
+// ever spamming a log. Correct operation never trips it.
 inline constexpr int kMaxFiresPerSite = 8;
 
 }  // namespace ue_wrap::hot_path
 
-// Hard developer stop on violation -- DEBUG builds only. Release (NDEBUG)
-// compiles it out so the shipping/smoke build never aborts on a guard.
+// Hard developer stop on a violation -- DEBUG builds only. Release (NDEBUG) compiles it out, so a
+// shipping build never aborts on a guard.
 #if defined(NDEBUG)
   #define UE_WRAP_DEBUG_BREAK() ((void)0)
 #else
   #define UE_WRAP_DEBUG_BREAK() __debugbreak()
 #endif
 
-// UE_ASSERT_GAME_THREAD(site) -- assert that this side-table access is on the
-// game thread. `site` is a short string literal naming the table/accessor (it
-// lands verbatim in the log so a violation is diagnosable). Must be a STATEMENT
-// (it expands to a do/while); place it at the top of every accessor of a
-// GT-only-by-convention side-table.
+// UE_ASSERT_GAME_THREAD(site) -- assert that this side-table access is on the game thread. `site`
+// is a short string literal naming the table or accessor, printed as-is so a violation is
+// diagnosable. Must be a STATEMENT (it expands to a do/while); place it at the top of every
+// accessor of a GT-only-by-convention side-table.
 //
-// A macro (not an inline fn) on purpose: the function-local `static` counter
-// gives each call SITE its own independent budget, so one noisy site can't
-// exhaust the log budget of the others, and a silent site costs nothing.
+// A macro rather than an inline function on purpose: the function-local `static` counter gives each
+// call SITE its own budget, so one noisy site cannot exhaust the others', and a silent site costs
+// nothing.
 //
-// Cost on the in-bounds (always, in correct operation) path: one relaxed
-// atomic load + one GetCurrentThreadId() (a TEB read) + a compare, then fall
-// through. No allocation, no lock, no log.
+// Cost on the in-bounds path, which is every call in correct operation: one relaxed atomic load,
+// one GetCurrentThreadId() (a TEB read) and a compare, then fall through. No allocation, no lock,
+// no log.
 #define UE_ASSERT_GAME_THREAD(site)                                            \
     do {                                                                       \
         if (::ue_wrap::game_thread::IsDefinitelyOffGameThread()) {             \
