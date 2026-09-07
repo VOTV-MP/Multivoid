@@ -12,14 +12,16 @@
 
 namespace ue_wrap::economy {
 
-// The sole credit writer in the cooked corpus is lib_C::addPoints(int32 Add, UObject
-// __WorldContext). It adds to saveSlot.points, sets the player interface's points text, and adds
-// to save_main.stats -- total_points for a gain, points_spent for a spend. mainGamemode's own
-// addPoints is a forwarder into it, which is what AddPoints() below dispatches.
+// Every EARNING and SPEND in the game goes through lib_C::addPoints(int32 Add, UObject
+// __WorldContext). It adds to saveSlot.points, sets the player interface's points text, and
+// adds to save_main.stats -- total_points for a gain, points_spent for a spend. mainGamemode's
+// own addPoints is a forwarder into it, which is what AddPoints() below dispatches. (The one
+// writer that bypasses it is saveSlot::reset_points, which zeroes the balance outright.)
 //
-// No hook can observe an earning: every call site dispatches through the blueprint VM, below
-// ProcessEvent. The one choke point is lib_C::addPoints itself, reachable only through the
-// vm_dispatch substrate, and that is what blocks a host-authoritative economy.
+// No hook can observe an earning as it happens: every blueprint call site of lib_C::addPoints
+// dispatches EX_LocalVirtualFunction, below ProcessEvent. That is what rules out INTERCEPTING
+// an earning -- vetoing or rewriting it at the moment it is credited -- so the shared balance
+// is kept host-authoritative by polling and mirroring instead, in coop/balance_sync.
 
 // The live UsaveSlot_C* (gamemode.saveSlot), or nullptr while unresolvable.
 // Exposed for sibling ue_wrap accessors of OTHER saveSlot fields (daily_task) so the

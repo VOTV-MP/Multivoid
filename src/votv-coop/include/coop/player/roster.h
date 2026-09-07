@@ -45,11 +45,12 @@ struct Row {
     bool isLocal = false;    // this row is YOU
     bool isHost  = false;    // this row's peer is the host (slot 0)
     bool connected = false;
-    // BOTH connection facts are the HOST's measurement, republished on RosterRow
-    // and read straight out of the ledger -- identical on every board, for every
-    // row, with no role branching. They answer ONE question: "how is THIS
-    // PLAYER connected to the session", which is not "how do I reach them" --
-    // that one has a different answer per viewer.
+    // BOTH connection facts are the HOST's measurement, republished on RosterRow.
+    // They answer ONE question -- "how is THIS PLAYER connected to the session" --
+    // rather than "how do I reach them", so no row is special-cased by what the
+    // viewer happens to be able to measure. The one substitution is row 0: the host
+    // has no link to itself, so a client board shows its own host RTT there.
+    // roster_ledger::DisplayLink owns that, in one place.
     int  ping = -1;   // RTT ms to the SESSION (-1 = not sampled / not applicable, 0 = sub-ms)
     coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
 };

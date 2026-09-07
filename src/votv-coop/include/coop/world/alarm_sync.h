@@ -1,14 +1,14 @@
 // coop/world/alarm_sync.h -- the base radar alarm as a shared-world toggle.
 //
-// There is ONE trigger_alarm_C per map, under the gamemode key 'alarmTrigger'. It goes ON when
-// the screen test's radar sweep hits an important comp_radarPoint, and OFF from the radar
-// panel's "Stop alarm" press or from the screen test's own resets. runTrigger is natively
-// IDEMPOTENT -- it returns when IntToBool(index) already equals `active` -- and it fans out the
-// WHOLE alarm: the alarm lamps, the klaxon loop, the basement grate, the ceiling lamps' flicker,
-// and the native event registry through lib_C::setEvent.
+// The map carries more than one trigger_alarm_C; ours is the one keyed 'alarmTrigger', which
+// owns the wiring. It goes ON from the screen test's radar sweep and from crafting a snusk
+// loaf, and OFF from the radar panel's lever and the screen test's own resets. runTrigger is
+// natively IDEMPOTENT -- it returns when IntToBool(index) already equals `active` -- and it
+// fans out the WHOLE alarm: the basement grate, lib_C::setEvent, the alarm lamps, the klaxon
+// loop and the ceiling lamps' flicker.
 //
-// Every native call site dispatches runTrigger EX_VirtualFunction, which is ProcessEvent-
-// invisible, so this lane POLLS trigger_alarm_C.active rather than hooking the verb.
+// Every native call site dispatches runTrigger EX_LocalVirtualFunction, which is
+// ProcessEvent-invisible, so this lane POLLS trigger_alarm_C.active instead of hooking it.
 
 #pragma once
 

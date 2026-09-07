@@ -5,29 +5,29 @@
 // the only thing that travels, so an order built that way carries nothing to forward.
 //
 // On a CLIENT, once, after a settle delay, it reproduces the laptop's order button without the
-// UI: debit the local balance by the summed price -- that debit is the thing the whole feature
-// has to correct, so a drill that skipped it would not test the interesting half -- then call
-// the native makeAnOrder with rows resolved from the peer's own `list_store`. order_sync's
-// watermark poll sees orders.Num rise and forwards it exactly as it would a human's purchase.
+// UI: place a real order through the game's own shop, rows resolved from the peer's own
+// `list_store`, then debit the local balance by the price that order came back with -- the debit
+// the whole feature has to correct, so a drill skipping it tests only the easy half. order_sync's
+// watermark poll then sees orders.Num rise and forwards it as it would a human's purchase.
 //
-// The rows are chosen: `drive`, `cup` and `burger`, 93 credits together, cheap enough not to
-// disturb a save. `cup` is one of the rows whose `object` is the generic `prop_C` with its real
-// identity in `asProp`, so a green run also exercises the wholesale-row copy those rows need.
+// The rows are chosen: `drive`, `cup` and `burger`, cheap enough not to disturb a save; `cup` is
+// one of the rows whose `object` is the generic `prop_C`, its identity in `asProp`, so a green
+// run exercises the wholesale-row copy those rows need.
 
 #pragma once
 
 namespace coop::dev::order_selftest {
 
 // Reading a run:
-//   GREEN -- the host logs one line committing the order and charging 93 from the shared balance,
-//            which is the whole feature: it priced the order from its own table, checked its own
-//            balance, confirmed the orders.Num edge, and charged. The client's balance mirror
-//            converges on the same figure.
+//   GREEN -- the host logs one line committing the order and charging it against the shared
+//            balance: it priced the order from its own table, checked its own balance,
+//            confirmed the orders.Num edge, and charged, and the client's balance mirror
+//            converges on the same figure. Read the charge off the client's own log line
+//            rather than expecting a fixed number -- the price comes from the live shop.
 //   RED   -- run it again with VOTVCOOP_STORE_CATALOG_BREAK=1 in the HOST's environment. The
 //            catalog gate must reject the corrupted read: the host refuses the order and charges
 //            nothing, the client logs the refusal and restores its cart. That is the drill for the
-//            fail-closed branch, which in a healthy build can never fire on its own -- and an
-//            instrument that cannot see the failure it guards always passes.
+//            fail-closed branch, which a healthy build can never fire on its own.
 
 // ini-gated OFF (`[dev] order_selftest=1`); never ships enabled. It DOES mutate local state -- a
 // balance debit and an order -- which is why it is a knob and not a passive readout; but every

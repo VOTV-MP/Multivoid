@@ -1,18 +1,18 @@
 // harness/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. The
 // public interface is in harness/autotest.h.
 //
-// Expected on the host: grab_hook[PHC.Grab] once at the GrabComponentAtLocation call,
-// grab_hook[PHC.SetTarget] once a second (throttled one in thirty), and grab_hook[PHC.Release
-// PRE] once at the ReleaseComponent call, logging the component read off the handle.
+// Expected on the host: grab_hook[PHC.Grab] at the GrabComponentAtLocation call,
+// grab_hook[PHC.SetTarget] once a second (throttled one in thirty), grab_hook[PHC.Release PRE]
+// at the ReleaseComponent call; then, from the arms below, grab_hook[PCC.SetConstrainedComponents]
+// and grab_hook[PCC.BreakConstraint PRE] for the heavy drag, and grab_hook[grab.Update] three
+// times with grab_hook[grab.Finished PRE] for the timeline force. Missing any is not green.
 //
-// A green run establishes that FindClass and FindFunction resolve engine-native UFunctions,
-// that reflection::CallFunction dispatches through ProcessEvent, and that our observer detour
-// catches engine-native UFunctions and not only blueprint ones. It does NOT establish that the
-// game's own graph reacted: we call the native UFunction, so the blueprint never learns of the
-// grab and mainPlayer.grabbing_actor stays null.
-//
-// Run on BOTH peers, each scans props; comparing their nearest prop's Key.ComparisonIndex says
-// whether cooked FNames are stable across peers. Only the HOST grabs; the client is scan-only.
+// It establishes that FindClass and FindFunction resolve engine-native UFunctions, that
+// reflection::CallFunction dispatches through ProcessEvent, and that our detour catches
+// engine-native UFunctions, not only blueprint ones -- but NOT that the game's graph reacted:
+// the blueprint never learns of the grab, so mainPlayer.grabbing_actor stays null. Run on BOTH
+// peers, each scans props, and their nearest prop's Key.ComparisonIndex says whether cooked
+// FNames are stable across peers. Only the HOST grabs; the client is scan-only.
 
 #include "harness/autotest.h"
 

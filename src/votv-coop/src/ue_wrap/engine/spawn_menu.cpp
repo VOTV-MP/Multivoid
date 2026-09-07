@@ -81,7 +81,7 @@ bool Open(void* localPlayer) {
     // system wires the forward to the open ubergraph, not to the stub body, so the dispatch left
     // the widget collapsed. And driving ExecuteUbergraph_mainPlayer at the open entry runs the
     // game's own guards, one of which is lib_C::isBuoyant -- a capability check that is false in
-    // story mode and whose failing branch can quit the game (see the header). What follows
+    // story mode, and whose flying branch can quit the game (see the header). What follows
     // therefore reproduces the open block's effects on the widget the game already created:
     // visibility, the widget's own opened(), then the input mode and cursor. No asset edit
     // (RULE 3).

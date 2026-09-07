@@ -9,10 +9,10 @@
 // Identity is the garage's LEVEL-EXPORT FName, its placed-actor name, and not the inherited
 // AtriggerBase_C key. That key comes from the gamemode's one-shot, sublevel-gated keying pass
 // (loadObjects -> loadTriggers, gated on isSublevelAllowed), and a garage that misses the pass
-// keeps the class default -- "garageDoor", which every garage instance shares and which therefore
-// cannot tell two of them apart. The host was seen losing its garage identity across a reload while
-// every door kept its key. The level-export FName is baked into the cooked map package, so both
-// peers read the identical name -- the same reason door_box keys the lockers by name.
+// keeps the class default, "garageDoor", which every garage instance shares; and the host was
+// seen losing its garage identity across a reload while every door kept its key. The
+// level-export FName is baked into the cooked map package, so both peers read the identical
+// name -- the same reason door_box keys the lockers by name.
 
 #pragma once
 
@@ -40,9 +40,9 @@ bool TryReadOpen(void* g, bool& open);
 // -- and the mirror's poll baseline would otherwise go stale and oscillate. Then plays the native
 // animated swing through acivae(): the montage from position 0 at half rate, and the move timeline
 // over its full length, both taking their direction from the flag just written. NOT settime, which
-// runs that same timeline and then snaps it -- the montage at full rate from position 100, then
-// SetNewTime straight to the endpoint. Must run on the game thread. False on null or an unresolved
-// UFunction.
+// runs that same timeline and then jumps it -- the montage at full rate from position 100, then
+// SetNewTime to second 0 or 1 of a six-second track, so a close snaps shut and an open lurches
+// and runs on. Must run on the game thread. False on null or an unresolved UFunction.
 bool ApplyOpen(void* g, bool open);
 
 }  // namespace ue_wrap::garage

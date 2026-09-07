@@ -135,10 +135,11 @@ const Adapter g_containerAdapter = {
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The garage door (Agarage_C), symmetric: no sensor and no autoclose, so a symmetric poll never
-// oscillates. Its identity is the level-export FName, not the save Key: the gamemode's
-// sublevel-gated keying can leave the garage Key=None through the host's menu-to-save world
-// transition, and the None-key filter dropped it forever, while the FName survived the same
-// reload byte-identical on both peers. The wall button toggles Open, which the poll catches.
+// oscillates. Its identity is the level-export FName, not the save key: a garage that misses
+// the gamemode's sublevel-gated keying pass keeps the class default "garageDoor", which every
+// garage instance shares, and the host was seen losing its garage identity through a
+// menu-to-save reload while the FName came through the same reload byte-identical on both
+// peers. The wall button toggles Open, which the poll catches.
 const Adapter g_garageAdapter = {
     "garage", coop::net::ReliableKind::GarageDoorState,
     &ue_wrap::garage::EnsureResolved,

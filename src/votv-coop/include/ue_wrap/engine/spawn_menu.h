@@ -6,8 +6,8 @@
 // things: activeInterface must be null, so the menu never stacks over another UI, and
 // lib_C::isBuoyant must return true. That one is not what its name suggests -- it is a capability
 // check, answering `hasWeapon` normally and, when the gamemode is flying, comparing a key file on
-// disk against a derived string. In story mode it is false, so the block bails -- and one branch of
-// it quits the game outright, which is reason enough not to drive it.
+// disk against a derived string. In story mode it answers hasWeapon, which is false, so the
+// block bails; and its flying branch quits the game when that key file does not match.
 //
 // So this opens the menu itself, on the widget the game already created: honour the activeInterface
 // guard, set the widget visible through the NATIVE UWidget::SetVisibility, run the widget's own

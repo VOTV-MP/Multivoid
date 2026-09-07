@@ -34,8 +34,9 @@ struct PowerState {
 bool ReadPower(PowerState& out);
 
 // Reflected actionOptionIndex(player=null, hit={}, action=b8, lookAt=null) -- the native
-// power-button press. The empty hit frame is what the game itself passes: its own self-call
-// hands actionOptionIndex a zeroed FHitResult with the same action byte.
+// power-button press. The hit frame is never read on this path: the game's own self-call
+// passes a default-initialised FHitResult with the same action byte, and the ubergraph
+// stores that parameter without ever reading it.
 bool CallPowerToggle();
 
 // ---- floppy slot axis ----

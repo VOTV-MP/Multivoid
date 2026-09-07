@@ -22,9 +22,9 @@ void*   g_garageCls = nullptr;  // garage_C UClass
 int32_t g_openOff   = -1;       // Agarage_C::Open     (0x02E8)
 void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the montage from position
                                 // 0 at half rate, and the move timeline over its full length). NOT
-                                // settime, which runs the same timeline and then SNAPS it: the
+                                // settime, which runs the same timeline and then JUMPS it: the
                                 // montage at full rate from position 100, then move.SetNewTime
-                                // straight to the endpoint.
+                                // to second 0 or 1 of a six-second track.
 // No Key offset: identity is the level-export FName (GetNameKey), not the save key -- see
 // garage.h for why the key cannot serve as one.
 
@@ -92,15 +92,15 @@ bool ApplyOpen(void* g, bool open) {
     //       (`open := value; settime`). So we must set the field ourselves, or the
     //       mirror's poll baseline goes stale and the symmetric Channel re-broadcasts
     //       the opposite -- an open/close oscillation.
-    //   (2) settime() SNAPS: it plays the timeline, then puts the montage at position
-    //       100 at full rate and calls move.SetNewTime(endpoint). acivae() ANIMATES:
-    //       the montage from 0 at half rate and move.Play/Reverse over the full
-    //       timeline, taking its DIRECTION from the `Open` field.
-    // So: write Open := target FIRST -- that both fixes the oscillation and gives acivae its
-    // direction -- THEN call acivae() for the native animated swing. acivae itself has no `mov`
-    // guard; the guard sits in runTrigger, which ignores an E-press mid-swing. So a mid-swing
-    // opposite packet just re-aims the door, last writer wins. This is the path a local E-press
-    // takes (runTrigger toggles Open, then calls acivae), minus the toggle and minus that guard.
+    //   (2) settime() JUMPS: it plays the timeline, then puts the montage at position
+    //       100 at full rate and calls move.SetNewTime with second 0 or 1 of a
+    //       six-second track -- a close snaps shut, an open lurches and runs on.
+    //       acivae() ANIMATES: the montage from 0 at half rate and move.Play/Reverse
+    //       over the full timeline, direction read from the `Open` field.
+    // So: write Open := target FIRST -- fixing the oscillation and giving acivae its direction --
+    // THEN call acivae() for the native animated swing. acivae has no `mov` guard; that sits in
+    // runTrigger, which ignores an E-press mid-swing, so a mid-swing opposite packet re-aims the
+    // door, last writer wins. This is the local E-press path minus the toggle and that guard.
     if (g_openOff >= 0)
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(g) + g_openOff) = open;
     ParamFrame f(g_acivaeFn);  // acivae() takes no params -- it reads the Open field for direction

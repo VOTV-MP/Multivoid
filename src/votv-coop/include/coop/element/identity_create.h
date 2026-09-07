@@ -24,10 +24,12 @@ namespace coop::element {
 //   - eid bound to a DIFFERENT live actor, morph=true -> RE-SKIN the Element onto `actor`. A
 //     mirror rebinds through SetActor; a LOCAL element routes through RebindLocalElementActor
 //     so the forward map stays consistent. The caller retires the old actor.
-//   - the same, morph=false -> REJECT, the head live-conflict guard. The existing binding is
-//     left intact, so a re-spawn convergence packet for a still-live eid is absorbed rather
-//     than duplicated.
-//   - eid free -> CREATE a fresh Prop mirror, Install'd at `eid`.
+//   - the same, morph=false -> a HOST packet naming a mirror row RE-ASSERTS it onto `actor`,
+//     healing a recycle smear, unless `actor` already belongs to another row, which is
+//     refused rather than stolen. A peer's packet is REJECTED by the live-conflict guard,
+//     so a re-spawn convergence packet for a still-live eid is absorbed, not duplicated.
+//   - eid free -> CREATE a fresh Prop mirror at `eid`, subject to the one-actor-one-row
+//     adjudication below, which can still refuse or dissolve a client's own row first.
 // `eid == 0`, the wire sentinel for "the sender had no Element minted", and `kInvalidId` are
 // both rejected. `senderSlot` tags the owner peer slot for per-slot disconnect eviction.
 // remote_prop::RegisterPropMirror is a thin forwarder onto this.

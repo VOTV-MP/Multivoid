@@ -37,13 +37,13 @@ uint32_t g_resolveN = 0;  // ~1 Hz throttle on the resolve walk (Install runs pe
 // (UI clicks, 2D cues); the body is three cached-offset reads and compares, exiting on the first
 // mismatch. The predicate:
 //   Sound == inventory_Cue    pointer compare against the resolved cue object
-//   1.05 < pitch < 1.2        the collect plays 1.1; the same cue on waking from a dream, 0.9
+//   1.05 < pitch < 1.2        the collect plays 1.1; the same cue on a climb plays 0.9
 //   WorldContext == LOCAL     the collector. A puppet has no input stack and can never dispatch
 //                             this; and the gamemode's own collect helper plays the same cue at
 //                             the same pitch with ITSELF as the context, so this test is what
 //                             makes the cue-and-pitch pair unambiguous.
-// The game plays the cue once, on the single success path of putObjectInventory2, so one matching
-// dispatch is one collect.
+// putObjectInventory2 plays the cue once, on its single success path, so one dispatch that
+// passes all three tests is one collect.
 void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread() || !params) return;
     if (!g_inventoryCue) return;  // cue not resolved yet -> predicate undecidable
@@ -54,7 +54,7 @@ void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
     void* sound = *reinterpret_cast<void* const*>(p + g_offSound);
     if (sound != g_inventoryCue) return;
     const float pitch = *reinterpret_cast<const float*>(p + g_offPitch);
-    if (pitch <= 1.05f || pitch >= 1.2f) return;  // dream-wake / customWall reject
+    if (pitch <= 1.05f || pitch >= 1.2f) return;  // rejects the climb play at 0.9
     void* wco = *reinterpret_cast<void* const*>(p + g_offWco);
     void* local = coop::players::Registry::Get().Local();
     if (!local || wco != local) return;
