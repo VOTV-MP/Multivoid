@@ -1,18 +1,18 @@
 // ue_wrap/sleep.h -- standalone engine access for VOTV's sleep and timelapse state: the gamemode's
 // isSleep flag, the global time dilation, the nightmare probability override and the saveSlot sleep
-// need. Principle-7 engine-wrapper layer, no network logic; coop/sleep_sync drives the
-// Minecraft-style sleep gate through here.
+// need. Principle-7 wrapper, no network logic; coop/sleep_sync drives the sleep gate through it.
 //
 // The whole timelapse is ONE engine call -- SetGlobalTimeDilation(20) at sleep entry, 1.0 at wake
 // -- plus ONE world flag, mainGamemode.isSleep. The natural wake fires when saveSlot.sleep reaches
-// 100, and that need REFILLS during sleep at the dilated rate. The nightmare roll, every 500
-// in-sleep seconds, weights the bed's own dreamProb unless mainGamemode.dreamProbability is >= 0
-// and overrides it, where -1 is the single-player sentinel and 0 kills the rolls.
+// 100, and that need REFILLS during sleep at the dilated rate. The nightmare roll runs every 500
+// in-sleep seconds, weighted by bedSleepProb() -- the bed's own dreamProb, 0.15 with no bed, or
+// mainGamemode.dreamProbability when that is >= 0, where -1 is the single-player sentinel and 0
+// kills the rolls. A winning roll calls wakeup() and then createDream().
 //
 // gamemode.wakeup() is the idempotent END of the timelapse: re-possess, camera, dilation back to
-// 1.0, isSleep false. It also rolls the 10% gearer gift, but only if saveSlot.sleep is >= 99 at
-// that moment -- so a caller that grants rest must call wakeup() FIRST and write the need AFTER, or
-// every mirror rolls its own gift.
+// 1.0, isSleep false. It also rolls the 10% gearer gift, but only when saveSlot.sleep is >= 99 AND
+// the bed is a bed_C -- so a caller that grants rest must call wakeup() FIRST and write the need
+// AFTER, or every mirror rolls its own gift.
 
 #pragma once
 
