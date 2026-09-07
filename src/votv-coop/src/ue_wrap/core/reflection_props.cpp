@@ -1,11 +1,7 @@
-// ue_wrap/reflection_props.cpp -- the FProperty / FField walk family:
-// function params, struct fields, property/param offsets, the calibrated
-// FStructProperty::Struct and FBoolProperty payload slots.
-//
-// EXTRACTED from reflection.cpp 2026-07-10 (877 LOC, past the 800 soft cap;
-// this was the flagged extraction). Behavior preserved byte-for-byte; the
-// family is self-contained (public reflection primitives + profile offsets;
-// its calibration statics move with it, no shared private state).
+// ue_wrap/reflection_props.cpp -- the FProperty / FField walk family: function params, struct
+// fields, property and param offsets, and the calibrated FStructProperty::Struct and FBoolProperty
+// payload slots. Self-contained: public reflection primitives plus profile offsets, with its
+// calibration statics beside them and no shared private state.
 
 #include "ue_wrap/core/reflection.h"
 
@@ -76,16 +72,12 @@ std::vector<StructFieldInfo> EnumerateStructFields(void* structOrClass) {
 
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
     if (!owningClass || !propName) return -1;
-    // Walk OWN ChildProperties, then climb SuperStruct on miss. UE4 BP-
-    // generated classes inline BP-added properties directly into the leaf
-    // class's chain (BP compiler convention), so the original local-only
-    // scan happened to work for every existing call site -- but the moment
-    // a future accessor targets an inherited native UE4 UPROPERTY (e.g.
-    // `APawn::bCanAffectNavigationGeneration` queried with `mainPlayer_C`
-    // as the owner), the local-only scan would silently return -1.
-    // Audit fix 2026-05-25 (commit ~09c003b): walk SuperStruct chain to
-    // close the latent footgun. Bound the loop at 32 hops to cap pathological
-    // cycles.
+    // Walk OWN ChildProperties, then climb SuperStruct on a miss. UE4 BP-generated classes inline
+    // BP-added properties directly into the leaf class's chain, so a local-only scan happens to
+    // work for every call site that targets a BP property -- but the moment an accessor targets an
+    // inherited native UE4 UPROPERTY (APawn::bCanAffectNavigationGeneration queried with
+    // `mainPlayer_C` as the owner, say), a local-only scan would silently return -1. The loop is
+    // bounded at 32 hops to cap a pathological cycle.
     void* cls = owningClass;
     for (int hops = 0; hops < 32 && cls; ++hops) {
         auto* field = *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(cls) +

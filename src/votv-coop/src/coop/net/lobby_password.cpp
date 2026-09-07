@@ -28,14 +28,12 @@ constexpr size_t kTagLen = sizeof(kTag) - 1;
 
 }  // namespace
 
-// The derivation, with the round count as a parameter. Production always uses
-// `kIterations`; the SELFTEST uses a cheap count for the arms that only need to show
-// which INPUTS reach the KDF, and one full-cost run for the constant we ship.
+// The derivation, with the round count as a parameter. Production always uses `kIterations`; the
+// selftest uses a cheap count for the arms that only need to show which INPUTS reach the KDF, and
+// one full-cost run for the constant we ship.
 //
-// WHY: `RunSelftest` derived four times at 200k rounds, un-gated, on the session-bringup
-// thread that also loads the world -- about 400 ms added to EVERY host and EVERY join, on
-// both peers, on every smoke. The commit that shipped it listed "16 checks, un-gated" as
-// evidence and never priced them (post-ship audit, 2026-08-31). The negatives are worth
+// WHY: deriving four times at 200k rounds, un-gated, on the session-bringup thread that also loads
+// the world adds about 400 ms to EVERY host and EVERY join, on both peers. The negatives are worth
 // keeping; paying full price four times to learn that a salt is a salt is not.
 static bool DeriveKeyAt(const std::string& password, const peer_identity::PubKey& hostPub,
                         uint32_t iterations, std::array<uint8_t, 32>& outKey) {
@@ -152,12 +150,11 @@ bool RunSelftest() {
         nonce2[i] = static_cast<uint8_t>(i + 1);
     }
 
-    // CHEAP ROUNDS FOR THE INPUT ARMS. What these prove is WHICH INPUTS reach the KDF --
-    // that the salt is the host key, that a one-character change lands, that an empty
-    // password refuses. None of that depends on the round count, and paying the shipped
-    // 200k four times cost ~400 ms on every session start, on the thread that also loads
-    // the world (post-ship audit). ONE full-cost derivation below keeps the production
-    // constant itself exercised.
+    // CHEAP ROUNDS FOR THE INPUT ARMS. What these prove is WHICH INPUTS reach the KDF -- that the
+    // salt is the host key, that a one-character change lands, that an empty password refuses. None
+    // of it depends on the round count, and paying the shipped 200k four times costs about 400 ms
+    // on every session start, on the thread that also loads the world. ONE full-cost derivation
+    // below keeps the production constant itself exercised.
     constexpr uint32_t kCheap = 1;
     std::array<uint8_t, 32> kA{}, kA2{}, kB{}, kOther{}, kEmpty{}, kReal{};
     check(DeriveKeyAt("hunter2", hostA, kCheap, kA), "the derivation must succeed");
