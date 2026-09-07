@@ -1,53 +1,13 @@
-// coop/email_sync.h -- v64/v65: the meadow-PC EMAIL mirror (appends + deletes).
-//
-// USER ASK (2026-06-11): the laptop's messages -- the hash-collection task
-// mails, the scientist/alien responses, the event mails from caught signals
-// -- must mirror cross-peer.
-//
-// RE (votv-computers-phase2-impl-RE-2026-06-12.md SS3): every producer
-// funnels through gamemode.addEmail (PE-invisible) into saveSlot.emails;
-// gamemode.addEmail on the RECEIVER reproduces everything in one reflected
-// call (persistence append + list row + the email ding at the physical
-// laptop + tab highlight) and re-stamps the date from the host-synced clock.
-// Deletion is ui_laptop.delEmail(Index) (the row's del button) -- mirrored
-// since v65.
-//
-// Mechanism: every peer keeps a SHADOW of saveSlot.emails -- one entry per
-// row holding (a) the POD instance key read raw off the array bytes (zero
-// reflected calls at cadence; ue_wrap::email::RowKey) and (b) the row's
-// cross-peer identity = FNV-1a 64 of its serialized blob (the exact
-// EmailAppend bytes; date-free, so the per-peer addEmail re-stamp doesn't
-// split identities). A 1 Hz poll diffs the array against the shadow
-// positionally (the game only ever appends at the tail; deletes shift):
-//   APPEND  -> serialize + chunk-broadcast (EmailChunkPayload, host-relayed;
-//              per-row send-or-retry, audit I-3). Wire-applied rows are
-//              recognized by instance key and adopt the WIRE hash as
-//              identity (echo-proof + delete-key consistency even when the
-//              receiver resolved a different pfp).
-//   SHRINK  -> the removed rows' hashes broadcast as EmailDelete (v65);
-//              receivers resolve their local index by hash and run the
-//              native delEmail. Index-keyed deletes would be wrong: a
-//              producer appends natively before its row relays, so peers
-//              hold different array ORDERS under concurrent appends.
-// A delete for a hash not (yet) present tombstones briefly: it lands when
-// the row's chunked append completes (the delete-beats-append race) or
-// TTLs out. World-down drops the shadow and re-primes silently at world-up
-// (fresh allocations = fresh instance keys; never diff across a reload).
-//
-// Identity caveat (engineered, documented): the instance key is
-// {topic/text FText data pointers, pfp pointer, date.X, username byte}.
-// A false "kept" verdict needs BOTH freed FText allocations recycled at
-// identical addresses for a content-different row stamped the same minute
-// by the same sender within one poll second -- treated as negligible, same
-// class as an FNV collision.
-//
-// Join: saveSlot.emails rides the v56 save transfer, and rows authored
-// DURING a joiner's load window ride the READY-EDGE SEED (2026-08-23, the
-// shared coop/session/join_seed helper -- see the seed API below; before it
-// they were silently lost, b125 R-A shape (b), and solo-authored rows DUPED
-// via the hold-and-retry).
-//
-// Game thread throughout.
+// coop/email_sync.h -- the meadow-PC EMAIL mirror: the laptop's messages (the hash-collection
+// task mails, the scientist and alien responses, the event mails from caught signals) appear on
+// every peer, and a row deleted on one disappears on all. Reader-facing summary: docs/devices.md.
+// Every producer funnels through `gamemode.addEmail`, which is Blueprint-internal, into
+// `saveSlot.emails`; that same reflected call on a RECEIVER reproduces everything at once --
+// persistence append, list row, the ding at the physical laptop, tab highlight -- and re-stamps the
+// date from the host-synced clock. The only remover, pak-wide, is the player's own
+// `ui_laptop.delEmail(Index)`, which is why the game's "You deleted" attribution stays correct.
+// Appends are HOST-AUTHORED, deletes are peer-symmetric, and what a delete carries is a content
+// hash rather than an index. Game thread throughout.
 
 #pragma once
 
@@ -62,11 +22,15 @@ namespace coop::email_sync {
 // Store the session. Idempotent; called per tick from subsystems::Install.
 void Install(coop::net::Session* session);
 
-// --- Seeds arc (2026-08-23): the ready-edge join seed -- emails authored during
-// a joiner's 30-60 s load window were silently never delivered (B2 skip, no
-// queue). Design: votv-signal-email-ready-seeds-DESIGN-2026-08-23.md. HOST, game
-// thread; per-slot; consume-once. Hooked beside meadow's calls in save_transfer
-// (capture/cancel) and subsystems::ConnectReplayForSlot (seed).
+// --- the ready-edge join seed ---
+//
+// `saveSlot.emails` rides the join save transfer, but a row authored DURING the joiner's 30-60
+// second load window is in neither the transferred save nor any later diff, and was silently
+// never delivered. The seed closes that window: the host captures the array at the transfer's
+// blob instant and sends the difference on the joiner's ready edge. HOST, game thread,
+// per-slot, consume-once; the shared helper is `coop/session/join_seed`. Hooked beside the
+// meadow lane's calls in save_transfer (capture and cancel) and in
+// subsystems::ConnectReplayForSlot (seed).
 void CaptureJoinSnapshot(int peerSlot);
 void CancelJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
@@ -75,16 +39,38 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // seed bracket so a recycled occupant can never inherit them.
 void OnDisconnectSlot(int peerSlot);
 
-// Per-tick: throttled resolve + the 1 Hz shadow poll (append broadcast +
-// delete diff) + tombstone retry.
+// Per-tick: the throttled resolve, the 1 Hz shadow poll (append broadcast + delete diff) and the
+// tombstone retry.
+//
+// The shadow holds one entry per row: the POD instance key read raw off the array bytes (zero
+// reflected calls at cadence, `ue_wrap::email::RowKey`) and the row's cross-peer identity, FNV-1a
+// 64 of its serialized blob. The identity is date-free, so the per-peer re-stamp cannot split it.
+// The poll diffs the array against the shadow POSITIONALLY, which the game permits because it only
+// ever appends at the tail and deletes shift. An APPEND serializes and chunk-broadcasts, per row,
+// send-or-retry. A SHRINK broadcasts the removed rows' hashes as EmailDelete. Index-keyed deletes
+// would be wrong: a producer appends natively before its row relays, so peers hold different array
+// ORDERS under concurrent appends. World-down drops the shadow and re-primes silently at world-up,
+// since fresh allocations mean fresh instance keys and the diff must never cross a reload.
 void Tick();
 
-// Wire ingest: one chunk of an appended row (assembly + apply). Host
-// additionally relays via the whitelist; both roles apply.
+// Wire ingest: one chunk of an appended row (assembly + apply). The append is HOST-AUTHORED --
+// every addEmail site is world, story or system authored, so a client is not an email authority --
+// and this kind is therefore not relayed: a chunk arriving at the host from a client slot is a
+// protocol violation, dropped at the dispatch so one client-side regression cannot pollute the
+// shared inbox. A client still keeps the whole shadow and diff, which the mirror needs; only its
+// send is gated.
+//
+// A wire-applied row is recognized by instance key and adopts the WIRE hash as its identity, which
+// keeps it echo-proof and its delete key agreeing even when the receiver resolved a different pfp.
+// The key is {topic and text FText data pointers, pfp pointer, date.X, username byte}, and its one
+// engineered caveat is accepted: a false "kept" verdict needs BOTH freed FText allocations recycled
+// at identical addresses, for a content-different row stamped in the same minute by the same
+// sender, within one poll second -- the same negligible class as an FNV collision.
 void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// Wire ingest: one content-keyed delete. Applies via the native
-// ui_laptop.delEmail (or tombstones if the row isn't here yet).
+// Wire ingest: one content-keyed delete, applied through the native `ui_laptop.delEmail`. A
+// delete for a hash not yet present tombstones briefly: it lands when the row's chunked append
+// completes -- the delete-beats-append race -- or it TTLs out.
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot);
 
 // Aggregate teardown: drop shadow/assemblies/tombstones + reset seq.

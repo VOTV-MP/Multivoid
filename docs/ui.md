@@ -100,12 +100,13 @@ game's audio engine so they honour its volume settings (`ui/menu_sfx`).
 
 ### The game's notifications
 
-The game's corner toasts, emails, console lines and alarms are never networked: each machine's
-own game evaluates its local state and paints its own widget through one static function that
-no hook sees. The mod does not touch the widget. Where a client would show a false notice from
-diverged state, the mod drives the state that produces it instead: the signal servers' broken
-set is host-authored and driven into each client's server boxes, so a client never authors a
-false "server down". The purely local notices (an item that cannot be used while held) are left
+The game's corner toasts, console lines and alarms are never networked: each machine's own game
+evaluates its local state and paints its own widget through one static function that no hook
+sees. The mod does not touch the widget. Where a notice has to appear on every peer, the mod
+drives the STATE that produces it and lets each game paint its own: a mail mirrored into a
+client's inbox rings that client's own laptop, and the signal servers' broken set is
+host-authored and driven into each client's server boxes, so a client never authors a false
+"server down". The purely local notices (an item that cannot be used while held) are left
 alone.
 
 ## Who owns what

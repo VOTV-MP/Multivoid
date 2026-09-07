@@ -112,6 +112,26 @@ set the group's money to anything; it was retired whole rather than clamped
 (`coop/world/balance_sync`). A client's own earnings are therefore not shared unless a lane
 carries them as an intent.
 
+### The laptop's inbox
+
+The laptop's messages -- the hash-collection task mails, the scientist and alien replies, the
+mails an event or a caught signal produces -- are the same on every machine, and deleting one
+deletes it for everyone. Every producer in the game funnels through one Blueprint-internal
+function into the save's email array, and calling that same function on a receiver reproduces the
+whole arrival at once: the stored row, the list entry, the ding at the physical laptop and the
+tab highlight, with the date re-stamped from the synced clock.
+
+Each peer keeps a shadow of the array and diffs it once a second. The array only ever grows at
+the tail, so the diff is positional. A new row is broadcast; a removed row is broadcast as the
+row's content HASH, never its index, because a producer writes its own row before that row
+reaches anyone and two peers therefore hold the same messages in different orders.
+
+Writing a mail is the host's alone: nothing in the game authors a mail from a player action, so a
+client that started producing them could only be a diverged simulation writing into everyone's
+permanent inbox, and a client's append is dropped at the host rather than relayed. Deleting is
+symmetric, because the only thing in the game that removes a mail is a player pressing the row's
+delete button (`coop/world/email_sync`).
+
 ### Shop orders
 
 A client's laptop order is entirely local to its machine: the order lands in its own save and its
@@ -181,6 +201,14 @@ must be pushed too; the keypads, the power masks, the turbine, the windows, the 
 drone's pose are sent the same way, and the balance is sent at connect. A pending order is
 primed by a watermark so the joiner's next order is the first it forwards.
 
+The inbox rides the joiner's save transfer, so it arrives whole. A mail written during the 30 to
+60 seconds the joiner spends loading is in neither that save nor any later diff, so the host
+captures the array at the instant it hands over the save and sends the difference on the joiner's
+ready edge -- once per slot. A mail that arrives before the joiner's world can take it is parked
+in arrival order and applied once the array settles, rather than dropped on the spot; a row the
+settled world still refuses after thirty attempts is malformed for that world and is dropped with
+an error line.
+
 ## Known limits
 
 | Limit | Evidence |
@@ -198,6 +226,7 @@ primed by a watermark so the joiner's next order is the first it forwards.
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `ue_wrap/devices/drone` |
+| the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/coingun_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog` |
 | identity | `coop/element/portable_identity` |
 | tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_probe`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/light_group_census` |
