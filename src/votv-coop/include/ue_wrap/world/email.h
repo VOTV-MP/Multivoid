@@ -1,22 +1,17 @@
-// ue_wrap/email.h -- standalone engine access for the meadow-PC email
-// pipeline: the saveSlot.emails array (watermark side) and the
-// gamemode.addEmail apply (one reflected call = persistence append + list
-// row + the email ding at the physical laptop + tab highlight). Principle-7
-// engine-wrapper layer -- NO network logic; coop::email_sync drives the
+// ue_wrap/email.h -- standalone engine access for the meadow-PC email pipeline: the
+// saveSlot.emails array on the watermark side, and the gamemode.addEmail apply, where one reflected
+// call is a persistence append plus a list row plus the email ding at the physical laptop plus the
+// tab highlight. Principle-7 engine-wrapper layer, no network logic; coop::email_sync drives the
 // mirror through here.
 //
-// RE (votv-computers-phase2-impl-RE-2026-06-12.md SS3): every producer
-// (daynightCycle task mails, drone sell responses, console/desk status
-// mails) funnels through gamemode.addEmail -- EX_LocalVirtualFunction =
-// PE-invisible, so detection is the array watermark. addEmail RE-STAMPS the
-// date from the (host-synced) clock, so dates converge without shipping
-// them. Emails are NOT append-only: ui_laptop.delEmail(Index) is the
-// player's delete (removes the list slot widget AND the saveSlot row in
-// one); coop::email_sync mirrors it content-keyed via the RowKey/DelEmail
-// surface below. The pfp is a stored UTexture2D pointer
-// (list_emailCharacters is NOT part of the runtime pipeline); ship its leaf
-// name + FindObject-or-null on the receiver (a null pfp renders an empty
-// brush, no crash).
+// Every producer -- the day-cycle task mails, drone sell responses, console and desk status mails
+// -- funnels through gamemode.addEmail, which is an EX_LocalVirtualFunction and so invisible to
+// ProcessEvent; detection is therefore the array watermark. addEmail re-stamps the date from the
+// host-synced clock, so dates converge without being shipped. Emails are NOT append-only:
+// ui_laptop.delEmail(Index) is the player's delete, removing the list slot widget and the saveSlot
+// row together, and coop::email_sync mirrors it content-keyed through the RowKey and DelEmail
+// surface below. The pfp is a stored UTexture2D pointer, so we ship its leaf name and the receiver
+// does FindObject-or-null; a null pfp renders an empty brush rather than crashing.
 
 #pragma once
 
