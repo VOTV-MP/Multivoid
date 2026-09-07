@@ -1,39 +1,17 @@
-// coop/deck_play_sync.h -- L6: unit-3 deck PLAYBACK sync (PlayDeckEvent=107,
-// v117). Design: 7-round /qf 2026-07-18 (converged "that holds" R7); fact
-// base = the whole-asset bytecode census in the design finding.
+// coop/interactables/deck_play_sync.h -- unit-3 deck PLAYBACK sync (PlayDeckEvent).
 //
-// SHAPE -- presser-authored edge events at the v115 audio Func seam:
-//   PLAY:  the ONLY signalSound.Activate site in the desk BP is playSignal's
-//          body (census x1, operand bReset=TRUE) -> an organic (non-wire)
-//          Activate on the desk's signalSound IS "a peer started playback"
-//          -> broadcast {play, selectIndex, gen}.
-//   STOP:  the ONLY Deactivate site is stopSound's body (census x1) -> an
-//          organic Deactivate IS "playback stopped" -- covers the stop
-//          button (any peer -- the deck is claim-free world buttons), the
-//          power-off side effect, and IMPORT/EXPORT (invariant, not a verb
-//          list) -- EXCEPT inside the fin() PE bracket (natural track end:
-//          every peer's own copy self-terminates; broadcasting it would be
-//          N-peer spam).
-//   GEN GUARD (correctness is INDEPENDENT of fin's inferred PE visibility):
-//          the play author mints max(seenGen)+1; a stop carries the gen of
-//          the playback it terminates; receivers drop stale-gen + duplicate
-//          stops. If fin proves EX-dispatched (bracket never fires), every
-//          natural-end stop is dropped by the guard -- no cross-kill of a
-//          restarted (higher-gen) playback.
-//   APPLY: pre-check active_play + index validity (rows are byte-identical
-//          across peers -- the decoded gate cannot diverge; a failed check
-//          is a WARN + one silent track, self-healing), route selectIndex
-//          through the v112 DeskInput apply author (write + echo-prime --
-//          closes the scroll-then-play race where the 250 ms poll's delta
-//          does not exist yet), then reflected playSignal()/stopSound()
-//          under the shared audio-seam wire guard.
+// Playback edges are authored by the presser at the desk audio Func seam, off two facts about the
+// desk blueprint: the ONLY signalSound.Activate site is playSignal's body, with bReset=TRUE, and
+// the ONLY Deactivate site is stopSound's body. So an organic -- non-wire -- Activate on the desk's
+// signalSound IS "a peer started playback", and an organic Deactivate IS "playback stopped". Being
+// an invariant rather than a verb list, the stop side covers the stop button on any peer, since the
+// deck is claim-free world buttons, the power-off side effect, and import and export alike.
 //
-// JOIN: no playback seed (a joiner misses in-flight playback -- accepted
-// arch residual; volume/index/toggles seed via DeskState adopt). LEAVER:
-// fin self-terminates on every peer natively. Dev self-test ([dev]
-// deck_selftest=1): the host dispatches a reflected organic Activate ->
-// Deactivate pair on signalSound -- proves patch/routing/classification/
-// wire/gen pre-hands-on (the full playSignal audio positive is the take's).
+// The one exception is inside the fin() PE bracket, a natural track end: every peer's copy
+// self-terminates there, so broadcasting would be N-peer spam.
+//
+// JOIN: no playback seed, so a joiner misses in-flight playback; volume, index and toggles seed via
+// the DeskState adopt. LEAVER: fin self-terminates on every peer natively.
 
 #pragma once
 
@@ -47,12 +25,25 @@ namespace coop::deck_play_sync {
 
 void Install(coop::net::Session* session);
 
-// Per-net-pump: lazy seam install (Activate chain + the Deactivate Func
-// patch + the fin PE pre/post bracket), detour-ring flush -> wire, the dev
-// self-test, and the 60 s seam-fire evidence counters.
+// Per-net-pump: lazy seam install (the Activate chain, the Deactivate Func patch and the fin PE
+// pre/post bracket), detour-ring flush to the wire, the dev self-test and the 60 s seam-fire
+// evidence counters. The self-test ([dev] deck_selftest=1) has the host dispatch a reflected
+// organic Activate/Deactivate pair on signalSound, which exercises the patch, routing,
+// classification, wire and gen without a hands-on take.
 void Tick();
 
 // PlayDeckEvent from the wire (router: event_dispatch_signal.cpp).
+//
+// The play author mints max(seenGen)+1 and a stop carries the gen of the playback it terminates, so
+// receivers drop a stale gen and a duplicate stop. Correctness does not depend on fin's dispatch
+// visibility: if fin turns out to be EX-dispatched, so the bracket never fires, every natural-end
+// stop is dropped by the guard and no restarted, higher-gen playback is cross-killed.
+//
+// Apply pre-checks active_play and index validity -- rows are byte-identical across peers, so the
+// decoded gate cannot diverge, and a failed check is a WARN plus one silent track, self-healing --
+// then routes selectIndex through the DeskInput apply author, whose write-plus-echo-prime closes
+// the scroll-then-play race where the 250 ms poll's delta does not exist yet, and finally calls
+// reflected playSignal() or stopSound() under the shared audio-seam wire guard.
 void OnPlayDeck(const coop::net::PlayDeckEventPayload& p, uint8_t senderSlot);
 
 // Full state reset (gen counters, ring, self-test latch). Wired into the
