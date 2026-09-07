@@ -1,27 +1,12 @@
-// ue_wrap/device_screen.h -- standalone engine access for the ENTERABLE
-// screen devices (base computers / terminals) and the mainPlayer interface
-// fields that gate them. Principle-7 engine-wrapper layer: class resolves,
-// the activeInterface discriminator, the aim-field clear/restore primitive,
-// and the reflected force-exit. NO network logic -- coop::device_occupancy
+// ue_wrap/device_screen.h -- standalone engine access for the ENTERABLE screen devices (base
+// computers and terminals) and the mainPlayer interface fields that gate them. Principle-7
+// engine-wrapper layer: class resolves, the activeInterface discriminator, the aim-field
+// clear/restore primitive, and the reflected force-exit. NO network logic -- coop::device_occupancy
 // drives the busy/deny mirror through here.
 //
-// RE (votv-base-computers-RE-2026-06-11.md): the enterable census is CLOSED
-// at 8 device assets; every enter/exit call is EX_LocalVirtualFunction
-// (ProcessEvent-INVISIBLE), so detection is polling
-// `mainPlayer.activeInterface @0x07E0` (null = not inside) and the deny seam
-// is the engine-dispatched `InpActEvt_use` PRE (the door HostAuth precedent:
-// null the aim fields for one dispatch and the whole native enter chain
-// no-ops on its own icast guards). Five devices show ONE SHARED widget
-// instance each (desk-coords atlas / SAT console / radar / reactor / the
-// gamemode.laptop ui_laptop shared by the base laptop AND every portable
-// PC) -- their claim is per-WIDGET, a single key; transformer panels and
-// arcade props carry per-instance widgets -- per-instance keys via the
-// quantized-position identity (the turbine PosKey shape).
-//
-// v1 deny granularity: the WHOLE device actor (the RE doc's sanctioned v1
-// simplification). Component-level gating (desk coords cluster only, radar
-// panel-vs-alarm-lever) is the documented refinement once the
-// lookAtComponent-vs-HitResult.Component equivalence is validated hands-on.
+// Deny granularity is the WHOLE device actor. Component-level gating (the desk coords cluster
+// alone, the radar panel as against its alarm lever) waits on the lookAtComponent versus
+// HitResult.Component equivalence being validated hands-on.
 
 #pragma once
 
@@ -29,15 +14,21 @@
 
 namespace ue_wrap::device_screen {
 
-// Resolve the mainPlayer interface offsets + the 7 enterable widget classes +
-// the 8 device actor classes + setActiveInterface. Operational once the
-// player offsets and AT LEAST the player class resolve (widget/device classes
-// keep lazily resolving -- several only load with their sublevel). Idempotent;
-// game thread.
+// Resolve the mainPlayer interface offsets + the 7 enterable widget classes + the 8 device actor
+// classes + setActiveInterface. Operational once the player offsets and AT LEAST the player class
+// resolve; widget and device classes keep resolving lazily, since several only load with their
+// sublevel. Idempotent; game thread.
+//
+// The enterable census is CLOSED at 8 device assets. Five of them show ONE SHARED widget instance
+// each -- the desk-coords atlas, the SAT console, the radar, the reactor, and the gamemode.laptop
+// ui_laptop that the base laptop shares with every portable PC -- so their claim is per-WIDGET, a
+// single key. Transformer panels and arcade props carry per-instance widgets, and get per-instance
+// keys from the quantized-position identity, the same shape the turbine PosKey uses.
 bool EnsureResolved();
 
-// The inside-a-device discriminator: mainPlayer.activeInterface (null when
-// not inside any screen). Null player / unresolved offset -> null.
+// The inside-a-device discriminator: mainPlayer.activeInterface, null when not inside any screen.
+// Null player or unresolved offset -> null. This is a POLL and not a hook because every enter and
+// exit call the game makes is an EX_LocalVirtualFunction, which ProcessEvent never sees.
 void* ReadActiveInterface(void* player);
 
 // Classify an ACTIVE INTERFACE widget into its cross-peer claim key:
@@ -63,16 +54,16 @@ std::wstring ClassifyWidgetClaimKey(void* widget);
 // prop_arcade_C -> "arc_<posKey>". Empty for non-device actors.
 std::wstring ClassifyDeviceActorClaimKey(void* actor);
 
-// Null the local player's aim fields (lookAtActor + HitResult.Actor weakptr)
-// for the CURRENT InpActEvt_use dispatch so the native enter chain no-ops on
-// its own icast guards, remembering the prior values. One slot -- PRE/POST
-// pair within one game-thread dispatch (the door Active-gate shape).
-// Returns false if the offsets are unresolved (nothing cleared).
+// Null the local player's aim fields (lookAtActor + HitResult.Actor weakptr) for the CURRENT
+// InpActEvt_use dispatch, so the native enter chain no-ops on its own icast guards, remembering the
+// prior values. That engine-dispatched PRE is the deny seam, the same shape the door's HostAuth
+// gate uses. One slot -- a PRE/POST pair within one game-thread dispatch. Returns false if the
+// offsets are unresolved, meaning nothing was cleared.
 bool ClearAimForDispatch(void* player);
 
-// Restore the fields ClearAimForDispatch saved. Safe to call when nothing is
-// cleared (no-op). Every POST/early-exit path must call this FIRST (the door
-// leak lesson, audit IMP-3).
+// Restore the fields ClearAimForDispatch saved. Safe to call when nothing is cleared (no-op).
+// Every POST and early-exit path must call this FIRST, or the clear leaks past its dispatch
+// and the player can aim at nothing.
 void RestoreAim();
 
 // True while a ClearAimForDispatch save is outstanding (leak-heal check).

@@ -1,34 +1,17 @@
-// ui/overlay_diag.h -- the overlay's DIAGNOSTIC instruments, off the hot file.
+// ui/overlay_diag.h -- the overlay's DIAGNOSTIC instruments, off the hot file. Two of them, the
+// KEY-MESSAGE trace (VOTVCOOP_INPUT_PROBE=1, sharing its arming with coop/dev/input_focus_probe)
+// and the CURSOR probe (VOTVCOOP_CURSOR_PROBE=1); both are armed by environment variable and both
+// are silent otherwise.
 //
-// Two instruments, both armed by environment variable and both silent otherwise:
+// WHY THEY LIVE HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the WndProc and
+// surface compositing. These two are instruments ABOUT that file rather than part of it, and they
+// pushed it past the 800-line soft cap. Retiring a replaced feature does not reach a probe, but a
+// probe still owes its own file once it is big enough to crowd the subsystem it watches.
 //
-//   * the KEY-MESSAGE trace (VOTVCOOP_INPUT_PROBE=1, shared arming with
-//     coop/dev/input_focus_probe) -- one line per key message naming what arrived and
-//     what the overlay decided to do with it. It exists because a keypress is a
-//     SEQUENCE (KEYDOWN, then a WM_CHAR that `TranslateMessage` already queued in the
-//     PUMP before `DispatchMessage` ever reached our detour) whose later members can be
-//     decided by state an earlier member changed. Reasoning about one message hid that
-//     for months; see docs/LESSONS.md and
-//     research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md §8/M4.
-//
-//   * the CURSOR probe (VOTVCOOP_CURSOR_PROBE=1) -- one line per ~2s while a capturing
-//     surface is up, naming every term of ImGui's own mouse-cursor draw guard, every
-//     early-out of RenderMouseCursor, and the OS-side pointer/clip/raw-input state
-//     around them. It rooted the "no cursor over the server browser" report: every
-//     ImGui term is healthy and `io.MousePos` is the failing one, because the OS
-//     pointer does not move.
-//
-// WHY IT LIVES HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the
-// WndProc and surface compositing. These two are instruments ABOUT that file, not part
-// of it, and they pushed it past the 800-LOC soft cap. RULE-2 note: they are probes, so
-// the "retire on replacement" rule does not reach them
-// ([[feedback-rule2-exempts-probes-diagnostics-tools]]) -- but a probe still owes its
-// own file once it is big enough to crowd the subsystem it watches.
-//
-// NO STATE REGISTRATION. Every gate these lines report (capture / chat / pause / the
-// window / the original SetCursorPos) is passed in per call. A context struct handed
-// over at init would be a second copy of the overlay's state with its own lifetime, and
-// an instrument whose inputs can go stale reports a state nobody was in.
+// NO STATE REGISTRATION. Every gate these lines report -- capture, chat, pause, the window, the
+// original SetCursorPos -- is passed in per call. A context struct handed over at init would be a
+// second copy of the overlay's state with its own lifetime, and an instrument whose inputs can go
+// stale reports a state nobody was in.
 
 #pragma once
 
@@ -46,17 +29,16 @@ void NoteWndProcMsg(UINT msg);
 
 // ---- GATE 3: which thread is the WndProc? -------------------------------------
 //
-// Called from `WndProcDetour` on every message; logs ONCE. The answer decides an
-// architecture, not a detail: if the WndProc runs on the GAME thread, a hotkey can ask
-// "does the game own typed text" SYNCHRONOUSLY at the keydown -- exactly, with no
-// staleness -- instead of reading a value republished by a polled tick. Windows delivers
-// messages to the thread that CREATED the window and UE4 creates its window on the game
-// thread, so it probably does; but that is an inference, and the whole design of
-// research/findings/tooling/votv-input-bindings-cursor-DESIGN-2026-07-31.md turns on it.
+// Called from `WndProcDetour` on every message; logs ONCE. The answer decides an architecture, not
+// a detail: if the WndProc runs on the GAME thread, a hotkey can ask "does the game own typed text"
+// SYNCHRONOUSLY at the keydown, exactly and with no staleness, instead of reading a value
+// republished by a polled tick. Windows delivers messages to the thread that CREATED the window and
+// UE4 creates its window on the game thread, so it probably does -- but that is an inference, and
+// the whole input-binding design turns on it.
 //
-// Always on (one atomic exchange per message, one log line per process) because the
-// answer is worth more than the byte it costs, and a probe you have to remember to arm
-// is a probe that is off when the question comes up.
+// Always on (one atomic exchange per message, one log line per process), because the answer is
+// worth more than the byte it costs and a probe you have to remember to arm is a probe that is off
+// when the question comes up.
 void NoteWndProcThread();
 
 // The SetCursorPos detour, on EVERY call -- including the ones we no-op. The game
@@ -76,18 +58,30 @@ struct KeyGates {
     bool pause;    // VOTV's own pause menu is up
 };
 
-// One line for one key message. Non-key messages are dropped HERE rather than at the
-// call site: the overlay's swallow `switch` shares one body across the mouse and key
-// cases, so the call site cannot filter without duplicating the case list.
+// One line for one key message, naming what arrived and what the overlay decided to do with it.
+// Non-key messages are dropped HERE rather than at the call site: the overlay's swallow `switch`
+// shares one body across the mouse and key cases, so the call site cannot filter without
+// duplicating the case list.
+//
+// The trace exists because a keypress is a SEQUENCE -- a KEYDOWN, then a WM_CHAR that
+// `TranslateMessage` had already queued in the PUMP before `DispatchMessage` ever reached our
+// detour -- whose later members can be decided by state an earlier member changed. Reasoning about
+// one message at a time hid that for months.
 void NoteKeyMsg(UINT msg, WPARAM wParam, const char* verdict, KeyGates gates);
 
 // ---- the cursor probe --------------------------------------------------------
 
 using SetCursorPosFn = BOOL(WINAPI*)(int, int);
 
-// Call at the END of the frame, immediately before ImGui::Render() -- it must read
-// exactly the state Render() itself will read. `origSetCursorPos` is the un-detoured
-// entry, used ONLY by the positive control (VOTVCOOP_CURSOR_PROBE_WRITE=1).
+// Call at the END of the frame, immediately before ImGui::Render(): it must read exactly the state
+// Render() itself will read. `origSetCursorPos` is the un-detoured entry, used ONLY by the positive
+// control (VOTVCOOP_CURSOR_PROBE_WRITE=1).
+//
+// One line per ~2 s while a capturing surface is up, naming every term of ImGui's own
+// mouse-cursor draw guard, every early-out of RenderMouseCursor, and the OS-side pointer, clip and
+// raw-input state around them. It rooted the "no cursor over the server browser" report: every
+// ImGui term is healthy and `io.MousePos` is the failing one, because the OS pointer does not
+// move.
 void CursorFrame(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursorPos);
 
 }  // namespace ui::overlay_diag

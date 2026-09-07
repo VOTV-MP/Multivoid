@@ -1,41 +1,16 @@
 // coop/player/skin_effects.h -- the native effect rig for builtin kerfur skins.
 //
-// WHY (user report 2026-07-03, screenshots): a census skin is a MESH; the
-// matching kerfur VARIANT ACTOR carries the rest of the look -- the animated
-// RT face screen (kerfusFace_C scene-capture), the alive glow (belly point
-// light + 14 joint-life particles + the 'ag' emissive texture makeSentient
-// sets), mynet's static-electricity rig and step bursts, keljoy's squeak
-// footsteps. A player body dressed in the mesh alone shows the raw material
-// atlas on the face screen and none of the effects.
+// A census skin is a MESH; the matching kerfur VARIANT ACTOR carries the rest of the look -- the
+// animated RT face screen (kerfusFace_C scene-capture), the alive glow (belly point light + 14
+// joint-life particles + the 'ag' emissive texture makeSentient sets), mynet's static-electricity
+// rig and step bursts, keljoy's squeak footsteps. A player body dressed in the mesh alone shows the
+// raw material atlas on the face screen and none of the effects, so after client_model applies a
+// builtin skin's mesh this module rebuilds the variant's cosmetic identity on the player body,
+// data-driven from the game's own classes.
 //
-// WHAT: after client_model applies a builtin skin's mesh, this module rebuilds
-// the variant's cosmetic identity on the player body, data-driven from the
-// game's own classes (RE: docs in research/pak_re, kerfurOmega*.json 2026-07-03):
-//   - base kerfurOmega_C SCS rig + the variant class's own SCS rig
-//     (ue_wrap/scs_rig: particles / point light / decals / eff_* audio),
-//     TEMPLATE-faithful: nodes the game authors dormant (the makeSentient-only
-//     joint-life sparks + lifeLight, bAutoActivate/bVisible=false) stay OFF --
-//     force-enabling them was the 2026-07-03 "pink blast" regression;
-//   - the face: spawn the game's own kerfusFace_C (deferred, `type` stamped
-//     pre-BeginPlay exactly like kerfurOmega.makeFace), read its `dynmat`
-//     (the 256x256 scene-capture RT material its BeginPlay gen()erates), set
-//     it into the mesh's faceMaterialIndex slot -- ONLY for the four omega
-//     bodies whose mesh really has the screen slot (census: fmi=1, Type
-//     0/1/2 = blue/pink/green);
-//   - step FX at the shared stride gate (puppet_footsteps::Stride::StepDue),
-//     mirroring the variant's own step routing (bytecode, 2026-07-03):
-//     REPLACE variants (mynet) call lib_C::step with volume 0 -- the default
-//     surface footstep is MUTED -- and play their own sound (boltrix at the
-//     actor location, vol 1, att_default) + the eff_mynetEmitterStep burst;
-//     ADDITIVE variants (keljoy) keep the default step and layer footstepSound
-//     on top with the native stepped() math: scaled = clamp(MaxWalkSpeed/400,
-//     0.5, 2) * volume, sound attached to the body at scaled/4 volume,
-//     scaled/2+1 pitch (kerfurOmega ubergraph stepped region).
-//
-// Lifecycle: rigs are keyed by body actor (puppet or local pawn) and torn
-// down on skin change / body destroy; the kerfusFace actor is a separate
-// world actor and MUST be destroyed with its owner. All entry points are
-// game-thread only.
+// Rigs are keyed by body actor -- a puppet or the local pawn -- and torn down on a skin change or a
+// body destroy. The kerfusFace actor is a separate world actor and MUST be destroyed with its
+// owner. Every entry point is game-thread only.
 
 #pragma once
 
@@ -45,10 +20,20 @@
 
 namespace coop::skin_effects {
 
-// Build (or rebuild on change) the effect rig for `skinName` on `bodyActor`.
-// Called by client_model::ApplySkinToBody after the mesh lands; a non-builtin
-// skin (dr_kel / converter paks) tears any previous rig down and builds
-// nothing. Idempotent for an unchanged skin with a live rig.
+// Build (or rebuild on change) the effect rig for `skinName` on `bodyActor`. Called by
+// client_model::ApplySkinToBody after the mesh lands; a non-builtin skin (dr_kel, converter paks)
+// tears any previous rig down and builds nothing. Idempotent for an unchanged skin with a live rig.
+//
+// What it builds:
+//   - the base kerfurOmega_C SCS rig plus the variant class's own (ue_wrap/scs_rig: particles,
+//     point light, decals, eff_* audio), TEMPLATE-FAITHFUL: a node the game authors dormant -- the
+//     makeSentient-only joint-life sparks and lifeLight, bAutoActivate/bVisible false -- stays OFF.
+//     Force-enabling them was the "pink blast" regression.
+//   - the face: spawn the game's own kerfusFace_C, deferred, with `type` stamped pre-BeginPlay
+//     exactly as kerfurOmega.makeFace does, read its `dynmat` (the 256x256 scene-capture RT
+//     material its BeginPlay generates) and set it into the mesh's faceMaterialIndex slot. Only for
+//     the four omega bodies whose mesh really has the screen slot: fmi=1, Type 0/1/2 =
+//     blue/pink/green.
 void Apply(void* bodyActor, const std::string& skinName);
 
 // Tear the rig down before the body actor dies (destroys the face actor;
@@ -68,11 +53,17 @@ void SetRigVisible(void* bodyActor, bool visible);
 // puppet's step dispatch feeds this straight into CharacterStep.
 float DefaultStepVolume(void* bodyActor, float fallback);
 
-// Fire the skin's step FX (footstep sound / mynet burst) for a step that
-// JUST landed -- the caller owns the stride gate. Puppets call this from the
-// SAME footsteps_.StepDue verdict that dispatches lib_C::step, so the skin
-// sound lands exactly on the native step (perf audit W2: two independent
-// accumulators drifted apart = doubled audible steps). No-op without step FX.
+// Fire the skin's step FX (footstep sound, mynet burst) for a step that JUST landed -- the caller
+// owns the stride gate. Puppets call this from the SAME footsteps_.StepDue verdict that dispatches
+// lib_C::step, so the skin sound lands exactly on the native step; two independent accumulators
+// drift apart and the audible step doubles. No-op without step FX.
+//
+// The FX mirror the variant's own step routing. A REPLACE variant (mynet) calls lib_C::step with
+// volume 0, which mutes the default surface footstep, and plays its own sound instead -- boltrix at
+// the actor location, volume 1, att_default -- plus the eff_mynetEmitterStep burst. An ADDITIVE
+// variant (keljoy) overrides no step at all: the base class's stepped() runs, layering
+// footstepSound over the audible default at volume/4 and pitch volume/2 + 1, where volume is
+// clamp(MaxWalkSpeed / 400, 0.5, 2) as lib_C::step scales it.
 void OnStep(void* bodyActor, const ue_wrap::FVector& pos);
 
 // Own-body variant WITH the stride gate built in: the LOCAL player's native
