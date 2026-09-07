@@ -1,47 +1,18 @@
-// coop/device_occupancy.h -- v63 enterable-device OCCUPANCY (base computers /
-// terminals phase 1).
+// coop/device_occupancy.h -- OCCUPANCY for the enterable devices, the base computers and
+// terminals.
 //
-// USER DESIGN (2026-06-11, binding): devices you "enter" (E -> camera zooms
-// to the RT screen) are limited to ONE peer at a time via a "busy" state; a
-// second peer pressing E gets DENIED + the game's existing save-denied fail
-// sound. (Screen-STATE mirroring -- desk blob, dish aim, sky-signal
-// host-roller, email deltas -- is phase 2; see the RE doc §4-5.)
+// A device you "enter" -- press E and the camera zooms to its RT screen -- is limited to ONE peer
+// at a time by a busy state; a second peer pressing E is DENIED and hears the game's own
+// save-denied fail sound. Mirroring what is ON those screens is a separate concern, owned by the
+// state lanes.
 //
-// RE (votv-base-computers-RE-2026-06-11.md): the census is CLOSED at 8
-// enterable devices; every enter/exit dispatch is EX_LocalVirtualFunction =
-// ProcessEvent-INVISIBLE, so:
-//   DETECT  -- poll mainPlayer.activeInterface (the discriminator field) for
-//              rising/falling edges each pump tick (1 ptr read; classify only
-//              on an edge).
-//   ARBITRATE -- host-authoritative first-wins claim table (MTA shape:
-//              server-arbitrated entity locks -- vehicle-entry occupancy,
-//              first-claim-wins + relay; reference/mtasa-blue CVehicle
-//              occupant slots). A client claims optimistically (stays in;
-//              collisions only happen in a sub-100 ms race) and force-exits
-//              if the host replies that another slot holds the device.
-//   DENY    -- PRE-observe InpActEvt_use (the ONE PE-visible seam on the
-//              enter path); if the aim resolves to a wire-busy device, null
-//              lookAtActor + HitResult.Actor for that single dispatch (the
-//              door HostAuth Active-gate precedent -- the native chain no-ops
-//              on its own icast guards), restore in POST, play
-//              button_keypad_deny (coop::prop_sound::PlayDenyClick).
-//   FORCE-EXIT -- reflected setActiveInterface(null, zoom=true, 3D=the
-//              player's live flag), which is how ragdollMode, the game's own
-//              forced exit, calls it: held inputs cleared, GameOnly input and
-//              the cursor back, the default FOV restored, the outgoing widget
-//              left visible, exitInterface broadcast.
-//   RELEASE -- the activeInterface falling edge covers EVERY exit cause (ESC,
-//              ragdoll, death -- ragdollMode also exits via the same field);
-//              the host clears a leaver's claims on its disconnect edge.
+// Claim keys are SHARED-WIDGET identities: "desk", "sat", "radar", "reactor", "laptop", plus a
+// per-instance "tfm_<posKey>" and "arc_<posKey>". Five device families literally render ONE shared
+// widget instance each, so a per-widget claim is correctness rather than simplification -- two
+// peers in "different" laptops would be typing into the same screen. See ue_wrap/device_screen.
 //
-// Claim keys are SHARED-WIDGET identities ("desk"/"sat"/"radar"/"reactor"/
-// "laptop" + per-instance "tfm_<posKey>"/"arc_<posKey>") -- five device
-// families literally render ONE shared widget instance each, so per-widget
-// claims are correctness, not simplification (two peers in "different"
-// laptops would type into the same screen). See ue_wrap/device_screen.
-//
-// Game thread throughout (poll from the net-pump tick, OnReliable from the
-// event_feed drain, observers from the ProcessEvent detour).
+// Game thread throughout: the poll from the net-pump tick, OnReliable from the event_feed drain,
+// the observers from the ProcessEvent detour.
 
 #pragma once
 
@@ -56,18 +27,35 @@ namespace coop::device_occupancy {
 // gate runs on host AND clients.
 void Install(coop::net::Session* session);
 
-// Per-tick: resolve offsets/classes (throttled), poll the local player's
-// activeInterface for claim edges, retry a pending claim send. Cheap when
-// idle (one Local() + one pointer read).
+// Per-tick: resolve the offsets and classes (throttled), poll the local player's activeInterface
+// for claim edges, and retry a pending claim send. Cheap when idle: one Local() and one pointer
+// read.
+//
+// DETECT is a poll because every enter and exit dispatch is an EX_LocalVirtualFunction, which
+// ProcessEvent cannot see; the rising and falling edges of mainPlayer.activeInterface are read each
+// pump tick and classified only on an edge. RELEASE rides the falling edge, which covers every exit
+// cause -- ESC, ragdoll, death -- since ragdollMode leaves through the same field; the host also
+// clears a leaver's claims on its disconnect edge.
 void Tick();
 
-// Wire ingest (both roles). HOST: arbitrate a claim/release request and
-// broadcast the verdict. CLIENT: mirror the busy table; force-exit + deny
-// sound if the broadcast says another slot holds the device we are inside.
+// Wire ingest, both roles. HOST: arbitrate a claim or release request and broadcast the verdict,
+// first-wins, in the MTA shape of a server-arbitrated entity lock (vehicle-entry occupancy,
+// first-claim-wins plus relay; reference/mtasa-blue CVehicle occupant slots). CLIENT: mirror the
+// busy table, and force-exit with the deny sound if the broadcast says another slot holds the
+// device we are inside. A client claims optimistically and stays in, since a collision needs a
+// sub-100 ms race.
+//
+// DENY is a PRE observer on InpActEvt_use, the one ProcessEvent-visible seam on the enter path:
+// when the aim resolves to a wire-busy device it nulls lookAtActor and HitResult.Actor for that
+// single dispatch, so the native chain no-ops on its own icast guards, restores them in POST, and
+// plays button_keypad_deny. FORCE-EXIT is a reflected setActiveInterface(null, zoom=true, 3D = the
+// player's live flag), the way ragdollMode -- the game's own forced exit -- calls it: held inputs
+// cleared, GameOnly input and the cursor back, the default FOV restored, the outgoing widget left
+// visible, exitInterface broadcast.
 void OnReliable(const coop::net::DeviceClaimPayload& p, uint8_t senderSlot);
 
-// True iff the LOCAL peer currently holds the claim `key`. The v64 state
-// channels gate their owner-streams on holding "desk". Game thread.
+// True iff the LOCAL peer currently holds the claim `key`. The screen-state channels gate
+// their owner-streams on holding "desk". Game thread.
 bool LocalHolds(const wchar_t* key);
 
 // The slot currently holding `key`, or 0xFF if unclaimed. On the host this
