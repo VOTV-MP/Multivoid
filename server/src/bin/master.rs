@@ -530,7 +530,7 @@ fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) 
         }
         lo.last_seen = Instant::now();
     }
-    // SECURITY A6 (docs/security/TRACKER.md): this endpoint used to re-mint a TURN
+    // SECURITY: this endpoint used to re-mint a TURN
     // credential on EVERY heartbeat -- an HMAC signature handed out at RL_MUTATE rate to
     // anyone holding a token for their own lobby. The minting was retired whole (RULE 2)
     // rather than rate-limited, because it had NO CONSUMER: [V] the only caller is

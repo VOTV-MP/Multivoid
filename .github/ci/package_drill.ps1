@@ -1,7 +1,7 @@
 # package_drill.ps1 -- RED/GREEN controls for Test-PackageZip.
 #
 # A gate that has never been shown FAILING is not evidence of anything. This builds
-# deliberately-broken zips for each trap docs/UE4SS_ARC.md 7.2a measured off
+# deliberately-broken zips for each trap measured off
 # r2modman's own rule engine, and REQUIRES the check to catch every one -- plus a
 # GREEN arm requiring it to stay silent on a correct package.
 #
@@ -128,7 +128,7 @@ Arm 'red-miscased-entry' { param($r)
     Seed $r
     Remove-Item (Join-Path $r 'mod/dlls/main.dll') -Force
     Set-Content (Join-Path $r 'mod/dlls/Main.DLL') 'MZfake' -NoNewline
-} $true 'THUNDERSTORE.md:39 -- root files are case-SENSITIVE; PS -notcontains is not'
+} $true 'root files are case-SENSITIVE; PS -notcontains is not'
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

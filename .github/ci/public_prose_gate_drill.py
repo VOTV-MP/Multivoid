@@ -120,6 +120,7 @@ int r2() { return 0; } // plural too, as census rows a_file:192/:196
 # are measured here, except in an ignore file where only the # comments are. One marker per line.
 OTHER_PY = """# a script
 # see NOWHERE.md, a document this tree does not carry
+notes = open("GONE2.md")  # PRECISION: a .md a script OPENS is data; only the comment is prose
 # the design doc says so, which names one that cannot even be looked up
 # PRECISION: docs/a.md and a bare TRACKED.md both resolve and are not debt
 # dated 2026-09-05
@@ -136,7 +137,8 @@ print("делай")
 """
 # PRECISION for the comments-only carve-out: the RULES name research/ and .claude/ and must NOT
 # count, because a rule cannot ignore a path without naming it. Only the comment counts.
-OTHER_IGNORE = """# the notes are not published, decided 2026-09-05
+OTHER_IGNORE = """# PRECISION: GONE.md is named here to say WHY it is ignored, which is this file's job
+# the notes are not published, decided 2026-09-05
 research/
 .claude/
 """
@@ -262,9 +264,17 @@ MUTANTS = [
      'SRC_LINE_CITE = re.compile(r"ZZZZNOMATCH()()")'),
     # The dead-document predicate in the other.* family: it ran only over our C++ once, while 33
     # lines in ten tracked scripts and workflows named an absent doc with nothing reading them.
+    # The two carve-outs the doc predicate needs outside our C++, each able to damage the tree
+     # from the other side: reading a whole line makes a path a script OPENS a citation, and
+     # reading an ignore file's comments counts the reason every rule in it exists.
+    ("other: a path in code reads as a citation",
+     "    return line[i:] if i >= 0 else None", "    return line"),
+    ("other: an ignore file's comments count as citations",
+     "    if path.endswith(OTHER_COMMENTS_ONLY):\n        return None",
+     "    if False:\n        return None"),
     ("other: dead documents unread",
-     "            if doc_faults(line, docs):\n                c[\"other.dead_docpath\"] += 1",
-     "            if False:\n                c[\"other.dead_docpath\"] += 1"),
+     "            prose = other_prose(p, line)",
+     "            prose = None"),
     # The unstaged guard. It had no arm at all, and diffed two of the three measured families, so
     # a baseline could be written from an unstaged build file -- the very incident R-P12 names.
     ("guard: reads only part of what is measured",
@@ -408,7 +418,7 @@ def main():
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
         ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:48"],
-        (".gitignore", "other.dated"): [".gitignore:1"],
+        (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():
         arm("--lines points at {} for {}".format(want[0], k[1]), where.get(k) == want,

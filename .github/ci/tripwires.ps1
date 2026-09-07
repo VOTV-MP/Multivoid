@@ -1,4 +1,4 @@
-# tripwires.ps1 -- the UE4SS-switch decision trip-wires (VERSION_MIGRATION.md section 11).
+# tripwires.ps1 -- the UE4SS-switch decision trip-wires.
 #
 # ADVISORY, always exit 0: a FIRED wire re-opens the F1 DECISION, it never blocks a
 # release. Run from the RELEASE.md step-0 bullet; paste the output into the written
@@ -11,7 +11,7 @@
 #
 # Re-quiet discipline (no-wallpaper): a FIRED wire's disposition is a dated
 #   'TRIPWIRE-DECISION <wire> <YYYY-MM-DD>: <text>'
-# line appended to docs/VERSION_MIGRATION.md section 11 PLUS the matching constant
+# line appended to the migration doc PLUS the matching constant
 # update below, in the SAME commit. Constants here update ONLY together with such a line.
 #
 # Drills (all four verdict shapes; drills never write the real state file):

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """abi_gate -- assert the shipped mod DLL imports NOTHING from UE4SS.
 
-WHY THIS EXISTS. D-3 (docs/UE4SS_ARC.md section 0) chose the C-ABI loading contract
+WHY THIS EXISTS. The mod loads through the C-ABI contract
 (`start_mod`/`uninstall_mod`) over UE4SS's `CppUserModBase` C++ vtable, because that vtable
 and UE4SS's exported C++ surface are ABI-unstable across UE4SS builds. The entire measured
 payoff of that choice is a NUMBER: `[V]` field C++ mods import 32/40/130 mangled symbols
-from `UE4SS.dll`; Multivoid imports ZERO (UE4SS_ARC section 7.2b).
+from `UE4SS.dll`; Multivoid imports ZERO.
 
 Until this file existed, that number was enforced by NOTHING. `[V]` `mp.py` `_lane_check`
 asserts only that the boot line says `entry=cppmod`, that the retired proxy line is absent,
@@ -14,10 +14,10 @@ export. A single future commit could take the dependency and no gate, test or re
 in the tree would notice until a user on a different UE4SS build reported a mod that does
 not load.
 
-THAT FAILURE IS NOT HYPOTHETICAL AND WE HAVE THE COUNTER-EXAMPLE ON DISK. `[V]` 2026-08-26:
-DebugMod 5.0.3 uses `CppUserModBase`, imports UE4SS's C++ symbols, and fails to load with
-`0x7f` (ERROR_PROC_NOT_FOUND) on the pinned UE4SS 3.0.1 -- while the SAME binary starts on
-the experimental build, and Multivoid starts on both. See docs/DebugMod_ARC.md section 6a.
+THAT FAILURE IS NOT HYPOTHETICAL AND WE HAVE THE COUNTER-EXAMPLE ON DISK. DebugMod
+5.0.3 uses `CppUserModBase`, imports UE4SS's C++ symbols, and fails to load with `0x7f`
+(ERROR_PROC_NOT_FOUND) on the pinned UE4SS 3.0.1 -- while the SAME binary starts on the
+experimental build, and Multivoid starts on both.
 That binary is this gate's RED control: `--selftest` runs the gate against it and REQUIRES
 a violation, because a gate that has never been shown failing is not evidence of anything.
 
@@ -217,8 +217,7 @@ def main() -> int:
     if args.drill:
         import os
         import tempfile
-        # mkstemp, not a fixed name: two concurrent runs on one box (a scenario this
-        # repo explicitly worries about -- docs/CROSS_SESSION.md) would race a fixed
+        # mkstemp, not a fixed name: two concurrent runs on one box would race a fixed
         # path's unlink against the other's read.
         fd, tmp_name = tempfile.mkstemp(prefix="abi_gate_drill_", suffix=".dll")
         tmp = Path(tmp_name)
@@ -244,7 +243,7 @@ def main() -> int:
         p = Path(args.selftest)
         if not p.is_file():
             print(f"SELFTEST INCONCLUSIVE: RED control not found at {p}")
-            print("  (the control is DebugMod's main.dll -- see docs/DebugMod_ARC.md section 6a)")
+            print("  (the control is DebugMod's main.dll: a mod built on UE4SS's C++ vtable)")
             rc = 2
         else:
             try:
@@ -274,7 +273,7 @@ def main() -> int:
             print(f"FAIL: {p.name} imports {', '.join(bad)} -- D-3's C-ABI invariant is BROKEN.")
             print("  Multivoid must not depend on UE4SS's exported C++ surface: it is unstable")
             print("  across UE4SS builds, and a mod that takes it stops loading when the user's")
-            print("  UE4SS differs from the one it was linked against (docs/DebugMod_ARC.md 6a).")
+            print("  UE4SS differs from the one it was linked against.")
             rc = 1
         else:
             print(f"PASS: {p.name} imports nothing from UE4SS (C-ABI contract intact)")

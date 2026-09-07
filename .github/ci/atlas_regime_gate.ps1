@@ -92,10 +92,10 @@ function Invoke-Gate([hashtable]$mutate) {
     if ($clears -gt 0) {
         # The pre-flip state is not automatically wrong -- it was deliberate for
         # one build -- but it may not ship unexamined. Either our own DX12 texture
-        # servicing exists, or the design doc carries a dated verdict line saying
+        # servicing exists, or the regime record carries a verdict line saying
         # the upload cost was measured and accepted.
         #   THE ESCAPE HATCH IS ANCHORED AND DATED. An unanchored match on the
-        #   token is satisfied by the design doc's own PROSE describing this gate
+        #   token is satisfied by the record's own PROSE describing this gate
         #   -- measured: the first version of this check passed on a tree with a
         #   live clear, because the doc mentions the token in a sentence. The
         #   line must BEGIN with it and carry an ISO date, so writing the escape

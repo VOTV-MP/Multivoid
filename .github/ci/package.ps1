@@ -1,4 +1,4 @@
-# package.ps1 -- assemble the ONE distributable zip (docs/UE4SS_ARC.md 7.2a shape).
+# package.ps1 -- assemble the ONE distributable zip.
 #
 # WHY ONE ZIP. The archive holds the mod under the hierarchy r2modman expects, and both
 # install lanes take the SAME file: r2modman routes it by its top-level folder names, and
@@ -64,7 +64,7 @@ Write-Host "identity: game=$gameTarget build=$proto -> version_number=$version"
 # THE ONE SEAM THAT MUST NOT GO MANUAL (7.9): which DLL bytes go in the zip. For a
 # release that is the tagged cacheless rebuild's artifact, handed in via -PayloadDll.
 # The BuildDir default exists for the local-import control, which tests LAYOUT and is
-# explicitly exempt from the CI-bytes rule (THUNDERSTORE.md checklist item 5).
+# explicitly exempt from the CI-bytes rule.
 if (-not $PayloadDll) {
     $bd = Join-Path $repoRoot $BuildDir
     $cand = @(Get-ChildItem (Join-Path $bd 'main.dll') -ErrorAction SilentlyContinue)
@@ -76,7 +76,7 @@ if (-not $PayloadDll) {
 }
 if (-not (Test-Path -LiteralPath $PayloadDll)) { throw "payload not found: $PayloadDll" }
 
-# --- Icon: re-MEASURE it, never trust the filename (THUNDERSTORE.md item 3) --
+# --- Icon: re-MEASURE it, never trust the filename --
 $iconPath = Join-Path $repoRoot 'assets/branding/icon.png'
 if (-not (Test-Path -LiteralPath $iconPath)) { throw "icon missing: $iconPath" }
 $iconDim = Get-PngDimensions -Path $iconPath
@@ -89,7 +89,7 @@ if ($iconDim.Width -ne 256 -or $iconDim.Height -ne 256) {
 # USER 2026-08-30: the Thunderstore page wants a short player-facing text without the
 # repo README's developer sections or the author's note -- and the repo README's
 # relative links (docs/, src/) render BROKEN on the store page, which only absolute
-# links survive (THUNDERSTORE.md section 2). README_thunderstore.md is the page
+# links survive. README_thunderstore.md is the page
 # source and lands in the zip root as README.md. Its game target is re-checked
 # against the tree so the hand-written pair in it cannot rot unbumped -- the exact
 # failure that got mod semver deleted (2026-07-19).
@@ -183,7 +183,7 @@ if ($Pak.Count -gt 0) {
 # --- Zip -------------------------------------------------------------------
 # Named <Team>-<Name>-<version>.zip after the convention every field package follows
 # (7.2a). Thunderstore itself keys on the Team + manifest, not the filename
-# (THUNDERSTORE.md section 3), but the GitHub release asset is read by humans and the
+# on the package page, but the GitHub release asset is read by humans and the
 # Paper pair has to stay legible there -- it is the identity's zip-name destination
 # (7.3a item 2).
 $zipName = Get-PackageZipName -Version $version

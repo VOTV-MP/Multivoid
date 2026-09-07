@@ -49,7 +49,7 @@ OTHER_SKIP = ("src/votv-coop/third_party/", "reference/")
 # that proves the refusal must carry a fixture containing it. Counting those would push a sweep
 # to break the very checks it is measured by -- the same trap the offset detector hit.
 OTHER_MARKER_OWNERS = (".github/ci/public_prose_gate", ".github/ci/public_leak_gate",
-                       ".github/ci/commit_msg_check")
+                       ".github/ci/public_leak_ack", ".github/ci/commit_msg_check")
 # Third-party licence texts are reproduced as-is, and the baseline is generated from the counters,
 # so it names them by construction.
 OTHER_EXEMPT = ("LICENSE", "THIRD-PARTY", "public_prose_baseline.json")
@@ -292,6 +292,33 @@ class DocIndex:
         return first <= self.lengths[name]
 
 
+# How prose opens in each of the other.* file kinds. A citation is prose, so it is read from a
+# comment; a `.md` path in code is a file the script opens.
+OTHER_COMMENT_LEAD = {".py": "#", ".ps1": "#", ".yml": "#", ".yaml": "#", ".toml": "#",
+                      ".cmake": "#", ".txt": "#", "CMakeLists.txt": "#", ".gitignore": "#",
+                      ".gitattributes": "#", ".rs": "//", ".cs": "//"}
+
+
+def other_prose(path, line):
+    """-> the comment part of one line of a non-md, non-source file, or None when it has none.
+
+    An ignore file is not read at all here: its comments exist to say why a path is NOT tracked,
+    so counting them for naming an absent document measures the file's whole purpose.
+
+    THE GAP this leaves, stated rather than closed: a citation inside a STRING a script PRINTS is
+    a pointer a contributor follows, and it is not a comment. Two of those shipped here -- an
+    `abi_gate` failure message naming a document that is not in the tree -- and they were found by
+    reading, not by counting. Telling a printed message from a path a script opens needs more than
+    a pattern, so this counter does not try."""
+    if path.endswith(OTHER_COMMENTS_ONLY):
+        return None
+    lead = next((v for k, v in OTHER_COMMENT_LEAD.items() if path.endswith(k)), None)
+    if lead is None:
+        return None
+    i = line.find(lead)
+    return line[i:] if i >= 0 else None
+
+
 def doc_faults(line, docs):
     """True when one line cites a document a reader cannot open, in any of its four spellings.
 
@@ -492,7 +519,8 @@ def measure(repo):
                 if rx.search(line):
                     c["other." + k] += 1
                     who["other." + k][p] += 1
-            if doc_faults(line, docs):
+            prose = other_prose(p, line)
+            if prose and doc_faults(prose, docs):
                 c["other.dead_docpath"] += 1
                 who["other.dead_docpath"][p] += 1
     src = [p for p in files if measured_src(p)]
@@ -637,11 +665,12 @@ def explain(repo, path, tracked_set, subs=()):
     if text is None:
         return []
     out = []
+    # One index per CALL, never per line: it reads every tracked source to learn their lengths.
+    docs = DocIndex(repo, sorted(tracked_set))
     if path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT):
         bare = code_only(text)
         read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}
         owns_offsets = any(o in os.path.basename(path) for o in OFFSET_OWNERS)
-        docs = DocIndex(repo, sorted(tracked_set))
         comments, _code, long_blocks, tails = comment_lines(text)
         for start in long_blocks:
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
@@ -665,8 +694,10 @@ def explain(repo, path, tracked_set, subs=()):
         for k, (rx, _) in LINE_MARKERS.items():
             if rx.search(line):
                 out.append((no, prefix + k, line))
-        if prefix == "other." and doc_faults(line, DocIndex(repo, sorted(tracked_set))):
-            out.append((no, "other.dead_docpath", line))
+        if prefix == "other.":
+            prose = other_prose(path, line)
+            if prose and doc_faults(prose, docs):
+                out.append((no, "other.dead_docpath", line))
         if prefix == "md.":
             for k in md_link_faults(line, base, tracked_set, subs):
                 out.append((no, k, line))

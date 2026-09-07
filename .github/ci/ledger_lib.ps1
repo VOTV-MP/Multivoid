@@ -289,7 +289,7 @@ function Get-ReleaseBodySource {
     if ($m.Success) { $m.Groups[1].Value } else { $null }
 }
 
-# --- Package identity + shape (WP-9; docs/UE4SS_ARC.md 7.2a / 7.3) ---------
+# --- Package identity + shape --------------------------------------------
 # These five are the packaging half of this library. They live HERE and not in
 # package.ps1 because publish.ps1 must re-run the identical tree predicate on the
 # artifact it downloads back -- two copies of a fail-closed check is two checks that
@@ -337,7 +337,7 @@ function ConvertTo-PackageVersion {
 # named `Multivoid-Multivoid` reads as authored by a project rather than a person.
 # r2modman shows it for a LOCAL import too, derived from this filename, which is how
 # the wrong author surfaced before anything was ever published. Changed while nothing
-# is published: per THUNDERSTORE.md 5 neither half can move afterwards without
+# is published: neither half can move afterwards without
 # creating a SECOND package, and an author cannot delete a package.
 function Get-PackageZipName {
     param([Parameter(Mandatory)][string]$Version)
@@ -364,7 +364,7 @@ function Get-PngDimensions {
 }
 
 # manifest.json, GENERATED (7.3 HARD REQUIREMENT). Field rules are the wiki's, with
-# our values recorded in docs/THUNDERSTORE.md section 3:
+# our values, recorded here:
 #   name           no spaces, [A-Za-z0-9_] only
 #   version_number semver X.Y.Z, whole numbers, NO suffix
 #   description    max 250 chars (it is also the gallery subtitle)
