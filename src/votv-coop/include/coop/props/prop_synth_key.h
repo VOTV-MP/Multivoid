@@ -1,4 +1,4 @@
-// coop/prop_synth_key.h -- mint synthetic FName Key strings on non-Aprop_C keyed interactables (the
+// coop/props/prop_synth_key.h -- mint synthetic FName Key strings on non-Aprop_C keyed interactables (the
 // chipPile, clump and trashBitsPile families).
 //
 // An Aprop_C blueprint's construction script auto-mints a NewGuid Key when ResetKey is true or Key

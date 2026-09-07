@@ -1,4 +1,4 @@
-// coop/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively, with a follow
+// coop/creatures/kerfur_command.h -- the kerfur's radial menu, relayed host-authoritatively, with a follow
 // that follows whoever picked it. The subsystem's page is docs/npcs-and-kerfur.md.
 //
 // The game's own actionName sets the kerfur's State and calls move(), and its follow branch pins

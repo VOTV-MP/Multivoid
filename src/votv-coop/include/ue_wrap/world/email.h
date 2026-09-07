@@ -1,4 +1,4 @@
-// ue_wrap/email.h -- standalone engine access for the meadow-PC email pipeline: the
+// ue_wrap/world/email.h -- standalone engine access for the meadow-PC email pipeline: the
 // saveSlot.emails array on the watermark side, and the gamemode.addEmail apply, where one reflected
 // call is a persistence append plus a list row plus the email ding at the physical laptop plus the
 // tab highlight. Principle-7 engine-wrapper layer, no network logic; coop::email_sync drives the

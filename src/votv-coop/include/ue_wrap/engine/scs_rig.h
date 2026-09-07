@@ -1,4 +1,4 @@
-// ue_wrap/scs_rig.h -- instantiate a cooked Blueprint class's cosmetic component rig (the
+// ue_wrap/engine/scs_rig.h -- instantiate a cooked Blueprint class's cosmetic component rig (the
 // SimpleConstructionScript subset) onto a foreign actor.
 //
 // VOTV's kerfur variant actors (kerfurOmega_C and its children) carry their visual identity as SCS

@@ -1,4 +1,4 @@
-// coop/kerfur_reconcile.h -- retire the join-window kerfur off-to-active duplicate. CLIENT-only,
+// coop/creatures/kerfur_reconcile.h -- retire the join-window kerfur off-to-active duplicate. CLIENT-only,
 // game thread only: both the EntitySpawn apply and the quiescence sweep run on the game-thread
 // drain.
 //

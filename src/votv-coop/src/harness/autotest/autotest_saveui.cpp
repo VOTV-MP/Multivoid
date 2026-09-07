@@ -1,4 +1,4 @@
-// harness/autotest_saveui.cpp -- autonomous tests for the save-safety UI.
+// harness/autotest/autotest_saveui.cpp -- autonomous tests for the save-safety UI.
 //
 // The pair belongs together: both are the client-side half of host-only persistence, and both are
 // client-only and verify from the log the module itself writes.

@@ -1,4 +1,4 @@
-// coop/garbage_sync.h -- coop replication of VOTV's garbage and trash entities.
+// coop/interactables/garbage_sync.h -- coop replication of VOTV's garbage and trash entities.
 //
 // The family spans Aprop_C derivatives -- the garbage bag, bin, container and gun -- and actors
 // that are not Aprop_C at all: trashBitsPile, garbageClump, chipPile. Pickup is per-class: a

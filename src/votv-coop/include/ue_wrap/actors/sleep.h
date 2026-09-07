@@ -1,4 +1,4 @@
-// ue_wrap/sleep.h -- standalone engine access for VOTV's sleep and timelapse state: the gamemode's
+// ue_wrap/actors/sleep.h -- standalone engine access for VOTV's sleep and timelapse state: the gamemode's
 // isSleep flag, the global time dilation, the nightmare probability override and the saveSlot sleep
 // need. Principle-7 wrapper, no network logic; coop/sleep_sync drives the sleep gate through it.
 //

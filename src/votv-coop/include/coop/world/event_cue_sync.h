@@ -1,4 +1,4 @@
-// coop/event_cue_sync.h -- HOST-AUTHORITATIVE cosmetic emitter-cue mirror.
+// coop/world/event_cue_sync.h -- HOST-AUTHORITATIVE cosmetic emitter-cue mirror.
 //
 // Many of VOTV's scheduled, random and story events manifest ONLY as a one-shot cosmetic particle
 // emitter spawned through UGameplayStatics::SpawnEmitterAtLocation -- an EX_CallMath native call

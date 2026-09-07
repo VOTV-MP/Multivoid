@@ -1,4 +1,4 @@
-// coop/prop_echo_suppress.h -- one-shot echo-suppression sets, so a spawn or destroy that arrived
+// coop/props/prop_echo_suppress.h -- one-shot echo-suppression sets, so a spawn or destroy that arrived
 // from the OTHER end of the wire is not broadcast back. The receiver side (coop::remote_prop's
 // OnSpawn and OnDestroy) calls Mark*; the symmetric observer in coop::prop_lifecycle calls
 // Consume*. Without them our own receiver-applied spawn or destroy re-broadcasts to the original

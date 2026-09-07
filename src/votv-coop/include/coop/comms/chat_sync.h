@@ -1,4 +1,4 @@
-// coop/chat_sync.h -- the T-chat wire half, HOST-AUTHORED.
+// coop/comms/chat_sync.h -- the T-chat wire half, HOST-AUTHORED.
 //
 // The UI half, ui/chat_input -- the T-opened input bar, Enter sends, ESC closes -- hands typed text
 // to QueueSend, and every receiver renders "<nick>: <text>" through coop::chat_feed.
