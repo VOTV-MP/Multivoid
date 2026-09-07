@@ -82,8 +82,8 @@ struct LivePersonalStore {
 // coop/props/container_contents_sync -- deliberately, from opposite sides of one boundary:
 // that lane must never author a personal store, and this reader must never read anything
 // else. READ-ONLY BY CONSTRUCTION: there is no live-store writer in this header, and nothing
-// wires these records to the network yet. coop/dev/live_store_readout.h says what has and
-// has not been exercised.
+// wires these records to the network yet. coop/dev/live_store_readout is the dev probe that
+// reads them.
 bool ReadLivePersonalStore(LivePersonalStore& out);
 
 // The WRITE side: the apply on join.
