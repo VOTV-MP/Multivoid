@@ -62,7 +62,9 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
     // already filtered to relayable kinds through IsClientRelayableReliableKind.
     //
     // DoS note: a flooding client makes the host fan out one message to every other peer. Per-peer
-    // relay rate limiting is not built.
+    // relay rate limiting is not built. What does bound it is downstream and indirect: a receiver
+    // stops draining at kReliableInboxSoftPause (session.cpp) while GNS buffers losslessly
+    // beneath, so a flood turns into back-pressure on the sender rather than unbounded memory.
     if (cfg_.role != Role::Host) return;
     if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
     // GNS availability guard (the backlog's send helper re-checks per attempt).

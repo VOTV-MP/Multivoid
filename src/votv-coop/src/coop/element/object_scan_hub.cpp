@@ -21,7 +21,7 @@ using steady_clock = std::chrono::steady_clock;
 // Pass cadence, carried over from the retired settled-object scan. A full pass every tenth one is a
 // ~20 s full-pass cadence rather than 60 s, because the reseed consumer's recycled-slot detection
 // latency is load-bearing in the field: the periodic safety census caught real spawns that left
-// NumObjects flat -- one on a host, and 50, 17 and 12 in successive 20 s windows on a client. The
+// NumObjects flat -- two on a host, and 50, 17 and 12 in successive 20 s windows on a client. The
 // cost is that the duty cycle of sliced full passes triples; the per-frame cap below is unchanged
 // by construction.
 constexpr auto    kPassCadence   = std::chrono::seconds(2);

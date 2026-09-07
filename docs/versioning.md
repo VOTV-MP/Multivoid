@@ -90,12 +90,14 @@ contact. Do not publish a duration for a migration nobody has done.
 
 ## The loader
 
-UE4SS loads the mod and is never its engine layer: the DLL imports no symbol from it, a gate in
-CI proves that on every build, and the installer pins one UE4SS build by hash, the same build the
-mod manager's loader delivers. Moving the substrate onto UE4SS's own C++ API was weighed and
-refused: the game half of a migration, the signatures, the offsets and the names, is the mod's
-under any substrate, and that API's engine core sits behind an access gate that would end the
-plain recursive clone CI proves on every push.
+UE4SS loads the mod and is never its engine layer: the DLL imports no symbol from it, a gate
+checks that on every build, and the installer pins one UE4SS build by hash, the same build the
+mod manager's loader delivers. That gate runs in the build workflow, which is started by hand
+rather than on a push, so a local build is what enforces the rule day to day. Moving the
+substrate onto UE4SS's own C++ API was weighed and refused: the game half of a migration, the
+signatures, the offsets and the names, is the mod's under any substrate, and that API's engine
+core sits behind an access gate that would end the plain recursive clone this repository is
+built from.
 
 ## Code map
 
