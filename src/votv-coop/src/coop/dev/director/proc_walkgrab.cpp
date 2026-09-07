@@ -1,21 +1,18 @@
 // coop/dev/director/proc_walkgrab.cpp -- the walked-grab process set (Baritone
-// IBaritoneProcess analogs). Three decision units the brain arbitrates by priority +
-// context-activation:
+// IBaritoneProcess analogs). Three decision units the brain arbitrates by priority
+// and context-activation:
 //
-//   ClearHandProcess (prio 100) -- active while the hand is FULL. Drops the held prop at
-//     the input seam (InpActEvt_drop), effect-seam backstop if the input stub is inert.
-//     PREEMPTS Goto/Grab: the bot cannot walk while holding a prop (measured 2026-07-23),
-//     so it must empty its hand first. This is the state-awareness the held-disc lesson
-//     demanded -- structural, not a bolted-on step.
-//   GotoProcess    (prio 50)  -- active while out of reach. FindPath over the baked NavMesh
-//     + per-tick AddMovementInput steering along the waypoints; waypoint-progress stuck
-//     detection (distance-to-pile alone false-fails a winding route).
-//   GrabProcess    (prio 40)  -- active while in reach + not yet grabbed. Settle, aim, then
-//     the proven chippile grab (force lookAtActor + InpActEvt_use + playerGrabbed). Sets
-//     goal.grabbed on success.
+//   ClearHandProcess (prio 100), while the hand is FULL: drop the held prop at the
+//     input seam (InpActEvt_drop), effect-seam backstop if the stub is inert. It
+//     PREEMPTS the other two -- the bot cannot walk while holding a prop.
+//   GotoProcess (prio 50), while out of reach: FindPath over the baked NavMesh and
+//     per-tick AddMovementInput steering along the waypoints, with waypoint-progress
+//     stuck detection (distance-to-pile alone false-fails a winding route).
+//   GrabProcess (prio 40), while in reach and not yet grabbed: settle, aim, then the
+//     proven chippile grab (force lookAtActor + InpActEvt_use + playerGrabbed).
 //
-// Every action is at the human-INPUT seam (drive-at-input-seam). All OnTick runs on the
-// game thread (inside the ControlManager's per-tick closure), so engine calls are direct.
+// Every action is at the human-INPUT seam. All OnTick runs on the game thread
+// (inside the ControlManager's per-tick closure), so engine calls are direct.
 
 #include "coop/dev/director/director.h"
 
@@ -56,7 +53,7 @@ ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& t
 
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
                                           // the next waypoint stays on the walkable navmesh segment (a wide
-                                          // radius cuts corners into walls -- the door-pin bug, 2026-07-23)
+                                          // radius cuts corners into walls -- the door-pin bug)
 constexpr float kStuckImproveCm = 2.f;   // accept SLOW progress: shoving physics boxes out of the path
                                          // creeps forward a few cm at a time ("almost slid through" -- keep
                                          // pushing, don't quit). A real wall makes zero progress -> still stuck.
@@ -69,12 +66,13 @@ constexpr int   kVerifyTicks    = 90;    // ~1.8 s polling for the held clump
 constexpr int   kDropMeasureTicks = 20;  // ~0.4 s to MEASURE if the input-seam drop cleared the hand
 
 // ---- ClearHandProcess ------------------------------------------------------------------
-// Drive-at-input-seam FIRST: press InpActEvt_drop (the key a human presses), then MEASURE
-// whether the hand actually cleared. Do NOT mask with a mutator blindly (that was a RULE-1
-// crutch on an unmeasured fact -- caught 2026-07-23). If the input seam is INERT (the
-// reflection stub does not run the drop body -- the chippile InpActEvt_use-body-inert
-// precedent), that is a HALT-fact we LABEL + record, then fall back to the proven effect-seam
-// release so the run can proceed. `usedEffectFallback` is surfaced in the verdict.
+// Drive-at-input-seam FIRST: press InpActEvt_drop (the key a human presses), then
+// MEASURE whether the hand actually cleared. Do NOT mask with a mutator blindly --
+// that would be a workaround standing on an unmeasured fact. If the input seam is
+// INERT (the reflection stub does not run the drop body, the same way the chippile
+// InpActEvt_use body is inert), that is a HALT-fact we LABEL and record, then fall
+// back to the proven effect-seam release so the run can proceed.
+// `usedEffectFallback` is surfaced in the verdict.
 bool g_clearHandUsedEffectFallback = false;   // read by the scenario verdict (drive-at-seam honesty)
 
 class ClearHandProcess : public IProcess {
@@ -83,9 +81,10 @@ public:
     const char* Name() const override { return "ClearHand"; }
     int Priority() const override { return 100; }
     bool IsActive(const PlayerContext& ctx) const override {
-        // Clear a PRE-EXISTING held item ONLY while walking to the target (out of grab range). Once in
-        // range the held item is (or becomes) the GOAL grab -- clearing it there undid a successful grab
-        // (measured 2026-07-23: the grabbed clump landed in grabbing_actor, ClearHand woke and dropped it).
+        // Clear a PRE-EXISTING held item ONLY while walking to the target (out of grab range). Once
+        // in range the held item is (or becomes) the GOAL grab -- clearing it there undid a
+        // successful grab: the grabbed clump landed in grabbing_actor, and ClearHand woke and
+        // dropped it.
         return ctx.HandFull() && !goal_.grabbed && HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
@@ -173,10 +172,10 @@ public:
             // FIRST: a CLOSED door? Open it like a player pressing E (the door's own verb -- InpActEvt_use
             // is inert via reflection) and keep walking through.
             if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
-            // NEVER GIVE UP (USER RULE 2026-07-23): grind past physics boxes/clutter. Alternate a sideways
-            // JUKE to slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
-            // engine problem -- reaching the pile (IsActive->false, Grab takes over) or the run DEADLINE
-            // (>= 30 s of grinding) are the terminators, not an early stuck-count.
+            // NEVER GIVE UP: grind past physics boxes and clutter. Alternate a sideways JUKE to
+            // slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
+            // engine problem -- reaching the pile (IsActive->false, Grab takes over) or the run
+            // DEADLINE (>= 30 s of grinding) are the terminators, not an early stuck-count.
             ++stuckEpisodes_;
             if (stuckEpisodes_ % 4 == 0) {   // periodic fresh route from where we actually are
                 pathed_ = false; waypoints_.clear(); wp_ = 0; lastWp_ = 0; bestWp_ = 1e9f; bestPile_ = 1e9f;
