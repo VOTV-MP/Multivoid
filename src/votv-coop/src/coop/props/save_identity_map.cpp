@@ -26,15 +26,14 @@ namespace PT = coop::prop_element_tracker;
 
 namespace {
 
-// The two save-array element structs share an identical {class_3@+0x00 (UClass*), transform_8@+0x10 (FTransform;
-// translation @ +0x10 -> location @ +0x20), key_64@+0x40 (FName)} prefix; only the STRIDE differs (a TArray<
-// struct> element stride is the 16-ALIGNED struct size, NOT the raw size -- [[feedback-tarray-stride-aligned-
-// not-raw-size]]; runtime-gated below):
-//   Fstruct_save           (objectsData)    raw 0xF8 -> stride 0x100  (struct_save.hpp)
-//   Fstruct_primitiveSave  (primitivesData) raw 0x58 -> stride 0x60   (struct_primitiveSave.hpp)
-// Each TArray header @ saveSlot+off == {Data@0x0, Num@0x8, Max@0xC}.
+// The two save-array element structs share an identical prefix -- the UClass at the element base,
+// an FTransform whose translation is the location, and the FName key -- and differ only in STRIDE.
+// A TArray element stride is the 16-ALIGNED struct size, never the raw one:
+//   Fstruct_save          (objectsData)    stride 0x100  (struct_save.hpp)
+//   Fstruct_primitiveSave (primitivesData) stride 0x60   (struct_primitiveSave.hpp)
+// Each TArray header at saveSlot+off is {Data, Num, Max}. The strides are gated at runtime below.
 constexpr size_t kOffClass    = 0x00;
-constexpr size_t kOffLocation = 0x20;  // transform_8 (+0x10) + FTransform translation (+0x10)
+constexpr size_t kOffLocation = 0x20;  // the FTransform's translation within the element
 constexpr size_t kOffKey      = 0x40;
 
 // Quantize a world location to a 0.01-unit grid so the host-local join tolerates any sub-0.01 FP jitter
@@ -261,14 +260,16 @@ bool DeserializeSidecar(const uint8_t* data, size_t len, IdMap& outMap, size_t& 
     std::memcpy(&ver, data + 4, 4);
     std::memcpy(&count, data + 8, 4);
     if (ver != kSidecarVersion) return false;
-    // sidecar v3: entries are VARIABLE-length (the trailing key) -- walk + bounds-check each, never trust a
-    // fixed stride. Any field/key that would read past `len` aborts the whole parse (caller treats as no map).
-    // SECURITY (W2, docs/security/TRACKER.md): `count` is an unvalidated wire u32 and this reserve
-    // ran BEFORE the (correct) bounds-checked walk below -- a hostile host announced 0xFFFFFFFF in a
-    // 40-byte sidecar and OOM-killed the joining client on the net thread. Entries are
-    // VARIABLE-length (fixed part + trailing key), so the satisfiable entry count has a hard CEILING
-    // of the remaining bytes over the FIXED part; anything above it cannot be honoured by any body.
-    // Same shape the walk already uses for keyLen at the `end - p` check further down.
+    // sidecar v3: entries are VARIABLE-length, because the key trails each one, so the parse walks
+    // and bounds-checks every entry rather than trusting a fixed stride. Any field or key that
+    // would read past `len` aborts the whole parse and the caller treats it as no map.
+    //
+    // `count` is an unvalidated wire u32, and this reserve once ran BEFORE that bounds-checked
+    // walk: a hostile host announced 0xFFFFFFFF in a 40-byte sidecar and OOM-killed the joining
+    // client on the net thread. Since an entry is a fixed part plus a trailing key, the satisfiable
+    // entry count has a hard CEILING of the remaining bytes over the fixed part, and anything above
+    // it cannot be honoured by any body. The same shape the walk already uses for keyLen at its
+    // `end - p` check.
     const size_t maxEntries = (len - kSidecarHeaderBytes) / kSidecarFixedEntryBytes;
     if (count > maxEntries) return false;  // unsatisfiable count -- malformed or hostile
     outMap.reserve(count);

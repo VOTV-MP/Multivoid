@@ -1,33 +1,18 @@
-// coop/element/world_actor.h -- the WorldActor Element subclass (B3b, 2026-06-17).
+// coop/element/world_actor.h -- the WorldActor Element subclass, a peer of `Npc` under
+// `coop::element::Element`. Element is the MTA CClientEntity adoption, and CClientStreamElement has
+// several per-type siblings sharing one stream manager; this is that shape. The lane that owns
+// these elements, and the wire they ride, is `coop::world_actor_sync`.
 //
-// A peer of `Npc` under `coop::element::Element` (the intended sibling design --
-// Element is the MTA CClientEntity adoption, and CClientStreamElement has several
-// per-type siblings sharing the stream manager). Mirrors the ~14 NON-Character
-// event actors (gray saucers, Rozital mothership, ariral ships, sky UFO, space
-// jellyfish, firetank, ...) the Character-only NPC mirror can't replicate:
-// `npc_pose_drive` drives pos + YAW-ONLY rotation + DriveCharacterMovement (CMC@0x288,
-// ACharacter-only), so a raw AActor would lose pitch/roll AND the Character parking
-// would misread the non-Character layout (design doc votv-b3b-worldactor-mirror-
-// design-2026-06-17.md). So WorldActor is its OWN element: pos + FULL rotation
-// (pitch/yaw/roll), NO CMC, NO kerfur, NO save-persist.
+// It mirrors the roughly fourteen NON-Character event actors -- gray saucers, the Rozital
+// mothership, ariral ships, the sky UFO, the space jellyfish, the firetank -- that the
+// Character-only NPC mirror cannot replicate. `npc_pose_drive` drives position, YAW-ONLY rotation
+// and DriveCharacterMovement, all ACharacter-only, so a raw AActor would lose pitch and roll AND
+// the Character parking would misread the non-Character layout. WorldActor is therefore its own
+// element: position plus FULL rotation, no movement component, no kerfur, no save persistence.
 //
-// Owned by `coop::world_actor_sync` (the npc_sync shape, simpler):
-//   - host interceptor on BeginDeferredSpawnFromClass (a SECOND interceptor on the
-//     same UFunction; the WorldActor allowlist is DISJOINT from npc_sync's, so the
-//     two are conflict-free -- game_thread.h:115 multi-interceptor support):
-//     allocates a WorldActor per host-spawned allowlisted actor + broadcasts
-//     WorldActorSpawn.
-//   - host POST observer on the same UFunction: binds the returned AActor*.
-//   - host K2_DestroyActor PRE observer: broadcasts WorldActorDestroy + releases.
-//
-// CLIENT mirror drive: each WorldActorPose batch entry calls SetTargetPose (the
-// advance-before-rebase interp, the proven interp-starvation fix), and the net-pump
-// tick calls Tick() every frame to SetActorLocation + SetActorRotation the mirror.
-// The mirror's actor tick is parked (world_actor_sync: SetActorTickEnabled(false)),
-// so the streamed pose is authoritative (no integration fight). The HOST WorldActor
-// never interpolates -- it READS the live actor (world_actor_sync::TickPoseStream).
-// The interp TIMING is the shared coop::LerpWindow (RULE 2 / WP13 -- RemotePlayer +
-// Npc own one too); this class applies its dAlpha to its OWN pos + 3-angle errors.
+// The HOST WorldActor never interpolates: it READS the live actor. On a client the interp TIMING is
+// the shared coop::LerpWindow that RemotePlayer and Npc own too, and this class applies its dAlpha
+// to its own position and its three angle errors.
 
 #pragma once
 
@@ -47,38 +32,39 @@ public:
     // pose (or snaps on the first packet / a teleport). Game thread only.
     void SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap);
 
-    // CLIENT mirror: every frame -- advance the interp + push the pose to the engine (skips the
-    // engine write when frozen at target between packets). No-op until a pose arrives + the actor
-    // is live. Game thread only.
+    // CLIENT mirror: every frame -- advance the interp and push the pose to the engine,
+    // skipping the engine write while frozen at target between packets. No-op until a pose
+    // has arrived and the actor is live. The mirror's own actor tick is parked, so the
+    // streamed pose is authoritative and no integration fights it. Game thread only.
     void Tick();
 
-    // v100: the interp'd class-specific visible-heading yaw (WorldActorPoseSnapshot.auxYaw).
-    // Consumed by class lanes (piramid_sync writes it to the heading ArrowComponents); the
-    // generic ApplyToEngine ignores it. Valid once a pose arrived (hasPose()).
+    // The interpolated class-specific visible-heading yaw (WorldActorPoseSnapshot.auxYaw).
+    // Consumed by class lanes -- piramid_sync writes it to the heading ArrowComponents -- while
+    // the generic ApplyToEngine ignores it. Valid once a pose arrived (hasPose()).
     float CurrentAuxYaw() const { return curAuxYaw_; }
-    // v102: the latest class-specific auxiliary TARGET vector (WorldActorPoseSnapshot.auxX/Y/Z;
-    // piramid2_C = relLook, the head's look target). NOT interpolated -- it is a target the
+    // The latest class-specific auxiliary TARGET vector (WorldActorPoseSnapshot.auxX/Y/Z; for
+    // piramid2_C it is relLook, the head's look target). NOT interpolated: it is a target the
     // mirror's own native easing consumes, so the latest wire value IS the truth.
     void CurrentAuxVec(float& x, float& y, float& z) const { x = auxX_; y = auxY_; z = auxZ_; }
-    // v104: the latest class-specific TARGET-IDENTITY eid (WorldActorPoseSnapshot.auxTargetEid;
-    // piramid2_C = the host's wispTarget as its npc-lane eid; 0 = none). Latest-wins like the
-    // aux vec -- an identity, nothing to interpolate.
+    // The latest class-specific TARGET-IDENTITY eid (WorldActorPoseSnapshot.auxTargetEid; for
+    // piramid2_C the host's wispTarget as its npc-lane eid, 0 for none). Latest-wins like the aux
+    // vec -- an identity has nothing to interpolate.
     uint32_t CurrentAuxTargetEid() const { return auxTargetEid_; }
     bool  HasPose() const { return hasPose_; }
 
-    // v137 TRANSFORM-DELTA GATE (host send side). True when this actor's transform differs from the
-    // one we last batched, recording the new value when it does. Self-re-arming: anything that moves a
-    // resting actor (a collector's capsule shoving a coin's r=15 physics body sits OUTSIDE its r=10
-    // pickup trigger) is a change again. Epsilon is coarse on purpose -- this gates a MIRROR's visual
-    // pose, not a physics result.
+    // TRANSFORM-DELTA GATE, host send side. True when this actor's transform differs from the one
+    // we last batched, recording the new value when it does. Self-re-arming: anything that moves a
+    // resting actor is a change again -- a collector's capsule shoving a coin's r=15 physics body
+    // sits OUTSIDE its r=10 pickup trigger. The epsilon is coarse on purpose, since this gates a
+    // MIRROR's visual pose and not a physics result.
     //
-    // SCOPE, corrected by the 2026-08-24 audit: this saves WIRE BYTES, not batch slots. The caller
-    // MUST test the batch cap BEFORE calling, because reading the transform costs two ProcessEvent
-    // dispatches and two heap allocations -- gating on delta ahead of the cap made the walk scale with
-    // the whole live population instead of with 28. It follows that a resting sell-gun coin still
-    // OCCUPIES its slot in iteration order; starving the shipped event actors out of a 28-entry batch
-    // remains an open concern once coins accumulate, and the honest fix for that is fairness in the
-    // walk (a rotating start), NOT moving this call.
+    // SCOPE: this saves WIRE BYTES, not batch slots. The caller MUST test the batch cap BEFORE
+    // calling, because reading the transform costs two ProcessEvent dispatches and two heap
+    // allocations, and gating on delta ahead of the cap made the walk scale with the whole live
+    // population instead of with 28. It follows that a resting sell-gun coin still OCCUPIES its
+    // slot in iteration order. Starving the shipped event actors out of a 28-entry batch stays an
+    // open concern once coins accumulate, and the fix for that is fairness in the walk -- a
+    // rotating start -- not moving this call.
     bool PoseChangedSinceLastSend(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
 
 private:
@@ -103,18 +89,18 @@ private:
     float            errorPitch_ = 0.f;  // shortest-arc deltas, applied dAlpha/frame
     float            errorYaw_   = 0.f;
     float            errorRoll_  = 0.f;
-    float            curAuxYaw_    = 0.f;  // v100 class-specific heading (see CurrentAuxYaw)
+    float            curAuxYaw_    = 0.f;  // class-specific heading (see CurrentAuxYaw)
     float            targetAuxYaw_ = 0.f;
     float            errorAuxYaw_  = 0.f;
-    float            auxX_ = 0.f, auxY_ = 0.f, auxZ_ = 0.f;  // v102 aux target vec (latest wire value)
-    uint32_t         auxTargetEid_ = 0;  // v104 aux target identity (latest wire value; 0 = none)
+    float            auxX_ = 0.f, auxY_ = 0.f, auxZ_ = 0.f;  // aux target vec (latest wire value)
+    uint32_t         auxTargetEid_ = 0;  // aux target identity (latest wire value; 0 = none)
     coop::LerpWindow window_;          // shared interp timing (same one RemotePlayer / Npc own)
     bool             hasPose_ = false; // first packet snaps
     bool             dirty_   = true;  // unapplied change to push to the engine
 
-    // [WA-TRACE client-drive] state (2026-07-05 0s-frozen-pyramid hunt): 1 Hz per-mirror step/state
-    // log + the engine-write RESULTS (K2_SetActorLocation/Rotation CAN fail silently -- e.g. a
-    // static-mobility root -- and the old ApplyToEngine discarded both returns).
+    // [WA-TRACE client-drive] state: a 1 Hz per-mirror step and state log, plus the engine-write
+    // RESULTS. K2_SetActorLocation and K2_SetActorRotation CAN fail silently -- a static-mobility
+    // root does exactly that -- and an earlier ApplyToEngine discarded both returns.
     uint64_t dbgLastLogMs_   = 0;
     bool     lastApplyLocOk_ = true;
     bool     lastApplyRotOk_ = true;
