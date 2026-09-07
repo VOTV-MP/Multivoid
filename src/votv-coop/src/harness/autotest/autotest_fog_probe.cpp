@@ -1,30 +1,18 @@
-// harness/autotest_fog_probe.cpp -- SP-solo fog ON/OFF model + clear-path probe.
+// harness/autotest/autotest_fog_probe.cpp -- a solo fog on/off model and clear-path probe,
+// gated by VOTVCOOP_RUN_FOG_PROBE=1. A throwaway diagnostic, never a shipping path: the
+// production fix lives in weather_sync.
 //
-// The host-authoritative weather fix must, on host-clear, ACTIVELY clear the
-// client's fog (hands-on bug 2026-06-01: client STRONG MIST while host CLEAR).
-// The 4-agent RE workflow (2026-06-01) established the clear path -- destroy the
-// rolling-fog actor AweatherFogController_C (cycle->fogEventObject @0x0338) +
-// any live AsuperFog_C + zero finalFogDensity/thickFog + call SetFogDensity() --
-// but left ONE thing unconfirmed that decides the WIRE design: during an active
-// fog event, is thickFog a STABLE high TARGET (so a single broadcast can carry
-// full fog intensity via the client's own ramp) or is finalFogDensity driven
-// continuously (needing a density stream)? Per the deep-RE rule (runtime
-// CONFIRM, no iterative shenanigans) this probe answers it on ONE instance
-// before any protocol change is written.
+// Host-authoritative weather has to ACTIVELY clear a client's fog when the host is clear, or
+// the client sits in mist the host cannot see. The clear path is known: destroy the rolling-fog
+// actor the cycle points at through fogEventObject, destroy any live superFog, zero
+// finalFogDensity and thickFog, then call SetFogDensity(). What it leaves open is what the WIRE
+// must carry: is thickFog a STABLE high target during an event, so one broadcast hands the
+// client an intensity its own ramp reaches, or is finalFogDensity driven continuously?
 //
-// Sequence (all engine work on the game thread via GT::Post):
-//   1. settle until the singleton daynightCycle_C resolves (gameplay world).
-//   2. FORCE rolling fog (enable_fog=1 + fogProbability=1 + spawnFog()) AND
-//      super fog (enable_superfog=1 + superFogEvent()).  [game's own verbs]
-//   3. sample finalFogDensity / thickFog / fogEventObject!=null / superFog_C
-//      count every ~1 s for ~12 s -> the density-vs-target evolution = THE MODEL.
-//   4. run the CLEAR sequence (the production fix's mechanics, in isolation).
-//   5. sample ~6 s more -> confirms density stays ~0 and the actors are gone
-//      (clear-path efficacy).  Logs a VERDICT line.
-//
-// Gated by env VOTVCOOP_RUN_FOG_PROBE=1; launch `mp.py fogprobe` (solo).
-// Emits FOG-FORCED READY / FOG-CLEARED READY screenshot markers. Throwaway
-// diagnostic -- NOT a shipping path; the production fix lives in weather_sync.
+// The sequence, every engine call posted to the game thread: settle until the cycle resolves;
+// FORCE both fogs through the game's own verbs; sample density, target and the actor counts
+// each second while they evolve, which is the model; run the clear sequence in isolation;
+// sample again to confirm it holds; log a verdict, with a screenshot marker at each end.
 
 #include "harness/autotest.h"
 
@@ -59,12 +47,12 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
 // One observable snapshot of the cycle's fog state (read on the game thread).
 struct FogSample {
     bool  ok            = false;  // cycle was live and read
-    float finalDensity  = 0.f;    // finalFogDensity @0x0418 (active height-fog density)
-    float thickFog      = 0.f;    // thickFog @0x0330 (the per-tick density TARGET)
-    bool  enableFog     = false;  // enable_fog @0x0449
-    bool  enableSuperfog= false;  // enable_superfog @0x044A
-    bool  permanentFog  = false;  // permanentFog @0x042D
-    bool  rollingActor  = false;  // fogEventObject @0x0338 != null (rolling fog live)
+    float finalDensity  = 0.f;    // finalFogDensity -- the active height-fog density
+    float thickFog      = 0.f;    // thickFog -- the per-tick density TARGET
+    bool  enableFog     = false;  // enable_fog
+    bool  enableSuperfog= false;  // enable_superfog
+    bool  permanentFog  = false;  // permanentFog
+    bool  rollingActor  = false;  // fogEventObject is non-null -- rolling fog is live
     int   superFogCount = 0;      // live AsuperFog_C instances
     // AweatherFogController_C ramp state (read when rollingActor) -- to design the
     // late-joiner SNAP (copy host actor state onto the mirror so it doesn't ramp from 0).
