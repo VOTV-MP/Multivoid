@@ -1,28 +1,18 @@
-// coop/dev/perf_probe.h -- MEASURE-FIRST frame-cost probe for the 15-FPS audit.
+// coop/dev/perf_probe.h -- MEASURE-FIRST frame-cost probe for the shared hot path our DLL adds.
 //
-// The whole game runs at ~15 FPS on BOTH host and client. That points at a
-// SHARED hot path our DLL adds. The 2026-06-04 whole-project audit FALSIFIED the
-// "per-dispatch detour substrate (mutex + 73-observer walk) = 50 ms" hypothesis
-// using the codebase's own ~100k PE/sec figure (=> ~0.1 ms/frame, not 50 ms), and
-// pointed instead at a HOT per-tick caller / observer-callback BODY doing an
-// uncached reflection Find*/CountObjectsByClass (a ~1M-entry GUObjectArray walk +
-// a wstring alloc per entry) -- one such call per frame is the whole 50 ms budget.
-// So we MEASURE before touching code. This probe answers, once per second:
-//   * how many ProcessEvent dispatches/frame (game-thread vs worker split),
-//   * how many ns our DETOUR body spends per dispatch (sampled, engine excluded),
-//   * how long EACH net_pump subsystem Tick takes (ms/frame),
-//   * the single worst observer/interceptor cb BODY (ms + its UFunction name)
-//     -- this is what catches an observer secretly walking GUObjectArray.
+// A frame cost that shows up on BOTH host and client points at something we run on every peer, and
+// the two candidates look identical from outside: the per-dispatch detour substrate, or one hot
+// per-tick caller or observer body doing an uncached reflection Find*/CountObjectsByClass -- a
+// GUObjectArray walk with a wstring allocation per entry, where a single call per frame is the
+// whole budget. This measures instead of guessing, answering once a second: how many ProcessEvent
+// dispatches per frame, split game-thread against worker; how many ns our DETOUR body spends per
+// dispatch, sampled with the engine excluded; how long EACH net_pump subsystem Tick takes; and the
+// single worst observer or interceptor callback BODY, in ms and by UFunction name, which is what
+// catches an observer secretly walking GUObjectArray.
 //
-// Dev-only (RULE 3), ini-gated `perf_probe=1` (+ `perf_probe_selftime=1` to arm
-// the 1/256-sampled detour self-timer). OFF (shipping default) the only steady-
-// state cost is ONE relaxed atomic-bool load per dispatch. Nothing here ships.
-//
-// Output (logged ~1 Hz from net_pump::Tick via Sample()):
-//   [perf] PE=<n>/s (GT=<g> wk=<w>) frames=<f>/s => PE/frame=<n/f> GT/frame=<g/f>
-//   [perf] detour self avg=<ns>/dispatch (<m> samp) => ~<x.x> ms/frame
-//   [perf] obs/intc body total=<x.x> ms/frame worst='<Fn>' <y.y> ms | post=<p> pre=<q> intc=<r>
-//   [perf] net_pump::Tick=<x.x> ms/frame | interactable=.. weather=.. remoteProp=.. reaper=.. ...
+// Dev-only, ini-gated `perf_probe=1`, with `perf_probe_selftime=1` arming the 1/256-sampled detour
+// self-timer. OFF, the shipping default, the only steady-state cost is ONE relaxed atomic-bool load
+// per dispatch. Nothing here ships.
 
 #pragma once
 
@@ -86,9 +76,12 @@ void Init();
 // AnyOpen() gate so it counts every rendered frame, overlay shown or not.
 void NoteFrame();
 
-// Called once per net-pump tick (~125 Hz). Self-throttles to ~1 Hz: snapshots the
-// detour counters + frame counter + subsystem buckets, computes per-second rates +
-// per-frame costs, and logs. No-op when the probe is disabled. Game thread.
+// Called once per net-pump tick (~125 Hz). Self-throttles to ~1 Hz: snapshots the counters, logs
+//   four lines and resets the window. [perf] PE=<n>/s (GT=<g> wk=<w>) frames=<f>/s =>
+//   PE/frame=<n/f> GT/frame=<g/f> [perf] detour self avg=<ns>/dispatch (<m> samp) => ~<x.x>
+//   ms/frame [perf] obs/intc body total=<x.x> ms/frame worst='<Fn>' <y.y> ms | post=<p> pre=<q>
+//   intc=<r> [perf] net_pump::Tick=<x.x> ms/frame | interactable=.. weather=.. remoteProp=..
+//   reaper=.. ...
 void Sample();
 
 }  // namespace coop::dev::perf_probe
