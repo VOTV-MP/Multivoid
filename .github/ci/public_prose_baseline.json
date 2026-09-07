@@ -1,9 +1,9 @@
 {
-  "as_of": "4bcce640e",
+  "as_of": "ddeaf0e87",
   "note": "measured on the working tree; as_of is HEAD at that moment",
   "counters": {
     "md.files": 45,
-    "md.lines": 5598,
+    "md.lines": 5600,
     "md.over_600": 0,
     "md.cyrillic": 1,
     "md.user": 1,
@@ -29,7 +29,7 @@
     "other.ptr_claude": 1,
     "other.ptr_security": 1,
     "other.dead_docpath": 0,
-    "src.comment_lines": 43563,
+    "src.comment_lines": 43565,
     "src.comment_cyrillic": 0,
     "src.comment_user": 3,
     "src.comment_verbatim": 44,
