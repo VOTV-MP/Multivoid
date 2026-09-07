@@ -49,7 +49,7 @@ void MarkDirtyFromVerb();
 // The take-race reap VERDICT (drive_sync ApplyPayloadBlob, host side): if a
 // deny record matches {senderSlot, rowHash} and is within TTL, consume it
 // (clear the slot) and return true -- the caller destroys the ghost instead
-// of applying. Mirrors the pre-extraction :404 correlation 1:1.
+// of applying. Mirrors the correlation this was extracted from, 1:1.
 bool TryConsumeDenyReap(uint8_t senderSlot, uint64_t rowHash);
 
 // Full teardown (the OnDisconnect fanout) -- baselines, shadow, dirty mark,

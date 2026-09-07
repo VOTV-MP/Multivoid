@@ -107,6 +107,7 @@ int r2() { return 0; } // plural too, as census rows a_file:192/:196
 // a citation of a line a file no longer has, as x.cpp:9000 is in a file this short
 // a citation of a file the tree does not carry at all, as gone.cpp:12 is
 // PRECISION: x.cpp:1 resolves -- the file is here and it is that long, so it is not debt
+// PRECISION: vendored.cpp:9000 resolves too -- a submodule is pinned and cannot be shortened
 // one document spelling per line, so dropping any one of them turns this drill red
 // COOP_EVENT_JOIN.md names a document with no directory in front of it and none in the tree
 // DEATH_ARC section 3.1 is the same name with the extension dropped and a locator in its place
@@ -254,8 +255,12 @@ MUTANTS = [
     # The rotted line citation. It is judged by RESOLUTION, not by shape, so both halves of the
     # judgement need an arm: a file the tree does not carry, and a line past the end of one it
     # does. Accepting either would call a pointer live that leads nowhere.
+    # A citation into a submodule is not a rotted one: the tree is pinned by SHA and checked out
+    # beside us, so it cannot be shortened under the citation the way one of ours can.
+    ("doc_row: a vendored file does not resolve",
+     "            return name in self.vendored()", "            return False"),
     ("doc_row: an absent file resolves",
-     "        if name not in self.lengths:\n            return False",
+     "        if name not in self.lengths:\n            return name in self.vendored()",
      "        if name not in self.lengths:\n            return True"),
     ("doc_row: any line number resolves",
      "        return first <= self.lengths[name]", "        return True"),
@@ -350,6 +355,15 @@ def main():
         f.write(HDR_OWNER)
     with open(os.path.join(repo, "src", "votv-coop", "include", "twin.h"), "w", encoding="utf-8") as f:
         f.write(HDR_TWIN)
+    # A real nested repository, so `tracked` sees a gitlink and `vendored` has something to read.
+    vend = os.path.join(repo, "third_party", "vend")
+    os.makedirs(vend)
+    git(["init", "-q", "-b", "main"], vend, env)
+    git(["config", "core.hooksPath", os.devnull], vend, env)
+    with open(os.path.join(vend, "vendored.cpp"), "w", encoding="utf-8") as f:
+        f.write("int vendored() { return 0; }\n")
+    git(["add", "."], vend, env)
+    git(["commit", "-q", "-m", "vendored"], vend, env)
     git(["add", "."], repo, env)
     git(["commit", "-q", "-m", "[drill] seed"], repo, env)
     baseline = os.path.join(tmp, "baseline.json")
@@ -371,7 +385,7 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 68, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 69, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
               "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,

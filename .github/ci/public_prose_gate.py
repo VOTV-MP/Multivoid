@@ -269,8 +269,9 @@ class DocIndex:
     """What a citation resolves against: tracked paths, tracked basenames, and how long each
     source is, since a line citation past a file's end resolves no better than an absent file."""
 
-    def __init__(self, repo, tracked):
+    def __init__(self, repo, tracked, subs=()):
         self.names = set(tracked) | {t.rsplit("/", 1)[-1] for t in tracked}
+        self.repo, self.subs, self._vendored = repo, list(subs), None
         self.lengths = {}
         for t in tracked:
             if not t.endswith(SRC_EXT):
@@ -283,12 +284,28 @@ class DocIndex:
     def resolves(self, ref):
         return ref in self.names or ref.rsplit("/", 1)[-1] in self.names
 
+    def vendored(self):
+        """Every basename in the checked-out submodules, read once and only if asked.
+
+        A submodule is ONE gitlink entry in `git ls-files`, so its contents are invisible to the
+        tracked set even though they sit on disk beside us. A citation into one resolves for a
+        reader, and it cannot rot the way ours does, because the submodule is pinned by SHA."""
+        if self._vendored is None:
+            self._vendored = set()
+            for sub_path in self.subs:
+                try:
+                    out = git(["ls-files"], os.path.join(self.repo, sub_path))
+                except Exception:
+                    continue
+                self._vendored |= {p.rsplit("/", 1)[-1] for p in out.split("\n") if p.strip()}
+        return self._vendored
+
     def line_resolves(self, name, first):
         """A `<file>:NNN` citation resolves when the tree carries that file AND it is that long.
-        Both halves matter: 13 of the tree's citations name a file that is gone, and 4 more name
-        a line a shortened file no longer has."""
+        Both halves matter: some of the tree's citations name a file that is gone, and others name
+        a line a shortened file no longer has. A vendored file resolves on its name alone."""
         if name not in self.lengths:
-            return False
+            return name in self.vendored()
         return first <= self.lengths[name]
 
 
@@ -459,7 +476,7 @@ def measure(repo):
     `--lines` can name them without a second implementation of the analysis that found them."""
     files, subs = tracked(repo)
     tracked_set = set(files)
-    docs = DocIndex(repo, files)
+    docs = DocIndex(repo, files, subs)
     c = collections.OrderedDict()
     who = collections.defaultdict(collections.Counter)
     detail = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -666,7 +683,7 @@ def explain(repo, path, tracked_set, subs=()):
         return []
     out = []
     # One index per CALL, never per line: it reads every tracked source to learn their lengths.
-    docs = DocIndex(repo, sorted(tracked_set))
+    docs = DocIndex(repo, sorted(tracked_set), subs)
     if path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT):
         bare = code_only(text)
         read_offsets = {int(h, 16) for h in HEX_LITERAL.findall(bare)}

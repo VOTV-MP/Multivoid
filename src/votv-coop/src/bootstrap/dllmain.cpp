@@ -38,7 +38,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // safe under the lock" -- and BOTH halves of that were false. It reached
         // a thread join, a 200 ms network linger loop, a socket close with
         // WSACleanup, two sleeps and two MinHook thread-freezes (a documented
-        // loader-lock deadlock risk that hook.cpp:229-235 already had on file).
+        // loader-lock deadlock risk ue_wrap/core/hook.cpp already had on file).
         // The comment described the intent; nobody had re-read the body.
         //
         // `[V]` the module is PINNED at start_mod (cppmod_entry.cpp:318-325), so

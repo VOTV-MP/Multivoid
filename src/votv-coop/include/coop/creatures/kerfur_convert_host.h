@@ -34,7 +34,7 @@ void SetClasses(void* npcClass, void* propClass, void* floppyClass);
 // fail-closed deviation (s27 cut, documented): the DISABLED install state
 // (signature-changed verbs) no longer reaches this, so a request in that state
 // is DROPPED instead of CallFunction-ing a signature-changed verb over a
-// zeroed 16-byte frame (the pre-cut :869 gate passed it -- a latent over-read;
+// zeroed 16-byte frame (the gate this replaced passed it -- a latent over-read;
 // unreachable on the current game build where the verbs take no params).
 void SetVerbs(void* dropPropFnBase, void* dropPropFnCol, void* dropPropFnColGamer,
               void* colClass, void* colGamerClass, void* spawnKerfuroFn, int32_t killOff);

@@ -25,7 +25,7 @@ namespace coop::puppet_drive {
 // array is module-owned. Game thread (asserted).
 coop::RemotePlayer& Puppet(int slot);
 
-// The per-tick puppet drive (net_pump's old :1079-1218 block, verbatim):
+// The per-tick puppet drive, extracted whole from net_pump:
 // per-slot pose spawn/apply, ragdoll pelvis drive, per-puppet interp Tick,
 // wisp grab-hold placement, pose-diag emit. Caller (net_pump::Tick) gates on
 // worldUp and passes its own g_worldReadyAnnounced load evaluated IN the call

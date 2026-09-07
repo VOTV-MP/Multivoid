@@ -22,8 +22,8 @@ namespace coop::net { class Session; }
 
 namespace coop::registry_reaper {
 
-// The ~4s-throttled reaper/re-seed scan (net_pump's old :436-783 block,
-// verbatim). Returns true iff the gameplay->menu guard fired (session torn
+// The ~4s-throttled reaper and re-seed scan, extracted whole from
+// net_pump. Returns true iff the gameplay->menu guard fired (session torn
 // down + fleeing) -- the caller must abort its Tick, exactly as the old
 // inline `return` did. Game thread.
 bool Tick(coop::net::Session& session);

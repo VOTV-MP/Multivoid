@@ -135,8 +135,8 @@ bool IsEnabled() {
 
 void Install(coop::net::Session* session) {
     if (!IsEnabled()) return;
-    // subsystems::Install is called EVERY net_pump tick (net_pump.cpp:766 -- "one-shot
-    // install ... idempotent"): the contract is that each subsystem's Install latches its
+    // subsystems::Install is called EVERY net_pump tick, and the contract there is that it is
+    // idempotent: each subsystem's Install latches its
     // expensive/noisy work and no-ops on repeat. Keep g_session current each call (cheap;
     // picks up a fresh session ptr on re-host), but LATCH the banner so it logs once per
     // process instead of ~1/tick. Prior runs logged the ENABLED line ~37k times/session

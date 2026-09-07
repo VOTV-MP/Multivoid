@@ -3,8 +3,8 @@
 //
 // THE BUG IT GUARDS (docs/piles/10, 2026-06-25 11:16): a join where the host failed to
 // EXPRESS/claim its keyless chipPiles. The client's claim sweep dooms every UNCLAIMED chipPile
-// UNCONDITIONALLY (remote_prop_spawn.cpp:1071) and its >50% abort valve is GLOBAL not per-class
-// (953/3083 = 31% < 50% -> no abort even though it wiped 100% of the 870 piles). ALL piles vanished.
+// UNCONDITIONALLY (coop/props/join_membership_sweep) and its >50% abort valve is GLOBAL, not
+// per-class (953/3083 = 31% < 50% -> no abort, though it wiped 100% of the 870 piles).
 //
 // THE FIX: a POSITIVE per-class completeness signal. The host tells the client "I have N live of
 // class C". The sweep destroys unclaimed actors of class C only when it has CLAIMED at least N of

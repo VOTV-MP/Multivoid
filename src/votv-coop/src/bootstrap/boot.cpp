@@ -140,8 +140,8 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // This is the one place that knows whether our offsets match the running game, so
     // a failed check STOPS the boot instead of installing the ProcessEvent detour and
     // driving VOTV's UFunctions through offsets the check has just called wrong. The
-    // hazard is NOT a null pointer (`game_thread::Install` refuses one at
-    // pe_detour.cpp:645); it is an AOB that matched the WRONG SITE, which is non-null,
+    // hazard is NOT a null pointer -- `game_thread::Install` refuses to install over an
+    // unresolved ProcessEvent -- it is an AOB that matched the WRONG SITE, which is non-null,
     // only the functional round-trips catch it, and writing through wrong offsets into
     // a live game corrupts the save. So we stand down and SAY SO on a surface that
     // exists: the Win32 modal, never `ui::boot_warning_dialog`, which renders from an
