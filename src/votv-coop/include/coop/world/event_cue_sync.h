@@ -24,9 +24,14 @@ namespace coop::event_cue_sync {
 // called every net-pump tick from subsystems::Install; detection lives in Tick(), not here.
 //
 // The cue REGISTRY, in the .cpp, maps an emitter template to a cueId, plus an optional fixed spawn
-// location for the cues the blueprint hardcodes, like starRain. starRain is cue 0; the eye moon,
-// pink beam, TriFO, blinking lights and green fire are one registry line each. cueId is on the
-// wire, so the registry is APPEND-ONLY.
+// location for the cues the blueprint hardcodes. starRain is cue 0 and the ONLY cue registered so
+// far; the eye moon, pink beam, TriFO, blinking lights and green fire are candidates, one registry
+// line each when they are added. cueId is on the wire, so the registry is APPEND-ONLY.
+//
+// Detection is a ~1 Hz poll diff, so a cue must LIVE longer than about a second to be caught.
+// Before registering a sub-second one-shot, give it a synchronous capture instead, the way
+// firefly_sync brackets its tick -- otherwise it can spawn and die between polls and never
+// broadcast at all.
 void Install(coop::net::Session* session);
 
 // HOST: the ~1 Hz authoritative detection poll (new cue PSC -> broadcast; kPollIntervalMs).
