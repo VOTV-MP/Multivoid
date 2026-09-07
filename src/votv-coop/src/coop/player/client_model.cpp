@@ -18,7 +18,7 @@ namespace {
 
 // Per-name asset cache. A load MISS is remembered with a TIMESTAMP: re-probes
 // are throttled (kMissRetryMs), never latched forever -- the forever-latch was
-// the "peer sees my model with the wrong texture" field root (2026-08-29): a
+// the "peer sees my model with the wrong texture" field root: a
 // skin applied EARLY on a joining machine (world still loading, pak mounting)
 // could miss ONE load, latch `tried`, and render the mesh with no atlas for the
 // whole session while the wearer's own machine (warm world) looked fine. A HIT
@@ -83,14 +83,14 @@ bool IsNativeSkin(const std::string& name) {
 
 void* GetSkinMesh(const std::string& name) {
     if (IsNativeSkin(name) || !coop::skins::IsValidSkinName(name)) return nullptr;
-    // v94 builtin kerfur skins: the game's own kerfurOmegaV1_Skeleton bodies,
+    // Builtin kerfur skins: the game's own kerfurOmegaV1_Skeleton bodies,
     // loaded by asset path (no pak; materials ship with the mesh).
     if (const wchar_t* builtin = coop::skins::BuiltinSkinPath(name))
         return ResolveCached(g_meshCache, name, builtin, "mesh");
     const std::wstring w = Widen(name);
     // Package <name>, object kerfurOmega_KelSkin: the converter splices every
     // model into the kel-skin template and does not rename the export
-    // (docs/COOP_CLIENT_MODEL.md 6a); the package path disambiguates from the
+    // under its own package; the package path disambiguates from the
     // game's own kerfurOmega_KelSkin.
     return ResolveCached(g_meshCache, name,
                          L"/Game/Mods/VOTVCoop/" + w + L".kerfurOmega_KelSkin", "mesh");
@@ -164,7 +164,7 @@ bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativ
 
     void* mesh = GetSkinMesh(name);
     if (!mesh) return false;  // pak missing here -- keep the current body (logged in resolver)
-    // ATOMIC pair for pak skins (2026-08-29): a pak skin's mesh without its atlas
+    // ATOMIC pair for pak skins: a pak skin's mesh without its atlas
     // texture is the "wrong texture / wrong UV" field report -- the mesh swap
     // landed and the tex miss cleared the slot-0 override, so the model rendered
     // in the kel material. Builtins carry their own materials (no tex by design);
@@ -182,9 +182,9 @@ bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativ
     }
     // Slot-0 MID 'tex' override on both slots (inst_kel4_body is a MIC of
     // mat_object_sk whose diffuse is the 'tex' param -- no cooked material needed).
-    // No texture (v94 builtin kerfur skins carry their OWN materials) -> CLEAR the
+    // No texture (builtin kerfur skins carry their OWN materials) -> CLEAR the
     // slot-0 override instead, or a previous pak skin's MID atlas stays painted
-    // over the builtin's material (the dr_kel revert lesson applied here).
+    // over the builtin's material.
     int bound = 0;
     void* tex = GetSkinTexture(name);
     for (void* comp : comps) {

@@ -129,27 +129,21 @@ int CountItemInstances(const ItemSig& x, bool print) {
         UE_LOGW("dup_verifier: could not resolve saveSlot.GObjStack offset -- GObjStack count is BLIND");
     }
 
-    // (2) The player stores read a DIFFERENT way (saveSlot.inventoryData/equipment/hold) -- a
-    // cross-check against the GObjStack walk. If X shows here but NOT in GObjStack, the "player inv is in
-    // GObjStack" premise is incomplete for this build and these must be ADDED to the authoritative count;
-    // the positive control (phaseA/phaseB below == 1) is what decides whether player double-counts GObjStack.
-    // `player` would FUSE two answers -- "read fine, found nothing" and "the read failed" -- if the
-    // read's own success were not reported separately, so it is logged as READ-OK / READ-FAILED.
+    // (2) The player stores read a DIFFERENT way (saveSlot.inventoryData, equipment, hold) -- a
+    // cross-check against the GObjStack walk. If X shows here but NOT in GObjStack, the "player
+    // inventory lives in GObjStack" premise is incomplete for this build and these must be ADDED to
+    // the authoritative count; the positive control (phaseA and phaseB below both 1) is what
+    // decides whether `player` double-counts GObjStack. It is logged as READ-OK or READ-FAILED
+    // because a bare number would FUSE two answers: "read fine, found nothing" and "the read
+    // failed".
     //
-    // MEASURED 2026-07-24, and the result is stronger than the marker: READ-FAILED is UNREACHABLE from
-    // any run that emits a COUNT line at all. Both this function (the `!save` guard at the top) and
-    // INV::ReadAll gate on the SAME INV::ResolveSaveSlot(), inside the SAME game-thread task. So:
-    //   saveSlot unresolvable -> we returned -1 above ("no saveSlot -- cannot count"), no COUNT printed;
-    //   saveSlot resolvable    -> ReadAll's resolver succeeds too -> READ-OK.
-    // A boot-time control aimed at forcing READ-FAILED hit the earlier guard instead, twice (first an
-    // invalid-signature refusal, then "no saveSlot"), which is what established this.
-    //
-    // The consequence is retroactive and worth stating: EVERY historical `player=0` on a line that also
-    // printed a scan summary already meant "read succeeded, found zero" -- it was never ambiguous. The
-    // branch below is kept as a defensive tripwire: if it ever fires, the shared-resolver invariant has
+    // READ-FAILED is in fact UNREACHABLE from any run that prints a COUNT line at all, because this
+    // function's `!save` guard and INV::ReadAll gate on the SAME INV::ResolveSaveSlot(), inside the
+    // same game-thread task. An unresolvable saveSlot returns -1 above and prints no COUNT; a
+    // resolvable one means ReadAll's resolver succeeds too. So every `player=0` on a line that also
+    // printed a scan summary meant "read succeeded, found zero", and was never ambiguous. The
+    // branch below stays a defensive tripwire: if it fires, the shared-resolver invariant has
     // broken and the count is not to be trusted.
-    // ([[feedback-probe-must-count-not-confirm]] -- and a control that trips a DIFFERENT guard than the
-    // one under test is not a control; that is how this was found.)
     INV::PlayerInventory pinv;
     const bool playerReadOk = INV::ReadAll(pinv);
     int playerRows = 0;
@@ -161,12 +155,12 @@ int CountItemInstances(const ItemSig& x, bool print) {
         for (const auto& e : pinv.hold)      if (SigOf(e.data) == x) { ++player; if (print) UE_LOGI("dup_verifier:   MATCH hold cls=%ls key=%ls", e.data.className.c_str(), e.data.key.c_str()); }
     } else {
         // Naming the cause precisely, because a tripwire that lists several possible causes is one
-        // symptom for two reasons and settles nothing. ReadAll has exactly TWO returns (censused
-        // 2026-07-24, inventory.cpp): the shared-resolver guard, and `return true`. Its three offsets
-        // are compile-time constants, so there is no post-resolve failure path. We already passed our
-        // own `!save` guard above with the SAME resolver, in the SAME game-thread task -- so the only
-        // way to reach this line is the saveSlot dying BETWEEN the two calls inside one GT task, i.e.
-        // the shared-resolver invariant is broken. Nothing else can produce it.
+        // symptom for two reasons and settles nothing. ReadAll has exactly TWO returns -- the
+        // shared-resolver guard, and `return true` -- and its three offsets are compile-time
+        // constants, so there is no post-resolve failure path. We already passed our own `!save`
+        // guard with the SAME resolver in the SAME game-thread task, so the only way to reach this
+        // line is the saveSlot dying BETWEEN the two calls inside one task. Nothing else can
+        // produce it.
         UE_LOGW("dup_verifier: INV::ReadAll FAILED *after* our own saveSlot resolve SUCCEEDED -- the "
                 "inv/eq/hold count is BLIND, NOT zero. This is the shared-resolver tripwire: the "
                 "saveSlot died mid-GT-task. Treat the whole COUNT as untrustworthy, not just this half");
@@ -187,9 +181,10 @@ int CountItemInstances(const ItemSig& x, bool print) {
             "(scanned %d rows in %d non-empty slices)",
             x.className.c_str(), x.key.c_str(), gobj, playerVerdict.c_str(),
             playerRows, scannedRows, scannedSlices);
-    // Primary count = GObjStack (the authoritative store per the lesson). `player` is logged as a
-    // cross-check for the control to interpret (0 => disjoint / player IS a GObjStack slice; >0 => a
-    // separate store to fold in). The control run resolves the topology before any race verdict.
+    // Primary count = GObjStack, the authoritative store. `player` is logged as a cross-check for
+    // the control to interpret: 0 means disjoint, or that `player` IS a GObjStack slice; above 0
+    // means a separate store to fold in. The control run resolves the topology before any race
+    // verdict.
     return gobj;
 }
 
