@@ -28,13 +28,9 @@ namespace {
 using SaveGameToSlotFn = bool(__fastcall*)(void* saveGameObject, void* slotNameFStr,
                                            int32_t userIndex);
 
-// Trampoline to the un-hooked SaveGameToSlot (call to perform a real save).
-// NAMED *Trampoline since 2026-08-26: this is MinHook's 64-byte slot, not the
-// engine's function ([V] minhook/src/hook.c:634). The old name was the one this
-// project's rename census MISSED -- the twelfth of twelve hook::Install
-// out-params -- because that census keyed on the NAME g_orig* instead of
-// enumerating the CALL SITES it claimed to. Freeing this slot corrupts it in
-// place; see hook.h "Retirement".
+// Trampoline to the un-hooked SaveGameToSlot; call it to perform a real save. The name says
+// trampoline because that is what this points at -- MinHook's own 64-byte slot, not the engine's
+// function -- and freeing the slot corrupts it in place; see hook.h, "Retirement".
 SaveGameToSlotFn g_saveGameToSlotTrampoline = nullptr;
 
 // The world-save container UClass (saveSlot_C), resolved once at install. Only
