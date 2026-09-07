@@ -35,22 +35,20 @@ std::mutex        g_mu;
 Snapshot          g_snap;
 std::atomic<int>  g_count{0};
 
-// v94 per-player plate visibility. ALL of it is atomic (any-thread by
-// construction): the local pref is read by the render-thread F1 checkbox; the
-// per-slot store is written by game-thread wire handlers AND by the bringup-
-// thread session-start reset (player_handshake::Reset runs on the
-// TimelineThread -- a game-thread assert here would trip on every session
-// start, the hot_path_guard.h "one-shot session-start helper" trap; audit
-// 2026-07-02). Stored INVERTED as hidden-by-slot so the zero-init default is
-// the correct one -- absent info never hides a plate.
+// Per-player plate visibility. ALL of it is atomic, any-thread by construction: the local pref
+// is read by the render-thread F1 checkbox, and the per-slot store is written by game-thread
+// wire handlers AND by the bringup-thread session-start reset -- player_handshake::Reset runs
+// on the TimelineThread, so a game-thread assert here would trip on every session start, the
+// one-shot-session-start-helper trap hot_path_guard.h describes. Stored INVERTED as
+// hidden-by-slot, so the zero-init default is the correct one and absent information never
+// hides a plate.
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool>                g_localVisible{true};
 std::array<std::atomic<bool>, coop::players::kMaxPeers> g_hiddenBySlot{};
 
-// Distance fade (MTA nametag shape): fully opaque close up, fading to nothing far
-// away so a distant peer's label doesn't clutter the screen. Pulled in 2026-06-08
-// (user: "make it disappear at less distance") -- opaque within a room, gone just
-// beyond it instead of trailing ~90 m across the whole base/outdoors.
+// Distance fade (MTA nametag shape): fully opaque close up, fading to nothing far away so a
+// distant peer's label does not clutter the screen. Opaque within a room and gone just beyond
+// it, rather than trailing some 90 m across the whole base and outdoors.
 float DistanceAlpha(float distCm) {
     constexpr float kFullCm = 1500.f;  // fully opaque within ~15 m
     constexpr float kGoneCm = 4000.f;  // invisible beyond ~40 m
@@ -60,12 +58,11 @@ float DistanceAlpha(float distCm) {
 }
 
 // Distance SIZE scale (MTA nametag billboard shape). The whole plate scales like a
-// world-anchored billboard (~1/distance) so it stays proportional to the peer's
-// shrinking on-screen body instead of looming ever larger as they recede -- the
-// fixed-size plate "grew" relative to a far, tiny character (user 2026-06-08). Capped
-// at 1.0 up close so a peer right next to you never gets a screen-filling label (the
-// earlier 22->16 "huge up close" complaint), floored so a mid-range plate stays legible
-// while DistanceAlpha fades it out.
+// world-anchored billboard, roughly 1/distance, so it stays proportional to the peer's
+// shrinking on-screen body instead of looming larger as they recede: a fixed-size plate "grew"
+// against a far, tiny character. Capped at 1.0 up close so a peer right beside you never gets
+// a screen-filling label, and floored so a mid-range plate stays legible while DistanceAlpha
+// fades it out.
 float DistanceScale(float distCm) {
     // kRefCm is 900, not the 600 this started at: names became hard to read well before the plate
     // was small, so full size holds to ~9 m, every farther plate is 1.5x its old size, and the
@@ -105,7 +102,7 @@ void Update() {
     // uses. (Starting at 1 silently hid the host's nameplate on every client.)
     for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
         if (g_hiddenBySlot[slot].load(std::memory_order_relaxed))
-            continue;  // v94: that peer hid its own plate (synced pref)
+            continue;  // that peer hid its own plate (synced pref)
         RemotePlayer* p = reg.Puppet(static_cast<uint8_t>(slot));
         if (!p || !p->valid()) continue;
 
@@ -135,12 +132,12 @@ void Update() {
         pl.alpha = DistanceAlpha(dist);
         pl.scale = DistanceScale(dist);
         pl.onScreen = inFront && pl.alpha > 0.02f;
-        // Occlusion (minecraft nametag shape, user 2026-07-04): world geometry between
-        // the camera and the head grays the plate. The {WorldStatic, WorldDynamic} set
-        // means level geometry / closed doors / props block; pawns are NEITHER type, so
-        // the local body and the puppet itself never self-block. Unresolved (-1) -> not
-        // occluded (a missing primitive must never gray every plate). Traced only while
-        // the plate is actually drawable -- 0..3 one-line traces per tick.
+        // Occlusion, in the minecraft nametag shape: world geometry between the camera and the head
+        // grays the plate. The {WorldStatic, WorldDynamic} set means level geometry, closed doors
+        // and props block, while pawns are NEITHER type, so the local body and the puppet itself
+        // never self-block. Unresolved (-1) counts as not occluded, since a missing primitive must
+        // never gray every plate. Traced only while the plate is actually drawable: nought to three
+        // one-line traces per tick.
         pl.occluded = pl.onScreen &&
                       ue_wrap::trace::LineBlockedStatDyn(lp, camera, head) == 1;
         pl.x = screen.X;
@@ -148,20 +145,19 @@ void Update() {
         pl.flash = p->IsHurtFlashing();
         const float h = std::clamp(p->GetHealth(), 0.f, 1.f);
         pl.healthPct = static_cast<int>(std::lround(h * 100.f));
-        // v131: the ledger, not a per-tick fan-out through RemotePlayer. The old
-        // path pushed session.rttMsForSlot(slot) into every puppet each tick --
-        // but a client only owns peerConns_[0], so on a client another client's
-        // plate got -1 and rendered NO ms at all while the host's plate showed a
-        // real one. Same defect as the scoreboard's, one surface over. The host
-        // measures every link and publishes it, so every plate now agrees.
-        // DisplayLink, not Get(): row 0 is the host, whose own row carries Local/-1
-        // because the host cannot measure a link to itself -- so a client read the
-        // host's plate as a bare name with no ms. See roster_ledger.h.
+        // The ledger, not a per-tick fan-out through RemotePlayer. The old path pushed
+        // session.rttMsForSlot(slot) into every puppet each tick, but a client only owns
+        // peerConns_[0], so on a client another client's plate got -1 and rendered no ms at all
+        // while the host's plate showed a real one -- the same defect as the scoreboard's, one
+        // surface over. The host measures every link and publishes it, so every plate now agrees.
+        // DisplayLink rather than Get(): row 0 is the host, whose own row carries Local/-1 because
+        // the host cannot measure a link to itself, so a client read the host's plate as a bare
+        // name with no ms. See roster_ledger.h.
         const auto link = coop::roster_ledger::DisplayLink(slot);
         pl.ping = link.pingMs;
         pl.linkKind = link.kind;
-        pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
-        pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
+        pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // badge
+        pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // custom nick color
         pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble
         coop::text::CopyUtf8ToBuffer(pl.nick, p->GetNickname());
 
@@ -181,7 +177,7 @@ bool HasAny() {
     return g_count.load(std::memory_order_relaxed) > 0;
 }
 
-// ---- v94 per-player visibility pref (see header) ----
+// ---- the per-player visibility pref (see header) ----
 
 void SetInitialLocalVisible(bool visible) {
     g_localVisible.store(visible, std::memory_order_relaxed);

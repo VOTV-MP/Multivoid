@@ -92,9 +92,9 @@ bool RunRepertoireSelftest() {
     // asked for, and the emoji the donor exists for), two OUT (the script whose
     // absence is the whole reason the fold changed, and an invisible character).
     ok(InRepertoire(U'A') && InRepertoire(0x043F), "Latin and Cyrillic are in");
-    // Latin Extended-A/B + Greek (2026-07-29). Free: the embedded faces already
-    // carried these, the bake just never asked. U+0141 L-stroke, U+015E S-cedilla,
-    // U+0393 capital gamma -- Michal / Gunes / Giorgos spelled properly.
+    // Latin Extended-A/B and Greek cost nothing: the embedded faces already carried them and the
+    // bake simply never asked. U+0141 L-stroke, U+015E S-cedilla, U+0393 capital gamma -- Michal,
+    // Gunes and Giorgos spelled properly.
     ok(InRepertoire(0x0141) && InRepertoire(0x015E) && InRepertoire(0x0393),
        "Latin Extended-A/B and Greek are in");
     // U+03A2 sits inside the Greek block and is PERMANENTLY UNASSIGNED in Unicode,
@@ -116,11 +116,10 @@ bool RunRepertoireSelftest() {
     ok(!InRepertoire(0xE50A) && !InRepertoire(0xF8FF),
        "private-use is OUT (a vendor logo is not a character)");
 
-    // THE WIDENING, asserted as itself (2026-07-30, the 1.92 flip). These are not
-    // new bytes in the DLL -- every one is in a face we already ship and the old
-    // inclusion list simply never asked for it. They are the deliverable the user
-    // can point at, so a regression that quietly narrows the repertoire back has
-    // to fail here rather than show up as boxes in somebody's chat.
+    // THE WIDENING, asserted as itself. None of these is a new byte in the DLL: every one is in a
+    // face we already ship and the old inclusion list never asked for it. They are the deliverable
+    // a player can point at, so a regression that quietly narrows the repertoire back has to fail
+    // here rather than show up as boxes in somebody's chat.
     ok(InRepertoire(0x2014) && InRepertoire(0x2019) && InRepertoire(0x201C) &&
        InRepertoire(0x2026) && InRepertoire(0x20BD),
        "em dash, curly quotes, ellipsis and the ruble sign draw (they used to be boxes)");

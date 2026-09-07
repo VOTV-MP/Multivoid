@@ -1,18 +1,11 @@
-// coop/props/prop_container_extract.cpp -- the propInventory_C::takeObj
-// container-extract seam of coop::prop_lifecycle (see coop/props/
-// prop_lifecycle.h): the PRE/POST observer pair + the in-flight bracket +
-// InstallInventory.
+// coop/props/prop_container_extract.cpp -- the propInventory_C::takeObj container-extract seam of
+// coop::prop_lifecycle (see coop/props/prop_lifecycle.h): the PRE/POST observer pair, the in-flight
+// bracket and InstallInventory.
 //
-// Extracted from prop_lifecycle.cpp 2026-07-10 when it passed the 800-LOC
-// soft cap (the destroy seam left first -- prop_destroy_seam.cpp; this is the
-// second slice). Behavior preserved byte-for-byte.
-//
-// Storage-container spawn fix (2026-05-25 RE): an Aprop extracted from a
-// container spawns INSIDE takeObj, before loadData has restored its saved
-// Key -- so the nested Aprop_C::Init POST observer (prop_lifecycle.cpp) must
-// defer its broadcast and let the takeObj POST here be the canonical
-// broadcaster. g_takeObjInFlight (defined here, shared via
-// prop_lifecycle_detail.h) is that bracket.
+// An Aprop extracted from a container spawns INSIDE takeObj, before loadData has restored its saved
+// Key, so the nested Aprop_C::Init POST observer in prop_lifecycle.cpp must defer its broadcast and
+// let the takeObj POST here be the canonical broadcaster. g_takeObjInFlight, defined here and
+// shared through prop_lifecycle_detail.h, is that bracket.
 
 #include "coop/props/prop_lifecycle.h"
 
@@ -96,12 +89,10 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     for (size_t i = 0; i < cls.size() && i < 63; ++i) {
         p.className.data[p.className.len++] = static_cast<char>(cls[i]);
     }
-    // Audit defensive close 2026-05-29 (M-1 extraction post-ship): mirror
-    // the Init POST EnsureKeyForBroadcast call here so a non-Aprop_C
-    // keyed-interactable extracted from an inventory container also gets
-    // a synthetic Key (no-op for Aprop_C lineage whose Key is already set
-    // via loadData; just returns currentKey unchanged). Symmetric with
-    // the Init POST path; zero cost in the typical Aprop_C inventory drop.
+    // Mirror the Init POST's EnsureKeyForBroadcast call here, so a non-Aprop_C keyed interactable
+    // extracted from an inventory container also gets a synthetic Key. It is a no-op for the
+    // Aprop_C lineage, whose Key is already set through loadData: it just returns currentKey
+    // unchanged, at zero cost in the typical inventory drop.
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(spawnedActor);
     keyStr = coop::prop_synth_key::EnsureKeyForBroadcast(spawnedActor, keyStr);
     p.key.len = 0;
@@ -114,10 +105,10 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    // v54: real scale + identity row + SP-parity bools (same stamp as the
-    // Init POST site; a container extraction is a fresh simulating spawn).
-    // The flag reads are Aprop_C-gated -- pre-v54 this read the heavy/frozen
-    // offsets on non-Aprop_C lineages too, i.e. stray bytes.
+    // Real scale, identity row and SP-parity bools, the same stamp the Init POST site makes, since
+    // a container extraction is a fresh simulating spawn. The flag reads are Aprop_C-gated: without
+    // that gate they read the heavy and frozen offsets on non-Aprop_C lineages too, which is stray
+    // bytes.
     const auto scl = ue_wrap::engine::GetActorScale3D(spawnedActor);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
@@ -134,8 +125,8 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
-        // v114 (L7): the save-scalar birth channel (a reel extracted from a container
-        // keeps its Progress on every peer's mirror).
+        // The save-scalar birth channel: a reel extracted from a container keeps its Progress on
+        // every peer's mirror.
         float sc = 0.f;
         if (ue_wrap::prop::ReadSavedScalarForClass(spawnedActor, sc)) {
             p.savedScalar = sc;
@@ -145,11 +136,10 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
 
-    // Init POST returned early (g_takeObjInFlight) so MarkPropElement wasn't
-    // called from that path. Mint the Prop Element here so this container-
-    // extracted actor has a Registry shadow (audit fix 2026-05-28).
-    // KEY-UNIQUENESS (2026-07-11): Mark may RE-KEY a duplicate (host key
-    // authority) -- rebuild p.key (filled above) from the enrolled key.
+    // The Init POST returned early on g_takeObjInFlight, so MarkPropElement was not called from
+    // that path. Mint the Prop Element here, so this container-extracted actor has a Registry
+    // shadow. Mark may RE-KEY a duplicate under host key authority, so rebuild p.key -- filled
+    // above -- from the enrolled key.
     keyStr = PT::MarkPropElement(spawnedActor, keyStr, cls, PT::EnrollSource::kExpressSeam);
     p.key.len = 0;
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
@@ -158,8 +148,6 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     {
         const coop::element::ElementId eid = PT::GetPropElementIdForActor(spawnedActor);
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
-        // (v15 stamped a senderContext byte here; v16 PR-FOUNDATION-1b
-        // moved stale-gen defense to the header senderEpoch.)
     }
     UE_LOGI("grab_hook[takeObj POST]: SPAWN broadcast cls='%ls' key='%ls' loc=(%.1f, %.1f, %.1f) heavy=%d frozen=%d eid=%u",
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ,
@@ -167,34 +155,29 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0,
             p.elementId);
     s->SendPropSpawn(p);  // channel queues internally
-    // Fork B 2c: self-claim (see the Init POST site).
+    // Self-claim (see the Init POST site).
     coop::join_membership_sweep::RecordClaimIfTracking(spawnedActor);
 }
 
 }  // namespace
 
-// takeObj-in-flight bracket (declared in prop_lifecycle_detail.h; the nested
-// Aprop_C::Init POST observer in prop_lifecycle.cpp reads it, OnDisconnect
-// there clears it).
+// takeObj-in-flight bracket (declared in prop_lifecycle_detail.h; the nested Init POST reads it,
+// and the POST observer here clears it).
 //
-// Audit H12 (2026-05-27): std::atomic<bool> (was plain bool). The PRE/POST
-// observers and the nested Init POST observer all run from parallel-anim
-// worker threads per game_thread.cpp's header comment; plain-bool writes
-// in the PRE + reads in the Init POST race per the C++ memory model. The
-// PRE->POST sequencing within a single ProcessEvent dispatch is preserved
-// by the same-thread execution order; relaxed memory order is sufficient
-// (no other state depends on the bool's visibility ordering).
+// It is a std::atomic<bool> rather than a plain one: the PRE and POST observers and the nested Init
+// POST all run from parallel-anim worker threads, per game_thread.cpp's header, so plain-bool
+// writes in the PRE against reads in the Init POST race under the C++ memory model. The
+// PRE-then-POST sequencing within one ProcessEvent dispatch is preserved by same-thread execution
+// order, and relaxed memory order is enough, since no other state depends on this bool's visibility
+// ordering.
 std::atomic<bool> g_takeObjInFlight{false};
 
 void InstallInventory(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
     PT::SetSession(session);  // mirror; see SetSession comment in prop_lifecycle.cpp.
-    // Audit Fix 2 (2026-05-27): atomic latch matches Install()'s. Without
-    // this, the 125 Hz pump's InstallGrabObservers call runs R::FindClass
-    // (a full GUObjectArray walk with std::wstring alloc per entry) on
-    // every tick until propInventory_C loads. The plain-bool guard below
-    // is read/written only from the GT, but it doesn't short-circuit the
-    // GUObjectArray walk if propInventory_C is slow to load.
+    // An atomic latch, matching Install()'s. Without it the 125 Hz pump's InstallGrabObservers call
+    // runs R::FindClass -- a full GUObjectArray walk with a std::wstring allocation per entry -- on
+    // every tick until propInventory_C loads.
     static std::atomic<bool> s_done{false};
     if (s_done.load(std::memory_order_acquire)) return;
     if (g_inventoryObserverInstalled) {
