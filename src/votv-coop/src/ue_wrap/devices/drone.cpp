@@ -34,7 +34,7 @@ void*   g_cache    = nullptr;  // cached singleton drone actor (GT-only)
 int32_t g_cacheIdx = -1;       // its GUObjectArray slot -- IsLiveByIndex is safe vs a freed pointer
                                // (the project rule; IsLive(ptr) derefs the maybe-freed object itself)
 
-// ---- FX mirroring (Phase 2) -- resolved lazily (separate from the pose path) ----
+// ---- FX mirroring -- resolved lazily (separate from the pose path) ----
 bool    g_fxResolved   = false;
 int32_t g_canTakeOffOff = -1;  // Adrone_C::canTakeOff @0x0500 (arrival edge)
 int32_t g_dustOff       = -1;  // Adrone_C::eff_droneDust @0x0278 (UParticleSystemComponent*)
@@ -52,14 +52,14 @@ constexpr int32_t kCanTakeOffFallback = 0x0500;
 constexpr int32_t kDustFallback       = 0x0278;
 constexpr int32_t kAudioAlarmFallback = 0x0230;
 constexpr int32_t kLightAlarmFallback = 0x0240;
-// The BP's per-tick intensity formula (drone_dust_notes.md stmt @11781-11966):
-// 'dust' = 1 - dist(actor, ground hit)/2000 -- a RateScale multiplier on both
-// spawn modules, valid range [0,1].
+// The blueprint's per-tick intensity formula: 'dust' = 1 - distance(trace start, the hit, or the
+// trace end when nothing was hit) / 2000 -- a RateScale multiplier on both spawn modules, so its
+// valid range is [0,1].
 constexpr float kDustTraceLen = 2000.f;
-// Interaction-gate fields (RE 2026-06-09): the client mirror must carry these so a PARKED drone is
-// interactable (the suppressed tick never sets them). canTakeOff@0x0500 IS the gate (true=parked);
-// hasSack@0x0501 gates the action options (open-inv / drop-sack); container@0x04F8 is the inventory
-// actor openPropInv opens (a keyed Aprop_C the prop pipeline already mirrors).
+// Interaction-gate fields: the client mirror must carry these so a PARKED drone is interactable,
+// since the suppressed tick never sets them. canTakeOff@0x0500 IS the gate (true means parked);
+// hasSack@0x0501 gates the action options (open-inv and drop-sack); container@0x04F8 is the
+// inventory actor openPropInv opens, a keyed Aprop_C the prop pipeline already mirrors.
 int32_t g_hasSackOff   = -1;   // Adrone_C::hasSack   @0x0501
 int32_t g_containerOff = -1;   // Adrone_C::container @0x04F8 (Aprop_inventoryContainer_drone_C*)
 constexpr int32_t kHasSackFallback   = 0x0501;
@@ -239,19 +239,18 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
     if (!drone || !EnsureFxResolved()) return;
     void* dust = ReadComp(drone, g_dustOff);
     if (!dust) return;
-    // 1. The BP's own edge form (drone_dust_notes.md @11295-11562): SetActive
-    //    only when IsActive() != want. Load-bearing both ways: deactivates on
-    //    leaving the ground AND re-arms the EmitterLoops=1/20s system after it
-    //    self-completes mid-hover -- a latched rising-edge replay cannot
-    //    (the pre-v69 invisible-dust bug, part 2).
+    // 1. The blueprint's own edge form: SetActive(want, bReset=false) only when IsActive() != want.
+    //    Load-bearing both ways -- it deactivates on leaving the ground AND re-arms the one-loop
+    //    system after it self-completes mid-hover, which a latched rising-edge replay cannot do.
+    //    Getting this wrong is half of what once left the dust invisible.
     if (ComponentIsActive(dust) != on) SetComponentActive(dust, on);
     if (!on) return;
-    // 2. Pin the component to the host's ground-trace hit. eff_droneDust is
-    //    bAbsoluteLocation with NO relative offset -- unmoved it renders at
-    //    WORLD ORIGIN and its fixed relative bounding box gets frustum-culled
-    //    (the pre-v69 invisible-dust bug, part 1). Same call form as the BP
-    //    (@12035-12346): sweep=false, teleport=false; no VInterpTo -- the
-    //    host streams its already-interpolated component location at 20 Hz.
+    // 2. Pin the component to the host's ground-trace hit. eff_droneDust is bAbsoluteLocation with
+    // NO
+    //    relative offset, so unmoved it renders at WORLD ORIGIN and its fixed relative bounding box
+    //    is frustum-culled -- the other half of the invisible dust. Same call form as the
+    //    blueprint: sweep=false, teleport=false. The blueprint VInterpTo's toward the hit; we do
+    //    not, because the host streams its already-interpolated component location at 20 Hz.
     if (g_setWorldLocFn) {
         ParamFrame f(g_setWorldLocFn);
         if (f.valid()) {
@@ -261,9 +260,9 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
             Call(dust, f);
         }
     }
-    // 3. The BP's intensity formula (@11781-11966): 'dust' = 1 - dist(actor,
-    //    hit)/2000, clamped [0,1] (a RateScale multiplier on both spawn
-    //    modules). Lazy-resolve the FName (needs Kismet up; post-boot it is).
+    // 3. The blueprint's intensity formula: 'dust' = 1 - distance(trace start, hit) / 2000, clamped
+    // to
+    //    [0,1]. Lazy-resolve the FName -- it needs Kismet up, which post-boot it is.
     if (g_setFloatParamFn) {
         if (g_dustFName.ComparisonIndex == 0 && g_dustFName.Number == 0)
             g_dustFName = ue_wrap::fname_utils::StringToFName(L"dust");
