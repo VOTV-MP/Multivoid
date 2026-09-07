@@ -35,17 +35,18 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
 }
 
 // ===================== puppet-damage hazard PROBE =====================
-// mainPlayer_C carries no per-actor health: health lives on UsaveSlot_C, reached through
-// GameInstance->save_gameInst, one store per machine (ue_wrap/actors/vitals.h resolves the field by
-// name). So a damage entry invoked on an UNPOSSESSED host-side puppet -- a second mainPlayer_C with
-// GetController()==null -- can drain the HOST'S OWN health, and only a runtime measurement settles
-// it, because the `addDamage` skipSetting guard and the subtraction itself live in BP bytecode.
+// mainPlayer_C carries no per-actor health: it lives on UsaveSlot_C, reached through
+// GameInstance->save_gameInst, one store per machine (vitals.h resolves it by name). So a damage
+// entry invoked on an UNPOSSESSED host-side puppet -- a second mainPlayer_C, GetController()==null
+// -- can drain the HOST'S OWN health, and only a runtime measurement settles it: the `addDamage`
+// skipSetting guard and the subtraction itself live in BP bytecode.
 //   HOST: read own saveSlot.health, invoke a damage entry on the slot-1 puppet, re-read. A DROP
-//     means the hazard is real and native damage on a puppet has to be INTERCEPTED rather than
-//     merely relayed -- coop/player/player_damage.h installs exactly that for the three impact
-//     entries. No drop, and a LOCAL control (the same call on the host's own player) separates a BP
-//     early-out from a call that never landed. Host health is restored after; the hit is 5 of ~100.
-//   CLIENT: connects, so the slot-1 puppet exists for the host. Host-only verdict.
+//     means the hazard is real and native damage on a puppet has to be INTERCEPTED, not merely
+//     relayed -- which coop/player/player_damage.h does for the three impact entries. No drop,
+//     and a LOCAL control on the host's own player separates an early-out from a call that never
+//     landed. Health is restored after; the hit is 5 of ~100.
+//   CLIENT: connects, so the puppet exists. Host-only verdict.
+// A null result also fits a wisp grab: wisp_attack_sync PRE-cancels Add Player Damage during one.
 
 // Invoke AmainPlayer_C::"Add Player Damage"(Damage) on `target`; true iff the UFunction resolved
 // and the call dispatched. A raw ParamFrame, so the probe can aim at a puppet. Game-thread only.

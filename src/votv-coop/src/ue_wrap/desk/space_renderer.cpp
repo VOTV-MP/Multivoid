@@ -381,8 +381,9 @@ bool KillClientSpawnTimer() {
 
 bool ZeroMovement() {
     // Kill a residual local glide when a REMOTE stream takes cursor authority: the blueprint's tick
-    // integrator adds `movement` to the cursor location with no focus gate of any kind (only a
-    // movementVelocity >= 0 test), so a stale glide would co-write against the wire stream.
+    // integrator adds `movement` to the cursor location with no focus gate of any kind -- only a
+    // movementVelocity >= 0 test, under the tick's own time-dilation gate -- so a stale glide would
+    // co-write against the wire stream.
     // `movement` is a raw Vector2D written by EX_Let rather than through a setter -- the same write
     // class as WriteCursorOnly.
     void* inst = Instance();
