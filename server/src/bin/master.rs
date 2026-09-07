@@ -533,10 +533,10 @@ fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) 
     // SECURITY: this endpoint used to re-mint a TURN
     // credential on EVERY heartbeat -- an HMAC signature handed out at RL_MUTATE rate to
     // anyone holding a token for their own lobby. The minting was retired whole (RULE 2)
-    // rather than rate-limited, because it had NO CONSUMER: [V] the only caller is
-    // LobbyAnnouncer's heartbeat thread, and lobby_announcer.cpp:115-118 reads ONLY
-    // resp.ok and resp.status -- it never parses the response body at all (contrast :53,
-    // which does ParseObject for the /v1/host announce). Credentials are issued where
+    // rather than rate-limited, because it had NO CONSUMER: the only caller is
+    // LobbyAnnouncer's heartbeat thread, and it reads ONLY resp.ok and resp.status --
+    // it never parses the heartbeat's response body at all, in contrast with the
+    // /v1/host announce, which does ParseObject on it. Credentials are issued where
     // they are actually consumed, at /v1/host and /v1/join.
     (200, json!({"ok": true}))
 }
