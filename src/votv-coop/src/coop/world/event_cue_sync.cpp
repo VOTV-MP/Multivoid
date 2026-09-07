@@ -1,10 +1,10 @@
-// coop/event_cue_sync.cpp -- see coop/event_cue_sync.h.
+// coop/world/event_cue_sync.cpp -- see coop/world/event_cue_sync.h.
 //
-// HOST-AUTHORITATIVE: only the host detects + broadcasts (clients run a dormant scheduler --
-// time_sync pins TimeScale=0 -- so they never fire an event). The detection is a ~2 Hz host-only
-// poll that diffs the live ParticleSystemComponent set against the registered cue templates (the
-// EX_CallMath SpawnEmitterAtLocation is invisible to our ProcessEvent detour, the firefly trap).
-// Clients replay the emitter via a reflected SpawnEmitterAtLocation (the firefly_sync spawn path).
+// HOST-AUTHORITATIVE: only the host detects and broadcasts (clients run a dormant scheduler --
+// time_sync pins TimeScale=0 -- so they never fire an event). The detection is a 1 Hz host-only
+// poll that diffs the live ParticleSystemComponent set against the registered cue templates,
+// because the EX_CallMath SpawnEmitterAtLocation is invisible to our ProcessEvent detour. Clients
+// replay the emitter through a reflected SpawnEmitterAtLocation.
 
 #include "coop/world/event_cue_sync.h"
 
@@ -124,13 +124,13 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
-    // HOST-ONLY, ~1 Hz, connected. The only cost is the FindObjectsByClass GUObjectArray walk,
-    // capped to 1 Hz + host-only (the cue-PSC set is virtually always empty). NOTE for the perf
-    // audit: this is a bounded periodic walk like turbine_sync's host poll, NOT a per-frame scan.
-    // Game-thread check FIRST -- before touching g_lastPollMs -- so a hypothetical off-thread
-    // call is a true no-op that mutates no poll state (the GUObjectArray walk + raw reads are
-    // game-thread only). In the shipping path TickGameplay is always game-thread (net_pump::Tick
-    // asserts it), so this guard never actually fires; it's defensive.
+    // HOST-ONLY, 1 Hz, connected. The only cost is the FindObjectsByClass GUObjectArray walk,
+    // capped to 1 Hz and host-only, over a cue-PSC set that is virtually always empty -- a bounded
+    // periodic walk like turbine_sync's host poll, not a per-frame scan. Game-thread check FIRST,
+    // before touching g_lastPollMs, so an off-thread call is a true no-op that mutates no poll
+    // state (the walk and the raw reads are game-thread only). TickGameplay is always game-thread
+    // in the shipping path, since net_pump::Tick asserts it, so the guard is defensive and never
+    // fires.
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;

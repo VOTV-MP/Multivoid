@@ -1,33 +1,17 @@
-// coop/wisp_grab_hold.h -- the killerwisp grab-window body placement, on EVERY peer.
+// coop/creatures/wisp_grab_hold.h -- killerwisp grab-window body placement, on every peer.
 //
-// v2 of the killerwisp-vs-peers lane (2026-07-03; v1 relay = commit 1ae92a1a). The
-// native kill sequence is hard-bound to player 0 (Capture: socket attach + fatality +
-// the lift) -- a puppet victim used to get a flat 3.5 s death while the wisp mimed the
-// tear alone and the victim's screen showed nothing but a timer. This module puts the
-// BODIES where the native choreography puts them, on every screen:
+// The native kill sequence is hard-bound to player 0 -- socket attach, fatality, lift -- so a
+// puppet victim got a flat death while the wisp mimed the tear alone. This module puts the BODIES
+// where the native choreography puts them: the victim peer replays the native Capture template
+// against its own player and its local wisp mirror, every other peer holds the victim's PUPPET at
+// the wisp's 'playerGrab' socket.
 //
-//   * VICTIM peer (EngageSelf, from wisp_tear_mirror::OnWispGrab): replay the native
-//     Capture player template against the LOCAL player and the LOCAL wisp MIRROR
-//     (ue_wrap::wisp::ApplyGrabToLocalPlayer -- socket attach + MOVE_None + held +
-//     camera decouple). The tear montage (WispTear) and the scheduled ragdoll death
-//     (wisp_tear_mirror) complete the sequence; the death calls ReleaseSelf FIRST
-//     (native releasePlayer shape: detach, then ragdoll).
-//   * HOST + THIRD peers (EngagePuppet, from wisp_attack_sync::RelayGrab on the host /
-//     wisp_tear_mirror::OnWispTear elsewhere): hold the victim's PUPPET at the local
-//     wisp actor's 'playerGrab' socket -- a per-tick SetActorLocation follow (the
-//     carry-drive shape, puppet_carry_drive precedent), NOT an engine attach: the
-//     puppet pose apply (RemotePlayer::Tick) would fight an attach every frame, so the
-//     hold instead OVERWRITES after it. Tick() therefore MUST run after net_pump's
-//     g_puppets[].Tick loop -- the call site IS the ordering.
-//
-// No release wire exists on purpose: the hold self-releases on per-tick liveness
-// guards (wisp died/despawned -- the host's +3.5 s despawn is the canonical edge, its
-// EntityDestroy tears the client mirrors down the same second -- or the puppet left).
-// The victim-side grab window is bounded by the kill deadline it rode in with.
-//
-// One-owner note (anti-smear): wisp_attack_sync owns WHO gets attacked (the aggro
-// selector) and the host-side lift; wisp_tear_mirror owns the tear montage + the
-// victim death; THIS module owns only the grab-window body placement. Game-thread only.
+// That hold is a per-tick SetActorLocation follow, not an engine attach, because the puppet pose
+// apply would fight an attach every frame; it overwrites after it instead, so Tick() must run after
+// the puppet Tick loop in puppet_drive::DriveTick -- the call site IS the ordering. Nothing sends a
+// release: the hold ends on its own liveness guards, and the victim window on the kill deadline it
+// rode in with. wisp_attack_sync owns WHO is attacked and the host lift, wisp_tear_mirror the
+// montage and the death; this owns only placement. Game-thread only.
 
 #pragma once
 
