@@ -1,26 +1,18 @@
-// harness/autotest/autotest_scanparity.cpp -- the R-2 scan-hub N-MATCH PARITY drill
-// (VOTVCOOP_RUN_SCANPARITY=1, either role; design acceptance (i) in
-// votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// harness/autotest/autotest_scanparity.cpp -- the scan-hub N-MATCH PARITY drill, run with
+// VOTVCOOP_RUN_SCANPARITY=1 on either role.
 //
-// An INDEPENDENT old-shape probe walk (ObjectAt + each consumer's own public predicate +
-// key filter -- never the hub's classifier) is compared against the hub's per-consumer
-// completed-pass counts, INSIDE ONE GT task so GC cannot move the array between the two
-// reads (GC runs on the GT; a same-task pair is atomic):
-//   mode B (first): probe vs the LAST SLICED-BUILT counts -- certifies the shipping
-//     accumulation path; at a settled anchor staleness is provably nil.
-//   mode A (second): ForceSyncFullPass() then probe -- certifies the classifier with zero
-//     staleness even if the world was not settled.
-// MUTATE control: run once with VOTVCOOP_HUB_SKIP=door -- mode A/B must FAIL for exactly
-// the skipped consumer before any green run counts (the instrument can see a miss).
+// An INDEPENDENT old-shape probe walk -- ObjectAt plus each consumer's own public predicate and key
+// filter, never the hub's classifier -- is compared against the hub's per-consumer completed-pass
+// counts inside ONE GT task, so GC cannot move the array between the two reads. Mode B goes first,
+// probing against the last sliced-built counts, which certifies the shipping accumulation path;
+// mode A then calls ForceSyncFullPass() and probes again, certifying the classifier even when the
+// world never settled. VOTVCOOP_HUB_SKIP=door is the mutate control: both modes must FAIL for
+// exactly the skipped consumer before a green run counts.
 //
-// Count semantics: the probe counts DISTINCT KEYS using each consumer's REAL key fn (the
-// independence requirement is about the WALK/classifier, not the key extractor -- production
-// key fns are shared). grime uses DebugPosKeyForActor (the first RED run measured 2 real
-// cell collisions among 1,023 decals, so an instance count over-reads). turbine still counts
-// instances (5 turbines; a collision there would be a map-design change). The atv compare
-// assumes no PURCHASED (synth-keyed) ATVs in the run (the parked smoke scenario).
-//
-// Grep keys: "[SCANPARITY]" per-consumer rows + "[SCANPARITY] DONE fail=<n>".
+// The probe counts DISTINCT KEYS through each consumer's REAL key function -- independence is about
+// the walk and the classifier, not the extractor. grime keys by DebugPosKeyForActor, since an
+// instance count over-reads its cell collisions; turbine counts instances; the atv row assumes no
+// purchased synth-keyed ATVs. Every row and the verdict print under "[SCANPARITY]".
 
 #include "harness/autotest.h"
 
@@ -63,8 +55,8 @@ struct ProbeRow {
     bool skipDefaultCdo;   // the consumer's old walk had a Default__ skip (turbine did not)
 };
 
-// The 13 consumers' OLD-shape filters, verbatim (the independent control -- calls the
-// public wrapper predicates directly, never the hub registry).
+// The 13 consumers' OLD-shape filters -- the independent control, calling each consumer's public
+// wrapper predicate directly and never the hub registry.
 const ProbeRow kRows[] = {
     {"door",       &ue_wrap::door::IsDoor,              &ue_wrap::door::GetKeyString,        true},
     {"light",      &ue_wrap::lightswitch::IsLightSwitch,&ue_wrap::lightswitch::GetSwitchKeyString, true},
