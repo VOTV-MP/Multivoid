@@ -49,7 +49,7 @@ Command CommandFromActionName(const std::wstring& name);
 // runs the verb. Returns false, leaving the dispatch alone, for an unrelayed verb, outside a
 // connected session, and when re-entered from our own host-side actionName replay, which a
 // thread-local guard catches.
-bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient, bool isHost);
+bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient);
 
 // Store the session pointer, re-cached on every call so a reconnect lands. Nothing else installs
 // here: the actionName interceptor belongs to kerfur_convert, and the verb and move UFunctions

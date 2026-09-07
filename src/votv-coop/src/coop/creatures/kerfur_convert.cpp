@@ -102,8 +102,7 @@ bool OnKerfurActionNamePre(void* self, void* params) {
         // fix_transformers) go to the host-authoritative command relay, which records the action
         // and returns true (cancel) for a relayed verb and false for an unrelayed one.
         const bool isClient = s->role() == coop::net::Role::Client;
-        const bool isHost   = s->role() == coop::net::Role::Host;
-        return coop::kerfur_command::TryRecordMenuCommand(self, name, isClient, isHost);
+        return coop::kerfur_command::TryRecordMenuCommand(self, name, isClient);
     }
     // turn_off is detected by the poll and the chokepoints, never here: the verb does not reach
     // this interceptor. Pass through.

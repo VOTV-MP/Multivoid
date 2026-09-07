@@ -158,7 +158,7 @@ Command CommandFromActionName(const std::wstring& name) {
     return Command::Invalid;  // turn_off (kerfur_convert) / take_object / equipment / pat
 }
 
-bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient, bool /*isHost*/) {
+bool TryRecordMenuCommand(void* self, const std::wstring& name, bool isClient) {
     if (t_inHostExec) return false;  // our own host actionName replay -- pass through
     if (CommandFromActionName(name) == Command::Invalid) return false;  // not a relayed verb
     auto* s = LoadSession();
