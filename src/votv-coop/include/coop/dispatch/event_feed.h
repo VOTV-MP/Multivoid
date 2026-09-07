@@ -1,14 +1,14 @@
-// coop/event_feed.h -- coop session events surfaced to the on-screen feed.
+// coop/dispatch/event_feed.h -- coop session events surfaced to the on-screen feed.
 //
-// Gameplay/network layer (principle 7): decides WHAT lines the player sees and when,
-// from coop/session state -- "X joined", "X left the game", connection errors. It
-// surfaces them via coop::chat_feed::Push -- the ImGui HUD (ui::hud) draws the feed.
+// Gameplay/network layer: decides WHAT lines the player sees and when, from coop/session state --
+// "X joined", "X left the game", connection errors. It surfaces them via coop::chat_feed::Push, and
+// the ImGui HUD (ui::hud) draws the feed.
 //
-// Mirrors MTA (research/findings/mta/mta-chat-joinquit-reliability-2026-05-23.md): joins
-// announce a nickname over the RELIABLE channel; the disconnect message is generated
-// LOCALLY from the cause (MTA's quit-reason-enum pattern), not sent as a string.
+// The shape follows MTA: a join announces a nickname over the RELIABLE channel, while the
+// disconnect message is generated LOCALLY from the cause, MTA's quit-reason-enum pattern, rather
+// than sent as a string.
 //
-// Game thread only (it calls chat_feed + reads the session).
+// Game thread only -- it calls chat_feed and reads the session.
 
 #pragma once
 
@@ -44,19 +44,19 @@ void OnSessionStart();
 // + per-slot "left the game" message.
 void Update(net::Session& session, void* localPlayer);
 
-// Neutralize the per-slot connect edge detectors WITHOUT the full OnSessionStart
-// reset. Called from the FleeToMainMenu funnel (net_pump) the instant the LOCAL
-// peer begins tearing down its own session (self quit-to-menu, death, host-close
-// eject, host RAM-balloon quit). Rationale: when WE leave, session.Stop() flips
-// every peer slot connected->disconnected, and the next Update() would read those
-// as per-slot "<X> left the game" departures and Push them into chat_feed -- AFTER
-// FleeToMainMenu already cleared it -- so the stale line rides its 11 s TTL into the
-// MAIN MENU overlay (user 2026-07-15: "Host left the game" leaking into the menu on
-// the client's OWN quit; the message is also semantically wrong -- the host did not
-// leave, the client did). Clearing the edge bits here means the aggregate teardown
-// produces no spurious peer-left toast. The HOST-stays path (its last client leaving)
-// does NOT flee, so its legitimate "<client> left the game" toast is untouched.
-// OnSessionStart re-primes the edges for the next session (no restore needed).
+// Neutralize the per-slot connect edge detectors WITHOUT the full OnSessionStart reset. Called from
+// the FleeToMainMenu funnel (net_pump) the instant the LOCAL peer begins tearing down its own
+// session: self quit-to-menu, death, host-close eject, host RAM-balloon quit.
+//
+// When WE leave, session.Stop() flips every peer slot from connected to disconnected, and the next
+// Update() would read those as per-slot "<X> left the game" departures and Push them into chat_feed
+// -- AFTER FleeToMainMenu already cleared it -- so a stale line rides its 11 s TTL into the MAIN
+// MENU overlay. It is wrong twice over: the host did not leave, the client did. Clearing the edge
+// bits here means the aggregate teardown produces no spurious peer-left toast.
+//
+// The HOST-stays path, its last client leaving, does NOT flee, so its legitimate "<client> left the
+// game" toast is untouched. OnSessionStart re-primes the edges for the next session, so nothing
+// needs restoring.
 void SuppressPeerLeaveEdges();
 
 }  // namespace event_feed
