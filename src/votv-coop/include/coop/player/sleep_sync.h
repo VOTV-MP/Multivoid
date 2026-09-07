@@ -31,8 +31,8 @@ void Install(coop::net::Session* session);
 // can end the night naturally and a first-to-fill race becomes one authority; and they run
 // dreamProbability=0 all session, nightmares being host-only by design. The host's own roll is
 // restored to the -1 sentinel, which is the blueprint's "use the default", only DURING the
-// accelerate phase. A host nightmare wakes the house structurally, because createDream calls
-// wakeup() before the dream, so the falling edge IS the End.
+// accelerate phase. A host nightmare wakes the house structurally, because the roll that picks
+// it calls wakeup() immediately before createDream, so the falling edge IS the End.
 void Tick();
 
 // Wire ingest (both roles; see SleepStatePayload op semantics). The gate has four phases.
@@ -45,9 +45,10 @@ void Tick();
 //   and broadcasts "N/M sleeping" as a chat feed line.
 // ACCELERATE -- everyone in bed: the host broadcasts, each sleeping peer sets its own dilation to
 //   20 so vitals refill natively, and the client clock free-runs (time_sync::SetSleepAccelerate).
-// END -- ANY peer's isSleep falling edge ends the night for everyone. Natural wake, manual exit,
-//   hunger (food <= 20), an active event and a nightmare all funnel through gamemode.wakeup, so one
-//   edge catches every case: the host broadcasts End{natural} and receivers reflect wakeup().
+// END -- ANY peer's isSleep falling edge ends the night for everyone. EVERY wake cause funnels
+//   through gamemode.wakeup -- the natural fill, a manual exit, hunger at food <= 20, an active
+//   event, a nightmare, the ariral chains -- so one edge catches them all: the host broadcasts
+//   End{natural} and receivers reflect wakeup().
 void OnReliable(const coop::net::SleepStatePayload& p, uint8_t senderSlot);
 
 // HOST: a joiner arrived (world-ready) -- ends a running accelerate phase
