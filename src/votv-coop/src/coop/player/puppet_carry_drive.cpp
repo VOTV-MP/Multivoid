@@ -23,9 +23,8 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// The probe (votv-puppet-grab-feasibility-RE-2026-06-22) read grabLen frozen at 150 on the puppet --
-// that is the BP-authored hold distance. We use it directly (the puppet's grabLen Timeline never
-// advances, so there is no live value to read).
+// grabLen reads frozen at 150 on the puppet -- the BP-authored hold distance. We use it directly,
+// because the puppet's grabLen Timeline never advances and there is no live value to read.
 constexpr float kGrabLenCm = 150.f;
 
 struct PuppetHeld {
@@ -111,8 +110,8 @@ void Tick(coop::net::Session& s) {
         // Guard 2: the clump still live? (cross-tick cached pointer -> IsLiveByIndex, never bare IsLive.) The
         // re-pile DESTROYS the clump (K2_DestroyActor(self)) while a land-settle is pending (g_carry still
         // open for kLandSettleTicks) -- that is a LANDING, NOT a lost clump: erase WITHOUT releasing so the
-        // settle can COMMIT the ToPile. Only a clump gone with NO pending settle is a genuine loss (audit
-        // MEDIUM-1: release the hold so the eid is re-grabbable, else g_heldBy strands it un-grabbable).
+        // settle can COMMIT the ToPile. Only a clump gone with NO pending settle is a genuine loss: release
+        // the hold there so the eid is re-grabbable, or g_heldBy strands it un-grabbable.
         if (!R::IsLiveByIndex(it->clump, it->clumpIdx)) {
             if (coop::trash_channel::HasPendingSettle(E)) {
                 UE_LOGI("[PUPPET-DRIVE] eid=%u slot=%u -- clump consumed by a re-pile (settle pending) -> drive OFF (land commits)",
