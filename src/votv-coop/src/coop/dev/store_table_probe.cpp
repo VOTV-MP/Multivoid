@@ -127,9 +127,8 @@ void Unavailable(const wchar_t* label, const wchar_t* why) {
     UE_LOGI("store_table_probe: %ls -> UNAVAILABLE (%ls)", label, why);
 }
 
-// Log a UFunction's parameter chain. The param NAMES are an input to every candidate below, and an
-// instrument that reports its inputs beats one that only reports a verdict
-// ([[lesson-an-instrument-must-report-its-inputs-not-only-its-verdict]]).
+// Log a UFunction's parameter chain. The param NAMES are an input to every candidate
+// below, and an instrument that reports its inputs beats one that only reports a verdict.
 void LogParams(const wchar_t* label, void* fn) {
     if (!fn) {
         UE_LOGI("store_table_probe: params %ls -> function not found", label);
@@ -227,8 +226,7 @@ void TryRowFromName(void* cdo, void* fn, void* table, const std::vector<std::wst
         // rules out "never called", but a rejected FTableRowBase compat check, a null
         // Stack.MostRecentProperty in the compiled-in path, and an OutParms walk that landed on a
         // different property all produce byte-identical output here. Naming one would be a
-        // confirmation dressed as a measurement
-        // ([[feedback-probe-must-count-not-confirm]]); separating them needs a debugger, and the
+        // confirmation dressed as a measurement; separating them needs a debugger, and the
         // decision does not depend on which it is.
         Unavailable(L"(a) GetDataTableRowFromName",
                     L"dispatched for every row, returned false every time, never wrote the out "
@@ -324,8 +322,8 @@ void Tick() {
 
     // THROTTLE THE WORK, not just the log. `FindObject` is a full GUObjectArray walk that renders
     // an FName per object; running it every frame while the table is unresolved is a per-frame
-    // stall that reads as a game problem, not a probe problem (audit 2026-08-24). And give up
-    // loudly rather than retrying forever in silence.
+    // stall that reads as a game problem, not a probe problem. And give up loudly rather than
+    // retrying forever in silence.
     static uint64_t s_lastTryMs = 0;
     static int32_t  s_tries     = 0;
     const uint64_t nowMs = static_cast<uint64_t>(

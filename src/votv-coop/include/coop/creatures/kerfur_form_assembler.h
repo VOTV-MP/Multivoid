@@ -1,37 +1,18 @@
-// coop/creatures/kerfur_form_assembler.h -- the kerfur FORM-FLIP assembler:
-// first consumer of the EX_Local* VM-dispatch substrate (ue_wrap/vm_dispatch).
+// coop/creatures/kerfur_form_assembler.h -- the kerfur FORM-FLIP assembler, first
+// consumer of the EX_Local* VM-dispatch substrate (ue_wrap/vm_dispatch).
 //
-// docs/COOP_VM_DISPATCH_PLAN.md S3. The kerfur turn-on / turn-off conversion
-// verbs (spawnKerfuro / dropKerfurProp) are BP-internal EX_LocalVirtualFunction
-// self-calls -- invisible to both ProcessEvent and Func patches -- which forced
-// three probabilistic fragment-stitching crutches (fresh-spawn stamps, destroy-
-// edge capture, death-watch poll; takes 8/9/10, take-10 regressed). The substrate
-// gives us a DETERMINISTIC bracket at the verb itself; this module will grow into
-// the capture + destroy-suppress + deferred-converge assembler that retires those
-// crutches (increments 2a-2c).
+// The turn-on and turn-off verbs (spawnKerfuro / dropKerfurProp) are BP-internal
+// EX_LocalVirtualFunction self-calls, invisible to both ProcessEvent and Func
+// patches (docs/COOP_DISPATCH_VISIBILITY.md), so which successor a conversion
+// produced could only be guessed at, by proximity and timing. The substrate gives
+// a DETERMINISTIC bracket at the verb itself.
 //
-// INCREMENT 1 (observe-only, retained): register the two verbs with the substrate
-// and, on each caught dispatch, LOG the Context class + depth + the 2a-observe gate
-// counters. This proved the PERMANENT substrate delivers the catch end-to-end and
-// turned the inferred kerfur variant family into a MEASURED set (G1 13:40 take:
-// formIn/selfIn in-window, DESTROY_NO_SPAWN=0, Bindex live).
-//
-// INCREMENT 2a-CAPTURE (2026-07-14, this file now feeds behavior): on each in-bracket
-// (0x45) OR in-request-scope (CallFunction) kerfur-form successor spawn, STORE the
-// finished actor B (pointer + live index + form) in a one-shot thread-local slot. The
-// convert layer (coop::kerfur_convert) CONSUMES it at the paired A-destroy edge --
-// TryCaptureKerfurPropDestroy (client relay-suppress / host inline converge) and
-// ConvergeAfterConversion (request route) -- to bypass the (0,0,0) post-destroy
-// proximity anchor that starved the guard on every real toggle (take-8/take-10
-// misfilter class; measured live in the G1 take). The capture is the DETERMINISTIC
-// which-B; the converge/suppress logic itself is unchanged and still lives in
-// kerfur_convert. Still NO suppress/converge IN THIS FILE (2b/2c own routing) -- the
-// verb bodies run unchanged; this module only publishes B.
-//
-// Logging is gated behind [dev] vm_dispatch_log (default off) and capped, so a
-// normal session is silent and a hands-on observation run is not spammed. The capture
-// STORE + the observe counters accrue whenever the session is active (behind neither
-// gate) so a run can never end having captured/measured nothing.
+// On each in-bracket (0x45) or in-request-scope (CallFunction) kerfur-form
+// successor spawn, this module STORES the finished actor B -- pointer, live index
+// and form -- in a one-shot thread-local slot, and does nothing else with it:
+// kerfur_convert CONSUMES it at the paired A-destroy edge, which is what lets the
+// converge skip the (0,0,0) post-destroy proximity anchor. The routing stays
+// there; this file only publishes B.
 
 #pragma once
 
@@ -66,8 +47,12 @@ void ClearCapturedForm();
 bool IsCapturedForm(void* actor);
 
 // Register the two conversion verbs with ue_wrap::vm_dispatch and open the session
-// gate (SetEnabled(true)). Called from subsystems::Install (world-up, session
-// active). Idempotent -- the substrate de-dups the registrations.
+// gate (SetEnabled(true)) -- both roles, since a client needs the bracket to observe
+// its own conversion. Called from subsystems::Install (world-up, session active).
+// Idempotent: the substrate de-dups the registrations. The capture store and the
+// observe counters accrue for as long as the session is active, behind neither the
+// [dev] vm_dispatch_log gate nor its line cap, so a run cannot end having captured
+// nothing merely because logging was off.
 void Install(coop::net::Session* session);
 
 // Drive the substrate's deferred GT FName resolution + (dev) the 1/s stats line.
