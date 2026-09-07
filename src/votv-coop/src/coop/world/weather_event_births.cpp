@@ -73,7 +73,7 @@ void OnFinishSpawnPost(void* /*context*/, void* /*srcObj*/, void* result) {
     const uint32_t nSup = ++g_suppressed[match];
     if (nSup <= 5 || (nSup % 25) == 0) {
         UE_LOGW("weather_births: CLIENT suppressed uncommanded %ls birth #%u "
-                "(the newDay roll is host-owned RNG; EX_Local caller is "
+                "(the weather roll is host-owned RNG; EX_Local caller is "
                 "PE-invisible -- destroyed at FinishSpawn)",
                 kClassNameStrs[match], nSup);
     }

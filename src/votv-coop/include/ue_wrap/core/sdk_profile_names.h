@@ -572,8 +572,7 @@ inline constexpr const wchar_t* DaynightCycle_setRainParticlesFn   = L"setRainPa
 inline constexpr const wchar_t* MainGamemode_SpawnRedSkyFn      = L"spawnRedSky";
 inline constexpr const wchar_t* RedSkyEventClass               = L"redSkyEvent_C";
 inline constexpr const wchar_t* RedSkyEvent_SetFn              = L"set";
-// The other two newDay weather-event birth classes (weather_event_births' client birth catch);
-// both present in the bp_reflection dumps.
+// The other two weather-event birth classes (weather_event_births' client birth catch).
 inline constexpr const wchar_t* WeatherFogControllerClass      = L"weatherFogController_C";
 inline constexpr const wchar_t* BlackFogClass                  = L"blackFog_C";
 // SetCollisionEnabled (UPrimitiveComponent): remote_prop::OnSpawn restores default collision

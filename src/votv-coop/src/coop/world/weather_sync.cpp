@@ -411,7 +411,7 @@ void Install(coop::net::Session* session) {
     // client unsuppressed.
     if (!coop::weather_fog::Install(isHost)) return;
 
-    // The event-birth catch: a client's own newDay rolls (red sky, black fog, rolling fog) are
+    // The event-birth catch: a client's own weather rolls (red sky, black fog, rolling fog) are
     // destroyed at FinishSpawningActor, the one place the organic roll surfaces (its caller is
     // invisible to every ProcessEvent seam). The latch waits on it too.
     if (!coop::weather_event_births::Install(session, isHost)) return;

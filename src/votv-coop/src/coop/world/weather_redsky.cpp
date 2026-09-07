@@ -37,7 +37,7 @@ void* g_redSkyEventSetFn       = nullptr;
 // Receiver-side suppression: while we APPLY a remote red-sky state, the
 // mirror spawn must pass coop/weather_event_births' client birth-catch
 // (which destroys any UNCOMMANDED redSkyEvent_C birth -- the organic 1%
-// newDay roll). Atomic for the same reason as g_session.
+// hour roll). Atomic for the same reason as g_session.
 std::atomic<bool> g_echoSuppress{false};
 
 // HOST poll state (game-thread only). The organic spawnRedSky caller is an

@@ -1,13 +1,13 @@
-// coop/weather_event_births.h -- the newDay weather-event BIRTH seam (2026-08-29).
+// coop/weather_event_births.h -- the weather-event BIRTH seam.
 //
-// daynightCycle's newDay handler rolls per-day chances (measured 1% for red
-// sky) and calls gamemode.spawnRedSky / spawnBlackFog / cycle.spawnFog via
-// EX_Context + EX_LocalVirtualFunction -- PE-INVISIBLE dispatch (the
-// docs/COOP_DISPATCH_VISIBILITY.md class; bytecode-measured in
-// research/bp_reflection/daynightCycle.json). EVERY peer runs that roll, so a
-// client could sprout its OWN red sky / black fog / rolling fog the host never
-// had (the arigalit red-mist field report: one peer blood-red, the other
-// clear). The PE PRE interceptor weather_fog registers on spawnFog never sees
+// daynightCycle rolls its weather events on the settime NEW-HOUR edge -- red sky at
+// hour 12 on a 1% roll, black fog on a 0.05% roll, and rolling fog behind its own
+// enable_fog gate on fogProbability -- and calls gamemode.spawnRedSky /
+// spawnBlackFog / cycle.spawnFog through EX_Context and EX_LocalVirtualFunction,
+// which is PE-INVISIBLE dispatch (the docs/COOP_DISPATCH_VISIBILITY.md class).
+// EVERY peer runs those rolls, so a client can sprout its OWN red sky, black fog
+// or rolling fog that the host never had -- one peer blood-red, the other clear.
+// The PE PRE interceptor weather_fog registers on spawnFog never sees
 // this caller, and red sky had no client suppression at all.
 //
 // The verbs' BODIES are plain BP SpawnActor chains -> they ALL funnel through

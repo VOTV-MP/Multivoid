@@ -72,7 +72,7 @@ post it. `[V]`
 | the inventory widget's buttons | widget delegate | yes | `[V]` |
 | the hotbar switch (`updateHold`) | Blueprint-internal | no, but one synchronous call does the destroy, the spawn and the name | poll the holding actor `[V]` |
 | the pile's grab and re-pile verbs | `EX_LocalVirtualFunction` | no | the use input's pre observer reads the aimed pile while it is alive `[V]` |
-| the new-day weather rolls (red sky, black fog, rolling fog) | `EX_LocalVirtualFunction` | no | a field poll on the host; a birth catch at the finish-spawning seam on clients `[V]` |
+| the weather-event rolls (red sky, black fog, rolling fog) | `EX_LocalVirtualFunction` | no | a field poll on the host; a birth catch at the finish-spawning seam on clients `[V]` |
 | the impact damage entries | native impact system into a Blueprint event | yes, and interceptable | cancelled on any body that is not the local player `[V]` |
 | the lethal chain (damage, kill, ragdoll, fallen) | `EX_LocalVirtualFunction` | no | the death lane cuts at the native level open below it `[V]` |
 | the level travel (`loadLevel`, `transition`) | `EX_LocalVirtualFunction` | no, to both the detour and the native seam | the bytecode seam sees it `[V]` |
