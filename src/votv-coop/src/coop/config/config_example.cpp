@@ -1,22 +1,17 @@
-// coop/config/config_example.cpp -- the T8 generated settings catalog
-// `multivoid.ini.example` (ini rework arc 4; design research/findings/tooling/
-// votv-ini-arc4-T8-catalog-impl-DESIGN-2026-07-25.md, /qf 12r "that holds").
+// coop/config/config_example.cpp -- the generated settings catalog, multivoid.ini.example.
 //
-// ONE file owns the catalog GRAMMAR for both emit and verify:
-//   `;; `  prose (descriptions, allowed/range/env-twin lines -- NEVER contains
-//          '=' so even a doubly-uncommented prose line stays parse-invisible);
-//   `; `   copyable key line `; key=default` (uncomment = strip the leading
-//          "; ");
-//   bare   `[section]` headers, exactly kSectionOrder, once each (the parser
-//          is section-blind (F3) so a bare header can activate nothing, and a
-//          whole-file copy yields a headered ini the T3b writer can place
-//          into);
-//   blank  separators.
-// The catalog is REGENERATED every launch and NEVER read back as config; the
-// banner says so by NAME (so a line copied into the live ini stays true).
-// Deterministic bytes: no timestamp, numeric emission pinned to the C locale
-// (a comma LC_NUMERIC process would otherwise drift emit+parse together and
-// stay silently green -- the drill's locale canary guards the parse side).
+// One file owns the catalog GRAMMAR, for the emit here and for the verify in SelftestExampleVerify
+// below. `;; ` opens prose -- a description, the allowed values, a range, an env twin -- and never
+// contains '=', so even a doubly-uncommented prose line stays invisible to the parser. `; ` opens a
+// copyable `; key=default`, so using a setting means stripping that leading "; ". A bare
+// `[section]` header appears once each, in kSectionOrder; the parser is section-blind, so a bare
+// header activates nothing, and a whole-file copy still yields a headered ini the writer can place
+// into.
+//
+// Rebuilt on every launch, rewritten only when its bytes would change, and never read back as
+// config -- the banner says so BY NAME, so a line copied into the live ini stays true. The bytes
+// are deterministic: no timestamp, and numeric emission pinned to the C locale, since a
+// comma-decimal process would otherwise drift emit and parse together and stay silently green.
 
 #include "coop/config/config.h"
 
@@ -214,7 +209,7 @@ ExampleGen ExampleGenStatus(int* keyCountOut) {
     return g_status.load(std::memory_order_relaxed);
 }
 
-// ---- the arc-4 drill's verifier (six detectors + the round-trip) ------------
+// ---- the catalog verifier: six checks and the round-trip ---------------------
 
 int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& scratchPath) {
     using config_registry::Kind;
@@ -239,13 +234,13 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
     for (const auto& raw : lines) {
         std::string l = raw;
         while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
-        // Detector 2: wrap (~100 target, 110 tolerance).
+        // Width: ~100 target, 110 tolerance.
         if (l.size() > 110) failLog("over-long line: " + l.substr(0, 60) + "...");
         if (l.empty()) continue;
         if (l.rfind(";;", 0) == 0) continue;  // prose
         if (l.rfind("; ", 0) == 0) {
             const std::string body = l.substr(2);
-            // Detector 4: env-only pattern -- no VOTVCOOP_* in copyable shape.
+            // No env var in copyable form: a VOTVCOOP_* name may only appear in prose.
             if (body.find("VOTVCOOP_") != std::string::npos) {
                 failLog("env var in copyable form: " + body);
                 continue;
@@ -255,7 +250,7 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
                 failLog("copyable line is not key=value: " + body);
                 continue;
             }
-            // Detector 5: orphan key.
+            // Orphan key: a copyable line naming no registry row.
             const config_registry::Row* row = config_registry::FindRow(k.c_str());
             if (!row) {
                 failLog("orphan key (not a registry row): " + k);
@@ -263,7 +258,7 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
             }
             const size_t idx = static_cast<size_t>(row - rows);
             seen[idx]++;
-            // Detector 6: section placement under the CURRENT bare header.
+            // Placement: the key belongs to the section whose bare header is current.
             if (curSection != row->section)
                 failLog("key '" + k + "' under section [" + curSection + "], row says [" +
                         row->section + "]");
@@ -287,8 +282,8 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
     if (headerIdx != config_registry::kSectionCount)
         failLog("not all section headers present (" + std::to_string(headerIdx) + "/" +
                 std::to_string(config_registry::kSectionCount) + ")");
-    // Detector 3: TRI-directional exactly-once (presence half; dup half above
-    // via the counter; orphan half = detector 5).
+    // Presence: every registry row appears exactly once. The duplicate half of the same check is
+    // above, on the seen[] increment.
     for (size_t i = 0; i < count; ++i) {
         if (seen[i] == 0) failLog(std::string("registry key missing from the catalog: ") + rows[i].key);
         if (seen[i] > 1)
@@ -342,14 +337,13 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
 
 // ---- retired stored values (see config.h) ----------------------------------
 void MigrateRetiredIniValues() {
-    // `browser.lastdirect` = "127.0.0.1:7777". Unreal's default port, never ours; a host
-    // listens on kDefaultPort (47621), so the box offered a port nothing in this mod has
-    // ever bound and the failure is indistinguishable from a firewalled one. Shipped from
-    // the first server browser (43e2a843) until 2026-09-01.
+    // `browser.lastdirect` = "127.0.0.1:7777" is a retired stored value. That is Unreal's default
+    // port and never ours -- a host listens on kDefaultPort -- so the box offered a port nothing in
+    // this mod has ever bound, and the failure looked exactly like a firewalled one.
     //
-    // READ RAW, not Resolve*: Resolve falls back to the row's (now corrected) default when
-    // the key is absent, so comparing a resolved value would rewrite nothing on the installs
-    // that need it and would match on the ones that do not.
+    // READ RAW, not Resolve*: Resolve falls back to the row's (now corrected) default when the key
+    // is absent, so comparing a resolved value would rewrite nothing on the installs that need it
+    // and would match on the ones that do not.
     static const char* kAbsent = "\x01<absent>";
     IniScan st = IniScan::Ok;
     const std::string cur = internal::ReadIniValueAtPath(
