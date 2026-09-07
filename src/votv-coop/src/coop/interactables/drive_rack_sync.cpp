@@ -1,9 +1,8 @@
-// coop/drive_rack_sync.cpp -- see coop/interactables/drive_rack_sync.h.
+// coop/interactables/drive_rack_sync.cpp -- see coop/interactables/drive_rack_sync.h.
 //
-// Extracted 2026-07-18 from drive_sync.cpp (mechanical move; the rack lane's
-// bodies are verbatim v119 code). Detection = the putDriveIn/getDrive 0x45
-// marks FORWARDED by drive_sync's bracket (MarkDirtyFromVerb) + the 1 Hz
-// diff-gated sweep. Apply+prime is GT-atomic.
+// The rack lane, split out of drive_sync. Detection is the putDriveIn and getDrive marks that
+// drive_sync's bracket forwards through MarkDirtyFromVerb, plus the 1 Hz diff-gated sweep.
+// Apply and prime are atomic on the game thread.
 
 #include "coop/interactables/drive_rack_sync.h"
 
@@ -59,17 +58,16 @@ struct Pending {
 };
 std::vector<Pending> g_pending;
 constexpr auto kPendingTtl = std::chrono::seconds(10);
-constexpr size_t kPendingCap = 256;  // perf-audit F-7: drop-oldest + WARN past this
+constexpr size_t kPendingCap = 256;  // drop-oldest and WARN past this
 
-// ---- rack take deny records (audit MAJOR-1 rework: CONTENT-correlated).
-// The v118 slot-only match could reap a legitimate unrelated birth from the
-// same peer. Drives have no byte discriminator, so the correlation key is the
-// ROW CONTENT HASH: the loser's ghost carries exactly the row the WINNING
-// take removed (both raced the same pre-race state). The host records the
-// removed row's hash at every successful take apply; a deny arms
-// {senderSlot, rowHash}; the reap fires when the denied ghost's PAYLOAD
-// arrives (broadcast-at-adoption) with a matching hash -- exact, never a
-// false positive. The birth intent itself is authored normally.
+// ---- rack take deny records, correlated by CONTENT ----
+// Matching a deny on its slot alone can reap a legitimate unrelated birth from the same peer.
+// Drives carry no byte discriminator, so the correlation key is the ROW CONTENT HASH: the
+// loser's ghost holds exactly the row the WINNING take removed, both having raced the same
+// pre-race state. The host records the removed row's hash at every successful take apply, a
+// deny arms {senderSlot, rowHash}, and the reap fires when the denied ghost's payload arrives
+// with a matching hash -- exact, never a false positive. The birth intent itself is authored
+// normally.
 struct DenyRec { uint8_t slot = 0xFF; uint64_t rowHash = 0; Clock::time_point until{}; };
 DenyRec g_denies[8];
 constexpr auto kDenyTtl = std::chrono::seconds(10);
@@ -349,9 +347,9 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
 void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<uint8_t>& blob,
                          bool fromPending) {
     if (h.op == 2) {  // deny: destroy OUR ghost from that exact take (content-matched)
-        // Audit MAJOR-1: never sweep all untracked drives (a legitimate fresh
-        // birth would die too). The denied take's ghost carries the row that
-        // sat at (rackEid, idx) in OUR shadow -- match by content hash.
+        // Never sweep all untracked drives -- a legitimate fresh birth would die too. The denied
+        // take's ghost carries the row that sat at (rackEid, idx) in OUR shadow, so match by
+        // content hash.
         uint64_t wantHash = 0;
         {
             const auto now = Clock::now();
@@ -395,7 +393,7 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
         }
         return;
     }
-    // Drain-before-adopt: push any local pending diff as ops FIRST (v118 shape).
+    // Drain before adopt: push any local pending diff as ops FIRST.
     SweepRacks(/*announce*/true);
     DC::RackRow rows[DC::kRackSlots];
     if (!ParseRackCanonical(blob, rows)) {

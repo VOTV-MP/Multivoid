@@ -1,19 +1,17 @@
-// coop/dev/director/director.h -- the autonomous bot-director BRAIN (Baritone-analog).
+// coop/dev/director/director.h -- the autonomous bot-director BRAIN, a Baritone analogue.
 //
-// Design: research/findings/tooling/votv-baritone-analog-autonomous-director-DESIGN-
-// 2026-07-23.md (Part A: the brain is the [ARCH] part of Baritone that ports; the voxel
-// pathfinder is replaced by the engine's baked NavMesh). This is the minimal-but-real
-// brain: a read-model (PlayerContext ~ IPlayerContext), priority-arbitrated processes
-// (IProcess ~ IBaritoneProcess) driven by a tick loop (ControlManager ~
-// PathingControlManager). Concrete behaviours plug in as processes; arbitration is
-// EMERGENT from context (a full hand activates ClearHand, which preempts Goto) -- not a
-// hardcoded step sequence. That is what makes the bot state-aware: it reads its OWN state
-// and reacts, instead of blindly pushing input (the held-disc lesson, 2026-07-23).
+// The brain is the architectural half of Baritone that ports; the voxel pathfinder is replaced
+// by the engine's baked NavMesh. Minimal but real: a read-model (PlayerContext, for Baritone's
+// IPlayerContext), priority-arbitrated processes (IProcess, for IBaritoneProcess) driven by a
+// tick loop (ControlManager, for PathingControlManager). Concrete behaviours plug in as
+// processes, and arbitration is EMERGENT from context -- a full hand activates ClearHand,
+// which preempts Goto -- rather than a hardcoded step sequence. That is what makes the bot
+// state-aware: it reads its OWN state and reacts instead of pushing input blindly.
 //
-// DEV-ONLY (RULE 3): the director exercises the game for autonomous testing; it is NOT in
-// the shipping gameplay path. It drives the game ONLY at the human-INPUT seam
-// (AddMovementInput, InpActEvt_*, forced aim) so the bot is authority-equivalent to a
-// human client (drive-at-input-seam). All engine access is on the game thread.
+// DEV-ONLY (rule 3): the director exercises the game for autonomous testing and is not in the
+// shipping gameplay path. It drives the game ONLY at the human-input seam (AddMovementInput,
+// the input-action events, forced aim), so the bot is authority-equivalent to a human client.
+// All engine access is on the game thread.
 
 #pragma once
 
@@ -114,14 +112,16 @@ DWORD WINAPI WalkGrabDirectorThread(LPVOID arg);
 void RunContainerTakeProbe();
 DWORD WINAPI ContainerTakeProbeThread(LPVOID arg);
 
-// The two-peer CONTAINER concurrent-take RACE (container_race.cpp) -- the director's raison d'etre.
-// Both peers walk to the SAME container (deterministic shared target), open it, log ARRIVED, wait on
-// an orchestrator GO sentinel (a future-timestamp file, sub-ms simultaneity on one box -- /qf R2/§B5),
-// then fire the faithful take (openContainer->setHoverContainerSlot(bound slot)->pressButton) at once.
-// Each peer counts X locally after; mp.py sums across peers -- FULL matrix: sum 1 = correct, 2 = dup
-// (R11b confirmed), 0 = X vanished (loss bug), >2 = worse. Modes: "race" (both take) / "control"
-// (only host takes; solo sum MUST be 1 before the summation is trusted). Env: VOTVCOOP_RUN_CTAKE_RACE=1,
-// VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE. Greppable "director/ctake-race:".
+// The two-peer CONTAINER concurrent-take RACE (container_race.cpp), the director's reason for
+// existing. Both peers walk to the SAME container (a deterministic shared target), open it,
+// log ARRIVED, wait on an orchestrator GO sentinel -- a future-timestamp file, good for
+// sub-millisecond simultaneity on one box -- then fire the faithful take (openContainer, then
+// setHoverContainerSlot on the bound slot, then pressButton) at the same instant. Each peer
+// counts X locally afterwards and the driver sums across peers: 1 is correct, 2 a duplicate, 0
+// means X vanished, more is worse. Modes: "race" (both take) and "control" (only the host
+// takes, whose solo sum must be 1 before the summation is trusted). Env:
+// VOTVCOOP_RUN_CTAKE_RACE=1, VOTVCOOP_RACE_MODE, VOTVCOOP_RACE_ROLE, VOTVCOOP_RACE_GO_FILE.
+// Greppable as "director/ctake-race:".
 void RunContainerRace();
 DWORD WINAPI ContainerRaceThread(LPVOID arg);
 
