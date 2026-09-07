@@ -1,19 +1,16 @@
 // ue_wrap/actors/save_record.h -- the Fstruct_save record: its POD form, its engine codec,
 // and the TArray primitives both are built on.
 //
-// Principle-7 engine-wrapper layer. Extracted from ue_wrap/actors/inventory.cpp 2026-07-22
-// when the container-contents lane (coop/props/container_contents_sync -- take-4 R11) needed
-// the SAME codec: a container's contents are a TArray<Fstruct_save> living in the global
-// saveSlot.GObjStack, i.e. the identical serialization currency as the player inventory
-// (research/findings/inventory-items/votv-container-contents-gobjstack-RE-2026-07-22.md SS3).
-// RULE 2: ONE implementation -- inventory.cpp consumes this, it does not keep a copy.
+// Principle-7 engine-wrapper layer, and the one implementation of this codec: a container's
+// contents are a TArray<Fstruct_save> in the global saveSlot.GObjStack, exactly what the player
+// inventory is, so both lanes read it from here rather than each keeping a copy.
 //
-// THE KEY RE FACT (votv-inventory-impl-plan-2026-06-14.md): a saved item is DATA, not an
-// actor -- a Fstruct_save record (class + transform + key + typed key/value groups). Reading
-// it = walking the nested TArrays; the value-group arrays are TArray<Fstruct_mX> where each
-// Fstruct_mX wraps a single TArray<X> (-> a vector<vector<X>>), except `signals` which is a
-// TArray<Fstruct_signalDataDynamic> directly. FNames/UClasses are read as STRINGS (non-
-// portable across peers as pointers; re-interned / FindClass'd on apply).
+// The fact the whole file rests on: a saved item is DATA, not an actor -- a Fstruct_save
+// record of class, transform, key and typed key/value groups. Reading one means walking the
+// nested TArrays: each value group is a TArray<Fstruct_mX> whose element wraps a single
+// TArray<X>, giving a vector of vectors, except `signals`, which is a TArray of
+// Fstruct_signalDataDynamic directly. FNames and UClasses are read as STRINGS, since neither
+// pointer is portable across peers; they are re-interned or resolved by name on apply.
 //
 // Game thread (the write side mints FStrings + interns FNames through the engine).
 
@@ -47,16 +44,14 @@ struct SaveRecord {
     std::vector<std::vector<std::wstring>>          names;    // FName
 };
 
-// ARRAY ELEMENT STRIDE = the 16-ALIGNED struct size, NOT the dump's raw `Size: 0xF8` line.
-// Fstruct_save embeds an FTransform (16-aligned FQuat) at 0x10, so the struct's alignment is 16
-// and its TArray element stride / embedded-field size is Align(0xF8,16) = 0x100. This is the
-// SAME value the SDK reports for every embedded Fstruct_save field (struct_equipment.hpp data
-// @0x10..0x110 = 0x100; saveSlot.hpp:38 drone size 0x100; dirthole_item/drone/eriePlush/kerfur).
-// The engine's native loadObjects() iterates inventoryData at THIS stride; a mismatch makes it
-// read element i+1's class at the wrong byte -> wild UClass* deref + heap over-read. (Using the
-// raw 0xF8 was a real N>=2 crash, caught by the 2026-06-14 adversarial verify panel.) The dump's
-// bottom-line `Size:` is PropertiesSize; the per-field embedded `size:` annotation is the stride.
-// See [[feedback-tarray-stride-aligned-not-raw-size]].
+// ARRAY ELEMENT STRIDE is the 16-ALIGNED struct size, not the dump's raw `Size:` line.
+// Fstruct_save embeds an FTransform, whose FQuat is 16-aligned, so the struct's own alignment
+// is 16 and its element stride is the size rounded up to that -- which is what the SDK reports
+// for every embedded Fstruct_save field. The engine's native loadObjects() walks inventoryData
+// at THIS stride, so using the unrounded size reads element i+1's class at the wrong byte: a
+// wild class pointer and a heap over-read, which is a crash from the second element onward.
+// In a dump the bottom-line `Size:` is PropertiesSize; the per-field embedded `size:` is the
+// stride.
 inline constexpr int32_t kSaveStride   = 0x100;
 inline constexpr int32_t kMxStride     = 0x10;  // Fstruct_mX wraps a single TArray<X> @ +0; already 16-aligned
 inline constexpr int32_t kSignalStride = 0x70;  // Fstruct_signalDataDynamic; no 16-aligned member

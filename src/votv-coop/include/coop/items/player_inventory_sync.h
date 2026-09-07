@@ -1,19 +1,15 @@
-// coop/player_inventory_sync.h -- per-player client inventory (host-persisted, GUID-keyed).
+// coop/items/player_inventory_sync.h -- a per-player client inventory, host-persisted and
+// keyed by GUID.
 //
-// Replaces the v56 whole-host-save inventory inheritance with a Minecraft-style per-player
-// inventory persisted on the HOST at SaveGamesDir()/<save_name>/coop_players/<guid>.json,
-// keyed by the client's durable GUID -- hex(SHA-256(pubkey)[0..16]) of the key that
-// peer PROVED at admission (coop/net/peer_identity.h), never a value it sent.
+// Each player keeps their own inventory instead of inheriting the host save's, in the
+// Minecraft shape: the HOST persists it at SaveGamesDir()/<save>/coop_players/<guid>.json,
+// keyed by the client's durable GUID -- derived from the key that peer PROVED at admission
+// (coop/net/peer_identity.h), never from a value it sent.
 //
-// Plan: research/findings/inventory-items/votv-inventory-impl-plan-2026-06-14.md. Design (Topic 2):
-// votv-wisp-and-client-inventory-RE-2026-06-12.md.
-//
-// INCREMENT 1 (this file's current scope): identity is wired (Join carries the GUID), and the
-// HOST ensures each joining peer's per-save inventory FILE exists (an empty-inventory
-// placeholder). No inventory DATA is read/serialized/applied yet -- that is Increment 2
-// (serializer + read layer), Increment 3 (client->host stream + host persist), and Increment 4
-// (host->client apply-on-join, gated behind an SP probe). Each increment is added here as it
-// lands; this header grows with them (one feature per file, modular cap honored).
+// The four halves, in the order a session uses them: the host makes sure a joining peer's
+// file exists; the host sends that peer its saved inventory at the connect replay, which the
+// client stashes and writes into the save object before the world materialises; the client
+// streams its inventory back as it changes; the host persists each complete, changed blob.
 
 #pragma once
 
@@ -26,20 +22,20 @@ namespace coop::player_inventory_sync {
 // Cache the session pointer. Call once at boot (subsystems Install).
 void Install(coop::net::Session* session);
 
-// INCREMENT 3 -- transport + host persistence.
+// ---- transport and host persistence ----
 
 // Bidirectional PlayerInventoryBlob receiver (event_feed -> here); branches by role:
 //   * HOST receiving from a CLIENT slot (1..): one chunk of that client's inventory STREAM.
 //     Reassembles (per-sender) and, on a complete + CHANGED blob, persists it to that peer's
 //     coop_players/<guid>.json (atomic, magic + FNV integrity, .bak of last good, 15s rate-limit).
-//   * CLIENT receiving from the HOST (slot 0): one chunk of the host's ON-JOIN apply blob (Inc 4,
-//     host->client). Reassembles and, on completion, deserializes + stashes it as the pending
+//   * CLIENT receiving from the HOST (slot 0): one chunk of the host's ON-JOIN apply blob.
+//     Reassembles and, on completion, deserializes + stashes it as the pending
 //     per-player inventory (HasPendingApply()), to be written into the save object by the
 //     SaveObjectReadyHook before the world materializes.
 // Game thread.
 void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot);
 
-// INCREMENT 4 -- the live apply on join (host->client + the SaveObjectReadyHook).
+// ---- the live apply on join: host to client, then the save-object-ready hook ----
 
 // HOST: send peer `peerSlot` its persisted per-player inventory (read from coop_players/<guid>.json,
 // FNV-verified, .bak fallback, EMPTY on missing/corrupt -- fail-safe, never leaks another player's
@@ -65,17 +61,16 @@ void OnDisconnect();
 // (pure file I/O on captured bytes -- safe on the WM_CLOSE thread). No-op off the host.
 void FlushAllToDisk();
 
-// Per-tick. INCREMENT 2 scope: a one-shot READ-VERIFY self-test (ini inventory_selftest=1) --
-// ~5s after world-up it reads the LOCAL saveSlot inventory via ue_wrap::inventory::ReadAll and
-// logs the item counts + the first item's class/key/group sizes, proving the structural read
-// works. (Increment 3 fills this with the real client->host inventory stream.) No-op unless
-// the ini flag is set. Game thread.
+// Per-tick: the client's outbound inventory stream, or the host's persist pass, by role. It
+// also carries a one-shot read-verify self-test (ini inventory_selftest=1) that reads the local
+// saveSlot inventory a few seconds after world-up and logs what it found; that part is a no-op
+// unless the flag is set. Game thread.
 void Tick();
 
 // HOST-only: ensure peer `peerSlot`'s per-save inventory file exists. Builds
 // <SaveGames>/<hostSlot>/coop_players/<guid>.json (guid = the Join-carried GUID for that
 // slot); creates the coop_players/ dir + an empty-inventory placeholder file if absent.
-// No-op off the host, or when the peer's GUID hasn't arrived yet (pre-v73 / Join not landed).
+// No-op off the host, or while the peer's GUID has not arrived (its Join has not landed).
 // Called at the host's connect-replay edge (subsystems ConnectReplayForSlot). Game thread.
 void EnsurePlayerFile(int peerSlot);
 
