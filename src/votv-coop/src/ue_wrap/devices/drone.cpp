@@ -242,12 +242,12 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
     // 1. The blueprint's own edge form: SetActive(want, bReset=false) only when IsActive() != want.
     //    Load-bearing both ways -- it deactivates on leaving the ground AND re-arms the one-loop
     //    system after it self-completes mid-hover, which a latched rising-edge replay cannot do.
-    //    Getting this wrong is half of what once left the dust invisible.
     if (ComponentIsActive(dust) != on) SetComponentActive(dust, on);
     if (!on) return;
     // 2. Pin the component to the host's ground-trace hit. eff_droneDust is bAbsoluteLocation with
     //    NO relative offset, so unmoved it renders at WORLD ORIGIN and its fixed relative bounding
-    //    box is frustum-culled -- the other half of the invisible dust. Same call form as the
+    //    box is frustum-culled, so the dust draws invisibly rather than not at all. Same call
+    //    form as the
     //    blueprint: sweep=false, teleport=false. The blueprint VInterpTo's toward the hit; we do
     //    not, because the host streams its already-interpolated component location at 20 Hz.
     if (g_setWorldLocFn) {

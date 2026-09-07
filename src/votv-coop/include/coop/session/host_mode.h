@@ -1,6 +1,5 @@
-// coop/session/host_mode.h -- HOW a hosted session is reachable. Two answers, Direct and Brokered,
-// because there were never three: they differ only in who introduces the peers, and the enum below
-// says how each of them does it.
+// coop/session/host_mode.h -- HOW a hosted session is reachable. Two answers, Direct and Brokered.
+// They differ in one thing, who introduces the peers, and the enum below says how each does it.
 //
 // Whether the session is ANNOUNCED to the master is a SEPARATE axis, `listed`, with its own field.
 // There is deliberately no third mode and no accept filter that refuses remote addresses: a port
@@ -10,7 +9,8 @@
 // lane.
 //
 // THE INDEPENDENCE PROPERTY, which is the point of the Direct family: a Direct host with
-// `listed == false` makes ZERO master calls -- no announce, no heartbeat, no signaling. `Brokered`
+// `listed == false` makes ZERO master calls for the session -- no announce, no heartbeat, no
+// signaling; only opening the server browser contacts the master, whatever the mode. `Brokered`
 // cannot promise that, because the master is a relay game's only rendezvous.
 
 #pragma once

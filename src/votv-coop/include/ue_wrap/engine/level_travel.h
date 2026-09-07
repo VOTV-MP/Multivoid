@@ -26,8 +26,8 @@ namespace ue_wrap::engine::level_travel {
 // native function called from the BP VM, so a UFunction dispatch made from here re-enters our own
 // ProcessEvent detour: FireInterceptors runs every interceptor -- one returning true would SKIP the
 // very verb you called -- FirePreObservers then runs every PRE-observer, and the post-observers
-// follow, all inside the detoured OpenLevel frame; that nesting has been measured corrupting a
-// mid-verb conversion elsewhere. So a veto may read cached offsets, atomics and GUObjectArray
+// follow, all inside the detoured OpenLevel frame -- which is how a dispatch from here corrupts a
+// verb already in flight. So a veto may read cached offsets, atomics and GUObjectArray
 // slots, but MUST NOT dispatch a UFunction, allocate through the engine, or take a game-thread
 // lock; work the decision implies belongs on the next pump task.
 //

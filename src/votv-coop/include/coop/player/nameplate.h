@@ -1,11 +1,9 @@
 // coop/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
 //
-// Gameplay/network layer (principle 7). The label used to be a 3D world-space
-// UWidgetComponent the ENGINE rendered; it is now drawn by our OWN ImGui overlay
-// as a screen-space PROJECTION -- the proper MTA nametag shape (project the head
-// world point to the screen, fade with distance, draw centred outlined text),
-// finally possible because we control an ImGui canvas (VOTV never runs the stock
-// HUD canvas, which is why the old code had to fall back to a world widget).
+// Gameplay/network layer (principle 7). The label is drawn by our OWN ImGui overlay as a
+// screen-space PROJECTION -- the MTA nametag shape: project the head world point to the
+// screen, fade with distance, draw centred outlined text. It takes an ImGui canvas of our
+// own, because VOTV never runs the stock HUD canvas.
 //
 // This module is the GAME-THREAD half: Update() projects each live remote puppet's
 // head world point to viewport-pixel screen coords via the local player's
@@ -46,7 +44,7 @@ struct Plate {
     uint8_t voiceIcon = 0;   // coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
     uint32_t colorRGB = 0;   // packed custom nick color (coop::nick_color; 0 = white)
     float bubbleAlpha = 0.f; // overhead chat bubble fade (0 = none; rides the plate anchor)
-    char  bubble[208] = {};  // 12g: the peer's last chat message, UTF-8 (chat_bubbles)
+    char  bubble[208] = {};  // the peer's last chat message, UTF-8 (chat_bubbles)
     char  nick[coop::text::kNickBufBytes] = {};
 };
 
