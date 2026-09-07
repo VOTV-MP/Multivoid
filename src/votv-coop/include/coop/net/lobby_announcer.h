@@ -1,19 +1,18 @@
 // coop/net/lobby_announcer.h -- the host side of the master plane.
 //
-// MTA precedent: CMasterServerAnnouncer / CMasterServer (announce on host start +
-// periodic reminder/heartbeat, last-seen kept alive) -- reference/mtasa-blue/Server/
-// mods/deathmatch/utils/CMasterServerAnnouncer.h. We diverge: one master (not a
-// redundant list yet), a 30s heartbeat (< the master's 120s TURN-cred TTL / 300s
-// lobby expiry, per design 7/8), and an explicit leave on stop.
+// MTA is the precedent: CMasterServerAnnouncer and CMasterServer announce on host start, then keep
+// the lobby alive with a periodic heartbeat. We diverge in three ways: one master rather than a
+// redundant list, a 30 s heartbeat -- under the master's 120 s TURN-credential lifetime and its 300
+// s lobby expiry -- and an explicit leave on stop.
 //
-//   POST /v1/host       -> sessionId + opaque lobbyId + host token + identities + ICE
-//   POST /v1/heartbeat   (every 30s) -> keep the lobby alive + refresh players_cur/listed
-//   POST /v1/visibility  -> the "hide from browser" toggle (design 5.6)
-//   POST /v1/leave        on stop
+//   POST /v1/host        sessionId, an opaque lobbyId, the host token, identities and ICE
+//   POST /v1/heartbeat   every 30 s: keep the lobby alive, refresh the current player count
+//   POST /v1/visibility  the "hide from the browser" toggle
+//   POST /v1/leave       on stop
 //
-// Threading: Host() blocks (call on a worker). On success it spawns the heartbeat
-// worker thread; Stop() signals + joins it. The creds are mutex-guarded (the
-// heartbeat thread reads them; SetListed writes listed_).
+// Threading: Host() blocks, so call it on a worker. On success it spawns the heartbeat worker
+// thread, and Stop() signals and joins it. The credentials are mutex-guarded, since the heartbeat
+// thread reads them while SetListed writes listed_.
 
 #pragma once
 
@@ -45,17 +44,17 @@ class LobbyAnnouncer {
 public:
     ~LobbyAnnouncer();
 
-    // Blocking POST /v1/host. CALL ON A WORKER THREAD. On success stashes the creds
-    // and STARTS the 30s heartbeat thread (keeping the lobby alive). A prior lobby is
-    // Stop()'d first. Returns the HostInfo (ok=false on failure -> nothing started).
-    // `directPort` != 0 announces a DIRECT lobby (2026-06-11): the master
-    // records conn="direct" + this LISTEN port and advertises the announce's
-    // source ip -- /v1/join then returns {conn,addr} for a plain UDP connect
-    // instead of ICE creds. 0 = the normal P2P lobby.
-    // The announce body carries the mod identity itself (the Paper pair: game =
-    // coop::version::kGameTarget, proto = kProtocolVersion the build number) --
-    // single authority, no caller-passed version string (the old param let a
-    // stale duplicate ride).
+    // Blocking POST /v1/host. CALL ON A WORKER THREAD. On success it stashes the credentials and
+    // STARTS the 30 s heartbeat thread that keeps the lobby alive; a prior lobby is Stop()ped
+    // first. Returns the HostInfo, with ok=false on failure, in which case nothing was started.
+    //
+    // A POSITIVE `directPort` announces a DIRECT lobby: the master records conn="direct" with this
+    // LISTEN port and advertises the announce's source ip, so /v1/join returns {conn, addr} for a
+    // plain UDP connect instead of ICE credentials. Zero is the normal P2P lobby.
+    //
+    // The announce body carries the mod identity itself -- the version pair, game from
+    // coop::version::kGameTarget and proto from kProtocolVersion -- so there is a single authority
+    // and no caller-passed version string, which is what once let a stale duplicate ride.
     HostInfo Host(const std::string& masterUrl, const std::string& name,
                   const std::string& world,
                   bool locked, int playersMax, int timeoutMs, int directPort = 0);
