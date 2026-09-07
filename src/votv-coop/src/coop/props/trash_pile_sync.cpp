@@ -1,7 +1,7 @@
-// coop/trash_pile_sync.cpp -- see header. The grime_sync shape with an int pair +
-// depletion-destroy semantics (the third keyed channel, deliberately NOT generalized
-// yet: float-scalar x2 vs int-pair-with-destroy differ enough that a forced common
-// engine would be speculative -- revisit if a FOURTH appears).
+// coop/props/trash_pile_sync.cpp -- see the header. The grime_sync shape with an int pair and
+// depletion-destroy semantics: a third keyed channel, deliberately NOT generalised yet, since
+// two float scalars and an int pair with a destroy differ enough that a forced common engine
+// would be speculative. Revisit if a fourth appears.
 
 #include "coop/props/trash_pile_sync.h"
 
@@ -14,8 +14,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
-#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "ue_wrap/engine/world_identity.h"     // Generation() -- the gen stamp that makes a dead-world index a miss
+#include "coop/element/object_scan_hub.h"      // the shared sliced scan pass that builds the index
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
@@ -56,9 +56,9 @@ Clock::time_point g_nextRebuild{};
 constexpr auto kPollEvery    = std::chrono::milliseconds(50);
 constexpr auto kRebuildEvery = std::chrono::seconds(2);
 constexpr auto kPendingTtl   = std::chrono::seconds(25);
-// Death-watch proximity gate: every writer (E-grab / vacuum / broom) acts at the
-// player, so a genuine depletion dies NEAR the local camera. Far deaths are
-// sublevel stream-outs. 8 m -- the grime super-sponge + v52 pile precedent.
+// Death-watch proximity gate: every writer (the E-grab, the vacuum, the broom) acts at the
+// player, so a genuine depletion dies NEAR the local camera and a far death is a sublevel
+// stream-out. Eight metres, the same radius the grime super-sponge uses.
 constexpr float kDeathNearCm = 800.f;
 
 uint64_t Fnv1a(const std::wstring& s, uint64_t h) {
@@ -66,16 +66,16 @@ uint64_t Fnv1a(const std::wstring& s, uint64_t h) {
     return h;
 }
 
-// One GUObjectArray walk: (re)index every live trashBitsPile by key. Existing
-// entries keep their poll baselines (re-primed only for NEW keys). Logs
-// (count, keysHash) on population change -- host==client hash is the smoke
-// signal for cross-peer key identity (~392 placed piles expected).
-// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
-// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks.
-// settleScans=2 kept (not the static-channel 15): this class CHURNS at runtime (depleted pile
-// self-destructs + spawner re-spawns) and every churn re-arms the full demand -- 15 would keep
-// a collecting session in permanent full-demand mode (the L5 hitch). Entries are merged
-// IN PLACE (no full-pass clear) exactly as before: persistent keys keep their poll baselines.
+// The index: every live trashBitsPile by key, merged IN PLACE, so a persistent key keeps its
+// poll baseline and only a NEW key is primed. Logs (count, keysHash) when the population
+// changes; an equal hash on host and client is the cross-peer key-identity signal, over the
+// few hundred piles a placed world holds.
+//
+// This module runs no walk of its own: it is a consumer of the shared sliced scan pass, whose
+// callbacks drive everything below. Its settle is 2 passes rather than the 15 a static channel
+// uses, because this class CHURNS at runtime -- a depleted pile destroys itself and the spawner
+// replaces it -- and every churn re-arms the full demand, so 15 would hold a collecting session
+// in permanent full-demand.
 uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
 bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
 struct ScanFound { std::wstring key; void* obj; int32_t idx; ue_wrap::FVector loc; };
@@ -120,11 +120,11 @@ size_t HubPassComplete(void*, bool /*isFull*/, uint32_t worldGen) {
 }
 
 bool HubEnsureResolved() {
-    // audit W-1: report readiness HONESTLY so the hub benches this consumer while the class
-    // is unresolved -- IsTrashBitsPile's ResolveExtraBases re-runs FindClass (a full array
-    // walk) on EVERY call until all three extra bases resolve, and the hub calls IsInstance
-    // once per memo-missed class per pass; a stub `return true` discarded exactly the
-    // protection Consumer::EnsureResolved exists to give. One resolve attempt per pass.
+    // Report readiness HONESTLY, so the hub benches this consumer while the class is unresolved.
+    // IsTrashBitsPile calls ResolveExtraBases, which re-runs FindClass -- a full array walk -- for
+    // each base not yet found, on every call until all three are; and the hub asks IsInstance once
+    // per memo-missed class per pass. A stub `return true` would discard exactly the protection
+    // EnsureResolved exists to give. One resolve attempt per pass.
     return UP::EnsureTrashBitsPileResolved();
 }
 
@@ -162,7 +162,7 @@ void ApplyToLive(Entry& e, const std::wstring& key, int16_t wa, int16_t wb, bool
     if (!UP::ReadTrashPileAmounts(e.actor, la, lb)) return;
     int32_t na, nb;
     if (adopt) {
-        na = wa; nb = wb;  // host snapshot: adopt verbatim
+        na = wa; nb = wb;  // host snapshot: take both as sent
     } else {
         na = (wa < la) ? wa : la;  // live edge: per-component MIN (monotone-down)
         nb = (wb < lb) ? wb : lb;
@@ -199,9 +199,8 @@ void OnReliable(const coop::net::TrashPileStatePayload& payload, uint8_t senderP
     for (uint8_t i = 0; i < payload.key.len && i < 31; ++i)
         key.push_back(static_cast<wchar_t>(static_cast<unsigned char>(payload.key.data[i])));
     if (key.empty()) return;
-    // audit W-2: a stale-gen index holds another world's piles (R-1 class) -- treat it as a
-    // miss so the apply PARKS in g_pending and lands after the hub's next pass, never on a
-    // dead-world actor.
+    // A stale-gen index holds another world's piles, so treat it as a miss: the apply then PARKS
+    // in g_pending and lands after the hub's next pass, never on a dead-world actor.
     auto it = IndexCurrent() ? g_index.find(key) : g_index.end();
     if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx)) {
         ApplyToLive(it->second, key, payload.amountA, payload.amountB, adopt, senderPeerSlot);
@@ -235,9 +234,9 @@ void NotifyWireDestroy(const std::wstring& key) {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh;
-    // a pile churned in that window reaches the joiner via the depleted-key replay below /
-    // the claim sweep (both pre-existing backstops for exactly this race).
+    // No forced rebuild here: the hub keeps the index at most one pass (about two seconds) stale,
+    // and a pile churned inside that window reaches the joiner through the depleted-key replay
+    // below or the claim sweep, both of which exist for this race already.
     size_t sent = 0;
     for (auto& [key, e] : g_index) {
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
@@ -331,10 +330,10 @@ void Tick(bool inTransition) {
             } else if (a > e.lastA || b > e.lastB) {
                 e.lastA = a; e.lastB = b;  // BeginPlay re-roll / save reload: re-prime, never propagate
             }
-            // NO per-poll GetActorLocation here (audit CRIT-1): it is a ProcessEvent
-            // dispatch -- ~400 piles x 20 Hz would add ~8000 PE/s through our own
-            // detour. Piles are save-placed and never move; the position captured at
-            // RebuildIndex time (2 s throttle) is the death-watch's proximity input.
+            // No per-poll GetActorLocation here: it is a ProcessEvent dispatch, and a few hundred
+            // piles at the 20 Hz poll would push several thousand dispatches a second through our
+            // own detour. Piles are save-placed and never move, so the position captured when the
+            // index is built (on the two second throttle) is the death-watch's proximity input.
         }
         ++it;
     }
