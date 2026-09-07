@@ -100,37 +100,19 @@ void Tick() {
     if (g_tick++ < 300) return;
 
     // SOLO ONLY. This probe MUTATES -- a synthetic use() plus the group selftest's four
-    // writes -- and its window lands squarely in a joining client's connect-snapshot. Armed
-    // on a host during `mp.py smoke` it cost the client its join: PASS with the flag off,
-    // "expected 2 peers, got 1" with it on, twice, everything else identical. It is a solo
-    // measurement instrument and this makes that its contract rather than its documentation.
+    // writes -- and its window lands squarely in a joining client's connect-snapshot:
+    // armed on a host it cost the client its join, twice, everything else identical. It
+    // is a solo measurement instrument, and this guard makes that its contract.
     //
-    // NOBODY ELSE HERE, EVER -- not "no session". Three things this guard has to get right,
-    // and the first two versions each got one of them wrong.
-    //
-    // (1) It must be SATISFIABLE WITH ITS OWN CALLER. The version before this refused on
-    //     `running() || connected()`, which made the probe unreachable on EVERY launch rather
-    //     than merely hard to arm: net_pump::Tick is the only path that reaches this Tick (via
-    //     subsystems::TickGameplay), and session_runtime.cpp calls net_pump::Tick only when
-    //     running() is true -- at :298 and :336 inside loops that break on !running(), and at
-    //     :696 under `if (running)`. All three agree, so running() is a PRECONDITION of getting
-    //     here and refusing on it is refusing always.
-    //     `[[lesson-a-guard-can-be-unsatisfiable-with-its-own-caller]]`
-    //
-    // (2) It must count the peers that are ARRIVING, not just the seated ones.
-    //     connectedPeerCount() counts slots whose lanes are configured; a joiner spends its
-    //     entire AuthHello/Challenge/Proof round trip in the pending band, where that reads
-    //     ZERO. Hence the sum with pendingPeerCount(). (Measured 2026-09-01: in one smoke the
-    //     one-shot fired at 16:01:19 and the client was accepted into PENDING at 16:01:20.)
-    //
-    // (3) It must not RE-OPEN. The refusal latches: once any peer has been seen, this instrument
-    //     is done for the process. Without that, a host whose only client disconnects drops back
-    //     to zero and the mutating one-shot fires into a live hosted session -- a state the
-    //     over-broad first guard did at least make unreachable.
-    //
-    // The earlier mechanism note here was wrong and is not worth preserving: the breakage was
-    // not "the mutation landed just before the client arrived". What the runs actually show is
-    // an arriving peer, which is what (2) is about.
+    // NOBODY ELSE HERE, EVER -- not "no session". Three things it has to get right, and
+    // the first two versions each got one of them wrong:
+    //   1. Satisfiable WITH ITS OWN CALLER. Refusing on running() made the probe
+    //      unreachable on every launch: net_pump::Tick is the only path that reaches
+    //      this Tick, and session_runtime calls it only while running().
+    //   2. Count the ARRIVING peers, not just the seated ones -- a joiner spends its
+    //      whole handshake in the pending band, where connectedPeerCount() reads zero.
+    //   3. Never RE-OPEN. The refusal latches, or a host whose only client disconnects
+    //      drops back to zero and the mutating one-shot fires into a live session.
     const auto& sess = harness::session_runtime::Session();
     const int present = sess.connectedPeerCount() + sess.pendingPeerCount();
     if (present > 0) g_everSawPeer = true;
@@ -175,7 +157,7 @@ void Tick() {
     RunGroupApplySelftest();
 }
 
-// ---- GROUP-APPLY SELFTEST (2026-09-01) -----------------------------------------------
+// ---- GROUP-APPLY SELFTEST -------------------------------------------------------------
 // The group lane's whole premise is that runTrigger index 1/2 moves a light group even where
 // index 0 -- the verb a switch press uses -- refuses because the group's gate is shut. That is
 // bytecode-derived; this executes it. It matters because at idle two peers AGREE, so an
