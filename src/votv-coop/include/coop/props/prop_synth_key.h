@@ -6,7 +6,8 @@
 // FName(NAME_None) at fresh spawn -- so without a synthetic Key the "None" guard in the Init POST
 // broadcast path would silently drop every chipPile, clump and trashBits morph.
 //
-// Single-caller machinery (GrabObserver_Aprop_Init_POST_Body) with no session or role dependency.
+// Four callers, none with a session or role dependency: the Init-POST grab observer, the
+// container extract, the trash-collect held path and the host census's duplicate re-key.
 // Keep this file under 200 lines: it is a single-concern utility.
 //
 // Synthetic format: `cs_<process-low32>_<monotonic-counter>`, a per-peer namespace plus a monotonic

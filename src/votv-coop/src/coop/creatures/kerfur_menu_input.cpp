@@ -80,7 +80,7 @@ void OnUseInputPre(void* self, void* /*function*/, void* /*params*/) {
     s_last[kerfur] = now;
     // Record via the existing relay: queued here -> kerfur_command::Tick sends a KerfurCommand ->
     // host OnCommandRequest -> ExecuteHostCommand (RunActionName for State verbs / the ownership
-    // follow loop). isHost=false: this seam is CLIENT-only (the host's own use is stream-mirrored).
+    // follow loop). This seam is CLIENT-only; the host's own use is stream-mirrored.
     coop::kerfur_command::TryRecordMenuCommand(kerfur, verb, /*isClient=*/true);
     UE_LOGI("kerfur_menu_input: client radial verb '%ls' on kerfur=%p (actionIndex=%d State=%u) -> relayed to host",
             verb, kerfur, idx, static_cast<unsigned>(state));
