@@ -1,12 +1,14 @@
 // coop/world/alarm_sync.cpp -- see coop/world/alarm_sync.h.
 //
-// Bytecode ground truth (docs/events/alarm.md, disasm 2026-07-05):
-//   - trigger_alarm_C.runTrigger(owner, index) is natively IDEMPOTENT (IntToBool(index) ==
-//     active -> no-op) -- redundant applies are free; that property breaks every echo loop
-//     this lane could otherwise create.
-//   - Both native callers (analogDScreenTest scan ON, panel_radar stop-press OFF) dispatch it
-//     EX_VirtualFunction -- ProcessEvent-INVISIBLE -- so the lane POLLS the `active` field
-//     (the L2 device-layer pattern), never hooks the verb.
+// Two facts from the blueprint shape this lane:
+//   - trigger_alarm_C.runTrigger(owner, index) is natively IDEMPOTENT: it compares
+//     IntToBool(index) against `active` and returns when they already agree. Redundant
+//     applies are free, and that property is what breaks every echo loop this lane could
+//     otherwise create.
+//   - Every native call site dispatches it EX_VirtualFunction, which is ProcessEvent-
+//     invisible, so the lane POLLS the `active` field -- the device-layer pattern -- and
+//     never hooks the verb. The sites are the screen test (which turns the alarm both on
+//     and off) and the radar panel's stop press (off).
 
 #include "coop/world/alarm_sync.h"
 
