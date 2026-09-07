@@ -1,37 +1,18 @@
-// coop/props/pile_spawn_bind.h -- the pile SPAWN-TIME native-bind mechanism.
+// The pile SPAWN-TIME native-bind mechanism.
 //
-// ONE concept: at a host pile PROXY spawn, reconcile that proxy against the client's
-// OWN save-loaded native chipPile set, using a lazily-built bracket-scoped GUObjectArray
-// index. This is the SPAWN-time half of the keyless-pile reconcile -- it is driven by
-// remote_prop_spawn during a PropSpawn, NOT by the quiescence sequence. (The DRAIN-time
-// half -- the deferred queues this can arm + the ordered sweep that drains them -- lives
-// in coop/element/quiescence_drain.h, the join-window ORDER owner. The split was the
-// 2026-06-30 anti-smear refactor: pile_reconcile.cpp held BOTH this spawn mechanism AND
-// the order owner's queues, plus a generic kerfur destroy queue -- three concepts in one
-// mis-named file. [[feedback-one-owner-order-axis]])
+// At a host pile PROXY spawn, reconcile that proxy against the client's OWN
+// save-loaded native chipPile set, through a lazily-built bracket-scoped
+// GUObjectArray index rather than one walk per pile. The joiner's world came from
+// the host's save, so its chipPiles ARE the host's piles at the same positions --
+// which is why a keyless-eid expression can bind to a local pile instead of
+// sweep-destroying ~870 of them and spawning mirrors (docs/piles.md).
 //
-// EXTRACTED from coop/props/pile_reconcile.cpp 2026-06-30; that file's group-A symbols
-// (the bracket index + TryDestroyTwin + FindAndConsumeAdoptCandidate + the [PILE-DELTA]
-// probe) moved here byte-for-byte; only the miss-arm now calls quiescence_drain::Arm*
-// across modules (the spawn mechanism CAPTURES into the order owner's queue).
+// This is the SPAWN-time half only, driven by remote_prop_spawn during a PropSpawn;
+// the DRAIN-time half -- the deferred queues this arms and the ordered sweep that
+// drains them -- belongs to coop/element/quiescence_drain.h, the order owner.
 //
-// WHY this works: with the save-transfer join the client's world is LOADED FROM THE
-// HOST'S OWN SAVE -- its chipPiles are the same piles, settled at the same positions.
-// So the host's keyless-eid pile expression is reconciled against the client's OWN local
-// pile (instead of sweep-destroying all ~870 and fresh-spawning mirrors). Two paths, both
-// built off ONE lazily-built bracket-scoped index (NOT one walk per pile):
-//   - TryDestroyTwin: a host pile PROXY (AStaticMeshActor) spawned at `eid`; the client's
-//     co-located save-loaded NATIVE twin is the visible DUP -> destroy it so the proxy is
-//     the sole mirror. The match position is a PARAMETER: v86 Path 1c passes the pile's
-//     SAVE-TIME position (the frozen value both peers loaded) so a pile the host MOVED in
-//     the join-load window still reconciles. On a save-time-key MISS, the twin is recorded
-//     on the order owner (quiescence_drain::ArmPendingSaveTimeTwin) for the post-quiescence
-//     retry (the native@old loads ~10s later, in the async tail).
-//   - FindAndConsumeAdoptCandidate: the eid-only fresh-spawn fallback ADOPTS a live same-
-//     class/chipType native within 30cm onto the host eid (the caller registers the mirror).
-//
-// Game-thread ONLY (the event_feed drain). No mutex -- same contract as the claim set it
-// reads. The `claimed` set (remote_prop_spawn's g_claimedActors) is passed in read-only.
+// Game-thread ONLY (the event_feed drain), no mutex: the same contract as the
+// claim set it reads. `claimed` (remote_prop_spawn's g_claimedActors) is read-only.
 
 #pragma once
 
@@ -49,17 +30,18 @@ namespace coop::pile_spawn_bind {
 // drain at quiescence / steady-state), cleared only at session teardown.
 void Reset();
 
-// A host pile PROXY for `payload.elementId` just spawned. Destroy the client's save-loaded
-// NATIVE twin matched by `matchPos` (the SAVE-TIME key under Path 1c; the proxy's render
-// pose pre-1c). chipType-gated, ambiguous-skip (>1 within 1cm -> keep all). Lazily builds
-// the index on first call. No-op if no twin.
+// A host pile PROXY for `payload.elementId` just spawned. Destroy the client's
+// save-loaded NATIVE twin matched by `matchPos`. chipType-gated, ambiguous-skip
+// (>1 within 1cm -> keep all). Lazily builds the index on first call. No-op if no
+// twin.
 //
-// `isSaveTimeKey` (v86 Path 1c): true when matchPos is the pile's frozen SAVE-TIME position
-// (payload.hasMatchPos). On a MISS (matchCount==0) with isSaveTimeKey, the twin is recorded
-// on the order owner (quiescence_drain::ArmPendingSaveTimeTwin) for a retry at the post-
-// quiescence sweep -- because the world-ready snapshot burst runs BEFORE the client's async
-// native-pile load-tail has drained, so a moved pile's save-loaded native@old may not exist
-// yet at this call (it loads in the tail ~10s later).
+// `isSaveTimeKey`: true when matchPos is the pile's frozen SAVE-TIME position
+// (payload.hasMatchPos). On a MISS (matchCount==0) with isSaveTimeKey, the twin is
+// recorded on the order owner (quiescence_drain::ArmPendingSaveTimeTwin) for a
+// retry at the post-quiescence sweep -- the world-ready snapshot burst runs BEFORE
+// the client's async native-pile load-tail has drained, so a moved pile's
+// save-loaded native at the old position may not exist yet at this call; it loads
+// in the tail about ten seconds later.
 void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
                     const ue_wrap::FVector& matchPos,
                     bool isSaveTimeKey,
