@@ -1,37 +1,18 @@
-// coop/snapshot_census.h -- Phase 0 per-class completeness floor for the claim sweep.
-// (docs/COOP_STABLE_ID_SIDECAR.md S4; the catastrophe guard for docs/piles/10.)
+// coop/props/snapshot_census.h -- per-class completeness floor for the joiner's claim sweep.
 //
-// THE BUG IT GUARDS (docs/piles/10, 2026-06-25 11:16): a join where the host failed to
-// EXPRESS/claim its keyless chipPiles. The client's claim sweep dooms every UNCLAIMED chipPile
-// UNCONDITIONALLY (coop/props/join_membership_sweep) and its >50% abort valve is GLOBAL, not
-// per-class (953/3083 = 31% < 50% -> no abort, though it wiped 100% of the 870 piles).
+// It guards a join where the host fails to express its keyless chipPiles: the claim sweep dooms
+// every unclaimed chipPile, and its >50% abort valve is GLOBAL rather than per-class, so wiping
+// 100% of one class can still sit under the global threshold.
 //
-// THE FIX: a POSITIVE per-class completeness signal. The host tells the client "I have N live of
-// class C". The sweep destroys unclaimed actors of class C only when it has CLAIMED at least N of
-// them (the snapshot for C is complete -> the rest are genuine deletions). If it claimed fewer than
-// the host has, the snapshot for C is INCOMPLETE -> KEEP the unclaimed (the missing expressions are
-// in flight or failed; dooming would destroy genuine objects). This is an EXACT signal, not a crude
-// percentage: it distinguishes "host expressed 0 of 870 (the bug)" from "the player legitimately
-// cleared the world (host genuinely has 0; nothing to keep)".
+// The signal is positive and exact. The host reports how many live actors of class C it has; the
+// sweep destroys unclaimed actors of C only once it has claimed at least that many, and keeps them
+// when it claimed fewer, because the missing expressions are then in flight or failed. Being a
+// count rather than a percentage, it separates "the host expressed none of them" from "the player
+// cleared the world".
 //
-// INDEPENDENCE (the crux): the census is built from a RAW GUObjectArray walk -- every live actor,
-// tracked or not -- NOT from the Prop Element registry the snapshot enumeration uses. The 11:16
-// root was untracked piles MISSING from the registry, hence never expressed; a raw walk still
-// COUNTS them, so the manifest does not share the failure mode it guards.
-//
-// SCOPE (Phase 0): the census counts CHIPPILE classes -- the keyless MASS class that 11:16 wiped
-// (IsChipPile is a cheap class-hierarchy test, no per-object string alloc on the ~237k walk). Keyed
-// interactables match by their stable key (claimed reliably; a mass keyed over-destroy is far less
-// likely and stays backstopped by the existing >50% valve). The CLIENT floor below is fully general
-// (per-class map): Phase 3 (the in-memory index->eid map) extends the census to every class for free.
-//
-// WIRE: appended as a tail to the existing SnapshotComplete message -- NO new ReliableKind. The
-// reliable payload cap is 228 B; the host emits classes ORDERED BY COUNT DESC up to the budget, so
-// the mass classes always fit; any omitted small tail is LOGGED (never a silent cap) and the >50%
-// valve still backstops it.
-//
-// Phase 0 of the stable-ID plan: ships FIRST and INDEPENDENT. Does NOT touch identity migration,
-// the in-memory map, the spawn-order probe, or the position reconcile layer (all Phase 1+).
+// The crux is INDEPENDENCE: the census is a raw GUObjectArray walk over every live actor, not the
+// prop element registry the snapshot enumeration reads, because the piles it guards were untracked
+// and missing from that registry -- a manifest built there would share the failure mode.
 #pragma once
 
 #include <cstddef>
@@ -43,8 +24,15 @@ namespace coop::snapshot_census {
 
 // HOST (game thread, once per drain-complete): walk GUObjectArray, count live chipPiles per class,
 // serialize the classes that fit `budgetBytes` (ordered by count desc) into `outTail`. Returns the
-// number of classes emitted. Tail layout: uint16 classCount, then per class
-// { uint16 nameLen(wchars), wchar name[nameLen], uint32 liveCount }.
+// number of classes emitted. Tail layout: uint16 classCount, then per class { uint16
+// nameLen(wchars), wchar name[nameLen], uint32 liveCount }.
+//
+// It rides as a tail on the existing SnapshotComplete message rather than a new ReliableKind, so
+// the budget is whatever is left of the 228-byte reliable payload; ordering by count keeps the mass
+// classes inside it, and an omitted tail is logged rather than dropped silently. Only chipPile
+// classes are counted -- IsChipPile is a class-lineage test with no per-object string allocation on
+// the walk. Keyed interactables are claimed by their stable key instead and stay backstopped by the
+// >50% valve, and the client floor below is already per-class and general.
 int BuildHostTail(std::vector<uint8_t>& outTail, int budgetBytes);
 
 // CLIENT: parse a census tail received on SnapshotComplete. Replaces any prior census. Tolerant of

@@ -1,22 +1,18 @@
-// coop/event_dispatch.h -- INTERNAL per-domain reliable-message handlers for
-// coop::event_feed::Update's dispatch switch (extracted 2026-06-11: event_feed.cpp
-// had grown to 1388 LOC, 112 from the 1500 hard cap; the case BODIES moved into
-// three domain files, the exhaustive switch itself stays in event_feed.cpp so the
-// kind->handler table remains greppable in one place).
+// coop/dispatch/event_dispatch.h -- INTERNAL per-domain reliable-message handlers for
+// coop::event_feed::Update's dispatch switch. The case BODIES live in the per-domain files; the
+// exhaustive switch itself stays in event_feed.cpp, so the kind->handler table is greppable in one
+// place.
 //
-// Sibling-internal header (the net/session_lanes.h precedent) -- NOT part of the
-// public coop/ include surface; only event_feed.cpp and the event_dispatch_*.cpp
-// translation units include it.
+// Sibling-internal header, the coop/net/session_lanes.h shape: not part of the public coop/ include
+// surface, and only event_feed.cpp and the event_dispatch_*.cpp translation units include it.
 //
-// Each Handle* function re-switches on msg.kind and contains the FULL original
-// case body: payload-length check, trust-boundary validation (sender slot/role
-// gates, finite/bounds checks, eid range), and the module dispatch. Each RETURNS
-// true if msg.kind is in its family (whether processed or validation-dropped),
-// false otherwise -- so event_feed's drain chains them (entity -> state -> world)
-// and a kind no family claims falls to the unknown-kind log. This makes each
-// family's own switch the SINGLE membership declaration: the old parallel
-// case-label lists in event_feed.cpp were the 3-place ReliableKind wiring hazard
-// (a new kind needed enum + here + the family switch). Now: enum + family switch.
+// Each Handle* re-switches on msg.kind and carries the full case body -- payload-length check,
+// trust-boundary validation (sender slot and role gates, finite and bounds checks, eid range), then
+// the module dispatch -- and returns true when msg.kind is in its family, whether it processed the
+// message or dropped it in validation. event_feed's drain chains them, and a kind no family claims
+// falls to the unknown-kind log. That makes each family's own switch the SINGLE membership
+// declaration, so a new kind is the enum plus one case; no list of kinds is repeated here, because
+// a second list is the wiring hazard the split removed.
 
 #pragma once
 
@@ -26,49 +22,45 @@
 
 namespace coop::event_feed {
 
-// PR-FOUNDATION-1 role-range validation for an inbound eid-carrying packet
-// (see the definition's comment for the full trust model). Shared by the
-// entity family (ItemActivate) and the world family (RedSky / LightningStrike /
-// WeatherState). Defined in event_dispatch_world.cpp.
+// Role-range validation for an inbound eid-carrying packet (see the definition's comment for the
+// full trust model). Shared by the entity family (ItemActivate) and the world family (RedSky,
+// LightningStrike, WeatherState). Defined in event_dispatch_world.cpp.
 bool VerifySenderEidRange(int senderPeerSlot, uint32_t senderElementId,
                           const char* kind);
 
-// Entity lifecycle + held-item family: PropRelease, PropSpawn, PropDestroy,
-// PropConvert, EntitySpawn, EntityDestroy, ItemActivate.
-// `localPlayer` threads into remote_prop for held-grab release / destroy safety.
+// Entity lifecycle and held-item family: prop and world-actor spawn, destroy and convert,
+// owner-entity mirroring, position snaps, and item activation. `localPlayer` threads into
+// remote_prop for held-grab release and destroy safety.
 bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer);
 
-// Keyed device-state family: DoorState/LightState/ContainerState/GarageDoorState/
-// ApplianceState (the shared KeyedTogglePayload case), KeypadState,
-// PowerControlState, AtvState, DroneState, WindowCleanState, GrimeState,
-// TrashPileState, KerfurConvert (v78 client apply), DeviceClaim/Sleep/email/
-// inventory/voice.
-// `localPlayer` threads into the KerfurConvert client apply (prop teardown/materialize).
+// Keyed device-state family: the mirrored state of doors, lights, lockers, containers, appliances,
+// keypads, power, the ATV, drones, turbines, cleanliness and grime, plus the per-device claim,
+// sleep, email, inventory and voice rows. `localPlayer` threads into the KerfurConvert client apply
+// (prop teardown and materialize).
 bool HandleStateEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg,
                       void* localPlayer);
 
-// Signal-pipeline family (2026-07-18 extraction; every future signal-chain
-// lane L6/L8/L5/L9 lands here): SkySignalState, SkySignalCatch, LaptopState,
-// DishArm/DishSnapshot/DishCalib, ReelSlot, TaskNewState, DeskLogLine,
-// DeskState, DeskInput, DeskScanEvent, DeskSndFx, DishAimState,
-// SavedSignalAppend/Delete, CompState/CompData.
+// Signal-pipeline family: the sky-signal chain, the laptop and its blobs, the dish and its aim, the
+// play deck and drive slots, the rack, the desk with its input, log and scans, the meadow store,
+// and the saved-signal list.
 bool HandleSignalEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg);
 
-// CLIENT->HOST intent/request family (2026-07-10 extraction): OrderRequest,
-// DoorOpenRequest, KerfurConvertRequest, KerfurCommand, GrabIntent,
-// ThrowIntent, PileResyncRequest, PropDropIntent. Every case validates
-// role()==Host + a client sender slot, then hands the request to the
-// authoritative module.
+// CLIENT->HOST intent and request family: a client asks the host to perform something it alone is
+// authoritative for. Most cases gate on role()==Host plus a client sender slot before handing the
+// request to the authoritative module, but not all of them, so read the case: CoinGunResult and
+// OrderRefused are HOST->CLIENT answers that drop on the host; OrderRequest, CoinGunSell and
+// CoinCollect check the slot here and leave the role gate to their module; RoachConsumed defers
+// both to roach_sync::OnConsumedIntent.
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer);
 
-// Ambient / world-event family: FireflySpawn, InventoryPickup, TimeSync,
-// SkyState, RedSky, LightningStrike, WeatherState.
+// Ambient and world-event family: fireflies, scheduled events with their cues and snapshots,
+// alarms, the server rack, roaches, inventory pickups, chat, and the time, sky and weather stream.
 bool HandleWorldEvent(net::Session& session,
                       const net::Session::ReliableMessage& msg);
 

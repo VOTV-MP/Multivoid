@@ -1,15 +1,15 @@
-// coop/event_dispatch_intent.cpp -- the CLIENT->HOST INTENT / REQUEST
-// reliable-kind case bodies: a client asks the HOST to perform an action it
-// is authoritative for (OrderRequest, DoorOpenRequest, KerfurConvertRequest,
-// KerfurCommand, GrabIntent, ThrowIntent, PileResyncRequest, PropDropIntent).
+// coop/dispatch/event_dispatch_intent.cpp -- the CLIENT->HOST INTENT / REQUEST reliable-kind case
+// bodies: a client asks the HOST to perform an action it alone is authoritative for. The switch
+// below is the family's membership declaration; nothing re-lists it.
 //
 // The intent family is a distinct concept from keyed device-STATE mirrors. MOST cases are
 // CLIENT->HOST and gate on role()==Host plus a client sender slot (1..kMaxPeers-1) at the
 // trust boundary before handing the request to the authoritative module -- but not all of
 // them, so read the case: CoinGunResult and OrderRefused are HOST->CLIENT answers and drop
-// on the host instead, CoinCollect checks only the sender slot, and RoachConsumed defers its
-// gate to roach_sync::OnConsumedIntent. Family contract per coop/event_dispatch.h: returns
-// true iff msg.kind is in this family.
+// on the host instead; OrderRequest, CoinGunSell and CoinCollect check the sender slot here
+// and leave the role gate to the module they call, which drops off the host; and RoachConsumed
+// defers both to roach_sync::OnConsumedIntent. Family contract per coop/dispatch/event_dispatch.h:
+// returns true iff msg.kind is in this family.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
