@@ -13,7 +13,7 @@
 #include "coop/creatures/npc_sync.h"             // GetSession
 #include "coop/props/remote_prop_spawn.h"    // HasLoadTailQuiesced
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/config/config.h"             // IsIniKeyTrue
+#include "coop/config/config.h"             // ResolveFlag, for the census gate
 #include "ue_wrap/engine/engine.h"            // GetActorLocation
 #include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"

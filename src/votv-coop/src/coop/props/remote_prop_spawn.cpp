@@ -9,7 +9,6 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
-#include "coop/config/config.h"  // IsIniKeyTrue, the dev probe flags
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor, the grab guard's kerfur exemption
 #include "coop/creatures/kerfur_prop_adoption.h"  // a kerfur prop's fuzzy miss defers to the polled adoption
 #include "coop/creatures/kerfur_reconcile.h"  // the post-quiescence retry of the kerfur off-to-active retire

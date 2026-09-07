@@ -9,7 +9,7 @@
 #include "coop/props/pile_spawn_bind.h"
 
 #include "coop/element/quiescence_drain.h"  // ArmPendingSaveTimeTwin (the spawn mechanism CAPTURES into the order owner)
-#include "coop/config/config.h"  // IsIniKeyTrue -- the [PILE-DELTA] probe flag (multivoid.ini [dev], not bats/env)
+#include "coop/config/config.h"  // ResolveFlag -- the [PILE-DELTA] probe flag (multivoid.ini [dev], not bats/env)
 #include "coop/props/prop_element_tracker.h"  // IsBoundMirrorNative / GetPropElementIdForActor
 #include "coop/props/save_time_retire_util.h"  // UnmarkAndDestroy + kExactMatchR2Cm (shared kernel)
 #include "coop/props/trash_proxy.h"  // NearestPileProxy (the L1 orphan census)
