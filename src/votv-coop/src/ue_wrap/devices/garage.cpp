@@ -1,6 +1,6 @@
-// ue_wrap/garage.cpp -- see ue_wrap/garage.h. Engine access for the base garage door
-// (Agarage_C). Offsets resolved from the live class via reflection (version-portable);
-// the Alpha 0.9.0-n values are logged fallbacks.
+// ue_wrap/devices/garage.cpp -- see ue_wrap/devices/garage.h. Engine access for the base garage
+// door (Agarage_C). Offsets resolved from the live class via reflection (version-portable); the
+// Alpha 0.9.0-n values are logged fallbacks.
 
 #include "ue_wrap/devices/garage.h"
 
@@ -20,12 +20,13 @@ std::atomic<bool> g_resolved{false};
 
 void*   g_garageCls = nullptr;  // garage_C UClass
 int32_t g_openOff   = -1;       // Agarage_C::Open     (0x02E8)
-void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (montage from 0 @0.5x + the
-                                // move timeline over its full duration). NOT settime: settime SNAPS
-                                // (move.SetNewTime(endpoint) + montage @StartingPosition=100) = the
-                                // "too fast" the user saw. Bytecode-verified 2026-06-09.
-// NOTE: no Key offset -- identity is the level-export FName (GetNameKey), not the save Key
-// (RULE 2: the AtriggerBase_C::Key resolution was retired with the R9 fix, see garage.h).
+void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the montage from position
+                                // 0 at half rate, and the move timeline over its full length). NOT
+                                // settime, which runs the same timeline and then SNAPS it: the
+                                // montage at full rate from position 100, then move.SetNewTime
+                                // straight to the endpoint.
+// No Key offset: identity is the level-export FName (GetNameKey), not the save key -- see
+// garage.h for why the key cannot serve as one.
 
 constexpr int32_t kOpenOffFallback = 0x02E8;
 
@@ -66,9 +67,9 @@ bool IsGarage(void* obj) {
 }
 
 std::wstring GetNameKey(void* g) {
-    // Identity = the garage's level-export FName (baked into the cooked package -> deterministic +
-    // cross-peer stable), NOT the save Key. Mirrors ue_wrap::door_box::GetNameKey (the proven author
-    // for keyless placed actors). See garage.h for why the save Key is unreliable (R9).
+    // Identity is the garage's level-export FName, baked into the cooked package and so
+    // deterministic and cross-peer stable, NOT the save key. Mirrors ue_wrap::door_box::GetNameKey,
+    // the proven author for keyless placed actors; garage.h says why the save key is unreliable.
     if (!g) return std::wstring();
     return R::ToString(R::NameOf(g));
 }
@@ -85,18 +86,21 @@ bool ApplyOpen(void* g, bool open) {
     // Idempotent: if already in the target state, do nothing (skip the re-trigger + the echo).
     bool cur = false;
     if (TryReadOpen(g, cur) && cur == open) return true;
-    // Two bytecode-verified facts (RE 2026-06-09) drive this:
-    //  (1) Neither settime() NOR acivae() writes the `Open` bool @0x02E8 -- the ONLY writers are
-    //      runTrigger's E-press toggle and the game's own loadTriggerData (`open := value; settime`).
-    //      So we MUST set the field ourselves, else the mirror's poll baseline goes stale and the
-    //      symmetric Channel re-broadcasts the opposite -> the open/close OSCILLATION the user first saw.
-    //  (2) settime() SNAPS (move.SetNewTime(endpoint) + a montage at StartingPosition=100) -> the
-    //      "garage slides too fast on the host" the user saw next; acivae() ANIMATES (montage from 0
-    //      @0.5x + move.Play/Reverse over the full ~10s, DIRECTION read from the `Open` field).
-    // So: write Open := target FIRST (fixes the oscillation + gives acivae its direction), THEN call
-    // acivae() for the NATIVE animated swing (fixes the too-fast). acivae has no `mov` guard, so a
-    // mid-swing opposite packet just re-aims it (last-writer-wins). This is exactly the code path a
-    // local E-press takes (runTrigger toggles Open -> acivae), minus the toggle.
+    // Two facts about the blueprint drive this:
+    //   (1) Neither settime() nor acivae() writes the `Open` bool. The only writers
+    //       are runTrigger's E-press toggle and the game's own loadTriggerData
+    //       (`open := value; settime`). So we must set the field ourselves, or the
+    //       mirror's poll baseline goes stale and the symmetric Channel re-broadcasts
+    //       the opposite -- an open/close oscillation.
+    //   (2) settime() SNAPS: it plays the timeline, then puts the montage at position
+    //       100 at full rate and calls move.SetNewTime(endpoint). acivae() ANIMATES:
+    //       the montage from 0 at half rate and move.Play/Reverse over the full
+    //       timeline, taking its DIRECTION from the `Open` field.
+    // So: write Open := target FIRST -- that both fixes the oscillation and gives acivae its
+    // direction -- THEN call acivae() for the native animated swing. acivae itself has no `mov`
+    // guard; the guard sits in runTrigger, which ignores an E-press mid-swing. So a mid-swing
+    // opposite packet just re-aims the door, last writer wins. This is the path a local E-press
+    // takes (runTrigger toggles Open, then calls acivae), minus the toggle and minus that guard.
     if (g_openOff >= 0)
         *reinterpret_cast<bool*>(reinterpret_cast<char*>(g) + g_openOff) = open;
     ParamFrame f(g_acivaeFn);  // acivae() takes no params -- it reads the Open field for direction
