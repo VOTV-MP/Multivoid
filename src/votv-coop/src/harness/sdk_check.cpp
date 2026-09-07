@@ -36,10 +36,9 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 
 // ---- compat_report.txt accumulator -------------------------------------
-// Each check function appends its findings here in addition to the live
-// log stream. After all checks run, the buffer is written to a single
-// shareable file beside the mod DLL. Users can paste it verbatim into a
-// GitHub issue when sdk-check reports DEGRADED post-VOTV-update.
+// Each check function appends its findings here as well as to the live log stream. After every
+// check has run the buffer is written to a single shareable file beside the mod DLL, so a player
+// can paste it whole into a GitHub issue when sdk-check reports DEGRADED after a game update.
 std::ostringstream g_report;
 
 void ReportHeader() {
@@ -267,9 +266,7 @@ const FunctionCheck kFunctions[] = {
     {P::name::MainPlayerClass,          P::name::MainPlayerGrabFinishedFn,   Severity::Important, "grab Timeline end observer"},
 };
 
-// ---- Phase 5N1 NPC class allowlist --------------------------------------
-// Checked separately because the allowlist is a single array; missing entries
-// = those NPC types silently spawn on both peers (suppression no-op).
+// ---- NPC class allowlist -------------------------------------------------
 
 // ---- Asset catalog ------------------------------------------------------
 const AssetCheck kAssets[] = {
@@ -313,12 +310,11 @@ void RunFunctionChecks(int& ok, int& fail, int& failPriority, int& skipped) {
     for (const auto& f : kFunctions) {
         void* cls = R::FindClass(f.className);
         if (!cls) {
-            // Class already counted as a CLASS failure (RunClassChecks); to
-            // avoid noisy double-counts the function attempt is SKIPPED here,
-            // but tracked in the `skipped` counter so the SUMMARY reflects the
-            // true total. Audit fix 2026-05-25: previously skipped entries
-            // silently vanished from `total = ok + fail`, making "resolved: 45/47"
-            // misleading when 23 function entries were skipped on a dead class.
+            // The class was already counted as a CLASS failure (RunClassChecks). To avoid a noisy
+            // double-count the function attempt is SKIPPED here, but it is tracked in the `skipped`
+            // counter so the SUMMARY reflects the true total: without it, skipped entries vanish
+            // from `total = ok + fail` and a line like "resolved: 45/47" reads as healthy while
+            // twenty-odd entries were never attempted.
             ++skipped;
             continue;
         }
