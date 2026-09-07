@@ -1,22 +1,17 @@
 // coop/net_pump.h -- main per-tick net pump ORCHESTRATOR.
 //
-// Owns the per-slot connect/disconnect edge logic, the death policy +
-// flee-to-menu, and the world-ready announce axis. The dead-prop reaper /
-// re-seed engine lives in coop/props/registry_reaper, the puppet array +
-// pose/ragdoll drive in coop/player/puppet_drive (both extracted 2026-07-18;
-// net_pump calls them at the right tick moments and still owns the tick
-// ORDER). The sync-module fan-out lists live in coop/subsystems (the wiring
-// registry) and the outbound local pose/held-prop/ragdoll streams in
-// coop/local_streams. Driven from the harness timeline tick at the
-// game-thread post rate.
+// Owns the per-slot connect and disconnect edge logic, the death policy and flee-to-menu, and the
+// world-ready announce axis. The dead-prop reaper and re-seed engine live in
+// coop/props/registry_reaper and the puppet array and pose/ragdoll drive in
+// coop/player/puppet_drive; net_pump calls them at the right tick moments and still owns the tick
+// ORDER. The sync-module fan-out lists live in coop/session/subsystems, the wiring registry, and
+// the outbound local pose, held-prop and ragdoll streams in coop/player/local_streams. Driven from
+// the harness timeline tick at the game-thread post rate, which keeps harness.cpp to its boot and
+// scenario glue.
 //
-// State previously lived in harness.cpp as file-scope globals; extracted
-// per the audit (`research/findings/architecture-audits/votv-coop-audit-post-pr4-7-2026-05-28.md`)
-// to keep harness.cpp at its boot/scenario glue role.
-//
-// Scenario branches in harness.cpp that drove a single puppet for
-// non-net visual tests (drive / show / skin) reach the slot-1 puppet via
-// Puppet(1) -- it IS the canonical "the remote" puppet on HOST.
+// The scenario branches in harness.cpp that drive a single puppet for non-net visual tests (drive,
+// show, skin) reach the slot-1 puppet through Puppet(1) -- on the HOST that IS the canonical "the
+// remote" puppet.
 
 #pragma once
 
@@ -43,19 +38,15 @@ void OnSessionStart();
 // path. Game thread only.
 void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why);
 
-// (The per-slot puppet array + its accessor moved to coop/player/puppet_drive
-// (2026-07-18 decomposition) -- see puppet_drive::Puppet.)
-
 // True while this session is already travelling to the main menu (the one-shot
 // flee latch). registry_reaper's gameplay->menu guard reads it so its branch
 // predicate stays literal across the extraction. Game thread.
 bool IsFleeing();
 
-// The announce axis' ONE owner (2026-07-18 decomposition): registry_reaper
-// requests a world-ready re-announce after a world-change re-seed; this owner
-// compares against the last-announced world, arms the quiesce probe, and sets
-// the re-announce flag -- or logs the same-world suppression. No-op on the
-// host. Game thread.
+// The announce axis' ONE owner: registry_reaper requests a world-ready re-announce after a
+// world-change re-seed, and this owner compares against the last-announced world, arms the quiesce
+// probe and sets the re-announce flag -- or logs the same-world suppression. No-op on the host.
+// Game thread.
 void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld);
 
 // The gameplay->menu RAM-balloon guard's ACTION half (detection lives in
@@ -64,11 +55,10 @@ void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld);
 // latch. Game thread.
 void FleeAfterNativeMenuTravel(coop::net::Session& session);
 
-// True once THIS client has announced ClientWorldReady for the current
-// connection (false on the host, which never announces; latched false again
-// at disconnect). v120: the meadow lane's client send gate -- a client line
-// reaching the host before the ready flip would ride the join seed back as a
-// duplicate, so peer-symmetric lanes stay mute until the announce.
+// True once THIS client has announced ClientWorldReady for the current connection (false on the
+// host, which never announces; latched false again at disconnect). The meadow lane's client send
+// gate reads it: a client line reaching the host before the ready flip would ride the join seed
+// back as a duplicate, so peer-symmetric lanes stay mute until the announce.
 bool HasAnnouncedWorldReady();
 
 }  // namespace coop::net_pump
