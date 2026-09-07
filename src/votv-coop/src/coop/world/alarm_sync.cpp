@@ -5,10 +5,10 @@
 //     IntToBool(index) against `active` and returns when they already agree. Redundant
 //     applies are free, and that property is what breaks every echo loop this lane could
 //     otherwise create.
-//   - Every native call site dispatches it EX_VirtualFunction, which is ProcessEvent-
-//     invisible, so the lane POLLS the `active` field -- the device-layer pattern -- and
-//     never hooks the verb. The sites are the screen test (which turns the alarm both on
-//     and off) and the radar panel's stop press (off).
+//   - Every native call site dispatches it EX_LocalVirtualFunction, which is
+//     ProcessEvent-invisible, so the lane POLLS the `active` field -- the device-layer
+//     pattern -- and never hooks the verb. The callers are the screen test (both on and
+//     off), the radar panel's lever (off) and crafting a snusk loaf (on).
 
 #include "coop/world/alarm_sync.h"
 
@@ -20,6 +20,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/save_record.h"  // ReadFNameAt
 
 #include <atomic>
 #include <chrono>
@@ -39,12 +40,15 @@ void* g_cls = nullptr;           // trigger_alarm_C UClass
 int32_t g_offActive = -1;        // trigger_alarm_C.active byte offset...
 uint8_t g_maskActive = 0;        // ...and its FBoolProperty bit mask (real-bit, never assume 0x01)
 void* g_runTriggerFn = nullptr;  // runTrigger(owner: UObject*, index: int)
+int32_t g_offKey = -1;           // triggerBase_C.key -- selects WHICH trigger_alarm_C is ours
 std::chrono::steady_clock::time_point g_nextResolve{};
 int g_postClassAttempts = 0;
 bool g_resolveLatched = false;
 constexpr int kMaxPostClassAttempts = 5;
 
-bool Resolved() { return g_offActive >= 0 && g_maskActive != 0 && g_runTriggerFn != nullptr; }
+bool Resolved() {
+    return g_offActive >= 0 && g_maskActive != 0 && g_runTriggerFn != nullptr && g_offKey >= 0;
+}
 
 void ResolvePass() {
     if (g_resolveLatched) return;
@@ -55,22 +59,30 @@ void ResolvePass() {
     if (!g_cls) return;  // world not loaded yet -- keep trying
     if (g_offActive < 0) R::FindBoolProperty(g_cls, L"active", g_offActive, g_maskActive);
     if (!g_runTriggerFn) g_runTriggerFn = R::FindFunction(g_cls, L"runTrigger");
+    if (g_offKey < 0) g_offKey = R::FindPropertyOffset(g_cls, L"key");
     if (Resolved()) {
         g_resolveLatched = true;
-        UE_LOGI("alarm_sync: resolved (active=0x%X mask=0x%02X runTrigger=yes)", g_offActive,
-                g_maskActive);
+        UE_LOGI("alarm_sync: resolved (active=0x%X mask=0x%02X key=0x%X runTrigger=yes)",
+                g_offActive, g_maskActive, g_offKey);
         return;
     }
     if (++g_postClassAttempts >= kMaxPostClassAttempts) {
         g_resolveLatched = true;  // class IS loaded; a member lookup that failed 5x never succeeds
         UE_LOGW("alarm_sync: resolution INCOMPLETE after %d passes on a loaded trigger_alarm_C "
-                "(active=0x%X runTrigger=%s) -- latched OFF; game version mismatch?",
-                g_postClassAttempts, g_offActive, g_runTriggerFn ? "yes" : "no");
+                "(active=0x%X key=0x%X runTrigger=%s) -- latched OFF; game version mismatch?",
+                g_postClassAttempts, g_offActive, g_offKey, g_runTriggerFn ? "yes" : "no");
     }
 }
 
-// ---- the live trigger instance (ONE per map, key 'alarmTrigger'; cached, revalidated by
-// internal index -- recycled-slot-safe) ---------------------------------------------------------
+// ---- the live trigger instance, cached and revalidated by internal index so a recycled slot
+// cannot be mistaken for it.
+//
+// SELECTED BY KEY. The map carries more than one trigger_alarm_C: the wired one keeps the
+// class default key 'alarmTrigger' and owns the lamp/grate wiring, and a second instance
+// carries its own key and no wiring. Taking the first match out of the object array would bind
+// whichever the array happened to yield, so this matches the key the game's own callers look
+// the trigger up by. Binding nothing is the right answer when no instance carries that key:
+// driving the wrong trigger is worse than driving none.
 void* g_trigger = nullptr;
 int32_t g_triggerIdx = -1;
 
@@ -79,12 +91,14 @@ void* Trigger() {
         g_trigger = nullptr;
         g_triggerIdx = -1;
         if (!g_cls) return nullptr;
+        if (g_offKey < 0) return nullptr;  // unresolved layout -- cannot tell the two apart
         for (void* obj : R::FindObjectsByClass(L"trigger_alarm_C")) {
-            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-                g_trigger = obj;
-                g_triggerIdx = R::InternalIndexOf(obj);
-                break;
-            }
+            if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__"))
+                continue;
+            if (ue_wrap::save_record::ReadFNameAt(obj, g_offKey) != L"alarmTrigger") continue;
+            g_trigger = obj;
+            g_triggerIdx = R::InternalIndexOf(obj);
+            break;
         }
     }
     return g_trigger;
