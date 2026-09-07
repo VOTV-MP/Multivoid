@@ -14,8 +14,8 @@ namespace coop::text {
 std::string ToUtf8(const std::wstring& w) {
     // Hand-rolled rather than WideCharToMultiByte because it must be defined on
     // the two inputs the API is coy about: an UNPAIRED surrogate (dropped) and a
-    // C0 control (dropped). Promoted verbatim from chat_sync::NickUtf8, which has
-    // carried every chat line since 2026-07-04.
+    // C0 control (dropped). Promoted unchanged from chat_sync::NickUtf8, which has
+    // carried every chat line since it was written.
     std::string s;
     s.reserve(w.size() * 2);
     for (size_t i = 0; i < w.size(); ) {
@@ -210,14 +210,14 @@ bool RunUtf8CodecSelftest() {
         ok(SanitizeUtf8(cyr.data(), cyr.size()) == cyr, "denylist keeps non-ASCII");
     }
 
-    // THE EGRESS, and specifically the cliff that shipped in v132. The old code
+    // THE EGRESS, and specifically a cliff that shipped once. The old code
     // called WideCharToMultiByte with a 23-byte cap; at 12 Cyrillic characters
     // (24 bytes) it returned 0 and the row went BLANK. These cases assert the two
     // properties the bare API does not give us: a too-long name TRUNCATES rather
     // than vanishing, and it truncates on a character boundary.
     {
         char narrowBuf[8] = {};
-        // 12 Cyrillic characters = 24 bytes, the exact v132 cliff, into a buffer
+        // 12 Cyrillic characters = 24 bytes, the exact cliff, into a buffer
         // far smaller still. Must be non-empty and well-formed.
         CopyUtf8ToBuffer(narrowBuf, L"Пельменьмень");
         std::wstring sink;

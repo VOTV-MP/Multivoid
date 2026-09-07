@@ -1,20 +1,18 @@
-// ue_wrap/sleep.h -- standalone engine access for VOTV's sleep/timelapse
-// state (mainGamemode.isSleep + the global time dilation + the nightmare
-// probability override + the saveSlot sleep need). Principle-7 engine-wrapper
-// layer -- NO network logic; coop/sleep_sync drives the Minecraft-style sleep
-// gate through here.
+// ue_wrap/sleep.h -- standalone engine access for VOTV's sleep and timelapse state: the gamemode's
+// isSleep flag, the global time dilation, the nightmare probability override and the saveSlot sleep
+// need. Principle-7 engine-wrapper layer, no network logic; coop/sleep_sync drives the
+// Minecraft-style sleep gate through here.
 //
-// RE (votv-sleep-nightmare-RE-2026-06-12.md): the whole timelapse is ONE
-// engine call -- UGameplayStatics::SetGlobalTimeDilation(20) at sleep entry
-// (@70543), 1.0 at wake (@68530) -- plus ONE world flag mainGamemode.isSleep
-// @0x04EC. The natural wake fires when saveSlot.sleep >= 100 (the need
-// REFILLS during sleep at the dilated rate). The nightmare roll (every 500
-// in-sleep seconds) weights bed.dreamProb unless mainGamemode.
-// dreamProbability @0x1030 >= 0 overrides it (-1 = the SP sentinel; 0 kills
-// rolls). gamemode.wakeup() is the idempotent timelapse END (re-possess +
-// camera + dilation 1.0 + isSleep=false); it also rolls the 10% gearer gift
-// IFF saveSlot.sleep >= 99 at that moment -- callers that grant rest must
-// call wakeup() FIRST and write the need AFTER, or every mirror rolls gifts.
+// The whole timelapse is ONE engine call -- SetGlobalTimeDilation(20) at sleep entry, 1.0 at wake
+// -- plus ONE world flag, mainGamemode.isSleep. The natural wake fires when saveSlot.sleep reaches
+// 100, and that need REFILLS during sleep at the dilated rate. The nightmare roll, every 500
+// in-sleep seconds, weights the bed's own dreamProb unless mainGamemode.dreamProbability is >= 0
+// and overrides it, where -1 is the single-player sentinel and 0 kills the rolls.
+//
+// gamemode.wakeup() is the idempotent END of the timelapse: re-possess, camera, dilation back to
+// 1.0, isSleep false. It also rolls the 10% gearer gift, but only if saveSlot.sleep is >= 99 at
+// that moment -- so a caller that grants rest must call wakeup() FIRST and write the need AFTER, or
+// every mirror rolls its own gift.
 
 #pragma once
 
@@ -51,15 +49,15 @@ float GetGlobalTimeDilation();
 bool ReadSleepNeed(float& out);
 bool WriteSleepNeed(float v);
 
-// ---- the WAITING-state camera (v71.1, user directive 2026-06-13) ----
-// In SP the sleep entry instantly retargets the view to mainGamemode.sleepCam
-// (the cinematic base shot). In the gate's WAITING state the lone sleeper
-// must NOT see the base view -- the cinematic belongs to the ACCELERATE
-// phase. These resolve the gamemode's own actors so coop/sleep_sync can hold
-// the waiting camera at the bed and hand it to the cinematic when the gate
-// fills. All null-safe (camera polish never blocks the gate).
-void* SleepCam();        // mainGamemode.sleepCam      @0x04F0 (ACameraActor)
-void* SleepingPawn();    // mainGamemode.sleepingPawn  @0x1258 (the body in bed)
+// ---- the WAITING-state camera ----------------------------------------------
+//
+// In single-player, sleep entry instantly retargets the view to the gamemode's sleepCam, the
+// cinematic base shot. In the gate's WAITING state the lone sleeper must NOT see that view: the
+// cinematic belongs to the ACCELERATE phase. These resolve the gamemode's own actors -- the camera
+// and the body in bed -- so coop/sleep_sync can hold the waiting camera at the bed and hand it to
+// the cinematic once the gate fills. All null-safe, since camera polish never blocks the gate.
+void* SleepCam();
+void* SleepingPawn();
 // SetViewTargetWithBlend via the SLEEPING PAWN's controller -- during sleep
 // the controller possesses the sleeping pawn (the local mainPlayer is
 // unpossessed, so the usual local-player route is null mid-sleep).
