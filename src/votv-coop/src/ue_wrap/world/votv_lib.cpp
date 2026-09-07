@@ -1,4 +1,4 @@
-// ue_wrap/votv_lib.cpp -- see header.
+// ue_wrap/world/votv_lib.cpp -- see header.
 
 #include "ue_wrap/world/votv_lib.h"
 
@@ -33,12 +33,12 @@ bool Resolve() {
 
 bool CharacterStep(void* character, float volume) {
     if (!character || !Resolve()) return false;
-    // Signature (CXX dump lib.hpp:76): step(ACharacter* Character, float Z_offset,
-    // AActor* callActor, float Volume, float Pitch, float speedVolume,
-    // UAudioComponent* AudioComponent, UObject* __WorldContext, FHitResult& OutHit).
-    // Values mirror the local player's own call (mainPlayer uber @70973), except
-    // Volume which the caller tunes (a remote puppet's steps are presentation --
-    // user-tuned quieter than the native 1.0).
+    // Signature: step(ACharacter* Character, float Z_offset, AActor* callActor, float Volume, float
+    // Pitch, float speedVolume, UAudioComponent* AudioComponent, UObject* __WorldContext,
+    // FHitResult& OutHit). Volume is the caller's -- a puppet's steps are presentation and read too
+    // loud at the native 1.0 -- and callActor is us, where the local player's own call passes null.
+    // lib_C::step tests callActor for int_objects and calls its `stepped`; mainPlayer_C implements
+    // the interface with an empty event, so ours costs one dispatch and does nothing.
     ue_wrap::ParamFrame f(g_stepFn);
     f.Set<void*>(L"Character", character);
     f.Set<float>(L"Z_offset", 0.f);

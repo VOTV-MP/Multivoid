@@ -1,24 +1,17 @@
-// coop/puppet_footsteps.h -- footstep audio for the remote-player puppet.
+// coop/player/puppet_footsteps.h -- footstep audio for the remote-player puppet.
 //
-// WHY (hands-on 2026-06-10, "remote player has no footstep sounds"): VOTV's
-// footsteps are a BP TICK distance accumulator in mainPlayer's ubergraph
-// (block @70172: accumulate |delta findFootLocation| while |v|>10, fire
-// lib_C::step every 150 cm) -- and the puppet's mainPlayer BP tick is
-// DELIBERATELY suppressed (puppet.cpp SetActorTickEnabled(false): it would
-// run the whole SP brain + clobber the global camera MPC). Kerfur stays
-// audible because its rig uses anim-notifies -> int_anim_events.step --
-// an interface mainPlayer_C does not implement (and we cannot add one:
-// asset edit, A6). So the coop layer reproduces THE CALLER (the stride
-// accumulator, native constants cited per @-offset) and dispatches the
-// SAME callee the local player and Kerfur both funnel into --
-// lib_C::step -- which natively does the ground trace, the per-material
-// cue choice (foot_def/grass/metal/snow/water/...), spatialization and
-// the steppedOn world reactions. Nothing re-implemented (RULE 1 natural
-// dispatch; the kerfur/lib RE pass 2026-06-10).
+// VOTV's footsteps are a tick-driven distance accumulator in mainPlayer's ubergraph: while
+// |velocity| > 10 cm/s it accumulates how far the foot location moved and calls lib_C::step every
+// 150 cm. The puppet cannot inherit that, because its actor tick is off from spawn
+// (puppet_spawn.cpp) to keep mainPlayer_C's ReceiveTick -- HUD, look traces, hunger and thirst --
+// from running a second single-player brain.
 //
-// Header-only: one small struct owned per RemotePlayer, ticked from
-// ApplyToEngine right after the CMC drive. Cost: float math per frame +
-// ONE lib_C::step ProcessEvent per ~150 cm walked (~2-4 Hz per moving
+// So this reproduces the CALLER, the stride accumulator, and dispatches the same callee the local
+// player's own tick does: lib_C::step, which sphere-traces the ground, raises the stepped-on event
+// and then picks the per-material cue and its spatialization. Nothing is re-implemented.
+//
+// Header-only: one small struct per RemotePlayer, ticked from ApplyToEngine right after the CMC
+// drive. Float math per frame plus ONE lib_C::step dispatch per ~150 cm walked (2-4 Hz per moving
 // puppet). Game thread only.
 
 #pragma once
@@ -31,13 +24,11 @@
 namespace coop::puppet_footsteps {
 
 struct Stride {
-    // Native constants (mainPlayer ubergraph):
-    //   stride 150 cm           (@70685)
-    //   move gate |v| > 10 cm/s (@70241)
-    //   run factor 0.75 on accumulated distance while sprinting (@70458;
-    //     the run threshold mirrors the speedVolume=400 normalization).
-    // Crouch x2.0 / water x0.5 are omitted: no crouch/water wire state today
-    // (PoseSnapshot stateBits carries only InAir/Ragdoll); revisit with them.
+    // Native constants, read off mainPlayer's ubergraph: a 150 cm stride, a |v| > 10 cm/s move
+    // gate, and 0.75 applied to the accumulated distance while running. The run TEST is ours -- the
+    // graph reads its run input, which the wire pose does not carry, so speed stands in for it at
+    // the same 400 cm/s lib_C::step normalizes volume against. The graph's crouch x2.0 and water
+    // x0.5 are omitted: stateBits carry only InAir and Ragdoll today.
     static constexpr float kStrideCm     = 150.f;
     static constexpr float kMinSpeedCmS  = 10.f;
     static constexpr float kRunSpeedCmS  = 400.f;
@@ -45,23 +36,22 @@ struct Stride {
     // Teleport/connect-snap guard: a per-frame displacement this large is a
     // warp, not locomotion -- drop the sample (re-prime from the new spot).
     static constexpr float kMaxSampleCm  = 200.f;
-    // Remote-step loudness: the native call passes 1.0 for the LOCAL player's
-    // own feet; a remote puppet's steps at full volume read too loud
-    // (user-tuned down 2026-06-11). Multiplies the step BP's internal
-    // clamp(MaxWalkSpeed/400, 0.5, 2.0) -- sprint still scales louder.
+    // Remote-step loudness. The native call passes 1.0 for the local player's own feet, and a
+    // puppet at full volume reads too loud. lib_C::step multiplies this by its own
+    // clamp(MaxWalkSpeed/400, 0.5, 2.0), so sprinting still scales louder.
     static constexpr float kStepVolume   = 0.6f;
 
-    // Advance the stride accumulator one frame; true exactly when a step lands
-    // (every ~150 walked cm). The caller dispatches the consequences from the
-    // ONE verdict -- the puppet fires lib_C::step (CharacterStep) AND the skin
-    // step FX (skin_effects::OnStep) together, so they can never drift apart;
-    // the local body's skin_effects::TickStride runs its own instance over the
-    // wire-pose samples (RULE 2: one stride emitter).
+    // Advance the stride accumulator one frame; true exactly when a step lands (every ~150 walked
+    // cm). The caller dispatches the consequences from the ONE verdict -- the puppet fires
+    // lib_C::step (CharacterStep) AND the skin step FX (skin_effects::OnStep) together, so they
+    // cannot drift apart; the local body's skin_effects::TickStride runs its own instance over the
+    // wire-pose samples. One stride emitter either way.
     bool StepDue(const ue_wrap::FVector& pos, float speedCmS, bool grounded) {
         if (!grounded || speedCmS <= kMinSpeedCmS) {
-            // Idle/airborne: reset like the native chain re-primes lastStep
-            // when stopped (@71043). lib_C::step's own ground trace is the
-            // second airborne safety (silent on no hit).
+            // Idle or airborne: drop the accumulator and unprime, so the next moving sample
+            // re-primes from the new spot. The graph zeroes its own lastStep at this same gate.
+            // lib_C::step's ground trace is the second airborne safety -- it is silent when the
+            // trace hits nothing.
             accum_ = 0.f;
             primed_ = false;
             return false;
