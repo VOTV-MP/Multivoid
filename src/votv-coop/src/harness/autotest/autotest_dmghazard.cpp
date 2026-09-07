@@ -1,8 +1,6 @@
-// harness/autotest_dmghazard.cpp -- the MUST-VERIFY #6 puppet-damage hazard
-// PROBE (VOTVCOOP_RUN_DMGHAZARD_TEST): fire both damage entries on the slot-1
-// puppet and diff the HOST's own saveSlot.health (shared-saveSlot corruption
-// check). Extracted verbatim from harness/autotest_vitals.cpp (2026-07-19 s27
-// dissolve); interfaces + per-routine docs in harness/autotest.h.
+// The puppet-damage hazard probe (VOTVCOOP_RUN_DMGHAZARD_TEST): fire both of mainPlayer_C's damage
+// entries at the host's own slot-1 puppet and diff the HOST's saveSlot.health. Interfaces and
+// per-routine docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -27,39 +25,30 @@ namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace cfg = coop::config;
 
-// Bounded spin-wait on a game-thread task's completion flag. Returns true if
-// the task signalled (set the flag non-zero), false if it never completed
-// within timeoutMs -- which would mean the posted task faulted (the SEH
-// firewall ate the AV and the flag was never set). A bound is mandatory:
-// driving ragdollMode on the local player COULD fault and an unbounded wait
-// would hang the whole smoke.
+// Bounded spin-wait on a game-thread task's completion flag: true if the task signalled, false if
+// it never completed within timeoutMs -- which means the posted task faulted and the SEH firewall
+// ate the access violation before the flag was set. The bound is mandatory: driving damage on the
+// local player could fault, and an unbounded wait would hang the whole test.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// ===================== #6 puppet-damage hazard PROBE =====================
-// MUST-VERIFY #6 (gates Inc3-WIRE -- the combat loop). Static RE (IDA + SDK,
-// 2026-05-31) found NO per-actor health field on mainPlayer_C: health lives ONLY
-// on UsaveSlot_C (health@0x428), reached via GameInstance->save_gameInst -- ONE
-// per machine. So invoking `Add Player Damage` on a host-side UNPOSSESSED puppet
-// (a 2nd mainPlayer_C, GetController()==null) should drain the HOST'S OWN saveSlot
-// health. This probe LOCKS that at runtime (the static RE's lone wiggle is the
-// `addDamage` skipSetting guard + the BP-bytecode subtract that no static tool sees).
-//
-//   HOST: read own saveSlot.health -> invoke Add Player Damage(5) on the slot-1
-//     puppet -> re-read. A DROP == the shared-saveSlot corruption hazard is REAL
-//     (=> Inc3-WIRE must INTERCEPT native damage on puppets, not just relay it).
-//     If no drop, a LOCAL control (same call on the host's own player) tells a
-//     BP early-out (writes the slot, but skips unpossessed pawns) from a call that
-//     never landed. Host health is restored after, so the smoke stays alive/clean.
-//   CLIENT: just connects so the slot-1 puppet exists for the host.
-// Damage is tiny (5 HP from ~100); the session is disposable. Host-only verdict.
+// ===================== puppet-damage hazard PROBE =====================
+// mainPlayer_C carries no per-actor health: health lives on UsaveSlot_C, reached through
+// GameInstance->save_gameInst, one store per machine (ue_wrap/actors/vitals.h resolves the field by
+// name). So a damage entry invoked on an UNPOSSESSED host-side puppet -- a second mainPlayer_C with
+// GetController()==null -- can drain the HOST'S OWN health, and only a runtime measurement settles
+// it, because the `addDamage` skipSetting guard and the subtraction itself live in BP bytecode.
+//   HOST: read own saveSlot.health, invoke a damage entry on the slot-1 puppet, re-read. A DROP
+//     means the hazard is real and native damage on a puppet has to be INTERCEPTED rather than
+//     merely relayed -- coop/player/player_damage.h installs exactly that for the three impact
+//     entries. No drop, and a LOCAL control (the same call on the host's own player) separates a BP
+//     early-out from a call that never landed. Host health is restored after; the hit is 5 of ~100.
+//   CLIENT: connects, so the slot-1 puppet exists for the host. Host-only verdict.
 
-// Invoke AmainPlayer_C::"Add Player Damage"(Damage) on `target`. Returns true iff
-// the UFunction resolved AND the call dispatched. Game-thread only. (Harness uses
-// raw ParamFrame like the sibling tests -- the shipping Inc3-WIRE will add a proper
-// ue_wrap wrapper; this is a throwaway diagnostic.)
+// Invoke AmainPlayer_C::"Add Player Damage"(Damage) on `target`; true iff the UFunction resolved
+// and the call dispatched. A raw ParamFrame, so the probe can aim at a puppet. Game-thread only.
 bool InvokeAddPlayerDamage(void* target, float damage) {
     if (!target || !R::IsLive(target)) return false;
     void* cls = R::FindClass(L"mainPlayer_C");
@@ -71,12 +60,12 @@ bool InvokeAddPlayerDamage(void* target, float damage) {
     return ue_wrap::Call(target, f);
 }
 
-// Invoke AmainPlayer_C::addDamage(Actor, Damage, Hit, impact, skipSetting=false) on
-// `target` -- the HIT-ACTOR-keyed entry the native enemy/physics-impact path forwards
-// to (impactDamageCPP, the npc_zombie attack-sphere overlap). skipSetting=false ==
-// "do write the health value". Hit(FHitResult)/impact(FVector) stay zero-init (the
-// frame is zeroed); a well-formed BP null-checks them and the SEH firewall + bounded
-// WaitDone contain any fault. Game-thread only.
+// Invoke AmainPlayer_C::addDamage(Actor, Damage, Hit, impact, skipSetting=false) on `target` -- the
+// hit-actor-keyed entry the native enemy/physics-impact path forwards to (impactDamageCPP, the
+// npc_zombie attack-sphere overlap). skipSetting=false means "do write the health value". Hit
+// (FHitResult) and impact (FVector) stay zero-init, since the frame is zeroed; a well-formed BP
+// null-checks them, and the SEH firewall plus the bounded WaitDone contain any fault. Game-thread
+// only.
 bool InvokeAddDamage(void* target, void* sourceActor, float damage) {
     if (!target || !R::IsLive(target)) return false;
     void* cls = R::FindClass(L"mainPlayer_C");
@@ -90,8 +79,8 @@ bool InvokeAddDamage(void* target, void* sourceActor, float damage) {
     return ue_wrap::Call(target, f);
 }
 
-// GT-posted wrappers: invoke + log dispatch, bounded-wait for completion. `who` is a
-// string literal (lives forever -> safe to capture by pointer).
+// GT-posted wrappers: invoke, log the dispatch, bounded-wait for completion. `who` is a string
+// literal, so capturing it by pointer is safe.
 void InvokeAddPlayerDamageGT(void* target, float damage, const char* who) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([target, damage, who, done] {
@@ -132,14 +121,13 @@ void RestoreHostHealth(float v) {
 
 void ProbeDamageHazardOnHost() {
     UE_LOGI("dmghazard[host]: probe armed -- fire BOTH damage entries (Add Player Damage + "
-            "addDamage) on the slot-1 puppet, diff host saveSlot.health (MUST-VERIFY #6)");
+            "addDamage) on the slot-1 puppet, diff host saveSlot.health");
 
     // Wait for BOTH the slot-1 puppet (client connected) AND the host saveSlot.
     auto puppet = std::make_shared<void*>(nullptr);
     auto before = std::make_shared<float>(-1.f);
-    // 180 s: the window must survive a cold client boot (+connect) that starts
-    // AFTER the host's own boot armed this probe (the 60 s window expired before
-    // the client ever connected -- 2026-08-29 run).
+    // 180 s: the window has to outlast a cold client boot and connect that only starts after the
+    // host's own boot armed this probe.
     for (int attempt = 0; attempt < 180 && (!*puppet || *before < 0.f); ++attempt) {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([puppet, before, done] {
@@ -173,21 +161,21 @@ void ProbeDamageHazardOnHost() {
 
     if (d1 > 0.01f || d2 > 0.01f) {
         RestoreHostHealth(*before);
-        UE_LOGW("dmghazard[host]: VERDICT #6 = SHARED-SAVESLOT CORRUPTION CONFIRMED -- invoking %s on a "
+        UE_LOGW("dmghazard[host]: VERDICT = SHARED-SAVESLOT CORRUPTION CONFIRMED -- invoking %s on a "
                 "host-side UNPOSSESSED puppet drained the HOST'S OWN saveSlot.health (Add Player Damage "
-                "delta=%.2f, addDamage delta=%.2f). Health is the per-machine shared saveSlot. Inc3-WIRE "
-                "MUST intercept native damage on puppets (GetController()==null) and route it to the owner "
-                "as a reliable PlayerDamage event -- never let a host-side puppet's damage path run "
+                "delta=%.2f, addDamage delta=%.2f). Health is the per-machine shared saveSlot, so "
+                "native damage on a puppet has to be intercepted and routed to the owner as a "
+                "reliable PlayerDamage event, never run against the host's own store "
                 "(host health restored to %.2f).",
                 (d1 > 0.01f ? "Add Player Damage" : "addDamage"), d1, d2, *before);
         UE_LOGI("dmghazard[host]: DONE");
         return;
     }
 
-    // Neither puppet entry dropped host health -> control: the SAME Add Player Damage
-    // on the host's OWN possessed player. Tells "both entries early-out on the
-    // unpossessed puppet" (writes work, guarded by possession -> safe) from "calls
-    // never landed" (param/resolution bug -> INCONCLUSIVE, revise the probe).
+    // Neither puppet entry dropped host health -> control: the SAME Add Player Damage on the host's
+    // OWN possessed player. That separates "both entries early-out on the unpossessed puppet" (the
+    // writes work, guarded by possession, so they are safe) from "the calls never landed" (a param
+    // or resolution bug, which makes the verdict inconclusive).
     UE_LOGI("dmghazard[host]: neither puppet entry changed host health -- running a LOCAL control "
             "(Add Player Damage on the host's OWN player) to tell early-out from a non-landing call");
     auto local = std::make_shared<void*>(nullptr);
@@ -211,14 +199,14 @@ void ProbeDamageHazardOnHost() {
     UE_LOGI("dmghazard[host]: LOCAL control: host saveSlot.health %.2f -> %.2f (delta=%.2f)", bc, ac, dc);
     if (dc > 0.01f) {
         RestoreHostHealth(*before);
-        UE_LOGW("dmghazard[host]: VERDICT #6 = PUPPET-ENTRIES-EARLY-OUT -- BOTH 'Add Player Damage' AND "
+        UE_LOGW("dmghazard[host]: VERDICT = PUPPET-ENTRIES-EARLY-OUT -- BOTH 'Add Player Damage' AND "
                 "'addDamage' are no-ops on the unpossessed puppet (zero host-health change), while the SAME "
                 "'Add Player Damage' on the host's OWN possessed player dropped %.2f -> the damage path "
                 "writes the shared saveSlot but GUARDS on possession (GetController()). So directly invoking "
-                "either entry on a puppet is SAFE. RESIDUAL: VOTV's native enemy attack reaches the pawn via "
-                "impactDamageCPP/overlap (native hit-actor forward) -- if that bypasses the possession guard "
-                "it could still corrupt; Inc3-WIRE should still OBSERVE/intercept damage on puppets (needed "
-                "for event routing regardless). Host health restored to %.2f.", dc, *before);
+                "either entry on a puppet is SAFE. RESIDUAL: the native enemy attack reaches the pawn via "
+                "impactDamageCPP/overlap (a native hit-actor forward) -- if that bypasses the possession "
+                "guard it could still corrupt, which is why those entries are intercepted on puppets. "
+                "Host health restored to %.2f.", dc, *before);
     } else {
         UE_LOGW("dmghazard[host]: VERDICT INCONCLUSIVE -- no entry (puppet OR local control) changed host "
                 "health; the damage calls aren't landing (param/resolution). Revise the probe / verify the "
