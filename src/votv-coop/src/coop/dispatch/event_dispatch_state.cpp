@@ -259,8 +259,8 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::GrimeState: {
         // The surface grime scalar. Symmetric cooperative cleaning keyed by a quantised world
         // position (a grime decal is static); the host relays a client edge. The receiver applies
-        // the minimum and repaints. A decal destroy is deferred (see grime_sync.h): grime streams
-        // in and out, so a vanished decal is not a reliable destroy signal.
+        // the minimum and repaints. A decal wiped out of existence arrives on this same kind as a
+        // zero, which the minimum makes invisible; there is no separate destroy.
         if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
             UE_LOGW("event_feed: GrimeState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));

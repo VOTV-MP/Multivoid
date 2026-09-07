@@ -1,37 +1,18 @@
-// coop/dish_sync.h -- L4 (v113): the satellite-dish sync lane.
+// coop/interactables/dish_sync.h -- the satellite-dish sync lane.
 //
-// THE ROOT (measured, votv-dish-impl-RE-2026-07-16.md): every dish slew runs a
-// per-peer BP frame-loop with per-slew RNG (start delays, speed), the download
-// ARM rolls PER-PEER RNG polarity at initDownloadSignal(-1), and calibration
-// has four independent writers -- so dish poses, the armed download's polarity,
-// and calibration all DIVERGE across peers. Design of record:
-// votv-dish-L4-impl-DESIGN-2026-07-16.md (10-round /qf, 2026-07-16).
+// THE ROOT, measured: every dish slew runs a per-peer Blueprint frame loop with per-slew RNG
+// in its start delays and speed; the download ARM rolls per-peer RNG polarity when it
+// initialises the signal; and calibration has four independent writers. So dish poses, an
+// armed download's polarity and the calibration all DIVERGE across peers on their own.
 //
-// The shape:
-//  - CLIENT dish sim PARKED: ticker_disher (ClearTimer) + ticker_dishUncalib
-//    (TickEnabled false) killed with paired restores on the teardown fanout;
-//    the client's own unpreventable ping slews are killed-with-cleanup by the
-//    catch detector (signal_catch_sync calls KillOwnPingSlews right after the
-//    catch payload is sent).
-//  - HOST streams DishPose (unreliable 39): movers-only rows at 4 Hz + a
-//    settle-tail (full-24 sweeps 1 Hz x3 after MovingCount hits 0). A receiver
-//    drives the streamed poses kinematically, interpolated by a coop::LerpWindow
-//    per-frame on Tick to eliminate 4 Hz hard-snap stepping while dishes slew.
-//    ONE applier (stream rows AND the DishSnapshot=100 join seed): wire-shadow ->
-//    raw isMoving -> activeDishes -> cue edges -> target / interp / snap. Guard:
-//    skip a dish whose LOCAL loop is live (own-ping pre-kill window: local
-//    isMoving && !shadow).
-//  - ARM axis has ONE author: the host's 4 Hz raw poll (mesh EDGE | DL signal
-//    FName change | polarity change) -> DishArm=99 {armed, decoded, polarity};
-//    client apply = pre-clear mirrored moving state -> reflected
-//    checkFordDishes() (the native display tail) -> ArmDownloadFromSignal with
-//    the HOST polarity. Disarm -> ResetDownloadMachine + deleteSignalActor.
-//    (The v70 pending-adopt + the joiner direct-arm are RETIRED -- RULE 2.)
-//  - CALIBRATION is symmetric: 1 Hz diff-poll on every peer; local changes
-//    broadcast as absolute-value batches (DishCalib=101); host relay = total
-//    order; apply+prime GT-atomic (echo-proof).
-//
-// One concept = one folder: lives with the other desk/device interactables.
+// So each axis gets ONE author. POSES: a client's dish simulation is PARKED -- both its
+// tickers stopped, with paired restores on the teardown fanout -- and the host streams
+// movers-only rows plus a settle tail, which one applier drives kinematically through an
+// interpolation window, so the stream's rate is not visible as stepping. That applier serves
+// the stream rows and the join seed alike, and skips a dish whose own local loop is still
+// live. ARM: the host's raw poll is the only author, and a client applies the host's polarity
+// rather than rolling its own. CALIBRATION is symmetric instead, having no RNG to diverge on:
+// every peer diff-polls, broadcasts absolute values, and the host relay gives them one order.
 
 #pragma once
 

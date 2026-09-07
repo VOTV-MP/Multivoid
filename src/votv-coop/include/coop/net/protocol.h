@@ -232,7 +232,7 @@ enum class ReliableKind : uint8_t {
 
     // Any peer, relayed by the host: a grime decal's process scalar decreased, keyed by the decal's
     // quantized world position (a static decal's position is its identity). Minimum wins, like the
-    // window. A decal's final removal has no lane yet. KeyedScalarPayload.
+    // window. A decal wiped out of existence rides the same kind, as a zero. KeyedScalarPayload.
     GrimeState = 31,
 
     // Any peer, relayed by the host: the garage door's open state, keyed by the garage's
@@ -2037,8 +2037,8 @@ static_assert(sizeof(PropSnapPosPayload) <= 256 - 20 - 8, "PropSnapPosPayload mu
 // plus the named hour, minute and day the HUD reads (a client at TimeScale 0 never runs its own
 // minute pulse).
 struct TimeSyncPayload {
-    float totalTime;   // within-day clock [0, MaxTime) -- the sun/moon derive from this every tick
-    float day;         // the within-day ACCUMULATOR (midnight cascade threshold), NOT the day number
+    float totalTime;   // the absolute elapsed clock, never wrapped
+    float day;         // the within-day accumulator the sun and the midnight threshold both read
     float timeScale;   // clock advance rate (so the client advances at the host's rate)
     int32_t hour;
     int32_t minute;

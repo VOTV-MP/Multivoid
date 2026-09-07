@@ -1,4 +1,4 @@
-// coop/npc_adoption.cpp -- see coop/npc_adoption.h for the contract + RE ground truth.
+// coop/creatures/npc_adoption.cpp -- see coop/creatures/npc_adoption.h for the contract.
 
 #include "coop/creatures/npc_adoption.h"
 

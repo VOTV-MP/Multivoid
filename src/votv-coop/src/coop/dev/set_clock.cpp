@@ -47,16 +47,14 @@ void SetClock(int day, int hour, int minute) {
             return;
         }
         const int rawZ = day - 1;  // displayed day -> the scheduler/save day-Z
-        // INSTANT + COMPLETE (user 2026-07-03: the old timeZ-only write left the sun
-        // where it was until the next minute pulse "fed it through" -- and the pulse
-        // rebuilds timeZ from the accumulators, so the write could even snap back).
-        // The full native clock state is three pieces:
-        //   totalTime -- the within-day [0, MaxTime) clock the sun/moon re-derive from
-        //                EVERY ReceiveTick -> writing it moves the lighting this frame;
-        //   day       -- the within-day midnight-cascade accumulator: keep it equal to
-        //                totalTime so the next natural midnight stays exactly one
-        //                day-remainder away (never crosses MaxTime spuriously);
-        //   timeZ     -- the NAMED clock (HUD + settime scheduler + save persistence).
+        // INSTANT and COMPLETE. A timeZ-only write leaves the sun where it was and does not
+        // even hold: the cycle rebuilds timeZ from the accumulator on its next tick, so the
+        // write snaps back. All three pieces move together:
+        //   day       -- the within-day accumulator the sun derives from AND the midnight
+        //                cascade fires on, so writing it moves the lighting;
+        //   totalTime -- the absolute elapsed clock, kept equal to day so the two never
+        //                disagree about where in the day we are;
+        //   timeZ     -- the NAMED clock (the HUD, settime's scheduler, save persistence).
         // The next minute pulse persists via settime; a forward day jump fires skipped
         // scheduled events natively (settime's own walk). Connected clients converge on
         // the next time_sync correction (<= 2 s), which now carries timeZ too (v96).
@@ -95,9 +93,9 @@ void SetTimeFraction(float frac) {
             return;
         }
         // COMPLETE set (2026-07-03): sun AND the named clock together -- the old sun-only
-        // write desynced the HUD clock from the lighting, and the next minute pulse
-        // rebuilt everything from the accumulators anyway. Same day; the within-day
-        // accumulator follows totalTime (see SetClock).
+        // write desynced the HUD clock from the lighting, and the next tick rebuilt timeZ
+        // from the accumulator anyway. Same day; the two accumulators are kept equal, as in
+        // SetClock.
         const int minutes = static_cast<int>(frac * 1440.0f);
         DNC::WriteTimeZ(minutes / 60, minutes % 60, dz);
         DNC::ApplyClock(frac * maxT, frac * maxT, scale);

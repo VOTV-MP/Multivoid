@@ -12,7 +12,7 @@
 #include "coop/creatures/npc_sync.h"             // GetSession (the shared session accessor npc_adoption uses)
 #include "coop/player/players_registry.h"     // Local()
 #include "coop/props/remote_prop.h"          // RegisterPropMirror
-#include "coop/props/remote_prop_spawn.h"    // OnSpawn (fresh-spawn fallback) + RecordClaimIfTracking + HasLoadTailQuiesced
+#include "coop/props/remote_prop_spawn.h"    // OnSpawn -- the fresh-spawn fallback
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced -- the claim and sweep half of the join window
 #include "ue_wrap/engine/engine.h"            // GetActorLocation + SetActorSimulatePhysics
 #include "ue_wrap/actors/prop.h"              // GetKeyString (anti-collision gate: candidate's own Aprop_Key)

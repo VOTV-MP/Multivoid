@@ -4,10 +4,9 @@
 // client apply + the connect-snapshot. Talks to the engine ONLY through
 // ue_wrap::daynightcycle.
 //
-// WHY: the cycle's clock (totalTime/Day/TimeScale) is NOT otherwise replicated, so a
-// fresh joiner free-runs its own day-0/night clock while the host is at midday -> the
-// client world renders DARK. The sun is a pure function of totalTime (the cycle's
-// ReceiveTick re-derives it each frame), so syncing the clock fixes the brightness.
+// WHY: the cycle's clock is NOT otherwise replicated, so a fresh joiner free-runs its own
+// day-zero night clock while the host is at midday and the client world renders DARK. The sun
+// follows the cycle's within-day accumulator, so syncing the clock fixes the brightness.
 //
 // MODEL (host-authoritative, MTA single-syncer): the HOST polls its cycle and broadcasts
 // the clock on a throttle (the clock is continuous -> push periodically, not on-change) +

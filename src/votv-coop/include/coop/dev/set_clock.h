@@ -4,18 +4,18 @@
 // existing coop::time_sync host poll broadcasts the accumulator clock to clients each tick, so the
 // sky snaps on every peer. Host-only (dev_gate refuses on a connected client, like every dev verb).
 //
-// TWO clocks live on the cycle (bytecode-verified 2026-07-03; ue_wrap/daynightcycle.h):
-//   - the NAMED clock `timeZ` (FIntVector: X=hour, Y=minute, Z=DAY) -- the game's own running
-//     triple. The minute pulse calls saveSlot.settime(timeZ) (persists savedtime + runs the
-//     scheduled-event walk) and rebuilds timeZ from settime's outs. THE day number lives here.
-//   - the float accumulators `totalTime`/`Day` ([0, MaxTime) within-day counters; the sun angle
-//     derives from totalTime, the midnight cascade from Day). The old dev menu printed the raw
-//     `Day` ACCUMULATOR as "day" (the 4029-ticking display bug) and wrote it in SetDay -- both
-//     wrong; the accumulator is not the day number.
-// Setting the clock = write `timeZ`; the game's own pulse picks it up within a game-minute and
-// runs settime natively (a FORWARD day jump fires every skipped scheduled row -- native settime
-// semantics, and v95 EventFire mirrors them to clients per policy). The sun slider stays a
-// separate, visual-only lever (totalTime), exactly as before.
+// TWO clocks live on the cycle (see ue_wrap/world/daynightcycle.h):
+//   - the NAMED clock `timeZ` (FIntVector: X=hour, Y=minute, Z=day number) -- the game's own
+//     running triple, which the cycle rebuilds each tick from the accumulator and
+//     saveSlot.savedtime.Z and then hands to settime, which persists it and walks the
+//     scheduled events. The DAY NUMBER lives in savedtime.Z, mirrored here.
+//   - the float accumulators `totalTime` and `day`. `day` is the within-day counter the
+//     midnight cascade fires on AND what the sun derives from; `totalTime` is the absolute
+//     elapsed clock and drives nothing in the Blueprint. Neither is the day number, which is
+//     why printing the accumulator as "day" was a display bug.
+// Setting the clock therefore writes BOTH: the accumulators, so the sky moves at once, and
+// `timeZ`, so the HUD agrees before the next rebuild. A FORWARD day jump fires every skipped
+// scheduled row through the game's own settime, and the event lane mirrors those to clients.
 
 #pragma once
 
