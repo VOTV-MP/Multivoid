@@ -1,8 +1,7 @@
 // coop/player/puppet_carry_drive.h -- HOST-side per-tick drive of a PUPPET-held trash clump to its hand.
 //
-// Increment 2 (chipPile CLIENT-grab, docs/piles/08): when a client grabs a pile, the host executes
-// playerGrabbed on puppet-N. The probe (research/findings/votv-puppet-grab-feasibility-RE-2026-06-22)
-// proved the grab ENGAGES + HOLDS on an unpossessed puppet, but the puppet's own ReceiveTick does NOT
+// When a client grabs a chipPile, the host executes playerGrabbed on that client's puppet. The grab
+// ENGAGES and HOLDS on an unpossessed puppet, but the puppet's own ReceiveTick does NOT
 // drive the PHC's per-tick SetTargetLocationAndRotation -- so the held clump FLOATS at the grab spot,
 // it never tracks to the puppet's hand. Because the host streams the clump's HOST-side pose to all
 // peers (trash_channel + PropPose), the clump must BE at the puppet's hand ON THE HOST. This module
@@ -10,8 +9,8 @@
 // local_streams applies to the host's OWN held props (MTA CClientVehicle target-follow shape).
 //
 // HOST-ONLY. Game-thread only (all entries run on the net-pump game thread, like trash_channel).
-// One-feature-per-file (RULE 2026-05-25): NOT folded into local_streams (the LOCAL pose stream) nor
-// trash_channel (the state machine) -- this is the puppet-held kinematic follower, a distinct subsystem.
+// One feature per file: NOT folded into local_streams (the LOCAL pose stream) nor trash_channel (the
+// state machine) -- this is the puppet-held kinematic follower, a subsystem of its own.
 
 #pragma once
 

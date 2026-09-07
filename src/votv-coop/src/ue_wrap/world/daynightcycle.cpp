@@ -37,8 +37,8 @@ constexpr int32_t kTimeZOffFallback     = 0x02D0;
 // {ptr, g_cycleCacheIdx} pair (RULE 2; islive-zeroav D1) -- IsLiveByIndex (serial
                                  // slot-compare) rejects a RECYCLED slot that plain
                                  // IsLive accepts; raw float writes through a recycled
-                                 // pointer corrupt the foreign occupant (audit
-                                 // 2026-07-04 (c), the quit-to-menu teardown context)
+                                 // pointer corrupt the foreign occupant, which is
+                                 // reachable from the quit-to-menu teardown)
 ue_wrap::CachedObjRef g_cycleCache;
 
 }  // namespace
@@ -145,7 +145,7 @@ namespace {
 void* g_gmCls = nullptr;
 int32_t g_offGmSaveSlot = -1;
 void* g_saveSlotCls = nullptr;
-int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery (@0x0E40)
+int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery
 void* g_gm = nullptr;
 int32_t g_gmIdx = -1;
 }  // namespace

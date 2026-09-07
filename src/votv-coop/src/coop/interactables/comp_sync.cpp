@@ -103,7 +103,7 @@ void SendState(coop::net::Session* s, const CMP::CompScalars& cs, uint8_t adopt,
     else s->SendReliableToSlot(toSlot, coop::net::ReliableKind::CompState, &p, sizeof(p));
 }
 
-// Audit I-1: the SIMULATOR derives "this completion hit the cap" from its own
+// The SIMULATOR derives "this completion hit the cap" from its own
 // post-increment level + maxLevel at the falling edge -- the mirror must never
 // derive it (its comp_data is one CompData behind the CompState on the lane).
 uint8_t ComputeFinalLevel(const CMP::CompScalars& cs) {
@@ -182,7 +182,7 @@ void Tick() {
     }
     if (g_worldDown) {
         // World-up edge. CLIENT: kill the setData->comp_start auto-resume
-        // (the v56 joiner double-simulation bug) BEFORE any stream goes out.
+        // that would double-simulate the decode, BEFORE any stream goes out.
         // The host keeps its natural latch -- it owns the world's decode.
         g_worldDown = false;
         if (s->role() == coop::net::Role::Client && cs.decodeActive) {
@@ -197,7 +197,7 @@ void Tick() {
     }
 
     // Simulator stream: ~1 Hz while latched + both edges. The falling edge
-    // carries the Done-vs-prog verdict (audit I-1).
+    // carries the Done-vs-prog verdict.
     if (s->connected() && (cs.decodeActive || g_lastLocalFlag != cs.decodeActive)) {
         const bool falling = g_lastLocalFlag && !cs.decodeActive;
         SendState(s, cs, /*adopt=*/0, /*toSlot=*/-1,
@@ -237,8 +237,8 @@ void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot) {
         CMP::CompCueStop();
         if (p.progress >= 100.0f) {
             // Completion beep: the SIMULATOR stamped the Done-vs-prog verdict
-            // (audit I-1/I-5: the mirror's local level is pre-CompData stale
-            // here, and a desk-read fallback guessed maxLevel=0 -- both wrong).
+            // here: the mirror's local level is pre-CompData stale at this point,
+            // and a desk-read fallback guesses maxLevel=0.)
             CMP::CompBeepDone(p.isFinalLevel != 0);
         }
         g_simSlot = 0xFF;
