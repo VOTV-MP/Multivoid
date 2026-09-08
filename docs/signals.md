@@ -119,8 +119,9 @@ edit-script batches the host anchors and answers with a canonical
 a deny that reaps the author's just-spawned disc (`coop/interactables/floppybox_sync`). The
 laptop's signal database is a content-hash multiset with a host-canonical order, because the
 store has a move verb (`coop/interactables/meadow_db_sync`). The signal servers' break-and-fix
-simulation is host-owned and driven into each client's server boxes as state, so a client never
-authors a false "server down" (`coop/interactables/serverbox_sync`).
+simulation is host-owned and driven into each client's server boxes as state, so a client's own
+break is overwritten within a second (`coop/interactables/serverbox_sync`). A break the client
+authors locally can still raise one transient notice before that.
 
 ### Upgrades
 

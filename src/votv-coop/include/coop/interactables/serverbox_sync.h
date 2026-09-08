@@ -11,7 +11,10 @@
 // broadcasts ServerStatePayload on a change; the client raw-writes each IsBroken (resolved by name
 // at runtime), dispatches the box's notify-free check(), mirrors brokenServers and serverEfficiency
 // so its SAT-console reads the host's numbers, neutralizes its own ticker_serverBreaker, and never
-// sends server state. Identity is the save-stable servers[] array index: isBrokenMask bit i is
+// sends server state. Neutralizing the breaker does not close every local break: serverBox's own
+// graph reaches breakServer() from a damage path, and that broadcasts serverBroke and bumps
+// brokenServers before the next mirror overwrites the STATE, so a transient false notice on a
+// client is still possible. Identity is the save-stable servers[] array index: isBrokenMask bit i is
 // servers[i].IsBroken, and a joiner is sent the current state at world-ready.
 
 #pragma once
