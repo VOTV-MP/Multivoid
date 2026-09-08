@@ -1,23 +1,17 @@
-// ue_wrap/gvas_meta.h -- direct .sav (GVAS) metadata reader for the save picker.
+// ue_wrap/engine/gvas_meta.h -- direct .sav (GVAS) metadata reader for the save picker.
 //
-// Engine-wrapper layer (principle 7): understands UE4's SaveGameToSlot on-disk
-// format (uncompressed GVAS header + tagged property stream) just enough to
-// harvest the handful of saveSlot_C scalars a picker row shows -- WITHOUT
-// deserializing the save. A VOTV save is 15-20 MB of world arrays;
-// UGameplayStatics::LoadGameFromSlot parses ALL of it synchronously on the game
-// thread, so the old picker scan (native loadSlots = N x LoadGameFromSlot) froze
-// the game for seconds at picker-open (user 2026-07-11, ~11 saves x ~17 MB).
-// Here every unwanted property's payload is SKIPPED via its tag's Size field:
-// a 20 MB file costs a few hundred small reads + seeks, runs on a WORKER thread.
+// Engine-wrapper layer (principle 7): understands UE4's SaveGameToSlot on-disk format -- an
+// uncompressed GVAS header followed by a tagged property stream -- just enough to harvest the
+// handful of saveSlot_C scalars a picker row shows, without deserializing the save. A VOTV save is
+// 15-20 MB of world arrays and LoadGameFromSlot parses all of it on the game thread, so a picker
+// that opened every slot that way froze the game for the whole scan. Here each unwanted payload is
+// SKIPPED via its tag's Size field, so the cost follows the number of top-level properties rather
+// than the file size. Pure file I/O -- no engine access, callable from ANY thread.
 //
-// Tagged-property caveat (measured on s_1234.sav, 2026-07-11): SaveGameToSlot
-// serializes DELTA-VS-CDO -- a property equal to its class default is NOT in the
-// file (health/maxHealth absent at 100/100; Version absent when it equals the
-// authored default). "Missing" therefore means "CDO default"; the caller fills
-// those from the live saveSlot_C CDO (game thread), reproducing
-// LoadGameFromSlot's NewObject-then-apply-deltas semantics exactly.
-//
-// Pure file I/O -- no engine access; callable from ANY thread.
+// SaveGameToSlot serializes DELTA-VS-CDO: a property equal to its class default is not in the file
+// at all, which is why health and maxHealth go missing at 100/100. Every field below therefore
+// ships a has* flag, and "missing" means "CDO default" -- the caller fills those from the live
+// saveSlot_C CDO on the game thread, which is LoadGameFromSlot's own new-then-apply semantics.
 
 #pragma once
 
@@ -39,11 +33,10 @@ struct GvasSlotMeta {
     bool hasLastSavedDate = false; int64_t lastSavedDateTicks = 0;  // FDateTime ticks
 };
 
-// Parse the file's GVAS header + walk the TOP-LEVEL tagged-property stream,
-// harvesting the fields above and seeking past everything else. Returns false
-// (out.parsed=false) on IO failure / not-a-GVAS / malformed stream -- the
-// caller drops the file from the list (native parity: a LoadGameFromSlot
-// failure was skipped too). Any thread.
+// Parse the file's GVAS header + walk the TOP-LEVEL tagged-property stream, harvesting the
+// fields above and seeking past everything else. Returns false (out.parsed=false) on IO failure,
+// on a file whose magic is not GVAS, and on a malformed stream -- the caller drops such a file
+// from the list rather than showing a row it could not read. Any thread.
 bool ReadSlotMeta(const std::wstring& savPath, GvasSlotMeta& out);
 
 }  // namespace ue_wrap::gvas_meta
