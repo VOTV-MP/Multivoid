@@ -1,17 +1,14 @@
-// coop/session/player_handshake_prefs.cpp -- the live display-pref change
-// family of the player_handshake module: SkinChange (v93) / NameplateChange
-// (v94) / NickColorChange (v103). One shared shape per family member:
-// AnnounceLocal* (the local player's mid-session change: client -> host,
-// host -> all) + Handle* (host: forgery-guarded store + rebroadcast
-// originator-excluded; client: host-only sender, store). The AT-JOIN state of
-// each pref rides the Join/PlayerJoined payloads built by
-// player_handshake.cpp -- this file is the LIVE-CHANGE wire only.
+// coop/session/player_handshake_prefs.cpp -- the live display-pref change family of the
+// player_handshake module: SkinChange, NameplateChange and NickColorChange. One shared shape
+// per family member: AnnounceLocal* for the local player's mid-session change (client to host,
+// host to all), plus Handle* -- on the host a forgery-guarded store and an originator-excluded
+// rebroadcast, on a client a host-only sender and a store. The AT-JOIN state of each pref rides
+// the Join and PlayerJoined payloads built by player_handshake.cpp; this file is the
+// LIVE-CHANGE wire only.
 //
-// Extracted from player_handshake.cpp 2026-07-05 (modular file-size rule:
-// 1043 LOC after the v103 nick color landed). Shared internals (the skin
-// side-table store + the skin field parser) come through
-// player_handshake_detail.h; the public API stays in
-// include/coop/session/player_handshake.h (same namespace, two TUs).
+// The shared internals -- the skin side-table store and the skin field parser -- come through
+// player_handshake_detail.h, and the public API stays in
+// include/coop/session/player_handshake.h: one namespace, two translation units.
 
 #include "coop/session/player_handshake.h"
 
@@ -34,8 +31,8 @@ namespace coop::player_handshake {
 
 namespace {
 
-// [u8 slot][u8 len][name ASCII] -- the SkinChange wire form (also what the host
-// rebroadcasts verbatim).
+// [u8 slot][u8 len][name ASCII] -- the SkinChange wire form, and what the host rebroadcasts
+// unchanged.
 std::vector<uint8_t> BuildSkinChangePayload(uint8_t slot, const std::string& name) {
     std::vector<uint8_t> out;
     const uint8_t len = static_cast<uint8_t>(name.size() > 48 ? 48 : name.size());
@@ -46,13 +43,13 @@ std::vector<uint8_t> BuildSkinChangePayload(uint8_t slot, const std::string& nam
     return out;
 }
 
-// [u8 slot][u8 visible] -- the NameplateChange wire form (host rebroadcasts verbatim).
+// [u8 slot][u8 visible] -- the NameplateChange wire form; the host rebroadcasts it unchanged.
 std::vector<uint8_t> BuildNameplateChangePayload(uint8_t slot, bool visible) {
     return { slot, static_cast<uint8_t>(visible ? 1 : 0) };
 }
 
-// [u8 slot][u8 has][u8 r][u8 g][u8 b] -- the NickColorChange wire form (host
-// rebroadcasts verbatim).
+// [u8 slot][u8 has][u8 r][u8 g][u8 b] -- the NickColorChange wire form; the host rebroadcasts
+// it unchanged.
 std::vector<uint8_t> BuildNickColorChangePayload(uint8_t slot, uint32_t packed) {
     return { slot, static_cast<uint8_t>(coop::nick_color::IsCustom(packed) ? 1 : 0),
              coop::nick_color::R(packed), coop::nick_color::G(packed),

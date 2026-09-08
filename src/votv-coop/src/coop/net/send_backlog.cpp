@@ -137,13 +137,13 @@ void SendBacklog::Drain(int slot, uint32_t hConn, int sendBufBytes) {
         ResetLocked_(s);
         return;
     }
-    // D8 reserve: stop refilling once pending crosses sendBufBytes - kReserve,
-    // keeping headroom for the UnreliableNoDelay pose/voice streams. The rc
-    // below remains the correctness backstop -- this read is a fairness gate.
+    // Reserve: stop refilling once pending crosses sendBufBytes - kReserve, keeping headroom
+    // for the UnreliableNoDelay pose and voice streams. The rc below remains the correctness
+    // backstop -- this read is a fairness gate.
     int pending = PendingBytesTotal_(hConn);
     bool progressed = false;
     bool blocked = false;
-    int sentThisPass = 0;  // kDrainPassCap bounds the mutex hold (audit WARN-1)
+    int sentThisPass = 0;  // kDrainPassCap bounds the mutex hold
     for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Normal -> Bulk
         LaneQ& l = s.lanes[lane];
         while (!l.q.empty()) {
