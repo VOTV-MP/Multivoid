@@ -1,20 +1,17 @@
-// ue_wrap/saved_signals.h -- standalone engine access for the desk signal
-// LIBRARY: gamemode.savedSignals_0 (TArray<Fstruct_signalDataDynamic>,
-// @0x0968) and its two native verbs. Principle-7 engine-wrapper layer;
+// ue_wrap/saved_signals.h -- engine access for the desk signal LIBRARY, gamemode.savedSignals_0
+// (TArray<Fstruct_signalDataDynamic>) and its two native verbs. Principle-7 engine-wrapper layer;
 // coop::signal_sync drives the mirror through here.
 //
-// RE (2026-06-12 savedSignals agent pass):
-// - The live list is the gamemode array; saveSlot.savedSignals_comp_0 is its
-//   save marshal (copied at saveObjects/load) -- persistence is free.
-// - gamemode.saveSignal(signal, new, checkOnly, downloadedAtQuality,
-//   selfQuality, succ): validity-gated (decoded>=size && size>0) append +
-//   "Create Signal List" pane rebuild + specials/forceObjects bookkeeping.
-//   `new` is a dead param; selfQuality=true keeps the row's own quality.
-//   No sounds/points/stats inside -- those live at the producer's button
-//   sites and correctly stay producer-local.
-// - gamemode.deleteSignal(IndexToRemove): Array_Remove + pane rebuild only.
-// - Producers: download-save, drive import, copySignal (direct Array_Add).
-//   Export-to-drive = Array_Get + deleteSignal (a MOVE).
+// The live list is the gamemode array, and saveSlot.savedSignals_comp_0 is its save marshal, copied
+// at saveObjects and at load, so persistence is free.
+//
+// gamemode.saveSignal(signal, new, checkOnly, downloadedAtQuality, selfQuality, succ) is a
+// validity-gated append -- decoded >= size and size > 0 -- plus a "Create Signal List" pane rebuild
+// and the specials and forceObjects bookkeeping. `new` is a dead param, and selfQuality=true keeps
+// the row's own quality. No sounds, points or stats are inside: those live at the producer's button
+// sites and correctly stay producer-local. gamemode.deleteSignal(IndexToRemove) is an Array_Remove
+// plus that rebuild, nothing else. Producers are download-save, drive import and copySignal's
+// direct Array_Add; export to a drive is an Array_Get plus deleteSignal, so it is a MOVE.
 
 #pragma once
 
@@ -31,8 +28,8 @@ namespace ue_wrap::saved_signals {
 // sees delete+append and re-broadcasts the row, which IS the desired
 // convergence for renames (order moves to tail on mirrors; documented).
 struct RowKey {
-    uint64_t namePtr = 0;  // FString data ptr @0x00
-    uint64_t idPtr   = 0;  // FString data ptr @0x18
+    uint64_t namePtr = 0;  // the name FString's data pointer
+    uint64_t idPtr   = 0;  // the id FString's data pointer
     int64_t  date    = 0;
     int32_t  level   = 0;
     uint8_t  isCopy  = 0;
