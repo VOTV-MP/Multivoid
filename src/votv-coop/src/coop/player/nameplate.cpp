@@ -222,8 +222,12 @@ void Install(coop::net::Session* session) {
 }
 
 void ResetSlots() {
-    // Session-start reset -- runs on the BRINGUP thread (TimelineThread) via
-    // player_handshake::Reset; the store is atomic, so no game-thread hop needed.
+    // Two callers, on two threads, and the stores are atomic so neither needs a hop:
+    // event_feed::OnSessionStart on the BRINGUP thread, and the leave-world funnel in
+    // net_pump on the game thread. The bringup one is the correctness edge -- a peer's pref
+    // arrives with its Join, before its roster row exists, so a slot that never became
+    // occupied would otherwise carry the pref into the next session. The funnel one keeps a
+    // stale plate from re-activating the HUD in the menu through hud::IsActive().
     for (auto& h : g_hiddenBySlot) h.store(false, std::memory_order_relaxed);
 }
 
