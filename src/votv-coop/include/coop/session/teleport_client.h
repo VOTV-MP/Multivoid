@@ -1,14 +1,12 @@
 // coop/session/teleport_client.h -- teleport connected clients to the host's pose.
 //
-// MOVED coop/dev/ -> coop/session/ 2026-07-10 (placement audit HIGH-1): this is a SHIPPED
-// join/moderation verb, not a dev toy -- every join spawns the joiner at the host pose through
-// TeleportSlotToHost (subsystems connect edge), the F1 Admin scoreboard teleport uses it
-// (moderation.cpp), and event_feed applies its wire packet. The F1 dev-menu button is just one
-// more caller. Namespace followed the move (coop::dev::teleport_client -> coop::teleport_client).
+// A shipped join and moderation verb, not a dev toy: every join spawns the joiner at the host pose
+// through TeleportSlotToHost on the connect edge (subsystems.cpp), the F1 admin scoreboard
+// teleports one client through it (moderation.cpp), event_feed applies its wire packet, and the F1
+// dev-menu button is one more caller.
 //
-// Direction: HOST -> CLIENT only. The action is a no-op on a client (it self-
-// gates on Session::Role::Host). Mirrors MTA's `!tphere` chat command but as a
-// menu button. [[project-coop-foundation]] cross-ref.
+// Direction: HOST -> CLIENT only. The action self-gates on Session::Role::Host and no-ops on a
+// client. It mirrors MTA's `!tphere` chat command as a menu button.
 
 #pragma once
 
