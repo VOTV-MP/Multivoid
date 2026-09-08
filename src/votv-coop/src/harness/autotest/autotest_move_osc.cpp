@@ -1,30 +1,18 @@
 // harness/autotest_move_osc.cpp -- TEST-ONLY autonomous local-player movement.
 //
-// PURPOSE: drive the LOCAL player around a small horizontal circle so the OTHER
-// peer's RemotePlayer interpolation has a MOVING source to track. This is the
-// verification rig for the interp-starvation fix (2026-06-06): with a STATIC
-// source the receiver's `pose-diag[slot N] ... trail=` line is trivially ~0 cm
-// (which is exactly why the bug hid in every prior autonomous smoke -- the host
-// never moved). With this oscillator the observer's trail reveals the real
-// steady-state lag:
-//   - BROKEN (pre-fix): the puppet crawls at ~0.68x and trails the moving source
-//     by ~1-2.5 s of motion -> trail grows to HUNDREDS of cm (the user's real
-//     hand-walked logs showed 69-204 cm).
-//   - FIXED (advance-before-rebase): the trail is bounded at ~ speed * window.
-//     At the constants below (~235 cm/s on a 75 ms window) that is a CONSTANT
-//     ~18 cm -- small and steady, a clean ~10x separation from the broken case.
+// It drives the LOCAL player around a small horizontal circle so the OTHER peer's RemotePlayer
+// interpolation has a MOVING source to track. Against a STATIC source the receiver's
+// `pose-diag[slot N] ... trail=` reads a trivial ~0 cm, which is how an interpolation that
+// crawled at ~0.68x and trailed by one to two and a half seconds of motion -- hundreds of cm --
+// stayed invisible. With the oscillator running, a correct receiver's trail is bounded at about
+// speed times window: at the constants below, ~235 cm/s on a 75 ms window, a steady ~18 cm. A
+// CIRCLE rather than a back-and-forth is deliberate -- constant tangential speed gives a
+// constant trail, easy to read at the 1 Hz pose-diag cadence, and it sweeps every direction so
+// it never repeatedly slams one wall.
 //
-// A CIRCLE (not a back-and-forth) is deliberate: constant tangential speed gives
-// a constant trail (easy to read at the 1 Hz pose-diag cadence), and it sweeps
-// all directions so it never repeatedly slams one wall.
-//
-// TEST-ONLY. Never ships -- gated by env VOTVCOOP_RUN_MOVE_OSC, exactly like every
-// other VOTVCOOP_RUN_*_TEST probe (RULE 3: dev/test scaffolding, not shipped
-// behaviour). Role-agnostic: it just moves whichever peer has the env set; enable
-// it on ONE peer and read the OTHER peer's pose-diag. Motion is applied as small
-// per-tick absolute SetActorLocation writes (small moves stick; VOTV's player
-// constraints silently revert large teleports -- see coop/session/teleport_client.cpp).
-// Game thread only (every engine touch goes through GT::Post).
+// Gated by VOTVCOOP_RUN_MOVE_OSC and role-agnostic: enable it on ONE peer and read the OTHER
+// peer's pose-diag. Motion is small per-tick absolute SetActorLocation writes, because small
+// moves stick while VOTV's player constraints silently revert large teleports. Game thread only.
 
 #include "harness/autotest.h"
 

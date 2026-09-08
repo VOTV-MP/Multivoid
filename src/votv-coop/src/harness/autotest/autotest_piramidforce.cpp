@@ -1,24 +1,18 @@
-// harness/autotest_piramidforce.cpp -- piramid mirror-lane e2e smoke driver.
+// harness/autotest_piramidforce.cpp -- piramid mirror-lane end-to-end smoke driver.
 //
-// HOST-ONLY (the client observes via wire; assert its side by log diff). Exercises the whole
-// v97 lane on the REAL native chain (docs/events/piramid.md section 5):
-//   1. FORCE  -- event_force::ForceNow("piramid"): HostFire arm + the native TB_event_piramid
-//               overlap dispatch -> piramidSpawner_2.runTrigger runs in game bytecode: 4x
-//               killerwisp_C (npc lane) + piramid2_C at scale 2 (world_actor lane catches the
-//               BeginDeferred -> WorldActorSpawn broadcast; client materializes the mirror).
-//   2. ARM    -- poll piramid_sync::DebugHooksArmed(): the lane resolved piramid2_C's brain
-//               members + registered the interceptors/observer (host side; the client's own
-//               "piramid-brain: armed" line is the client-side assert).
-//   3. GATHER -- the native wisps spawn 40-69 km out (a real gather would take hours), so the
-//               probe re-pins every live killerwisp onto a 150 m ring around the pyramid every
-//               5 s (host TeleportTo; the npc pose stream carries it to the client). The host
-//               pyramid's OWN seeWisps/checkIfReached then acquire + arrive + gather natively.
-//   4. VERDICT -- DebugHostRelayCount() >= 1 within the window = the gather COMMIT was edge-
-//               detected and relayed. Client log must then show "piramid-gather[client]:
-//               replay OK". Greppable: "piramidforce_test: VERDICT PASS|FAIL".
-//
-// Gated by env VOTVCOOP_RUN_PIRAMIDFORCE_TEST=1 (autonomous mp.py only; not an ini flag).
-// Probe/diagnostic code -- RULE 2 exempt ([[feedback-rule2-exempts-probes-diagnostics-tools]]).
+// HOST-ONLY; the client observes over the wire, so its side is asserted by log diff. It runs the
+// whole lane on the REAL native chain:
+//   1. FORCE -- event_force::ForceNow("piramid") arms HostFire and the native TB_event_piramid
+//      overlap dispatch, so piramidSpawner_2.runTrigger runs in game bytecode: four
+//      killerwisp_C through the npc lane, and piramid2_C at scale 2, whose BeginDeferred the
+//      world_actor lane catches and broadcasts for the client to materialize.
+//   2. ARM -- poll piramid_sync::DebugHooksArmed(): the lane resolved piramid2_C's brain members
+//      and registered its interceptors. The client's own "piramid-brain: armed" is its assert.
+//   3. GATHER -- the native wisps spawn 40-69 km out, so a real gather would take hours. The
+//      probe re-pins every live killerwisp onto a 150 m ring around the pyramid every 5 s, and
+//      the host pyramid's own seeWisps and checkIfReached then gather natively.
+//   4. VERDICT -- DebugHostRelayCount() >= 1 in the window means the gather COMMIT was
+//      edge-detected and relayed. Greppable: "piramidforce_test: VERDICT PASS|FAIL".
 
 #include "harness/autotest.h"
 
