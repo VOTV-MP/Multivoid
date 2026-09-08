@@ -1,21 +1,18 @@
-// ue_wrap/door_box.h -- standalone engine access for the hinged-door storage
-// boxes: the base/map LOCKERS (Alocker_C + its pure subclasses locker_personal_C
-// / locker_death_C) and the DRONE-CALL CONSOLE box (AdroneConsole_C). Principle-7
-// engine-wrapper layer: class resolve, the `opened` state, the native apply
-// verbs, and the far-peer frozen-timeline force-snap. NO network logic --
-// coop::interactable_sync's door-box Channel drives the mirror through here.
+// ue_wrap/door_box.h -- standalone engine access for the hinged-door storage boxes: the base
+// and map LOCKERS (Alocker_C and its pure subclasses locker_personal_C, locker_death_C) and
+// the DRONE-CALL CONSOLE box (AdroneConsole_C). Principle-7 engine-wrapper layer -- class
+// resolve, the `opened` state, the native apply verbs and the far-peer frozen-timeline
+// force-snap. No network logic: coop::interactable_sync's door-box channel drives the mirror
+// through here.
 //
-// RE (votv-lockers-boxes-door-RE-2026-06-11.md): both classes are plain AActor
-// (no save Key -- identity is the level-export actor FName, deterministic
-// cross-peer), state = `opened` (locker @0x0270, console @0x0298), swing = a
-// 0.5 s Timeline that FREEZES outside the local player's tick range (the
-// door.cpp lesson) -> verify + force-snap via the timeline alpha/direction
-// fields + a__UpdateFunc/a__FinishedFunc. The locker has a full native verb
-// `Open(bool opened)` (sound + swing + collision + trigger side-effects); the
-// console has NO public verb -> write `opened` + setButtonsCollision() + drive
-// the Timeline (the garage write+refresh precedent). The radiotower "box on the
-// mast" doors are prop_swinger_C child actors -- already synced by the
-// container channel, no code here.
+// Both classes are plain AActor with no save Key, so identity is the level-export actor
+// FName, deterministic cross-peer. State is the `opened` bool; the swing is a 0.5 s Timeline
+// that FREEZES outside the local player's tick range, which is why an apply is verified and
+// force-snapped through the timeline's alpha and direction fields plus a__UpdateFunc and
+// a__FinishedFunc. The locker has a full native verb Open(bool) -- sound, swing, collision,
+// trigger side-effects -- while the console has none, so there it is a write to `opened` plus
+// setButtonsCollision() and driving the Timeline. The radiotower doors on the mast are
+// prop_swinger_C child actors, already synced by the container channel, and need nothing here.
 
 #pragma once
 
