@@ -2,9 +2,11 @@
 // coffeePower is deliberately excluded: writing it to 100 triggers a post-coffee screen shake in
 // the blueprint.
 //
-// Driven by the ImGui dev menu (Player > Vitals). Any peer can trigger it -- Restore() applies
-// locally AND broadcasts a RestoreVitals reliable, so the remote peer refills too. The echo is
-// safe, since maxing out twice is idempotent.
+// Driven by the ImGui dev menu (Player > Vitals), and HOST-ONLY through dev_gate like every dev
+// verb: solo or hosting, Restore() applies locally AND broadcasts a RestoreVitals reliable so the
+// other peers refill too. A connected client is refused at the call, and its packet is dropped
+// again at the receiver -- refilling your own vitals in someone else's game is a survival cheat.
+// The echo is safe, since maxing out twice is idempotent.
 
 #pragma once
 

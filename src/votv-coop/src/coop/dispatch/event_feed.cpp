@@ -187,8 +187,9 @@ void Update(net::Session& session, void* localPlayer) {
         }
 
         case net::ReliableKind::RestoreVitals: {
-            // The dev refill of food, sleep, health and coffee. No payload; idempotent, so an echo
-            // is harmless. Host-only origin, or any peer could nullify the survival tension.
+            // The dev refill of food, sleep and health (coffeePower is deliberately excluded). No
+            // payload; idempotent, so an echo is harmless. Host-only origin, or any peer could
+            // nullify the survival tension.
             if (msg.senderPeerSlot != 0) {
                 UE_LOGW("event_feed: RestoreVitals from non-host senderPeerSlot=%d "
                         "-- dropping (host-only dev-key origin)",
