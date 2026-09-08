@@ -67,7 +67,7 @@
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
 #include "coop/creatures/kerfur_form_assembler.h"  // VM-dispatch substrate consumer (observe-only + containment counter)
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
-#include "coop/session/teleport_client.h"  // TeleportSlotToHost: spawn a joiner at the host pose (connect edge)
+#include "coop/session/teleport_client.h"  // TeleportSlotToHost: the admin bring-to-host action
 #include "coop/dev/keypad_probe.h"
 #include "coop/dev/door_probe.h"
 #include "coop/dev/light_group_census.h"

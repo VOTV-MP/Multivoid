@@ -1,9 +1,10 @@
 // coop/session/teleport_client.h -- teleport connected clients to the host's pose.
 //
-// A shipped join and moderation verb, not a dev toy: every join spawns the joiner at the host pose
-// through TeleportSlotToHost on the connect edge (subsystems.cpp), the F1 admin scoreboard
-// teleports one client through it (moderation.cpp), event_feed applies its wire packet, and the F1
-// dev-menu button is one more caller.
+// A shipped moderation verb, not a dev toy: the F1 admin scoreboard brings one client to the host
+// through TeleportSlotToHost (moderation.cpp), event_feed applies the wire packet on the receiving
+// side, and the F1 dev-menu button broadcasts to everyone. A JOIN does not use it -- a joiner
+// places itself at the start point, and a host teleport at world-ready overwrote that placement,
+// since world-ready arrives after the client has already spawned.
 //
 // Direction: HOST -> CLIENT only. The action self-gates on Session::Role::Host and no-ops on a
 // client. It mirrors MTA's `!tphere` chat command as a menu button.
