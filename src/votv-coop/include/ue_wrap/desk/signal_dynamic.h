@@ -1,19 +1,15 @@
 // ue_wrap/signal_dynamic.h -- the Fstruct_signalDataDynamic (0x70) bridge.
 //
-// This ONE struct is both the desk refiner's loaded signal (comp_data_0) and
-// the element of gamemode.savedSignals_0 (the desk signal library) -- the
-// 2026-06-12 savedSignals RE corrected the prior doc: rows are pure
-// POD+strings (NO texture/sound pointers; those live in the per-TYPE template
-// Fstruct_signal_data, rebuilt identically on every peer from the
-// list_signals DataTable and re-derived natively at play time via
-// lib_C.dynamicToSignal). So the row is fully serializable; the only heavy
-// member is `image` (a PNG byte TArray used solely by the laptop photo view),
-// which the live mirror SKIPS (deferred bulk-lane increment; join converges
-// via the v56 save transfer).
+// This ONE struct is both the desk refiner's loaded signal (comp_data_0) and an element of
+// gamemode.savedSignals_0, the desk signal library. Its rows are pure POD and strings, with no
+// texture or sound pointers: those live in the per-TYPE template Fstruct_signal_data, rebuilt
+// identically on every peer from the list_signals DataTable and re-derived natively at play time by
+// lib_C.dynamicToSignal. So a row is fully serializable. The one heavy member is `image`, a PNG
+// byte TArray used solely by the laptop photo view, which the live mirror SKIPS; a joiner converges
+// on it through the save transfer instead.
 //
-// Member offsets are dump-authoritative (struct_signalDataDynamic.hpp; the
-// GUID-mangled cooked names make FindPropertyOffset unreliable here -- the
-// door_box precedent).
+// Member offsets are dump-authoritative (struct_signalDataDynamic.hpp): the GUID-mangled cooked
+// names make FindPropertyOffset unreliable here, as with the door box.
 //
 // Principle-7 engine-wrapper layer; no network logic.
 
