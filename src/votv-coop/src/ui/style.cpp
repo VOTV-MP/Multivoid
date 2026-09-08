@@ -23,11 +23,11 @@ void Rebuild() {
 
     // THE CURSOR BUG. ImGui's ScaleAllSizes() applies ImTrunc to MouseCursorScale the way it does
     // to every other style field. Every other field is a PIXEL SIZE, where truncating toward zero
-    // is right; MouseCursorScale is a unitless MULTIPLIER, so a UI factor below 1 -- 0.833 here --
-    // truncates to 0, and RenderMouseCursor then draws a zero-area quad. With the OS cursor hidden
-    // by our WM_SETCURSOR handler that is no cursor at all, and it reads as intermittent because
-    // the factor tracks client size: at 1.0 and above the truncation is harmless, below 1.0 the
-    // cursor vanishes. Upstream has applied the same ImTrunc to both since ImGui 1.91.5.
+    // is right; MouseCursorScale is a unitless MULTIPLIER, so any UI factor below 1 -- 0.833 on the
+    // rig this was found on -- truncates to 0, and RenderMouseCursor draws a zero-area quad. With
+    // the OS cursor hidden by our WM_SETCURSOR handler that is no cursor at all, and it reads as
+    // intermittent because the factor tracks client size: at 1.0 and above truncation is harmless,
+    // below 1.0 the cursor vanishes. Our vendored ImGui applies the same ImTrunc to both.
     //
     // So the cursor never scales BELOW 1: a cursor smaller than its authored 12x19 is not worth
     // having, and 0 is not a size. ImTrunc-then-floor-at-1, written without imgui_internal.h
@@ -54,15 +54,21 @@ void Rebuild() {
 
 void MaybeRescale(HWND hwnd) {
     RECT rc{};
-    if (hwnd && ::GetClientRect(hwnd, &rc))
+    // `rc` stays zeroed when there is no window or the query fails, and the rebuild line below
+    // prints it -- so record whether it holds a real client size rather than reporting 0x0 as one.
+    const bool haveRect = hwnd && ::GetClientRect(hwnd, &rc) != 0;
+    if (haveRect)
         ui::scale::NoteViewport(static_cast<float>(rc.right - rc.left),
                                 static_cast<float>(rc.bottom - rc.top));
     if (!ui::scale::ConsumeRebuild()) return;
     ui::fonts::Load();  // clears + re-bakes the atlas at the new px/family
     overlay_backend::InvalidateDeviceObjects();
     Rebuild();
-    UE_LOGI("ui::style: UI re-scaled (factor %.2f, client %ldx%ld)", ui::scale::Ui(),
-            rc.right - rc.left, rc.bottom - rc.top);
+    if (haveRect)
+        UE_LOGI("ui::style: UI re-scaled (factor %.2f, client %ldx%ld)", ui::scale::Ui(),
+                rc.right - rc.left, rc.bottom - rc.top);
+    else
+        UE_LOGI("ui::style: UI re-scaled (factor %.2f, client size unavailable)", ui::scale::Ui());
 }
 
 }  // namespace ui::style

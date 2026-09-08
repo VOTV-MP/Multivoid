@@ -171,6 +171,9 @@ float Playback::SlotVolume(int slot) const {
 }
 
 bool Playback::IsTalking(int slot, bool* whispering) const {
+    // `whispering` is written on EVERY return, not only the talking one: an out-param the caller
+    // has to pre-initialise to read it safely is one a future caller will not.
+    if (whispering) *whispering = false;
     if (slot < 0 || slot >= coop::players::kMaxPeers) return false;
     const Channel& ch = channels_[slot];
     const int64_t last = ch.lastFrameMs.load(std::memory_order_relaxed);

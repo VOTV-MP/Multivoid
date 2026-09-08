@@ -20,7 +20,7 @@ namespace coop::pause_guard {
 
 // Per-gameplay-tick enforcement (subsystems::TickGameplay chain, so it only runs
 // world-up). `connected` = Session::connected() -- the invariant's scope. Cheap when
-// unpaused (one reflected IsGamePaused read); logs once per pause episode.
+// unpaused -- one reflected IsGamePaused call; logs once per pause episode.
 void Tick(bool connected);
 
 }  // namespace coop::pause_guard

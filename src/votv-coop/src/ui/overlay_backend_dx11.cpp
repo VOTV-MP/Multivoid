@@ -65,6 +65,12 @@ bool CaptureDevice(IDXGISwapChain* sc) {
 }
 
 void AbandonCapture() {
+    // Total, not partial: this is the unwind arm for a capture that CaptureDevice committed, so it
+    // must leave the backend as if the capture never happened. Today its two callers both run
+    // before InitRenderer commits, but a render target left pointing at a released device -- or
+    // g_live still true over a null context -- would be a use-after-free the moment one did not.
+    ReleaseRTV();
+    g_live = false;
     if (g_context) { g_context->Release(); g_context = nullptr; }
     if (g_device)  { g_device->Release();  g_device = nullptr; }
 }
