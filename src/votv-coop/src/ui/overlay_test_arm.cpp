@@ -1,11 +1,8 @@
 // ui/overlay_test_arm.cpp -- see ui/overlay_test_arm.h.
 //
-// Extracted 2026-08-28 from imgui_overlay.cpp::Init(). The nine env blocks
-// below are MOVED VERBATIM (log strings included -- probes grep them); the only
-// seam edits are the two writes that touched imgui_overlay TU-locals, now the
-// publics imgui_overlay::SetVisible(true) (an identical store) and
-// imgui_overlay::ForceScoreboardOpen() (the FORCED latch, documented at its
-// declaration).
+// The nine env blocks below keep their log strings exactly as written, because the probes grep for
+// them. The two writes that reach imgui_overlay go through its publics rather than its TU-locals:
+// SetVisible(true), and ForceScoreboardOpen() for the forced latch, documented at its declaration.
 
 #include "ui/overlay_test_arm.h"
 
