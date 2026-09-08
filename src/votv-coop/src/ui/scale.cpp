@@ -39,22 +39,20 @@ float g_scale = 1.25f;   // published combined factor = min(res * user, cap)
 bool  g_rebuild = false;
 bool  g_prefLoaded = false;
 
-// VIEWPORT DEBOUNCE (2026-07-28, perf audit of the arc-D2 donor). The rebuild is
-// edge-triggered off a CONTINUOUS signal -- the live client height -- and that was
-// tolerable only while a bake cost 5-16 ms. It now costs 58-80 ms, on the RENDER
-// THREAD inside the Present detour, so the whole game stalls for each one.
+// VIEWPORT DEBOUNCE. The rebuild is edge-triggered off a CONTINUOUS signal, the live client height,
+// which was tolerable only while a bake cost 5-16 ms. It now costs 58-80 ms, on the RENDER THREAD
+// inside the Present detour, so the whole game stalls for each one.
 //
-// Two failures, one root. There are fifteen sixth-boundaries inside [0.5, 3.0], so
-// a full-range drag used to fire fifteen rebakes back to back (~1 s of freeze);
-// and with no hysteresis, a window edge parked ON a boundary re-baked EVERY FRAME
-// forever. Neither is a font problem: the atlas is being asked to follow a value
-// that is still moving. So the pending factor has to hold still before it counts.
+// Two failures, one root. There are fifteen sixth-boundaries inside [0.5, 3.0], so a full-range
+// drag fired fifteen rebakes back to back, about a second of freeze; and with no hysteresis a
+// window edge parked ON a boundary re-baked EVERY FRAME forever. Neither is a font problem: the
+// atlas is being asked to follow a value that is still moving, so the pending factor has to hold
+// still before it counts.
 //
-// Counted in FRAMES, not milliseconds, because the caller IS the frame and a
-// wall-clock hold would tie the answer to the frame rate it is trying to protect
-// ([[lesson-readiness-announcements-precede-visible-state]]). An explicit
-// RequestRebuild (a font-family click, a scale-slider release) is NOT debounced --
-// those are already discrete user acts and must feel instant.
+// Counted in FRAMES, not milliseconds, because the caller IS the frame and a wall-clock hold would
+// tie the answer to the frame rate it exists to protect. An explicit RequestRebuild -- a
+// font-family click, a scale-slider release -- is NOT debounced: those are discrete acts and have
+// to feel instant.
 constexpr int kViewportSettleFrames = 12;
 float g_pendingRes   = 0.f;
 int   g_pendingHeld  = 0;
