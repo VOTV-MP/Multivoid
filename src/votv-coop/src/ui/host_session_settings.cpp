@@ -439,7 +439,7 @@ bool BuildScreen(void* switcher) {
     // off the frame.
     if (void* spacer = NS::Spawn(L"Spacer", col)) NS::AddVFill(col, spacer, 1.f, NS::kFill, NS::kFill);
 
-    // Footer: Back at the left, Host at the right, status between (docs/VOTV_UI_STYLE.md). No
+    // Footer: Back at the left, Host at the right, status between (docs/votv-ui-style.md). No
     // bordered strip: the game frames content, never a row of buttons.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
         g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);

@@ -11,7 +11,7 @@
 // SCOPE, AND IT IS LOAD-BEARING: those routes funnel through `Func` only when the callee is NATIVE.
 // Both dispatch handlers branch on FUNC_Native, and a SCRIPT (bytecode) callee goes through
 // ProcessScriptFunction to ProcessInternal, never reading Func at all. Per-function detail:
-// docs/COOP_DISPATCH_VISIBILITY.md.
+// docs/coop-dispatch-visibility.md.
 
 #pragma once
 

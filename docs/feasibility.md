@@ -15,7 +15,7 @@ for what reflection cannot see. The engine already runs several pawns and player
 once (split screen, listen servers), so "spawn a second protagonist" is a factory call it supports
 by design. A mature modding stack, UE4SS, provides a loader, a live object browser, header and
 object dumps and Lua probes; the mod uses it as the loader and the development tool and imports
-nothing from it ([ARCHITECTURE.md](ARCHITECTURE.md)).
+nothing from it ([architecture.md](architecture.md)).
 
 ## The questions
 
@@ -40,7 +40,7 @@ whether an actor has a controller is how the mod tells the local player from a p
 **What is the script VM?** The Blueprint VM; the game's logic is almost entirely Blueprint. The
 mod hooks the engine's function dispatch with its own detour, patches individual native functions,
 and observes the VM's internal virtual calls where neither reaches; which calls each seam sees is
-mapped on [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md).
+mapped on [coop-dispatch-visibility.md](coop-dispatch-visibility.md).
 
 **What is the save format?** The engine's own save-game serialisation, one flat unencrypted file
 per slot under the user's local application data, about twenty megabytes with photos inline,
@@ -54,4 +54,4 @@ on one machine, which is how the whole test rig works ([testing.md](testing.md))
 
 None. A documented engine, no anti-tamper, a hookable dispatch and native multi-pawn support make
 the game a good fit for the method. The risk is scope, not feasibility: the game is a large
-simulation of signals, a base and a day cycle, which is why [SCOPE.md](SCOPE.md) is law.
+simulation of signals, a base and a day cycle, which is why [scope.md](scope.md) is law.

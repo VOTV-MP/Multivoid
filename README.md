@@ -8,7 +8,7 @@
 
 | | |
 |--|--|
-| **Install** | [**Multivoid on Thunderstore**](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/) — through r2modman or the Thunderstore Mod Manager, which set the loader up for you ([other routes](docs/INSTALL.md)) |
+| **Install** | [**Multivoid on Thunderstore**](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/) — through r2modman or the Thunderstore Mod Manager, which set the loader up for you ([other routes](docs/install.md)) |
 | **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name and the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
@@ -41,7 +41,7 @@
   reflection, hooks, transport and UI are the mod's own); an official master server for the lobby
   list, signaling and an informational update check.
 
-The per-system answer to "how far along is it" is [docs/STATUS.md](docs/STATUS.md). There is
+The per-system answer to "how far along is it" is [docs/status.md](docs/status.md). There is
 deliberately no single "N% done" figure: a co-op mod is finished system by system.
 
 ## How it works
@@ -59,8 +59,8 @@ a client acts by naming an intent that the host performs.
 
 The code splits along one principle: `src/votv-coop/src/ue_wrap/` wraps the engine and holds no
 gameplay; `src/votv-coop/src/coop/` holds gameplay and network and reaches the engine only through
-the wrapper. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the one-read overview and
-[docs/CODE_MAP.md](docs/CODE_MAP.md) says where every concept lives.
+the wrapper. [docs/architecture.md](docs/architecture.md) is the one-read overview and
+[docs/code-map.md](docs/code-map.md) says where every concept lives.
 
 ## Versioning
 
@@ -79,12 +79,12 @@ compatibility is byte-equality on the pair, per lobby. Source of truth:
 > **There is no stable release yet.** Every build on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases)
 > is a dev build, and everyone playing one is a tester. Expect bugs, and please report them on
 > [Discord](https://discord.gg/bA6tGBvGMN); good reports get credited. What to attach:
-> [docs/INSTALL.md](docs/INSTALL.md).
+> [docs/install.md](docs/install.md).
 
 One zip, two ways to install it: through **r2modman** (recommended; it sets up the loader itself)
 or manually into the game's UE4SS `Mods\` folder. Launch, and a **Multiplayer** button appears in
 the main menu. No port forwarding needed. Full steps, updating, troubleshooting and uninstalling:
-[docs/INSTALL.md](docs/INSTALL.md).
+[docs/install.md](docs/install.md).
 
 ### For developers
 
@@ -109,7 +109,7 @@ cmake --build build/votv-coop --config Release
 
 ## Roadmap
 
-The long-term arc, in order; each phase gates the next ([docs/ROADMAP.md](docs/ROADMAP.md)):
+The long-term arc, in order; each phase gates the next ([docs/roadmap.md](docs/roadmap.md)):
 
 | # | Phase | Status |
 |--|--|--|
@@ -129,7 +129,7 @@ direction, architecture, testing and every release decision are mine; much of th
 with Claude. The full commit history is public, so you can judge the process as well as the result.
 
 Everything else in it came from outside, as code, reports or review. If it changed the mod, it gets
-a row; the full ledger is [docs/CREDITS.md](docs/CREDITS.md).
+a row; the full ledger is [docs/credits.md](docs/credits.md).
 
 | Who | Kind | Contribution | Landed |
 |--|--|--|--|

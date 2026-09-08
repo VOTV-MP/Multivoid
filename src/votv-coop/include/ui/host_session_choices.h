@@ -9,7 +9,7 @@
 // three working cases -- is satisfied, and a third copy would have been the third place to get the
 // two-channel style wrong.
 //
-// The style is docs/VOTV_UI_STYLE.md's State section and is not a choice this module makes:
+// The style is docs/votv-ui-style.md's State section and is not a choice this module makes:
 // selection is a row FILL change, hover is a TEXT colour change, and the two are independent.
 // ImGui's HeaderHovered shape -- one channel, fill on hover -- would look foreign in VOTV's own
 // menus.

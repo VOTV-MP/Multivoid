@@ -43,7 +43,7 @@ browser marks mismatched lobbies before you click.
 ## Installing without the mod manager
 
 The steps above are the managed lane. Manual install, updating and troubleshooting:
-[install guide](https://github.com/VOTV-MP/Multivoid/blob/main/docs/INSTALL.md).
+[install guide](https://github.com/VOTV-MP/Multivoid/blob/main/docs/install.md).
 
 ## Versions and joining
 

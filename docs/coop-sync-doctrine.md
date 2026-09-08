@@ -1,10 +1,10 @@
 # How a system gets synced
 
 The method every lane that survived converged on, written so that anyone can follow it without
-re-deriving it. [ARCHITECTURE.md](ARCHITECTURE.md) holds the authority model this applies;
-[COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md) answers whether a hook fires;
-[COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md) says how each entity family gets its
-identity; [CODE_MAP.md](CODE_MAP.md) says where lanes live; [STATUS.md](STATUS.md) says how far
+re-deriving it. [architecture.md](architecture.md) holds the authority model this applies;
+[coop-dispatch-visibility.md](coop-dispatch-visibility.md) answers whether a hook fires;
+[coop-entity-expression-map.md](coop-entity-expression-map.md) says how each entity family gets its
+identity; [code-map.md](code-map.md) says where lanes live; [status.md](status.md) says how far
 each one is.
 
 ## In one paragraph
@@ -39,7 +39,7 @@ measured or inferred, and the review attacks the difference.
 
 ## Step 2: exactly one owner per element
 
-Pick the first row that fits, from the table on [ARCHITECTURE.md](ARCHITECTURE.md): shared-world
+Pick the first row that fits, from the table on [architecture.md](architecture.md): shared-world
 progression belongs to the host and clients mirror; a discrete, persistent, shared-world change a
 client initiates is an intent the host validates and performs; a continuously simulated element
 one peer is interacting with belongs to that peer by assignment, never by assertion, with the host
@@ -104,14 +104,14 @@ the loser dissolves, before it ships, not after the first duplicate.
 
 A lane is not done until its mid-activity join answer exists in writing, one of snapshot, seed,
 park, replay or unlatch, chosen, implemented and listed in the late-join column of
-[STATUS.md](STATUS.md). "Don't join during X" is a crutch. The join order is fixed: identity,
+[status.md](status.md). "Don't join during X" is a crutch. The join order is fixed: identity,
 save transfer, pre-world per-player state, world load, connect replay, per-lane seeds, the ready
 gate ([join.md](join.md)); a new lane picks its slot in that order explicitly.
 
 ## Step 7: wire discipline
 
 A new wire format or field bumps the build number in the same commit. A new reliable kind walks
-the router checklist on [CODE_MAP.md](CODE_MAP.md): a kind that parses but does not route is a
+the router checklist on [code-map.md](code-map.md): a kind that parses but does not route is a
 silent black hole. Compatibility is byte-equality on the version pair per lobby, and the update
 check informs, never gates. Receive boundaries are strict on format (refuse ill-formed input
 whole) and permissive on motion and state (log, never block; display follows the sender, and trust

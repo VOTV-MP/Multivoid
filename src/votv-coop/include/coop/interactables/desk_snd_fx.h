@@ -7,7 +7,7 @@
 // NATIVE audio seam rather than classifying inputs. It func-patches AudioComponent:Play and
 // ActorComponent:SetActive/Activate: every whitelisted call site measures as EX_VirtualFunction on
 // a NATIVE target, so the dispatch funnels through UFunction->Func whatever the caller's opcode
-// (docs/COOP_DISPATCH_VISIBILITY.md). The detour filters by POINTER COMPARE against the desk's six
+// (docs/coop-dispatch-visibility.md). The detour filters by POINTER COMPARE against the desk's six
 // resolved components in ue_wrap/desk/desk_audio, excluding the laptop's same-named components for free,
 // and enqueues {op, comp, cue} into a game-thread ring that Tick ships as the relayed
 // ReliableKind::DeskSndFx. This lane owns ALL unit-1 one-shot and loop desk audio; the hums,

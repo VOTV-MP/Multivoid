@@ -112,7 +112,7 @@ function Get-LedgerState {
 # N has a published row too; the terminal closes it; R23). Returns $null if no
 # stable has ever been published.
 # The newest row whose state(N) is PUBLISHED. STABLE-ONLY BY DEFAULT -- that is
-# the closing check's normal contract (docs/RELEASE.md step 7).
+# the closing check's normal contract (docs/release.md step 7).
 #
 # -IncludeDev admits dev prereleases, for the case where the master's
 # COOP_LATEST_* was deliberately pointed at one. That is not a hypothetical:
@@ -148,7 +148,7 @@ function Get-ProtoAtCommit {
 
 # --- Release-body machine keys (R22) -------------------------------------
 # ONE format shared by the publish step, the completion check, and the
-# RELEASE.md template:  'source: <40hex>'  +  'sha256: <64hex>  <filename>'.
+# release.md template:  'source: <40hex>'  +  'sha256: <64hex>  <filename>'.
 
 # The machine-key grammars, shared by the writer, the completion parser, the
 # publish backstop asserts, the notes-format lint, and NOTES_DRIFT (one format,
@@ -157,7 +157,7 @@ $script:SourceLineRegex = '(?m)^source:\s*[0-9a-f]{40}\s*$'
 $script:Sha256LineRegex = '(?m)^sha256:\s*[0-9a-f]{64}\s\s\S+\s*$'
 
 # Anchor phrases shared VERBATIM between the release-body Install block and
-# docs/INSTALL.md (ledger_lint INSTALL_CONSISTENT asserts they appear in the
+# docs/install.md (ledger_lint INSTALL_CONSISTENT asserts they appear in the
 # doc). Reword only both together. Re-SHAPED at WP-2 commit 3 (UE4SS_ARC 8.4):
 # a single "install folder" had no true value once there were two lanes, so the
 # folder anchor is now explicitly the MANUAL lane's mod-folder destination (the
@@ -166,7 +166,7 @@ $script:Sha256LineRegex = '(?m)^sha256:\s*[0-9a-f]{64}\s\s\S+\s*$'
 # installs left two DLLs beside the exe; the mod REFUSES to start beside them).
 $script:InstallModFolderAnchor = 'WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid'
 $script:InstallDeleteOldAnchor = 'delete the old `multivoid-*.dll` and `xinput1_3.dll`'
-$script:InstallGuideUrl        = 'https://github.com/VOTV-MP/Multivoid/blob/main/docs/INSTALL.md'
+$script:InstallGuideUrl        = 'https://github.com/VOTV-MP/Multivoid/blob/main/docs/install.md'
 
 # --- Game target (the identity's game half) --------------------------------
 # THE one PS-side parser of VOTVCOOP_GAME_TARGET (CMakeLists.txt is the code
@@ -233,7 +233,7 @@ function Get-ReleaseBodyWhatsNew {
 # LEGACY two-DLL era (b122..b143 bodies are LIVE on GitHub; notes_regen rebuilds
 # them from their own machine lines, and the Install block must describe THAT
 # page's assets -- zip-era prose over two-DLL assets would lie about its own
-# page). The legacy prose is FROZEN literal text on purpose: INSTALL.md no
+# page). The legacy prose is FROZEN literal text on purpose: install.md no
 # longer carries it, so it must never ride the live anchors or change again.
 function New-ReleaseBody {
     param([Parameter(Mandatory)][string]$SourceSha,

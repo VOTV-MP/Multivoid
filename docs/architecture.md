@@ -10,7 +10,7 @@ more people attached.
 
 This page is the one read: the layers, who owns which state, how bytes move, how peers and
 entities are named, and how a join works. Each subsystem has its own page for the details, and
-[CODE_MAP.md](CODE_MAP.md) says where the code is.
+[code-map.md](code-map.md) says where the code is.
 
 ## The layers
 
@@ -194,10 +194,10 @@ a call is a property of how the Blueprint VM dispatches it, not of the function:
 | the bytecode seam (`ue_wrap/core/vm_dispatch`) | the Blueprint-internal virtual calls neither of the above sees; the call site only, no arguments | no |
 | per-site reconcile | anything else: let the verb run, diff the observable state, converge to the authority's answer | after the fact |
 
-[COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md) is the per-function table and the
-decision guide; [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md) says how each
+[coop-dispatch-visibility.md](coop-dispatch-visibility.md) is the per-function table and the
+decision guide; [coop-entity-expression-map.md](coop-entity-expression-map.md) says how each
 entity family gets its identity, its expression and its destruction, and where two seams overlap;
-[COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md) is the method for adding a sync lane end to end.
+[coop-sync-doctrine.md](coop-sync-doctrine.md) is the method for adding a sync lane end to end.
 
 Hot-path rules bind every hook: no object-array scan per frame, no heavy work per `ProcessEvent`
 or per tick, engine calls on the game thread only. Discovery of the game's objects goes through
@@ -231,7 +231,7 @@ detours compose.
 
 The arbiter is the host's game process today, so it can read the engine whenever it wants, and
 the lanes that derive their canonical state by reading the engine are the ones that cannot leave
-that process. The destination ([ROADMAP.md](ROADMAP.md), phase 2) is an arbiter in its own
+that process. The destination ([roadmap.md](roadmap.md), phase 2) is an arbiter in its own
 process: spawned as a child when hosting from in-game, launched by hand for a dedicated box,
 physically the same binary, never reading the engine. The rule it is built around: **the arbiter
 holds values and anchors; the engine holds only what has a world-dependent rate.** An accumulator
@@ -257,7 +257,7 @@ live game is the inverse of how much of the world the arbiter's own record cover
 4. **Targeted crash fixes, never broad suppression.** A single-player assumption that crashes on
    the second pawn is fixed at its call site. A broad filter masks many crashes behind one
    mechanism and hides every root cause; one shipped here once and was retired the same week.
-5. **Minimum viable subset.** [SCOPE.md](SCOPE.md) is the law of what is synced, so every new
+5. **Minimum viable subset.** [scope.md](scope.md) is the law of what is synced, so every new
    feature has a binary answer instead of a debate, and it is amended in the commit that changes
    a decision.
 6. **Augment single-player, never replace it.** Where co-op meets a per-player thing in the game
@@ -275,12 +275,12 @@ that answer is the default, and a deliberate divergence says so in a comment at 
 
 ## Where to go next
 
-- [CODE_MAP.md](CODE_MAP.md): where every concept lives, and the checklist for adding a sync lane.
-- [STATUS.md](STATUS.md): what is synced, system by system, with its owner, its late-join answer
+- [code-map.md](code-map.md): where every concept lives, and the checklist for adding a sync lane.
+- [status.md](status.md): what is synced, system by system, with its owner, its late-join answer
   and how far it is.
-- [SCOPE.md](SCOPE.md): what is deliberately not synced, and the rules a new item is classified
+- [scope.md](scope.md): what is deliberately not synced, and the rules a new item is classified
   against.
-- [COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md), [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md),
-  [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md): read before writing any
+- [coop-sync-doctrine.md](coop-sync-doctrine.md), [coop-dispatch-visibility.md](coop-dispatch-visibility.md),
+  [coop-entity-expression-map.md](coop-entity-expression-map.md): read before writing any
   entity-sync, hook or spawn-catch code.
 - [../CONTRIBUTING.md](../CONTRIBUTING.md): the rules a change must respect.

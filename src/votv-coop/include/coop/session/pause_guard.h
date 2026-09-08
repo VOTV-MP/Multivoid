@@ -5,7 +5,7 @@
 // freeze". SP semantics: ESC (mainPlayer InpActEvt_Escape -> the mainGamemode
 // ubergraph, stmts [372]/[375]/[3035]) opens pause_mainMenu (ui_menu_C::enterPause,
 // isPause@0x4C0) and pauses the world via GameplayStatics::SetGamePaused -- dispatched
-// as EX_CallMath, PE-INVISIBLE (docs/COOP_DISPATCH_VISIBILITY.md), so no ProcessEvent
+// as EX_CallMath, PE-INVISIBLE (docs/coop-dispatch-visibility.md), so no ProcessEvent
 // interceptor can cancel it; and the console `pause` command reaches the same engine
 // state through APlayerController::SetPause without touching GameplayStatics at all.
 //

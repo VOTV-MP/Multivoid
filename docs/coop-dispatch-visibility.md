@@ -2,7 +2,7 @@
 
 The answer to "will our hook fire for function X?", kept in one place because the fact used to be
 scattered across comments and cost a three-iteration rework. Read it before adding any observer,
-interceptor or poll. Companion: [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md).
+interceptor or poll. Companion: [coop-entity-expression-map.md](coop-entity-expression-map.md).
 Evidence tags: `[V]` verified from code or a run, `[RD]` from a comment or a reverse-engineering
 record, `[?]` needs a probe.
 

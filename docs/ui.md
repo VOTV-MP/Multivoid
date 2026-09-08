@@ -7,7 +7,7 @@ browser, the two hosting windows, the address and name entry), the loading and f
 the version line on the main menu, the F1 overlay and its panels, the in-game HUD (nameplates,
 chat, the scoreboard), and the game's own notifications and what the mod does about them. The
 game's widget style that the native screens must match is measured in
-[VOTV_UI_STYLE.md](VOTV_UI_STYLE.md).
+[votv-ui-style.md](votv-ui-style.md).
 
 ## How it works
 
@@ -136,7 +136,7 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 
 | Limit | Evidence |
 |---|---|
-| The native screens' frames do not yet reproduce the game's bevelled, nested border material; the flat border was measured wrong | `[V]` [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md), the frame section |
+| The native screens' frames do not yet reproduce the game's bevelled, nested border material; the flat border was measured wrong | `[V]` [votv-ui-style.md](votv-ui-style.md), the frame section |
 | The game's own toasts a client self-generates from diverged world state are not suppressed or mirrored; only the server state behind one family is driven | `[V]` `coop/interactables/serverbox_sync` is the one family |
 | The old ImGui browser is kept as a fallback, a deliberate exception to retiring replaced code | `[V]` `ui/server_browser_surface` |
 

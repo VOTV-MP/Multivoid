@@ -3,7 +3,7 @@
 The mod ships as a single DLL in a UE4SS mod folder
 (`Mods\Multivoid\dlls\main.dll`). The rules a change must respect are in
 [CONTRIBUTING.md](CONTRIBUTING.md) and the architecture in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); this file is purely how to compile + deploy.
+[docs/architecture.md](docs/architecture.md); this file is purely how to compile + deploy.
 
 The build output is **`main.dll`** (the UE4SS mod-folder contract name). The
 version identity — the Paper-Minecraft pair `<game target> b<build>` — is not
@@ -31,7 +31,7 @@ Visual Studio, CMake, or vcpkg at all:
    from the run page. It contains `main.dll` and `build-info.txt` with the
    exact source commit.
 4. Install it like a manual release install — the DLL goes to
-   `Mods\Multivoid\dlls\main.dll` (see [docs/INSTALL.md](docs/INSTALL.md)).
+   `Mods\Multivoid\dlls\main.dll` (see [docs/install.md](docs/install.md)).
 
 Notes:
 
@@ -46,7 +46,7 @@ Notes:
   bytes come from the [Releases page](https://github.com/VOTV-MP/Multivoid/releases)
   only — release builds are cacheless rebuilds of the tagged source, published
   with SHA256 by the release lane (maintainers: the ritual is
-  [docs/RELEASE.md](docs/RELEASE.md)).
+  [docs/release.md](docs/release.md)).
 
 ## Prerequisites
 
@@ -216,7 +216,7 @@ both routes land on the same bytes.
 That four-copy layout is this repo's own test rig. If you are just building
 for yourself, install UE4SS once and copy `main.dll` to
 `...\Binaries\Win64\Mods\Multivoid\dlls\main.dll` (+ an `enabled.txt` beside
-`dlls\`) in your own install instead — see [docs/INSTALL.md](docs/INSTALL.md).
+`dlls\`) in your own install instead — see [docs/install.md](docs/install.md).
 
 For the two-peer check a pull request asks for ([CONTRIBUTING.md](CONTRIBUTING.md)): deploy the
 build to two game copies, host on one and join from the other, and read both logs

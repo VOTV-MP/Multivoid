@@ -4,7 +4,7 @@
 // whose .set(bool isred) swaps the world colour curves. The ORGANIC trigger is in daynightCycle: on
 // a new-hour edge, when the hour is 12, a 1% roll calls gamemode.spawnRedSky through EX_Context and
 // EX_LocalVirtualFunction -- invisible to the ProcessEvent detour
-// (docs/COOP_DISPATCH_VISIBILITY.md), which is why a POST observer on spawnRedSky or set cannot
+// (docs/coop-dispatch-visibility.md), which is why a POST observer on spawnRedSky or set cannot
 // see a native red sky at all, only our own reflected calls.
 //
 // The HOST POLLS the state field-level instead (the weather_fog shape; MTA's

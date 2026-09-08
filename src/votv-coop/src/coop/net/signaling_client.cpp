@@ -474,7 +474,7 @@ void SignalingClient::Poll() {
             UE_LOGE("signaling: the relay at %s:%s never sent a registration "
                     "challenge -- it is older than this build and cannot verify "
                     "who registers a name. REFUSING to register unproved. Update "
-                    "the signaling server (see docs/RELEASE.md). P2P is "
+                    "the signaling server (see docs/release.md). P2P is "
                     "unavailable; LAN and direct-IP are unaffected.",
                     host_.c_str(), service_.c_str());
             CloseSocketLocked();

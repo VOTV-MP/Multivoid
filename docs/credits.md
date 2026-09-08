@@ -16,7 +16,7 @@ public, that a decision in it was wrong.
 **How to land in here:** open a pull request, or report anything on
 [Discord](https://discord.gg/bA6tGBvGMN) or in
 [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues). What to attach:
-**[INSTALL.md](INSTALL.md)**.
+**[install.md](install.md)**.
 
 ---
 
@@ -243,7 +243,7 @@ team."*
 **What it produced immediately.** The VoidTogether credit was agreed and shipped
 the same day — the prior-art row in this project's credits exists because he asked
 for it. Two stale documentation claims were found and fixed the same day too:
-`FEASIBILITY.md` still announced "Chosen approach: UE4SS + reflection", a decision
+`feasibility.md` still announced "Chosen approach: UE4SS + reflection", a decision
 reversed the day after it was written and never annotated, and the overlay was
 still described as riding "UE4SS's built-in ImGui" months after the mod
 hand-rolled its own present hook. That pair became a standing project lesson: in a

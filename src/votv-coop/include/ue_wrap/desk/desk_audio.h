@@ -8,7 +8,7 @@
 // playButtonSound / playPingSound helpers), and corrds_loop and audio_coord_pingLoop (loops driven
 // by SetActive / Activate). Every call site dispatches EX_VirtualFunction on a NATIVE target, so
 // the dispatch funnels through UFunction->Func and is catchable by the Func-patch
-// (docs/COOP_DISPATCH_VISIBILITY.md; the K2_DestroyActor precedent), NEVER by the ProcessEvent
+// (docs/coop-dispatch-visibility.md; the K2_DestroyActor precedent), NEVER by the ProcessEvent
 // detour.
 //
 // The component INDEX (0..5) is a wire contract (protocol.h DeskSndComp); kCompNames in the .cpp is

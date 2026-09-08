@@ -25,7 +25,7 @@ Three rules govern every change:
    hooking, transport and UI are the mod's own.
 
 And eight architectural principles; the reasoning behind them is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md):
+[docs/architecture.md](docs/architecture.md):
 
 | # | Principle |
 |---|---|
@@ -33,7 +33,7 @@ And eight architectural principles; the reasoning behind them is in
 | 2 | The mod is an engine-extension layer on top of UE4 + VOTV, not a set of hooks. |
 | 3 | A parallel class hierarchy: our `RemotePlayer` owns network state; the engine's `APawn` and `APlayerController` own rendering, animation and physics. |
 | 4 | Targeted crash fixes, never broad suppression. |
-| 5 | Minimum viable subset: [docs/SCOPE.md](docs/SCOPE.md) is the law of what is synced. |
+| 5 | Minimum viable subset: [docs/scope.md](docs/scope.md) is the law of what is synced. |
 | 6 | Augment single-player, never replace it: route per player inside the game's own systems. |
 | 7 | Two layers, two subtrees: `ue_wrap/` (engine wrapper, no gameplay or network logic) and `coop/` (gameplay and network, reaching the engine only through `ue_wrap/`). |
 | 8 | Mid-activity join is always handled: every sync lane defines what a peer joining mid-event, mid-download or mid-drive sees. |
@@ -151,6 +151,12 @@ A doc that says something works without naming its evidence is a bug in the doc.
 Working notes, reverse-engineering logs, design drafts and session records are kept by the
 maintainer outside the repository. The `docs/` tree is an allowlist in `.gitignore`: a new doc is
 published by adding its `!docs/<file>` line, so a working note left there stays local by default.
+The filename says which half a document is in, so nobody has to ask git: a published doc is named
+in lower case (`voice-and-chat.md`, `coop-dispatch-visibility.md`), a local one in capitals
+(`DEATH_ARC.md`). The exceptions are the files an ecosystem expects to find shouting -- `README`,
+`LICENSE`, `CONTRIBUTING`, `SECURITY`, `THIRD-PARTY-NOTICES`, `CHANGELOG` -- because GitHub gives
+several of them special treatment and moving them would add exactly the strangeness this rule
+removes.
 `.github/ci/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
 the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
@@ -184,4 +190,4 @@ say so in an issue and it will be honoured.
 
 Bug reports and questions: [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues) or the
 [Discord](https://discord.gg/bA6tGBvGMN). Every report and review that changed the mod is
-credited in [docs/CREDITS.md](docs/CREDITS.md).
+credited in [docs/credits.md](docs/credits.md).

@@ -2,7 +2,7 @@
 
 The map of every synced entity family: where its birth is caught, what names it across peers, who
 owns that name, and how its destruction propagates. This is the question "which seam expresses
-this thing?" answered once. Companion: [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md).
+this thing?" answered once. Companion: [coop-dispatch-visibility.md](coop-dispatch-visibility.md).
 Evidence tags: `[V]` verified from code or a run, `[RD]` from a comment or a reverse-engineering
 record, `[?]` needs a probe.
 
@@ -53,7 +53,7 @@ are peer-gated. `[V]`
 - **Identity.** The Blueprint save key is the cross-peer name, minted by the game and read by
   the mod; a receiver writes the host's key into a mirror before its spawn finishes. A host id
   rides alongside. `[V]` Keyed devices the save does not persist are named by the portable
-  identity on [ARCHITECTURE.md](ARCHITECTURE.md).
+  identity on [architecture.md](architecture.md).
 - **Key uniqueness.** The game's own saves ship duplicate keys, a clone family of dozens of
   trash-bit piles on one key among them, and every identity layer assumes uniqueness. The host
   is the key authority: at enrolment, a keyed actor whose key another live actor already carries

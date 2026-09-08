@@ -46,26 +46,26 @@ foreach ($n in $allNs) {
 }
 
 # --- Public-doc staleness/consistency gates (local, both lanes) -----------
-# INSTALL_STALENESS: docs/INSTALL.md + README.md carry NO per-build data (no
+# INSTALL_STALENESS: docs/install.md + README.md carry NO per-build data (no
 # 40/64-hex, no literal multivoid-<target>-<digits>.dll -- placeholders like
 # multivoid-<game>-<build>.dll pass) and any multivoid-<x.y.z?>- filename
 # context names the CURRENT game target (parsed by the one PS-side parser,
 # Get-GameTargetFromCMake, which throws UNREADABLE on parser-miss).
 # INSTALL_CONSISTENT: the release-body template's anchor phrases appear
-# verbatim (ordinal) in docs/INSTALL.md -- the machine diff between the two
+# verbatim (ordinal) in docs/install.md -- the machine diff between the two
 # surfaces that share the install prose.
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $gameTarget = Get-GameTargetFromCMake -CMakePath (Join-Path $repoRoot $script:CMakeListsPath)
-$installPath = Join-Path $repoRoot 'docs/INSTALL.md'
+$installPath = Join-Path $repoRoot 'docs/install.md'
 if (-not (Test-Path -LiteralPath $installPath)) {
-    Fail 'INSTALL: docs/INSTALL.md missing (release bodies link it)'
+    Fail 'INSTALL: docs/install.md missing (release bodies link it)'
 } else {
     $installDoc = Get-Content -LiteralPath $installPath -Raw
-    if (-not $installDoc.Contains($script:InstallModFolderAnchor)) { Fail "INSTALL_CONSISTENT: manual-lane mod-folder anchor '$($script:InstallModFolderAnchor)' not found verbatim in docs/INSTALL.md" }
-    if (-not $installDoc.Contains($script:InstallDeleteOldAnchor)) { Fail "INSTALL_CONSISTENT: upgrade-from-standalone anchor '$($script:InstallDeleteOldAnchor)' not found verbatim in docs/INSTALL.md" }
-    if (-not $installDoc.Contains($gameTarget)) { Fail "INSTALL_STALENESS: docs/INSTALL.md does not name the current game target '$gameTarget' (retarget without doc update?)" }
+    if (-not $installDoc.Contains($script:InstallModFolderAnchor)) { Fail "INSTALL_CONSISTENT: manual-lane mod-folder anchor '$($script:InstallModFolderAnchor)' not found verbatim in docs/install.md" }
+    if (-not $installDoc.Contains($script:InstallDeleteOldAnchor)) { Fail "INSTALL_CONSISTENT: upgrade-from-standalone anchor '$($script:InstallDeleteOldAnchor)' not found verbatim in docs/install.md" }
+    if (-not $installDoc.Contains($gameTarget)) { Fail "INSTALL_STALENESS: docs/install.md does not name the current game target '$gameTarget' (retarget without doc update?)" }
 }
-foreach ($docRel in @('docs/INSTALL.md', 'README.md')) {
+foreach ($docRel in @('docs/install.md', 'README.md')) {
     $p = Join-Path $repoRoot $docRel
     if (-not (Test-Path -LiteralPath $p)) { continue }   # INSTALL absence already failed above; README always exists
     $doc = Get-Content -LiteralPath $p -Raw

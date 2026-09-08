@@ -28,10 +28,10 @@ death.
 
 **Remaining.** Play-testing breadth (much of the synced world has been exercised by scripted
 runs and not yet by people playing), the tail of game systems still unsynced
-([SCOPE.md](SCOPE.md) says which), and the subsystems shipped in a shape the project
+([scope.md](scope.md) says which), and the subsystems shipped in a shape the project
 does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
 actor instead of driving it, and both are queued for a proper rebuild. The per-system status is
-[STATUS.md](STATUS.md).
+[status.md](status.md).
 
 **Right now.** The repository itself: the public tree is being rewritten for people, one document
 per subsystem, with the rules in [../CONTRIBUTING.md](../CONTRIBUTING.md) enforced by a commit hook

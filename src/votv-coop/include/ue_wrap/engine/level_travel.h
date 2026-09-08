@@ -7,7 +7,7 @@
 // WHY A SEAM EXISTS HERE AT ALL. VOTV's death chain is BP-internal hops -- `kill`, `ragdollMode`,
 // `fallen`, uber `dead := true`, two RetriggerableDelays, `lib_C::loadLevel('menu')`,
 // `mainGamemode::transition` -- and every one of them is EX_LocalVirtualFunction or EX_Context,
-// invisible to our ProcessEvent detour per docs/COOP_DISPATCH_VISIBILITY.md. The chain's LAST hop,
+// invisible to our ProcessEvent detour per docs/coop-dispatch-visibility.md. The chain's LAST hop,
 // OpenLevel, is native and therefore the only interceptable point on it, which is why no bytecode
 // patch is needed anywhere in the chain. It is also the only LEGAL point: the RetriggerableDelays
 // are armed timers that never re-read `dead`, so while they pend nothing can undo the death --

@@ -1,7 +1,7 @@
 # tripwires.ps1 -- the UE4SS-switch decision trip-wires.
 #
 # ADVISORY, always exit 0: a FIRED wire re-opens the F1 DECISION, it never blocks a
-# release. Run from the RELEASE.md step-0 bullet; paste the output into the written
+# release. Run from the release.md step-0 bullet; paste the output into the written
 # release handoff. Remote-content checks can never FAIL a build (the stale-body
 # lesson) -- the only hard logic here reads LOCAL files (the state file + section 11).
 #

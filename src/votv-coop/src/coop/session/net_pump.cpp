@@ -515,7 +515,7 @@ void Tick(coop::net::Session& session) {
         // The outbound local streams (coop/local_streams). A joining client's pawn is parked and
         // teleported through positions that must not stream as our pose, and ClientWorldReady fires
         // seconds before loadObjects' final teleport, which cannot be hooked
-        // (docs/COOP_DISPATCH_VISIBILITY.md); so the client gate is load-tail quiescence
+        // (docs/coop-dispatch-visibility.md); so the client gate is load-tail quiescence
         // (join_membership_sweep), the signal that observes its effect, reset per world. The host
         // keeps the worldUp gate.
         const bool poseAuthoritative =

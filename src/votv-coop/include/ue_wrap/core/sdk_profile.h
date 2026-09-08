@@ -107,7 +107,7 @@ inline constexpr const char* kSigD3D12ViewportPresentInternal =
 // UGameplayStatics::OpenLevel(WorldContextObject, FName LevelName, bool bAbsolute, FString
 // Options): the level-travel seam, the one native hop of the game's death chain (every hop above
 // it is EX_LocalVirtualFunction / EX_Context, invisible to the detour;
-// docs/COOP_DISPATCH_VISIBILITY.md). The C++ function is detoured, not the exec thunk, so the
+// docs/coop-dispatch-visibility.md). The C++ function is detoured, not the exec thunk, so the
 // parameters arrive parsed and a cancel is `return;`: SetClientTravel is the whole effect, so
 // nothing half-started needs unwinding. OpenLevelBySoftObjectPtr calls the same function;
 // nothing else in the image does. ABI: RCX = WorldContextObject, RDX = FName by value, R8B =

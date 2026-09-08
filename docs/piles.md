@@ -144,7 +144,7 @@ during the window arrives as a position correction after the snapshot.
 
 | Limit | Evidence |
 |---|---|
-| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` `coop/props/trash_proxy`, `coop/props/native_pile_mirror`; the rebuild is next after the ATV on [ROADMAP.md](ROADMAP.md) |
+| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` `coop/props/trash_proxy`, `coop/props/native_pile_mirror`; the rebuild is next after the ATV on [roadmap.md](roadmap.md) |
 | The proxy has no collision: a player walks through a carried or flying clump, and the aim cone ignores walls | `[V]` `coop/props/trash_proxy` |
 | A client's grab resolves the aimed pile by testing every pile proxy against a camera cone, on each press | `[V]` `coop/props/trash_use_intercept` |
 | Trash dropped into a garbage container updates the container only for the peer who dropped it; the container's contents are not synced, and the client skips the Blueprint that would walk a stale list | `[V]` `coop/interactables/garbage_sync` |

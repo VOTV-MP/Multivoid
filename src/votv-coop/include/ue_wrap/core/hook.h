@@ -36,7 +36,7 @@ bool Init();
 //
 // Pass `followJmpImmune` true ONLY for a target another inline-hook engine also
 // detours (ProcessEvent): it rewrites the relay so a jmp-following engine composes
-// with us instead of clobbering it. docs/ARCHITECTURE.md has the encodings.
+// with us instead of clobbering it. docs/architecture.md has the encodings.
 bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune = false);
 
 // ---- Retirement -------------------------------------------------------------
@@ -49,7 +49,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
 // `MH_RemoveHook` (`hook.c:702`) -- in place, with no drain window that helps,
 // and a thread still holding the pointer runs a list link as code. Disable only
 // writes the original prologue back, so a thread already inside the detour
-// returns through intact memory. The full account is docs/ARCHITECTURE.md.
+// returns through intact memory. The full account is docs/architecture.md.
 
 // Disable the hook on `target`: the patch is lifted (the detour stops firing)
 // but the trampoline slot stays allocated and intact. Pair with Enable to

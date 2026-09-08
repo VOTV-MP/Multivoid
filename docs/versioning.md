@@ -16,7 +16,7 @@ bumped by every change to any wire format and by every release. The pair is stam
 DLL's version resource, printed in the boot banner, and carried in the release zip's name; the
 deploy and publish scripts refuse on a mismatch between the resource and the tree. The build
 numbers themselves are minted in an append-only ledger in `.github/ci/`, and a tag or a
-release page is a drift detector, never the authority ([RELEASE.md](RELEASE.md)).
+release page is a drift detector, never the authority ([release.md](release.md)).
 
 Two peers play together only when their pairs are byte-equal. The build number rides every
 packet header, so a peer on another build never parses a message; the game target rides the
@@ -76,7 +76,7 @@ reports, or two SDK dumps, and names the constant each change belongs to.
    displacements replaces the old one. An open-source signature resolver for Unreal executables
    is a useful independent first answer.
 6. Update the identity: the game target, the expected executable size, the build number, and
-   the game target named on [INSTALL.md](INSTALL.md), which a lint checks in CI.
+   the game target named on [install.md](install.md), which a lint checks in CI.
 7. Run the gates in order: the health check all green, the config self-test, the two-peer smoke,
    the launcher's scenarios for the systems the diff said moved, and a play session by a person.
 8. Write down what it cost. Nothing here has been done for real yet: the mod has only ever run

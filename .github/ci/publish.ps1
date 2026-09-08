@@ -36,7 +36,7 @@ if ($payload.Count -ne 1) { throw "expected exactly one main.dll in $ArtifactDir
 #
 # LEG 3 IS AN ASSERTION ABOUT THE CHECKOUT, and it only became a TRUE one on
 # 2026-09-01. The workflow used to hand this script a checkout of `main`, which
-# the ritual guarantees has already moved: RELEASE.md steps 1-3 tag, then bump
+# the ritual guarantees has already moved: release.md steps 1-3 tag, then bump
 # kProtocolVersion N -> N+1, then push both together -- so at publish time main
 # reads N+1 while the tag declares N, and leg 3 threw on every release that
 # followed the documented steps. It had simply never run: leg 3 landed
@@ -98,7 +98,7 @@ if (-not (Test-Path -LiteralPath $notesPath)) { throw "notes file missing: $note
 $notes = Get-Content -LiteralPath $notesPath -Raw
 $notesViolations = @(Test-ReleaseNotesFormat -Content $notes)
 if ($notesViolations.Count -gt 0) { throw "notes format violations: $($notesViolations -join '; ')" }
-if (-not (Test-Path -LiteralPath 'docs/INSTALL.md')) { throw "docs/INSTALL.md missing on the tag's checkout -- the release body links it" }
+if (-not (Test-Path -LiteralPath 'docs/install.md')) { throw "docs/install.md missing on the tag's checkout -- the release body links it" }
 
 # --- Draft-first ----------------------------------------------------------
 $title = "Multivoid $($tag.Game) b$($tag.N)" + $(if ($tag.Dev) { '-dev' } else { '' })

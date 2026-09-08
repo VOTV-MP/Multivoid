@@ -104,7 +104,7 @@ progression, in one of three shapes chosen per prop: park the brain and let the 
 progression through the existing lanes (the pile shape); a host corrector that re-snaps a
 deterministic, clamped accrual when the game keeps re-enabling the tick (the tape reel, at one
 hertz); or an anchor, a start stamp every peer computes from, valid only while the rate is
-constant ([ARCHITECTURE.md](ARCHITECTURE.md), where the authority is going). The reel corrector
+constant ([architecture.md](architecture.md), where the authority is going). The reel corrector
 is built; concrete and food are designed and not built.
 
 ### Deployables

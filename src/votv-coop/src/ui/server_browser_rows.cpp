@@ -42,7 +42,7 @@ using NS::Spawn;
 // Slate units; the row height is the game's own (uicomp_saveSlot_C is 64 px).
 constexpr float kRowH     = 64.f;
 constexpr float kRowGapPx = 2.f;
-// Every row carries its own frame (docs/VOTV_UI_STYLE.md: nothing floats unboxed), inside the
+// Every row carries its own frame (docs/votv-ui-style.md: nothing floats unboxed), inside the
 // 64 px row so the scroll arithmetic is unchanged; the 2 px slot gap stays, or two adjacent frames
 // read as one 4 px rule.
 constexpr float kRowBorderPx = 2.f;

@@ -44,7 +44,7 @@ A container's contents are not on the container. Every one of them reads from a 
 per-peer array, `saveSlot.GObjStack`, addressed by an index the actor holds alongside a cached
 volume. That array reaches a client once, inside the join save-transfer blob, and never again on
 its own, because every verb that mutates it dispatches internally to the Blueprint and so is
-invisible to both hook seams (`docs/COOP_DISPATCH_VISIBILITY.md`). Without a lane of its own, a
+invisible to both hook seams (`docs/coop-dispatch-visibility.md`). Without a lane of its own, a
 drone delivery landed full on the host and empty on the client.
 
 The seam is the bytecode dispatcher on the add and take verbs, and it only marks the container

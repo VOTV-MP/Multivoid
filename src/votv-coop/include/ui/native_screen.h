@@ -3,7 +3,7 @@
 // Blueprint, no editor, no pak. It holds what a second native screen needs as is (the measured
 // palette, the framed box, the styled text block, the window shell, the donor-cloned button, the
 // hit test); a screen's own model, columns and selection state stay in the screen. One owner, or
-// the copies drift. The measurements are in docs/VOTV_UI_STYLE.md. Game thread only: every
+// the copies drift. The measurements are in docs/votv-ui-style.md. Game thread only: every
 // function spawns UObjects or calls UFunctions.
 
 #pragma once
@@ -29,7 +29,7 @@ inline constexpr uint8_t kTop = 1, kBottom = 3;
 // ETextJustify: Left=0, Center=1, Right=2.
 inline constexpr uint8_t kJustLeft = 0, kJustCenter = 1, kJustRight = 2;
 
-// The palette, sampled from the game's own menus by histogram (docs/VOTV_UI_STYLE.md): a designed
+// The palette, sampled from the game's own menus by histogram (docs/votv-ui-style.md): a designed
 // ramp (#1A1A1A, #313131, #404040 step evenly; the selected fill moves one 0x40 component between
 // channels), so a colour outside the table is a mistake. Functions, not constants: the
 // sRGB-to-linear conversion is not constexpr, and a header-inline const would mint a copy per

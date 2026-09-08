@@ -162,7 +162,7 @@ void ValidateCachedSaveForCampaign(const wchar_t* slot, void* curWorld) {
     }
 }
 // The boot poll's two "where are we?" reads, one owner for LoadStorySave and StartFreshGame.
-// Adopted from archhn0madd's Multifoid fork; see docs/CREDITS.md.
+// Adopted from archhn0madd's Multifoid fork; see docs/credits.md.
 // After a quit to the menu the dying gameplay world and its player corpse stay in GUObjectArray for
 // tens of seconds and their kill flags can lag, so a class search found the corpse off the origin
 // and answered "in gameplay" while the process sat at the menu. This keys on world identity

@@ -3,7 +3,7 @@
 //
 // The turn-on and turn-off verbs (spawnKerfuro / dropKerfurProp) are BP-internal
 // EX_LocalVirtualFunction self-calls, invisible to both ProcessEvent and Func
-// patches (docs/COOP_DISPATCH_VISIBILITY.md), so which successor a conversion
+// patches (docs/coop-dispatch-visibility.md), so which successor a conversion
 // produced could only be guessed at, by proximity and timing. The substrate gives
 // a DETERMINISTIC bracket at the verb itself.
 //

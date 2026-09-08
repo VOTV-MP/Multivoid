@@ -78,7 +78,7 @@ each preceded by a drill that proves the gate can fail.
 
 A release is a tag: the release workflow judges the tag against the ledger, refuses early on a
 stale fingerprint, rebuilds the tagged source without caches, and publishes the zip with its
-checksum ([RELEASE.md](RELEASE.md)).
+checksum ([release.md](release.md)).
 
 ## Known limits
 

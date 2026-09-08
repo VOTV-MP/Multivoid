@@ -7,7 +7,7 @@ substrate; the DLL imports nothing from UE4SS, which is the loader and the devel
 identity, game target plus build, is in the boot banner and the DLL's generated VERSIONINFO
 (`version.rc.in`), not in the filename.
 
-## Subtrees (principle 7, `docs/ARCHITECTURE.md`)
+## Subtrees (principle 7, `docs/architecture.md`)
 
 ```
 include/
@@ -45,6 +45,6 @@ a one-time per-copy UE4SS install.
 - UE4SS's code: the mod imports nothing from it. UE4SS itself is the loader every game copy
   runs (the pinned build and the one the mod manager delivers are the same), and
   the development copy also uses it for Live View, Lua probes and header dumps
-  (`docs/RE_WORKFLOW.md`).
+  (`docs/re-workflow.md`).
 - Game assets: never touched. Every sync rides reflected function calls and reads through cached
   offsets.

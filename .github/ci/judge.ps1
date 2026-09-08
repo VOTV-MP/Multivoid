@@ -71,7 +71,7 @@ if ($tag) {
 # 4b. NOTES_OK -- the changelog authority file for N exists on THIS (main)
 #     checkout and passes the format lint (pre-build refusal: no 40-min build
 #     is wasted on a missing/malformed notes file). Semantic truth of the
-#     prose is human-gated at RELEASE.md step 0.5, not judged here.
+#     prose is human-gated at release.md step 0.5, not judged here.
 if ($tag) {
     $notesPath = Get-ReleaseNotesPath -N $tag.N
     if (-not (Test-Path -LiteralPath $notesPath)) {

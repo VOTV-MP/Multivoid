@@ -1,6 +1,6 @@
 // ui/native_screen.cpp -- the hand-built native-screen kit: the measured palette, the framed box,
 // the window shell, the chrome button and the one hit test. See ui/native_screen.h and
-// docs/VOTV_UI_STYLE.md for the measurements behind the constants.
+// docs/votv-ui-style.md for the measurements behind the constants.
 
 #include "ui/native_screen.h"
 

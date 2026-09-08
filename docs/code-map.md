@@ -75,7 +75,7 @@ can show before the game's UI exists.
 
 ## Adding a sync lane
 
-1. Decide who owns the state (see [ARCHITECTURE.md](ARCHITECTURE.md)): the host owns it and
+1. Decide who owns the state (see [architecture.md](architecture.md)): the host owns it and
    clients mirror; a client names an intent and the host performs it; or each peer owns its own
    copy and the rest see it.
 2. Add the message kind to `coop/net/protocol.h` and bump the build number: the wire changed.

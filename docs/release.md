@@ -8,7 +8,7 @@ SHA256. The zip is assembled by `.github/ci/package.ps1` from the tagged build's
 and the bytes are CI's cacheless rebuild of the tagged source, published by the release lane
 (`.github/workflows/release-trampoline.yml` into `release-core.yml`). The page body has one
 writer: a dev disclaimer, then what is new (the notes file for that build), then the install
-steps with a link to [INSTALL.md](INSTALL.md), then the build provenance (the source commit and
+steps with a link to [install.md](install.md), then the build provenance (the source commit and
 the checksum).
 
 Build numbers are minted in one place, the append-only, human-written ledger

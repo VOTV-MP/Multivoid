@@ -77,7 +77,7 @@ std::string Narrow(const std::wstring& w) {
 
 // Is `dirName` the directory OUR OWN paks land in? Both install lanes are covered
 // by one rule because both derive the name from the package name we choose:
-// the manual lane uses LogicMods\multivoid\ (INSTALL.md), and shimloader VFS-maps
+// the manual lane uses LogicMods\multivoid\ (install.md), and shimloader VFS-maps
 // each package to LogicMods\<Team>-<Name>\, which for us is Pelmentor-Multivoid.
 bool IsOurPakDir(const std::wstring& dirName) {
     std::wstring lower = dirName;

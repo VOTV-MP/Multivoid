@@ -7,7 +7,7 @@
 // level before the interceptor installed, and the EX_CALLMATH SPAWN CATCH, for
 // actors a Blueprint ubergraph spawns via EX_CallMath BeginDeferred -- which
 // routes UFunction::Func one layer BELOW ProcessEvent
-// (docs/COOP_DISPATCH_VISIBILITY.md), so the interceptor and its POST register but
+// (docs/coop-dispatch-visibility.md), so the interceptor and its POST register but
 // never fire.
 //
 // Consumes npc_sync's host-side lifecycle state through its public accessors only,

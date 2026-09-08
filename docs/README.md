@@ -10,10 +10,10 @@ mod and the rules for changing it.
 
 | | |
 |---|---|
-| [INSTALL.md](INSTALL.md) | Install, update, uninstall. The single owner of that text; the README and every release only link here |
+| [install.md](install.md) | Install, update, uninstall. The single owner of that text; the README and every release only link here |
 | [../SECURITY.md](../SECURITY.md) | What the mod does and does not protect, and how to report a vulnerability. Read the "what does not hold" part before hosting for strangers |
 | [../README.md](../README.md) | The front page: what works today, where to get builds, who contributed |
-| [CREDITS.md](CREDITS.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it |
+| [credits.md](credits.md) | Every outside code contribution, report and review that changed the mod, and what shipped from it |
 
 ## I want to understand it, or help
 
@@ -21,30 +21,30 @@ Start here, in this order:
 
 | | |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The one read: the layers, who owns which state, how bytes move, how peers and entities are named, and how a join works |
-| [SCOPE.md](SCOPE.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
-| [DEVS_GAUNTLET.md](DEVS_GAUNTLET.md) | The game developers' public statement on why multiplayer mods fail, and the answer to each claim. It is the bar this project builds to |
-| [FEASIBILITY.md](FEASIBILITY.md) | Whether this is possible at all, answered with measurements |
-| [ROADMAP.md](ROADMAP.md) | Where it is going: the phases and where we are in them |
+| [architecture.md](architecture.md) | The one read: the layers, who owns which state, how bytes move, how peers and entities are named, and how a join works |
+| [scope.md](scope.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
+| [devs-gauntlet.md](devs-gauntlet.md) | The game developers' public statement on why multiplayer mods fail, and the answer to each claim. It is the bar this project builds to |
+| [feasibility.md](feasibility.md) | Whether this is possible at all, answered with measurements |
+| [roadmap.md](roadmap.md) | Where it is going: the phases and where we are in them |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | The rules a change must respect, and the shape a commit and a doc must have |
 
 Then, if you are going to touch code:
 
 | | |
 |---|---|
-| [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then a disassembler, then UE4SS as a probe. The probes do not ship; UE4SS ships only as the loader |
+| [re-workflow.md](re-workflow.md) | How this project reverse-engineers the game: reflection first, then a disassembler, then UE4SS as a probe. The probes do not ship; UE4SS ships only as the loader |
 | [testing.md](testing.md) | The test rig, the launcher and its scenarios, the in-game harness, and the gates a push runs |
-| [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
+| [release.md](release.md) | How a build becomes a release, and the gates it must pass |
 | [versioning.md](versioning.md) | The version pair two peers must match, the files a game update touches, how a broken build says so, and the port runbook |
-| [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md) | The game's own widget style, measured; binding for anything drawn inside the game's UI |
+| [votv-ui-style.md](votv-ui-style.md) | The game's own widget style, measured; binding for anything drawn inside the game's UI |
 
 Before writing any entity-sync, hook or spawn-catch code, read these three:
 
 | | |
 |---|---|
-| [COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md) | How a system gets synced here: foundation first, the authority table, the dispatch-seam ladder, brain parking, identity, the mandatory late-join answer, and the forbidden-crutch list |
-| [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md) | Will my hook even fire? Visible versus invisible Blueprint dispatch, and the trap that `init()` is Blueprint-internal |
-| [COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md) | How each entity gets identity, expression and destruction, plus the duplication matrix |
+| [coop-sync-doctrine.md](coop-sync-doctrine.md) | How a system gets synced here: foundation first, the authority table, the dispatch-seam ladder, brain parking, identity, the mandatory late-join answer, and the forbidden-crutch list |
+| [coop-dispatch-visibility.md](coop-dispatch-visibility.md) | Will my hook even fire? Visible versus invisible Blueprint dispatch, and the trap that `init()` is Blueprint-internal |
+| [coop-entity-expression-map.md](coop-entity-expression-map.md) | How each entity gets identity, expression and destruction, plus the duplication matrix |
 
 ## I maintain this
 
@@ -70,8 +70,8 @@ And the two maps:
 
 | | |
 |---|---|
-| [CODE_MAP.md](CODE_MAP.md) | Where every concept lives: one folder each, and the files in it |
-| [STATUS.md](STATUS.md) | What is synced, system by system, who owns it, and how far each one is |
+| [code-map.md](code-map.md) | Where every concept lives: one folder each, and the files in it |
+| [status.md](status.md) | What is synced, system by system, who owns it, and how far each one is |
 
 ## How to read a claim in these docs
 

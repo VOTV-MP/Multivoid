@@ -123,7 +123,7 @@ jobs:
     steps:
       # THE CONTENT AND THE IDENTITY COME FROM THE TAG; THE PREDICATES COME FROM
       # MAIN. This job used to check out `main` for both, and that is a
-      # CONTRADICTION with the ritual it serves: RELEASE.md steps 1-3 tag, then
+      # CONTRADICTION with the ritual it serves: release.md steps 1-3 tag, then
       # bump kProtocolVersion N -> N+1 on main, then push both together -- so by
       # the time this job runs, main ALWAYS reads N+1 while the tag declares N.
       # publish.ps1's leg 3 compares the two and throws. It could not have been
@@ -141,7 +141,7 @@ jobs:
 
       # Only the *.ps1 predicates are overlaid, and only from main. A tag can be
       # created by anyone who can push one; the refuse-to-publish logic must not
-      # be readable from it (RELEASE.md: "executed from main HEAD -- editing them
+      # be readable from it (release.md: "executed from main HEAD -- editing them
       # is a human-only act"). Everything else under .github/ci is CONTENT that
       # describes this release -- the notes file, the store README, the ledger,
       # the fingerprint -- and stays at the tag.

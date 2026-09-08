@@ -143,7 +143,7 @@ Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Enc
 # game-derived meshes, and it hid them from the repository and from nobody else,
 # since the same bytes already ship in every release archive; the cost was the
 # automated lane, because a runner's checkout had no paks and -Release refused.
-# The manual-install step for pak\ lives in INSTALL.md, and skin_registry scans
+# The manual-install step for pak\ lives in install.md, and skin_registry scans
 # every LogicMods subdirectory, so both lanes see the models wherever their route
 # lands them.
 if ($Pak.Count -eq 0) {
