@@ -1,11 +1,11 @@
 // coop/save_button_disable.h -- grey out and disable the client's pause-menu Save button.
 //
-// The visible half of the guarantee in coop/save_block.cpp: persistence is host-only, so a
-// client must not write the world save, and the block already stops the write at
-// UGameplayStatics::SaveGameToSlot. This makes the restriction READ as one rather than as a
-// silent failed save -- on the client's pause menu (ui_menu_C with isPause set) the "Save Game"
-// button is disabled and dimmed. The native disableSave bool stays untouched on purpose: it also
-// blocks OPENING the ESC menu, which would trap the client.
+// The visible half of the guarantee in coop/save_block.cpp: persistence is host-only, so a client
+// must not write the world save, and the block already stops the write at
+// UGameplayStatics::SaveGameToSlot. This makes the restriction READ as one rather than as a silent
+// failed save -- on the client's pause menu (ui_menu_C with isPause set) button_Save is disabled
+// and dimmed with SetRenderOpacity. The native disableSave bool stays untouched on purpose: it
+// also blocks OPENING the ESC menu, which would trap the client.
 //
 // Mechanism: a POST observer on mainPlayer_C::InpActEvt_Escape, the ProcessEvent-dispatched input
 // event that opens the menu (enterPause is blueprint-internal and fires no observer), applies the

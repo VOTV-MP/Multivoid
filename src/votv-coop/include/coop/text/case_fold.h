@@ -6,9 +6,10 @@
 //
 // That coupling is the whole point. A hand-written table covering ASCII, Latin-1 and Cyrillic is
 // correct only for the repertoire of the day it is written, and a widened repertoire breaks it
-// with no symptom: of 890 cased codepoints whose lowercase is also drawable, 649 fold to
-// THEMSELVES under such a table, so a Greek nickname does not collide with its own lowercase.
-// Nothing folds WRONG -- incomplete, never incorrect, which is why there is nothing to grep for.
+// with no symptom: a census against this build's repertoire found 649 of the 890 cased-and-
+// drawable codepoints folding to THEMSELVES under such a table, so a Greek nickname did not
+// collide with its own lowercase. Nothing folds WRONG -- incomplete, never incorrect, which is
+// why there is nothing to grep for.
 
 #pragma once
 

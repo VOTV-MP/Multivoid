@@ -10,8 +10,9 @@
 // and the client overwrites its own local sim, whose garbage the overwrite hides.
 //
 // The knob INTENTS (speeds, active, dir) stay occupant-authored on DeskState, the host applies
-// them and its own blueprint integrates the offset, so this vector is host-down only: one
-// author. It lives with the other desk and device interactables -- one concept, one folder.
+// them and its own blueprint integrates the offset, so this vector is host-down only: one author.
+// frData and poData ride the vector rather than converging natively -- they read a filter-size
+// upgrade that has no sync lane of its own.
 
 #pragma once
 

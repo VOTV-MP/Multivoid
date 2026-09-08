@@ -9,8 +9,8 @@
 // AmainGamemode_C::transition("/Game/menu"). Quitting to the menu loads the real ui_menu_C main
 // menu without re-showing OMEGA, and our ui_menu_C::Tick observer (coop::multiplayer_menu)
 // injects the MULTIPLAYER button. A transparent ProcessEvent bypass covers the dying-world
-// teardown, where our detour otherwise hangs on the EndPlay storm; it auto-expires, so the
-// observers re-engage at the loaded menu.
+// teardown, where our detour otherwise hangs on the EndPlay storm (autotest_menutravel_probe is
+// what shows that); it auto-expires, so the observers re-engage at the loaded menu.
 //
 // Requires the launch to boot gameplay (scenario=play, ideally fresh_boot=1).
 

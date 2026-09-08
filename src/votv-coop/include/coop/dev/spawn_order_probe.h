@@ -8,8 +8,8 @@
 // catches every keyless load spawn. COVERAGE is the one unproven part, and this probe measures
 // it.
 //
-// THE PROBE: during the client join, record every keyless-family BeginDeferred spawn the thunk
-// sees, by actor pointer; at load quiescence, walk the GUObjectArray for the surviving keyless
+// THE PROBE: during the client join, record every keyless-family load spawn the thunk sees -- the
+// gate is a gamemode-framed source -- by actor pointer; at load quiescence, walk the keyless
 // natives and check each was recorded. CAUGHT-ALL (no survivor missed) makes spawn order the
 // deterministic primary; MISSES sends the bind to the exact-transform bijection instead. Nothing
 // is spawned, bound or mutated. Ini-gated [dev] spawn_order_probe=1; game thread only.

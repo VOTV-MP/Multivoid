@@ -31,8 +31,8 @@ namespace coop::player_handshake {
 
 namespace {
 
-// [u8 slot][u8 len][name ASCII] -- the SkinChange wire form, and what the host rebroadcasts
-// unchanged.
+// [u8 slot][u8 len][name ASCII] -- the SkinChange wire form; the host re-emits the same form
+// after its forgery guard.
 std::vector<uint8_t> BuildSkinChangePayload(uint8_t slot, const std::string& name) {
     std::vector<uint8_t> out;
     const uint8_t len = static_cast<uint8_t>(name.size() > 48 ? 48 : name.size());
@@ -43,13 +43,13 @@ std::vector<uint8_t> BuildSkinChangePayload(uint8_t slot, const std::string& nam
     return out;
 }
 
-// [u8 slot][u8 visible] -- the NameplateChange wire form; the host rebroadcasts it unchanged.
+// [u8 slot][u8 visible] -- the NameplateChange wire form; the host re-emits it after its guard.
 std::vector<uint8_t> BuildNameplateChangePayload(uint8_t slot, bool visible) {
     return { slot, static_cast<uint8_t>(visible ? 1 : 0) };
 }
 
-// [u8 slot][u8 has][u8 r][u8 g][u8 b] -- the NickColorChange wire form; the host rebroadcasts
-// it unchanged.
+// [u8 slot][u8 has][u8 r][u8 g][u8 b] -- the NickColorChange wire form; the host re-emits it
+// after its guard.
 std::vector<uint8_t> BuildNickColorChangePayload(uint8_t slot, uint32_t packed) {
     return { slot, static_cast<uint8_t>(coop::nick_color::IsCustom(packed) ? 1 : 0),
              coop::nick_color::R(packed), coop::nick_color::G(packed),
