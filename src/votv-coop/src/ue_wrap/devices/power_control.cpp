@@ -27,15 +27,15 @@ namespace {
 
 namespace R = reflection;
 
-// One descriptor per breaker subsystem. `bit` is the PowerPanelPayload mask bit (FIELD/offset
-// order, 0x0380..0x0384) -- NOT the powerChanged() arg order (we never call powerChanged). The
-// `eff_*_on/off` are the LED particle components (visibility = the lit indicator); note the BP
-// typo "eef_calc_*" (not "eff") for the calc subsystem.
+// One descriptor per breaker subsystem. `bit` is the PowerPanelPayload mask bit, in field order --
+// NOT the powerChanged() arg order, since we never call powerChanged. The `eff_*_on/off` are the
+// LED particle components, whose visibility is the lit indicator; note the blueprint's typo
+// "eef_calc_*" for the calc subsystem.
 struct Sys {
     int            bit;
-    const wchar_t* pressName;  int32_t pressOffFallback;
-    const wchar_t* effOnName;  int32_t effOnOffFallback;
-    const wchar_t* effOffName; int32_t effOffOffFallback;
+    const wchar_t* pressName;
+    const wchar_t* effOnName;
+    const wchar_t* effOffName;
     // resolved lazily (game-thread serial):
     int32_t pressOff;
     int32_t effOnOff;
@@ -43,55 +43,57 @@ struct Sys {
 };
 
 Sys g_sys[] = {
-    { 0, L"press_coord", 0x0380, L"eff_coords_on", 0x02E8, L"eff_coords_off", 0x0310, -1, -1, -1 },
-    { 1, L"press_downl", 0x0381, L"eff_downl_on",  0x02E0, L"eff_downl_off",  0x0308, -1, -1, -1 },
-    { 2, L"press_play",  0x0382, L"eff_play_on",   0x02F0, L"eff_play_off",   0x0318, -1, -1, -1 },
-    { 3, L"press_calc",  0x0383, L"eef_calc_on",   0x02D8, L"eef_calc_off",   0x0300, -1, -1, -1 },
-    { 4, L"press_light", 0x0384, L"eff_light_on",  0x02D0, L"eff_light_off",  0x02F8, -1, -1, -1 },
+    { 0, L"press_coord", L"eff_coords_on", L"eff_coords_off", -1, -1, -1 },
+    { 1, L"press_downl", L"eff_downl_on",  L"eff_downl_off",  -1, -1, -1 },
+    { 2, L"press_play",  L"eff_play_on",   L"eff_play_off",   -1, -1, -1 },
+    { 3, L"press_calc",  L"eef_calc_on",   L"eef_calc_off",   -1, -1, -1 },
+    { 4, L"press_light", L"eff_light_on",  L"eff_light_off",  -1, -1, -1 },
 };
 
 std::atomic<bool> g_resolved{false};
+bool    g_layoutRefused = false;  // the class loaded but a field did not: permanent for this build
 void*   g_cls = nullptr;          // powerControl_C UClass
-int32_t g_keyOff = -1;            // AtriggerBase_C::Key (Alpha 0.9.0-n: 0x0260)
+int32_t g_keyOff = -1;            // AtriggerBase_C::Key
 void*   g_moveLeversFn = nullptr; // moveLevers() -- visual-only lever animation
-
-constexpr int32_t kKeyOffFallback = 0x0260;
 
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_layoutRefused) return false;
 
     void* cls = R::FindClass(L"powerControl_C");
-    if (!cls) return false;
+    if (!cls) return false;  // the blueprint has not streamed in yet; retried next tick
+
+    // Every offset is resolved BY NAME, and a miss refuses the lane rather than falling back on
+    // the address this build happens to use. The apply writes a bool and dereferences a component
+    // pointer at these offsets, so a recook that moves a field would turn a fallback into a blind
+    // write into whatever now lives there. The class IS loaded by this point, so a miss is a fact
+    // about this game build and not a timing race: it is latched, and reported once.
+    auto refuse = [&](const wchar_t* what) {
+        g_layoutRefused = true;
+        UE_LOGE("power: %ls did not resolve on a loaded powerControl_C -- the base power-panel lane "
+                "is OFF for this game build (no blind writes at a stale offset)", what);
+        return false;
+    };
 
     // Key lives on the AtriggerBase_C base; FindPropertyOffset does NOT climb to a super, so
     // resolve it against triggerBase_C directly (same gotcha garage/appliance handle).
     int32_t keyOff = -1;
     if (void* trig = R::FindClass(L"triggerBase_C")) keyOff = R::FindPropertyOffset(trig, L"Key");
-    if (keyOff < 0) {
-        UE_LOGW("power: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
-    }
+    if (keyOff < 0) return refuse(L"triggerBase_C::Key");
 
     for (auto& s : g_sys) {
         s.pressOff = R::FindPropertyOffset(cls, s.pressName);
-        if (s.pressOff < 0) {
-            UE_LOGW("power: %ls offset not found -- fallback 0x%04X", s.pressName, s.pressOffFallback);
-            s.pressOff = s.pressOffFallback;
-        }
+        if (s.pressOff < 0) return refuse(s.pressName);
         s.effOnOff = R::FindPropertyOffset(cls, s.effOnName);
-        if (s.effOnOff < 0) {
-            UE_LOGW("power: %ls offset not found -- fallback 0x%04X", s.effOnName, s.effOnOffFallback);
-            s.effOnOff = s.effOnOffFallback;
-        }
+        if (s.effOnOff < 0) return refuse(s.effOnName);
         s.effOffOff = R::FindPropertyOffset(cls, s.effOffName);
-        if (s.effOffOff < 0) {
-            UE_LOGW("power: %ls offset not found -- fallback 0x%04X", s.effOffName, s.effOffOffFallback);
-            s.effOffOff = s.effOffOffFallback;
-        }
+        if (s.effOffOff < 0) return refuse(s.effOffName);
     }
 
+    // The one best-effort resolve: moveLevers is a VERB, not an address. Without it the mirror
+    // still drives the LEDs, so its absence degrades the visual instead of corrupting the object.
     void* moveLevers = R::FindFunction(cls, L"moveLevers");
     if (!moveLevers)
         UE_LOGW("power: moveLevers UFunction not found -- mirror levers won't animate (LEDs still mirror)");
