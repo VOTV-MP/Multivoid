@@ -1,29 +1,18 @@
 // coop/pause_guard.h -- the coop no-pause invariant (ONE owner, both roles).
 //
-// USER REPORT (2026-07-04): a client pressing ESC in a session pauses ITS world --
-// the engine stops ticking, its pose stream freezes on every other screen, "clients
-// freeze". SP semantics: ESC (mainPlayer InpActEvt_Escape -> the mainGamemode
-// ubergraph, stmts [372]/[375]/[3035]) opens pause_mainMenu (ui_menu_C::enterPause,
-// isPause@0x4C0) and pauses the world via GameplayStatics::SetGamePaused -- dispatched
-// as EX_CallMath, PE-INVISIBLE (docs/coop-dispatch-visibility.md), so no ProcessEvent
-// interceptor can cancel it; and the console `pause` command reaches the same engine
-// state through APlayerController::SetPause without touching GameplayStatics at all.
+// A client pressing ESC in a session pauses ITS world: the engine stops ticking and its pose
+// stream freezes on every other screen. SP semantics: ESC opens pause_mainMenu and pauses the
+// world with GameplayStatics::SetGamePaused, dispatched as EX_CallMath and so PE-INVISIBLE
+// (docs/coop-dispatch-visibility.md) that no ProcessEvent interceptor can cancel it, while the
+// console `pause` reaches the same state through APlayerController::SetPause. On the MTA
+// precedent a connected session has no world pause at all: it never stops ticking on any peer,
+// and the ESC menu stays usable, minus that side effect.
 //
-// MP semantics (MTA precedent, reference/mtasa-blue: no world pause exists anywhere in
-// a session): while a coop session is CONNECTED the world NEVER stops ticking, on any
-// peer -- host or client. The ESC menu itself stays fully usable: it is just a widget;
-// only the world-pause side effect is removed.
-//
-// Mechanism: enforce the STATE, not the call sites (anti-smear: one owner for the
-// "world pause" axis). Every gameplay tick while connected: if the world reads paused
-// (engine::IsGamePaused) -> engine::SetGamePaused(false), the game's own un-pause
-// verb. Level-triggered = catches EVERY pause source (ESC, console pause, any future
-// path) at one seam. Poll LIVENESS while paused is guaranteed by the pump's
-// ProcessEvent ride: the pause menu widget's own Tick (ui_menu_C -- the exact tickFn
-// multiplayer_menu latches) dispatches ProcessEvent every Slate frame even while the
-// world is paused, so the un-pause lands within a frame of the pause engaging.
-//
-// Solo (no session) is untouched -- SP pause behaves natively. Game-thread only.
+// So the STATE is enforced rather than the call sites -- one owner for the "world pause" axis.
+// Every gameplay tick while connected, a world that reads paused (engine::IsGamePaused) is
+// un-paused with the game's own verb; level-triggered, so every pause source is caught at one
+// seam. The poll stays live while paused because the pause menu widget's own Tick dispatches
+// ProcessEvent every Slate frame. Solo is untouched. Game thread only.
 
 #pragma once
 
