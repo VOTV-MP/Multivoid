@@ -1,12 +1,9 @@
-// ue_wrap/drive_chain.h -- the drive-chain engine wrappers (v119 L5):
-// AdriveSlot_C (desk play/comp ChildActor slots + the eraser's slot),
-// Aprop_drive_C (the Data_0 payload @ "data_0"), Aprop_driveRack_C (the
-// 16-row storage arrays + gen()).
+// ue_wrap/desk/drive_chain.h -- the drive-chain engine wrappers: driveSlot_C (the desk play/comp
+// ChildActor slots and the eraser's slot), prop_drive_C (the data_0 payload, an
+// Fstruct_signalDataDynamic) and prop_driveRack_C (the 16-row storage arrays + gen()).
 //
-// Fact base: votv-drive-chain-L5-impl-DESIGN-2026-07-18.md +
-// votv-signal-chain-units-RE-2026-07-16.md §5. Principle 7: reflection
-// access + struct layouts + UFunction thunks ONLY -- no coop/network state
-// (coop/interactables/drive_sync owns the lanes).
+// Reflection access, struct layouts and UFunction thunks ONLY -- no coop or network state;
+// coop/interactables/drive_sync and drive_rack_sync own the lanes.
 //
 // Game thread throughout (UObject access + reflected dispatch).
 
@@ -56,10 +53,9 @@ void* SlotDrive(void* slotActor);
 bool CallPutDriveIn(void* slotActor, void* driveActor);
 bool CallDrivePulledOut(void* slotActor);
 
-// The deterministic eject-latch completion (design R3): if the ejected drive
-// no longer overlaps the slot's drivePort (or is null/dead), complete the
-// EndOverlap transition the FSM is waiting for: isRecentlyDetached = false.
-// No-op when still overlapping (the organic EndOverlap will clear it).
+// The deterministic eject-latch completion: if the ejected drive no longer overlaps the slot's
+// drivePort (or is null/dead), complete the EndOverlap transition the FSM is waiting for --
+// isRecentlyDetached = false. No-op when still overlapping (the organic EndOverlap will clear it).
 void CompleteEjectLatch(void* slotActor, void* driveActor);
 
 // Drive payload (prop_drive.data_0, Fstruct_signalDataDynamic 0x70).

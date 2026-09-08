@@ -1,19 +1,17 @@
 // ue_wrap/core/reflected_offset.h -- reflection-resolved BP property offsets.
 //
-// VOTV's BP-cooked classes recompile every patch, and a struct layout shifts whenever a
-// property is added or reordered, so a hardcoded offset into that surface is a landmine the
-// next update trips. Each accessor below resolves its (class, field) pair through reflection
-// at first use and caches it, so the offset follows layout drift for as long as the field
-// keeps its name. -1 means the class has not loaded yet, or the field was renamed, and a
-// caller MUST test for it before using the result as an offset -- several do not, and one
-// path widens it to an unsigned type, where -1 becomes an enormous displacement. The cache
-// memorises only on SUCCESS, so a call that fires before the BP class loads is retried by
-// the next one and late-loading content resolves without the call site owning a retry.
+// VOTV's BP-cooked classes recompile every patch and a struct layout shifts whenever a property is
+// added or reordered, so a hardcoded offset into that surface is a landmine the next update trips.
+// Each accessor below resolves its (class, field) pair through reflection at first use and caches
+// it, so the offset follows layout drift for as long as the field keeps its name. -1 means the
+// class has not loaded yet or the field was renamed, and every read and write refuses a negative
+// offset -- as an unsigned displacement it addresses the byte BELOW the object. The cache memorises
+// only on SUCCESS, so a call that fires before the BP class loads is retried by the next one.
 //
-// Engine-stable offsets -- UObject internals, the FProperty and FField chain, a component's
-// attach parent -- stay hardcoded in sdk_profile.h, since a BP recook does not move them.
-// Only the BP-cooked surface (mainPlayer_C, the kerfur AnimBP) lives here, and no number
-// does: naming one is the coupling this header exists to remove.
+// Engine-stable offsets -- UObject internals, the FProperty and FField chain, a component's attach
+// parent -- stay hardcoded in sdk_profile.h, since a BP recook does not move them. Only the
+// BP-cooked surface (mainPlayer_C, the kerfur AnimBP) lives here, and no number does: naming one is
+// the coupling this header exists to remove.
 
 #pragma once
 
