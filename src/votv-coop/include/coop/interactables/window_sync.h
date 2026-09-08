@@ -1,23 +1,18 @@
-// coop/window_sync.h -- base-window dirt scalar sync (AbaseWindow_C::clean, the
-// base's "main huge window"). Protocol v41, ReliableKind::WindowCleanState.
+// coop/window_sync.h -- the base window's dirt scalar (AbaseWindow_C::clean, the base's "main huge
+// window"), on ReliableKind::WindowCleanState. Gameplay/network layer (principle 7): the wire
+// protocol, the per-tick poll, the apply, the per-window Key->actor index, the deferred retry and
+// the connect snapshot; the engine is reached only through ue_wrap::base_window.
 //
-// Gameplay/network layer (principle 7): owns the wire protocol, the per-tick `clean`
-// POLL, the receiver min-wins apply, the per-window Key->actor index, the deferred-apply
-// retry, and the connect-snapshot. Talks to the engine ONLY through ue_wrap::base_window.
-//
-// Model (SYMMETRIC, MTA monotone min-register): each peer POLLS every AbaseWindow_C's
-// `clean`@0x0260 once per tick (NOT a UFunction observer -- cleanSponge is BP-internal and
-// bypasses our ProcessEvent detour, same as doors/keypad) and broadcasts on a DECREASE,
-// keyed by the window's Aactor_save_C::Key. The receiver resolves the window by Key (self-
-// healing index; deferred + retried if it has not streamed in yet) and applies
-// MIN(local, wire) -- a wire update can only make a window CLEANER, so two peers wiping
-// concurrently converge to the lowest value with no oscillation/regression (clean is
-// monotone + inert: nothing re-raises it locally, unlike a door's autoclose -> no HostAuth
-// needed). The host RELAYS a client-originated wipe to the other clients. On a new client's
-// connect edge the HOST snapshots each window's current clean with adopt=1 (the receiver
-// writes it VERBATIM so the joiner adopts the host's world even if its own save was cleaner).
-//
-// RE: research/findings/world-systems/votv-dirt-window-cleaning-RE-and-coop-sync-design-2026-06-07a.md.
+// The model is symmetric and monotone, MTA's min register. Each peer polls every AbaseWindow_C's
+// `clean` once per tick -- not a UFunction observer, since cleanSponge is blueprint-internal and
+// never reaches our ProcessEvent detour, as with doors and the keypad -- and broadcasts on a
+// DECREASE, keyed by the window's Aactor_save_C::Key. A receiver resolves the window by Key,
+// deferring and retrying if it has not streamed in yet, and applies MIN(local, wire): a live edge
+// can only make a window CLEANER, so two peers wiping at once converge without oscillation, and
+// nothing re-raises `clean` the way a door re-closes, so no host authority is needed. The host's
+// relay carries a client's wipe to the other clients. On a connect edge the host sends each
+// window's current value with adopt=1, applied AS SENT so a joiner takes the host's world even
+// where its own save was cleaner -- which is why an adopt counts only from the host.
 
 #pragma once
 
@@ -34,10 +29,10 @@ namespace coop::window_sync {
 // net-pump tick until the BP class is loaded. Stores the session pointer. Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a WindowCleanState packet arrived (payload already memcpy'd +
-// range-checked by event_feed). Resolves the window by Key and applies MIN(local, clean)
-// for a live wipe (adopt==0) or VERBATIM for a connect-snapshot (adopt==1), deferring if
-// the instance has not streamed in. Called from event_feed's reliable drain loop.
+// Receiver entry: a WindowCleanState packet arrived, its payload already copied and range-checked
+// by event_feed. Resolves the window by Key and applies MIN(local, clean) for a live wipe
+// (adopt==0) or the value as sent for a connect snapshot (adopt==1), deferring if the instance has
+// not streamed in. Called from event_feed's reliable drain loop.
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot);
 
 // HOST-only: snapshot the current `clean` of every indexed window to a freshly connected
