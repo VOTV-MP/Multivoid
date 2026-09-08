@@ -1,19 +1,16 @@
 // coop/dev/menu_proceed.cpp -- see coop/dev/menu_proceed.h. TEST-ONLY.
 //
-// Reaching VOTV's MAIN MENU autonomously (for the MULTIPLAYER-button screenshot) is
-// blocked at boot by the OMEGA content-warning screen: it is a special early-boot
-// widget (NOT ui_menu_C -- proven: FindObjectByClass("ui_menu_C")==null there) with
-// no standard UButtons (a full GUObjectArray scan found 0 live bound UButtons), and
-// VOTV's menu cursor is raw-input driven so synthetic OS clicks don't activate it.
+// Reaching VOTV's MAIN MENU autonomously is blocked at boot by the OMEGA content-warning screen:
+// a special early-boot widget, not ui_menu_C, carrying no standard UButtons, and VOTV's menu
+// cursor is raw-input driven, so synthetic OS clicks do not activate it either.
 //
-// So instead of fighting OMEGA, we go the OTHER way: wait until the game reaches
-// GAMEPLAY (which the harness boots past OMEGA via StartFreshGame/LoadStorySave),
-// then issue VOTV's own AmainGamemode_C::transition("/Game/menu"). Quitting to the
-// menu loads the REAL ui_menu_C main menu WITHOUT re-showing OMEGA, and our
-// ui_menu_C::Tick observer (coop::multiplayer_menu) injects the MULTIPLAYER button.
-// A transparent ProcessEvent bypass covers the dying-world teardown (our detour
-// otherwise hangs the untitled_1 EndPlay storm -- see autotest_menutravel_probe);
-// it auto-expires so observers re-engage at the loaded menu.
+// So instead of fighting OMEGA this goes the other way: wait until the game reaches GAMEPLAY
+// (the harness boots past OMEGA with StartFreshGame or LoadStorySave), then issue VOTV's own
+// AmainGamemode_C::transition("/Game/menu"). Quitting to the menu loads the real ui_menu_C main
+// menu without re-showing OMEGA, and our ui_menu_C::Tick observer (coop::multiplayer_menu)
+// injects the MULTIPLAYER button. A transparent ProcessEvent bypass covers the dying-world
+// teardown, where our detour otherwise hangs on the EndPlay storm; it auto-expires, so the
+// observers re-engage at the loaded menu.
 //
 // Requires the launch to boot gameplay (scenario=play, ideally fresh_boot=1).
 
