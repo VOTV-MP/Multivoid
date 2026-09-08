@@ -1,22 +1,16 @@
 // ue_wrap/core/hook_drill.h -- make the trampoline-retirement contract falsifiable.
 //
-// The rule this drills lives in `hook.h` under "Retirement": lift a patch, never
-// remove it, because removing writes a linked-list pointer over the trampoline's
-// first bytes (`[V]` minhook/src/buffer.c:43-50 + :282, reached from :702
-// MH_RemoveHook) while a thread may still be about to return through them.
+// The rule it drills lives in `hook.h` under "Retirement": lift a patch, never remove it,
+// because MinHook's removal writes a free-list pointer over the trampoline's first bytes
+// while a thread may still be about to return through them.
 //
-// A rule of that shape cannot be trusted on argument alone. Every comparable arc in
-// this project made the defect DETERMINISTIC before believing the fix --
-// VOTVCOOP_REAPER_PIN_WORLD turned an 11-flush symptom into 2, the atlas exclude
-// drill, the 29-check ApplyPose selftest -- and a teardown fix whose only evidence
-// is "the CI gate went red" has shown the INSTRUMENT failing and never the defect.
-//
-// It deliberately does NOT assert that a crash happens. `[V]` The eight bytes
-// MH_RemoveHook writes are a heap pointer; executed as code they may fault or may
-// decode into something that quietly runs. And `[V]` buffer.c:288-296 only
-// VirtualFrees the block once usedCount hits 0, which with ~12 live hooks it never
-// reaches -- so the unmap is not a reliable signal either. A drill keyed on a crash
-// would be a coin flip wearing a control's clothes.
+// A rule of that shape cannot be trusted on argument alone, and a teardown fix whose only
+// evidence is a CI gate going red has shown the INSTRUMENT failing, never the defect. So this
+// samples the bytes directly -- and it deliberately does NOT assert that a crash happens. The
+// eight bytes the removal writes are a heap pointer: executed as code they may fault, or may
+// decode into something that quietly runs. MinHook frees the block only once its used count
+// reaches zero, which with a dozen live hooks it never does, so an unmap is not a reliable
+// signal either. A drill keyed on a crash would be a coin flip wearing a control's clothes.
 
 #pragma once
 

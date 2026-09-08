@@ -1,16 +1,10 @@
-// harness/session_runtime.h -- the coop-session LIFECYCLE DRIVER on the
-// TimelineThread (extracted verbatim from harness/harness.cpp, 2026-07-19 s27
-// cut): owns THE production session object (g_session) and everything
-// per-Start/Stop -- world boot (story save / menu-mode save-transfer join /
-// host-with-save picker), session bringup (StartCoopSession wiring), and the
-// unified 60 Hz play loop (browser-start drain + pump-composite + abort/death
-// edges). harness.cpp keeps the PROCESS boot (one-shot installs) + the
-// scenario timeline; it reaches the session object via Session() and drives
-// the lifecycle through the functions below.
-//
-// Not engine-wrapper and not coop/network logic: this glues the scenario/UX
-// surfaces (join_progress cover, server_browser reopen) onto coop::session --
-// harness-side by principle 7 (coop/session modules never touch ui::).
+// harness/session_runtime.h -- the coop-session LIFECYCLE DRIVER, on the TimelineThread. It
+// owns THE production session object (g_session) and everything per Start and Stop: world
+// boot (the story save, a menu-mode save-transfer join, the host-with-save picker), session
+// bringup (StartCoopSession wiring), and the unified 60 Hz play loop (browser-start drain,
+// pump composite, abort and death edges). harness.cpp keeps the PROCESS boot -- the one-shot
+// installs -- and the scenario timeline; it reaches the session object through Session() and
+// drives the lifecycle through the functions below.
 
 #pragma once
 
