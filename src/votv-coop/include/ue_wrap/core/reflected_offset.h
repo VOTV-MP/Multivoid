@@ -4,9 +4,10 @@
 // added or reordered, so a hardcoded offset into that surface is a landmine the next update trips.
 // Each accessor below resolves its (class, field) pair through reflection at first use and caches
 // it, so the offset follows layout drift for as long as the field keeps its name. -1 means the
-// class has not loaded yet or the field was renamed, and every read and write refuses a negative
-// offset -- as an unsigned displacement it addresses the byte BELOW the object. The cache memorises
-// only on SUCCESS, so a call that fires before the BP class loads is retried by the next one.
+// class has not loaded yet or the field was renamed, and every read and write in the tree refuses a
+// negative offset, because used as one it addresses memory outside the object -- silent garbage
+// from a read, a corrupted header from a write. The cache memorises only on SUCCESS, so a call that
+// fires before the BP class loads is retried by the next one.
 //
 // Engine-stable offsets -- UObject internals, the FProperty and FField chain, a component's attach
 // parent -- stay hardcoded in sdk_profile.h, since a BP recook does not move them. Only the

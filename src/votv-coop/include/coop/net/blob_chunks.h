@@ -1,6 +1,7 @@
 // coop/net/blob_chunks.h -- chunked variable-length blob transport over the reliable lane,
-// shared by every chunked-row kind (EmailAppend, SavedSignalAppend, CompData). Two semantics
-// callers rely on:
+// shared by EVERY chunked-row kind on the wire -- a dozen of them, from the e-mail and saved-signal
+// appends through the drive, rack, laptop, floppy-box, container, meadow-DB and
+// per-player-inventory payloads. Two semantics callers rely on:
 //
 //   ALL-OR-NOTHING -- SendBlob returns true only if EVERY chunk was accepted. The caller
 //                     retries the whole blob next poll under a FRESH seq, and the receiver's

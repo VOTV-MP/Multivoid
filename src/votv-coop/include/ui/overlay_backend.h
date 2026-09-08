@@ -3,8 +3,8 @@
 // imgui_overlay.cpp owns the hooks, the WndProc and surface compositing (the platform layer); this
 // interface owns everything that touches a concrete D3D device: device capture off the game's
 // swapchain, the ImGui renderer backend, the render target, and texture creation for UI surfaces.
-// One implementation per RHI -- overlay_backend_dx11.cpp today, overlay_backend_dx12.cpp for the
-// D3D12 RHI -- selected at first present by what the game's swapchain actually is. No RHI types
+// One implementation per RHI -- overlay_backend_dx11.cpp and overlay_backend_dx12.cpp, both
+// shipped -- selected at first present by what the game's swapchain actually is. No RHI types
 // cross this boundary.
 
 #pragma once

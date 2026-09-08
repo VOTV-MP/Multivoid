@@ -13,7 +13,6 @@
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/game_thread.h"
-#include "ue_wrap/core/reflected_offset.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/sdk_profile_names.h"
@@ -33,7 +32,6 @@ namespace LT = ue_wrap::engine::level_travel;
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 namespace V = ue_wrap::vitals;
-namespace RO = ue_wrap::reflected_offset;
 
 // The widget the death chain adds at +5 s. It has no function or ubergraph export; the level
 // travel is what disposes of it, so a cancelled travel keeps a permanent black screen unless it

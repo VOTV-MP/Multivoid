@@ -2,7 +2,7 @@
 // ownership transfer.
 //
 // `coop::npc_sync` owns the lifecycle through three seams: an interceptor on
-// GameplayStatics::BeginDeferredSpawnFromClass (the host branch allocates an Npc for an allowlisted
+// UGameplayStatics::BeginDeferredActorSpawnFromClass (the host branch allocates an Npc for an allowlisted
 // class and broadcasts EntitySpawn; the client branch skips the original, leaving only the mirror),
 // a POST observer on the same UFunction (binds the AActor* and records actor->eid), and a PRE
 // observer on K2_DestroyActor (destroys the Npc, broadcasts EntityDestroy).

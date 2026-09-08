@@ -1,4 +1,4 @@
-// coop/blob_chunks.cpp -- see coop/blob_chunks.h.
+// coop/net/blob_chunks.cpp -- see coop/net/blob_chunks.h.
 
 #include "coop/net/blob_chunks.h"
 
@@ -75,14 +75,15 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
 
     const auto now = std::chrono::steady_clock::now();
     const auto key = std::make_pair(senderSlot, p.blobSeq);
-    // SECURITY (W4, docs/security/TRACKER.md): blobSeq is ATTACKER-CHOSEN, and `map_[key]` below
-    // default-inserts, so before this cap one 228-byte packet bought a fresh assembly that reserved
-    // chunks * 220 = up to ~56 KB -- ~246x amplification, on 8 lanes, reachable client->host with no
-    // join or role gate. Only the size of ONE assembly was bounded (chunks is u8); their NUMBER was
-    // not. order_sync.cpp:270 already caps its table -- this is the same guard at the shared
-    // primitive, so all lanes get it at once rather than eight bespoke patches.
+    // Anti-flood cap. blobSeq is ATTACKER-CHOSEN, and `map_[key]` below default-inserts, so before
+    // this cap one 228-byte packet bought a fresh assembly that reserved chunks * 220 = up to ~56
+    // KB -- about 246x amplification, on eight lanes, reachable client-to-host with no join or role
+    // gate. Only the size of ONE assembly was bounded (chunks is a u8); their NUMBER was not.
+    // order_sync caps its own table the same way -- this is that guard at the shared primitive, so
+    // every lane gets it at once instead of eight bespoke patches.
+    //
     // PER-SENDER, not global (unlike order_sync): a global table would let one flooding peer starve
-    // every other peer's assemblies, which is finding W10's shape and not worth importing here.
+    // every other peer's assemblies.
     if (map_.find(key) == map_.end()) {
         size_t fromSender = 0;
         for (const auto& kv : map_)
@@ -101,7 +102,7 @@ bool Assembler::OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot
         a.blob.reserve(static_cast<size_t>(p.chunks) * sizeof(p.data));
     }
     if (a.expectChunks != p.chunks || a.gotChunks != p.chunkIdx) {
-        // Mismatched part: the C-1 restart semantics (see header).
+        // Mismatched part: the RESTART semantics (see header).
         map_.erase(key);
         if (p.chunkIdx != 0) return false;
         auto& fresh = map_[key];
@@ -136,11 +137,10 @@ void Assembler::Sweep(std::chrono::steady_clock::time_point now, std::chrono::se
 void Assembler::Clear() { map_.clear(); }
 
 void Assembler::ClearSlot(uint8_t senderSlot) {
-    // Slot teardown is a ROW TRANSITION (roster doctrine): slots recycle lowest-free
-    // with no observable absence, so person Y's chunks must never merge into person
-    // X's half-assembly under the same slot id. The 20 s TTL alone leaves that window
-    // open (measured 2026-08-23, the seeds-arc /qf R2); callers hook this into the
-    // per-slot disconnect fan-out.
+    // Slot teardown is a ROW TRANSITION: slots recycle lowest-free with no observable absence, so
+    // person Y's chunks must never merge into person X's half-assembly under the same slot id. The
+    // 20 s TTL alone leaves that window open, so callers hook this into the per-slot disconnect
+    // fan-out.
     for (auto it = map_.begin(); it != map_.end();) {
         if (it->first.first == senderSlot) it = map_.erase(it);
         else ++it;

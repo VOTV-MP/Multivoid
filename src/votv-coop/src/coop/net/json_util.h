@@ -66,10 +66,10 @@ inline std::string CredField(const Json& j, const char* key, size_t maxlen) {
 // The depth cap is applied AT PARSE. nlohmann's parser is iterative, but the resulting value's
 // DESTRUCTOR recurses one frame per nesting level -- so a deeply-nested body (`{"a":{"a":{...}}}`,
 // easily within the 1 MiB byte cap) would overflow the worker thread's stack when the local Json
-// goes out of scope: an UNCATCHABLE SEH crash (0xC00000FD) a hostile master could trigger at boot
-// (/v1/latest) or on any browser refresh or join. The parse callback DISCARDS any value past the
-// limit, so the built tree can never get deep enough to overflow on destruction, and the whole body
-// is rejected. Real master responses nest ~3 deep; 32 is generous headroom.
+// goes out of scope: an UNCATCHABLE SEH crash (0xC00000FD) a hostile master could trigger on any
+// browser refresh, update check or join. The parse callback DISCARDS any value past the limit, so
+// the built tree can never get deep enough to overflow on destruction, and the whole body is
+// rejected. Real master responses nest ~3 deep; 32 is generous headroom.
 inline bool ParseObject(const std::string& body, Json& out) {
     constexpr int kMaxDepth = 32;
     bool tooDeep = false;

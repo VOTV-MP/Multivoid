@@ -1,18 +1,18 @@
 // coop/save/save_block.h -- client-side world-save block. During a coop session the HOST's save is
 // the single canonical one; CLIENTS must not write the world save -- their pre-coop save is left
 // UNTOUCHED, and coop-only mirror state (phantom props and NPCs) is never serialized into a
-// client's slot.
+// client's slot. Both layers below install ONLY in a client process; the host's save path is
+// untouched.
 //
-// The WRITE block is a MinHook detour on UGameplayStatics::SaveGameToSlot, the one physical
-// chokepoint every save path funnels through: it cancels writes whose USaveGame object is the
-// world-save container (saveSlot_C) and lets the harmless meta save (save_main_C) through. The BP
-// funnel saveSlot_C::saveToSlot is out of reach of our ProcessEvent interceptor -- BP-to-BP
-// dispatch goes through ProcessInternal -- but the engine-native write function is reachable.
+// The WRITE block is a MinHook detour on UGameplayStatics::SaveGameToSlot, the chokepoint every
+// save path funnels through: it cancels writes whose USaveGame object is the world-save container
+// (saveSlot_C) and lets the harmless meta save (save_main_C) through. The BP funnel
+// saveSlot_C::saveToSlot is out of reach of our ProcessEvent interceptor -- BP-to-BP dispatch goes
+// through ProcessInternal -- but the engine-native write function is reachable.
 //
 // The CYCLE block holds gamemode.disableSave true, which saveSlot_C::save tests at its head and
-// returns on, before the world gather (saveObjects) and the write funnel. Every gamemode trigger --
-// autosave, sleep, menu, quicksave -- funnels through save(), and no bytecode in mainGamemode ever
-// writes disableSave.
+// returns on, before the world gather (saveObjects) and the write funnel. Every gamemode trigger
+// funnels through save(), and no bytecode in mainGamemode ever writes disableSave.
 
 #pragma once
 

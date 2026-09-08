@@ -17,7 +17,6 @@
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/core/reflected_offset.h"
 
 #include <algorithm>
 #include <chrono>

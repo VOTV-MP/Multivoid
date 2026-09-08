@@ -2,8 +2,9 @@
 // ue_wrap/engine/engine_bones.h; this TU implements the bone-related functions in
 // `namespace ue_wrap::engine`.
 //
-// Read by the remote-player puppet (foot-on-ground placement, the head-bone anchored nameplate and
-// the hand item's head anchor), by the ragdoll bone overlay and by the ragdoll acceptance arms.
+// Read by the remote-player nameplate and the local hand-item measure (both the `head` bone), the
+// puppet's head and neck rotations, the wisp's `playerGrab` bone, skin_effects' `rootKerfur` step
+// burst, the ragdoll bone overlay and the ragdoll acceptance arms.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -15,7 +16,6 @@
 
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <string>
 #include <unordered_map>

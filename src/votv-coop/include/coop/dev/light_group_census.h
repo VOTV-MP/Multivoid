@@ -1,18 +1,18 @@
 // coop/dev/light_group_census.h -- dev-only READ-ONLY census of VOTV's light groups. The shipped
-// light lane syncs Alightswitch_C::A, the switch's PRESENTATION bit (its mesh and
-// sound), which is not save-persistent -- lightswitch_C has no getTriggerData/loadTriggerData pair.
-// What a player SEES lives one object away, on Atrigger_lightRoot_C, which carries THREE bools:
+// light lane syncs Alightswitch_C::A, the switch's PRESENTATION bit (its mesh and sound), which is
+// not save-persistent -- lightswitch_C has no getTriggerData/loadTriggerData pair. What a player
+// SEES lives one object away, on Atrigger_lightRoot_C, which carries THREE bools:
 //
-//   isActive     -- the group's live on/off. updLig() pushes it to every lamp.
-//   active       -- an ENABLE GATE: runTrigger(owner, 0) is `IFNOT(active) POP` before it toggles
-//                   isActive, so a closed gate makes a switch press move NO lights.
-//                   Save-persistent, driven by the base power panel's lights breaker
-//                   (powerControl.buttonsVisibility).
+//   isActive     -- the group's live on/off; updLig() pushes it to every lamp. Host-authoritative
+//                   on the wire as LightGroupState.
+//   active       -- an ENABLE GATE, and NOT on the wire: runTrigger(owner, 0) is `IFNOT(active)
+//                   POP` before it toggles isActive, so a closed gate makes a switch press move NO
+//                   lights. Save-persistent, driven by the base power panel's lights breaker.
 //   buffIsActive -- the SAVED copy; `loadAft` does isActive := buffIsActive, then updLig().
 //
-// Nothing syncs or reconciles isActive or active, and thirteen cooked-pak blueprints can move a
-// light group, so peer agreement is unanswerable from the shipped logs. This file only MEASURES.
-// Set `lightgroup_census=1` on BOTH peers and pair the `[LGC]` lines BY KEY. Game thread only.
+// Nothing reconciles the `active` gate, and thirteen cooked-pak blueprints can move a light group,
+// so a drifted gate is unanswerable from the shipped logs. This file only MEASURES: set
+// `lightgroup_census=1` on BOTH peers and pair the `[LGC]` lines BY KEY.
 
 #pragma once
 

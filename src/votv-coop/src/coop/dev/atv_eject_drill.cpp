@@ -11,7 +11,8 @@
 // while it is the pose AUTHOR, the direction presence-authority refuses: the host must RETAIN the
 // wheel, count presence-skipped, and its wheel-key census must not grow.
 //
-// Fires ONCE per process, after the first eligible sighting.
+// Fires ONCE per process, the arm's delay after eligibility begins -- and the countdown restarts
+// whenever eligibility lapses, so the anchor below is not "first sighting".
 
 #include "coop/dev/atv_eject_drill.h"
 

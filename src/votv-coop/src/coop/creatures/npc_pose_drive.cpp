@@ -1,4 +1,4 @@
-// coop/npc_pose_drive.cpp -- the CLIENT-mirror pose interpolator + engine drive for
+// coop/creatures/npc_pose_drive.cpp -- the CLIENT-mirror pose interpolator + engine drive for
 // coop::element::Npc. See coop/element/npc.h. A SUBSET of remote_player.cpp (pos + yaw +
 // speed + stateBits; no pitch/headYawDelta/vitals/ragdoll/mesh-offset).
 //
