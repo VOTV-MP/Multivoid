@@ -12,8 +12,11 @@ namespace ue_wrap::log {
 enum class Level { Info, Warn, Error };
 
 // Open/truncate the log file and write a header. Optional; Write() lazy-inits.
+//
+// There is deliberately no close: nothing sets the FILE* back to null once it is open, so the
+// un-locked null test every Write() and Flush() starts with cannot race a teardown, and the
+// process exit is what closes the handle. The one-second sync below is what makes that safe.
 void Init();
-void Shutdown();
 
 // printf-style (ANSI). Use %ls for wide strings (FName text is wide).
 void Write(Level level, const char* fmt, ...);
@@ -31,8 +34,8 @@ void SetSink(Sink sink);
 // THE STANDING GUARANTEE: the log on disk is never more than one second behind the process. INFO
 // rides the CRT's ~4 KB buffer for the performance reason in log.cpp, but a write that finds the
 // buffer older than that syncs it, so an abnormal exit -- a kill, a crash, a close that misses
-// Shutdown() -- costs at most the lines written in the final second of activity. Making a
-// post-mortem readable does not require calling Flush().
+// close -- costs at most the lines written in the final second of activity. Making a post-mortem
+// readable does not require calling Flush().
 //
 // Force the CRT stdio buffer to disk NOW, ahead of that bound. Worth it only when something
 // EXTERNAL is about to read the file and cannot wait a second -- a test runner polling for a

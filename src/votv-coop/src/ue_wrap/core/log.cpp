@@ -125,17 +125,6 @@ void Init() {
     ::LeaveCriticalSection(&g_lock);
 }
 
-void Shutdown() {
-    std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
-    ::EnterCriticalSection(&g_lock);
-    if (g_file) {
-        std::fclose(g_file);
-        g_file = nullptr;
-        g_opened = false;
-    }
-    ::LeaveCriticalSection(&g_lock);
-}
-
 void Flush() {
     EnsureOpen();
     if (!g_file) return;
