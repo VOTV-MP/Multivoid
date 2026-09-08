@@ -1,27 +1,17 @@
-// coop/dev/atv_eject_drill.cpp -- the FORCED-EJECT acceptance arm (qf rounds 1/3 of the v147
-// condition pass). A diagnostic, RULE-2-exempt (probes/diagnostics exemption).
+// coop/dev/atv_eject_drill.cpp -- the forced-eject acceptance arm, a diagnostic.
 //
-// The one moment #4 exists for -- a mask flip landing on a live simulating mirror -- has no
-// organic trigger in an autonomous run (17.12: an eject has NEVER been observed; tires stayed
-// 0xF through every archived run). This drill performs a REAL eject through the game's own
-// path: getTire(index) -> damageWheel(index, 200, component), which drives ubergraph 15210 --
-// durability to 0 -> ejectWheel -> wheel prop + tires[i]=false + updTires, i.e. the native
-// transaction, not a hand-poked array.
+// A mask flip landing on a live simulating mirror has no organic trigger in an autonomous run, so
+// the drill performs a REAL eject through the game's own path: getTire(index) ->
+// damageWheel(index, 200, component), which drives durability to zero -> ejectWheel -> wheel prop +
+// tires[i] = false + updTires, the native transaction rather than a hand-poked array.
 //
-// TWO ARMS, selected by env VOTVCOOP_ATV_EJECT_TEST (propagated by mp.py like the weather
-// test's env):
-//   "host"   -- fires on the HOST for an ATV it owns the tick for. The canonical direction:
-//               a host-authored wheel prop broadcasts legally (b143 field log: 7/7 keys
-//               adopted), the mask travels in the next AtvState, the mirror's updTires fires
-//               once. Acceptance (b).
-//   "client" -- fires on a CLIENT while it is the pose AUTHOR (seated via the real sit verb
-//               by the probe's drive arm). The KNOWN-BROKEN direction the presence-authority
-//               rule refuses: the host must RETAIN the wheel, count presence-skipped, and its
-//               wheel-key census must not grow. Acceptance (b2) ASSERTS the divergence.
+// TWO ARMS, chosen by the VOTVCOOP_ATV_EJECT_TEST environment variable. "host" fires on the HOST
+// for an ATV it owns the tick for, the direction that works: the wheel prop broadcasts, the mask
+// travels in the next AtvState and the mirror's updTires fires once. "client" fires on a CLIENT
+// while it is the pose AUTHOR, the direction presence-authority refuses: the host must RETAIN the
+// wheel, count presence-skipped, and its wheel-key census must not grow.
 //
-// Fires ONCE per process, kFireDelayMs after the first ELIGIBLE sighting -- late enough for
-// the drive arm to be seated and moving, early enough to leave steady-state tail in a 300 s
-// smoke.
+// Fires ONCE per process, after the first eligible sighting.
 
 #include "coop/dev/atv_eject_drill.h"
 
@@ -41,16 +31,14 @@ namespace R = ue_wrap::reflection;
 
 namespace {
 
-// PER-ARM delay, and the countdown is over CONTINUOUS eligibility (the anchor RESETS on a
-// lapse). The first client run proved why: the drive arm banks its 20 s and DISMOUNTS, so a
-// 45 s countdown anchored at first-eligibility fired into a lapsed authority and the drill
-// never shot -- the run then idled out its whole --duration with the driver standing next
-// to the ATV (audit MINOR-7, noted-not-fixed, and it cost the run). The client arm must fit
-// INSIDE the drive window; the host arm keeps a longer settle because its eligibility never
-// lapses (nobody drives in its run) and the joiner needs to be world-ready.
+// PER-ARM delay, and the countdown is over CONTINUOUS eligibility -- the anchor RESETS on a lapse.
+// The drive arm banks its 20 s and DISMOUNTS, so a 45 s countdown anchored at first eligibility
+// fires into a lapsed authority and the drill never shoots. The client arm must fit INSIDE the
+// drive window; the host arm keeps a longer settle because its eligibility never lapses (nobody
+// drives in its run) and the joiner needs to be world-ready.
 constexpr uint64_t kFireDelayHostMs   = 45000;
 constexpr uint64_t kFireDelayClientMs = 10000;
-constexpr int32_t  kWheelIndex  = 2;      // a REAR wheel: index 2 per the uber's own switch
+constexpr int32_t  kWheelIndex  = 2;      // a REAR wheel: index 2 is backWheel_R in the ATV's getTire switch
 constexpr float    kDamage      = 200.f;  // > any durability -> FMax(x,0)=0 -> ejectWheel
 
 enum class Arm : uint8_t { Off, Host, Client };

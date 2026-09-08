@@ -11,11 +11,11 @@
 
 #include <string>
 
-// The eventer resolution + the reflected runEvent/runSpecialEvent dispatch moved to
-// coop/world/event_fire_sync (v95, one owner): the menu's fire must be the SAME seam that
+// The eventer resolution and the reflected runEvent/runSpecialEvent dispatch live in
+// coop/world/event_fire_sync, which is the single owner: the menu's fire must be the SAME seam that
 // broadcasts EventFire to clients (a direct runEvent never reaches passEvents, so the host
-// observation poll cannot see menu fires). Only the ambient/weather verb table stays here --
-// those are dev-only levers on daynightCycle/mainGamemode timers, never on the wire.
+// observation poll cannot see menu fires). Only the ambient/weather verb table stays here -- those
+// are dev-only levers on daynightCycle/mainGamemode timers, never on the wire.
 
 namespace coop::dev::event_trigger {
 namespace {
@@ -47,12 +47,11 @@ const char* CategoryName(Category c) {
 const std::vector<EventInfo>& Events() {
     using D = Dispatch;
     using C = Category;
-    // ALL natively-triggerable events across BOTH dispatchers (runEvent 65 + runSpecialEvent 34
-    // effective), ordered BY CATEGORY then day. dayZ = list_events DataTable time.Z (-1 = trigger/
-    // rep-gated). `time` = native trigger time-of-day (time.X:time.Y anchor / "trigger" build-or-story /
-    // "rep-gated" prank pool). Sources: votv-event-system-RE-2026-06-13.md (runEvent cases + safety),
-    // the 2026-06-17 dispatcher sweep (runSpecialEvent 36-case switch + daynightCycle X=Hour/Y=Min/Z=Day),
-    // list_events DataTable (day + HH:MM), votv-all-events-coop-sync-classification-2026-06-17.md (names).
+    // ALL natively-triggerable events across BOTH dispatchers, ordered BY CATEGORY then day: 65
+    // runEvent rows, 30 addressable runSpecialEvent rows, one random ariral prank and 8
+    // ambient/weather verbs. dayZ is the list_events DataTable's time.Z (-1 = trigger- or
+    // reputation-gated) and `time` is the native trigger time of day -- the time.X:time.Y
+    // hour:minute anchor, "trigger" for a build-or-story event, "rep-gated" for the prank pool.
     static const std::vector<EventInfo> kEvents = {
         // ---- Story (narrative / save progression) ----
         { "break_RomeoSierra", D::RunEvent, C::Story, 7,  "01:44", "breaks the Romeo/Sierra servers",        Risk::Dangerous },
@@ -200,8 +199,8 @@ bool Trigger(const EventInfo& ev) {
     const std::string name = ev.name;
     const Dispatch dispatch = ev.dispatch;
     if (dispatch != Dispatch::Ambient) {
-        // The three eventer paths route through the SHARED fire seam (native dispatch +
-        // the v95 EventFire broadcast so connected clients replay per policy).
+        // The three eventer paths route through the SHARED fire seam: the native dispatch plus the
+        // EventFire broadcast, so connected clients replay it per policy.
         namespace efs = coop::event_fire_sync;
         const std::wstring wname(name.begin(), name.end());
         const bool random = (dispatch == Dispatch::RandomPrank);
