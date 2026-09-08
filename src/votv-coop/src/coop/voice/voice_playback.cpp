@@ -260,9 +260,9 @@ void Playback::DeliverInOrder(Channel& ch, const coop::net::VoiceFramePayload& f
     }
     const int64_t seq = static_cast<int64_t>(f.seq);
     if (ch.lastSeq >= 0 && seq <= ch.lastSeq) {
-        // A HUGE backward jump is the u32 wire seq wrapping (or a sender stream
-        // reset that lost its stop marker) -- a new burst, not a late duplicate
-        // (audit M-4). Reset the stream state and decode this frame fresh.
+        // A HUGE backward jump is the u32 wire seq wrapping (or a sender stream reset that lost its
+        // stop marker) -- a new burst, not a late duplicate. Reset the stream state and decode this
+        // frame fresh.
         if (ch.lastSeq - seq <= (int64_t{1} << 30)) return;  // dupe / too-late reorder
         ch.lastSeq = -1;
         opus_decoder_ctl(static_cast<OpusDecoder*>(ch.decoder), OPUS_RESET_STATE);
