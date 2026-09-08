@@ -1,26 +1,18 @@
-// coop/voice/voice_chat.h -- the voice-chat subsystem facade (v66).
+// coop/voice/voice_chat.h -- the voice-chat subsystem facade.
 //
-// USER ASK (2026-06-12): proximity voice chat, the Simple-Voice-Chat port per
-// research/findings/network/votv-voice-chat-port-design-2026-06-12.md. User-mandated:
-// voice multiplexes over the existing coop session (NO second port) and PTT
-// defaults to 'X'. MTA precedent: CVoiceDataPacket rides the main connection
-// the same way.
+// Proximity voice chat, ported from Simple Voice Chat. It multiplexes over the existing coop
+// session rather than opening a second port -- the way MTA's CVoiceDataPacket rides the main
+// connection -- and push-to-talk defaults to 'G', since 'X' clashes with the game's own binds.
 //
-// Wiring (the subsystems registry shape):
-//   Install -- read voice.* config, open capture+playback, reset state.
-//   Tick    -- tone-mode synth; drain encoded mic frames -> seq-stamp ->
-//              Session::SendVoiceFrame (+ optional local loopback); drain the
-//              session voice inbox -> per-slot jitter buffers; decode; snap
-//              listener/speaker positions for the mixer; mute-key edge;
-//              VoiceState edges.
-//   OnVoiceState / ReplayPeerStatesToSlot / OnDisconnectSlot / OnDisconnect.
+// Wiring (the subsystems registry shape): Install reads voice.* config, opens capture and
+// playback and resets state. Tick runs the tone-mode synth, seq-stamps encoded mic frames into
+// Session::SendVoiceFrame, drains the voice inbox into per-slot jitter buffers, decodes, snaps
+// listener and speaker positions for the mixer, and walks the mute-key and VoiceState edges.
+// The rest of the surface is the wire and teardown entries declared below.
 //
-// The icon surfaces (nameplate / scoreboard / HUD) read PeerVoiceStateFor +
-// LocalVoiceState -- everything is derived client-side from decoded frames
-// (the SVC TalkCache) + the display-only VoiceState edges.
-//
-// Game thread throughout (the audio threads live inside capture/playback and
-// see only POD snapshots).
+// The icon surfaces (nameplate, scoreboard, HUD) read PeerVoiceStateFor and LocalVoiceState,
+// derived client-side from decoded frames. Game thread throughout: the audio threads live
+// inside capture and playback and see only PODs.
 
 #pragma once
 
@@ -33,8 +25,8 @@ namespace coop::net { class Session; }
 
 namespace coop::voice_chat {
 
-// The one-icon-per-surface priority enum (SVC RenderEvents port; the design
-// doc SS3.1). Shared by nameplate, scoreboard and the local HUD.
+// The one-icon-per-surface priority enum, ported from Simple Voice Chat's render events.
+// Shared by the nameplate, the scoreboard and the local HUD.
 enum class VoiceIcon : uint8_t {
     None = 0,
     Talking,
@@ -57,7 +49,7 @@ void Tick();
 // Wire ingest (display-only state).
 void OnVoiceState(const coop::net::VoiceStatePayload& p, uint8_t senderSlot);
 
-// Host: replay known peer voice states to a late joiner (T2-4 shape).
+// Host: replay known peer voice states to a late joiner.
 void ReplayPeerStatesToSlot(int peerSlot);
 
 void OnDisconnectSlot(int slot);

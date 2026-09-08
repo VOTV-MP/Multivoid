@@ -1,24 +1,18 @@
 // coop/lerp_window.h -- the shared MTA-form interpolation TIMING window.
 //
-// One concept, one implementation (RULE 2 / WP13): the per-frame alpha/dAlpha
-// bookkeeping that drives a fixed-duration linear interpolation toward a cached
-// error. Extracted 2026-06-07 from the two byte-identical copies that had grown
-// up independently -- RemotePlayer (coop/remote_player.cpp) and element::Npc
-// (coop/npc_pose_drive.cpp). Both now own a LerpWindow and apply the returned
-// dAlpha to their OWN cached errors (RemotePlayer interpolates pos+yaw+pitch+
-// headYawDelta; Npc only pos+yaw) -- the window owns ONLY the timing, never any
-// pose field, so the differing field sets stay in each class.
+// One concept, one implementation: the per-frame alpha/dAlpha bookkeeping that drives a
+// fixed-duration linear interpolation toward a cached error. Its owners -- the remote player,
+// element::Npc, world actors, the dish, the drone, the desk cursor and sim lanes -- each hold a
+// LerpWindow and apply the returned dAlpha to their OWN cached errors, over whatever field set
+// they interpolate; the window owns only the timing and never a pose field, which is what lets
+// those field sets differ.
 //
-// MTA shape (CClientPed::Interpolate): the error is cached ONCE at packet
-// arrival (target - cur at that instant); each frame applies dAlpha * error so
-// the motion is LINEAR, not geometric-decay. At alpha==1 the full error has been
-// applied and the window closes (the caller snaps cur=target exactly to kill
-// float drift) until the next packet re-Opens it.
-//
-// Pure value type -- no engine/network deref, no allocation, header-only. Each
-// owner is single-threaded on the game thread (the receiver interp path), so no
-// synchronization. NowMs() stays in each caller (steady_clock ms) and is passed
-// into Advance -- the window is clock-agnostic.
+// MTA shape (CClientPed::Interpolate): the error is cached ONCE at packet arrival, as
+// target - cur at that instant, and each frame applies dAlpha * error, so the motion is LINEAR
+// rather than a geometric decay. At alpha == 1 the whole error has been applied and the window
+// closes -- the caller snaps cur = target exactly, killing float drift -- until the next packet
+// reopens it. A pure value type: no engine or network dereference, no allocation, header-only,
+// single-threaded on the game thread, and clock-agnostic (NowMs() stays in each caller).
 
 #pragma once
 
