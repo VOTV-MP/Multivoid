@@ -1,20 +1,18 @@
-// ui/join_curtain.h -- instant-world UPPER layer (SEAM 1): the SHORT curtain.
+// ui/join_curtain.h -- the instant-world UPPER layer: the SHORT curtain.
 //
-// A full-viewport opaque cover the joining client raises at connect and DISMISSES with a
-// smooth alpha-fade when the "primary world is assembled" (SnapshotComplete + spawn-drain --
-// NOT full quiescence; see docs/COOP_INSTANT_WORLD_TWO_LAYER.md SEAM 1). It hides the rawest
-// connect moment (the client's own save load-in, camera settle, the spawn burst, and the
-// local-actor reposition jumps that deferred-spawn cannot hide because those are the engine's
-// own actors). Because it lifts at SnapshotComplete (~2s BEFORE quiescence) it adds NO long
-// blank screen -- the world fades in already-assembled, and the uncertain tail keeps resolving
-// invisibly under mirror_defer.
+// A full-viewport opaque cover the joining client raises at connect and dismisses with a smooth
+// alpha fade once the primary world is assembled -- SnapshotComplete plus the spawn drain, which is
+// NOT full quiescence. It hides the rawest connect moment: the client's own save load-in, the
+// camera settle, the spawn burst, and the local-actor reposition jumps that deferred spawning
+// cannot hide, because those actors are the engine's own. Lifting at SnapshotComplete, about two
+// seconds before quiescence, adds no long blank screen: the world fades in already assembled and
+// the uncertain tail keeps resolving invisibly under mirror_defer.
 //
-// The cover draws on the ImGui BACKGROUND draw list -- ON TOP of the game world but BEHIND the
-// loading panel -- so the panel stays legible while the curtain is up. Pure ImGui (our surface,
-// our trigger), NOT the engine ClientSetCameraFade (whose co-op semantics are unpredictable).
-//
-// Game-thread / render-thread: Show/BeginDismiss/Reset are called from the join lifecycle
-// (game thread); Render is called once per frame from the imgui overlay (the DX Present hook).
+// The cover draws on the ImGui BACKGROUND draw list -- on top of the game world but behind the
+// loading panel -- so the panel stays legible while the curtain is up. Pure ImGui, our surface and
+// our trigger, not the engine's ClientSetCameraFade, whose co-op semantics are unpredictable. Show,
+// BeginDismiss and Reset are called from the join lifecycle on the game thread; Render is called
+// once per frame from the imgui overlay, on the DX Present hook.
 
 #pragma once
 

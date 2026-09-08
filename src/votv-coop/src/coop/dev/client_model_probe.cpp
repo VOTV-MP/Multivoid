@@ -64,7 +64,7 @@ void Tick(bool connected, bool /*isHost*/) {
         void* kelSkin = Pup::GetMeshPlayerVisibleAsset(local);
         void* animCls = Pup::GetMeshPlayerVisibleAnimClass(local);
         if (!kelSkin) break;  // save-load hasn't dressed the player yet -- keep waiting
-        // The probe's fixed subject: the shipped scientist skin (v93 name-keyed API).
+        // The probe's fixed subject: the shipped scientist skin, keyed by name.
         void* sciMesh = coop::client_model::GetSkinMesh("hl_einstein_v1sc");  // may be null (pak absent)
 
         // Place the pair ~3 m in front of WHERE THE CAMERA LOOKS (inert-probe shape: camera yaw,
@@ -78,16 +78,14 @@ void Tick(bool connected, bool /*isHost*/) {
         const ue_wrap::FVector leftSpot { center.X + rx * 80.f, center.Y + ry * 80.f, center.Z };
         const ue_wrap::FVector rightSpot{ center.X - rx * 80.f, center.Y - ry * 80.f, center.Z };
 
-        // TAKE 3 (2026-07-02). Take 1: both puppets read as clean kel -- the byte-parse proved our
-        // cooked buffers ARE the scientist (1062v/52KB vs kel 17132v/1.78MB), so the kel pixels came
-        // from the SECOND body: the inherited ACharacter::Mesh slot (mesh_playerVisible's
-        // AttachParent) carries its own kel 1:1 overlap (puppet.cpp spawn notes). Take 2: hiding that
-        // slot (SetVisibility+SetHiddenInGame, BOTH with propagate=false -- wrapper verified honest,
-        // engine_component.cpp:173) made BOTH bodies vanish -> MEASURED: UE4 implicitly gates a
-        // child's rendering by its AttachParent's visibility regardless of the propagate flag.
-        // Hiding the parent is a dead end. Take 3 uses NO visibility flags: write the SAME mesh into
-        // BOTH slots -- the game's own invariant ("identical skin asset on both, overlapping as ONE
-        // body") preserved with our mesh. RIGHT then has scientist in BOTH layers: masking impossible.
+        // Both body slots get the SAME mesh, and no visibility flag is touched. A display puppet
+        // carries two overlapping bodies: mesh_playerVisible, and the inherited ACharacter::Mesh
+        // slot that is its AttachParent. Writing our mesh into only the first leaves the second
+        // rendering its own kel 1:1 on top, so the puppet reads as clean kel however right the
+        // first slot is. Hiding the parent slot is a dead end -- UE4 gates a child's rendering by
+        // its AttachParent's visibility whatever the propagate flag says, so both bodies vanish
+        // together. Writing the same mesh into both keeps the game's own invariant (one skin asset
+        // on both slots, overlapping as one body) while making the masking impossible.
         auto applyToNativeSlot = [](void* actor, void* mesh, const wchar_t* which) {
             void* slot = Pup::GetNativeBodyMeshComponent(actor);
             void* was = Pup::GetComponentSkeletalMeshAsset(slot);
@@ -97,7 +95,8 @@ void Tick(bool connected, bool /*isHost*/) {
                     which, slot, was, mesh, ok ? 1 : 0);
         };
 
-        // LEFT: the local kel skin -- the known-good CONTROL (proves a display puppet renders here).
+        // LEFT: the local kel skin -- the known-good CONTROL, proving a display puppet renders
+        // here.
         void* kelA = Pup::SpawnPuppet(leftSpot, kelSkin, animCls);
         if (!kelA) {
             if (++g_spawnRetries >= kMaxSpawnRetry) {
@@ -118,11 +117,12 @@ void Tick(bool connected, bool /*isHost*/) {
                 E::SetActorRotation(sciA, ue_wrap::FRotator{0.f, YawToward(rightSpot, pl), 0.f});
                 applyToNativeSlot(sciA, sciMesh, L"RIGHT");
 
-                // Rung 3 (texture ladder, COOP_CLIENT_MODEL.md 7): bind our cooked UTexture2D
-                // onto the RIGHT puppet's slot-0 material via a MID. The slot material is
-                // inst_kel4_body (a MIC of mat_object_sk) whose diffuse is texture parameter
-                // 'tex' -- overriding it needs NO cooked material. Applied to BOTH body slots
-                // (the two-body invariant). Graceful: tex null -> stays garbled kel (rung-2 look).
+                // Rung 3, the texture ladder: bind our cooked UTexture2D onto the RIGHT puppet's
+                // slot-0 material through a MID. The slot material is inst_kel4_body, a material
+                // instance of mat_object_sk whose diffuse is the texture parameter 'tex', so
+                // overriding it needs no cooked material of our own. Applied to BOTH body slots,
+                // per the two-body invariant above. Graceful: a null texture leaves the rung-2
+                // look, a garbled kel.
                 void* sciTex = coop::client_model::GetSkinTexture("hl_einstein_v1sc");
                 if (sciTex) {
                     int bound = 0;
