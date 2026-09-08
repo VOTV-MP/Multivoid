@@ -22,8 +22,10 @@ namespace {
 
 namespace VC = coop::voice_chat;
 
-// Atomic: Toggle and Close run on the game-window WndProc thread (the V key) while IsOpen
-// and Render read on the render thread.
+// Atomic because the panel's open flag is written and read from three threads: Toggle runs on
+// the game-window WndProc thread (the V key); Close is reached from there, from the render thread's
+// re-fault guard, and from the game thread at session teardown; IsOpen and Render are read on the
+// WndProc and render threads both.
 std::atomic<bool> g_open{false};
 
 // Device lists are enumerated once per panel-open (and on Rescan), never per frame:

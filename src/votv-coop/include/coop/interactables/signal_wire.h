@@ -1,8 +1,8 @@
-// coop/interactables/signal_wire.h -- one Fstruct_signalDataDynamic row
-// (ue_wrap::signal_dynamic::Row) on the wire, shared by the SavedSignalAppend and CompData lanes.
-// The blob rides BlobChunkPayload chunks; its FNV-1a 64 is the row's cross-peer content identity,
-// which SavedSignalDelete keys on. The image PNG is deliberately absent: it belongs to the bulk
-// lane, which does not carry it yet.
+// coop/interactables/signal_wire.h -- one Fstruct_signalDataDynamic row on the wire, shared by
+// every lane that ships one: SavedSignalAppend and CompData, the DrivePayload and RackState drive
+// lanes, and the meadow append/order pair. The blob rides BlobChunkPayload chunks; its FNV-1a 64 is
+// the row's cross-peer content identity, which SavedSignalDelete keys on. The image PNG is
+// deliberately absent: it belongs to the bulk lane, which does not carry it yet.
 //
 // Layout, version byte 1, little-endian:
 //   u8 ver; u8 flags(bit0 hasData, bit1 isCopy, bit2 adopt); u8 frequency; u8 quality;
@@ -10,8 +10,8 @@
 //   i32 level; i32 polarity; f32 size; f32 decoded; f32 downloadedAtQuality; f32 locX;
 //   f32 locY; i64 date; then name, id, object and signal as UTF-16LE.
 //
-// `adopt` marks a host connect-snapshot apply, which the receiver trust-gates to slot 0, and it is
-// EXCLUDED from the content hash, so an adopt snapshot and a live append of one row share an
+// `adopt` marks a host connect-snapshot apply, trust-gated to slot 0 by the receiver, and it is
+// EXCLUDED from the content hash so an adopt snapshot and a live append of one row share one
 // identity.
 
 #pragma once

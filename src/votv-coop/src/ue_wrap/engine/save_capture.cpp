@@ -43,13 +43,14 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     // liveness test, no world filter -- and answers in GUObjectArray index order. A dying world's
     // actors are not kill-flagged until the GC purge, which can run tens of seconds behind, and
     // after a menu-to-game cycle the OLD mainGamemode sits at a LOWER index than the new one. So
-    // the scan reads every candidate and takes the one this world stamps, instead of judging the
-    // first and stopping: judging only the first turns the very case this guard exists for into a
-    // refusal to capture, since the stale gamemode fails the world test and the live one is never
-    // reached. Serializing the stale one, in turn, produces no torn write but a structurally
-    // complete save that describes nothing -- a saveSlot whose object arrays are empty, terminator
-    // intact, a kilobyte or so long. A joiner handed that keeps its own world, and the two then
-    // disagree on every door and vehicle.
+    // the scan reads candidates until one names this world, rather than judging the first and
+    // stopping: judging only the first turns the very case this guard exists for into a refusal to
+    // capture, since the stale gamemode fails the world test and the live one is never reached.
+    //
+    // Serializing the stale one produces no torn write but a structurally complete save that
+    // describes nothing -- a saveSlot whose object arrays are empty, terminator intact, a kilobyte
+    // or so long. A joiner handed that keeps its own world, and the two then disagree on every door
+    // and vehicle.
     void* gm = nullptr;
     void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
     for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {

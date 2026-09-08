@@ -37,9 +37,10 @@ void* Instance();
 bool ReadDishAim(DishAim& out);
 // The LIVE cursor and the COMMITTED locks are SEPARATE writes (see the .cpp). WriteCursorOnly
 // is a viewCoordinate memcpy with NO dispatch -- it serves the 60 Hz interpolated stream, and the
-// widget's own Tick repaints. WriteDishCommitted writes the discrete locks and runs the
-// updCursorLocations repaint, at commit rate. A single call that wrote both and dispatched at 3 Hz
-// is retired: two authors on viewCoordinate is the duplicate-writer shape.
+// widget's own Tick repaints. WriteDishCommitted writes the discrete locks, runs the
+// updCursorLocations repaint and the desk's own updateCoordCoords text repaint, at commit rate. A
+// single call that wrote both and dispatched at 3 Hz is retired: two authors on viewCoordinate is
+// the duplicate-writer shape.
 bool WriteCursorOnly(float viewX, float viewY);
 bool WriteDishCommitted(const DishAim& in);
 

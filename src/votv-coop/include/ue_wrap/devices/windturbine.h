@@ -5,12 +5,12 @@
 //
 // The turbine is a per-tick SERVO. `rot` integrates at 1 deg/s toward the directionalWind
 // direction, signed by which side of the wind the turbine currently faces; `targetRot` follows
-// `rot`; `headRotation` spring-chases `targetRot` and is written to the nacelle pivot; blades
+// `rot`; `headRotation` spring-chases `targetRot` and is written to the `axis_room` pivot; blades
 // accumulate `alpha_blades` at a rate scaled by `bladesMomentum`, which itself springs toward the
-// wind's strength, and by the BeginPlay-random `mult`. All six are PLAIN FLOATS the tick consumes,
-// so a mirror writes them raw and the native tick does the rest -- no verbs, no engine calls. The
-// tick integrates whether or not anyone is looking; only the APPLY to the pivots is gated on the
-// turbine being near the camera or recently rendered.
+// wind's combined strength and speed over ten, and by the BeginPlay-random `mult`. All six are
+// PLAIN FLOATS the tick consumes, so a mirror writes them raw and the native tick does the rest --
+// no verbs, no engine calls. The tick integrates whether or not anyone is looking; only the APPLY
+// to the pivots is gated on the turbine being near the camera or recently rendered.
 
 #pragma once
 
