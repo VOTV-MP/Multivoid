@@ -62,15 +62,14 @@ constexpr size_t kMaxClasses = 1024;            // probe backstop
 std::atomic<uint64_t> g_totalNotes{0};
 std::atomic<uint64_t> g_droppedNotes{0};        // cap-hit / unresolvable-owner records
 
-// ---- resolved natives
-// ----------------------------------------------------------------------------- The driver natives
-//    are EX_CallMath-invoked from BP ubergraphs, so the PE-detour interceptor table NEVER sees
-//    them: zero records in a 150 s window that produced 973 PE-visible BeginDeferred records, with
-//    the world-load BeginPlay arms (beehive K2_SetTimer, ufoDropper K2_SetTimerDelegate) silent as
-//    well. Channels (b) and (d) therefore ride the ufunction_hook FUNC-PATCH seam, the standard
-//    seam for every dispatch our ProcessEvent detour cannot see. Attribution comes free: the post
-//    callback's sourceObject is FFrame::Object, the CALLING BP actor -- the re-arming ticker, or
-//    mainGamemode itself -- which beats the param owner and needs no FFrame stepping.
+// ---- resolved natives -----------------------------------------------------------------------------
+// The driver natives are EX_CallMath-invoked from BP ubergraphs, so the PE-detour interceptor table
+// NEVER sees them: zero records in a 150 s window that produced 973 PE-visible BeginDeferred
+// records, and the world-load BeginPlay arms (beehive K2_SetTimer, ufoDropper K2_SetTimerDelegate), which
+// were the positive control, silent as well. Channels (b) and (d) therefore ride the ufunction_hook FUNC-PATCH seam, the
+// standard seam for every dispatch our ProcessEvent detour cannot see. Attribution comes free: the
+// post callback's sourceObject is FFrame::Object, the CALLING BP actor -- the re-arming ticker, or
+// mainGamemode itself -- which beats the param owner and needs no FFrame stepping.
 struct Target {
     const wchar_t* cls;
     const wchar_t* fn;
