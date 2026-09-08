@@ -106,13 +106,15 @@ void CreditLocal(int32_t amount) {
                 host ? "host -> will broadcast" : "solo");
         return;
     }
-    // A connected CLIENT has no way to credit the shared balance, and that is deliberate. The
-    // lane that let one -- a delta the host applied through AddPoints with no value bound -- was
-    // retired whole rather than clamped, because the balance is host-authoritative everywhere and
-    // there is no legitimate client-to-host economy write. Refusing here is defence in depth:
+    // A connected CLIENT cannot AUTHOR the shared balance, and that half is deliberate: the lane
+    // that let it -- a delta the host applied through AddPoints with no value bound -- was retired
+    // whole rather than clamped, because the balance is host-authoritative everywhere. Client-side
+    // earning still reaches it, but only where an intent lane forwards the action and the host
+    // re-runs the game's own verb on the authoritative instance, as coingun_collect does for a coin
+    // pickup. A direct credit from here is not that, so it is refused: defence in depth, since
     // coop::dev_gate already refuses the only caller on a client.
-    UE_LOGW("balance_sync: local credit %+d REFUSED -- balance is host-authoritative and "
-            "there is no client->host credit lane", amount);
+    UE_LOGW("balance_sync: local credit %+d REFUSED -- a client cannot author the shared "
+            "balance; earning reaches it through an intent lane the host re-runs", amount);
 }
 
 void OnDisconnect() {
