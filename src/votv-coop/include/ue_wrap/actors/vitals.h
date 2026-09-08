@@ -1,21 +1,15 @@
 // ue_wrap/vitals.h -- local-player vitals scalar accessor (engine substrate).
 //
-// Resolves the canonical live vitals store -- UmainGameInstance_C::save_gameInst
-// (a UsaveSlot_C*, exactly ONE per machine) -- and reads/writes the player's
-// vital scalars by reflected field offset. BP-cooked offsets shift across
-// recooks, so every offset is resolved by NAME (never hardcoded). Game-thread
-// only (UObject lookups + BP-state writes). NO network / coop / quantization
-// logic (Principle 7): callers in coop/ own the wire encoding.
+// Resolves the canonical live vitals store -- UmainGameInstance_C::save_gameInst, a UsaveSlot_C*
+// and exactly ONE per machine -- and reads and writes the player's vital scalars by reflected
+// field offset. Blueprint-cooked offsets shift across recooks, so every offset is resolved by
+// NAME and never hardcoded. Game thread only (UObject lookups and blueprint-state writes). No
+// network, coop or quantization logic (principle 7): the callers in coop/ own the wire encoding.
 //
-// CAUTION: there is exactly ONE saveSlot per machine -- every remote-player
-// puppet AND the local player resolve to it. This accessor only ever touches the
-// LOCAL player's vitals. NEVER use it to store a remote puppet's display health;
-// that would corrupt the local player's persisted health. Puppet display health
-// lives on coop::RemotePlayer.
-//
-// Extracted 2026-05-30 from coop/dev/restore_vitals.cpp (M-1/P7) so the
-// player-vitals/death replication feature can read live health off the same
-// proven chain. See research/findings/player-puppet/votv-player-vitals-death-RE-2026-05-30.md.
+// CAUTION: there is exactly ONE saveSlot per machine, and every remote-player puppet AND the
+// local player resolve to it. This accessor only ever touches the LOCAL player's vitals. NEVER
+// use it to store a remote puppet's display health -- that would corrupt the local player's
+// persisted health. Puppet display health lives on coop::RemotePlayer.
 #pragma once
 
 namespace ue_wrap::vitals {

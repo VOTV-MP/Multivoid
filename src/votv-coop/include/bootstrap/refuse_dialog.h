@@ -1,15 +1,12 @@
 // bootstrap/refuse_dialog.h -- the modal we show when the mod will NOT run.
 //
-// Deliberately NOT `ui::boot_warning_dialog`. That one renders from our ImGui
-// overlay, and every caller here is a case where the overlay must never be
-// installed: a duplicate instance that is standing down, or a boot whose SDK
-// health check failed (wrong offsets -> our own drawing hooks are suspect).
-// A plain Win32 modal is the only surface guaranteed to exist at that point.
+// Deliberately NOT `ui::boot_warning_dialog`. That one renders from our ImGui overlay, and every
+// caller here is a case where the overlay must never be installed: a duplicate instance standing
+// down, or a boot whose SDK health check failed, where wrong offsets make our own drawing hooks
+// suspect. A plain Win32 modal is the only surface guaranteed to exist at that point.
 //
-// Extracted 2026-08-30 from loader/cppmod_entry.cpp, which had the only copy.
-// It grew a second caller (bootstrap/boot.cpp, the health-check refusal) and
-// two copies of one concept is RULE 2; `loader::cppmod` was also the wrong
-// owner, since boot sits BELOW the loader lane and must not depend on it.
+// It lives under bootstrap rather than under the loader because boot sits BELOW the loader lane
+// and must not depend on it.
 
 #pragma once
 
