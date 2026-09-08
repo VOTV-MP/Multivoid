@@ -1,8 +1,6 @@
-// ue_wrap/desk/coords_panel.cpp -- see ue_wrap/desk/coords_panel.h. Bodies
-// verbatim from the console_desk.cpp originals (2026-07-19 one-class-per-file
-// split); the desk half of the instance chain stays in console_desk
-// (AtlasUiCoordsSlot), the desk's updateCoordCoords verb is reached through
-// console_desk::CallUpdateCoordCoords.
+// ue_wrap/desk/coords_panel.cpp -- see ue_wrap/desk/coords_panel.h. The desk half of the
+// instance chain stays in console_desk (AtlasUiCoordsSlot), and the desk's updateCoordCoords
+// verb is reached through console_desk::CallUpdateCoordCoords.
 
 #include "ue_wrap/desk/coords_panel.h"
 
@@ -24,12 +22,12 @@ namespace R = ue_wrap::reflection;
 void* g_uiCoordsCls = nullptr;
 void* g_uiCoordsInst = nullptr;
 int32_t g_uiCoordsIdx = -1;
-int32_t g_offViewCoordinate = -1;  // FVector2D @0x03B8
-int32_t g_offCoordinate0 = -1;     // FVector2D @0x03C0
-int32_t g_offCoordinate1 = -1;     // FVector2D @0x03C8
-int32_t g_offCoordinate2 = -1;     // FVector2D @0x03D0
-int32_t g_offSelected = -1;        // @0x03D8
-int32_t g_offDirection = -1;       // bool @0x0441 -- the catch-gate toggle (v70)
+int32_t g_offViewCoordinate = -1;  // FVector2D
+int32_t g_offCoordinate0 = -1;     // FVector2D
+int32_t g_offCoordinate1 = -1;     // FVector2D
+int32_t g_offCoordinate2 = -1;     // FVector2D
+int32_t g_offSelected = -1;
+int32_t g_offDirection = -1;       // bool -- the catch-gate toggle
 void* g_updCursorLocationsFn = nullptr;
 
 // The REQUIRED set (cls + the five aim offsets + the repaint verb) resolved --
@@ -78,14 +76,13 @@ void* Instance() {
     g_uiCoordsInst = nullptr;
     if (!g_required) ResolvePass();
     if (!g_uiCoordsCls) return nullptr;
-    // Resolve via the desk's OWN field chain (desk.Widget -> atlas.ui_coordinates)
-    // -- the game's access path (getCoordWidget does exactly this). The previous
-    // FindObjectsByClass(ui_coordinates_C) first-hit grabbed the cooked
-    // widget-tree TEMPLATE (loads with the class, IsLive, NOT Default__-named,
-    // permanently resident -> lowest index wins) and cached it forever: the
-    // host wrote dot state into the template (invisible) and the client read
-    // the template's frozen fields (nothing to stream) = the dead star-map
-    // mirror (STOLAS RE 2026-06-12 root cause 1).
+    // Resolve via the desk's OWN field chain (desk.Widget -> atlas.ui_coordinates), which is the
+    // game's own access path -- getCoordWidget does exactly this. Resolving instead by
+    // FindObjectsByClass(ui_coordinates_C) and taking the first hit grabs the cooked widget-tree
+    // TEMPLATE: it loads with the class, reads live, is not Default__-named and is permanently
+    // resident, so it wins on lowest index and gets cached forever. The host then writes dot
+    // state into an invisible template and the client reads that template's frozen fields, which
+    // is a star-map mirror with nothing to stream.
     void* coords = ue_wrap::console_desk::AtlasUiCoordsSlot();
     if (!coords || !R::IsLive(coords)) return nullptr;
     void* cls = R::ClassOf(coords);
@@ -120,14 +117,13 @@ bool ReadDishAim(DishAim& out) {
     return true;
 }
 
-// v109: the LIVE cursor apply (the DeskCursorPose stream, ~60Hz interpolated).
-// INVARIANT -- writes ONLY viewCoordinate and dispatches NOTHING. It must NEVER
-// call updCursorLocations: that is the committed-triangle + pingDishes setRot loop
-// (N UFunction dispatches), and running it at 60Hz is a per-frame dispatch STORM.
-// The widget's OWN Tick repaints the cursor from viewCoordinate (updMainCursor) --
-// keeping the field fresh IS the whole job here. If you need the triangle/dish
-// repaint, that is WriteDishCommitted (commit rate), NOT this. The name is the
-// guard: WriteCursorOnly does cursor, only.
+// The LIVE cursor apply (the DeskCursorPose stream, ~60 Hz interpolated).
+// INVARIANT -- it writes ONLY viewCoordinate and dispatches NOTHING. It must NEVER call
+// updCursorLocations: that is the committed-triangle plus pingDishes setRot loop, N UFunction
+// dispatches, and running it at 60 Hz is a per-frame dispatch STORM. The widget's own Tick
+// repaints the cursor from viewCoordinate through updMainCursor, so keeping the field fresh
+// IS the whole job here; the triangle and dish repaint is WriteDishCommitted, at commit rate.
+// The name is the guard: WriteCursorOnly does cursor, only.
 bool WriteCursorOnly(float viewX, float viewY) {
     if (!g_required) ResolvePass();
     void* w = Instance();
@@ -138,12 +134,12 @@ bool WriteCursorOnly(float viewX, float viewY) {
     return true;  // NO UFunction dispatch -- see the INVARIANT above.
 }
 
-// v109: the COMMITTED-coords apply (the discrete triangulation locks). Writes
-// Coordinate_0/1/2 + selected + direction and calls updCursorLocations (repaints
-// the committed triangle + rotates the physical pingDishes) + updateCoordCoords
-// (az/alt text). Does NOT touch viewCoordinate -- the live cursor is owned by the
-// DeskCursorPose stream (WriteCursorOnly). Runs at COMMIT rate (change-gated), so
-// the per-call updCursorLocations dish-setRot loop is fine here (it is NOT per-frame).
+// The COMMITTED-coords apply (the discrete triangulation locks). Writes Coordinate_0/1/2,
+// selected and direction, then calls updCursorLocations -- repainting the committed triangle
+// and rotating the physical pingDishes -- and updateCoordCoords for the az/alt text. It does
+// NOT touch viewCoordinate: the live cursor belongs to the DeskCursorPose stream and
+// WriteCursorOnly. This runs at COMMIT rate, change-gated, so the per-call dish setRot loop
+// is affordable here in a way it is not per frame.
 bool WriteDishCommitted(const DishAim& in) {
     if (!g_required) ResolvePass();
     void* w = Instance();
