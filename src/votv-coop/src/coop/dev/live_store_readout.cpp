@@ -37,22 +37,17 @@ std::string Narrow(const std::wstring& w) {
 
 // The record's PAYLOAD SHAPE -- total elements per value group, non-empty groups only.
 //
-// Why this is printed next to the identity (2026-07-24): `Aprop_container_C::extract` captures the
-// carrier actor via addObject -> getData BEFORE `loadData(takeObj_Output)` restores the saved state
-// (RE SS3.2b, measured statically). If that ordering means what it appears to, an item that passed
-// through a take lands in the store with a DEFAULT payload while its class and transform survive.
-// That was inferred from call order alone and had no known-positive, so it is measured here with the
-// control built into the same line: the save-loaded records in this very store never went through a
-// take, so they are the positive case, and a taken record is the negative -- side by side, one read.
-// An empty shape on EVERY record would mean this instrument is blind, not that payloads are empty.
+// Printed next to the identity because `Aprop_container_C::extract` captures the carrier actor
+// through addObject -> getData BEFORE `loadData(takeObj_Output)` restores the saved state, which
+// would leave an item that passed through a take holding a DEFAULT payload while its class and
+// transform survive. The control is built into the same line: this store's save-loaded records
+// never went through a take, so they stand as the positive case beside a taken one.
 //
-// RESULT 2026-07-24 -- the prediction was FALSIFIED, and this line's own limit was found:
-// the taken record printed {b5,f3,nm2}, i.e. NOT empty. But the shapes turn out to differ BY CLASS
-// (crowbar b5,f1,nm2 / food b6,f4,i1,nm2 / drive +sig1), so a group count is a CLASS FINGERPRINT and
-// says nothing about the VALUES inside. Do NOT read a familiar-looking shape here as "the saved
-// state survived the take" -- that question is still open and needs a value comparison against the
-// SOURCE container record (best candidate: a prop_drive_C carrying a signal, since a fresh one
-// should carry none). This block confirms a shape; it does not count the thing in dispute.
+// Read the result narrowly. Shapes differ BY CLASS -- crowbar b5,f1,nm2, food b6,f4,i1,nm2, a drive
+// one signal more -- so a group count is a CLASS FINGERPRINT and says nothing about the VALUES
+// inside. A familiar-looking shape here is NOT evidence that the saved state survived the take.
+// That needs a value comparison against the source container record, and a prop_drive_C carrying a
+// signal is the best candidate, since a fresh one should carry none.
 std::string ShapeOf(const SR::SaveRecord& r) {
     auto n2 = [](const auto& vv) {
         size_t t = 0;
