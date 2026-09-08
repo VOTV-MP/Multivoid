@@ -1,4 +1,4 @@
-// ue_wrap/door_box.cpp -- see ue_wrap/door_box.h.
+// ue_wrap/devices/door_box.cpp -- see ue_wrap/devices/door_box.h.
 
 #include "ue_wrap/devices/door_box.h"
 
@@ -26,7 +26,7 @@ struct ClassDesc {
     void*   updateFn = nullptr;     // a__UpdateFunc (rotates the axis from alpha)
     void*   finishedFn = nullptr;   // a__FinishedFunc (locker: close-slam + collision restore)
     int32_t offTimeline = -1;   // UTimelineComponent* A
-    int32_t offTrigger = -1;    // locker only: AActor* triggerOnOpen @0x0280 (davyJones gate)
+    int32_t offTrigger = -1;    // locker only: AActor* triggerOnOpen (the davyJones gate)
 };
 
 ClassDesc g_locker;   // Alocker_C (+ subclasses locker_personal_C / locker_death_C)
@@ -49,9 +49,9 @@ constexpr int32_t kConsoleAlpha     = 0x0288;
 constexpr int32_t kConsoleDirection = 0x028C;
 constexpr int32_t kConsoleTimeline  = 0x0290;
 
-// Force-snap verify queue (the door.cpp lesson: the 0.5 s swing Timeline only
-// advances while the actor TICKS -- far from the local player it freezes and
-// the door leaf sticks mid-swing). Entries clear on completion or snap.
+// Force-snap verify queue: the 0.5 s swing Timeline only advances while the actor TICKS, so far
+// from the local player it freezes and the door leaf sticks mid-swing (door.cpp drives the same
+// swing and carries the same note). Entries clear on completion or snap.
 struct Verify {
     void* actor;
     int32_t idx;
@@ -98,10 +98,10 @@ const ClassDesc* DescOf(void* obj) {
     return nullptr;
 }
 
-// Snap the swing to its end state: write the timeline track float + direction,
-// then dispatch a__UpdateFunc (rotates the axis -- the VISUAL move; FinishedFunc
-// alone does not move the mesh, the door.cpp lesson) and a__FinishedFunc (on a
-// locker close it plays the slam + restores the door collision -- required).
+// Snap the swing to its end state: write the timeline track float + direction, then dispatch
+// a__UpdateFunc, which rotates the axis and is the VISUAL move -- FinishedFunc alone does not move
+// the mesh -- and a__FinishedFunc, which on a locker close plays the slam and restores the door
+// collision, so it is required.
 void ForceSnap(void* actor, const ClassDesc& d, bool want) {
     *reinterpret_cast<float*>(reinterpret_cast<char*>(actor) + d.offAlpha) = want ? 1.0f : 0.0f;
     *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(actor) + d.offDirection) =
@@ -171,14 +171,12 @@ bool ApplyOpened(void* actor, bool want) {
     const ClassDesc* d = DescOf(actor);
     if (!d) return false;
     const bool isLocker = (d == &g_locker);
-    // Trigger-wired locker (locker_davyJones: triggerOnOpen -> a batchSpawner):
-    // the native Open verb FIRES the trigger -- correct on the OPENER (SP
-    // behavior, runs once), wrong on a MIRROR apply (the spawner would run a
-    // second time on this peer = the double-spawn). Targeted per-site fix
-    // (principle 4): a trigger-wired locker mirrors via the SNAP path (opened
-    // write + ForceSnap swing) -- door state mirrors, the trigger fires only
-    // where the player actually opened it. The other 18 lockers carry no
-    // trigger (uexp census) and keep the full native verb.
+    // Trigger-wired locker (locker_davyJones: triggerOnOpen -> a batchSpawner): the native Open
+    // verb FIRES the trigger -- correct on the OPENER, where it runs once, and wrong on a MIRROR
+    // apply, where the spawner would run a second time on this peer and double-spawn. Targeted
+    // per-site fix (principle 4): a trigger-wired locker mirrors via the SNAP path (opened write +
+    // ForceSnap swing), so door state mirrors and the trigger fires only where the player actually
+    // opened it. The other eighteen lockers carry no trigger and keep the full native verb.
     const bool triggerWired =
         isLocker && d->offTrigger >= 0 &&
         *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(actor) + d->offTrigger) != nullptr;
@@ -219,10 +217,9 @@ bool ApplyOpened(void* actor, bool want) {
 }
 
 void OnDisconnect() {
-    // Audit IMPORTANT-2 (2026-06-12): a swing mid-verify at session teardown must
-    // not survive into the next session/SP world -- a stale entry's ForceSnap
-    // (a__UpdateFunc/a__FinishedFunc) would fire on a world state it wasn't
-    // queued for.
+    // A swing mid-verify at session teardown must not survive into the next session or an SP world:
+    // a stale entry's ForceSnap (a__UpdateFunc / a__FinishedFunc) would fire on a world state it
+    // was not queued for.
     g_verify.clear();
 }
 
