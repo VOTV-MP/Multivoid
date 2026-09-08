@@ -1,6 +1,7 @@
 // ue_wrap/engine_save.cpp -- the save load, the game-mode derivation, the campaign-scoped save
-// cache, the fresh New Game boot and the return to the main menu. Declared in ue_wrap/engine.h;
-// everything here is game-thread only. The load path is a boot poll: LoadStorySave and
+// cache, the fresh New Game boot and the return to the main menu. Declared in
+// ue_wrap/engine/engine_save.h, which the engine.h umbrella includes; everything here is
+// game-thread only. The load path is a boot poll: LoadStorySave and
 // StartFreshGame are retried until the save class and the world are live.
 
 #include "ue_wrap/engine/engine.h"

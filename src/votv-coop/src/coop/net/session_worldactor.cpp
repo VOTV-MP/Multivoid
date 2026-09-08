@@ -1,6 +1,6 @@
-// coop/net/session_worldactor.cpp -- v80 (B3b) WorldActor pose-batch send/receive for Session.
+// coop/net/session_worldactor.cpp -- WorldActor pose-batch send/receive for Session.
 //
-// The byte-for-byte clone of session_npc.cpp for the WorldActor (non-Character event actor) pose
+// Modelled on session_npc.cpp for the WorldActor (non-Character event actor) pose
 // stream: the unreliable HOST->client batch (MsgType::WorldActorPose). The host serializes its live
 // batch ONCE per send (SerializeLocalWorldActorBatch) before the per-peer fan-out, and clients parse
 // + newest-wins-store each datagram (StoreRemoteWorldActorBatch) for the game thread to drain

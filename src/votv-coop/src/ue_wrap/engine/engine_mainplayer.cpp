@@ -94,7 +94,7 @@ void ResolveAddPlayerDamageFn() {
 }
 
 
-// The damage body pulse: the cached solid-red material and the primitive component's
+// The damage body pulse: the cached gore hurt material and the primitive component's
 // material UFunctions (count, get, set).
 ue_wrap::CachedObjRef g_hurtMat;  // a slot-validated cache
 void* g_getNumMatFn = nullptr, *g_getMatFn = nullptr, *g_setMatFn = nullptr;
