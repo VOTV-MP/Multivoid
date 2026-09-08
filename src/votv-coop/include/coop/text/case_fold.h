@@ -1,19 +1,14 @@
 // coop/text/case_fold.h -- simple lowercase, over the alphabet this build draws.
 //
-// Owned here, beside repertoire.h, because it answers the same kind of question
-// -- something about the set of codepoints this build can put on screen -- and
-// it is minted by the same generator run, so what FOLDS and what RENDERS cannot
-// drift.
+// Owned here, beside repertoire.h, because it answers the same kind of question -- something
+// about the set of codepoints this build can put on screen -- and is minted by the same
+// generator run, so what FOLDS and what RENDERS cannot drift.
 //
-// IT REPLACES A HAND TABLE THAT WENT STALE IN SILENCE (RULE 2). The old
-// nickname_arbiter::FoldCase covered ASCII, Latin-1 and Cyrillic, and its comment
-// called those "exactly the cased scripts the repertoire draws". True when
-// written; falsified by the Latin-Ext/Greek widening and by the lazy-atlas flip's
-// +4,741 codepoints, neither of which touched the function. Measured 2026-07-30:
-// of 890 cased codepoints whose lowercase is ALSO drawable, 649 (73%) folded to
-// THEMSELVES -- so `Ωμέγα` and `ωμέγα` did not collide, and neither did any pair
-// in Greek, Armenian, Georgian, Coptic or most of Latin Extended. None folded
-// WRONG; incomplete, never incorrect, which is why it was invisible.
+// That coupling is the whole point. A hand-written table covering ASCII, Latin-1 and Cyrillic is
+// correct only for the repertoire of the day it is written, and a widened repertoire breaks it
+// with no symptom: of 890 cased codepoints whose lowercase is also drawable, 649 fold to
+// THEMSELVES under such a table, so a Greek nickname does not collide with its own lowercase.
+// Nothing folds WRONG -- incomplete, never incorrect, which is why there is nothing to grep for.
 
 #pragma once
 
