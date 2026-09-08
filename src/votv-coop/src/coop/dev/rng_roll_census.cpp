@@ -1,4 +1,4 @@
-// coop/dev/rng_roll_census.cpp -- see header + docs/COOP_RNG_AUTHORITY.md "T1 PRE-REGISTRATION".
+// coop/dev/rng_roll_census.cpp -- see coop/dev/rng_roll_census.h.
 
 #include "coop/dev/rng_roll_census.h"
 
@@ -62,15 +62,15 @@ constexpr size_t kMaxClasses = 1024;            // probe backstop
 std::atomic<uint64_t> g_totalNotes{0};
 std::atomic<uint64_t> g_droppedNotes{0};        // cap-hit / unresolvable-owner records
 
-// ---- resolved natives -----------------------------------------------------------------------------
-// SEAM CORRECTION (measured, first smoke 2026-07-10 12:36): the driver natives are EX_CallMath-
-// invoked from BP ubergraphs -- the PE-detour interceptor table NEVER sees them (zero records in a
-// 150 s window that produced 973 PE-visible BeginDeferred records; the world-load BeginPlay arms --
-// beehive K2_SetTimer, ufoDropper K2_SetTimerDelegate -- were the positive control and they were
-// SILENT). Channels (b)+(d) therefore ride the ufunction_hook FUNC-PATCH seam ("the STANDARD seam
-// for every dispatch our ProcessEvent detour cannot see"). Attribution comes free: the post
-// callback's sourceObject = FFrame::Object = the CALLING BP actor (the re-arming ticker /
-// mainGamemode itself) -- better than the param owner, no FFrame stepping needed.
+// ---- resolved natives
+// ----------------------------------------------------------------------------- The driver natives
+//    are EX_CallMath-invoked from BP ubergraphs, so the PE-detour interceptor table NEVER sees
+//    them: zero records in a 150 s window that produced 973 PE-visible BeginDeferred records, with
+//    the world-load BeginPlay arms (beehive K2_SetTimer, ufoDropper K2_SetTimerDelegate) silent as
+//    well. Channels (b) and (d) therefore ride the ufunction_hook FUNC-PATCH seam, the standard
+//    seam for every dispatch our ProcessEvent detour cannot see. Attribution comes free: the post
+//    callback's sourceObject is FFrame::Object, the CALLING BP actor -- the re-arming ticker, or
+//    mainGamemode itself -- which beats the param owner and needs no FFrame stepping.
 struct Target {
     const wchar_t* cls;
     const wchar_t* fn;
