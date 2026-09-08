@@ -1,4 +1,4 @@
-// coop/interactables/tape_caddy_sync.cpp -- see the header + the L7 design doc.
+// coop/interactables/tape_caddy_sync.cpp -- see the header.
 //
 // Axes (one owner each):
 //   SLOT      -- ReelSlot=102, presser-authored -1.0-sentinel change edges, 4 Hz poll
@@ -173,8 +173,9 @@ void OnReelSlot(const coop::net::ReelSlotPayload& p, uint8_t senderSlot) {
                 p.reel, p.op, senderSlot);
         return;
     }
-    // Trust boundary (perf-audit F2): a raw wire float enters an engine field the
-    // accrual + taskNew grading read -- NaN/huge would propagate. Native range = [0,100].
+    // Trust boundary: a raw wire float enters an engine field that the accrual and the
+    // taskNew grading both read, so a NaN or a huge value would propagate into them. The native
+    // range is [0,100].
     if (p.op == 0 && !(p.progress >= 0.0f && p.progress <= 100.0f)) {
         UE_LOGW("[reel] OnReelSlot INSERT progress %.3f out of [0,100] (slot=%u) -- dropped",
                 p.progress, senderSlot);
@@ -204,8 +205,8 @@ void OnReelSlot(const coop::net::ReelSlotPayload& p, uint8_t senderSlot) {
                 g_recentInsert[cp.reel] = NowMs();  // protect the fresh value from a stale corrector
             } else if (std::fabs(local - cp.progress) > kProgressEps) {
                 if (isHost) {
-                    // Authority tiebreak (design D1 / residual L7-R5): the host keeps its own
-                    // occupied value; its corrector re-asserts it <= 1 s.
+                    // Authority tiebreak: the host keeps its own occupied value and its corrector
+                    // re-asserts it within a second.
                     UE_LOGW("[reel] wire INSERT onto OCCUPIED slot reel=%s local=%.2f wire=%.2f "
                             "(slot=%u) -- HOST keeps own (corrector re-asserts)",
                             cp.reel == 0 ? "big" : "small", local, cp.progress, senderSlot);

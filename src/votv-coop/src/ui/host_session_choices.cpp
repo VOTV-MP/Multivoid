@@ -1,9 +1,7 @@
 // ui/host_session_choices.cpp -- see ui/host_session_choices.h.
 //
-// Extracted 2026-09-01 from host_session_settings.cpp, where the row kit and TWO
-// hand-copied selectors lived. The construction and both style channels are MOVED
-// verbatim; the only new code is the `Selector` indirection that lets one body serve
-// three questions instead of three bodies serving one each.
+// One two-answer selector, built once and driven by the caller through a `Selector` handle, so
+// the host screen's three questions share a body instead of each carrying a hand-copied one.
 
 #include "ui/host_session_choices.h"
 
@@ -25,12 +23,11 @@ namespace NS = ui::native_screen;
 
 using ue_wrap::FLinearColor;
 
-// The row geometry the two shipped selectors were built with. Moved, not re-tuned: a
-// constant re-picked during an extraction is a behaviour change wearing a refactor's
-// clothes, and the screen's fixed-height frame is measured against exactly these.
+// The row geometry every selector on the screen is built with. The screen's fixed-height
+// frame is measured against exactly this height, so changing it moves the frame.
 constexpr float kRowH = 56.f;
-// The label/detail split. Both shipped selectors passed 0.42/0.58 and neither had a
-// reason to differ, so it is one constant here rather than a parameter nobody varies.
+// The label/detail split. No question has a reason to differ, so it is one constant here
+// rather than a parameter nobody varies.
 constexpr float kColA = 0.42f;
 constexpr float kColB = 0.58f;
 
@@ -48,8 +45,9 @@ void SetText(void* block, const wchar_t* t, const FLinearColor& col) {
 
 struct BuiltRow { void* box; void* bg; void* a; void* b; };
 
-// MOVED VERBATIM from host_session_settings.cpp. The one edit is that the failure paths
-// return an empty row rather than a `Row{}` typedef that no longer exists.
+// A row is a fixed-height overlay: an Image behind, set Visible so it is the hit target,
+// and a two-cell horizontal box in front. Any half-built row is returned empty, so a caller
+// never receives a row whose background exists and whose label does not.
 BuiltRow BuildRow(void* parent, float wA, float wB) {
     BuiltRow r{};
     r.box = NS::Spawn(L"SizeBox", parent);
@@ -88,12 +86,11 @@ bool Build(void* column, const wchar_t* heading, const Answer (&answers)[2], Sel
     if (heading) NS::AddText(column, heading, 16, NS::Accent(), NS::kJustLeft, 0.f);
     for (int i = 0; i < 2; ++i) {
         BuiltRow r = BuildRow(column, kColA, kColB);
-        // CHECKED BEFORE THE WIDGETS ARE STORED. The shipped WHO-MAY-JOIN loop stored
-        // first and checked after, which is harmless there and was NOT harmless in the
-        // SERVER LIST loop: a bare `return false` past `TF::Create` leaked a text field on
-        // every retry, once a second forever after the backoff (post-ship audit
-        // 2026-09-01). Storing only complete rows means a caller's failure path never has
-        // to reason about which half of a selector exists.
+        // CHECKED BEFORE THE WIDGETS ARE STORED, so a caller's failure path never has to reason
+        // about which half of a selector exists. The reverse order -- store, then check -- is
+        // harmless only while nothing below the check can allocate: in the server-list screen the
+        // same shape put a bare `return false` past a text-field construction, and the field leaked
+        // once per retry for as long as the backoff kept retrying.
         if (!r.bg || !r.a) return false;
         out.bg[i]    = r.bg;
         out.title[i] = r.a;
@@ -106,10 +103,11 @@ bool Build(void* column, const wchar_t* heading, const Answer (&answers)[2], Sel
 void Repaint(const Selector& s) {
     for (int i = 0; i < 2; ++i) {
         if (!s.bg[i]) continue;
-        // TWO INDEPENDENT CHANNELS, style doc section 4: selection is the row FILL, hover
-        // is the TEXT colour. A selector the player cannot move keeps its fill -- it is
-        // still stating what will happen -- and loses the white, so the section reads as
-        // information rather than as a control that ignores clicks.
+        // TWO INDEPENDENT CHANNELS, the native treatment recorded under State in
+        // docs/votv-ui-style.md: selection is the row FILL and hover is the TEXT colour. A selector
+        // the player cannot move keeps its fill -- it is still stating what will happen -- and
+        // loses the white, so the section reads as information rather than as a control that
+        // ignores clicks.
         U::SetImageTint(s.bg[i], s.chosen == i ? kRowSel : kRowBg);
         const FLinearColor& c = !s.editable ? kDim : (s.hover == i ? kHover : kText);
         E::SetTextBlockColorDispatch(s.title[i], c);
@@ -118,10 +116,9 @@ void Repaint(const Selector& s) {
 
 int HoverAt(const Selector& s, long hx, long hy) {
     if (!s.editable) return -1;
-    // GEOMETRY, NEVER `IsHovered()`. A hand-built `UImage` set Visible reports 0 from
-    // IsHovered whether or not it sits in a scroll container -- measured twice, on
-    // 2026-08-29 and again 2026-08-30. That fact cost a shipped selector that never
-    // highlighted; it is written here so the third question does not re-derive it.
+    // GEOMETRY, NEVER `IsHovered()`. A hand-built `UImage` set Visible reports false from
+    // IsHovered whether or not it sits in a scroll container, which is measured and written down
+    // here because believing IsHovered costs a selector that never highlights.
     for (int i = 0; i < 2; ++i)
         if (s.bg[i] && NS::WidgetContains(s.bg[i], hx, hy)) return i;
     return -1;
