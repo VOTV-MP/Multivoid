@@ -50,7 +50,9 @@ bool IsGarbageClump(void* obj);
 bool IsTrashBitsPile(void* obj);
 // A readiness probe for the scan hub: attempts the extra-base resolve once and says whether
 // trashBitsPile_C is known, so the hub benches that consumer instead of letting IsTrashBitsPile
-// re-run FindClass (a full GUObjectArray walk) per memo-missed class per pass.
+// re-run FindClass per memo-missed class per pass. FindClass keeps its own cache, so a resolved
+// class costs a lookup rather than a walk -- but that cache never memoises a MISS, so a class
+// that is not loaded walks the whole object array on every single call.
 bool EnsureTrashBitsPileResolved();
 
 // True once the Aprop base class resolves; IsKeyedInteractable is vacuously false before that,
