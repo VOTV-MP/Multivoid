@@ -1,10 +1,10 @@
-// ue_wrap/skysphere.cpp -- see ue_wrap/skysphere.h. Engine access for the night-sky actor
+// ue_wrap/world/skysphere.cpp -- see ue_wrap/world/skysphere.h. Engine access for the night-sky actor
 // (Anewsky_C). Offsets are resolved from the live class via reflection; the Alpha 0.9.0-n
 // values are logged fallbacks. Mirrors ue_wrap/daynightcycle.cpp's cache + resolve shape.
 
 #include "ue_wrap/world/skysphere.h"
 
-#include "ue_wrap/core/call.h"
+#include "ue_wrap/actors/inventory.h"  // ResolveSaveSlot: moonPhase lives on the save, not the actor
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -24,7 +24,7 @@ std::atomic<bool> g_resolved{false};
 void*   g_skyCls         = nullptr;  // newsky_C UClass
 int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*)
 int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)
-void*   g_setMoonPhaseFn = nullptr;  // setMoonPhase() -- re-applies the moon material param (optional)
+int32_t g_saveMoonOff    = -1;       // UsaveSlot_C::moonPhase (float) -- the source the Tick copies from
 
 constexpr int32_t kSkyCompOffFallback   = 0x0250;
 constexpr int32_t kMoonPhaseOffFallback = 0x02BC;
@@ -60,10 +60,9 @@ bool EnsureResolved() {
     g_skyCls         = cls;
     g_skyCompOff     = skyOff;
     g_moonPhaseOff   = moonOff;
-    g_setMoonPhaseFn = R::FindFunction(cls, L"setMoonPhase");  // optional -- immediate material refresh on apply
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("skysphere: resolved newsky_C=%p sky@0x%04X moonPhase_mirror@0x%04X setMoonPhase=%p",
-            cls, skyOff, moonOff, g_setMoonPhaseFn);
+    UE_LOGI("skysphere: resolved newsky_C=%p sky@0x%04X moonPhase_mirror@0x%04X",
+            cls, skyOff, moonOff);
     return true;
 }
 
@@ -96,12 +95,18 @@ void ApplySky(const FRotator& skyWorldRot, float moonPhase) {
     void* sky = Sky();
     if (!sky || g_moonPhaseOff < 0) return;
     if (void* comp = SkyComponent(sky)) E::SetComponentWorldRotation(comp, skyWorldRot);
+    // moonPhase_mirror first, so the value is right for the rest of THIS frame: the BP's Tick
+    // paints the moon material from the mirror every frame.
     *reinterpret_cast<float*>(reinterpret_cast<char*>(sky) + g_moonPhaseOff) = moonPhase;
-    // Re-apply the moon material param so the phase shows immediately (the BP otherwise only
-    // refreshes it inside upd()). Optional -- a no-op if setMoonPhase didn't resolve.
-    if (g_setMoonPhaseFn) {
-        ParamFrame f(g_setMoonPhaseFn);
-        if (f.valid()) Call(sky, f);
+    // Then the saveSlot, which is what actually survives: the same Tick re-assigns the mirror
+    // from saveSlot.moonPhase before it paints, so a mirror-only write is gone within a frame.
+    if (void* save = ue_wrap::inventory::ResolveSaveSlot()) {
+        if (g_saveMoonOff < 0) {
+            if (void* saveCls = R::ClassOf(save))
+                g_saveMoonOff = R::FindPropertyOffset(saveCls, L"moonPhase");
+        }
+        if (g_saveMoonOff >= 0)
+            *reinterpret_cast<float*>(reinterpret_cast<char*>(save) + g_saveMoonOff) = moonPhase;
     }
 }
 
