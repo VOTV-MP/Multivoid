@@ -17,9 +17,6 @@ namespace ue_wrap::engine {
 // humanoid foot bones with a 'wheels_R_end', so this is not where a human skin's feet are.
 bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ);
 
-// Diagnostic: log every bone's name and world location. Game thread.
-void DumpAllBonesWorldZ(void* skelMeshComp);
-
 // World position of one bone: one GetSocketLocation dispatch per call (the FName cached per name),
 // anchoring to the component transform when the bone is missing. False only on resolution failure.
 // Game thread.

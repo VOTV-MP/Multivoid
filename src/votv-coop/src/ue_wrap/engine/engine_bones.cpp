@@ -1,13 +1,9 @@
-// ue_wrap/engine_bones.cpp -- Skeletal mesh bone queries.
+// ue_wrap/engine/engine_bones.cpp -- skeletal mesh bone queries. The public API is
+// ue_wrap/engine/engine_bones.h; this TU implements the bone-related functions in
+// `namespace ue_wrap::engine`.
 //
-// Extracted from ue_wrap/engine.cpp (2026-05-25 modular refactor).
-// Public API lives in ue_wrap/engine.h; this TU implements the bone-related
-// functions in `namespace ue_wrap::engine`.
-//
-// Used by:
-//   - RemotePlayer (puppet foot-on-ground placement, head-bone anchored
-//     nameplate, dual-chain Z measurement for symmetric grounding)
-//   - one-shot diagnostics (DumpAllBonesWorldZ)
+// Read by the remote-player puppet (foot-on-ground placement, the head-bone anchored nameplate and
+// the hand item's head anchor), by the ragdoll bone overlay and by the ragdoll acceptance arms.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -34,10 +30,9 @@ namespace R = reflection;
 void* g_numBonesFn = nullptr, *g_boneNameFn = nullptr, *g_socketLocFn = nullptr;
 
 bool ResolveBoneFns() {
-    // All-resolved latch FIRST (audit F1 2026-07-03): without it every call paid TWO full
-    // GUObjectArray FindClass walks -- 60-120 walks/s with the bone overlay ON (the exact
-    // per-frame-walk anti-pattern the c7a0f5de pile-fps fix killed). UFunctions are
-    // process-lifetime; resolve once.
+    // All-resolved latch FIRST: without it every call paid TWO full GUObjectArray FindClass walks
+    // -- 60-120 walks/s with the bone overlay ON, the per-frame-walk pattern that costs frames.
+    // UFunctions are process-lifetime; resolve once.
     if (g_numBonesFn && g_boneNameFn && g_socketLocFn) return true;
     if (void* sk = R::FindClass(P::name::SkinnedMeshComponentClass)) {
         if (!g_numBonesFn) g_numBonesFn = R::FindFunction(sk, P::name::GetNumBonesFn);
@@ -127,41 +122,15 @@ bool GetLowestBoneWorldZ(void* skelMeshComp, float& outZ) {
     return true;
 }
 
-void DumpAllBonesWorldZ(void* skelMeshComp) {
-    if (!skelMeshComp || !ResolveBoneFns()) return;
-    int32_t n = 0;
-    { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
-    if (n <= 0) { UE_LOGW("engine: DumpAllBonesWorldZ: 0 bones on comp %p", skelMeshComp); return; }
-    std::string acc;
-    char buf[160];
-    for (int32_t i = 0; i < n; ++i) {
-        uint8_t name[8] = {};
-        { ParamFrame nf(g_boneNameFn); nf.Set<int32_t>(L"BoneIndex", i);
-          if (!Call(skelMeshComp, nf)) continue;
-          nf.GetRaw(L"ReturnValue", name, sizeof(name)); }
-        ParamFrame lf(g_socketLocFn);
-        lf.SetRaw(L"InSocketName", name, sizeof(name));
-        if (!Call(skelMeshComp, lf)) continue;
-        const FVector loc = lf.Get<FVector>(L"ReturnValue");
-        const std::wstring s = R::ToString(*reinterpret_cast<const R::FName*>(name));
-        // ToString returns UTF-16; collapse to ASCII for the log buffer.
-        std::string asc; asc.reserve(s.size());
-        for (wchar_t c : s) asc.push_back(static_cast<char>(c < 0x80 ? c : '?'));
-        snprintf(buf, sizeof(buf), "    [%3d] %-32s world=(%.1f, %.1f, %.1f)\n", i, asc.c_str(), loc.X, loc.Y, loc.Z);
-        acc += buf;
-    }
-    UE_LOGI("engine: DumpAllBonesWorldZ comp=%p (%d bones):\n%s", skelMeshComp, n, acc.c_str());
-}
-
 int CollectSkeletonBonePoints(void* skelMeshComp, std::vector<BonePoint>& out) {
     out.clear();
     if (!skelMeshComp || !ResolveBoneFns()) return 0;
     int32_t n = 0;
     { ParamFrame f(g_numBonesFn); if (Call(skelMeshComp, f)) n = f.Get<int32_t>(L"ReturnValue"); }
     if (n <= 0) return 0;
-    // Eviction valve (audit F2): ragdoll bodies churn per episode and entries are keyed by
-    // comp pointer -- clear the whole map past a small bound (next Collect rebuilds one graph;
-    // dead keys are never dereferenced, this only caps growth).
+    // Eviction valve: ragdoll bodies churn per episode and entries are keyed by comp pointer --
+    // clear the whole map past a small bound (the next Collect rebuilds one graph; dead keys are
+    // never dereferenced, this only caps growth).
     if (g_boneGraphs.size() > 32) g_boneGraphs.clear();
     BoneGraphCache& cache = g_boneGraphs[skelMeshComp];
     if (cache.n != n) {
