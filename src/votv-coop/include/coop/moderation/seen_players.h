@@ -1,21 +1,18 @@
-// coop/moderation/seen_players.h -- HOST-side persistent registry of every player this
-// host has ever seen: durable identity GUID (the v73 32-hex Join field) + last known
-// nick + last seen time + last known IP.
+// coop/moderation/seen_players.h -- HOST-side persistent registry of every player this host has
+// ever seen: the durable identity GUID from the Join packet, the last known nick, the last seen
+// time and the last known IP.
 //
-// Gameplay/network layer (principle 7). Feeds the F1 > Administration > Players panel
-// (Offline section: nick + last seen; Ban button needs the last IP -- the ban_list
-// enforcement key). MTA precedent: the admin resource's seen-players/ban bookkeeping
-// around CBanManager (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.cpp)
-// -- persistent identity records with nick + timestamps, file-backed.
+// Gameplay/network layer (principle 7). It feeds the F1 > Administration > Players panel -- the
+// offline section shows nick and last seen, and the Ban button needs the last IP, which is the
+// ban_list enforcement key. MTA's precedent is CBanManager
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.cpp): persistent, file-backed
+// identity records with nick and timestamps.
 //
-// Persistence: multivoid-players.txt next to the deployed DLL (the ban_list /
-// multivoid.ini convention) -- one record per line, `guid|nick|lastSeenUnix|ip`.
-// Only the HOST ever writes it (the touch points are host-role paths); each game
-// copy keeps its own file.
-//
-// Threading: the record map is mutex-guarded; GetSnapshot/FindByGuid are any-thread
-// (the F1 panel renders on the render thread). TouchOnJoin is GAME THREAD (it reads
-// player_handshake's game-thread-owned guid/nick strings).
+// Persistence is multivoid-players.txt next to the deployed DLL, the ban_list and multivoid.ini
+// convention, one record per line as `guid|nick|lastSeenUnix|ip`. Only the HOST writes it, every
+// touch point being a host-role path, and each game copy keeps its own file. The record map is
+// mutex-guarded: GetSnapshot and FindByGuid are any-thread, the F1 panel rendering on the render
+// thread, while TouchOnJoin is GAME THREAD because it reads player_handshake's game-thread strings.
 
 #pragma once
 
