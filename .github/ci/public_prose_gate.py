@@ -106,7 +106,23 @@ DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", 
 # name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
 LINE_MARKERS = collections.OrderedDict([
     ("cyrillic",     (CYRILLIC, "lines with Cyrillic")),
-    ("user",         (re.compile(r"\bUSER\b"), "lines quoting a decision as USER")),
+    # The same attribution in lower case. `\bUSER\b` reads three lines in the tree; "per the
+    # user", `user: "..."`, "the user-requested X", "a user report" and "user 2026-07-08" account
+    # for twenty-three more, in as many files nothing was measuring for it. One habit, one counter.
+    # The attribution has to be EXPLICIT, and the capitals alternative stays case-SENSITIVE: this
+    # tree writes about the person playing the game in the same word, so "the user types into a
+    # user widget as user 0" and "the user unchecked Custom nickname color" are correct prose, and
+    # a detector that flagged them would push a sweep to damage them.
+    ("user",         (re.compile(r"\bUSER\b"
+                                 r"|(?i:\bper (?:the )?user\b)"
+                                 r"|(?i:\buser'?s?\s*:\s*[\"\u00ab])"
+                                 r"|(?i:\buser-request(?:ed)?\b)"
+                                 r"|(?i:\buser'?s?\s+(?:ask|asks|asked|report|reports|reported"
+                                 r"|req|reqs|request|requests|requested|retest|retests|says|said"
+                                 r"|wants|wanted|picked|chose|choice|decision|rule|call|premise"
+                                 r"|verdict)\b)"
+                                 r"|(?i:\buser \d{4}-\d{2}-\d{2})"),
+                     "lines quoting a decision as USER")),
     ("verbatim",     (re.compile(r"\bverbatim\b", re.I), "lines saying verbatim")),
     ("qf",           (re.compile(r"(?<![\w/])/qf\b|\bqf\b(?!\.)"), "lines naming the /qf ritual")),
     ("agent",        (re.compile(r"\b(?:sub)?agents?\b", re.I), "lines naming an agent")),

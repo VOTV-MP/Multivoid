@@ -77,6 +77,13 @@ int t1() { return 0; } // WP-4 names a work package from a trailing comment
 int t2() { return 0; } // this one was settled by an audit nobody outside can read
 int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
 int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
+// one user attribution per line, so dropping any one of them turns this drill red
+// per the user, this row stays
+// user: "the words themselves, quoted"
+// the user-requested shape of the panel
+// a user report settled which of the two it was
+// user 2026-07-04 named the default
+// PRECISION: the user types into a user widget as user 0, and the user unchecked "Custom colour"
 const char* d = /* closes here */ "docs/nowhere.md";  // the string is CODE, not comment
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
@@ -189,6 +196,12 @@ MUTANTS = [
     ("evidence: drops [V]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:\\?|RD|A)\\]"'),
     ("evidence: drops [A]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|RD)\\]"'),
     ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
+    ("user: drops the per-the-user form", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r""'),
+    ("user: drops the quoted form", 'r"|(?i:\\buser\'?s?\\s*:\\s*[\\"\\u00ab])"', 'r""'),
+    ("user: drops the requested form", 'r"|(?i:\\buser-request(?:ed)?\\b)"', 'r""'),
+    ("user: drops the attribution nouns", 'r"|(?i:\\buser\'?s?\\s+(?:ask|asks|asked|report|reports|reported"', 'r"|(?i:\\bZZZZ\\b"'),
+    ("user: drops the dated attribution", 'r"|(?i:\\buser \\d{4}-\\d{2}-\\d{2})"', 'r""'),
+    ("user: any mention of the word", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r"|(?i:\\buser\\b)"'),
     ("label: drops the named families",
      'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
     ("label: increment needs its dash",
@@ -395,9 +408,9 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 70, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 77, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 3, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 3, "src.comment_dated": 3, "src.comment_user": 6, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
@@ -442,7 +455,7 @@ def main():
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
         ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:19",
-                                                                     "src/votv-coop/src/x.cpp:49"],
+                                                                     "src/votv-coop/src/x.cpp:56"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():
