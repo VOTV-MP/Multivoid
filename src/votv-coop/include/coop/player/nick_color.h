@@ -1,21 +1,18 @@
-// coop/nick_color.h -- per-player nickname COLOR pref (12f, 2026-07-05).
+// coop/player/nick_color.h -- the per-player nickname COLOR pref.
 //
-// Gameplay/network layer (principle 7). The COLOR AXIS has ONE owner: this
-// module ([[feedback-one-owner-order-axis]]). Every surface that draws a nick
-// (ImGui nameplate, chat feed nick prefix, scoreboard row) READS from here and
-// falls back to its OWN default when the slot has no custom color (nameplate =
-// white, chat = the per-slot palette, scoreboard = the role color). The wire
-// layer (player_handshake) parses Join/PlayerJoined/NickColorChange and stores
-// into this module -- exactly the coop::nameplate v94 visibility shape.
+// Gameplay/network layer (principle 7). The COLOR AXIS has ONE owner: this module. Every surface
+// that draws a nick -- ImGui nameplate, chat feed nick prefix, scoreboard row -- READS from here
+// and falls back to its OWN default when the slot has no custom colour (white, the per-slot
+// palette, the role colour). player_handshake parses Join, PlayerJoined and NickColorChange and
+// stores into this module.
 //
-// Packed form on both the wire and in the store: 0 = NO custom color (use the
-// surface default); custom = 0xFF000000 | (r<<16) | (g<<8) | b -- the 0xFF
-// marker byte keeps a pure-black custom pick (0xFF000000) distinct from the
-// "unset" 0.
+// Packed form on the wire and in the store: 0 = NO custom colour (use the surface default); custom
+// = 0xFF000000 | (r<<16) | (g<<8) | b, where the marker byte keeps a pure-black pick distinct from
+// the "unset" 0.
 //
-// The whole store is ATOMIC (any-thread): writers span the game thread (wire
-// handlers), the render thread (the F1 color picker request path) and the
-// bringup thread (session-start reset via player_handshake::Reset).
+// The whole store is ATOMIC (any-thread): writers span the game thread (wire handlers), the render
+// thread (the F1 colour picker) and the bringup thread (session-start reset via
+// player_handshake::Reset).
 
 #pragma once
 
@@ -43,11 +40,10 @@ inline uint8_t B(uint32_t p) { return static_cast<uint8_t>(p); }
 void SetInitialLocal(uint32_t packed);
 
 // Boot-time init from the RAW multivoid.ini nick_color= value (harness passes
-// ReadIniValue("nick_color", "unset")). v103 (12f) semantics: key ABSENT (a new
-// identity) = custom WHITE by default (user 2026-07-05); an explicitly EMPTY
-// value (the user unchecked "Custom nickname color") = the per-surface defaults
-// (chat palette / role colors); RRGGBB hex = that color. Owns the parse so the
-// harness boot glue stays parse-free (MODULARIZATION_PLAN Tier-C, s27).
+// ReadIniValue("nick_color", "unset")). Three cases: the key ABSENT, which is a new identity, means
+// custom WHITE; an explicitly EMPTY value, which is what unchecking the custom colour writes, means
+// the per-surface defaults (chat palette, role colours); and RRGGBB hex means that colour. This
+// owns the parse so the harness boot glue stays parse-free.
 void SetInitialLocalFromIniHex(const std::string& hex);
 
 // The local pref (0 = default). Any thread (atomic) -- the F1 picker reads it.
