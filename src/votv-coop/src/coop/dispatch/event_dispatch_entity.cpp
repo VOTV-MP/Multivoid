@@ -24,6 +24,7 @@
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced
 #include "coop/props/trash_pile_sync.h"
+#include "coop/items/hook_sync.h"  // grappling hook and rope visual sync
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -629,6 +630,19 @@ bool HandleEntityEvent(net::Session& session,
             void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
             ::coop::item_activate::ApplyToPuppetOrDefer(peerSlotCopy, puppetNow, pCopy);
         });
+        break;
+    }
+    case net::ReliableKind::HookSync: {
+        if (msg.payloadLen < sizeof(net::HookSyncPayload)) {
+            UE_LOGW("event_feed: HookSync payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::HookSyncPayload));
+            break;
+        }
+        net::HookSyncPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const uint8_t senderSlot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+            ? static_cast<uint8_t>(msg.senderPeerSlot) : 0xFF;
+        coop::hook_sync::OnHookSync(p, senderSlot);
         break;
     }
     default:

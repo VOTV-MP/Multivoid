@@ -636,6 +636,9 @@ enum class ReliableKind : uint8_t {
     // a group are host-owned world systems. A client's press still reaches the host as a LightState
     // edge. KeyedTogglePayload.
     LightGroupState = 129,
+
+    // Any peer, relayed: grappling hook or rope lifecycle and visual state. HookSyncPayload.
+    HookSync = 130,
 };
 
 #pragma pack(push, 1)
@@ -2386,6 +2389,43 @@ struct SnapshotEndPayload {
     uint32_t propSent;    // PropSpawn messages actually sent this drain (<= propTotal after skips)
 };
 static_assert(sizeof(SnapshotEndPayload) == 4, "SnapshotEndPayload must be exactly 4 bytes");
+
+// Grappling hook and rope synchronization (HookSync = 130).
+enum class HookSyncOp : uint8_t {
+    Spawn   = 0,
+    Update  = 1,
+    Destroy = 2,
+};
+
+enum class HookClassType : uint8_t {
+    Hook      = 0, // hook_C
+    Rope      = 1, // rope_C
+    HookChild = 2, // hook_Child_C
+    HookFlesh = 3, // hook_flesh_C
+};
+
+namespace HookFlag {
+inline constexpr uint8_t AttachedA    = 1 << 0;
+inline constexpr uint8_t AttachedB    = 1 << 1;
+inline constexpr uint8_t PlayerHooked = 1 << 2;
+inline constexpr uint8_t IsThrown     = 1 << 3;
+}  // namespace HookFlag
+
+struct HookSyncPayload {
+    uint8_t  op;          // HookSyncOp
+    uint8_t  ownerSlot;   // slot of the player who owns/spawned this hook
+    uint16_t hookNetId;   // local unique counter on owner
+    uint8_t  classType;   // HookClassType
+    uint8_t  flags;       // HookFlag bits
+    float    cableLength; // dist / cable length
+    float    posAx, posAy, posAz;
+    float    rotAPitch, rotAYaw, rotARoll;
+    float    posBx, posBy, posBz;
+    float    rotBPitch, rotBYaw, rotBRoll;
+};
+static_assert(sizeof(HookSyncPayload) == 58, "HookSyncPayload must be 58 bytes");
+static_assert(sizeof(HookSyncPayload) <= 256 - 20 - 8,
+              "HookSyncPayload must fit in one reliable datagram");
 
 #pragma pack(pop)
 

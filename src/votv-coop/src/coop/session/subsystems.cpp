@@ -79,6 +79,7 @@
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/items/coingun_sync.h"
+#include "coop/items/hook_sync.h"  // grappling hook and rope visual sync
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -153,6 +154,7 @@ void Install(coop::net::Session& session) {
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
+    coop::hook_sync::Install(&session);  // grappling hook and rope visual sync (any-peer, relayed)
     coop::firefly_sync::Install(&session);  // peer-symmetric ambient firefly mirror (each peer captures+shares its own)
     coop::event_cue_sync::Install(&session);  // host-authoritative cosmetic emitter-cue mirror: the host detects the emitter, the client replays
     coop::event_fire_sync::Install(&session);  // HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
@@ -316,6 +318,7 @@ void ConnectReplayForSlot(int slot) {
     // line. It lands retained on the joiner: arriving in a lobby must not replay a conversation
     // you were not in across your screen; it is there when you open the chat.
     coop::chat_sync::QueueConnectBroadcastForSlot(slot);
+    coop::hook_sync::QueueConnectReplayForSlot(slot);  // active hooks -> joiner
 }
 
 void ClientConnectEdge(coop::net::Session& session) {
@@ -400,6 +403,7 @@ DisconnectStats DisconnectAll() {
     coop::drone_sync::OnDisconnect();
     coop::order_sync::OnDisconnect();
     coop::coingun_sync::OnDisconnect();  // dump the lane summary + drop the sold-set, the barrier queue and the cached gun
+    coop::hook_sync::OnDisconnect();  // destroy all hook mirrors + clear local hook map
     coop::firefly_sync::OnDisconnect();
     coop::event_cue_sync::OnDisconnect();  // clear the cosmetic-cue poll snapshot
     coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop poll baseline/queues
@@ -534,6 +538,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // bracket (reads only; an engine call mid-bytecode corrupts) and destroyed here, one pump tick
     // later, where a dispatch is safe.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:coingun"}; coop::coingun_sync::Tick(); }
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // poll local hooks + update mirror actors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window"}; coop::window_sync::Tick(); }  // base-window clean: poll for wipes + deferred-apply retry (symmetric)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:grime"}; coop::grime_sync::Tick(); }  // surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:movement_ledger"}; coop::movement_ledger::Tick(session); }  // HOST: throttled per-slot summary + the wire-vs-actor divergence sample (an ENGINE read, hence game thread)

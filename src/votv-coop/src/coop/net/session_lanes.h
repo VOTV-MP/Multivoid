@@ -196,6 +196,7 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::ReelSlot:          // presser-authored
     case ReliableKind::MeadowAppend:      // presser-symmetric
     case ReliableKind::MeadowDelete:      // player-symmetric
+    case ReliableKind::HookSync:          // any-peer hook/rope visual state (owned + mirrored)
         return true;
     default:
         return false;

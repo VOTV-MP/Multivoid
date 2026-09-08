@@ -278,6 +278,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/core/trace.cpp
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
+    src/ue_wrap/actors/hook.cpp
     src/ue_wrap/engine/engine_pawn.cpp
     src/ue_wrap/engine/world_identity.cpp
     src/ue_wrap/engine/engine_nav.cpp
@@ -362,6 +363,7 @@ add_library(votv-coop SHARED
     src/coop/items/coingun_sync.cpp
     src/coop/items/coingun_arbiter.cpp
     src/coop/items/coingun_collect.cpp
+    src/coop/items/hook_sync.cpp
     src/coop/items/order_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp
@@ -790,5 +792,3 @@ if (MSVC)
     # FreeType (the imgui_freetype rasterizer) must match the static CRT too.
     set_property(TARGET freetype PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
-
-
