@@ -1,9 +1,7 @@
-// harness/autotest_puppetframe.cpp -- the puppet-frame nameplate CAPTURE RIG
-// (VOTVCOOP_RUN_PUPPET_FRAME, the mp.py puppetshot scenario): frame the slot-1
-// STANDING puppet up close for an autonomous nameplate screenshot. A capture
-// rig, not a vitals test (the s26 ledger flag). Extracted verbatim from
-// harness/autotest_vitals.cpp (2026-07-19 s27 dissolve); interfaces +
-// per-routine docs in harness/autotest.h.
+// harness/autotest/autotest_puppetframe.cpp -- the puppet-frame nameplate CAPTURE RIG
+// (VOTVCOOP_RUN_PUPPET_FRAME): frame the slot-1 STANDING puppet up close for an autonomous
+// nameplate screenshot. A capture rig, not a vitals test. Interfaces and per-routine docs in
+// harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -30,25 +28,20 @@ namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 namespace cfg = coop::config;
 
-// Bounded spin-wait on a game-thread task's completion flag. Returns true if
-// the task signalled (set the flag non-zero), false if it never completed
-// within timeoutMs -- which would mean the posted task faulted (the SEH
-// firewall ate the AV and the flag was never set). A bound is mandatory:
-// driving ragdollMode on the local player COULD fault and an unbounded wait
-// would hang the whole smoke.
+// Bounded spin-wait on a game-thread task's completion flag. Returns true if the task signalled,
+// false if it never completed within timeoutMs -- which means the task faulted and the SEH firewall
+// ate the access violation before the flag was set. The bound is mandatory: these tasks move the
+// local player, aim its controller and destroy actors, so an unbounded wait on a faulted one would
+// hang the whole run.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// ---- Puppet-frame nameplate shot (PROPER, non-ragdoll capture) ----------------
-// Frame the slot-1 STANDING puppet for an autonomous nameplate screenshot
-// (mp.py puppetshot): stand the host a few metres back + aim the camera at the
-// puppet's HEAD so the whole body AND the ImGui "Client" nameplate sit IN frame.
-// No ragdoll, no motion -- the antithesis of the ragdoll-shot crutch (which flopped
-// the puppet + aimed down at the body so the head fell past the top edge). `reposition`
-// is true only on the FIRST call (move the host back once); later calls re-aim only,
-// so the host isn't teleported every tick.
+// Puppet-frame nameplate shot: a proper, non-ragdoll capture. Frame the slot-1 STANDING puppet --
+// stand the host a few metres back and aim the camera at the puppet's HEAD, so the whole body AND
+// the ImGui nameplate sit IN frame. `reposition` is true only on the FIRST call (move the host back
+// once); later calls re-aim only, so the host is not teleported every tick.
 void FramePuppetForNameplate(bool reposition) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done, reposition] {
@@ -65,8 +58,8 @@ void FramePuppetForNameplate(bool reposition) {
         const ue_wrap::FVector pm = (mesh && R::IsLive(mesh)) ? E::GetComponentLocation(mesh) : pa;
         ue_wrap::FVector eye = E::GetActorLocation(local);
         if (reposition) {
-            // Stand ~220 u back from the puppet (CLOSE, per user) at the HOST's OWN
-            // floor Z (eye.Z); back direction from the current horizontal offset.
+            // Stand ~220 cm back from the puppet, close in, at the HOST's OWN floor Z (eye.Z); the
+            // back direction comes from the current horizontal offset.
             float bx = eye.X - pa.X, by = eye.Y - pa.Y;
             const float len = std::sqrt(bx * bx + by * by);
             if (len < 1.f) { bx = 1.f; by = 0.f; } else { bx /= len; by /= len; }
@@ -74,8 +67,8 @@ void FramePuppetForNameplate(bool reposition) {
             E::SetActorLocation(local, dst);
             eye = dst;
         }
-        // Aim above the mesh centre (+110 cm, ~the head) so the head sits mid-frame
-        // and the nameplate (anchor = head + 30 cm) tucks right over it, in view.
+        // Aim above the mesh centre (+110 cm, about the head) so the head sits mid-frame and the
+        // nameplate -- which floats ~33 cm above the head bone -- tucks right over it, in view.
         const float dx = pm.X - eye.X, dy = pm.Y - eye.Y, dz = (pm.Z + 110.f) - (eye.Z + 60.f);
         const float horiz = std::sqrt(dx * dx + dy * dy);
         const float yaw = std::atan2(dy, dx) * 57.29578f;
@@ -89,10 +82,10 @@ void FramePuppetForNameplate(bool reposition) {
     WaitDone(done, 8000);
 }
 
-// Destroy EVERY kerfurOmega NPC in the world (the save parks 2 at the spawn, which
-// clutter/occlude the puppet) so the nameplate shot is clean -- per the user. A
-// GUObjectArray walk by class-name substring; K2_DestroyActor each. Test-only (the
-// process is killed right after the capture). Game thread, one-shot.
+// Destroy EVERY kerfurOmega NPC in the world: the ones parked near the spawn clutter and occlude
+// the puppet, and the nameplate shot has to be clean. A GUObjectArray walk by class-name substring,
+// K2_DestroyActor each. Test-only -- the process is killed right after the capture. Game thread,
+// one-shot.
 void DestroyAllKerfurs() {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done] {
@@ -120,15 +113,14 @@ void DestroyAllKerfurs() {
     WaitDone(done, 8000);
 }
 
-// HOST: wait for the slot-1 puppet to spawn + settle, REMOVE the kerfur NPCs, then
-// frame the puppet UP CLOSE every tick (reposition ~220u back + aim at the head) and
-// HOLD. No ragdoll.
+// HOST: wait for the slot-1 puppet to spawn and settle, REMOVE the kerfur NPCs, then frame the
+// puppet UP CLOSE every tick (reposition ~220 cm back, aim at the head) and HOLD. No ragdoll.
 void FrameStandingPuppetOnHost() {
     UE_LOGI("puppet-frame[host]: waiting for the slot-1 puppet to spawn...");
     bool announced = false;
     bool cleared = false;
     int settle = 0;
-    for (int attempt = 0; attempt < 600; ++attempt) {  // ~300 s cap; mp.py kills after the shot
+    for (int attempt = 0; attempt < 600; ++attempt) {  // ~300 s cap; the harness kills the process after the shot
         auto done = std::make_shared<std::atomic<int>>(0);
         auto v = std::make_shared<bool>(false);
         GT::Post([done, v] { *v = coop::puppet_drive::Puppet(1).valid(); done->store(1); });
