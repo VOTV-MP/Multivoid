@@ -51,17 +51,20 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     // intact, a kilobyte or so long. A joiner handed that keeps its own world, and the two then
     // disagree on every door and vehicle.
     void* gm = nullptr;
-    void* unscoped = nullptr;
     void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
     for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {
-        void* const candWorld = ::ue_wrap::world_identity::WorldOf(cand);
-        if (nowWorld && candWorld == nowWorld) { gm = cand; break; }
-        // A null stamp means "not world-scoped" and is not a rejection (the same rule
-        // CachedObjRef applies), but it is the weaker answer, so it is only held until some
-        // candidate names this world outright. A stamp naming a DIFFERENT world is a rejection.
-        if ((!nowWorld || !candWorld) && !unscoped) unscoped = cand;
+        // With no current world there is nothing to judge against -- boot, mid-travel, or a
+        // recook that broke the world lookup, in which case WorldOf answers null for everything
+        // too -- so take the first candidate, which is what an unfiltered scan would return.
+        if (!nowWorld) { gm = cand; break; }
+        // Otherwise the stamp must name THIS world. A null stamp is a rejection here, not a
+        // shrug: elsewhere null means "not world-scoped", but that answer belongs to classes,
+        // CDOs and assets, whose outer chain reaches a package. A gamemode INSTANCE is outered
+        // to its level in one hop, so the only way it stamps null is that the level's owning
+        // world has already been nulled -- which names a torn-down world, the very thing being
+        // excluded.
+        if (::ue_wrap::world_identity::WorldOf(cand) == nowWorld) { gm = cand; break; }
     }
-    if (!gm) gm = unscoped;
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     if (!gm || !gmCls) {
         UE_LOGW("save_capture: no mainGamemode belonging to the CURRENT world -- refusing to "
