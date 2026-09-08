@@ -1,17 +1,13 @@
 // coop/dev/spawn_npc.h -- DEV/TEST: spawn a kerfurOmega NPC on demand.
 //
-// Gameplay/dev layer. The ONLY programmatic NPC-spawn trigger in the mod --
-// VOTV NPCs spawn only from in-game purchase / scripted events, so without this
-// the NPC-sync paths (host AllocAndInstall + broadcast, client mirror Install)
-// have no autonomous-test coverage. Two triggers:
-//   * the ImGui dev menu (Content > Entities > "Spawn kerfurOmega") -- hands-on.
-//     The legacy F7 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-
-//     in-imgui-menu]]).
-//   * a trigger FILE named by env VOTVCOOP_SPAWN_TRIGGER -- when the file
-//     appears it spawns once + deletes it. mp.py's npctest creates the file
-//     AFTER all peers connect, so the broadcast reaches every client (NPC
-//     EntitySpawn is not part of the connect-edge replay).
-// The actual spawn is npc_sync::DevSpawnNpcInFront, run on the game thread.
+// Gameplay/dev layer. The ONLY programmatic NPC-spawn trigger in the mod -- VOTV NPCs spawn only
+// from in-game purchase or scripted events, so without this the NPC-sync paths (host
+// AllocAndInstall + broadcast, client mirror Install) have no autonomous-test coverage. Two
+// triggers: the ImGui dev menu (Content > Entities > "Spawn kerfurOmega"), for hands-on use; and a
+// trigger FILE named by env VOTVCOOP_SPAWN_TRIGGER, which spawns once and deletes itself when it
+// appears. A test harness creates that file AFTER all peers connect, because NPC EntitySpawn is not
+// part of the connect-edge replay. The actual spawn is npc_sync::DevSpawnNpcInFront, run on the
+// game thread.
 
 #pragma once
 
@@ -35,19 +31,18 @@ void SpawnKerfurOmega();
 void SpawnKillerWisp();
 void SpawnVentCrawler();
 
-// v108 OWNER-ENTITY lane test (F1 > Content > Entities): spawn an eyer_C in
-// front of the local player. eyer is NOT npc-allowlisted by design -- the
-// owner_entity_sync BeginDeferred observer catches it as a LOCALLY-OWNED
-// entity and announces it, so every peer materializes a brain-parked,
-// collision-off display mirror. Host-only trigger (dev_gate); the client-owned
-// direction is exercised by the native ticker roll.
+// OWNER-ENTITY lane test (F1 > Content > Entities): spawn an eyer_C in front of the local player.
+// eyer is NOT npc-allowlisted by design -- the owner_entity_sync BeginDeferred observer catches it
+// as a LOCALLY-OWNED entity and announces it, so every peer materializes a brain-parked,
+// collision-off display mirror. Host-only trigger (dev_gate); the client-owned direction is
+// exercised by the native ticker roll.
 void SpawnEyer();
 
-// v72 Killer Wisp cross-peer-kill TEST: spawn a killerwisp ON the first connected client
-// puppet, so it acquires that PUPPET as its Target and exercises the host-detect ->
-// neutralize -> WispGrab/WispTear -> client ragdoll-death + tear path (the wisp normally
-// grabs whoever is nearest = the host). Host-only (dev_gate); no-op if no client is
-// connected. Safe off the game thread (posted to it).
+// Killer Wisp cross-peer-kill TEST: spawn a killerwisp ON the first connected client puppet, so it
+// acquires that PUPPET as its Target and exercises the host-detect -> neutralize ->
+// WispGrab/WispTear -> client ragdoll-death + tear path (the wisp normally grabs whoever is
+// nearest, which is the host). Host-only (dev_gate); no-op if no client is connected. Safe off the
+// game thread (posted to it).
 void SpawnKillerWispOnClient();
 
 }  // namespace coop::dev::spawn_npc
