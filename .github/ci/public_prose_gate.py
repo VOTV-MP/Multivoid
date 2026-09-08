@@ -143,7 +143,8 @@ SRC_EXTRA = collections.OrderedDict([
     # the fact.
     ("evidence", (re.compile(r"\[(?:V|\?|RD|A)\]"), "comment lines carrying an evidence tag")),
     # The same citation without the word: a work item, a review finding or a register row named
-    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `take-9`, `WP-2`, `s28 cut`, `K-5`, `R-2`
+    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `Inc3`, `take-9`, `WP-2`, `s28 cut`, `K-5`,
+    # `R-2`
     # all name a document outside the tree, and the security register is deliberately
     # unpublished, so those rows name something a reader is not meant to have. The named
     # families are exact; the one-letter form counts only where it OPENS the comment or carries
@@ -155,7 +156,7 @@ SRC_EXTRA = collections.OrderedDict([
     # a word character, a slash or a dot, so `IPv4`, a path and a decimal are left alone.
     ("label", (re.compile(r"\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\d+\b"
                           r"|\bsecurity\s+[A-Z]\d+\b|\bA\d\d/A\d\d\b"
-                          r"|\bInc-\d+[a-z]?\b|\bINCREMENT\s+\d+[a-z]?\b"
+                          r"|\bInc-?\d+[a-z]?\b|\bINCREMENT\s+\d+[a-z]?\b"
                           r"|\btake-\d+\b|\bWP-?\d+\b|\bs\d\d cut\b|\bfinding \d+\b"
                           r"|(?<![\w/.])v\d{2,3}\b"
                           r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),

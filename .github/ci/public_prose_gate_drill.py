@@ -54,6 +54,7 @@ int calledOnce() { return 0; }
 // CRIT-1 names a review finding
 // security A34 names a row of a register that is not published
 // Inc-2 names a build increment
+// Inc3 names the same increment with the dash left out
 // take-9 names an attempt
 // WP-2 names a work package
 // the s28 cut named a session
@@ -190,6 +191,8 @@ MUTANTS = [
     ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
     ("label: drops the named families",
      'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
+    ("label: increment needs its dash",
+     'r"|\\bInc-?\\d+[a-z]?\\b', 'r"|\\bInc-\\d+[a-z]?\\b'),
     ("label: drops the one-letter form",
      'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r""'),
     ("label: one-letter form unanchored",
@@ -392,14 +395,14 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 69, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 70, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 2, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 3, "src.comment_dated": 2, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 12}
+              "src.comment_label": 13}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to
@@ -438,7 +441,8 @@ def main():
     # A count says the explainer is not silent; only the NUMBER says it points at the right line.
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
-        ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:48"],
+        ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:19",
+                                                                     "src/votv-coop/src/x.cpp:49"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():
