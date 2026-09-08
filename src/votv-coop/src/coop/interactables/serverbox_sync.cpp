@@ -1,14 +1,15 @@
 // coop/interactables/serverbox_sync.cpp -- see coop/interactables/serverbox_sync.h.
 //
-// Measured ground truth (RE 2026-07-09, research/findings/world-systems/votv-notifications-suppress-mirror-DESIGN-2026-07-09.md):
-//   M1: breakServer/fix/break_type are EX_LocalVirtualFunction -> invisible to BOTH our seams -> we can
-//       NOT intercept the verb; we mirror STATE + drive the box's own check() ourselves (reflected).
-//   M2: serverBox_C.check() re-skins PURELY from the raw IsBroken bool (reads it, drives SetMaterial/
-//       SetActive) -- notify-free (no delegate/minigame), unlike the verbs. So raw-write IsBroken +
-//       reflected check() = a clean host-authoritative apply.
-//   Offsets (shipped CXXHeaderDump, resolved-by-name here + logged to verify): serverBox.IsBroken@0x378;
-//       mainGamemode.servers@0x3F0 (TArray<serverBox*>), serverEfficiency_calc@0x400/_downl@0x404,
-//       brokenServers@0x8A0.
+// The verbs cannot be intercepted: breakServer, fix and break_type are dispatched as
+// EX_LocalVirtualFunction, which the ProcessEvent detour and the native seam never see and the
+// bytecode seam can only observe. So we mirror STATE and drive the box's own check() ourselves.
+//
+// check() is notify-free -- no delegate, no minigame, unlike the verbs -- and re-skins from
+// isBroken, resisnant, active and calc. It returns without touching anything until it has cached a
+// gamemode; while the glow effect is recently rendered it retargets only that effect's particle;
+// otherwise it sets the body material, which is the OFF instance unless active && calc. So a raw
+// IsBroken write plus a reflected check() applies the break state host-authoritatively, and the
+// other three fields stay each peer's own.
 
 #include "coop/interactables/serverbox_sync.h"
 
@@ -40,7 +41,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 constexpr int      kMaxServers    = 64;    // the isBrokenMask width; VOTV has a handful
 constexpr long long kPollIntervalMs = 1000;
 
-// ---- resolution (lazy, 2 s retry, capped LOUD latch -- the alarm_sync/event_active pattern) --------
+// Resolution: lazy, retried every 2 s, and latched after a capped number of passes with a loud
+// warning (the alarm_sync / event_active pattern).
 void*   g_gmCls = nullptr;        // mainGamemode_C
 int32_t g_offServers  = -1;       // TArray<serverBox_C*>
 int32_t g_offBroken   = -1;       // int32 brokenServers
@@ -124,7 +126,7 @@ bool ReadIsBroken(void* sb) {
 }
 
 void WriteIsBroken(void* sb, bool broken) {
-    if (!sb || g_offIsBroken < 0) return;   // symmetric with ReadIsBroken (audit LOW-2)
+    if (!sb || g_offIsBroken < 0) return;   // symmetric with ReadIsBroken
     uint8_t* p = reinterpret_cast<uint8_t*>(sb) + g_offIsBroken;
     if (broken) *p |= g_maskIsBroken;
     else        *p &= static_cast<uint8_t>(~g_maskIsBroken);
@@ -172,9 +174,9 @@ long long NowMs() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-// Break/fix mask + brokenServers are the primary edge; efficiency is ALSO in the payload and CAN vary
-// off a break/fix edge (a download ramps serverEfficiency_downl), so include it with a small epsilon so
-// the client's SAT-console sv.*/tw.* reads stay fresh (audit MEDIUM-2). Bounded by the 1 Hz poll.
+// Break/fix mask + brokenServers are the primary edge; efficiency is ALSO in the payload and CAN
+// vary off a break/fix edge (a download ramps serverEfficiency_downl), so include it with a small
+// epsilon and the client's SAT-console sv.*/tw.* reads stay fresh. Bounded by the 1 Hz poll.
 bool StateChanged(const coop::net::ServerStatePayload& p) {
     return p.isBrokenMask != g_lastMask || p.brokenServers != g_lastBroken ||
            std::fabs(p.effCalc  - g_lastEffCalc)  > 0.005f ||
@@ -204,7 +206,7 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
         const bool desired = (p.isBrokenMask >> i) & 1ull;
         if (ReadIsBroken(sb) == desired) continue;   // already matches -> no re-skin
         WriteIsBroken(sb, desired);
-        ue_wrap::ParamFrame frame(g_checkFn);         // check() re-skins from the raw IsBroken (M2)
+        ue_wrap::ParamFrame frame(g_checkFn);         // re-skins from the raw IsBroken, notify-free
         if (frame.valid()) ue_wrap::Call(sb, frame);
         ++applied;
     }
@@ -213,11 +215,12 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
                 p.brokenServers, p.isBrokenMask, applied);
 }
 
-// ---- client breaker-kill: neutralize the local ticker_serverBreaker (disable its actor tick, the
-// autonomous false-break source). One-shot latch on the first successful kill (idempotent). NOTE (audit
-// LOW-1): there is NO re-arm -- a breaker respawned after the latch ticks autonomously until the next
-// host mirror overwrites its break; a world with NO breaker instance re-walks at 1 Hz until one exists
-// (alarm_sync-parity; in practice a breaker exists whenever servers do -> latches in 1-2 ticks). ------
+// client breaker-kill: neutralize the local ticker_serverBreaker (disable its actor tick, the
+// autonomous false-break source). One-shot latch on the first successful kill (idempotent). There
+// is NO re-arm -- a breaker respawned after the latch ticks autonomously until the next host mirror
+// overwrites its break; a world with NO breaker instance re-walks at 1 Hz until one exists
+// (alarm_sync-parity; in practice a breaker exists whenever servers do, so it latches within a tick
+// or two).
 bool g_breakerKilled = false;
 
 void KillLocalBreaker() {
@@ -322,12 +325,12 @@ void OnDisconnect() {
     g_gm = nullptr; g_gmIdx = -1;
     g_polledGm = nullptr; g_primed = false;
     g_lastMask = 0; g_lastBroken = 0; g_lastPollMs = 0;
-    // Restore the neutralized breaker (audit 2026-07-10 HIGH): KillLocalBreaker disabled the actor tick;
-    // resetting only the latch left servers permanently unbreakable in the SAME process after the session
-    // (solo play / re-host) -- the event_fire_sync restore precedent ("local scheduler resumes") applies
-    // here identically. The fanout runs on the game thread (net_pump teardown; wisp_grab_hold dispatches
-    // UFunctions from the same fanout). Re-walk rather than a stored pointer: restoring EVERY live breaker
-    // instance is idempotent and also covers a breaker respawned after the kill.
+    // Restore the neutralized breaker: KillLocalBreaker disabled the actor tick, and resetting only
+    // the latch left servers permanently unbreakable in the SAME process after the session (solo
+    // play, or re-hosting) -- the event_fire_sync restore precedent applies here identically. The
+    // fanout runs on the game thread (net_pump teardown; wisp_grab_hold dispatches UFunctions from
+    // the same fanout). Re-walk rather than a stored pointer: restoring EVERY live breaker instance
+    // is idempotent and also covers a breaker respawned after the kill.
     if (g_breakerKilled && GT::IsGameThread()) {
         int restored = 0;
         for (void* obj : R::FindObjectsByClass(L"ticker_serverBreaker_C")) {

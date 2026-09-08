@@ -1,29 +1,18 @@
-// coop/interactables/serverbox_sync.h -- the signal-SERVER simulation as host-authoritative shared-world state.
+// coop/interactables/serverbox_sync.h -- the signal-SERVER simulation as host-authoritative
+// shared-world state.
 //
-// PROBLEM (RE 2026-07-09, docs/notifications/ + research/findings/world-systems/votv-notifications-suppress-mirror-DESIGN-2026-07-09.md):
-// VOTV's signal-server sim -- mainGamemode.{servers, brokenServers, serverEfficiency_calc/downl} +
-// per-serverBox_C.IsBroken, broken/fixed by the host-only ticker_serverBreaker -- is NOT UE-replicated.
-// Each coop peer runs its OWN gamemode + ticker, so a client self-computes DIVERGED server state and
-// self-authors a FALSE "SERVER X is down" (email + console line + the serverDown alarm). The break/fix
-// VERBS (breakServer/fix/break_type) are ALL EX_LocalVirtualFunction -> invisible to BOTH our
-// ProcessEvent detour AND the UFunction::Func patch (M1 measured), so we cannot intercept the verb.
+// The sim -- mainGamemode.{servers, brokenServers, serverEfficiency_calc/downl} and
+// per-serverBox_C.IsBroken, driven by ticker_serverBreaker -- is not replicated, and each peer runs
+// its own gamemode and ticker, so a client diverges and authors a false "SERVER X is down". The
+// break/fix verbs dispatch as EX_LocalVirtualFunction, invisible to both our function seams, so we
+// mirror state instead of intercepting the verb.
 //
-// FIX (Inc-1, host-authoritative one-directional, the alarm_sync shape):
-//   - HOST polls its server state each ~1 Hz and broadcasts ServerStatePayload on any change.
-//   - CLIENT DRIVE-REALs it: raw-write each serverBox.IsBroken (offset from the CXX header dump) then
-//     dispatch the box's own check() via reflected CallFunction -- check() re-skins purely from IsBroken
-//     (M2 measured: reads IsBroken -> SetMaterial/SetActive; it is notify-free, unlike the verbs which
-//     entangle the delegate + minigame + counter + the Server Alert email). Mirrors brokenServers +
-//     serverEfficiency onto the client gamemode too (so the SAT-console sv.*/tw.* queries read TRUE).
-//   - CLIENT neutralizes its OWN ticker_serverBreaker (disable actor tick) -- the primary autonomous
-//     false-break source (the census's path #1); the world-load/event/minigame residual break paths are
-//     OVERWRITTEN by the next host mirror (state converges), and their transient false NOTICE is Inc-2's
-//     job (forward the host break EDGE + suppress the client edge). Client never SENDS server state.
-// Identity: the save-stable servers[] ARRAY INDEX (both peers load the same host save in order) ->
-// isBrokenMask bit i == servers[i].IsBroken. Late join: host sends the current state at world-ready.
-//
-// [[feedback-folder-per-domain-concept-rule]] [[lesson-script-fn-invisible-to-func-patch]]
-// [[lesson-tracking-gates-on-hosting-not-connected]]
+// Host-authoritative and one-directional, the alarm_sync shape: the host polls at ~1 Hz and
+// broadcasts ServerStatePayload on a change; the client raw-writes each IsBroken (resolved by name
+// at runtime), dispatches the box's notify-free check(), mirrors brokenServers and serverEfficiency
+// so its SAT-console reads the host's numbers, neutralizes its own ticker_serverBreaker, and never
+// sends server state. Identity is the save-stable servers[] array index: isBrokenMask bit i is
+// servers[i].IsBroken, and a joiner is sent the current state at world-ready.
 
 #pragma once
 
@@ -48,7 +37,9 @@ void QueueConnectBroadcastForSlot(int slot);
 // aggregate mirror); a non-host sender is dropped (host-authoritative one-directional).
 void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot);
 
-// Teardown: drop cached class/offsets/instances + baseline, clear the session.
+// Teardown: drop the cached gamemode and poll baseline, re-enable the neutralized
+// ticker_serverBreaker, and clear the session. The resolved class, offsets and check() pointer are
+// kept: they outlive a session.
 void OnDisconnect();
 
 }  // namespace coop::serverbox_sync
