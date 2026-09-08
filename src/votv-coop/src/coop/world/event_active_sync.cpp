@@ -1,13 +1,17 @@
 // coop/world/event_active_sync.cpp -- see coop/world/event_active_sync.h.
 //
-// Bytecode ground truth (verified 2026-07-04, votv-active-events-registry-RE-2026-07-04.md):
-//   - lib_C::setEvent(ctx, active, ambient): active=true -> gamemode.activeEvents += 1 +
-//     Array_Add(activeEvents_senders, ctx); active=false -> -= 1 + Array_RemoveItem + clamp>=0.
-//     The sender registers ITSELF (its __WorldContext) -- ClassOf(sender) names the event class.
-//   - lib_C::getEvent = activeEvents > 0 OR outside-base-box (the native no-save-during-event
-//     gate reads this; SP does not even pause mid-event).
-//   - ~95 classes call setEvent (census in the RE finding) -- creature controllers, story events,
-//     pranks, ambience. A handful can be active simultaneously (refcount, not a bool).
+// Bytecode ground truth, from the blueprint:
+//   - lib_C::setEvent(isEventActive, deactivateAmbientTrack, __WorldContext) -- the context
+//     is the LAST parameter. Active adds 1 to gamemode.activeEvents and appends the context
+//     to activeEvents_senders; inactive subtracts 1, removes the context, and clamps a
+//     negative count back to 0. The sender registers ITSELF, so ClassOf(sender) names the
+//     event class.
+//   - lib_C::getEvent is `activeEvents > 0` OR the player camera being outside the base box.
+//     The native no-save-during-event gate reads it; single player does not even pause
+//     mid-event.
+//   - Around ninety-five classes call setEvent: creature controllers, story events, pranks,
+//     ambience. Several can be active at once, which is why the game keeps a refcount rather
+//     than a bool.
 
 #include "coop/world/event_active_sync.h"
 
@@ -116,40 +120,40 @@ long long NowMs() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-// ---- the class->row map (Phase 1; Phase 2 completes the ~95 census) ---------------------------
-// ClassOf(sender) is the event's IMPLEMENTATION class, not the list_events row the replay policy
-// is keyed by (registry RE section 4). Every entry's class->row link is RE-verified from the
-// runEvent case table (votv-event-system-RE-2026-06-13.md section 10 "concrete class" column) or
-// proven live; a WRONG entry replays the wrong event, a MISSING one logs LOUD on the receiver and
-// feeds the Phase 2 fill -- so this map only carries verified links, never guesses. Classes that
-// register but map to no scheduled row (sub-chains like trigger_alarm_C, weather senders, creature
-// controllers spawned BY events) stay unmapped by design: their state rides lanes, not replay.
+// ---- the class->row map ------------------------------------------------------------------
+// ClassOf(sender) is the event's IMPLEMENTATION class, not the list_events row the replay
+// policy is keyed by. Every entry's class-to-row link is verified, from the runEvent case
+// table or live: a WRONG entry replays the wrong event, and a MISSING one logs LOUD on the
+// receiver and names the class to add -- so this map carries only verified links, never
+// guesses. Classes that register but map to no scheduled row (sub-chains like
+// trigger_alarm_C, weather senders, creature controllers spawned BY events) stay unmapped by
+// design: their state rides their own lanes, not replay.
 struct ClassRow { const char* className; const char* rowName; };
 const ClassRow kClassRowMap[] = {
-    { "obelisk_C", "obelisk" },                          // [V 2026-07-04 21:38 forced-obelisk probe]
-    { "piramid2_C", "piramid" },                         // [V 2026-07-04 23:19 piramid lane e2e]
-    { "trigger_solarBoom_C", "solar" },                  // RE sec 10 #2
-    { "trigger_vehtp_C", "vehtp" },                      // #4
-    { "trigger_agrav_C", "agrav" },                      // #5
-    { "trigger_bigmRoar_C", "call0" },                   // #7
-    { "trigger_wispSwarm_C", "wisps" },                  // #12
-    { "trigger_spawnFollowingArir_C", "arirFollower" },  // #13
-    { "trigger_arirEgg_C", "arirEgg" },                  // #14
-    { "trigger_bedEvent_C", "bedEvent" },                // #35
-    { "tentacleBallsFollower_C", "tentacleBalls" },      // #41
-    { "soltomiaCleaning_C", "soltoClean" },              // #47
-    { "morningUfo_C", "morningGay" },                    // #48
-    { "rozitBorg_C", "borgRozital" },                    // #49
-    { "event_bottomHoleController_C", "rozitalHole" },   // #50
-    { "ventCrawler_C", "ventCrawler" },                  // #51
-    { "kocker_C", "ventKnocker" },                       // #52
-    { "grayEventController_C", "graysforest" },          // #58
-    { "arirBusterSpawner_C", "arirBuster" },             // #60
-    { "saltpile_C", "salt" },                            // #61
-    { "superEgger_C", "eggvasion" },                     // #62
-    { "boarInvasion_C", "boarwar" },                     // #63
-    { "dreamer_dreambase_C", "dreambase" },              // #64
-    { "arirShip_C", "arirShip" },                        // #65
+    { "obelisk_C", "obelisk" },                         // proven live
+    { "piramid2_C", "piramid" },                        // proven live
+    { "trigger_solarBoom_C", "solar" },
+    { "trigger_vehtp_C", "vehtp" },
+    { "trigger_agrav_C", "agrav" },
+    { "trigger_bigmRoar_C", "call0" },
+    { "trigger_wispSwarm_C", "wisps" },
+    { "trigger_spawnFollowingArir_C", "arirFollower" },
+    { "trigger_arirEgg_C", "arirEgg" },
+    { "trigger_bedEvent_C", "bedEvent" },
+    { "tentacleBallsFollower_C", "tentacleBalls" },
+    { "soltomiaCleaning_C", "soltoClean" },
+    { "morningUfo_C", "morningGay" },
+    { "rozitBorg_C", "borgRozital" },
+    { "event_bottomHoleController_C", "rozitalHole" },
+    { "ventCrawler_C", "ventCrawler" },
+    { "kocker_C", "ventKnocker" },
+    { "grayEventController_C", "graysforest" },
+    { "arirBusterSpawner_C", "arirBuster" },
+    { "saltpile_C", "salt" },
+    { "superEgger_C", "eggvasion" },
+    { "boarInvasion_C", "boarwar" },
+    { "dreamer_dreambase_C", "dreambase" },
+    { "arirShip_C", "arirShip" },
 };
 
 const char* RowForClass(const std::string& className) {
@@ -158,12 +162,12 @@ const char* RowForClass(const std::string& className) {
     return nullptr;
 }
 
-// Registrants whose state a dedicated LANE snapshots at the same join edge -- the EventSnapshot
-// for them would only ship an unmapped-row WARN to every joiner. Skipped with an INFO so the
-// WARN stays meaningful as the Phase-2b fill signal for genuinely uncovered classes.
+// Registrants whose state a dedicated LANE snapshots at the same join edge. An EventSnapshot
+// for them would only ship an unmapped-row WARN to every joiner, so they are skipped with an
+// INFO and the WARN stays meaningful for genuinely uncovered classes.
 struct LaneOwned { const char* className; const char* lane; };
 const LaneOwned kLaneOwnedClasses[] = {
-    { "trigger_alarm_C", "alarm_sync" },  // v101 -- docs/events/alarm.md (state + join answer)
+    { "trigger_alarm_C", "alarm_sync" },
 };
 const char* LaneFor(const std::string& className) {
     for (const auto& e : kLaneOwnedClasses)
@@ -293,7 +297,7 @@ void OnReliable(const coop::net::EventSnapshotPayload& payload) {
         return;
     }
     if (row[0] == '\0') {
-        // The Phase 2 fill signal: this exact line names the class the map is missing.
+        // The fill signal: this exact line names the class the map is missing.
         UE_LOGW("event_active: in-flight event class=%s elapsed=%us has NO class->row map entry "
                 "-- skipped (add it to kClassRowMap; lanes still deliver lane-owned state)",
                 cls, static_cast<unsigned>(payload.elapsedSec));
