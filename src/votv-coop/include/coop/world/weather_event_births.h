@@ -1,27 +1,18 @@
 // coop/weather_event_births.h -- the weather-event BIRTH seam.
 //
-// daynightCycle rolls its weather events on the settime NEW-HOUR edge -- red sky at
-// hour 12 on a 1% roll, black fog on a 0.05% roll, and rolling fog behind its own
-// enable_fog gate on fogProbability -- and calls gamemode.spawnRedSky /
-// spawnBlackFog / cycle.spawnFog through EX_Context and EX_LocalVirtualFunction,
-// which is PE-INVISIBLE dispatch (the docs/COOP_DISPATCH_VISIBILITY.md class).
-// EVERY peer runs those rolls, so a client can sprout its OWN red sky, black fog
-// or rolling fog that the host never had -- one peer blood-red, the other clear.
-// The PE PRE interceptor weather_fog registers on spawnFog never sees
-// this caller, and red sky had no client suppression at all.
+// daynightCycle rolls its weather events on the settime NEW-HOUR edge -- red sky at hour 12 on a 1%
+// roll, black fog on a 0.05% roll, rolling fog behind its own enable_fog gate on fogProbability --
+// and calls gamemode.spawnRedSky, spawnBlackFog and cycle.spawnFog through EX_Context and
+// EX_LocalVirtualFunction, which no ProcessEvent hook sees. EVERY peer runs those rolls, so a
+// client can sprout its OWN red sky, black fog or rolling fog the host never had. weather_fog's PRE
+// interceptor on spawnFog never sees this caller, and red sky had no client suppression at all.
 //
-// The verbs' BODIES are plain BP SpawnActor chains -> they ALL funnel through
-// GameplayStatics::FinishSpawningActor, where our Func-patch POST hook chain
-// already lives (host_spawn_watcher, prop_drop_intent). This module adds one
-// more consumer: on a CLIENT, an UNCOMMANDED birth of one of the three weather
-// event classes (redSkyEvent_C / weatherFogController_C / blackFog_C) is
-// destroyed at birth -- the client-side producer is the suppressed side
-// (COOP_SYNCER_MODEL par.2b), and the wire-commanded mirror births pass via each
-// lane's echo flag. Host births are untouched (the host lanes' field polls
-// broadcast them).
-//
-// Class match is FName-index compare (int compares; no per-spawn allocation);
-// the three FNames are minted once on the game thread at install.
+// The verbs' BODIES are plain blueprint SpawnActor chains, so they all funnel through
+// GameplayStatics::FinishSpawningActor, where our Func-patch POST hook chain already lives. This
+// module adds one more consumer: on a CLIENT an UNCOMMANDED birth of redSkyEvent_C,
+// weatherFogController_C or blackFog_C is destroyed at birth, the client being the suppressed
+// producer, while a wire-commanded mirror birth passes on its lane's echo flag. Host births are
+// untouched.
 
 #pragma once
 
