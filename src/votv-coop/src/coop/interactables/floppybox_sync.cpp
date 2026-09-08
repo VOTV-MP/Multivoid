@@ -1,4 +1,4 @@
-// coop/interactables/floppybox_sync.cpp -- see the header. v121 (OPEN-10).
+// coop/interactables/floppybox_sync.cpp -- see coop/interactables/floppybox_sync.h.
 
 #include "coop/interactables/floppybox_sync.h"
 
@@ -113,7 +113,7 @@ int g_takenNext = 0;
 coop::blob_chunks::Assembler g_asm;
 uint32_t g_nextSeq = 1;
 uint64_t g_nextSweep = 0;
-std::set<uint32_t> g_canonRetry;  // CRIT-1: eids whose canonical send was refused
+std::set<uint32_t> g_canonRetry;  // eids whose canonical send was refused
 bool g_announced = false;
 
 bool IsHost() {
@@ -134,8 +134,9 @@ std::vector<uint8_t> PackCanonical(uint32_t eid, const FB::BoxArrays& a) {
     return b;
 }
 
-// CRIT-1: bound the canonical below the blob transport cap (drop TAIL entries
-// + WARN -- the OPEN-9-class accepted residual; the box tail is the LIFO top).
+// Bound the canonical below the blob transport cap: drop TAIL entries and WARN. The tail is the
+// box's LIFO top, so what a truncated canonical loses is the most recently added discs, not the
+// oldest.
 std::vector<uint8_t> PackCanonicalBounded(uint32_t eid, FB::BoxArrays a) {
     std::vector<uint8_t> b = PackCanonical(eid, a);
     int dropped = 0;
@@ -177,14 +178,14 @@ bool AnyClientReady(coop::net::Session* s) {
 void HostBroadcastCanonical(coop::net::Session* s, uint32_t eid, void* actor) {
     FB::BoxArrays a;
     if (!FB::ReadArrays(actor, a)) return;
-    // No READY client -> prime silently (the joiner gets the connect canonical
-    // at its ready edge; smoke 1 caught the load-window refused spam class).
+    // No READY client -> prime silently: the joiner gets the connect canonical at its ready edge,
+    // and sending into the load window only produces refusals.
     if (!AnyClientReady(s)) {
         PrimeShadow(eid, actor, std::move(a));
         g_canonRetry.erase(eid);
         return;
     }
-    // CRIT-1: refused send must not prime; the sweep retry set re-sends.
+    // A refused send must not prime; the sweep's retry set re-sends it.
     if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::FloppyBoxState,
                                     g_nextSeq++, PackCanonicalBounded(eid, a))) {
         PrimeShadow(eid, actor, std::move(a));
@@ -216,7 +217,7 @@ void Sweep(coop::net::Session* s, uint64_t now) {
 
     g_asm.Sweep(Clock::now(), std::chrono::seconds(10));  // 1 Hz per the blob_chunks contract
 
-    // CRIT-1 retry: re-send refused canonicals (host only; erased on success).
+    // Retry: re-send refused canonicals (host only; erased on success).
     if (IsHost() && !g_canonRetry.empty()) {
         std::set<uint32_t> retry = g_canonRetry;
         for (uint32_t eid : retry) {
@@ -255,8 +256,8 @@ void Sweep(coop::net::Session* s, uint64_t now) {
         if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
         if (!FB::IsFloppyBoxClass(R::ClassOf(pr.actor))) continue;
         const uint32_t eid = static_cast<uint32_t>(pr.id);
-        // Alloc-free digest pre-filter (perf audit F1): full ReadArrays only
-        // when the raw-buffer digest moved vs the shadow.
+        // Alloc-free digest pre-filter: full ReadArrays only when the raw-buffer digest moved vs
+        // the shadow.
         uint64_t dig = 0;
         if (!FB::ReadDigest(pr.actor, dig)) continue;
         auto it = g_shadow.find(eid);
@@ -281,11 +282,10 @@ void Sweep(coop::net::Session* s, uint64_t now) {
             HostBroadcastCanonical(s, eid, pr.actor);
             continue;
         }
-        // Client: derive TAIL ops -- common prefix p; pops for prev[p..]
-        // (reverse order), pushes for cur[p..] (in order). LIFO grammar.
-        // Perf audit F3: the shadow advances INCREMENTALLY per ACCEPTED send
-        // (blob_chunks I-3) -- a refused op stays underived-for and re-derives
-        // next sweep; no op is silently lost, no dupe is re-sent.
+        // Client: derive TAIL ops -- common prefix p; pops for prev[p..] in reverse order, pushes
+        // for cur[p..] in order. LIFO grammar. The shadow advances INCREMENTALLY per ACCEPTED send,
+        // so a refused op stays underived-for and re-derives next sweep: no op is silently lost and
+        // no dupe is re-sent.
         size_t p = 0;
         while (p < prev.data.size() && p < cur.data.size() &&
                prev.data[p] == cur.data[p] &&
@@ -330,9 +330,9 @@ void Sweep(coop::net::Session* s, uint64_t now) {
     }
 }
 
-// DENY reap: the popper's spawned disc goes INTO THE HAND (measured getFloppy
-// -> Hold Object). Reap-if-alive: destroy the held disc when it is disc-class
-// within the correlation window; skip-if-consumed otherwise (R4 policy).
+// DENY reap: the popper's spawned disc goes INTO THE HAND (getFloppy -> Hold Object).
+// Reap-if-alive: destroy the held disc when it is disc-class within the correlation window; skip if
+// it was already consumed.
 void ReapDeniedPop(uint32_t eid, uint64_t hash) {
     const uint64_t now = NowMs();
     bool windowed = false;
@@ -397,13 +397,12 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             const int32_t type = static_cast<int32_t>(r.U32());
             const std::wstring str = r.Str();
             if (!r.ok) return;
-            // SECURITY W8 (docs/security/TRACKER.md): REFUSE at the game's own capacity.
-            // This used to push first and then WARN above 15, which is not a cap at all --
-            // a wire op could grow the crate's two persisted TArrays without bound, into a
-            // state the native addFloppy can never produce. Refusing needs no new policy
-            // and no invented number: the bound is the game's, and the unconditional
-            // canonical below is already the ack, so the pusher's optimistic local push is
-            // undone by the same broadcast that acks a successful one.
+            // REFUSE at the game's own capacity. Pushing first and warning afterwards is not a cap
+            // at all: a wire op could grow the crate's two persisted TArrays without bound, into a
+            // state the native addFloppy can never produce. Refusing needs no new policy and no
+            // invented number -- the bound is the game's kNativeCapacity -- and the unconditional
+            // canonical below is already the ack, so the pusher's optimistic local push is undone
+            // by the same broadcast that acks a successful one.
             if (a.data.size() >= FB::kNativeCapacity) {
                 UE_LOGW("floppybox: push REFUSED (eid=%u, from slot %u) -- box is at the "
                         "native capacity (%zu); canonical follows and heals the sender",
@@ -444,7 +443,7 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
         } else {
             return;  // clients never author deny/canonical
         }
-        // R10-1 discipline: canonical after EVERY op (the ack).
+        // A canonical after EVERY op: that is the ack.
         HostBroadcastCanonical(s, eid, actor);
         return;
     }
@@ -494,7 +493,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
                                               g_nextSeq++, PackCanonicalBounded(beid, a))) {
             ++shipped;
         } else {
-            // CRIT-1: arm the broadcast retry (reaches the joiner too).
+            // Arm the broadcast retry (it reaches the joiner too).
             g_canonRetry.insert(beid);
             UE_LOGW("floppybox: connect canonical eid=%u -> slot %d REFUSED -- "
                     "broadcast retry armed", beid, peerSlot);
