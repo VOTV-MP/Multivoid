@@ -318,12 +318,12 @@ void ApplySnapshot(const SnapEntry* entries, int total) {
 // eat/stomp event -> forward the intent.
 void DetectLocalConsumption(coop::net::Session* s) {
     if (!g_haveApplied || g_tracked.empty()) return;
-    // Master-liveness gate (audit 2026-07-10 CRITICAL): a client WORLD TEARDOWN
-    // while the session is still connected (idle death -> menu -- observed on
-    // both peers 07-10) kills every tracked component at once; without this
-    // gate that mass-death would stream false RoachConsumed intents at
-    // host-correct positions and WIPE the host's live population. A dead or
-    // REPLACED master means the deaths were structural, not consumption.
+    // Master-liveness gate. A client WORLD TEARDOWN while the session is still
+    // connected -- an idle death dropping to the menu does it -- kills every tracked
+    // component at once, and without this gate that mass death would stream false
+    // RoachConsumed intents at host-correct positions and WIPE the host's live
+    // population. A dead or REPLACED master means the deaths were structural, not
+    // consumption.
     void* master = Master();
     if (!master || master != g_trackedMaster) {
         g_tracked.clear();
