@@ -1,9 +1,4 @@
-// coop/prop_synth_key.cpp -- see coop/prop_synth_key.h.
-//
-// Extracted from prop_lifecycle.cpp 2026-05-29 (M-1, post-E-2). The 4 file-
-// local symbols (g_synthKeyCounter, g_setKeyFnMutex, g_setKeyFnByClass,
-// ResolveSetKeyFn) are now in this file's anonymous namespace; only
-// EnsureKeyForBroadcast is exposed.
+// coop/props/prop_synth_key.cpp -- see coop/props/prop_synth_key.h.
 
 #include "coop/props/prop_synth_key.h"
 
@@ -31,12 +26,11 @@ namespace R = ue_wrap::reflection;
 std::atomic<uint64_t> g_synthKeyCounter{0};
 
 // Per-class setKey UFunction cache. setKey is a BP UFunction declared on the
-// LINEAGE ROOT, not on every subclass: Aprop_C declares its own (Key @0x02E0),
-// actor_save_C declares its own (key @0x0230, the trashBitsPile family), and
-// FindFunction is exact-owner ([[lesson-findfunction-exact-owner-no-superstruct-climb]],
-// 3rd strike: the take-4 "setKey not found on trashBitsPile_C" x162 re-key
-// failure). Resolve by CLIMBING the SuperStruct chain to the declaring
-// ancestor; cache per STARTING class (null cached too -- don't re-walk).
+// LINEAGE ROOT, not on every subclass -- Aprop_C declares one, and actor_save_C
+// (the trashBitsPile family) declares another -- while R::FindFunction matches on
+// the EXACT owner and climbs no SuperStruct chain, so a lookup that starts at the
+// leaf class finds nothing. Resolve by CLIMBING to the declaring ancestor; cache
+// per STARTING class, a null included, so a miss is not re-walked.
 std::mutex g_setKeyFnMutex;
 std::unordered_map<void*, void*> g_setKeyFnByClass;
 
@@ -95,26 +89,27 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
     }
     UE_LOGI("synth-key: minted '%ls' for actor %p class='%ls'",
             buf, self, R::ClassNameOf(self).c_str());
-    // Re-read via GetInteractableKey to confirm the field actually changed.
+    // Return the LIVE key by re-read rather than the one just asked for, so a write
+    // that did not take gives the caller what is actually on the actor.
     return ue_wrap::prop::GetInteractableKeyString(self);
 }
 
 std::wstring MintFreshKeyForDuplicate(void* self) {
     if (!self) return L"";
     void* cls = R::ClassOf(self);
-    // ResolveSetKeyFn climbs to the declaring ancestor itself (Aprop_C for the
-    // prop lineage, actor_save_C for trashBitsPile -- the take-4 x162 failure).
+    // ResolveSetKeyFn climbs to the declaring ancestor itself: Aprop_C for the prop
+    // lineage, actor_save_C for the trashBitsPile family.
     void* setKeyFn = ResolveSetKeyFn(cls);
     if (!setKeyFn) {
         UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor any SuperStruct ancestor) -- cannot re-key duplicate",
                 R::ClassNameOf(self).c_str());
         return L"";
     }
-    // Random (not counter-based like cs_): a re-key PERSISTS into the game's save,
-    // so it must stay unique across boots -- a counter restarting at 0 could
-    // re-mint a key already baked into an older record. 64 random bits is
-    // collision-free at this project's key volumes. GT-only caller (census walk)
-    // but keep the RNG mutex-guarded for the cost of nothing.
+    // Random, not counter-based like cs_: a re-key PERSISTS into the game's save, so
+    // it must stay unique across boots -- a counter restarting at 0 could re-mint a
+    // key already baked into an older record. 64 random bits is collision-free at this
+    // project's key volumes. The one caller re-keys only on the game thread, but the
+    // RNG stays mutex-guarded for the cost of nothing.
     static std::mutex sRngMutex;
     uint64_t r;
     {
