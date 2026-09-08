@@ -1,8 +1,7 @@
-// harness/autotest_playerdmg.cpp -- the Inc3-WIRE PlayerDamage relay e2e
-// (VOTVCOOP_RUN_PLAYERDMG_TEST): the HOST sends synthetic PlayerDamage to slot
-// 1 and observes its puppet flash via the round-trip streamed health drop; the
-// CLIENT is passive. Extracted verbatim from harness/autotest_vitals.cpp
-// (2026-07-19 s27 dissolve); interfaces + per-routine docs in harness/autotest.h.
+// harness/autotest/autotest_playerdmg.cpp -- the PlayerDamage relay end-to-end autotest
+// (VOTVCOOP_RUN_PLAYERDMG_TEST): the HOST sends synthetic PlayerDamage to slot 1 and observes its
+// puppet flash via the round-trip streamed health drop; the CLIENT is passive. Interfaces and
+// per-routine docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -24,25 +23,22 @@ namespace {
 namespace GT = ue_wrap::game_thread;
 namespace cfg = coop::config;
 
-// Bounded spin-wait on a game-thread task's completion flag. Returns true if
-// the task signalled (set the flag non-zero), false if it never completed
-// within timeoutMs -- which would mean the posted task faulted (the SEH
-// firewall ate the AV and the flag was never set). A bound is mandatory:
-// driving ragdollMode on the local player COULD fault and an unbounded wait
-// would hang the whole smoke.
+// Bounded spin-wait on a game-thread task's completion flag. Returns true if the task signalled,
+// false if it never completed within timeoutMs -- which means the task faulted and the SEH firewall
+// ate the access violation before the flag was set. The bound is mandatory: these tasks send on the
+// session and read the puppet's vitals, so an unbounded wait on a faulted one would hang the whole
+// run.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// ===================== Inc3-WIRE relay e2e (PlayerDamage) =====================
-// Proves the WHOLE host->owner damage relay with NO real enemy. The HOST both DRIVES
-// and OBSERVES: it sends synthetic PlayerDamage to slot 1 (player_damage::
-// DebugForceHitPuppet) -> the CLIENT receives it (event_feed) and runs Add Player
-// Damage on its OWN possessed player (player_damage::OnWireDamage) -> the client's
-// saveSlot.health drops -> Inc1 streams the lower fraction -> the host's slot-1 puppet
-// SetVitals detects the drop and flashes (Inc3). The CLIENT is passive (receive +
-// apply automatically). Gated by env VOTVCOOP_RUN_PLAYERDMG_TEST=1.
+// Proves the WHOLE host->owner damage relay with NO real enemy. The HOST both DRIVES and OBSERVES:
+// it sends synthetic PlayerDamage to slot 1 (player_damage::DebugForceHitPuppet); the CLIENT
+// receives it (event_feed) and runs Add Player Damage on its OWN possessed player
+// (player_damage::OnWireDamage); the client's saveSlot.health drops; the pose stream carries the
+// lower fraction; and the host's slot-1 puppet SetVitals detects the drop and flashes. The CLIENT
+// is passive -- it receives and applies automatically. Gated by env VOTVCOOP_RUN_PLAYERDMG_TEST=1.
 
 void DrivePlayerDamageOnHost() {
     UE_LOGI("playerdmg_test[host]: driver+observer armed -- send synthetic PlayerDamage to slot 1, "
@@ -71,19 +67,18 @@ void DrivePlayerDamageOnHost() {
     }
     UE_LOGI("playerdmg_test[host]: slot-1 ready -- interleaving PlayerDamage hits with flash observation");
 
-    // INTERLEAVE send + observe: the hurt-flash is a transient 500 ms window, and the
-    // host both drives AND observes, so we must poll WHILE the flash is open. Each
-    // iteration sends ONE hit, then polls the puppet's streamed GetHealth() (DIAGNOSTIC
-    // -- proves the round-trip drop actually streamed) + IsHurtFlashing across the
-    // round-trip + flash window. Bigger hits (18 dmg) so the drop is unmistakable even
-    // against any passive health regen; 4 hits x 18 = 72 from ~100 -> ~28 (no death).
-    // Breaks on the first observed flash.
+    // INTERLEAVE send and observe: the hurt-flash is a transient 500 ms window and the host both
+    // drives AND observes, so it must poll WHILE the flash is open. Each iteration sends ONE hit,
+    // then polls the puppet's streamed GetHealth() -- diagnostic, and the proof that the round-trip
+    // drop actually streamed -- and IsHurtFlashing across the round-trip and flash window. Breaks
+    // on the first observed flash.
     bool sawFlash = false;
     float minHealthSeen = 1.f;
     int hits = 0;
-    // 50 dmg/hit, max 2 hits (100 worst-case if fully dealt -> >=0; we break on the
-    // first observed drop, so health stays high). A big hit tells absorption (armor
-    // fully ate the earlier 18) from a genuine host/client no-op.
+    // 50 dmg per hit, at most two hits: 100 worst case if fully dealt, so health stays at or above
+    // zero, and the loop breaks on the first observed drop, so in practice it stays high. A hit
+    // that big separates absorption -- armour eating the damage -- from a genuine host or client
+    // no-op.
     for (int i = 0; i < 2 && !sawFlash && minHealthSeen > 0.4f; ++i) {
         {
             auto done = std::make_shared<std::atomic<int>>(0);
@@ -120,7 +115,7 @@ void DrivePlayerDamageOnHost() {
             hits, minHealthSeen, sawFlash ? 1 : 0);
 
     if (sawFlash)
-        UE_LOGI("playerdmg_test[host]: VERDICT Inc3-WIRE relay PASS -- a host-sent PlayerDamage made the "
+        UE_LOGI("playerdmg_test[host]: VERDICT PlayerDamage relay PASS -- a host-sent PlayerDamage made the "
                 "client apply damage to its OWN player; the streamed health drop flashed the host's slot-1 "
                 "puppet (full reliable host->owner relay, no real enemy)");
     else
