@@ -20,19 +20,15 @@ namespace {
 // (a press before Session start is logged + no-op'd, NOT crashed).
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// VOTV's vitals top out at 100.0 (% units). Writing >100 doesn't visually
-// over-fill the meter -- the BP graph clamps display at 100. Picking the
-// exact UI cap rather than something larger so subsequent food consumption
-// behaves identically to a player who reached max naturally (no hidden
-// over-stored value that would gate hunger draining differently).
-// 2026-05-25 NIGHT (user retest +1): writing coffeePower=100 produced a
-// screen-shaking post-coffee vanilla effect (the BP keys an effect off
-// coffeePower > 0). Restore only tops up food/sleep/health, leaving coffeePower as-is.
+// VOTV's vitals top out at 100.0 (% units). Writing more does not over-fill the meter, the BP graph
+// clamping the display at 100, and picking the exact UI cap keeps later food consumption identical
+// to a player who reached max naturally, with no hidden over-stored value gating hunger
+// differently. Restore tops up food, sleep and health only: writing coffeePower=100 produces the
+// screen-shaking post-coffee effect, which the blueprint keys off coffeePower > 0.
 constexpr float kMaxVital = 100.0f;
 
-// The GameInstance->save_gameInst->saveSlot resolution + the cached-offset writes
-// now live in ue_wrap::vitals (extracted 2026-05-30, P7). This file owns only the
-// menu action + the coop broadcast.
+// The GameInstance->save_gameInst->saveSlot resolution and the cached-offset writes live in
+// ue_wrap::vitals. This file owns the menu action and the coop broadcast.
 
 }  // namespace
 
@@ -81,12 +77,13 @@ void SetStaminaLow() {
         UE_LOGW("restore_vitals: SetStaminaLow REFUSED -- dev features are disabled while connected as a client");
         return;
     }
-    // VOTV has no separate "stamina" scalar (verified against the full CXXHeaderDump) -- the player's
-    // energy/exhaustion meter IS `sleep`: low sleep -> tired -> isExhausted -> can't sprint (saveSlot.sleep,
-    // drained by mainPlayer.sleepDraining). So "set stamina low" sets ONLY sleep=10, leaving food + health
-    // alone. LOCAL ONLY -- no broadcast: the v19 vitals DISPLAY stream (PoseSnapshot sleepFrac) already
-    // mirrors the low value to peers' nameplates, so this stays a one-peer test. Posted to the game thread
-    // (saveSlot writes touch BP state).
+    // VOTV has no separate "stamina" scalar -- checked against the whole header dump. The player's
+    // energy meter IS `sleep`: low sleep makes them tired, then isExhausted, and they cannot sprint
+    // (saveSlot.sleep, drained by mainPlayer.sleepDraining). So "set stamina low" sets sleep=10
+    // alone and leaves food and health untouched. LOCAL ONLY, no broadcast: the vitals display
+    // stream already mirrors the low value to the peers' nameplates through PoseSnapshot's
+    // sleepFrac, so this stays a one-peer test. Posted to the game thread, saveSlot writes touching
+    // BP state.
     GT::Post([] {
         constexpr float kLow = 10.0f;
         if (V::Write(V::Field::Sleep, kLow))
