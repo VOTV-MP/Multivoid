@@ -1,13 +1,9 @@
-// ue_wrap/engine_audio.cpp -- positional sound spawning (extracted from engine.cpp).
+// ue_wrap/engine/engine_audio.cpp -- positional sound spawning.
 //
-// Engine-wrapper layer (principle 7). The USoundAttenuation construct/config +
-// UGameplayStatics::PlaySoundAtLocation dispatch. Declared in ue_wrap/engine.h
-// (SoundAttenuationConfig / SpawnSoundAttenuation / PlaySoundAtLocation) so callers
-// (coop::flashlight_click_sound, coop::prop_sound) are unchanged.
-//
-// Extracted 2026-06-06 (modularity audit): engine.cpp had grown past the 800-LOC soft
-// cap; this audio block is self-contained (its own cached CDO/UFunction statics, no
-// cross-refs into engine.cpp's other internals) so it lifts cleanly into its own file.
+// Engine-wrapper layer (principle 7). The USoundAttenuation construct and config, plus the
+// UGameplayStatics::PlaySoundAtLocation dispatch. Declared in ue_wrap/engine/engine.h
+// (SoundAttenuationConfig / SpawnSoundAttenuation / PlaySoundAtLocation), so callers
+// (coop::flashlight_click_sound, coop::prop_sound) reach it through the umbrella header.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/engine/engine.h"
@@ -82,15 +78,13 @@ void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg) {
     if (cfg.attenuate)  flags |= 0x01; else flags &= ~static_cast<uint8_t>(0x01);
     if (cfg.spatialize) flags |= 0x02; else flags &= ~static_cast<uint8_t>(0x02);
 
-    // 3) AddToRoot so UE GC keeps this object alive across collections.
-    //    Caller will hold the pointer in a C++ static (invisible to UE's
-    //    reachability scan) -- without rooting, the object is reaped on
-    //    the next GC pass and PlaySoundAtLocation crashes reading freed
-    //    memory on the next call (2026-05-26 F-spam crash root cause).
-    //    PROCESS-LIFETIME by design: the attenuation object is outered to the
-    //    GameplayStatics CDO, not to a world, so it is not a world anchor and is never
-    //    released. It is still held through an OWNED pin rather than a bare flag write,
-    //    so it shows up in the pin registry instead of being invisible to it.
+    // 3) AddToRoot so UE GC keeps this object alive across collections. The caller holds the
+    //    pointer in a C++ static, which UE's reachability scan cannot see, so without rooting the
+    //    object is reaped on the next GC pass and the next PlaySoundAtLocation reads freed memory.
+    //    PROCESS-LIFETIME by design: the attenuation object is outered to the GameplayStatics CDO
+    //    rather than to a world, so it is not a world anchor and is never released. It is still
+    //    held through an OWNED pin rather than a bare flag write, so it shows up in the pin
+    //    registry instead of being invisible to it.
     static std::vector<ue_wrap::GcPin> sPermanentPins;
     sPermanentPins.emplace_back(obj);
     return obj;
