@@ -83,8 +83,9 @@ void SweepInto(std::vector<Row>& rows) {
         }
         for (const auto& g : groups) {
             const std::string& key = g.second.firstSpelling;
-            // Unknown key (vs the T2-enum + the composed family): the dead
-            // ui.font=fixedsys is the canonical catch (F28).
+            // Unknown key -- as against a known key carrying a bad value, and against the composed
+            // ui.font.<role> family, which IsKnownKey resolves as real rows. The dead
+            // ui.font=fixedsys is the canonical catch.
             if (!coop::config_registry::IsKnownKey(key.c_str())) {
                 Row r;
                 r.type = Row::Type::Unknown;
@@ -111,11 +112,10 @@ void SweepInto(std::vector<Row>& rows) {
                     r.type = Row::Type::DuplicateDormant;
                     r.key = key;
                     r.dupLines = g.second.lines;
-                    // player_guid is gone from this list with its row (v144): the
-                    // durable identity is a keypair in multivoid_identity.key now,
-                    // so a leftover `player_guid=` line in an existing ini is
-                    // simply DEAD -- and the sweep already has the right word for
-                    // that, reporting it as an Unknown key one branch above.
+                    // player_guid is gone from this list with its row: the durable identity is a
+                    // keypair in multivoid_identity.key now, so a leftover `player_guid=` line in
+                    // an existing ini is simply DEAD -- and the sweep already has the right word
+                    // for that, reporting it as an Unknown key one branch above.
                     r.identityKey = _stricmp(key.c_str(), "player_skin") == 0;
                     rows.push_back(r);
                 }
@@ -134,8 +134,8 @@ void SweepInto(std::vector<Row>& rows) {
             }
         }
     }
-    // Env twins: a SET env var that fails validation shadows the ini (T6) --
-    // report it with its env origin so the operator sees which layer bit them.
+    // Env twins: a SET env var that fails validation shadows the ini, so report it with its env
+    // origin and the operator sees which layer bit them.
     size_t rowCount = 0;
     const coop::config_registry::Row* regRows = coop::config_registry::Rows(rowCount);
     for (size_t i = 0; i < rowCount; ++i) {
@@ -178,14 +178,13 @@ void RunBootSweep() {
     }
     if (count) {
         UE_LOGI("config_review: sweep found %zu row(s) -- the review panel is armed", count);
-        // NAME THEM. Arming this panel is not a quiet event: it puts an ImGui surface up,
-        // and while any ImGui surface is up the game receives no mouse messages at all
-        // (ui/imgui_overlay.h, CaptureOwners) -- so an armed panel silently makes every
-        // native menu screen, ours and the game's, unclickable until it is dismissed. A
-        // line that says only "armed" leaves the reader of a log with the consequence and
-        // none of the cause; on 2026-08-29 that cost a three-day hunt for a close button
-        // that was never broken. One line per row, so the next reader knows WHICH finding
-        // put it there without opening the game.
+        // NAME THEM. Arming this panel is not a quiet event: it puts an ImGui surface up, and while
+        // any ImGui surface is up the game receives no mouse messages at all (ui/imgui_overlay.h,
+        // CaptureOwners), so an armed panel silently makes every native menu screen, ours and the
+        // game's, unclickable until it is dismissed. A log line that says only "armed" leaves its
+        // reader with that consequence and none of the cause, which reads as a close button that is
+        // broken. One line per row, so the next reader knows WHICH finding put the panel up without
+        // opening the game.
         std::lock_guard<std::mutex> lk(g_mu);
         for (const Row& r : g_rows) {
             switch (r.type) {
