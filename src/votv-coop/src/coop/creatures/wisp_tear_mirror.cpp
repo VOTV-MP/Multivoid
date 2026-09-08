@@ -104,14 +104,17 @@ void Tick() {
     if (g_killAtMs == 0) return;
     if (NowMs() < g_killAtMs) return;
     g_killAtMs = 0;
+    // Undo the grab FIRST (detach + restore movement/camera) -- the native releasePlayer shape is
+    // detach-then-ragdoll. Ahead of the liveness check below, and not after it: consuming the arm
+    // and then returning would strand the ride, since ReleaseSelf is the only thing that clears
+    // it in-session and the hold's own retry is gated on not-yet-attached. Safe no-op if the ride
+    // never engaged, and it re-checks the local player itself.
+    coop::wisp_grab_hold::ReleaseSelf();
     void* local = coop::players::Registry::Get().Local();
     if (!local || !R::IsLive(local)) {
         UE_LOGW("wisp_tear[victim]: kill deadline elapsed but local player not live -- skipping");
         return;
     }
-    // Undo the grab FIRST (detach + restore movement/camera) -- the native releasePlayer shape is
-    // detach-then-ragdoll. Safe no-op if the ride never engaged.
-    coop::wisp_grab_hold::ReleaseSelf();
     // The kill is a DIRECT ragdollMode(true,false,true), not kill(): kill() no-ops behind
     // immortal/startInvinc and ragdollMode does not. Native death -> menu -> rejoin, the settled
     // permadeath-rejoinable policy.
@@ -123,6 +126,9 @@ void Tick() {
 }
 
 void OnDisconnect() {
+    // The armed death and the ride it came in with are one thing: a teardown inside the window
+    // must not leave the local player detached-and-parked with nothing left to release it.
+    coop::wisp_grab_hold::ReleaseSelf();
     g_killAtMs = 0;
     g_killWispEid = 0;
 }
