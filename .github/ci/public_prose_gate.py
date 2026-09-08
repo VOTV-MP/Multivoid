@@ -106,23 +106,31 @@ DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", 
 # name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
 LINE_MARKERS = collections.OrderedDict([
     ("cyrillic",     (CYRILLIC, "lines with Cyrillic")),
-    # The same attribution in lower case. `\bUSER\b` reads three lines in the tree; "per the
-    # user", `user: "..."`, "the user-requested X", "a user report" and "user 2026-07-08" account
-    # for twenty-three more, in as many files nothing was measuring for it. One habit, one counter.
+    # The same attribution in lower case. `\bUSER\b` reads 3 lines of source, 3 of the build and CI
+    # files and 1 markdown line; "per the user", `user: "..."`, "the user-requested X", "a user
+    # report" and "user 2026-07-08" add 21 source lines and 4 build/CI lines on the tree this was
+    # measured against. One habit, one counter.
     # The attribution has to be EXPLICIT, and the capitals alternative stays case-SENSITIVE: this
     # tree writes about the person playing the game in the same word, so "the user types into a
-    # user widget as user 0" and "the user unchecked Custom nickname color" are correct prose, and
-    # a detector that flagged them would push a sweep to damage them.
+    # user widget as user 0" and "a per-user setting" are correct prose, and a detector that
+    # flagged them would push a sweep to damage them.
+    # The noun group is the ten words that actually occur, with their inflections -- a group that
+    # claims more than the drill tests is a group whose mutant proves nothing. THE GAP, stated
+    # rather than closed (R-P11): "the user wants/wanted/picked/chose", "the user's call/premise/
+    # verdict", a word between the possessive and the noun ("the user's key ask"), a noun that
+    # wraps onto the next comment line, and `user-mandated` / `user-retest` are unread.
     ("user",         (re.compile(r"\bUSER\b"
                                  r"|(?i:\bper (?:the )?user\b)"
                                  r"|(?i:\buser'?s?\s*:\s*[\"\u00ab])"
                                  r"|(?i:\buser-request(?:ed)?\b)"
-                                 r"|(?i:\buser'?s?\s+(?:ask|asks|asked|report|reports|reported"
-                                 r"|req|reqs|request|requests|requested|retest|retests|says|said"
-                                 r"|wants|wanted|picked|chose|choice|decision|rule|call|premise"
-                                 r"|verdict)\b)"
+                                 r"|(?i:\buser'?s?\s+(?:ask(?:s|ed)?"
+                                 r"|report(?:s|ed)?"
+                                 r"|req(?:s|uest(?:s|ed)?)?"
+                                 r"|retest(?:s|ed)?"
+                                 r"|say(?:s)?|said"
+                                 r"|choice|decision|rule)\b)"
                                  r"|(?i:\buser \d{4}-\d{2}-\d{2})"),
-                     "lines quoting a decision as USER")),
+                     "lines attributing a decision to the user")),
     ("verbatim",     (re.compile(r"\bverbatim\b", re.I), "lines saying verbatim")),
     ("qf",           (re.compile(r"(?<![\w/])/qf\b|\bqf\b(?!\.)"), "lines naming the /qf ritual")),
     ("agent",        (re.compile(r"\b(?:sub)?agents?\b", re.I), "lines naming an agent")),
@@ -159,8 +167,8 @@ SRC_EXTRA = collections.OrderedDict([
     # the fact.
     ("evidence", (re.compile(r"\[(?:V|\?|RD|A)\]"), "comment lines carrying an evidence tag")),
     # The same citation without the word: a work item, a review finding or a register row named
-    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `Inc3`, `take-9`, `WP-2`, `s28 cut`, `K-5`,
-    # `R-2`
+    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `Inc3`, `Increment 2b`, `take-9`, `WP-2`,
+    # `s28 cut`, `K-5`, `R-2`
     # all name a document outside the tree, and the security register is deliberately
     # unpublished, so those rows name something a reader is not meant to have. The named
     # families are exact; the one-letter form counts only where it OPENS the comment or carries
@@ -172,7 +180,7 @@ SRC_EXTRA = collections.OrderedDict([
     # a word character, a slash or a dot, so `IPv4`, a path and a decimal are left alone.
     ("label", (re.compile(r"\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\d+\b"
                           r"|\bsecurity\s+[A-Z]\d+\b|\bA\d\d/A\d\d\b"
-                          r"|\bInc-?\d+[a-z]?\b|\bINCREMENT\s+\d+[a-z]?\b"
+                          r"|(?i:\binc(?:rement)?[-\s]?\d+[a-z]?\b)"
                           r"|\btake-\d+\b|\bWP-?\d+\b|\bs\d\d cut\b|\bfinding \d+\b"
                           r"|(?<![\w/.])v\d{2,3}\b"
                           r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),

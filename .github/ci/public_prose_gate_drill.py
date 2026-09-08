@@ -55,6 +55,8 @@ int calledOnce() { return 0; }
 // security A34 names a row of a register that is not published
 // Inc-2 names a build increment
 // Inc3 names the same increment with the dash left out
+// Increment 2b spells the word out, which is the same citation again
+// increment-1 in lower case is that citation once more
 // take-9 names an attempt
 // WP-2 names a work package
 // the s28 cut named a session
@@ -77,13 +79,25 @@ int t1() { return 0; } // WP-4 names a work package from a trailing comment
 int t2() { return 0; } // this one was settled by an audit nobody outside can read
 int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
 int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
-// one user attribution per line, so dropping any one of them turns this drill red
+// one user attribution per line, so dropping any one of them turns this drill red. The capitals
+// form needs a line of its OWN: every earlier one read "USER asked" or "USER said", which the
+// lower-case noun group matches too, so the alternative the counter began as was unobserved.
+// flagged as USER in the ledger
 // per the user, this row stays
 // user: "the words themselves, quoted"
 // the user-requested shape of the panel
-// a user report settled which of the two it was
 // user 2026-07-04 named the default
+// the user asked for this one
+// a user report settled which of the two it was
+// a user req shrank the radius
+// a user retest confirmed it
+// the user said so at the time
+// the user's choice of the two
+// a user decision, recorded
+// the user rule that governs it
+int t5() { return 0; }
 // PRECISION: the user types into a user widget as user 0, and the user unchecked "Custom colour"
+// PRECISION: a per-user setting, a multi-user session and the user-visible form are all prose
 const char* d = /* closes here */ "docs/nowhere.md";  // the string is CODE, not comment
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
@@ -196,16 +210,29 @@ MUTANTS = [
     ("evidence: drops [V]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:\\?|RD|A)\\]"'),
     ("evidence: drops [A]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|RD)\\]"'),
     ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
+    ("user: drops the capitals form", 'r"\\bUSER\\b"', 'r"\\bZZZZ\\b"'),
     ("user: drops the per-the-user form", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r""'),
     ("user: drops the quoted form", 'r"|(?i:\\buser\'?s?\\s*:\\s*[\\"\\u00ab])"', 'r""'),
     ("user: drops the requested form", 'r"|(?i:\\buser-request(?:ed)?\\b)"', 'r""'),
-    ("user: drops the attribution nouns", 'r"|(?i:\\buser\'?s?\\s+(?:ask|asks|asked|report|reports|reported"', 'r"|(?i:\\bZZZZ\\b"'),
+    # One mutant per noun family, each a BALANCED substring: cutting the group
+    # mid-parenthesis made the gate fail to import, and an arm that only asks for a
+    # non-zero exit passes on the crash instead of on the detector going blind.
+    ("user: drops the ask family", "ask(?:s|ed)?", "zzzk(?:s|ed)?"),
+    ("user: drops the report family", "report(?:s|ed)?", "zzzort(?:s|ed)?"),
+    ("user: drops the request family", "req(?:s|uest(?:s|ed)?)?", "zzz(?:s|uest(?:s|ed)?)?"),
+    ("user: drops the retest family", "retest(?:s|ed)?", "zzzest(?:s|ed)?"),
+    ("user: drops the say family", "say(?:s)?|said", "zzy(?:s)?|zzid"),
+    ("user: drops the noun family", "|choice|decision|rule)", "|zzzice|zzzision|zzle)"),
     ("user: drops the dated attribution", 'r"|(?i:\\buser \\d{4}-\\d{2}-\\d{2})"', 'r""'),
     ("user: any mention of the word", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r"|(?i:\\buser\\b)"'),
     ("label: drops the named families",
      'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
     ("label: increment needs its dash",
-     'r"|\\bInc-?\\d+[a-z]?\\b', 'r"|\\bInc-\\d+[a-z]?\\b'),
+     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|\\bInc-\\d+[a-z]?\\b"'),
+    ("label: increment is capitals-only",
+     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|\\bInc(?:rement)?[-\\s]?\\d+[a-z]?\\b"'),
+    ("label: increment spelt out unread",
+     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|(?i:\\binc[-\\s]?\\d+[a-z]?\\b)"'),
     ("label: drops the one-letter form",
      'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r""'),
     ("label: one-letter form unanchored",
@@ -408,14 +435,14 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 77, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 90, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 3, "src.comment_dated": 3, "src.comment_user": 6, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 15, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 13}
+              "src.comment_label": 15}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to
@@ -455,7 +482,8 @@ def main():
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
         ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:19",
-                                                                     "src/votv-coop/src/x.cpp:56"],
+                                                                     "src/votv-coop/src/x.cpp:48",
+                                                                     "src/votv-coop/src/x.cpp:70"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():
@@ -573,6 +601,15 @@ def main():
         with io.open(os.path.join(mut, "public_prose_gate.py"), "w", encoding="utf-8",
                      newline="") as f:
             f.write(gate_src.replace(a, b))
+        chk = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib.util,sys\n"
+             "s=importlib.util.spec_from_file_location('g',sys.argv[1])\n"
+             "m=importlib.util.module_from_spec(s); s.loader.exec_module(m)",
+             os.path.join(mut, "public_prose_gate.py")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        arm("mutant still compiles: " + name, chk.returncode == 0,
+            (chk.stderr.strip().splitlines() or ["no output"])[-1])
         r = subprocess.run([sys.executable, os.path.join(mut, "public_prose_gate_drill.py")],
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            env=dict(os.environ, PPG_DRILL_NESTED="1"))
