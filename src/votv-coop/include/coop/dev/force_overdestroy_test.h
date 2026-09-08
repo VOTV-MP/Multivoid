@@ -1,25 +1,17 @@
-// coop/dev/force_overdestroy_test.h -- dev-only DETERMINISTIC injection of the
-// docs/piles/10 in-window pile MASS-UNCLAIM over-destroy, to PROVE the Phase 0
-// completeness floor (docs/COOP_STABLE_ID_SIDECAR.md S4) on a real wipe.
+// coop/dev/force_overdestroy_test.h -- dev-only deterministic injection of the in-window pile
+// MASS-UNCLAIM over-destroy, so the claim sweep's completeness floor can be proved against a real
+// wipe instead of waited for.
 //
-// THE INJECTION (ini-gated `[dev] force_chippile_unclaim=1`, HOST side): the host
-// SKIPS expressing every chipPile this session. The joiner still seeds its ~870
-// native chipPiles (its seed-walk is deterministic -- 871 seeded at 13:21:28),
-// but with no host expression they stay UNCLAIMED -> its claim sweep dooms them
-// en masse. That is EXACTLY the 11:16 condition (host under-expressed the piles),
-// now reproduced on demand instead of waiting on the non-deterministic race.
+// The injection, `[dev] force_chippile_unclaim=1` on the HOST: the host skips expressing every
+// chipPile for the session. The joiner still seeds its own native chipPiles deterministically, but
+// with no host expression they stay UNCLAIMED, so its claim sweep dooms them en masse -- exactly
+// the condition an under-expressing host produces by accident, now on demand.
 //
-// THE PROOF (controlled before/after, SAME flag):
-//   BEFORE = baseline binary (NO floor) + flag -> the sweep WIPES ~870 piles
-//            (confirms the flag genuinely creates the catastrophe).
-//   AFTER  = floor binary + flag -> the host's INDEPENDENT census still counts
-//            ~870 (snapshot_census walks GUObjectArray, not the expression path),
-//            so the floor KEEPs them: `completeness FLOOR kept ~870` + piles
-//            survive.
-//
-// HOST-ONLY: BuildPropSpawnPayload_ runs only on the expressing host, so the flag
-// gate alone suffices (no role plumbing). RULE-2-exempt: diagnostics/test infra,
-// gated, never in a release path (the ini key is absent in shipped configs).
+// The second flag is the control. `[dev] disable_completeness_floor=1` makes the client's sweep
+// skip the floor, so the same binary with the injection on WIPES the piles with that flag and KEEPs
+// them without it, isolating the floor as the only variable. Host-only in effect, since
+// BuildPropSpawnPayload_ runs on the expressing host alone and the flag gate suffices. Diagnostics
+// infrastructure, RULE-2-exempt: ini-gated, and the keys are absent from shipped configs.
 #pragma once
 
 namespace coop::dev::force_overdestroy_test {
@@ -28,12 +20,9 @@ namespace coop::dev::force_overdestroy_test {
 // chipPile (BuildPropSpawnPayload_ returns false for it). Latched + logged once.
 bool HostSkipChipPileExpression();
 
-// True when `[dev] disable_completeness_floor=1`: the CLIENT's claim sweep SKIPS the
-// Phase 0 completeness floor (behaves like a no-floor baseline) -- the "BEFORE" half
-// of the controlled proof. With force_chippile_unclaim also set, the sweep then WIPES
-// the unclaimed piles, confirming the injection genuinely creates the catastrophe; the
-// SAME binary with this OFF KEEPs them, isolating exactly the floor as the only variable.
-// Dev-only, ini-gated, RULE-2-exempt; absent in any shipped config. Latched + logged once.
+// True when `[dev] disable_completeness_floor=1`: the CLIENT's claim sweep SKIPS the completeness
+// floor, which is the no-floor half of the control above. Dev-only, ini-gated, RULE-2-exempt, and
+// absent from any shipped config. Latched and logged once.
 bool FloorDisabledForTest();
 
 }  // namespace coop::dev::force_overdestroy_test
