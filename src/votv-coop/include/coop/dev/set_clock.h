@@ -27,14 +27,16 @@ namespace coop::dev::set_clock {
 // Raw field reads (render-thread tolerable, the existing menu pattern).
 bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut);
 
-// HOST-only (dev_gate): set the named clock to (displayed day, hour, minute). Clamps day >= 1,
-// hour 0..23, minute 0..59; writes timeZ = (hour, minute, day-1). Posted to the game thread;
-// the cycle's next minute pulse feeds it through saveSlot.settime (savedtime persists; skipped
-// scheduled events fire natively on a forward jump). The sun is NOT moved (sun slider = visuals).
+// HOST-only (dev_gate): set the clock to (displayed day, hour, minute). Clamps day >= 1, hour
+// 0..23, minute 0..59, and writes timeZ = (hour, minute, day-1) together with both accumulators,
+// so the sky moves with the HUD. Posted to the game thread; the cycle's next minute pulse feeds
+// it through saveSlot.settime, savedtime persists, and a forward jump fires the skipped scheduled
+// events natively.
 void SetClock(int day, int hour, int minute);
 
-// HOST-only (dev_gate): set the SUN position as a fraction of one day (visual only --
-// totalTime := frac * MaxTime; the named clock/timeZ is untouched). Clamped [0, 0.999].
+// HOST-only (dev_gate): set the SUN position as a fraction of one day, keeping the same day.
+// It writes timeZ too: a sun-only write left the HUD clock disagreeing with the lighting, and the
+// next tick rebuilt timeZ from the accumulator anyway. Clamped [0, 0.999].
 void SetTimeFraction(float frac);
 
 }  // namespace coop::dev::set_clock
