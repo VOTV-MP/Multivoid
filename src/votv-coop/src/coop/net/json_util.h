@@ -1,13 +1,12 @@
 // coop/net/json_util.h -- exception-free nlohmann accessors for the master plane.
 //
-// INTERNAL to the lobby plane: include ONLY from .cpp files that parse master
-// responses (lobby_client.cpp, lobby_announcer.cpp). It pulls in the full
-// nlohmann/json.hpp (large) -- keeping it out of headers keeps that compile cost
-// localized to those two TUs.
+// INTERNAL to the lobby plane: include ONLY from .cpp files that parse master responses
+// (lobby_client.cpp, lobby_announcer.cpp). It pulls in the full nlohmann/json.hpp (large) --
+// keeping it out of headers keeps that compile cost localized to those two TUs.
 //
-// The accessors never throw: they find the key, verify the JSON type, and only then
-// extract -- a missing or wrong-typed field yields the default. (A network peer can
-// send anything; defensive parsing is correct here, not a crutch -- RULE 1.)
+// The accessors never throw: they find the key, verify the JSON type, and only then extract -- a
+// missing or wrong-typed field yields the default. The master is whatever URL the player is
+// pointed at, so every field it returns is untrusted input.
 
 #pragma once
 
@@ -34,25 +33,25 @@ inline bool Bool(const Json& j, const char* key) {
     return (it != j.end() && it->is_boolean()) ? it->get<bool>() : false;
 }
 
-// Length-capped string (audit L5): a hostile/MITM master must not hand back a multi-MB
-// `name` the browser re-renders every frame, nor an oversized identity/token flowing
-// into GNS config. Truncates to maxlen bytes.
+// Length-capped string: a hostile master must not hand back a multi-MB `name` the browser
+// re-renders every frame, nor an oversized identity/token flowing into GNS config. Truncates to
+// maxlen bytes.
 inline std::string StrN(const Json& j, const char* key, size_t maxlen) {
     std::string s = Str(j, key);
     if (s.size() > maxlen) s.resize(maxlen);
     return s;
 }
 
-// Clamped integer (audit L4): a hostile master's out-of-range count/age must not narrow
-// to garbage/negative in the UI.
+// Clamped integer: a hostile master's out-of-range count/age must not narrow to garbage or a
+// negative in the UI.
 inline int IntClamped(const Json& j, const char* key, int lo, int hi) {
     int v = Int(j, key);
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-// A credential field safe to splice into GNS's comma-separated TURN lists (audit L6):
-// reject a value containing a comma or whitespace, which would inject an extra list
-// element and desync the parallel user/pass/uri lists. Returns "" if unsafe/oversized.
+// A credential field safe to splice into GNS's comma-separated TURN lists: reject a value
+// containing a comma or whitespace, which would inject an extra list element and desync the
+// parallel user/pass/uri lists. Returns "" if unsafe or oversized.
 inline std::string CredField(const Json& j, const char* key, size_t maxlen) {
     std::string s = StrN(j, key, maxlen);
     if (s.find(',') != std::string::npos ||
@@ -61,18 +60,16 @@ inline std::string CredField(const Json& j, const char* key, size_t maxlen) {
     return s;
 }
 
-// Parse a body into an object. Returns false (and leaves out null) if the body is
-// not valid JSON, not a top-level object, or nested past kMaxDepth.
+// Parse a body into an object. Returns false (and leaves out null) if the body is not valid JSON,
+// not a top-level object, or nested past kMaxDepth.
 //
-// C-1 (security audit 2026-07-16): cap nesting depth AT PARSE. nlohmann's parser is
-// iterative, but the resulting value's DESTRUCTOR recurses one frame per nesting
-// level -- so a deeply-nested body (e.g. `{"a":{"a":{...}}}`, easily within the 1 MiB
-// byte cap) would overflow the worker thread's stack when the local Json goes out of
-// scope: an UNCATCHABLE SEH crash (0xC00000FD) that a hostile or MITM'd master (the
-// plane is plain HTTP) could trigger at boot (/v1/latest) or on any browser refresh /
-// join. The parse callback DISCARDS any value past the limit, so the built tree can
-// never get deep enough to overflow on destruction, and we reject the whole body.
-// Real master responses nest ~3 deep; 32 is generous headroom.
+// The depth cap is applied AT PARSE. nlohmann's parser is iterative, but the resulting value's
+// DESTRUCTOR recurses one frame per nesting level -- so a deeply-nested body (`{"a":{"a":{...}}}`,
+// easily within the 1 MiB byte cap) would overflow the worker thread's stack when the local Json
+// goes out of scope: an UNCATCHABLE SEH crash (0xC00000FD) a hostile master could trigger at boot
+// (/v1/latest) or on any browser refresh or join. The parse callback DISCARDS any value past the
+// limit, so the built tree can never get deep enough to overflow on destruction, and the whole body
+// is rejected. Real master responses nest ~3 deep; 32 is generous headroom.
 inline bool ParseObject(const std::string& body, Json& out) {
     constexpr int kMaxDepth = 32;
     bool tooDeep = false;
@@ -87,10 +84,10 @@ inline bool ParseObject(const std::string& body, Json& out) {
     return !tooDeep && !out.is_discarded() && out.is_object();
 }
 
-// Serialize a body with the `replace` error handler: a string containing invalid
-// UTF-8 (e.g. a user pasting odd bytes into the host-name box) yields replacement
-// chars instead of THROWING json::type_error -- which, escaping a detached worker
-// thread, would std::terminate the whole game process. (Audit.)
+// Serialize a body with the `replace` error handler: a string containing invalid UTF-8 (a user
+// pasting odd bytes into the host-name box) yields replacement chars instead of THROWING
+// json::type_error -- which, escaping a detached worker thread, would std::terminate the whole game
+// process.
 inline std::string Dump(const Json& j) {
     return j.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
@@ -107,7 +104,7 @@ inline std::string FirstTurnUri(const Json& turn) {
     const size_t q = u.find('?');
     if (q != std::string::npos) u = u.substr(0, q);
     if (u.size() > 256) return std::string();
-    // Audit L6: a comma/whitespace in the uri would desync GNS's parallel TURN lists.
+    // A comma or whitespace in the uri would desync GNS's parallel TURN lists.
     if (u.find(',') != std::string::npos ||
         u.find_first_of(" \t\r\n") != std::string::npos)
         return std::string();

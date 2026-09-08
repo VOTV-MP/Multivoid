@@ -1,15 +1,11 @@
 // ui/overlay_backend.h -- the RHI-specific half of the ImGui overlay.
 //
-// imgui_overlay.cpp owns the hooks, the WndProc, and surface compositing (the
-// platform layer); this interface owns everything that touches a concrete D3D
-// device: device capture off the game's swapchain, the ImGui renderer backend,
-// the render target, and texture creation for UI surfaces. One implementation
-// per RHI -- overlay_backend_dx11.cpp today, overlay_backend_dx12.cpp for the
-// D3D12 RHI -- selected at first present by what the game's swapchain actually
-// is. No RHI types cross this boundary.
-//
-// Design of record:
-// research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md
+// imgui_overlay.cpp owns the hooks, the WndProc and surface compositing (the platform layer); this
+// interface owns everything that touches a concrete D3D device: device capture off the game's
+// swapchain, the ImGui renderer backend, the render target, and texture creation for UI surfaces.
+// One implementation per RHI -- overlay_backend_dx11.cpp today, overlay_backend_dx12.cpp for the
+// D3D12 RHI -- selected at first present by what the game's swapchain actually is. No RHI types
+// cross this boundary.
 
 #pragma once
 
