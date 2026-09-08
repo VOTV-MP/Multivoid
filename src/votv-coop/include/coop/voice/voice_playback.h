@@ -1,22 +1,18 @@
-// coop/voice/voice_playback.h -- receive-side voice: per-slot jitter buffer
-// + PLC + opus decode (game thread) feeding per-slot PCM rings that a
-// miniaudio playback callback mixes + spatializes. Faithful SVC port
-// (svc-voice-chat-RE-2026-06-12.md SS5):
-//   - jitter buffer threshold 3 (in-order delivers immediately; out-of-order
-//     sorts; overflow pops oldest; the stop marker flushes the whole buffer);
-//   - seq gaps <= 5 frames -> opus PLC (decode(null)); bigger -> decoder
-//     reset; dupes dropped; stop marker resets lastSeq + decoder;
-//   - ~100 ms prebuffer (5 frames) before a channel starts playing after
-//     silence/underrun;
-//   - linear distance attenuation gain = 1 - d/maxDist (whisper halves the
-//     radius), vertical fade 1 - |dz|/3200 cm, and the SVC REDUCED-mode
-//     stereo pan (pan in [-0.5,0.5], volume = clamp(1 -+ pan*1.4, 0.3, 1));
-//   - TalkCache: talking = a frame decoded < 250 ms ago (drives the icons).
+// coop/voice/voice_playback.h -- receive-side voice: a per-slot jitter buffer, PLC and opus decode
+// on the game thread, feeding per-slot PCM rings that a miniaudio callback mixes and spatializes. A
+// faithful Simple Voice Chat port, described end to end in docs/voice-and-chat.md; the numbers that
+// make it faithful are a jitter threshold of 3 frames (in order delivers at once, out of order
+// sorts, an overflow pops the oldest, a stop marker flushes the buffer and resets lastSeq and the
+// decoder), a gap of up to 5 frames covered by opus PLC and a wider one resetting the decoder,
+// dupes dropped, ~100 ms of prebuffer (5 frames) before a channel plays again after silence, a
+// distance gain of 1 - d/maxDist with a whisper halving the radius, a vertical fade of 1 -
+// |dz|/3200 cm, the REDUCED-mode pan in [-0.5,0.5] giving volume = clamp(1 -+ pan*1.4, 0.3, 1), and
+// talking meaning a frame decoded under 250 ms ago.
 //
-// Threading: OnFrame/TickDecode/SetListener/SetSpeaker are GAME THREAD; the
-// miniaudio callback reads PCM rings (SPSC: GT produces, callback consumes)
-// and position atomics only. No engine access anywhere; no allocation after
-// Start except the lazily-created per-slot opus decoders.
+// Threading: OnFrame, TickDecode, SetListener and SetSpeaker are GAME THREAD; the miniaudio
+// callback touches only the PCM rings (SPSC -- the game thread produces, the callback consumes) and
+// the position atomics. No engine access anywhere, and no allocation after Start beyond the lazily
+// created per-slot opus decoders.
 
 #pragma once
 
@@ -77,9 +73,9 @@ private:
         int64_t lastSeq = -1;
         void* decoder = nullptr;  // OpusDecoder* (lazy)
 
-        // PCM ring: GT produces (TickDecode), audio callback consumes. The
-        // monotonic counters are 64-bit (audit M-1): 32-bit ones wrap after
-        // ~24.8 h of continuous talk on one channel.
+        // PCM ring: the game thread produces in TickDecode, the audio callback consumes. The
+        // monotonic counters are 64-bit because 32-bit ones wrap after ~24.8 h of continuous talk
+        // on one channel.
         static constexpr uint32_t kRingSamples = 48000;  // 1 s
         int16_t ring[kRingSamples];
         std::atomic<uint64_t> ringWrite{0};
