@@ -1,20 +1,18 @@
-// coop/voice/voice_capture.h -- mic capture -> gain/limiter -> activation ->
-// opus encode. The SVC MicThread port (svc-voice-chat-RE-2026-06-12.md SS3)
-// on miniaudio: the device callback IS the mic thread (miniaudio owns it; a
-// 20 ms cadence loop of our own would only add latency). Phase 1 = SVC's own
-// natives-unavailable configuration: PTT ('X', user-mandated) or peak-dB
-// threshold activation (-50 dB default) + manual gain with the 50-frame
-// rolling-peak limiter. RNNoise/AGC are the documented phase 2.
+// coop/voice/voice_capture.h -- mic capture, then gain and limiter, then activation, then opus
+// encode. A port of Simple Voice Chat's mic thread onto miniaudio, where the device callback IS
+// the mic thread, because miniaudio owns it and a 20 ms cadence loop of our own would only add
+// latency. The configuration is SVC's natives-unavailable one: push-to-talk or peak-dB threshold
+// activation (-50 dB default), plus manual gain with the 50-frame rolling-peak limiter.
+// RNNoise and AGC are not ported.
 //
-// Audio constants are SVC's verbatim: 48 kHz mono s16, 960-sample (20 ms)
-// frames, opus VOIP + inband FEC (5% expected loss), encoder reset between
-// talk bursts via the empty stop frame.
+// The audio constants are SVC's exactly: 48 kHz mono s16, 960-sample (20 ms) frames, opus VOIP
+// with inband FEC at 5% expected loss, and an encoder reset between talk bursts through the empty
+// stop frame.
 //
-// Threading: the miniaudio callback produces ENCODED frames into a fixed
-// SPSC ring; the game thread (voice_chat::Tick) consumes. No engine access,
-// no session access, no allocation after Start. Test-tone mode skips the
-// device entirely (the game thread synthesizes+encodes at 20 ms cadence) --
-// the autonomous-smoke path on machines with no microphone.
+// Threading: the miniaudio callback produces ENCODED frames into a fixed SPSC ring and the game
+// thread (voice_chat::Tick) consumes them. No engine access, no session access, no allocation
+// after Start. Test-tone mode skips the device entirely -- the game thread synthesizes and
+// encodes at the same cadence -- which is the path on a machine with no microphone.
 
 #pragma once
 
@@ -29,7 +27,8 @@ namespace coop::voice {
 
 struct CaptureConfig {
     bool        activationMode = false;  // false = PTT (SVC default), true = voice-activation
-    int         pttVk = 'X';             // user-mandated default key
+    int         pttVk = 'G';             // matches the voice.ptt_key default; always overwritten
+                                         // by voice_chat's config read before capture opens
     int         whisperVk = 0;           // 0 = whisper disabled
     float       thresholdDb = -50.0f;    // activation-mode peak threshold
     float       gainDb = 0.0f;           // manual mic gain (-40..+24)

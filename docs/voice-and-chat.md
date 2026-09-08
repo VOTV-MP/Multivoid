@@ -36,7 +36,7 @@ actor's own nickname as the subject for everyone including the actor
 
 Voice multiplexes over the session, with no second port. The shape is Simple Voice Chat's,
 ported: mono at 48 kilohertz in twenty-millisecond Opus frames with in-band correction for a
-few percent of loss, captured on the audio device's own callback, gated by push-to-talk on X by
+few percent of loss, captured on the audio device's own callback, gated by push-to-talk on G by
 default or by a level threshold, with a gain and a rolling-peak limiter
 (`coop/voice/voice_capture`). Frames stream unreliable through the host, sequence-stamped
 (`coop/voice/voice_chat`). On receive, a per-slot jitter buffer delivers in-order frames at once
