@@ -132,12 +132,9 @@ bool RunNoveltyLedgerSelftest() {
         return true;
     }
 
-    // A burst larger than the budget is refused WHOLE. The burst must carry
-    // budget+1 DISTINCT in-repertoire codepoints, derived FROM the budget -- the
-    // first version of this check built a fixed 32-codepoint string and then
-    // returned `true` when the budget exceeded 32, i.e. it passed by construction
-    // for every configuration except the one nobody runs.
-    // [[lesson-an-instrument-never-shown-failing-passes-by-construction]]
+    // A burst larger than the budget is refused WHOLE. The burst has to carry budget+1 DISTINCT
+    // in-repertoire codepoints derived FROM the budget: a fixed-size string passes by construction
+    // for every configuration whose budget exceeds it, which is all of them but one.
     std::wstring burst;
     int distinct = 0;
     for (uint32_t cp = 0x0020; cp < kMaxTracked && distinct <= budget; ++cp) {
