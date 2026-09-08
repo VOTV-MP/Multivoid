@@ -236,7 +236,7 @@ docs/CRUTCHES.md
 # sibling in this block: each file stays ON DISK, every local pointer resolves, none resolves on
 # GitHub.
 #   THUNDERSTORE.md -- the publishing runbook: operator knowledge, not user documentation. What a
-#     player needs is docs/INSTALL.md and that stays public. This one works through per-asset
+#     player needs is docs/install.md and that stays public. This one works through per-asset
 #     review considerations and the store rules that cannot be undone, so a public copy reads as a
 #     map of where a release can be attacked or mis-filed.
 docs/THUNDERSTORE.md
@@ -249,22 +249,22 @@ docs/THUNDERSTORE.md
 # Publishing a doc is a deliberate act (add its `!docs/<file>` line); writing a working doc is
 # free and safe by default. The files that left the tree stay on disk; history is not rewritten.
 docs/**
-!docs/ARCHITECTURE.md
-!docs/CODE_MAP.md
-!docs/COOP_DISPATCH_VISIBILITY.md
-!docs/COOP_ENTITY_EXPRESSION_MAP.md
-!docs/COOP_SYNC_DOCTRINE.md
-!docs/CREDITS.md
-!docs/DEVS_GAUNTLET.md
-!docs/FEASIBILITY.md
-!docs/INSTALL.md
+!docs/architecture.md
+!docs/code-map.md
+!docs/coop-dispatch-visibility.md
+!docs/coop-entity-expression-map.md
+!docs/coop-sync-doctrine.md
+!docs/credits.md
+!docs/devs-gauntlet.md
+!docs/feasibility.md
+!docs/install.md
 !docs/README.md
-!docs/RELEASE.md
-!docs/RE_WORKFLOW.md
-!docs/ROADMAP.md
-!docs/SCOPE.md
-!docs/STATUS.md
-!docs/VOTV_UI_STYLE.md
+!docs/release.md
+!docs/re-workflow.md
+!docs/roadmap.md
+!docs/scope.md
+!docs/status.md
+!docs/votv-ui-style.md
 !docs/devices.md
 !docs/events-and-weather.md
 !docs/join.md
