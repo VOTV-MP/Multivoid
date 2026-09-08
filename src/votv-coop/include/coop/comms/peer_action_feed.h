@@ -1,20 +1,17 @@
-// coop/comms/peer_action_feed.h -- announce a peer's shared-world action to the
-// local chat feed (gameplay layer, principle 7).
+// coop/comms/peer_action_feed.h -- announce a peer's shared-world action to the local chat feed
+// (gameplay layer, principle 7).
 //
-// The extensible home for "a player did a shared thing everyone should see". The
-// first caller is email deletion (coop::email_sync): each peer renders the line
-// LOCALLY from the existing EmailDelete wire event (which already carries who =
-// senderSlot and which = content hash) -- no new packet. Each peer decides whether
-// it SEES these lines via the ui.chat.peer_actions toggle (F1 > Cosmetics > Chat),
-// default ON -- a local view preference, not a wire broadcast.
+// The extensible home for "a player did a shared thing everyone should see". Email deletion
+// (coop::email_sync) is one caller: each peer renders the line LOCALLY from the existing
+// EmailDelete wire event, which already carries who (senderSlot) and which (a content hash), so
+// no new packet is needed. Each peer decides whether it SEES these lines through the
+// ui.chat.peer_actions toggle (F1 > Cosmetics > Chat), default on -- a local view preference,
+// not a wire broadcast.
 //
-// Renders "<nick> <action>" with the nick colored per slot (chat_feed::PushChat).
-// The subject is ALWAYS the actor's nickname -- the local actor sees the same
-// "<OwnNick> <action>" line everyone else sees (the Minecraft feed principle,
-// user 2026-07-18; the old "You <action>" rendering is retired, RULE 2).
-// Announce()/AnnounceDirect()/SetEnabled() are GAME THREAD (the callers --
-// email_sync's poll/apply, signal_catch, device_occupancy -- are game-thread).
-// Enabled() is lock-free.
+// Renders "<nick> <action>" with the nick coloured per slot (chat_feed::PushChat). The subject
+// is ALWAYS the actor's nickname, so the local actor sees the same line everyone else sees.
+// Announce(), AnnounceDirect() and SetEnabled() are GAME THREAD, as every caller is; Enabled()
+// is lock-free.
 #pragma once
 
 #include <cstdint>

@@ -4,7 +4,7 @@
 
 #include "coop/net/http_client.h"
 #include "coop/net/peer_identity.h"  // LocalIdentityString -- the identity joiners dial
-#include "coop/net/protocol.h"  // kProtocolVersion -- announced for the v59 browser join gate
+#include "coop/net/protocol.h"  // kProtocolVersion -- announced for the browser's join gate
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the announced identity pair's game half
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
@@ -34,19 +34,17 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     // replace error handler so invalid-UTF-8 input can't throw out of this worker.
     J::Json b;
     b["name"] = name;
-    // The Paper-pair identity (2026-07-19): game target + build number (proto).
-    // No "version" field -- the mod-semver axis was retired whole (RULE 2).
+    // The Paper-pair identity: the game target plus the build number (proto). There is no "version"
+    // field -- the mod-semver axis was retired whole (RULE 2).
     b["game"] = coop::version::kGameTarget;      // join gate tier 1
     b["proto"] = static_cast<int>(coop::net::kProtocolVersion);  // the build number (tier 2)
     b["world"] = world;
-    // The identity joiners dial. It is this install's durable PUBLIC KEY rendered
-    // `gen:<64 hex>` -- the same value the admission challenge proves possession
-    // of, so the rendezvous name and the provable name are one thing (RULE 2).
-    // REQUIRED since b145: the master's per-session mint that used to stand in for
-    // a host sending none is DELETED, and `/v1/host` answers a missing or
-    // malformed identity with a named 400. There is no fallback because a minted
-    // name is one the master asserts on our behalf, and the relay now registers
-    // only names their holder signed for (security A59).
+    // The identity joiners dial. It is this install's durable PUBLIC KEY rendered `gen:<64 hex>` --
+    // the same value the admission challenge proves possession of, so the rendezvous name and the
+    // provable name are one thing (RULE 2). It is REQUIRED: the master mints no per-session name to
+    // stand in for a host that sends none, and `/v1/host` answers a missing or malformed identity
+    // with a named 400. There is no fallback, because a minted name is one the master asserts on
+    // our behalf, and the relay registers only names their holder signed for.
     b["identity"] = coop::net::peer_identity::LocalIdentityString();
     b["locked"] = locked;
     b["players_max"] = playersMax;
