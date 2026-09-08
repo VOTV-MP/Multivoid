@@ -66,8 +66,9 @@ void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot) {
 void PlayTearOnWisp(void* wispActor, uint32_t victimSlot) {
     if (!wispActor || !ue_wrap::wisp::IsKillerWisp(wispActor)) return;
     // Force the parked mirror mesh to tick so a played montage advances, then play the fatality
-    // tear. Both best-effort: the force-tick alone shows the mirror; the montage is the gore. Gibs
-    // and the victim socket-attach hold are a follow-on.
+    // tear. Both best-effort: the force-tick alone shows the mirror, the montage is the gore. The
+    // limb gibs are still a follow-on; the victim's body placement belongs to wisp_grab_hold, which
+    // both receivers engage.
     ue_wrap::wisp::ForceMeshTick(wispActor);
     const bool montage = ue_wrap::wisp::PlayFatalityMontage(wispActor);
     UE_LOGI("wisp_tear: tear on wisp actor=%p (victimSlot=%u) -- force-tick + montage=%d",

@@ -1,23 +1,18 @@
-// coop/wisp_tear_mirror.h -- Killer Wisp coop, RECEIVER side (Inc2, parts B + C).
+// coop/wisp_tear_mirror.h -- Killer Wisp coop, receiver side. The host's detect and route live
+// in coop/wisp_attack_sync; this module owns the two receiver paths.
 //
-// See research/findings/npc-creatures/votv-killerwisp-coop-design-2026-06-13.md. The HOST detect +
-// route lives in coop/wisp_attack_sync; this module owns the two receiver paths:
+// OnWispGrab reaches the VICTIM alone: the host's killerwisp grabbed this client's puppet and
+// neutralised its own false grab, so this client now dies for real. The kill is per-peer
+// authoritative -- ragdollMode(true, false, true) on our own possessed player after the host's
+// delay, not a montage notify, since our wisp mirror is a kinematic puppet that fires none.
+// Native ragdoll death, then the menu, then rejoin.
 //
-//   * OnWispGrab (the VICTIM only): the host's killerwisp grabbed THIS client's puppet
-//     and neutralized its own false-grab; this client now dies for real. Per-peer-
-//     authoritative kill: schedule ragdollMode(true,false,true) on our OWN possessed
-//     player after the host's fixed delay (NOT a montage notify -- our wisp mirror is a
-//     kinematic puppet that fires no notifies). Native ragdoll death -> menu -> rejoin.
+// OnWispTear reaches every peer, and the host calls it locally because it never receives its own
+// broadcast: play the fatality tear on the LOCAL wisp mirror by forcing its parked mesh to tick
+// and playing the montage, which the mirror never runs itself. PlayTearOnWisp is that core.
 //
-//   * OnWispTear (ALL peers + the host's own local call): play the fatality TEAR on the
-//     LOCAL wisp mirror -- force its parked mesh to tick + Montage_Play 'fatality' (the
-//     mirror never runs the BP montage itself). PlayTearOnWisp is the shared core (the
-//     host calls it directly on its own wisp actor since it doesn't receive its own
-//     WispTear broadcast).
-//
-// DEFERRED to a follow-on (documented, no stubs): the 4 limb gibs + blood particles, the
-// victim socket-attach hold ('playerGrab' + a RemotePlayer wisp-held display mode), and
-// the victim CMC park. The first version is the cross-peer KILL + the wisp tear animation.
+// Body placement across the grab window belongs to coop::wisp_grab_hold. The limb gibs and the
+// blood particles are still a follow-on.
 
 #pragma once
 
@@ -30,21 +25,23 @@ struct WispTearPayload;
 
 namespace coop::wisp_tear_mirror {
 
-// VICTIM receiver (host->victim slot). Self-verifies the addressed Player Element id, then
-// arms a fixed-delay ragdoll death on the local player. Game thread.
+// VICTIM receiver (host to the victim's slot). Verifies the packet addresses our own Player
+// Element id, engages the local grab hold for the window, and arms the ragdoll death at the
+// host's delay, clamped to a sane range. Game thread.
 void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot);
 
-// ALL-peers receiver (host->all). Resolves the local wisp NPC mirror by wispElementId and
-// plays the tear on it. Game thread.
+// ALL-peers receiver (host to all). Resolves the local wisp mirror by wispElementId, plays the
+// tear on it, and holds the victim's puppet at its socket on every peer but the victim's own.
+// Game thread.
 void OnWispTear(const coop::net::WispTearPayload& p, uint8_t senderPeerSlot);
 
-// Shared tear core: force the wisp mesh to tick + play the fatality montage on it. Used by
-// OnWispTear (resolved mirror) AND by the host's wisp_attack_sync directly (its own wisp).
-// `victimSlot` is reserved for the deferred socket-attach hold. Game thread.
+// Shared tear core: force the wisp mesh to tick, then play the fatality montage on it. Used by
+// OnWispTear on the resolved mirror AND by the host's wisp_attack_sync directly on its own wisp.
+// `victimSlot` is logged, not acted on -- the hold is wisp_grab_hold's. Game thread.
 void PlayTearOnWisp(void* wispActor, uint32_t victimSlot);
 
-// Per-tick: discharge the armed victim ragdoll death once its deadline elapses. No-op until
-// armed. Game thread (ragdollMode is a UFunction call).
+// Per-tick: release the grab ride and discharge the armed victim ragdoll death once its deadline
+// elapses. No-op until armed. Game thread (ragdollMode is a UFunction call).
 void Tick();
 
 // Clear armed state on disconnect.
