@@ -1,23 +1,16 @@
-// coop/net/peer_admission_internal.h -- the signed blob's layout, shared by the two
-// translation units that make up peer_admission.
+// coop/net/peer_admission_internal.h -- the signed blob's layout, shared by the two translation
+// units that make up peer_admission.
 //
-// WHY THIS EXISTS. `RunSelftest` is ~115 lines of negative arms that the production
-// path never calls, and it pushed peer_admission.cpp past the 800-LOC soft cap on
-// 2026-09-01. Lifting it needs exactly one thing from its old home: the BLOB, because
-// the whole point of those arms is that a signature over a DIFFERENT blob must not
-// verify -- so the test has to build blobs the same way the production code does, or it
-// tests its own copy of the layout instead.
+// NOT A PUBLIC HEADER: it sits beside the .cpp files rather than under include/, because nothing
+// outside these two units may build an admission blob -- doing so elsewhere would mean signing
+// something the exchange did not author. `peer_admission.h` stays the module's whole public
+// surface.
 //
-// THAT IS THE TRAP THIS HEADER PREVENTS, and it is worth naming because the tempting
-// alternative is to re-declare the layout in the test file. A selftest carrying its own
-// copy of the structure it verifies passes forever after the real one changes -- the
-// project has the general form of this written down as "a selftest that reimplements
-// what it checks". ONE definition, two includers.
-//
-// NOT A PUBLIC HEADER. It lives beside the .cpp files rather than under include/,
-// because nothing outside these two TUs may build an admission blob: doing so from
-// elsewhere would mean signing something the exchange did not author. `peer_admission.h`
-// remains the module's whole public surface.
+// It exists because the selftest lives in its own translation unit and needs exactly one thing from
+// the production one: the BLOB. Its arms assert that a signature over a DIFFERENT blob does not
+// verify, so it has to build blobs the way the production code does. Re-declaring the layout in the
+// test file is the trap: a selftest carrying its own copy of the structure it verifies passes
+// forever after the real one changes. ONE definition, two includers.
 
 #pragma once
 
@@ -31,9 +24,9 @@ namespace coop::net::peer_admission::internal {
 
 using peer_identity::PubKey;
 
-// THE TAG IS THE VERSION OF THE LAYOUT, and the static_asserts below are the contract:
-// a change to any field width must break the build rather than silently invalidate
-// every signature in the field. Moved here verbatim from peer_admission.cpp.
+// THE TAG IS THE VERSION OF THE LAYOUT, and the static_asserts below are the contract: a change to
+// any field width must break the build rather than silently invalidate every signature in the
+// field.
 constexpr char   kTag[]  = "multivoid-peer-admission-v2";
 constexpr size_t kTagLen = sizeof(kTag) - 1;  // 27, terminator excluded
 static_assert(kTagLen == 27, "the tag width is part of the blob layout");
