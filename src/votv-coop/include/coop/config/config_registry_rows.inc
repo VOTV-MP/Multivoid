@@ -244,6 +244,9 @@ CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr,
     "Diagnostic probe: trash pile delta events.")
 CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,
     "Diagnostic probe: garbage pickup path.")
+CFG_FLAG(world_actor_trace, "world_actor_trace", "dev", false, nullptr,
+    "Diagnostic trace: the client-side world-actor mirror drive, once a second per mirror. Costs "
+    "two extra location reads per mirror per second while on.")
 CFG_FLAG(grime_log, "grime_log", "dev", false, nullptr,
     "Diagnostic logging for grime/cleaning sync.")
 CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr,

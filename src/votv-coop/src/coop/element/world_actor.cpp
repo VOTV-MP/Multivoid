@@ -6,11 +6,13 @@
 //
 // The interp is the advance-before-rebase shape that keeps it from starving: SetTargetPose
 // advances the open window FIRST, then rebases. The drive writes the mirror's transform, and
-// the mirror's actor tick is parked at spawn (world_actor_sync: SetActorTickEnabled(false)), so
-// this drive is authoritative and cannot fight the actor's own blueprint movement.
+// the mirror's actor tick is parked at spawn (world_actor_mirror.cpp: SetActorTickEnabled(false)),
+// so this drive is authoritative and cannot fight the actor's own blueprint movement.
 
 #include "coop/element/world_actor.h"
 
+#include "coop/config/config.h"           // ResolveFlag -- the [dev] world_actor_trace gate
+#include "coop/config/config_registry.h"  // rows::world_actor_trace
 #include "coop/net/protocol.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
@@ -135,11 +137,15 @@ void WorldActor::AdvanceInterp() {
 }
 
 void WorldActor::Tick() {
-    // [WA-TRACE client-drive] 1 Hz per-mirror step and state trace. `pre` is the engine location
-    // that SURVIVED the last frame -- a restored blueprint tick fighting the drive shows up as pre
-    // snapping back while cur and tgt advance; `post` is right after our write.
-    const uint64_t nowMs = NowMs();
-    const bool trace = (nowMs - dbgLastLogMs_ >= 1000);
+    // [WA-TRACE client-drive] 1 Hz per-mirror step and state trace, behind [dev] world_actor_trace
+    // because it is not free: `pre` and `post` are two EXTRA GetActorLocation dispatches per mirror
+    // per second that exist only to feed the line. `pre` is the engine location that SURVIVED the
+    // last frame -- a restored blueprint tick fighting the drive shows up as pre snapping back
+    // while cur and tgt advance; `post` is right after our write.
+    static const bool sTrace =
+        ::coop::config::ResolveFlag(::coop::config_registry::rows::world_actor_trace);
+    const uint64_t nowMs = sTrace ? NowMs() : 0;
+    const bool trace = sTrace && (nowMs - dbgLastLogMs_ >= 1000);
     void* actor = GetActor();
     if (!actor || !R::IsLiveByIndex(actor, GetInternalIdx())) {
         if (trace) { dbgLastLogMs_ = nowMs;

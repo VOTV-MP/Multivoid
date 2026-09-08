@@ -34,9 +34,17 @@ constexpr int kSettleSec  = 8;
 constexpr int kWatchSec   = 60;
 
 // The local player pawn (mainPlayer_C with a controller -- the definitive local-vs-puppet
-// discriminator). One GUObjectArray walk at the settle edge, NOT per tick. nullptr until the world
-// + player exist.
+// discriminator). The lookup is a full GUObjectArray walk that also allocates its result vector,
+// so it is throttled: the settle state re-enters every tick until the player exists, and an
+// unthrottled retry there would put that walk on the gameplay tick for as long as the world takes
+// to come up. One attempt a second, and nullptr in between.
+std::chrono::steady_clock::time_point g_lastPlayerScan{};
+
 void* LocalPlayer() {
+    const auto now = std::chrono::steady_clock::now();
+    if (g_lastPlayerScan.time_since_epoch().count() != 0 && now - g_lastPlayerScan < std::chrono::seconds(1))
+        return nullptr;
+    g_lastPlayerScan = now;
     for (void* p : R::FindObjectsByClass(L"mainPlayer_C")) {
         if (p && R::IsLive(p) && E::GetController(p)) return p;
     }
