@@ -22,14 +22,13 @@ namespace {
 
 namespace VC = coop::voice_chat;
 
-// Atomic: Toggle/Close run on the game-window WndProc thread (the V key) while
-// IsOpen/Render read on the render thread (audit 2026-06-12 IMPROVE-2).
+// Atomic: Toggle and Close run on the game-window WndProc thread (the V key) while IsOpen
+// and Render read on the render thread.
 std::atomic<bool> g_open{false};
 
-// Device lists are enumerated once per panel-open (and on Rescan) -- never
-// per frame (ma_context_init walks the audio stack). The PTT key label is
-// cached the same way: ReadIniValue is a file read, not per-frame material
-// (audit 2026-06-12 IMPROVE-1).
+// Device lists are enumerated once per panel-open (and on Rescan), never per frame:
+// ma_context_init walks the audio stack. The PTT key label is cached the same way, since
+// ReadIniValue is a file read.
 bool g_devicesFresh = false;
 std::vector<std::string> g_micDevices;
 std::vector<std::string> g_outDevices;
@@ -95,20 +94,13 @@ void Render() {
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f),
                             ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(S(380.0f), 0.0f), ImGuiCond_Always);
-    // Begin's close-X needs a plain bool*, so the atomic is bridged through a
-    // local -- and the local has to be written BACK, or the X does nothing.
-    //
-    // That write-back used to be hand-written at each exit, and the TAIL path
-    // did not have it. Only the `!s.enabled` early-out did. So with voice
-    // enabled -- the normal case, and the only one a player ever sees -- the X
-    // set `open=false`, nothing consumed it, `g_open` stayed true, and the next
-    // frame called Begin with a fresh `open=true`: the window came straight
-    // back and the X was dead. V worked because it drives `g_open` directly.
-    // (User report, 2026-08-31.) The comment that stood here asserted both
-    // paths wrote back; the comment was the only place that was true.
-    //
-    // A destructor cannot be forgotten by a branch someone adds later, which
-    // is why this is a guard and not a third copy of the same line.
+    // Begin's close-X needs a plain bool*, so the atomic is bridged through a local and written
+    // back by a destructor rather than at each exit. Written back by hand, it has to be repeated on
+    // every path out of this function, and the one path that forgets it is invisible: with voice
+    // enabled -- the normal case, and the only one a player ever sees -- the X cleared the local,
+    // nothing consumed it, g_open stayed true, and the next frame reopened the window with a fresh
+    // open=true. V kept working throughout, because V drives g_open directly. A destructor cannot
+    // be forgotten by a branch someone adds later.
     bool open = true;
     struct CloseOnX {
         const bool& open;
@@ -188,8 +180,8 @@ void Render() {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Speech louder than this transmits. Watch the mic\n"
                                   "meter: set the slider just above your room's noise.");
-            // 0 dB == full scale: nothing ever transmits. The user's round-1 debugging
-            // parked it there; warn instead of silently never activating.
+            // 0 dB is full scale, so nothing would ever transmit: warn rather than let the panel
+            // sit there silently never activating.
             if (thr > -5.0f)
                 ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
                                    "Threshold near 0 dB -- the mic will almost never "
