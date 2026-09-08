@@ -1,10 +1,13 @@
-// ue_wrap/world/skysphere.cpp -- see ue_wrap/world/skysphere.h. Engine access for the night-sky actor
-// (Anewsky_C). Offsets are resolved from the live class via reflection; the Alpha 0.9.0-n
-// values are logged fallbacks. Mirrors ue_wrap/daynightcycle.cpp's cache + resolve shape.
+// ue_wrap/world/skysphere.cpp -- see ue_wrap/world/skysphere.h. Engine access for the night-sky
+// actor (Anewsky_C). The two actor offsets are resolved from the live class via reflection,
+// with the Alpha 0.9.0-n values as logged fallbacks; saveSlot.moonPhase is resolved lazily, by
+// name only, and stays inert if it cannot be found. Mirrors ue_wrap/daynightcycle.cpp's cache
+// + resolve shape.
 
 #include "ue_wrap/world/skysphere.h"
 
 #include "ue_wrap/actors/inventory.h"  // ResolveSaveSlot: moonPhase lives on the save, not the actor
+#include "ue_wrap/core/call.h"         // ParamFrame + Call, to clear the BP's own moon-phase timer
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -13,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cwchar>
 
 namespace ue_wrap::skysphere {
 namespace {
@@ -24,7 +28,8 @@ std::atomic<bool> g_resolved{false};
 void*   g_skyCls         = nullptr;  // newsky_C UClass
 int32_t g_skyCompOff     = -1;       // Anewsky_C::sky (UStaticMeshComponent*)
 int32_t g_moonPhaseOff   = -1;       // Anewsky_C::moonPhase_mirror (float)
-int32_t g_saveMoonOff    = -1;       // UsaveSlot_C::moonPhase (float) -- the source the Tick copies from
+int32_t g_saveMoonOff    = -2;       // UsaveSlot_C::moonPhase (float); -2 = not looked at yet, -1 = looked and failed
+void*   g_timerClearedFor = nullptr; // the newsky actor whose setMoonPhase timer we already cleared
 
 constexpr int32_t kSkyCompOffFallback   = 0x0250;
 constexpr int32_t kMoonPhaseOffFallback = 0x02BC;
@@ -37,6 +42,42 @@ void* SkyComponent(void* newsky) {
     if (!newsky || g_skyCompOff < 0) return nullptr;
     return *reinterpret_cast<void* const*>(
         reinterpret_cast<const char*>(newsky) + g_skyCompOff);
+}
+
+// newsky arms a LOOPING 10 s timer on setMoonPhase at BeginPlay (applyMoonPhase defaults true),
+// and that event recomputes saveSlot.moonPhase from this machine's wall clock. On a client that
+// races the host's value in, so clear the timer once per newsky actor and let the host be the only
+// writer. K2_ClearTimer(Object, FunctionName) is the exact inverse of the BP's arm; FunctionName is
+// an FString {data, num, max} whose counts include the null terminator (the kerfur pattern).
+void ClearMoonPhaseTimer(void* sky) {
+    if (!sky || sky == g_timerClearedFor) return;
+    static void* sKslCdo  = nullptr;
+    static void* sClearFn = nullptr;
+    if (!sKslCdo) sKslCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
+    if (sKslCdo && !sClearFn) {
+        if (void* kc = R::FindClass(L"KismetSystemLibrary"))
+            sClearFn = R::FindFunction(kc, L"K2_ClearTimer");
+    }
+    if (!sKslCdo || !sClearFn) {
+        static bool sWarned = false;
+        if (!sWarned) { sWarned = true;
+            UE_LOGW("skysphere: K2_ClearTimer unresolved -- the BP's 10 s setMoonPhase timer still "
+                    "runs, so this peer re-derives the moon phase from its own clock between "
+                    "applies"); }
+        return;
+    }
+    ue_wrap::ParamFrame f(sClearFn);
+    if (!f.valid()) return;
+    f.Set<void*>(L"Object", sky);
+    static const wchar_t* kFn = L"setMoonPhase";
+    const int32_t num = static_cast<int32_t>(::wcslen(kFn)) + 1;
+    struct { const wchar_t* data; int32_t n; int32_t m; } fs{kFn, num, num};
+    if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) return;
+    if (ue_wrap::Call(sKslCdo, f)) {
+        g_timerClearedFor = sky;
+        UE_LOGI("skysphere: cleared newsky.setMoonPhase's 10 s timer on %p -- the host owns the "
+                "moon phase on this peer", sky);
+    }
 }
 
 }  // namespace
@@ -95,15 +136,20 @@ void ApplySky(const FRotator& skyWorldRot, float moonPhase) {
     void* sky = Sky();
     if (!sky || g_moonPhaseOff < 0) return;
     if (void* comp = SkyComponent(sky)) E::SetComponentWorldRotation(comp, skyWorldRot);
-    // moonPhase_mirror first, so the value is right for the rest of THIS frame: the BP's Tick
-    // paints the moon material from the mirror every frame.
-    *reinterpret_cast<float*>(reinterpret_cast<char*>(sky) + g_moonPhaseOff) = moonPhase;
-    // Then the saveSlot, which is what actually survives: the same Tick re-assigns the mirror
-    // from saveSlot.moonPhase before it paints, so a mirror-only write is gone within a frame.
+    // The phase goes to saveSlot.moonPhase and nowhere else. moonPhase_mirror is not a second
+    // home for it: newsky's Tick re-assigns the mirror FROM saveSlot.moonPhase and then paints
+    // the moon material from it, all in one straight-line block, so a write to the mirror has no
+    // reader left.
+    ClearMoonPhaseTimer(sky);
     if (void* save = ue_wrap::inventory::ResolveSaveSlot()) {
-        if (g_saveMoonOff < 0) {
-            if (void* saveCls = R::ClassOf(save))
-                g_saveMoonOff = R::FindPropertyOffset(saveCls, L"moonPhase");
+        if (g_saveMoonOff == -2) {
+            void* saveCls = R::ClassOf(save);
+            g_saveMoonOff = saveCls ? R::FindPropertyOffset(saveCls, L"moonPhase") : -1;
+            if (g_saveMoonOff < 0)
+                UE_LOGW("skysphere: saveSlot.moonPhase offset unresolved -- the moon phase is "
+                        "local-only on this peer");
+            else
+                UE_LOGI("skysphere: saveSlot.moonPhase@0x%04X", g_saveMoonOff);
         }
         if (g_saveMoonOff >= 0)
             *reinterpret_cast<float*>(reinterpret_cast<char*>(save) + g_saveMoonOff) = moonPhase;

@@ -18,8 +18,8 @@
 
 namespace ue_wrap::skysphere {
 
-// Resolve the newsky_C UClass + the sky/moonPhase_mirror offsets + the setMoonPhase UFunction.
-// Idempotent; true once resolved (false while the BP class is not yet loaded). Game thread.
+// Resolve the newsky_C UClass and the sky / moonPhase_mirror offsets. Idempotent; true once
+// resolved (false while the BP class is not yet loaded). Game thread.
 bool EnsureResolved();
 
 // The live Anewsky_C* (cached; re-resolved if it dies). nullptr until it has streamed in.
@@ -32,11 +32,13 @@ void* Sky();
 // untouched). Game thread.
 bool ReadSky(FRotator& skyWorldRot, float& moonPhase);
 
-// Apply the host's values: SetComponentWorldRotation on the `sky` mesh, then the phase into
-// BOTH moonPhase_mirror (right for this frame) and saveSlot.moonPhase (what survives, since
-// the Tick overwrites the mirror from it). The BP re-derives saveSlot.moonPhase from the local
-// clock on its own repeating timer, which sky_sync's ~1 Hz push then corrects. No-op if not
-// resolved / not streamed in. Game thread.
+// Apply the host's values: SetComponentWorldRotation on the `sky` mesh, and the phase into
+// saveSlot.moonPhase, which newsky's Tick copies into moonPhase_mirror and paints the moon
+// material from. Writing the mirror instead would have no reader. The save write needs both
+// the save slot and its moonPhase offset to resolve; on either miss it warns once and the
+// phase stays local. Also clears the BP's own 10 s setMoonPhase timer on this actor, so the
+// host is the only writer of the phase rather than a 1 Hz correction racing the local clock.
+// No-op if not resolved / not streamed in. Game thread.
 void ApplySky(const FRotator& skyWorldRot, float moonPhase);
 
 }  // namespace ue_wrap::skysphere
