@@ -439,9 +439,10 @@ void OnRequest(int peerSlot) {
     // NPC) is captured in its live state, so the joiner's loadObjects builds a correct world and
     // the reconcile has nothing to fix. The canonical slot is never named or written. On the game
     // thread (net_pump::Tick asserts it), so the save UFunctions are legal; the scratch file is
-    // read synchronously, then deleted. The native SAVED HUD is suppressed for this capture only:
-    // the bracket spans the synchronous capture, and a manual save uses a BP path the mod never
-    // calls.
+    // read synchronously, then deleted. The bracket around the capture DETECTS the native SAVED
+    // HUD rather than suppressing it -- nothing suppresses it yet: the bracket spans the
+    // synchronous capture, and a manual save uses a BP path the mod never calls, so a fire inside
+    // it belongs to the join save.
     coop::save_indicator_suppress::Begin();
     const bool captured = ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot);
     coop::save_indicator_suppress::End();

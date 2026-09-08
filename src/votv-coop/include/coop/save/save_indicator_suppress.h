@@ -1,28 +1,25 @@
-// coop/save_indicator_suppress.h -- suppress the native "SAVED..." HUD indicator ONLY
-// for the host's client-join scratch-save (save_transfer), never a manual F5/menu save.
+// coop/save/save_indicator_suppress.h -- watch for the native "SAVED..." HUD indicator during
+// the host's client-join scratch-save (save_transfer), and never a manual F5 or menu save.
 //
-// RE (research/findings + the 2026-06-24 agent RE): the join scratch-save is
-// save_transfer.cpp -> save_capture::CaptureLiveWorldToScratchSlot -> mainGamemode.
-// saveObjects, the ONLY direct saveObjects caller (a manual save uses the BP save()/
-// autosave() path the mod never calls -> cleanly discriminable, synchronous game-thread,
-// no interleave). The "SAVED..." text is painted by saveAnim / "Add Hint from Gamemode"
-// (addHint) called BP-INTERNALLY inside saveObjects (EX_LocalVirtualFunction -> invisible
-// to our ProcessEvent detour). We must NOT touch saveObjects/the disk write/the transfer
-// -- only the cosmetic indicator, and only inside the join-save window.
+// The join scratch-save is save_transfer.cpp -> save_capture::CaptureLiveWorldToScratchSlot ->
+// mainGamemode.saveObjects, the ONLY direct saveObjects caller: a manual save takes the BP
+// save()/autosave() path the mod never calls, so the two are cleanly discriminable.
 //
-// PHASE 1 (this build) = DETECT-LOG, READ-ONLY: a tight Begin/End flag brackets the
-// join-save; post-hooks on saveAnim + addHint (via ue_wrap/ufunction_hook, which patches
-// UFunction::Func below the BP VM) LOG which fires inside the window and FORWARD to the
-// original (SAVED still shows). Confirms which one paints before the targeted no-op.
-// PHASE 2 (next build, after the user reports which painted) = no-op that one in the
-// window. Game thread only.
+// It DETECTS ONLY -- nothing here suppresses the indicator. The candidate painters, saveAnim
+// and "Add Hint from Gamemode" (addHint), are called BP-INTERNALLY inside saveObjects
+// (EX_LocalVirtualFunction, invisible to the ProcessEvent detour), so they are reached through
+// ue_wrap/ufunction_hook, which patches UFunction::Func below the BP VM; both post-hooks
+// forward to the original. A live run caught NEITHER firing while the indicator showed, so
+// either the painter is a third path or the Func patch does not reach these two, and until
+// that is settled there is nothing to no-op. saveObjects, the disk write and the transfer are
+// never touched. Game thread only.
 #pragma once
 
 namespace coop::save_indicator_suppress {
 
-// Raise the join-save flag immediately BEFORE the scratch-save capture (lazily installs
-// the detect hooks on first call). Clear it immediately AFTER. Only saveAnim/addHint
-// calls that land inside this synchronous window are detected (later: suppressed).
+// Raise the join-save flag immediately BEFORE the scratch-save capture (lazily installs the
+// detect hooks on first call). Clear it immediately AFTER. Only saveAnim/addHint calls that
+// land inside this synchronous window, or within ~3 s of its close, are reported.
 void Begin();
 void End();
 
