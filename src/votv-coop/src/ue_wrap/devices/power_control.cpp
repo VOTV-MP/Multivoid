@@ -1,16 +1,16 @@
 // ue_wrap/power_control.cpp -- see ue_wrap/power_control.h. Engine access for the base POWER
-// PANEL (ApowerControl_C). Offsets/verbs resolved from the live class via reflection
+// PANEL (ApowerControl_C). Offsets and verbs are resolved from the live class by reflection
 // (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 //
-// The APPLY follows the RE doc's "Recipe A" (votv-powerControl-panel-sync-RE-2026-06-08.md):
-// mirror the panel's OWN visual (lever positions + LED particles) and nothing downstream. The
-// native buttonsVisibility() that the BP calls on a real press ALSO fans out to servers /
-// lightRoots / blackout-doors / wall-cords + gamemode.setPower -- all of which are synced by
-// their OWN coop channels (ApplianceState serverBox, LightState lightRoots, DoorState doors).
-// Re-running that fan-out on a remote peer would double-drive + fight those channels, so we do
-// NOT call buttonsVisibility()/powerChanged()/sendPower()/setPowered(); instead we call the
-// visual-only moveLevers() (levers) and drive the eff_*_on/off particle visibility directly
-// (the LED half of buttonsVisibility @116-1346), achieving the panel mirror with ZERO fan-out.
+// The apply mirrors the panel's OWN visual -- the lever positions and the LED particles -- and
+// nothing downstream. The native buttonsVisibility() the blueprint calls on a real press also
+// fans out to servers, lightRoots, blackout doors and wall cords plus gamemode.setPower, all of
+// which ride their own coop channels (ApplianceState for the serverBox, LightState for the
+// lightRoots, DoorState for the doors). Re-running that fan-out on a remote peer would
+// double-drive and fight those channels, so we never call buttonsVisibility(), powerChanged(),
+// sendPower() or setPowered(): we call the visual-only moveLevers() and drive the eff_*_on/off
+// particle visibility directly, which is the LED half of buttonsVisibility, for a panel mirror
+// with zero fan-out.
 
 #include "ue_wrap/devices/power_control.h"
 
@@ -148,12 +148,12 @@ bool ApplyPress(void* p, uint8_t mask) {
         if (f.valid()) Call(p, f);
     }
 
-    // 3. LEDs: set the eff_<sys>_on/off particle visibility DIRECTLY (replicating the visual half
-    //    of buttonsVisibility @116-1346) -- NOT buttonsVisibility() itself, which would fan out
-    //    to servers/lightRoots/blackout-doors/cords + gamemode.setPower (all synced by their own
-    //    channels). This drives ONLY the panel's own LED indicators. (The powerblock face-material
-    //    bulbs + isOn scalar are a documented visual-polish follow-up; the particles + levers are
-    //    the primary indicator.)
+    // 3. LEDs: set the eff_<sys>_on/off particle visibility DIRECTLY -- the visual half of
+    // buttonsVisibility -- and never buttonsVisibility() itself, which would fan out to servers,
+    // lightRoots, blackout doors and cords plus gamemode.setPower, all of them synced by their own
+    // channels. This drives ONLY the panel's own LED indicators. The powerblock face-material bulbs
+    // and the isOn scalar are still a visual-polish follow-up; the particles and levers are the
+    // primary indicator.
     for (auto& s : g_sys) {
         const bool on = (mask & (1u << s.bit)) != 0;
         if (s.effOnOff >= 0)
