@@ -1,15 +1,17 @@
-// coop/net/session_trashcarry.cpp -- v85 (Increment 2) host-authoritative trash-clump carry/flight
-// pose-batch send/receive for Session.
+// coop/net/session_trashcarry.cpp -- host-authoritative trash-clump carry/flight pose-batch send
+// and receive for Session.
 //
-// The byte-for-byte clone of session_worldactor.cpp for the trash-clump carry stream: the unreliable
-// HOST->client batch (MsgType::TrashCarryPose). A client-grabbed pile's clump is driven by the HOST (on
-// the requester's puppet); the host must ORIGINATE the pose so EVERY client -- including the grabber --
-// renders the clump moving (the relay never echoes a pose to its origin; a client drives only slot 0).
-// The host serializes its live batch ONCE per send (SerializeLocalTrashCarryBatch) before the per-peer
-// fan-out; clients parse + newest-wins-store each datagram (StoreRemoteTrashCarryBatch) for the game
-// thread to drain (trash_clump_pose_stream::TickApplyAndDrive). The per-peer PacketHeader stamp +
-// SendMessageToConnection stay in session.cpp's send loop. Mutex discipline identical to the WorldActor
-// path: local* under localMutex_, remote* under remoteMutex_. Reuses EntityPoseBatchHeader (a count).
+// Modelled on session_worldactor.cpp for the trash-clump carry stream: the unreliable HOST->client
+// batch (MsgType::TrashCarryPose). A client-grabbed pile's clump is driven by the HOST (on the
+// requester's puppet); the host must ORIGINATE the pose so EVERY client -- including the grabber --
+// renders the clump moving (the relay never echoes a pose to its origin; a client drives only slot
+// 0). The host serializes its live batch ONCE per send (SerializeLocalTrashCarryBatch) before the
+// per-peer fan-out; clients parse and newest-wins-store each datagram (StoreRemoteTrashCarryBatch)
+// for the game thread to drain (trash_clump_pose_stream::TickApplyAndDrive). The per-peer
+// PacketHeader stamp and SendMessageToConnection stay in session.cpp's send loop. Mutex discipline
+// is the WorldActor path's: local* under localMutex_, remote* under remoteMutex_. Reuses
+// EntityPoseBatchHeader (a count). The two files are no longer twins: the receive path here carries
+// a role gate and a per-entry finite check that the sibling does not.
 
 #include "coop/net/session.h"
 
@@ -59,21 +61,15 @@ int Session::SerializeLocalTrashCarryBatch(uint8_t* buf) {
 }
 
 void Session::StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq) {
-    // HOST->client trash-clump carry batch. The host ORIGINATES it (never relays/receives it), so this
-    // lands only on clients. Parse + store the LATEST into the carry-batch slot the game thread drains
-    // (trash_clump_pose_stream::TickApplyAndDrive); newest-wins via seq.
-    // SECURITY (W6, docs/security/TRACKER.md) -- FIXED below; kept as the record of what was wrong.
-    // This comment used to claim "per-entry float validation + the ctx-freshness gate happen at the
-    // game-thread apply". Only the SECOND half was ever true (trash_clump_pose_stream.cpp's
-    // IsInboundStreamCtxFresh); there was NO float validation anywhere on the path, so a wire NaN
-    // rode BeginLerpToPose straight into SetActorLocation. A half-true comment is worse than a false
-    // one -- spot-checking the true half confirms the whole sentence.
-    // Measured while fixing: neither this store NOR the game-thread apply had any role check, so a
-    // client could send this host-originated kind TO the host and drive its props. Note the sibling
-    // this file was cloned from (session_worldactor.cpp) has no role gate either -- the "unlike its
-    // siblings" framing in the tracker was imprecise; the finite-check asymmetry is the real one
-    // (session_streams.cpp :198/:222/:260/:297/:324 all validate).
-    // Both gaps are closed below: a ROLE gate, then a per-entry FINITE check.
+    // HOST->client trash-clump carry batch. The host ORIGINATES it (never relays or receives it),
+    // so this lands only on clients. Parse and store the LATEST into the carry-batch slot the game
+    // thread drains (trash_clump_pose_stream::TickApplyAndDrive); newest-wins via seq.
+    //
+    // The two gates below are the trust boundary. The ROLE gate: nothing on the wire stops a client
+    // from sending this host-originated kind TO the host, and without it neither this store nor the
+    // game-thread apply asks who sent it. The FINITE check: the apply's freshness gate
+    // (trash_clump_pose_stream.cpp's IsInboundStreamCtxFresh) judges staleness, not values, so
+    // without it a wire NaN reaches BeginLerpToPose and then SetActorLocation.
     if (role() == Role::Host) {
         UE_LOGW("trashcarry: host received a TrashCarryPose batch -- only the host originates this "
                 "kind, so this is a client-authored batch. Dropping.");
@@ -92,11 +88,10 @@ void Session::StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq
         std::memcpy(batch.data(),
                     static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader),
                     static_cast<size_t>(count) * sizeof(TrashClumpPoseSnapshot));
-    // W6: per-entry finite check, matching the five scalar stream channels in session_streams.cpp
-    // (:198 ValidatePose, :222, :260, :297, :324 isfinite). Without it a NaN rode straight through
-    // trash_clump_pose_stream's BeginLerpToPose into SetActorLocation. Reject the WHOLE batch rather
-    // than filtering entries: a batch carrying a non-finite pose is malformed, and silently applying
-    // its "good" half would leave the clump set half-updated from a sender we already distrust.
+    // Per-entry finite check, matching the five scalar stream channels in session_streams.cpp.
+    // Reject the WHOLE batch rather than filtering entries: a batch carrying a non-finite pose is
+    // malformed, and silently applying its "good" half would leave the clump set half-updated from
+    // a sender we already distrust.
     for (const TrashClumpPoseSnapshot& e : batch) {
         if (!std::isfinite(e.x) || !std::isfinite(e.y) || !std::isfinite(e.z) ||
             !std::isfinite(e.pitch) || !std::isfinite(e.yaw) || !std::isfinite(e.roll)) {
