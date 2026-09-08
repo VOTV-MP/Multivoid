@@ -1,8 +1,6 @@
-// harness/autotest_damage.cpp -- the Inc3 damage hurt-flash e2e autotest
-// (VOTVCOOP_RUN_DAMAGE_TEST): the CLIENT drives its OWN saveSlot.health down in
-// steps; the HOST observes its slot-1 puppet hurt-flash + body material swap.
-// Extracted verbatim from harness/autotest_vitals.cpp (2026-07-19 s27 dissolve);
-// interfaces + per-routine docs in harness/autotest.h.
+// harness/autotest/autotest_damage.cpp -- the damage hurt-flash end-to-end autotest
+// (VOTVCOOP_RUN_DAMAGE_TEST): the client drives its own health down, the host watches its puppet.
+// Interfaces and per-routine docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 #include "harness/screenshot.h"
@@ -31,22 +29,20 @@ namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 namespace cfg = coop::config;
 
-// Bounded spin-wait on a game-thread task's completion flag. Returns true if
-// the task signalled (set the flag non-zero), false if it never completed
-// within timeoutMs -- which would mean the posted task faulted (the SEH
-// firewall ate the AV and the flag was never set). A bound is mandatory:
-// driving ragdollMode on the local player COULD fault and an unbounded wait
-// would hang the whole smoke.
+// Bounded spin-wait on a game-thread task's completion flag. Returns true if the task signalled,
+// false if it never completed within timeoutMs -- which means the task faulted and the SEH firewall
+// ate the access violation before the flag was set. The bound is mandatory: these tasks touch the
+// save, the puppet's mesh and the local view, so an unbounded wait on a faulted one would hang the
+// whole run.
 bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     for (int i = 0; i < timeoutMs / 5 && d->load() == 0; ++i) ::Sleep(5);
     return d->load() != 0;
 }
 
-// ===================== Inc3 damage hurt-flash e2e test =====================
-// CLIENT drives its OWN saveSlot.health DOWN in steps; vitals Inc1 streams the
-// lower fraction; the HOST's slot-1 puppet SetVitals detects the drop, arms the
-// hurt-flash, and Tick flashes the nameplate red -- proven cross-peer by the host
-// reading the puppet's IsHurtFlashing(). No new wire (rides the health stream).
+// The mechanism under test: the client's saveSlot.health drops, the pose stream carries the lower
+// fraction, the host puppet's SetVitals edge-detects the drop and arms the flash, and its Tick
+// paints the nameplate red -- read back cross-peer through IsHurtFlashing(). No new wire: the
+// vitals ride PoseSnapshot.
 
 // HOST: poll the slot-1 puppet's hurt-flash state until it goes true (the wire-
 // driven health drop flashed it) then false (the flash window expired).
@@ -71,19 +67,19 @@ void ObserveDamageOnHost() {
             phase = 1;
         }
         if (phase == 1 && s == 1) {
-            UE_LOGI("damage_test[host]: observed HURT FLASH ON -- puppet nameplate red, driven by the wire-streamed health drop (Inc3 WORKS)");
-            // Confirm the BODY material swap took (slot-0 should be the solid-red
-            // hurt material) + capture a screenshot for the visual check.
+            UE_LOGI("damage_test[host]: observed HURT FLASH ON -- puppet nameplate red, driven by the wire-streamed health drop (the flash lane works)");
+            // Confirm the BODY material swap took (slot-0 should be the gore hurt material) +
+            // capture a screenshot for the visual check.
             {
                 auto d2 = std::make_shared<std::atomic<int>>(0);
                 GT::Post([d2] {
                     void* puppet = coop::puppet_drive::Puppet(1).GetActor();
                     if (!puppet || !R::IsLive(puppet)) { d2->store(1); return; }
                     const ue_wrap::FVector P = E::GetActorLocation(puppet);
-                    // Frame the puppet DYNAMICALLY: teleport the host to ~3.5 m in
-                    // front of the puppet (toward -X) looking back at it, so the red
-                    // body is in the screenshot regardless of where the puppet is
-                    // (static test-pose teleports desync the puppet on a big jump).
+                    // Frame the puppet DYNAMICALLY: teleport the host 2.8 m along +X from the
+                    // puppet, yawed 180 to look back at it, so the swapped body is in the
+                    // screenshot wherever the puppet stands (a fixed test-pose teleport desyncs the
+                    // puppet on a big jump).
                     coop::teleport_client::ApplyLocally({P.X + 280.f, P.Y, P.Z + 20.f,
                                                               /*pitch*/ -2.f, /*yaw*/ 180.f, /*roll*/ 0.f});
                     void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
@@ -156,7 +152,7 @@ void ObserveDamageOnHost() {
         ::Sleep(200);
     }
     if (phase >= 3)
-        UE_LOGI("damage_test[host]: VERDICT Inc3 e2e PASS -- a client's health drop flashed its host puppet's nameplate red then restored (no new wire)");
+        UE_LOGI("damage_test[host]: VERDICT damage-flash e2e PASS -- a client's health drop flashed its host puppet's nameplate red then restored (no new wire)");
     else if (!sawPuppet)
         UE_LOGW("damage_test[host]: VERDICT INCONCLUSIVE -- slot-1 puppet never resolved");
     else if (phase == 1)
@@ -166,9 +162,9 @@ void ObserveDamageOnHost() {
     UE_LOGI("damage_test[host]: DONE");
 }
 
-// CLIENT: lower the LOCAL player's saveSlot.health in steps (each a fresh DROP
-// edge -> sustained flashing) so the host has ample window to observe. Writes
-// the SAME saveSlot vitals Inc1 streams; values stay well above 0 (no death).
+// CLIENT: lower the LOCAL player's saveSlot.health in steps (each a fresh DROP edge -> sustained
+// flashing) so the host has an ample window to observe. Writes the SAME saveSlot vitals the pose
+// stream carries; values stay well above 0 (no death).
 void DriveDamageOnClient() {
     UE_LOGI("damage_test[client]: driver armed -- waiting for the local player + save");
     namespace V = ue_wrap::vitals;
@@ -196,16 +192,16 @@ void DriveDamageOnClient() {
     UE_LOGI("damage_test[client]: save resolved (maxHealth=%.1f) -- waiting 6 s for the host puppet to spawn", *maxH);
     ::Sleep(6000);  // the host puppet spawns on our first pose (~immediately after connect)
 
-    // SUSTAINED drop: ~12 small monotonic writes (0.92 -> ~0.48 of max) 300 ms
-    // apart. Each is a fresh drop edge that re-arms the 500 ms flash, so the puppet
-    // flashes CONTINUOUSLY for ~4 s -- ample for the host to detect + frame +
-    // screenshot the red body mid-flash. Stays well above 0 (no death).
+    // SUSTAINED drop: twelve small monotonic writes (0.92 -> 0.48 of max) 300 ms apart. Each is a
+    // fresh drop edge that re-arms the 500 ms flash, so the puppet flashes CONTINUOUSLY for about
+    // four seconds -- ample for the host to detect, frame and screenshot the hurt body mid-flash.
+    // Stays well above 0 (no death).
     for (int i = 0; i < 12; ++i) {
         auto done = std::make_shared<std::atomic<int>>(0);
         const float target = *maxH * (0.92f - 0.04f * i);
         GT::Post([target, done] {
             const bool ok = V::Write(V::Field::Health, target);
-            UE_LOGI("damage_test[client]: wrote local health=%.1f -> ok=%d (Inc1 streams it; host puppet should flash)", target, ok ? 1 : 0);
+            UE_LOGI("damage_test[client]: wrote local health=%.1f -> ok=%d (the pose stream carries it; host puppet should flash)", target, ok ? 1 : 0);
             done->store(1);
         });
         WaitDone(done, 8000);
