@@ -18,7 +18,7 @@
 #include "coop/props/save_identity_bind.h"  // the client's eid-range bind
 #include "coop/props/save_identity_map.h"  // the host's keyless index-to-eid map
 #include "coop/save/save_guard.h"
-#include "coop/save/save_indicator_suppress.h"  // suppress the SAVED HUD on the join scratch save
+#include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
 #include "ue_wrap/engine/engine.h"      // the host's current prop position
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream

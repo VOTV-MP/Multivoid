@@ -1,12 +1,8 @@
 // coop/items/save_record_wire.cpp -- see coop/items/save_record_wire.h.
-//
-// Extracted verbatim from inventory_wire.cpp 2026-07-22 (grammar byte-identical: same field
-// order, same caps, same Feasible gate, same per-row signal_wire reuse -- so a blob written by
-// the pre-extraction code parses identically here).
 
 #include "coop/items/save_record_wire.h"
 
-#include "coop/interactables/signal_wire.h"  // reuse the proven 0x70 signal-row serializer
+#include "coop/interactables/signal_wire.h"  // reuse the signal-row serializer; rows ride length-prefixed
 
 #include <array>
 #include <cstddef>

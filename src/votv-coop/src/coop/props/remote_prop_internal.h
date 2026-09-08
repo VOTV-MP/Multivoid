@@ -16,9 +16,9 @@
 namespace coop::remote_prop {
 
 // A Prop Element id -> its live mirror actor (UAF-safe IsLiveByIndex). Defined in
-// remote_prop.cpp, which uses it on the drive, release and convert paths; declared here so the
-// destroy TU (OnDestroyImpl_) can resolve the non-keyable trash clump by eid. null on a miss
-// or a dead actor.
+// remote_prop.cpp, which uses it on the drive and release paths; declared here so the convert
+// TU and the destroy TU (OnDestroyImpl_) can resolve the non-keyable trash clump by eid. null
+// on a miss or a dead actor.
 void* ResolveLiveActorByEid(uint32_t eid);
 
 // Echo-suppressed local destroy of `actor`: ClearAnyDriveFor, then (if K2_DestroyActor

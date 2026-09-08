@@ -123,7 +123,7 @@ void RecordDeny(uint8_t slot, uint8_t byte) {
 }
 
 // CLIENT deny handling: destroy the local hand ghost, else sweep untracked
-// module actors of the byte's class (the drop-before-deny case, r8).
+// module actors of the byte's class (the drop-before-deny case).
 void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
     if (origOp == 0) {
         // plug-dup: the HOST refunded (spawned the module back at the desk);
