@@ -121,7 +121,7 @@ LINE_MARKERS = collections.OrderedDict([
     # wraps onto the next comment line, and `user-mandated` / `user-retest` are unread.
     ("user",         (re.compile(r"\bUSER\b"
                                  r"|(?i:\bper (?:the )?user\b)"
-                                 r"|(?i:\buser'?s?\s*:\s*[\"\u00ab])"
+                                 r"|(?i:\buser'?s?\s*:\s*\S)"
                                  r"|(?i:\buser-request(?:ed)?\b)"
                                  r"|(?i:\buser'?s?\s+(?:ask(?:s|ed)?"
                                  r"|report(?:s|ed)?"

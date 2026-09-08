@@ -85,6 +85,7 @@ int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-
 // flagged as USER in the ledger
 // per the user, this row stays
 // user: "the words themselves, quoted"
+// user: the same attribution paraphrased, which opens no quote
 // the user-requested shape of the panel
 // user 2026-07-04 named the default
 // the user asked for this one
@@ -98,6 +99,8 @@ int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-
 int t5() { return 0; }
 // PRECISION: the user types into a user widget as user 0, and the user unchecked "Custom colour"
 // PRECISION: a per-user setting, a multi-user session and the user-visible form are all prose
+// PRECISION: two files, both the mechanism rather than a user:
+// the colon above ends its line, so it introduces this one instead of attributing anything
 const char* d = /* closes here */ "docs/nowhere.md";  // the string is CODE, not comment
 float translation(const char* base) { return *(const float*)(base + 0x10); }
 const char* s = "// not a comment";
@@ -212,7 +215,8 @@ MUTANTS = [
     ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
     ("user: drops the capitals form", 'r"\\bUSER\\b"', 'r"\\bZZZZ\\b"'),
     ("user: drops the per-the-user form", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r""'),
-    ("user: drops the quoted form", 'r"|(?i:\\buser\'?s?\\s*:\\s*[\\"\\u00ab])"', 'r""'),
+    ("user: drops the colon form", 'r"|(?i:\\buser\'?s?\\s*:\\s*\\S)"', 'r""'),
+    ("user: colon form needs a quote", "\\s*:\\s*\\S)", '\\s*:\\s*[\\"\\u00ab])'),
     ("user: drops the requested form", 'r"|(?i:\\buser-request(?:ed)?\\b)"', 'r""'),
     # One mutant per noun family, each a BALANCED substring: cutting the group
     # mid-parenthesis made the gate fail to import, and an arm that only asks for a
@@ -435,9 +439,9 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 90, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 93, "src.files": 5, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 15, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
@@ -483,7 +487,7 @@ def main():
     pinned = {
         ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:19",
                                                                      "src/votv-coop/src/x.cpp:48",
-                                                                     "src/votv-coop/src/x.cpp:70"],
+                                                                     "src/votv-coop/src/x.cpp:73"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():

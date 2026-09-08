@@ -177,8 +177,10 @@ void RenderSpawnNpc() {
     if (ImGui::Button("Spawn kerfurOmega (in front)")) coop::dev::spawn_npc::SpawnKerfurOmega();
     ImGui::SameLine();
     ImGui::TextDisabled("(host spawns + syncs)");
-    // Increment-1 mirror test: spawn the new allowlist creatures directly (the F1
-    // wisps/ventCrawler EVENTS don't reliably spawn a catchable one -- see spawn_npc).
+    // Spawn the allowlisted creatures directly, because the events that would otherwise produce
+    // one do not reliably leave a catchable actor: the wisp event arms an overlap box, and the
+    // eventer's ventCrawler spawn goes through EX_CallMath, bypassing our interceptor and landing
+    // in a far vent (see spawn_npc).
     if (ImGui::Button("Spawn killerWisp (in front)"))  coop::dev::spawn_npc::SpawnKillerWisp();
     ImGui::SameLine();
     if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();
@@ -247,8 +249,9 @@ void RenderEvents() {
     ImGui::SetNextItemWidth(S(180.f));
     ImGui::InputTextWithHint("##evfilter", "filter (name / category / time / effect)...", filter, sizeof(filter));
     ImGui::Separator();
-    // Horizontal scrollbar: the effect column can run past the panel on a narrow window, so the user can
-    // scroll right rather than lose the text (the window itself is also wider + min-constrained).
+    // Horizontal scrollbar: the effect column can run past the panel on a narrow window, so the
+    // reader scrolls right rather than losing the text. The window itself is wider and
+    // min-constrained too.
     ImGui::BeginChild("##evlist", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     ET::Category lastCat = ET::Category::COUNT;
     bool haveCat = false;
@@ -559,9 +562,10 @@ void Render() {
         g_selSub = nullptr;
     }
 
-    // Wider default + a MIN-size constraint so the content panel never gets cramped (user: elements
-    // didn't fit, had to widen every time). The min applies even when imgui.ini saved a narrow size,
-    // so it self-corrects an already-too-narrow window on next open; the user can still grow it.
+    // Wider default plus a MIN-size constraint, so the content panel is never cramped enough to
+    // need widening by hand on every open. The minimum applies even when imgui.ini saved a
+    // narrower size, so an already-too-narrow window self-corrects on the next open and can
+    // still be grown.
     ImGui::SetNextWindowSize(ImVec2(S(820.f), S(460.f)), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(S(720.f), S(320.f)), ImVec2(100000.0f, 100000.0f));
     if (!ImGui::Begin("VOTV Coop  -  Menu (F1)", nullptr, ImGuiWindowFlags_NoCollapse)) {

@@ -238,19 +238,17 @@ void Capture::ProcessFrame(const int16_t* samples) {
 
     // Activation. Whisper key acts as a second PTT that flags frames.
     //
-    // Foreground gate (2026-06-12, voice round 1): GetAsyncKeyState is GLOBAL across
-    // processes -- two same-PC instances BOTH transmitted on one PTT press (the freecam
-    // precedent, freecam.cpp InputDriverThread). Gate every key read -- and activation-
-    // mode capture too (no hot mic while alt-tabbed) -- on "the foreground window is
-    // OURS" (cheap user32 calls, safe on this mic thread). Tone mode is exempt: the
-    // headless autonomous smoke has no focused window at all.
+    // Foreground gate: GetAsyncKeyState is GLOBAL across processes, so two same-PC instances
+    // BOTH transmit on one PTT press (the same trap freecam.cpp's InputDriverThread hit). Every
+    // key read is gated on "the foreground window is OURS" -- cheap user32 calls, safe on this
+    // mic thread -- and so is activation-mode capture, so there is no hot mic while alt-tabbed.
+    // Tone mode is exempt: the headless smoke has no focused window at all.
     const bool foreground = toneMode_ || ui::input_focus::IsOurWindowForeground();
-    // Text-capture gate (2026-07-09): while OUR overlay is capturing typed text (chat
-    // input, a rebind box), a physical KEY must not drive the mic -- ImGui already ate
-    // the char for the field, so a PTT/whisper poll here would double-fire (user: T to
-    // chat, then G activated voice). KEY reads only; the activation-mode MIC path below
-    // is unaffected (typing does not change the mic level). Tone mode (headless smoke,
-    // no overlay) stays exempt.
+    // Text-capture gate: while OUR overlay is capturing typed text (chat input, a rebind box), a
+    // physical KEY must not drive the mic. ImGui has already eaten the char for the field, so a
+    // PTT or whisper poll here would double-fire -- typing T into chat and then G would open the
+    // voice channel. KEY reads only; the activation-mode MIC path below is unaffected, since
+    // typing does not change the mic level. Tone mode, headless and overlay-less, stays exempt.
     const bool keysLive = foreground &&
         (toneMode_ || !ui::input_focus::IsOverlayCapturingText());
     const bool whisperHeld =
