@@ -1,7 +1,8 @@
 // bootstrap/boot.cpp -- see bootstrap/boot.h.
 //
-// dllmain keeps only the lane discriminator + the DETACH backstop; the BootThread
-// body lives here, and src/loader/cppmod_entry.cpp is its second caller.
+// The BootThread body and the StartOnce guards. dllmain boots nothing: it disables thread
+// notifications on ATTACH and keeps the last-resort teardown backstop on DETACH, and
+// src/loader/cppmod_entry.cpp is the only caller of StartOnce.
 
 #include "bootstrap/boot.h"
 
@@ -116,11 +117,9 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // truth). The exe identity beside kGameTarget makes an install-skew report
     // (mod built for cook X running on exe Y) one-look diagnosable from the log.
     UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
-    // Entry + load-moment marker: which entry point brought us in (the one live
-    // lane is start_mod, entry=cppmod -- mp.py's _lane_check greps it, and
-    // entry=proxy-dllmain appearing here means a PREDECESSOR binary booted), and
-    // how late relative to process creation (UE4SS's mod-scan runs after its
-    // sig-scan phase).
+    // Entry + load-moment marker: which entry point brought us in (start_mod, entry=cppmod, is
+    // the only one this binary can print) and how late relative to process creation, since
+    // UE4SS's mod scan runs after its own sig-scan phase.
     UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag,
             MsSinceProcessStart(), ::GetCurrentProcessId());
     LogUe4ssPresence();
@@ -135,31 +134,28 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                     exePath, exeSize, coop::version::kGameTarget);
         }
     }
-    // THE VERDICT IS A DECISION, NOT A LOG LINE.
-    //
-    // This is the one place that knows whether our offsets match the running game, so
-    // a failed check STOPS the boot instead of installing the ProcessEvent detour and
-    // driving VOTV's UFunctions through offsets the check has just called wrong. The
-    // hazard is NOT a null pointer -- `game_thread::Install` refuses to install over an
-    // unresolved ProcessEvent -- it is an AOB that matched the WRONG SITE, which is non-null,
-    // only the functional round-trips catch it, and writing through wrong offsets into
-    // a live game corrupts the save. So we stand down and SAY SO on a surface that
-    // exists: the Win32 modal, never `ui::boot_warning_dialog`, which renders from an
-    // overlay this path must not install (it shares ShowRefuseDialog with the loader).
-    // THE NATIVE TEXT FIELD'S EDITING RULES, checked at BOOT and not at session start.
-    // It lives at the MENU -- the server browser's address box -- so a player can use
-    // it without a session ever existing, and a check gated on a session start would
-    // never run at all. Un-gated, pure logic, microseconds.
+    // THE NATIVE TEXT FIELD'S EDITING RULES, checked at BOOT and not at session start. The field
+    // lives at the MENU -- the server browser's address box -- so a player can use it without a
+    // session ever existing, and a check gated on a session start would never run at all.
+    // Un-gated, pure logic, microseconds.
     ui::native_text_field::RunSelftest();
 
+    // THE VERDICT IS A DECISION, NOT A LOG LINE.
+    //
+    // This is the one place that knows whether our offsets match the running game, so a failed
+    // check STOPS the boot instead of installing the ProcessEvent detour and driving VOTV's
+    // UFunctions through offsets the check has just called wrong. The hazard is NOT a null pointer
+    // -- `game_thread::Install` refuses to install over an unresolved ProcessEvent -- it is an AOB
+    // that matched the WRONG SITE: non-null, caught only by the functional round-trips, and
+    // writing through wrong offsets into a live game corrupts the save. So we stand down and SAY
+    // SO on a surface that exists -- the Win32 modal shared with the loader, never
+    // `ui::boot_warning_dialog`, which renders from an overlay this path must not install.
     int healthFails = ue_wrap::reflection::RunHealthCheck();
     {
-        // DRILL ARM (probe; RULE 2 exempt). A refusal path that never executes is
-        // a claim, not a behaviour -- and this one can only fire on a game build
-        // we do not have. `VOTVCOOP_FORCE_HEALTH_FAIL=<n>` makes boot react as if
-        // the check had failed n times, WITHOUT touching the check itself, so the
-        // stand-down and its modal can be shown RED on a healthy install. Inert
-        // unless set.
+        // DRILL ARM. A refusal path that never executes is a claim, not a behaviour, and this one
+        // can only fire on a game build we do not have. `VOTVCOOP_FORCE_HEALTH_FAIL=<n>` makes boot
+        // react as if the check had failed n times WITHOUT touching the check itself, so the
+        // stand-down and its modal can be shown on a healthy install. Inert unless set.
         char v[16] = {};
         if (::GetEnvironmentVariableA("VOTVCOOP_FORCE_HEALTH_FAIL", v, sizeof(v)) > 0) {
             const int forced = ::atoi(v);
@@ -197,11 +193,9 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     const unsigned long bootTid = ::GetCurrentThreadId();
     UE_LOGI("boot: BootThread tid=%lu", bootTid);
     {
-        // DIAGNOSTIC AMPLIFIER (probe; RULE 2 exempt): delay the
-        // PE MinHook install so the patch lands while the game thread is deep in
-        // live ProcessEvent traffic. Used to force the ~20% boot AV into a
-        // deterministic repro (hypothesis: a thread mid-PE at patch time).
-        // Inert unless VOTVCOOP_PE_INSTALL_DELAY_MS is set.
+        // `VOTVCOOP_PE_INSTALL_DELAY_MS` delays the ProcessEvent MinHook install, so the patch
+        // lands while the game thread is deep in live ProcessEvent traffic -- the state that makes
+        // a patch-time access violation reproducible instead of intermittent. Inert unless set.
         char v[16] = {};
         if (::GetEnvironmentVariableA("VOTVCOOP_PE_INSTALL_DELAY_MS", v, sizeof(v)) > 0) {
             const unsigned long ms = ::strtoul(v, nullptr, 10);
@@ -244,21 +238,19 @@ bool Started() {
 }
 
 StartResult StartOnce(const char* entryTag) {
-    // Latch FIRST: a second call on this module instance is the UE4SS restart
-    // re-entry (or a double-fire of the proxy lane) -- never re-bootstrap, and
-    // never re-take the mutex (CreateMutex on our own held name would report
-    // ERROR_ALREADY_EXISTS and mislabel the benign restart as a duplicate).
+    // Latch FIRST: a second call on this module instance is the UE4SS restart re-entry --
+    // never re-bootstrap, and never re-take the mutex (CreateMutex on our own held name
+    // would report ERROR_ALREADY_EXISTS and mislabel the benign restart as a duplicate).
     if (::InterlockedCompareExchange(&g_bootLatch, 1, 0) != 0) {
         UE_LOGI("boot: entry=%s already-booted (re-entry ignored; session keeps running)",
                 entryTag);
         return StartResult::kAlreadyBooted;
     }
 
-    // Per-PROCESS duplicate guard (lane-symmetric): first boot in this process
-    // owns the name; a SECOND module instance of the mod in the SAME process
-    // (two mod-folder copies; a folder-mod beside a live standalone install)
-    // collides here. PID suffix on purpose -- several game processes on one
-    // box (the standard LAN workflow) must never see each other.
+    // Per-PROCESS duplicate guard: the first boot in this process owns the name, and a
+    // SECOND module instance of the mod in the SAME process (two mod-folder copies; a mod
+    // folder beside a live standalone install) collides here. PID suffix on purpose --
+    // several game processes on one box must never see each other.
     wchar_t mutexName[64] = {};
     ::swprintf_s(mutexName, L"Local\\MultivoidLoaded_%lu", ::GetCurrentProcessId());
     const HANDLE mutex = ::CreateMutexW(nullptr, FALSE, mutexName);  // held for process life
@@ -269,11 +261,11 @@ StartResult StartOnce(const char* entryTag) {
         return StartResult::kRefusedDupMutex;
     }
 
-    // LATCH AFTER THE SPAWN, NOT BEFORE. `Started()` means "the boot thread
-    // exists", not "we intended to make one" -- and the old order made a failed
-    // CreateThread indistinguishable from a successful boot, at every caller and
-    // in the log. `Started()` is only ever read on RE-ENTRY (cppmod_entry.cpp:320),
-    // long after this call returns, so there is no window to race here.
+    // LATCH AFTER THE SPAWN, NOT BEFORE. `Started()` means "the boot thread exists", not
+    // "we intended to make one": latching first makes a failed CreateThread
+    // indistinguishable from a successful boot, at every caller and in the log. `Started()`
+    // is only ever read on RE-ENTRY, in the loader's restart short-circuit, long after this
+    // call returns, so there is no window to race here.
     const HANDLE t = ::CreateThread(nullptr, 0, BootThread,
                                     const_cast<char*>(entryTag), 0, nullptr);
     if (!t) {
