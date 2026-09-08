@@ -1,9 +1,9 @@
-// coop/player_damage.cpp -- see coop/player_damage.h.
+// coop/player/player_damage.cpp -- see coop/player/player_damage.h.
 //
-// vitals Inc3-WIRE relay half: host SENDS PlayerDamage to the hit peer; the owner
-// APPLIES it to its own possessed player. The vitals->flash tail (Inc1 health stream
-// + Inc3 hurt-flash) is already wired, so this module's job ends at causing the
-// owner's local saveSlot.health to drop.
+// The damage relay's wire half: the host SENDS PlayerDamage to the hit peer, and the owner APPLIES
+// it to its own possessed player. The vitals tail -- the pose stream's health fraction, and the
+// puppet hurt flash its drop arms -- is already wired, so this module's job ends at making the
+// owner's local saveSlot.health drop.
 
 #include "coop/player/player_damage.h"
 
@@ -38,9 +38,8 @@ constexpr float kMaxDamagePerHit = 1000.f;
 
 bool ValidDamage(float d) { return std::isfinite(d) && d > 0.f && d <= kMaxDamagePerHit; }
 
-// ---- the impact-entry cancel (2026-08-29; header block) ---------------------
-// mainPlayer_C's three native->BP impact events, resolved lazily (the class loads
-// with gameplay). One shared PRE callback; registered once each.
+// The impact-entry cancel. mainPlayer_C's three native->BP impact events, resolved lazily (the
+// class loads with gameplay). One shared PRE callback, registered once for each.
 const wchar_t* const kImpactEntryNames[3] = {
     L"impactDamage", L"impactDamageCPP", L"impactSquishCPP",
 };
@@ -49,25 +48,20 @@ bool     g_impactInterceptorsDone = false;
 uint32_t g_resolveThrottle = 0;
 uint32_t g_canceled = 0;   // rate-latched log counter
 
-// The LOCAL possessed player, published by Tick (game thread) for the
-// interceptor's any-thread compare. Post-ship audit 2026-08-29 (CRITICAL):
-// the first cut called Registry::IsLocal(self) inside the callback --
-// Registry::Local() mutates GT-only cache state, and a ProcessEvent
-// interceptor can fire on a parallel-anim worker (game_thread.h's own
-// contract). A published atomic pointer keeps the CANCEL effective on every
-// dispatching thread with one relaxed load and zero registry access (the
-// wisp interceptor's atomic-snapshot shape).
+// The LOCAL possessed player, published by Tick (game thread) for the interceptor's any-thread
+// compare. The interceptor may not reach the registry: Registry::Local() mutates game-thread-only
+// cache state, and a ProcessEvent interceptor can fire on a parallel-anim worker (game_thread.h's
+// own contract). A published atomic keeps the CANCEL effective on every dispatching thread with one
+// acquire load and no registry access.
 std::atomic<void*> g_localPawn{nullptr};
 
-// PRE cancel: a physical impact dispatched on a mainPlayer BODY that is NOT the
-// local possessed player (a peer's puppet, or the F1 skin-preview mannequin) must
-// not run the BP body -- it writes the PER-MACHINE saveSlot.health singleton and
-// drained the HOST when lethal contact resolved against a puppet in the host's
-// world (the "kill a player -> the host dies -> server falls" field report). The
-// victim's own machine computes the same contact on its own possessed player
-// (self==local -> pass-through), so nothing is lost -- MTA's victim-authoritative
-// shape, no relay. Coop-session gated: solo SP has only the local body anyway,
-// and an unset registry must never eat solo damage.
+// PRE cancel: a physical impact dispatched on a mainPlayer BODY that is NOT the local possessed
+// player (a peer's puppet, or the F1 skin-preview mannequin) must not run the BP body -- it writes
+// the PER-MACHINE saveSlot.health singleton, so lethal contact resolved against a puppet in the
+// host's world drained the HOST, and killing a player took the server down with them. The victim's
+// own machine computes the same contact on its own possessed player (self==local -> pass-through),
+// so nothing is lost: MTA's victim-authoritative shape, no relay. Coop-session gated, because solo
+// play has only the local body anyway and an unset registry must never eat solo damage.
 bool OnImpactEntryPre(void* self, void* /*params*/) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return false;
