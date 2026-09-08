@@ -1,10 +1,10 @@
-// ue_wrap/vm_dispatch.cpp -- see ue_wrap/vm_dispatch.h.
+// ue_wrap/core/vm_dispatch.cpp -- see ue_wrap/core/vm_dispatch.h.
 //
 // The permanent GNatives[0x45] swap, the name-keyed registration API and the game-thread
 // name-first filter that fires consumer bracket callbacks. Only opcode 0x45
-// (EX_LocalVirtualFunction) is swapped; 0x46 (EX_LocalFinalFunction) has no customer, so its
-// slot is left untouched. The table is checked for plausibility once at install and every
-// install failure latches loudly; there is no periodic re-check of the swapped slot.
+// (EX_LocalVirtualFunction) is swapped; 0x46 (EX_LocalFinalFunction) has no consumer, so its
+// slot is left untouched. The table is validated for plausibility once at install, every
+// install failure latches loudly, and the swapped slot is never re-checked.
 
 #include "ue_wrap/core/vm_dispatch.h"
 
@@ -27,23 +27,21 @@ namespace {
 namespace GT = ue_wrap::game_thread;
 namespace R  = ue_wrap::reflection;
 
-// GNatives handler ABI: uintptr exec(UObject* Context, FFrame& Stack, void* Result).
-// The dispatcher ignores the return, but execLocalVirtualFunction DOES return a
-// value -- forward it unchanged.
+// GNatives handler ABI: uintptr exec(UObject* Context, FFrame& Stack, void* Result). The
+// dispatcher ignores the return, but execLocalVirtualFunction produces one -- forward it
+// unchanged.
 using ExecFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result);
 
-// FFrame +0x20 = Code (bytecode cursor). At wrapper entry for op 0x45 it points AT
-// the 12-byte FScriptName operand {ComparisonIndex@0, DisplayIndex@4, Number@8}
-// as measured live. We peek it non-destructively -- a wrong
-// decode only mis-FILTERS, never corrupts, because the original handler re-reads
-// its own operands from Code and advances the cursor itself.
+// FFrame +0x20 is Code, the bytecode cursor. At wrapper entry for op 0x45 it points at the
+// 12-byte FScriptName operand {ComparisonIndex@0, DisplayIndex@4, Number@8}, as measured live.
+// The peek is non-destructive, so a wrong decode only mis-FILTERS and never corrupts: the
+// original handler re-reads its own operands from Code and advances the cursor itself.
 constexpr std::size_t kFFrameCodeOff = 0x20;
 constexpr int kOpcodeLocalVirtual = 0x45;
-// The verb table is a fixed array walked linearly per matched-name test, so it is sized rather than
-// grown. A full table's failure mode is one `UE_LOGE` and a lane that silently never observes
-// anything, and the count has come within one registration of the old size of 16, so the
-// capacity is set well clear of it. The walk is over registered entries, not the capacity, so
-// an unused slot costs one pointer and nothing per dispatch.
+// The verb table is a fixed array walked linearly per dispatch, so it is sized rather than
+// grown, and sized well clear of the registrations standing in the tree: an overflow costs one
+// UE_LOGE and a consumer lane that then silently observes nothing. The walk covers registered
+// entries only, so an unused slot costs one pointer and nothing per dispatch.
 constexpr int kMaxVerbs = 32;
 
 std::uintptr_t* g_gnatives = nullptr;   // GNatives[256], the exec-handler table base.
@@ -68,34 +66,23 @@ VerbEntry g_verbs[kMaxVerbs];
 std::atomic<int> g_verbCount{0};
 std::mutex g_regMutex;  // registration only -- NEVER taken on the dispatch hot path.
 
-// Re-entrancy depth + the active-verb window, per thread, published ONLY around a GT
-// match (a non-matching dispatch pays nothing). t_currentVerbId / t_currentCtx name
-// the innermost active matched verb so a consumer's own Func-seam hooks firing inside
-// the verb body can attribute a spawn/destroy to it (CurrentThreadVerb()).
-//
-// t_currentVerbName IS THE ONLY GLOBALLY UNIQUE HANDLE, and the ambient read MUST key
-// on it. `verbId` is a CALLER-CHOSEN int echoed back --
-// container_contents_sync (kVerbDirty), meadow_db_sync (kVerbMark) and drive_sync
-// (kVerbPutDriveIn) all publish 1, which kerfur_form_assembler reads as its own
-// kVerbTurnOff, and drive_sync's kVerbPulledOut=2 collides with kVerbTurnOn. An id is
-// unique only WITHIN the consumer that registered it, so it is meaningless to a
-// CROSS-MODULE ambient reader. The verb NAME is the BP function name and
-// RegisterVirtualVerb already requires it to have static lifetime, so the registration
-// slot's `name` pointer is unique by construction and free to publish.
+// Re-entrancy depth and the active-verb window, per thread, published ONLY around a game-thread
+// match, so a non-matching dispatch pays nothing. t_currentVerbName is the only globally unique
+// handle, and an ambient reader must key on it: `verbId` is a caller-chosen int echoed back, and
+// several consumers register unrelated verbs under 1 and 2. A registered name is a string
+// literal with static lifetime, so the slot's `name` pointer is unique by construction and free
+// to publish.
 thread_local int            t_matchDepth     = 0;
 thread_local int            t_currentVerbId  = 0;
 thread_local void*          t_currentCtx     = nullptr;
 thread_local const wchar_t* t_currentVerbName = nullptr;
 
-// Unwind-safe RAII bracket around g_origVirtual (the verb body): increments depth +
-// publishes the active verb, and restores the prior state on ANY exit -- normal
-// return OR C++ exception unwind. Without this, an abnormal unwind through the verb
-// body would leak the depth and make CurrentThreadVerb() read active-forever, so the
-// consumer's containment counter would silently read false-in-window for the rest of
-// the session. CAVEAT: a raw SEH unwind under /EHsc still bypasses the destructor --
-// but a kerfur verb body faulting via SEH means the process is already crashing, and
-// the consumer cross-checks its counter against the raw catch count, so a leak would
-// surface as an anomaly rather than a silent lie.
+// Unwind-safe RAII bracket around g_origVirtual, the verb body: increments the depth, publishes
+// the active verb, and restores the prior state on ANY exit -- normal return or C++ exception
+// unwind. A leaked depth would make CurrentThreadVerb() read active-forever for the rest of the
+// session, so every consumer's in-window test would silently lie. A raw SEH unwind under /EHsc
+// still bypasses the destructor, but a verb body faulting through SEH means the process is
+// already going down.
 struct MatchScope {
     int            prevVerbId;
     void*          prevCtx;
@@ -129,9 +116,9 @@ inline const std::uint32_t* PeekOperand(void* stack) {
     return reinterpret_cast<const std::uint32_t*>(code);
 }
 
-// Return the index of the registered verb the operand matches, or -1. Both threads
-// (an off-GT match is a tripwire the caller reports). op[0]=ComparisonIndex,
-// op[2]=Number@byte8 (the CORRECTED decode -- see the header).
+// Return the index of the registered verb the operand matches, or -1; runs on both threads (an
+// off-thread match is a tripwire the caller reports). op[0] is ComparisonIndex and op[2] the
+// Number 8 bytes in -- never the raw first 8 bytes, which never match.
 inline int MatchIndex(void* stack) {
     const std::uint32_t* op = PeekOperand(stack);
     const std::uint32_t opCmp = op[0];
@@ -148,8 +135,9 @@ inline int MatchIndex(void* stack) {
 }
 
 std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
-    // The eternal fast-path tax paid on EVERY 0x45 dispatch forever (the swap is
-    // never removed): one relaxed load + a predicted-not-taken branch + tail-call.
+    // The fast-path tax every 0x45 dispatch pays for the life of the process, since the swap is
+    // never removed: while disabled, one relaxed load, a predicted-not-taken branch and a tail
+    // call.
     if (!(g_enabled.load(std::memory_order_relaxed) &&
           g_resolvedAny.load(std::memory_order_acquire)))
         return g_origVirtual(ctx, stack, result);
@@ -170,13 +158,11 @@ std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
         return g_origVirtual(ctx, stack, result);
     }
 
-    // GT match: fire the consumer's ENTRY callback, then run the real verb body
-    // inside an unwind-safe depth+window bracket so a nested matched dispatch sees
-    // depth+1 AND the consumer's own FinishSpawningActor / K2_DestroyActor seam hooks
-    // -- which fire INSIDE g_origVirtual -- can query CurrentThreadVerb() to attribute
-    // the spawn/destroy to this verb. (Increment 1 is observe-only: an entry cb + the
-    // published window feed the consumer's containment counter; no state mutation yet
-    // -- capture/suppress/converge are 2a-2c.)
+    // GT match: fire the consumer's ENTRY callback, then run the real verb body inside an
+    // unwind-safe depth+window bracket, so a nested matched dispatch sees depth+1 and the
+    // consumer's own FinishSpawningActor / K2_DestroyActor seam hooks -- which fire INSIDE
+    // g_origVirtual -- can query CurrentThreadVerb() to attribute the spawn or destroy to this
+    // verb.
     const VerbEntry& e = g_verbs[idx];
     g_callbackFired.fetch_add(1, std::memory_order_relaxed);
     MatchScope scope(e.verbId, e.name, ctx);
@@ -188,9 +174,8 @@ std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
 }
 
 std::uintptr_t* ResolveGNatives() {
-    // AOB on a `call [GNatives + opcode*8]` dispatch site (STEP 1.0 / the spike):
-    // lea rcx,[GNatives]; ... movzx; ... call [rcx + rax*8]. rel32 at hit+3,
-    // GNatives = hit + 7 + rel32.
+    // AOB on a `call [GNatives + opcode*8]` dispatch site: lea rcx,[GNatives]; ... movzx; ... call
+    // [rcx + rax*8]. The rel32 sits at hit+3, so GNatives = hit + 7 + rel32.
     const uintptr_t hit = ue_wrap::FindPattern(
         "4C 8D 0D ?? ?? ?? ?? 49 8B D7 0F B6 08 48 FF C0 49 89 47 20 8B C1 49 8B 4F 18 41 FF 14 C1");
     if (!hit) return nullptr;
@@ -214,9 +199,10 @@ bool ValidateTable(const std::uintptr_t* tbl) {
 bool EnsureInstalled() {
     if (g_installed.load(std::memory_order_acquire)) return true;
 
-    // AOB resolution is process-immutable: a failed resolve can never succeed
-    // later, so LATCH the failure (logged once) or a per-tick registration retry
-    // re-runs the full-image scan forever.
+    // Every failure below latches, logged once. The AOB resolve is process-immutable, and a
+    // VirtualProtect that cannot make the table's page writable will not start being able to.
+    // Without the latch, a consumer that registers from its own tick -- container_contents does --
+    // re-runs the full-image scan on every tick for the rest of the session.
     static std::atomic<bool> s_installFailed{false};
     if (s_installFailed.load(std::memory_order_relaxed)) return false;
 
@@ -240,7 +226,8 @@ bool EnsureInstalled() {
 
     DWORD oldProt = 0;
     if (!VirtualProtect(&g_gnatives[kOpcodeLocalVirtual], sizeof(void*), PAGE_READWRITE, &oldProt)) {
-        UE_LOGE("[vm_dispatch] VirtualProtect failed -- substrate NOT installed");
+        s_installFailed.store(true, std::memory_order_relaxed);
+        UE_LOGE("[vm_dispatch] VirtualProtect failed -- substrate NOT installed (latched)");
         g_origVirtual = nullptr;
         return false;
     }
@@ -281,12 +268,10 @@ bool RegisterVirtualVerb(const wchar_t* verbName, int verbId, EntryFn cb) {
     g_verbCount.store(n + 1, std::memory_order_release);
     // A NEW unresolved verb re-opens the resolve pass. Without this, TickResolvePending's
     // g_allResolved fast-out is a PERMANENT latch: every verb registered after the first
-    // "all N resolved" moment stays pending FOREVER, its callback never fires, and nothing
-    // says so -- registration returns true and the consumer's own success banner prints.
-    // container_contents registers from its Tick, later than the install-time consumers, so it
-    // lands in a slot right after the "all N verb(s) resolved -- ARMED" line and would stay
-    // inert. Registration is dynamic by contract (any thread, installs on the FIRST successful
-    // registration), so the latch has to be per-pass, not per-process.
+    // "all N resolved" moment stays pending forever, its callback never fires, and nothing says so
+    // -- registration returns true and the consumer's own success banner prints. container_contents
+    // registers from its Tick, later than the install-time consumers, so it lands in exactly that
+    // gap. Registration is dynamic by contract, so the latch has to be per-pass, not per-process.
     g_allResolved.store(false, std::memory_order_relaxed);
     UE_LOGI("[vm_dispatch] registered verb %ls id=%d (slot %d) -- pending GT FName resolve",
             verbName, verbId, n);
