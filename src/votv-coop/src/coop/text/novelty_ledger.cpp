@@ -91,7 +91,7 @@ bool AdmitRemoteText(uint8_t peerSlot, const std::wstring& text) {
         UE_LOGW("novelty ledger: REFUSED a text field from slot %u -- it would introduce %d "
                 "never-before-seen codepoints and %d of this peer's %d are already spent in "
                 "this window. Rasterising a large first-sight alphabet inside one frame is a "
-                "stutter every receiving peer pays for (docs/security TRACKER W11). Raise "
+                "stutter every receiving peer pays for. Raise "
                 "net.novelty_budget if a legitimate multilingual lobby trips this.",
                 static_cast<unsigned>(peerSlot), novel, w.spent, budget);
         return false;
@@ -134,7 +134,7 @@ bool RunNoveltyLedgerSelftest() {
 
     // A burst larger than the budget is refused WHOLE. The burst has to carry budget+1 DISTINCT
     // in-repertoire codepoints derived FROM the budget: a fixed-size string passes by construction
-    // for every configuration whose budget exceeds it, which is all of them but one.
+    // for every configuration whose budget exceeds it -- which is every one but the default.
     std::wstring burst;
     int distinct = 0;
     for (uint32_t cp = 0x0020; cp < kMaxTracked && distinct <= budget; ++cp) {

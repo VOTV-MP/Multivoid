@@ -3,16 +3,16 @@
 //
 // WHY THIS EXISTS. When we hand-build a UE struct in C++ that carries an FText member and pass it
 // to a native UFunction -- the subcategory inside the order we feed to Uui_laptop_C::makeAnOrder --
-// the FText slot can NOT be left zeroed. A zeroed FText is a null TSharedRef, and any deref of one
-// crashes: the host opening the laptop's orders tab derefs subcategory through genStoreCart. So the
-// slot has to hold a real, valid, empty FText.
+// the FText slot can NOT be left zeroed. A zeroed FText is a null TSharedRef whose copy and
+// destruct are null-guarded, so addOrderCart's array copy survives it and the crash arrives later,
+// when the host opens the laptop's orders tab and genStoreCart derefs subcategory. So the slot has
+// to hold a real, valid, empty FText.
 //
 // We mint ONE through UKismetTextLibrary::Conv_StringToText("") and PIN it: ParamFrame raw-frees
 // its frame WITHOUT UE-destructing OUT params (ue_wrap/call.h), so the returned FText's +1 ref is
-// never released, the underlying empty FTextData stays live for the process, and the cached bytes
-// stay valid. Byte-copying them into struct slots is safe: a byte copy adds no refcount,
-// addOrderCart's Array_Add deep copy adds the proper per-element refs, and the native drain at
-// delivery releases them.
+// never released and the underlying empty FTextData stays live for the process. Byte-copying those
+// bytes into struct slots is safe: the copy adds no refcount, addOrderCart's Array_Add deep copy
+// adds the per-element refs, and the native drain at delivery releases them.
 
 #pragma once
 

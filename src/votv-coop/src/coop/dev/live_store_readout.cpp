@@ -39,15 +39,17 @@ std::string Narrow(const std::wstring& w) {
 //
 // Printed next to the identity because `Aprop_container_C::extract` captures the carrier actor
 // through addObject -> getData BEFORE `loadData(takeObj_Output)` restores the saved state, which
-// would leave an item that passed through a take holding a DEFAULT payload while its class and
-// transform survive. The control is built into the same line: this store's save-loaded records
+// predicted that an item passing through a take would land holding a DEFAULT payload while its
+// class and transform survive. The measurement REFUTED that: the taken record printed a
+// non-empty shape. The control is built into the same line: this store's save-loaded records
 // never went through a take, so they stand as the positive case beside a taken one.
 //
 // Read the result narrowly. Shapes differ BY CLASS -- crowbar b5,f1,nm2, food b6,f4,i1,nm2, a drive
 // one signal more -- so a group count is a CLASS FINGERPRINT and says nothing about the VALUES
 // inside. A familiar-looking shape here is NOT evidence that the saved state survived the take.
 // That needs a value comparison against the source container record, and a prop_drive_C carrying a
-// signal is the best candidate, since a fresh one should carry none.
+// signal is the best candidate, since a fresh one should carry none. An empty shape on EVERY
+// record would mean this instrument is blind, not that the payloads are empty.
 std::string ShapeOf(const SR::SaveRecord& r) {
     auto n2 = [](const auto& vv) {
         size_t t = 0;

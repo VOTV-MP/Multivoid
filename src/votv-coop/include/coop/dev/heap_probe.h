@@ -3,7 +3,8 @@
 // The companion to coop/dev/leak_probe, which censuses live UObjects: when that census is FLAT and
 // committed RAM still climbs, the leak is RAW HEAP -- FString, FText, std:: containers. Live bytes
 // climbing in lockstep with RSS means WE leak, and the top growing site names it; flat live bytes
-// under a climbing RSS rule us out and point at the engine's GMalloc.
+// under a climbing RSS rule us out and point at the engine's GMalloc, where the next step is a
+// GMalloc vtable hook.
 //
 // It MinHook-detours the CRT malloc, free, realloc and calloc. Our DLL links the static CRT, so
 // those are baked into main.dll and no other module calls them: the detour fires for exactly our
