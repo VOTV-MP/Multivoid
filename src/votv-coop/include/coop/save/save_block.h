@@ -1,31 +1,19 @@
-// coop/save_block.h -- client-side world-save block (host-only persistence).
+// coop/save/save_block.h -- client-side world-save block. During a coop session the HOST's save is
+// the single canonical one; CLIENTS must not write the world save -- their pre-coop save is left
+// UNTOUCHED, and coop-only mirror state (phantom props and NPCs) is never serialized into a
+// client's slot.
 //
-// PR-FOUNDATION-2 (save-game safety) increment B, part 1: the HARD guarantee.
+// The WRITE block is a MinHook detour on UGameplayStatics::SaveGameToSlot, the one physical
+// chokepoint every save path funnels through: it cancels writes whose USaveGame object is the
+// world-save container (saveSlot_C) and lets the harmless meta save (save_main_C) through. The BP
+// funnel saveSlot_C::saveToSlot is out of reach of our ProcessEvent interceptor -- BP-to-BP
+// dispatch goes through ProcessInternal -- but the engine-native write function is reachable.
 //
-// Policy (user decision 2026-05-30, host-only persistence): during a coop
-// session the HOST's save is the single canonical one; CLIENTS must not write
-// the world save -- their pre-coop save is left UNTOUCHED, and coop-only mirror
-// state (phantom props/NPCs) must never be serialized into a client's slot.
-//
-// Mechanism: a native MinHook detour on UGameplayStatics::SaveGameToSlot -- the
-// single physical write chokepoint EVERY save path funnels through. We install
-// it ONLY in the client process and cancel writes whose USaveGame object is the
-// world-save container (saveSlot_C), letting the harmless meta/settings save
-// (save_main_C: keybinds/achievements/store) through. This is the root-cause
-// fix (RULE 1): one hook, total coverage, no per-trigger allowlist that could
-// miss a path. The BP funnel saveSlot_C:saveToSlot is NOT hookable by our
-// ProcessEvent interceptor (BP->BP dispatch goes through ProcessInternal); the
-// engine-native write fn is. See research/findings/saves/votv-save-path-RE-2026-05-30.md.
-//
-// Part 2 (the pause-menu "Save Game" button grey-out, the honest UX) is a
-// separate increment -- this part is the under-the-hood guarantee that covers
-// autosave/sleep/forced/direct-trigger saves the button grey-out cannot.
-//
-// Part 3 turns the native save CYCLE off, not just the write. saveSlot_C::save checks
-// gamemode.disableSave at its HEAD (bytecode-verified) BEFORE the world gather
-// (saveObjects/saveTriggers -- a full-actor walk) and the saveToSlot write funnel; every
-// gamemode trigger (autosave/sleep/menu/quicksave) funnels through it, and no bytecode anywhere
-// in mainGamemode ever WRITES disableSave. Holding it TRUE on a coop client turns the whole native
+// The CYCLE block holds gamemode.disableSave true, which saveSlot_C::save tests at its head and
+// returns on, before the world gather (saveObjects) and the write funnel. Every gamemode trigger --
+// autosave, sleep, menu, quicksave -- funnels through save(), and no bytecode in mainGamemode ever
+// writes disableSave.
+
 #pragma once
 
 namespace coop::net { class Session; }

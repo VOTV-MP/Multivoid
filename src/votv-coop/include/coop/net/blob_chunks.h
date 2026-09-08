@@ -1,20 +1,16 @@
-// coop/blob_chunks.h -- chunked variable-length blob transport over the
-// reliable lane, shared by every chunked-row kind (EmailAppend v64,
-// SavedSignalAppend + CompData v65). Extracted from coop/email_sync (RULE 2:
-// one implementation) preserving its audited semantics verbatim:
-//   I-3: SendBlob returns true only if EVERY chunk was accepted -- a partial
-//        send must not be treated as sent; the caller retries the whole blob
-//        next poll under a FRESH seq, and the receiver's dangling
-//        half-assembly is TTL-swept.
-//   C-1: a mismatched part (a rejoining sender reusing (slot,seq) against a
-//        stale half-assembly) erases the stale entry and RESTARTS from the
-//        incoming chunk when it is a stream start (chunkIdx==0), including
-//        single-chunk completion; only a true mid-stream orphan drops.
+// coop/net/blob_chunks.h -- chunked variable-length blob transport over the reliable lane,
+// shared by every chunked-row kind (EmailAppend, SavedSignalAppend, CompData). Two semantics
+// callers rely on:
 //
-// Also home to the content-hash primitive (FNV-1a 64 over a serialized blob)
-// the delete mirrors key on.
+//   ALL-OR-NOTHING -- SendBlob returns true only if EVERY chunk was accepted. The caller
+//                     retries the whole blob next poll under a FRESH seq, and the receiver's
+//                     dangling half-assembly is TTL-swept.
+//   RESTART        -- a mismatched part (a rejoining sender reusing (slot, seq) against a
+//                     stale half-assembly) erases the stale entry and restarts from the
+//                     incoming chunk when that chunk is a stream start (chunkIdx == 0). Only
+//                     a true mid-stream orphan drops.
 //
-// Game thread throughout.
+// Also home to the FNV-1a 64 content hash the delete mirrors key on. Game thread throughout.
 
 #pragma once
 
@@ -41,24 +37,23 @@ inline uint64_t Fnv64(const uint8_t* p, size_t n) {
 }
 inline uint64_t Fnv64(const std::vector<uint8_t>& b) { return Fnv64(b.data(), b.size()); }
 
-// The transport ceiling: 255 chunks x the inline chunk payload. A blob past
-// this NEVER sends (ChunkAndSend WARNs + returns false before any chunk) --
-// callers with unbounded content must bound BELOW this and check the return
-// (v121 correctness CRIT-1: an ignored false on a canonical path is a silent
-// permanent divergence).
+// The transport ceiling: 255 chunks x the inline chunk payload. A blob past this NEVER sends
+// (ChunkAndSend warns and returns false before any chunk), so a caller with unbounded content must
+// bound BELOW this and check the return -- an ignored false on a canonical path is a silent
+// permanent divergence.
 inline constexpr size_t MaxBlobBytes() {
     return sizeof(coop::net::BlobChunkPayload{}.data) * 255;
 }
 
-// Ship one blob as BlobChunkPayload chunks under `kind` with per-sender id
-// `seq`. True only if every chunk was accepted (I-3).
+// Ship one blob as BlobChunkPayload chunks under `kind` with per-sender id `seq`. True only if
+// every chunk was accepted.
 bool SendBlob(coop::net::Session* s, coop::net::ReliableKind kind, uint32_t seq,
               const std::vector<uint8_t>& blob);
 
 // Slot-targeted variant: ship the blob's chunks to ONE peer (peerSlot) via
-// Session::SendReliableToSlot instead of the default route. Used by the HOST to send a
-// specific client its per-player inventory (v73 Inc 4, host->client). Same all-or-nothing
-// semantics as SendBlob (I-3). True only if every chunk was accepted by that slot.
+// Session::SendReliableToSlot instead of the default route. Used by the HOST to send a specific
+// client its per-player inventory. Same all-or-nothing semantics as SendBlob: true only if every
+// chunk was accepted by that slot.
 bool SendBlobToSlot(coop::net::Session* s, int peerSlot, coop::net::ReliableKind kind,
                     uint32_t seq, const std::vector<uint8_t>& blob);
 
@@ -76,9 +71,9 @@ public:
 
     void Clear();
 
-    // Drop every half-assembly from ONE sender slot. Call from the per-slot
-    // disconnect fan-out: a recycled slot (X -> Y, no observable absence) must
-    // not merge Y's chunks into X's partial (seeds-arc /qf R2, 2026-08-23).
+    // Drop every half-assembly from ONE sender slot. Call from the per-slot disconnect fan-out: a
+    // recycled slot (X -> Y, with no observable absence between them) must not merge Y's chunks
+    // into X's partial.
     void ClearSlot(uint8_t senderSlot);
 
 private:
