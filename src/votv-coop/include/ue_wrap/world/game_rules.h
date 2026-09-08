@@ -1,29 +1,17 @@
 // ue_wrap/game_rules.h -- read the LOCAL peer's world rules (engine substrate).
 //
-// VOTV's per-world settings live in one struct, Fstruct_gameRules (~41 members:
-// fallDamage, difficulty, funnySetting, customContent, seasons, extremeCombat,
-// foodSpoilage, the 8 minigame toggles, the decay toggles, ...). The value the
-// game actually consults at runtime is the PER-PEER copy at
-// mainGameInstance.gameRules -- every rule read funnels through
-// lib->getMainGameInstance().gameRules (RE 2026-07-08). GameInstance is one per
-// process and is never replicated, so this reads THIS peer's effective rules.
+// The per-world settings live in one struct, Fstruct_gameRules -- about 41 members: fall damage,
+// difficulty, seasons, food spoilage, the minigame and decay toggles. What the game consults at
+// runtime is the PER-PEER copy at mainGameInstance.gameRules, since every rule read funnels through
+// lib->getMainGameInstance().gameRules and a GameInstance is one per process and never replicated.
 //
-// A joining client boots from the host's LIVE-captured save
-// (coop/save/save_transfer.cpp), so the host's localGameRules travel inside
-// the save blob; IF VOTV's load copies localGameRules -> GI.gameRules on the
-// client (the same path single-player uses to restore rules), every peer's
-// effective rules equal the host's. This accessor deliberately reads the LOCAL
-// copy so the F1 panel shows the rules a peer is ACTUALLY under -- a host/client
-// mismatch stays visible (diagnostic) instead of being masked by a broadcast.
-//
-// Members are enumerated by reflection (ue_wrap::reflection::EnumerateStructFields
-// + FindBoolProperty), NOT a hardcoded field list: offsets resolve by name and
-// the panel auto-adapts if a game patch adds/removes a rule. GUID-mangled BP
-// names ("fallDamage_8_AEE...") are trimmed to their stable prefix for display.
-//
-// Principle 7: this is the engine read only -- no network, no UI. ui/ owns the
-// render. Game-thread only (UObject + FField reads); snapshot once (rules are
-// static post-world-load) and cache the result off-thread for the render.
+// A joining client boots from the host's live-captured save, so the host's localGameRules ride the
+// blob and, where the load copies them into GI.gameRules as single-player does, every peer's rules
+// equal the host's. This reads the LOCAL copy on purpose, so the panel shows the rules a peer is
+// ACTUALLY under and a mismatch stays visible. Members are enumerated by reflection, not a
+// hardcoded list, so offsets resolve by name and the panel adapts if a patch adds or removes a
+// rule; GUID-mangled names are trimmed to a stable prefix. Principle 7: the engine read only -- ui/
+// owns the render. Game thread; snapshot once and cache, rules being static after the world load.
 #pragma once
 
 #include <string>
