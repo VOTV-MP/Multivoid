@@ -30,6 +30,7 @@
 #include "coop/player/player_damage.h"
 #include "coop/creatures/wisp_tear_mirror.h"  // WispGrab and WispTear receivers
 #include "coop/player/local_body.h"     // the host's own skin belongs in its own roster row
+#include "coop/player/nick_color.h"  // ResetSlots() at bringup -- a colour lands before its row
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -108,6 +109,7 @@ void OnSessionStart() {
     coop::chat_feed::Reset();  // drop any prior session's lingering event lines
     coop::chat_sync::Reset();  // and the chat record: a re-host in one process would otherwise seed the new lobby with the old talk
     coop::chat_bubbles::ResetSlots();  // no prior session's bubbles either
+    coop::nick_color::ResetSlots();  // nor a prior peer's nick colour
 }
 
 void Update(net::Session& session, void* localPlayer) {
