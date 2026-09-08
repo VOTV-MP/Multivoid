@@ -29,10 +29,11 @@ coop::RemotePlayer& Puppet(int slot);
 // on the game thread in the same Tick. Game thread.
 void DriveTick(coop::net::Session& session, bool worldReadyAnnounced);
 
-// Drop `slot`'s Player Element from the registry -- unconditional, because unregistering a slot
-// that never spawned a puppet is a no-op -- and destroy the puppet actor if one is live. Returns
-// true iff a live puppet was destroyed: the disconnect edge logs on true, the session-end
-// teardown calls silently. Game thread.
+// Drop `slot`'s Player Element from the registry -- unconditional because it is right either way:
+// a slot that never spawned a puppet may still hold the mirror Element EstablishMirrorForSlot
+// installed, which this releases, and the drop early-returns when the slot is empty -- and destroy
+// the puppet actor if one is live. Returns true iff a live puppet was destroyed: the disconnect
+// edge logs on true, the session-end teardown calls silently. Game thread.
 bool DestroySlot(int slot);
 
 }  // namespace coop::puppet_drive

@@ -24,8 +24,8 @@ void Arm();
 // phases that need it report a SKIP rather than a failure. A no-op until Arm(), and a no-op
 // again once the sequence has run.
 //
-// CALLED WHETHER OR NOT THE SCREEN IS SHOWN. The last phases close it with ESC, re-open it and
-// then drive the X, which is impossible if the caller gates this on visibility.
+// CALLED WHETHER OR NOT THE SCREEN IS SHOWN. Mid-ladder phases close the screen with ESC and
+// re-open it before driving Back, which is impossible if the caller gates this on visibility.
 void Tick(void* scrim, void* list, void* exitBtn);
 
 }  // namespace ui::server_browser_selftest
