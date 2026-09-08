@@ -25,12 +25,13 @@ namespace R = ue_wrap::reflection;
 
 std::atomic<uint64_t> g_synthKeyCounter{0};
 
-// Per-class setKey UFunction cache. setKey is a BP UFunction declared on the
-// LINEAGE ROOT, not on every subclass -- Aprop_C declares one, and actor_save_C
-// (the trashBitsPile family) declares another -- while R::FindFunction matches on
-// the EXACT owner and climbs no SuperStruct chain, so a lookup that starts at the
-// leaf class finds nothing. Resolve by CLIMBING to the declaring ancestor; cache
-// per STARTING class, a null included, so a miss is not re-walked.
+// Per-class setKey UFunction cache. setKey is a BP UFunction declared by Aprop_C,
+// actor_save_C, actorChipPile_C and prop_garbageClump_C, but NOT by their subclasses:
+// trashBitsPile_C takes it from actor_save_C, and the erie and wetConcrete variants from
+// their own parents. R::FindFunction matches the EXACT owner and climbs no SuperStruct
+// chain, so a lookup starting at one of those subclasses finds nothing. Resolve by
+// CLIMBING to the nearest declaring ancestor; cache per STARTING class, a null included,
+// so a miss is not re-walked.
 std::mutex g_setKeyFnMutex;
 std::unordered_map<void*, void*> g_setKeyFnByClass;
 
@@ -97,8 +98,9 @@ std::wstring EnsureKeyForBroadcast(void* self, const std::wstring& currentKey,
 std::wstring MintFreshKeyForDuplicate(void* self) {
     if (!self) return L"";
     void* cls = R::ClassOf(self);
-    // ResolveSetKeyFn climbs to the declaring ancestor itself: Aprop_C for the prop
-    // lineage, actor_save_C for the trashBitsPile family.
+    // ResolveSetKeyFn climbs to the nearest declaring ancestor itself: the leaf for
+    // actorChipPile and prop_garbageClump, actor_save_C for trashBitsPile, Aprop_C for
+    // the prop lineage.
     void* setKeyFn = ResolveSetKeyFn(cls);
     if (!setKeyFn) {
         UE_LOGW("synth-key: rekey -- setKey UFunction not found on '%ls' (nor any SuperStruct ancestor) -- cannot re-key duplicate",
