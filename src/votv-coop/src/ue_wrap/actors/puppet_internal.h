@@ -16,18 +16,25 @@
 
 namespace ue_wrap::puppet {
 
-// Read/write a UObject* / POD at a fixed byte offset (raw engine memory access is
-// allowed in the wrapper layer; offsets come from sdk_profile.h, verified vs the
-// CXX dump).
-inline void* ReadPtr(void* base, size_t off) {
-    return base ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off) : nullptr;
+// Read/write a UObject* / POD at a byte offset (raw engine memory access is allowed in the
+// wrapper layer). The offset is signed and a NEGATIVE one is refused, because half these call
+// sites pass a reflection-resolved offset, which is -1 until its blueprint class loads and stays
+// -1 if a recook renamed the field. Widened to size_t that sentinel addressed one byte BELOW the
+// object -- silent garbage out of a read, a corrupted object header out of a write -- so the
+// refusal lives here, where every caller already goes, rather than in a check each one can
+// forget. A refused read yields a zeroed value and a refused write does nothing.
+inline void* ReadPtr(void* base, ptrdiff_t off) {
+    if (!base || off < 0) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off);
 }
 template <class T>
-inline T ReadAt(void* base, size_t off) {
+inline T ReadAt(void* base, ptrdiff_t off) {
+    if (!base || off < 0) return T{};
     return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(base) + off);
 }
 template <class T>
-inline void WriteAt(void* base, size_t off, T value) {
+inline void WriteAt(void* base, ptrdiff_t off, T value) {
+    if (!base || off < 0) return;
     *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(base) + off) = value;
 }
 

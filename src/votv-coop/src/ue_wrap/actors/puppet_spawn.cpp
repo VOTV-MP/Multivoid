@@ -47,7 +47,7 @@ void HeadGateBUAPost(void* /*context*/, void* animInstance, void* /*result*/) {
     if (ReadPtr(actor, P::off::APawn_Controller)) return;                    // the local player exits here
     const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_lookingAtPlayer();
     if (off < 0) return;
-    WriteAt<bool>(animInstance, static_cast<size_t>(off), true);
+    WriteAt<bool>(animInstance, off, true);
 }
 
 void InstallHeadGateHook(void* animClass) {

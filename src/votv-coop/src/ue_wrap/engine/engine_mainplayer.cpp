@@ -214,9 +214,10 @@ bool IsMainPlayerGrabbing(void* localPlayer, void* actor) {
     // physics-handle grab at a re-bracket.
     if (!localPlayer || !actor) return false;
     if (!R::IsLive(localPlayer)) return false;
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_grabbing_actor();
+    if (off < 0) return false;
     void* const* grabbingSlot = reinterpret_cast<void* const*>(
-        reinterpret_cast<const uint8_t*>(localPlayer) +
-        ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
+        reinterpret_cast<const uint8_t*>(localPlayer) + off);
     return *grabbingSlot == actor;
 }
 
@@ -226,8 +227,11 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
     // persistent across the session, but a level unload mid-disconnect could leave the cached
     // pointer dangling.
     if (!R::IsLive(localPlayer)) return false;
+    const int32_t offGrabbing = ue_wrap::reflected_offset::MainPlayer_grabbing_actor();
+    const int32_t offHandle   = ue_wrap::reflected_offset::MainPlayer_grabHandle();
+    if (offGrabbing < 0 || offHandle < 0) return false;
     void** grabbingSlot = reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
+        reinterpret_cast<uint8_t*>(localPlayer) + offGrabbing);
     if (*grabbingSlot != actor) return false;
     if (!ResolvePhcReleaseCached()) {
         // The physics-handle class is still not loaded (defensive). Clear the slot anyway so later
@@ -238,7 +242,7 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
         return false;
     }
     void* phc = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(localPlayer) + ue_wrap::reflected_offset::MainPlayer_grabHandle());
+        reinterpret_cast<uint8_t*>(localPlayer) + offHandle);
     if (phc && R::IsLive(phc)) {
         R::CallFunction(phc, g_phcReleaseFnCache, nullptr);
         UE_LOGI("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent dispatched on doomed actor=%p",
@@ -264,16 +268,22 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out) {
     out = {};
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
-    out.grabbingActor = *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_actor());
+    const int32_t grabbingOff = ue_wrap::reflected_offset::MainPlayer_grabbing_actor();
+    if (grabbingOff >= 0) {
+        out.grabbingActor = *reinterpret_cast<void**>(base + grabbingOff);
+    }
     // The holding actor: the chip-pile and clump carry slot, added in a later game recook; a
     // missing offset leaves the field null rather than dereferencing a negative offset.
     const int32_t holdingOff = ue_wrap::reflected_offset::MainPlayer_holding_actor();
     if (holdingOff >= 0) {
         out.holdingActor = *reinterpret_cast<void**>(base + holdingOff);
     }
-    out.grabsHeavy    = *reinterpret_cast<bool*>(base + ue_wrap::reflected_offset::MainPlayer_grabsHeavy());
-    out.heavy         = *reinterpret_cast<bool*>(base + ue_wrap::reflected_offset::MainPlayer_Heavy());
-    out.grabLen       = *reinterpret_cast<float*>(base + ue_wrap::reflected_offset::MainPlayer_grabLen());
+    const int32_t grabsHeavyOff = ue_wrap::reflected_offset::MainPlayer_grabsHeavy();
+    const int32_t heavyOff       = ue_wrap::reflected_offset::MainPlayer_Heavy();
+    const int32_t grabLenOff     = ue_wrap::reflected_offset::MainPlayer_grabLen();
+    if (grabsHeavyOff >= 0) out.grabsHeavy = *reinterpret_cast<bool*>(base + grabsHeavyOff);
+    if (heavyOff >= 0)      out.heavy      = *reinterpret_cast<bool*>(base + heavyOff);
+    if (grabLenOff >= 0)    out.grabLen    = *reinterpret_cast<float*>(base + grabLenOff);
     return true;
 }
 
@@ -312,28 +322,34 @@ bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& 
 
 bool WriteMainPlayerGrabbingPair(void* mainPlayer, void* actor, void* component) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    const int32_t offActor = ue_wrap::reflected_offset::MainPlayer_grabbing_actor();
+    const int32_t offComp  = ue_wrap::reflected_offset::MainPlayer_grabbing_component();
+    if (offActor < 0 || offComp < 0) return false;
     auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
-    *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_actor())     = actor;
-    *reinterpret_cast<void**>(base + ue_wrap::reflected_offset::MainPlayer_grabbing_component()) = component;
+    *reinterpret_cast<void**>(base + offActor) = actor;
+    *reinterpret_cast<void**>(base + offComp)  = component;
     return true;
 }
 
 void* ReadMainPlayerGrabHandle(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
-    return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + ue_wrap::reflected_offset::MainPlayer_grabHandle());
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_grabHandle();
+    if (off < 0) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
 }
 
 void* ReadMainPlayerHeavyGrabPCC(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
-    return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + ue_wrap::reflected_offset::MainPlayer_heavyGrab());
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_heavyGrab();
+    if (off < 0) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
 }
 
 void* ReadMainPlayerGrabTimeline(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
-    return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(mainPlayer) + ue_wrap::reflected_offset::MainPlayer_grabTimeline());
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_grabTimeline();
+    if (off < 0) return nullptr;
+    return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
 }
 
 void* GetMainPlayerLightR(void* mainPlayer) {

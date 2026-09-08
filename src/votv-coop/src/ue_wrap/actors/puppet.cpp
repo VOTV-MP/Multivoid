@@ -83,7 +83,7 @@ bool ReadLookAtOnAnim(void* anim, FVector& out) {
     if (!IsKerfurAnimBP(anim)) return false;
     const int32_t off = ue_wrap::reflected_offset::AnimBP_kerfur_lookAt();
     if (off < 0) return false;
-    out = ReadAt<FVector>(anim, static_cast<size_t>(off));
+    out = ReadAt<FVector>(anim, off);
     return true;
 }
 void WriteLookAtOnAnim(void* anim, const FVector& target) {
@@ -91,8 +91,8 @@ void WriteLookAtOnAnim(void* anim, const FVector& target) {
     const int32_t lookOff   = ue_wrap::reflected_offset::AnimBP_kerfur_lookAt();
     const int32_t customOff = ue_wrap::reflected_offset::AnimBP_kerfur_customLookAt();
     if (lookOff < 0 || customOff < 0) return;
-    WriteAt<FVector>(anim, static_cast<size_t>(lookOff), target);
-    WriteAt<bool>(anim, static_cast<size_t>(customOff), true);
+    WriteAt<FVector>(anim, lookOff, target);
+    WriteAt<bool>(anim, customOff, true);
     static bool s_loggedDrive = false;
     if (!s_loggedDrive) { s_loggedDrive = true;
         UE_LOGI("puppet: kerfur head-look drive active -- wrote lookAt=(%.0f,%.0f,%.0f) + customLookAt=true (first; class-gate passed)",
