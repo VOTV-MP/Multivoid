@@ -1,23 +1,18 @@
-// harness/autotest/autotest_seeddrill.cpp -- the seeds-arc RED/GREEN drill
-// (VOTVCOOP_RUN_SEED_DRILL=1, host-only).
+// harness/autotest/autotest_seeddrill.cpp -- the ready-edge seed drill
+// (VOTVCOOP_RUN_SEED_DRILL=1, host-only). It authors two distinctively-topic'd emails at the
+// two instants a ready-edge seed must handle:
+//   1. "[seed-drill] solo" -- BEFORE any client connects. It lands in the joiner's
+//      transferred save, the seed's delta is 0 for it, and the vacuous adopt keeps the old
+//      retry from re-broadcasting it. The client must hold exactly ONE copy: zero wire
+//      applies of this topic is the pass, one is the duplicate reproduced.
+//   2. "[seed-drill] in-window" -- while a slot is CONNECTED but NOT world-ready, in the
+//      joiner's load window, after its save snapshot was taken. It is not in the save, so
+//      only the ready-edge seed can deliver it; the client logging "email_sync: applied
+//      email from slot 0" for this topic is the pass.
 //
-// Authors two distinctively-topic'd emails at the two instants the ready-edge
-// seed design must handle (votv-signal-email-ready-seeds-DESIGN-2026-08-23 par.3):
-//   1. "[seed-drill] solo"      -- BEFORE any client connects. It lands in the
-//      joiner's transferred save; the seed's delta is 0 for it and the
-//      vacuous-adopt keeps the old retry from re-broadcasting it. The client
-//      must hold exactly ONE copy (zero wire applies of this topic = PASS;
-//      one wire apply = the pre-existing duplicate reproduced).
-//   2. "[seed-drill] in-window" -- while a slot is CONNECTED but NOT world-ready
-//      (the joiner's load window, after its save snapshot was taken). Not in the
-//      save; only the ready-edge seed can deliver it. Client log
-//      "email_sync: applied email from slot 0" for this topic = PASS.
-// Mutate control: VOTVCOOP_SEED_DISABLE=1 skips the lanes' CaptureJoinSnapshot
-// (wired in email_sync/signal_sync) -- the in-window email then never arrives
-// (RED), proving the seed, not a leftover retry, is the delivery mechanism.
-//
-// Grep keys: "[SEED-DRILL] authored solo", "[SEED-DRILL] authored in-window",
-// and email_sync's own applied/seed lines.
+// VOTVCOOP_SEED_DISABLE=1 skips CaptureJoinSnapshot in email_sync and signal_sync, so the
+// in-window email never arrives -- which is what shows the seed, not a leftover retry, is
+// the delivery mechanism. Grep keys: "[SEED-DRILL] authored solo" and "... in-window".
 
 #include "harness/autotest.h"
 
@@ -78,14 +73,12 @@ DWORD WINAPI SeedDrillThread(LPVOID /*arg*/) {
     for (int waited = 0; waited < 3000; ++waited) {  // up to 5 min
         for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
             if (s.HasPeerConn(slot) && !s.IsSlotWorldReady(slot)) {
-                // The authoring must land AFTER the OnRequest snapshot (the save
-                // serialize fires within ~2-5 s of the connect; the load window is
-                // 30-60 s long). A 3 s wait raced AHEAD of the request in the first
-                // run (authored :46, snapshot :47 -> the email rode the SAVE and the
-                // loss case never exercised) -- 12 s is safely post-snapshot while
-                // still deep in the window. The log ORDER is the per-run proof:
-                // "[SEED-DRILL] authored ... in-window" must follow the host's
-                // "captured ... at blob instant" line.
+                // The authoring must land AFTER the OnRequest snapshot: the save serialize fires
+                // within ~2-5 s of the connect and the load window is 30-60 s long, so a 3 s wait
+                // races ahead of the request and the email rides the SAVE instead, leaving the loss
+                // case unexercised. 12 s is safely post-snapshot and still deep in the window. The
+                // log ORDER is the per-run proof: "[SEED-DRILL] authored ... in-window" must follow
+                // the host's "captured ... at blob instant" line.
                 ::Sleep(12000);
                 if (s.IsSlotWorldReady(slot)) {
                     UE_LOGW("[SEED-DRILL] slot %d raced to ready during the wait -- "
