@@ -19,20 +19,20 @@ struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 void* g_gamemodeCls = nullptr;
 void* g_gamemode = nullptr;
 int32_t g_gamemodeIdx = -1;
-int32_t g_offDishs = -1;        // mainGamemode_C::dishs (@0x0330, TArray<Adish_C*>)
-int32_t g_offActiveDishes = -1; // mainGamemode_C::activeDishes (@0x0350, TArray<bool>)
+int32_t g_offDishs = -1;        // mainGamemode_C::dishs (TArray<Adish_C*>)
+int32_t g_offActiveDishes = -1; // mainGamemode_C::activeDishes (TArray<bool>)
 
 void* g_dishCls = nullptr;
-int32_t g_offLookAt = -1;       // Adish_C::lookAt (@0x378, FVector -- absolute post-write)
-int32_t g_offIsMoving = -1;     // Adish_C::isMoving (@0x384)
-int32_t g_offAxisY = -1;        // Adish_C::axis_Y (@0x300, UBillboardComponent*)
-int32_t g_offAxisZ = -1;        // Adish_C::axis_Z (@0x320, UBillboardComponent*)
-int32_t g_offMoveCue = -1;      // Adish_C::satellite_move_Cue (@0x308)
-int32_t g_offCue = -1;          // Adish_C::satellite_Cue (@0x310)
-int32_t g_offCalibration = -1;  // Adish_C::calibration (@0x3AC, float)
-int32_t g_offTechName = -1;     // Adish_C::techName (@0x408, FString)
+int32_t g_offLookAt = -1;       // Adish_C::lookAt (FVector -- absolute post-write)
+int32_t g_offIsMoving = -1;     // Adish_C::isMoving
+int32_t g_offAxisY = -1;        // Adish_C::axis_Y (UBillboardComponent*)
+int32_t g_offAxisZ = -1;        // Adish_C::axis_Z (UBillboardComponent*)
+int32_t g_offMoveCue = -1;      // Adish_C::satellite_move_Cue
+int32_t g_offCue = -1;          // Adish_C::satellite_Cue
+int32_t g_offCalibration = -1;  // Adish_C::calibration (float)
+int32_t g_offTechName = -1;     // Adish_C::techName (FString)
 void* g_startMovingToFn = nullptr;  // startMovingTo(lookAt) -- the relative slew entry
-void* g_stopFn = nullptr;           // stop() -- 2 flag writes (impl-RE SS2)
+void* g_stopFn = nullptr;           // stop() -- two flag writes
 
 // Engine-class functions -- resolved on their DECLARING class (FindFunction
 // is exact-owner, no SuperStruct climb).
@@ -42,7 +42,7 @@ void* g_activateFn = nullptr;   // UActorComponent::Activate(bool bReset)
 void* g_deactivateFn = nullptr; // UActorComponent::Deactivate()
 void* g_isActiveFn = nullptr;   // UActorComponent::IsActive() -> bool
 
-// Tickers (gamemode-BeginPlay singletons, impl-RE SS4).
+// Tickers: singletons the gamemode's BeginPlay creates.
 void* g_disherCls = nullptr;
 void* g_uncalibCls = nullptr;
 void* g_disherBeginPlayFn = nullptr;   // ticker_disher_C::ReceiveBeginPlay (BP override)
@@ -185,11 +185,10 @@ bool CueIsActive(void* cue, bool& ok) {
     return active;
 }
 
-// One live instance of a singleton ticker class, CACHED like Gamemode():
-// ptr + InternalIndexOf fast path; the GUObjectArray walk runs only on a
-// cache miss (boot / level reload killed the old instance). Perf audit
-// 2026-07-16: the uncached form cost the client 2 full walks/s at the 1 Hz
-// park latch.
+// One live instance of a singleton ticker class, CACHED like Gamemode(): pointer plus
+// InternalIndexOf fast path, with the GUObjectArray walk only on a cache miss (boot, or a
+// level reload that killed the old instance). Uncached, this cost the client two full walks
+// a second at the 1 Hz park latch.
 struct SingletonCache { void* obj = nullptr; int32_t idx = -1; };
 
 void* SingletonOf(void* cls, const wchar_t* clsName, SingletonCache& cache) {
@@ -262,12 +261,10 @@ bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
     TArrayView* a = Dishs();
     if (!a || !g_coreResolved) return false;
     if (a->num < 0 || a->num > 64) return false;
-    // Moving dish preferred; else FIRST live dish. v116 fallback (qf R5-Q1):
-    // the catch chain writes lookAt ABSOLUTE to ALL dishes at the catch moment
-    // (impl-RE SS8 loop), so within the detector's <=1 s poll window a fully
-    // SETTLED array still holds the fresh target -- without the fallback a
-    // near-aim catch shipped slewValid=0 and the host never armed (no theater
-    // -> no dishesStop -> no formDownload).
+    // Moving dish preferred; else the FIRST live dish. The catch chain writes lookAt ABSOLUTE to
+    // ALL dishes at the catch moment, so within the detector's <=1 s poll window even a fully
+    // SETTLED array still holds the fresh target. Without that fallback a near-aim catch shipped
+    // slewValid=0 and the host never armed: no theater, so no dishesStop and no formDownload.
     void* pick = nullptr;
     for (int32_t i = 0; i < a->num; ++i) {
         void* d = DishAt(a, i);
@@ -276,9 +273,9 @@ bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
         if (*(reinterpret_cast<uint8_t*>(d) + g_offIsMoving)) { pick = d; break; }
     }
     if (!pick) return false;
-    // lookAt was rewritten absolute at startMovingTo (@162: param +
-    // ActorLocation); subtracting the dish's own location recovers the
-    // shared relative vector the catch chain passed to every dish.
+    // lookAt was rewritten absolute at startMovingTo (the param plus the actor's location), so
+    // subtracting the dish's own location recovers the shared relative vector the catch chain
+    // passed to every dish.
     const auto* la = reinterpret_cast<const float*>(
         reinterpret_cast<uint8_t*>(pick) + g_offLookAt);
     const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(pick);
@@ -340,8 +337,8 @@ bool WritePose(int32_t index, float yawZ, float rollY) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);
     if (!d) return false;
-    // The native loop's own channel shape (impl-RE SS1): each write zeroes the
-    // component's other two channels. FRotator = {Pitch, Yaw, Roll}.
+    // The native loop's own channel shape: each write zeroes the component's other two channels.
+    // FRotator = {Pitch, Yaw, Roll}.
     bool ok = true;
     if (void* az = ComponentAt(d, g_offAxisZ))
         ok &= SetRelRot(az, ue_wrap::FRotator{0.f, yawZ, 0.f});
@@ -458,9 +455,9 @@ void* UncalibInstance() {
 
 bool ParkDisher(void* inst) {
     if (!inst || !g_clearTimerFn || !g_kismetSysCdo) return false;
-    // K2_ClearTimer(Object, FunctionName="do") -- the exact inverse of the
-    // BP's one-shot K2_SetTimerDelegate({self, do}) arm (impl-RE SS4;
-    // space_renderer KillClientSpawnTimer precedent).
+    // K2_ClearTimer(Object, FunctionName="do") -- the exact inverse of the blueprint's one-shot
+    // K2_SetTimerDelegate({self, do}) arm, the same shape space_renderer's KillClientSpawnTimer
+    // uses.
     ue_wrap::ParamFrame f(g_clearTimerFn);
     if (!f.valid()) return false;
     f.Set<void*>(L"Object", inst);
@@ -471,10 +468,11 @@ bool ParkDisher(void* inst) {
 }
 
 bool RestoreDisher(void* inst) {
-    // PE ReceiveBeginPlay = the native initializer: gamemode gate ->
-    // BindDelegate(LOCAL var) -> Random(1800,3600) -> K2_SetTimerDelegate ->
-    // parent BeginPlay. Bytecode-verified re-fire-safe (no do() call, no
-    // spawn, local-var bind can't stack; qf R5/R8 2026-07-16).
+    // ReceiveBeginPlay is the native initializer, and re-firing it is safe. Its bytecode runs the
+    // parent BeginPlay, gates on the gamemode, then binds a delegate to this object's `do` and
+    // arms a one-shot K2_SetTimerDelegate for a random 1800-3600 s. Nothing spawns, `do` itself is
+    // never called, and the engine keys a dynamic timer by object and function name, so a second
+    // arm re-arms that timer instead of stacking another.
     return inst && CallNoArg(inst, g_disherBeginPlayFn);
 }
 
