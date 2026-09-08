@@ -1,30 +1,27 @@
 // coop/dev/flashlight_setup.h -- Autotest helpers to set up a working flashlight.
 //
-// Phase 5F autotest needs to programmatically give the player a flashlight,
-// install a charged battery, and (if needed) equip the item so that calls
-// to AmainPlayer_C::updateFlashlight() actually toggle the world light.
-// RE: research/findings/inventory-items/votv-inventory-equip-battery-RE-2026-05-26.md.
+// The autotest needs to programmatically give the player a flashlight, install a
+// charged battery, and if needed equip the item, so that calls to
+// AmainPlayer_C::updateFlashlight() actually toggle the world light.
 //
-// These helpers are autotest-only. The shipping coop sync does NOT call
-// them -- the user's save already has the flashlight equipped in normal
-// play. They exist solely to make the autonomous LAN test deterministic.
+// These helpers are autotest-only. The shipping coop sync does NOT call them --
+// a save from normal play already has the flashlight equipped. They exist solely
+// to make the autonomous LAN test deterministic.
 
 #pragma once
 
 namespace coop::dev::flashlight_setup {
 
-// Spawn an Aprop_equipment_flashlight_C and add it to the local player's
-// inventory via AmainPlayer_C::addPropToPlayer(FName). Whether this also
-// auto-equips depends on VOTV BP behavior (F-INV-2 open flag).
-// Returns true if the call dispatched. Game thread only.
+// Ask the BP to add an Aprop_equipment_flashlight_C to the local player's
+// inventory, through AmainPlayer_C::addPropToPlayer(FName), whose FName is the
+// UClass's own name. Whether that also auto-equips is BP behaviour we have not
+// pinned down. Returns true if the call dispatched. Game thread only.
 bool GiveFlashlight(void* mainPlayer);
 
-// Write a full charge into the live saveSlot:
-//   saveSlot.battery @0x0100 = 1.0f
-//   saveSlot.flashlightBattery @0x0890 = UClass*(prop_batts_C)
-// Both fields are looked up by name via reflection (offset
-// FindPropertyOffset on saveSlot_C), so a recook that shifts BP
-// offsets still works. Returns true on success. Game thread only.
+// Write a full charge into the live saveSlot: battery = 1.0f, and
+// flashlightBattery = the prop_batts_C UClass. Both fields are found by name
+// through FindPropertyOffset on saveSlot_C, so a recook that shifts BP offsets
+// still works. Returns true on success. Game thread only.
 bool SetBatteryFull(void* mainPlayer);
 
 // High-level: ensure flashlight is equipped + battery is full. Reads
