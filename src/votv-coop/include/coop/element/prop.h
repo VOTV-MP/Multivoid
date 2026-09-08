@@ -1,35 +1,17 @@
-// coop/element/prop.h -- the Prop Element subclass.
+// coop/element/prop.h -- the Prop Element subclass. Third after Npc and Player: every live
+// keyed-interactable Aprop_C derivative (chipPile, clump, trashBitsPile, every Aprop_*_C food or
+// container) has a Prop Element shadow whose ElementId is the runtime address the rest of the mod
+// dispatches on. The shape is MTA's `CClientObject` minus the streaming machinery: UE owns the
+// transform, PropPose the wire side.
 //
-// Third subclass of `coop::element::Element` (after Npc and Player). Each live
-// keyed-interactable Aprop_C derivative (chipPile / clump / trashBitsPile +
-// every Aprop_*_C food/container/etc) has a Prop Element shadow whose
-// ElementId is the unified runtime address used for cross-subsystem dispatch.
-//
-// Dual-track identity (per the MTA audit section 3.5.2):
-//   - `Element::m_name`    = the Aprop_C.Key string (save-stable, persists
-//                            across game-save cycles -- the only stable id
-//                            VOTV gives us for world-prop matching on load).
-//   - `Element::m_typeName`= the BP class name (e.g. "Aprop_chipPile_C").
-//   - `Element::m_id`      = the runtime ElementId (host-allocated; not save-
-//                            stable; the wire-efficient handle used by
-//                            PropPose / PropRelease / etc).
-//   - `Element::m_actor`   = the live AActor* (engine-owned; we don't manage
-//                            its lifetime, the engine does).
-//
-// Lifetime: owned by the shared `coop::element::MirrorManager<Prop>::Instance()`
-// singleton (PR-FOUNDATION-3 Inc3 2026-05-30 -- the bespoke g_propElementsById
-// owner map was retired). The LOCAL handle is AllocAndInstall'd by
-// `coop::prop_element_tracker::MarkPropElement` (m_mirror=false) when
-// `MarkKnownKeyedProp` fires from the Init POST observer or the seed scan, and
-// Take'n out when `UnmarkKnownKeyedProp` fires from K2_DestroyActor PRE; the
-// MIRROR handle is Install'd by `coop::remote_prop::RegisterPropMirror`
-// (m_mirror=true) for a wire-received prop. Both kinds share the one manager.
-//
-// Per the audit (section 4.3): `CClientObject` is MTA's world-prop equivalent
-// of `Aprop_C`. The Prop Element here is the same architectural shape (id +
-// type tag + name + actor + lifecycle flag) minus MTA's CClientStreamElement
-// position/streaming machinery (UE owns transforms; PropPose handles the
-// wire side).
+// Identity runs on two tracks. `m_name` is the Aprop_C.Key string, the only save-stable id the game
+// offers, so a prop re-matches across save cycles; `m_id` is the runtime ElementId, host-allocated,
+// not save-stable, the handle PropPose and PropRelease put on the wire. `m_typeName` is the
+// blueprint class name, `m_actor` the live AActor*, whose lifetime is the engine's. Local and
+// mirror handles share one owner, `element::PropMirrors()`: the local one AllocAndInstall'd by
+// `prop_element_tracker::MarkPropElement` on `MarkKnownKeyedProp` (the Init POST observer or the
+// seed scan) and Take'n back on `UnmarkKnownKeyedProp` (K2_DestroyActor PRE), the mirror one by
+// `remote_prop::RegisterPropMirror`.
 
 #pragma once
 
