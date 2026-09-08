@@ -1,4 +1,4 @@
-// coop/roster.cpp -- see coop/roster.h.
+// coop/player/roster.cpp -- see coop/player/roster.h.
 
 #include "coop/player/roster.h"
 
@@ -51,9 +51,8 @@ void Refresh() {
         snap.rows[0].isLocal = true;
         snap.rows[0].isHost = true;
         snap.rows[0].connected = true;
-        // NAMED EXCEPTION (arc A T14): with no session there is no ledger, so
-        // this one row is synthesised from the local request and carries no ID.
-        // "One derivation" holds WITHIN a session.
+        // NAMED EXCEPTION: with no session there is no ledger, so this one row is synthesised from
+        // the local request and carries no ID. "One derivation" holds WITHIN a session.
         snap.rows[0].playerNo = kNoPlayerNo;
         // Out of session there is no link to measure and never will be, which is
         // the "n/a" case -- NOT the "--" one, which means a sample has not landed
@@ -79,11 +78,9 @@ void Refresh() {
 
     int idx = 0;
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        // ONE DERIVATION (arc A). Presence comes from the LEDGER, which both
-        // peers agree on, instead of from connection state -- which a client
-        // simply does not have for other clients. That is why a client's board
-        // used to list only itself and the host: IsSlotConnected(2) is false on
-        // a client no matter who is in slot 2.
+        // ONE DERIVATION. Presence comes from the LEDGER, which both peers agree on, instead of
+        // from connection state, which a client simply does not have for other clients:
+        // IsSlotConnected(2) is false on a client no matter who is in slot 2.
         const coop::roster_ledger::Row& led = coop::roster_ledger::Get(slot);
         if (!led.occupied()) continue;
         const bool rowIsLocal = (slot == localSlot);
@@ -94,18 +91,15 @@ void Refresh() {
         r.isLocal = rowIsLocal;
         r.isHost = (slot == 0);
         r.connected = true;  // an occupied row IS the presence fact now
-        // ONE DERIVATION for the connection facts too (v131). Both come from the
-        // ledger, i.e. from the HOST's measurement, on BOTH roles -- so the same
-        // player reads the same on every board. There is deliberately no role
-        // branch here: the previous five-way cascade asked "what can I measure
-        // about you", which made one column answer transport on some rows and
-        // routing on others, side by side (user: "It should be all the same, no
-        // special treatment"). The local row is NOT special-cased -- your own
-        // ping is a real host-measured number and belongs on your own row.
-        // DisplayLink, not the raw row: row 0 (the host) carries Local/-1 because the
-        // host has no link to itself, and every client board rendered that as "n/a".
-        // The host<->client RTT is one link the host already published on the viewer's
-        // OWN row, so that is what row 0 shows here. See roster_ledger.h.
+        // ONE DERIVATION for the connection facts too. Both come from the ledger, that is from the
+        // HOST's measurement, on BOTH roles, so the same player reads the same on every board.
+        // There is deliberately no role branch here: asking "what can I measure about you" makes
+        // one column answer transport on some rows and routing on others, side by side. The local
+        // row is not special-cased either -- your own ping is a real host-measured number and
+        // belongs on your own row. DisplayLink, not the raw row: row 0 (the host) carries Local/-1
+        // because the host has no link to itself, which a client board renders as "n/a", and the
+        // host<->client RTT is one link the host already published on the viewer's OWN row, so that
+        // is what row 0 shows here. See roster_ledger.h.
         const auto link = coop::roster_ledger::DisplayLink(slot);
         r.ping = link.pingMs;
         r.linkKind = link.kind;
