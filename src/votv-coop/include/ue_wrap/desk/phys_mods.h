@@ -5,10 +5,11 @@
 // physMods is a TArray<TEnumAsByte<enum_physicalModules>> on
 // AanalogDScreenTest_C, fixed at 12 slots with 0 meaning empty, and behaves as a
 // SET: plugInModule's native dup-check denies a byte the array already Contains.
-// Four writers -- plugInModule (write into a free slot, then K2_DestroyActor on
+// Three writers -- plugInModule (write into a free slot, then K2_DestroyActor on
 // the module prop), the playerHitWith unplug path (the module is reborn INTO THE
-// HAND through lib.physModToActor and the slot goes to 0), setData on save load
-// (which calls updPhysMods) and gatherData on save marshal. updPhysMods() is the
+// HAND through lib.physModToActor and the slot goes to 0), and setData on save
+// load, which calls updPhysMods. gatherData only READS it, marshalling the array
+// into the save. updPhysMods() is the
 // parameterless consumer re-runner and measures as a PURE function of the array
 // -- per-slot socket visuals plus Contains-gated speed, lamp and shield effects,
 // with no player references, spawns or audio -- so a mirror may call it.

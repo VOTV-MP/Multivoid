@@ -8,8 +8,8 @@
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CBanManager.cpp): persistent, file-backed
 // identity records with nick and timestamps.
 //
-// Persistence is multivoid-players.txt next to the deployed DLL, the ban_list and multivoid.ini
-// convention, one record per line as `guid|nick|lastSeenUnix|ip`. Only the HOST writes it, every
+// Persistence is multivoid-players.txt in the game's install directory, beside ban_list and
+// multivoid.ini, one record per line as `guid|nick|lastSeenUnix|ip`. Only the HOST writes it, every
 // touch point being a host-role path, and each game copy keeps its own file. The record map is
 // mutex-guarded: GetSnapshot and FindByGuid are any-thread, the F1 panel rendering on the render
 // thread, while TouchOnJoin is GAME THREAD because it reads player_handshake's game-thread strings.

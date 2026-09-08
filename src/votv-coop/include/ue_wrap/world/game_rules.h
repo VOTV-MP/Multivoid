@@ -6,8 +6,8 @@
 // lib->getMainGameInstance().gameRules and a GameInstance is one per process and never replicated.
 //
 // A joining client boots from the host's live-captured save, so the host's localGameRules ride the
-// blob and, where the load copies them into GI.gameRules as single-player does, every peer's rules
-// equal the host's. This reads the LOCAL copy on purpose, so the panel shows the rules a peer is
+// blob; whether the load then copies them into GI.gameRules is not visible in the blueprints, so
+// whether every peer's rules end up equal to the host's is unproven. This reads the LOCAL copy on purpose, so the panel shows the rules a peer is
 // ACTUALLY under and a mismatch stays visible. Members are enumerated by reflection, not a
 // hardcoded list, so offsets resolve by name and the panel adapts if a patch adds or removes a
 // rule; GUID-mangled names are trimmed to a stable prefix. Principle 7: the engine read only -- ui/
