@@ -1,26 +1,18 @@
 // coop/dev/ragdoll_bone_overlay.h -- dev skeleton ESP for the NATIVE ragdoll bodies.
 //
-// The game's ragdoll is a separate spawned actor (AplayerRagdoll_C) whose simulating
-// SkeletalMesh is INVISIBLE in the main view (ragdollMode sets SetVisibleInSceneCaptureOnly
-// on it -- it renders only in mirrors); it activates on the C key ("ragdoll mode"), faints,
-// and trip/fall knockdowns. Debugging its motion (and our v22 mirror-body coupling -- today
-// pelvis-only) therefore needs an explicit visualizer: this module projects EVERY bone of
-// every ACTIVE ragdoll body to the screen and draws the bone->parent skeleton lines +
-// joint dots as an ImGui overlay (the object_overlay pattern: game thread collects +
-// projects + publishes a snapshot under a mutex; ui/hud.cpp draws it).
+// The game's ragdoll is a separate spawned actor (AplayerRagdoll_C) whose simulating skeletal
+// mesh is invisible in the main view -- ragdollMode sets SetVisibleInSceneCaptureOnly on it, so
+// it renders only in mirrors -- which is why debugging its motion needs a visualizer. This
+// projects every bone of every ACTIVE ragdoll body and draws the bone-to-parent skeleton and
+// joint dots as an ImGui overlay: the game thread publishes under a mutex, ui/hud.cpp draws it.
 //
-// Targets per update:
-//   - the LOCAL player's native ragdoll (mainPlayer.ragdollActor -> SkeletalMesh) -- lit
-//     while YOU are ragdolled (drawn from the ragdoll's own head-camera view),
-//   - every remote peer's MIRROR ragdoll body (RemotePlayer::RagdollBody) -- lit while a
-//     peer is ragdolling, i.e. the exact body whose only coupled bone is the pelvis today
-//     (the visualizer is the diagnostic for extending that to every bone).
+// Two targets per update: the local player's own native ragdoll (mainPlayer.ragdollActor) and
+// every remote peer's mirror body (RemotePlayer::RagdollBody), each lit while that body is
+// ragdolling. The mirror body's only coupled bone is the pelvis, and extending that is the point.
 //
-// Dev-gated (host-only via coop::dev_gate, like every dev overlay); OFF by default; force-on
-// via [dev] ragdoll_bone_overlay=1. COST while ON with an active ragdoll: ~2 UFunction calls
-// per bone per update at 30 Hz (GetSocketLocation + ProjectWorldToScreen) -- a dev-diagnostic
-// budget. OFF = one atomic load per tick; ON with no active ragdoll = a handful of cheap
-// reads + one controller call at 30 Hz; the per-bone cost only runs while a body is live.
+// Dev-gated host-only and off by default. Off is one atomic load per tick; on with no active
+// ragdoll, a few cheap reads and a controller call at 30 Hz; the per-bone GetSocketLocation and
+// ProjectWorldToScreen run only while a body is live.
 #pragma once
 
 #include <cstdint>
@@ -43,15 +35,15 @@ struct Snapshot {
 // Read [dev] ragdoll_bone_overlay once at boot (force-enable). Render/menu thread safe.
 void InitFromIni();
 
-// Game-thread tick (the harness composite pump, next to object_overlay::Update):
-// collect active ragdoll meshes -> bone points -> project -> publish. Self-clears
-// once on disable; one atomic load per tick while off.
+// Game-thread tick, in the harness composite pump next to object_overlay::Update: collect the
+// active ragdoll meshes, take the bone points, project, publish. Self-clears once on disable;
+// one atomic load per tick while off.
 void Update();
 
 // Render thread: copy the published snapshot (mutex).
 void GetSnapshot(Snapshot& out);
 
-// Menu checkbox state (role-aware: reports OFF while a connected client, dev_gate).
+// Menu checkbox state, role-aware: reports OFF while a connected client.
 bool IsEnabled();
 void SetEnabled(bool on);
 

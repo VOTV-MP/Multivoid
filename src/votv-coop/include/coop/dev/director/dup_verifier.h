@@ -1,23 +1,18 @@
-// coop/dev/director/dup_verifier.h -- the container-race NO-DUP verifier (director Phase-2).
+// coop/dev/director/dup_verifier.h -- the container-race no-dup verifier: after a staged
+// concurrent take, does the contested item X exist exactly ONCE across the whole save (the
+// winner has it, the loser's take was refused) or TWICE?
 //
-// The ONLY instrument that can READ a staged concurrent container-take race: does the raced item
-// X exist EXACTLY ONCE across the whole save after the race (winner has it, loser's take refused),
-// or TWICE (a dup -- R11b's reasoned-but-unproven refusal-dup residual)?
+// It COUNTS rather than confirms -- it walks the whole global saveSlot.GObjStack (every
+// propInventory index) plus the player stores and prints every matching row, instead of asking a
+// container "do you still have X?", which would query the very subsystem whose correctness it
+// measures. X is matched by CONTENT SIGNATURE, read off the engine save independently of
+// container_contents_sync.
 //
-// Instrument discipline (it is a tool, so the tool rules apply -- feedback_probe_must_count_not_confirm):
-//  (a) it COUNTS, does not confirm: it walks the WHOLE global saveSlot.GObjStack (every propInventory
-//      index) + the player stores (inventoryData/equipment/hold) and prints EVERY matching row -- it does
-//      NOT ask a container "do you still have X?" by key/eid (that would query the very subsystem whose
-//      correctness it measures). It matches X by CONTENT SIGNATURE (class + key + a hash of the value
-//      groups), read straight off the engine save, independent of container_contents_sync.
-//  (b) it demands a POSITIVE CONTROL before any race verdict is trusted: a solo run where a dup is
-//      IMPOSSIBLE (one bot takes X once) must count EXACTLY 1. Without it, count==1 on a race cannot
-//      distinguish "no dup" from "instrument blind" -- the exact R11b trap (a probe that counted on empty
-//      containers and nearly reported a false green). The control also proves X is UNIQUE in the world
-//      (a fungible X would count >1 with no dup) and that the walk sees BOTH the source (container) and
-//      the destination (player) store an item moves between.
+// A verdict counts only behind a positive control: a solo run where a dup is impossible must
+// count exactly 1, or count == 1 on a race cannot separate "no dup" from "instrument blind". The
+// control also proves X is unique in the world and that the walk sees both stores.
 //
-// DEV-ONLY (RULE 3). Game thread. Self-contained: no dependency on the container-sync lane.
+// Dev only (RULE 3). Game thread. No dependency on the container-sync lane.
 
 #pragma once
 
@@ -28,9 +23,9 @@
 
 namespace coop::director {
 
-// The content signature of a saved item -- class + key + a hash over the value groups. Two records are
-// "the same X" iff their signatures are equal. Deliberately NOT the container eid / GObjStack index
-// (that is the subsystem under test); this is derived only from the item's own serialized content.
+// The content signature of a saved item -- class, key and a hash over the value groups. Two
+// records are "the same X" iff their signatures are equal. Deliberately NOT the container eid or
+// the GObjStack index, which are the subsystem under test.
 struct ItemSig {
     std::wstring className;
     std::wstring key;
@@ -44,13 +39,14 @@ struct ItemSig {
 // The signature of a Fstruct_save POD record.
 ItemSig SigOf(const ue_wrap::save_record::SaveRecord& rec);
 
-// Capture X's signature from a live container's propInventory GObjStack slice at slot `slotIdx`.
-// Reads the raw slice itself (not via the sync lane). Invalid ItemSig if unresolvable / out of range.
+// Capture X's signature from a live container's propInventory GObjStack slice at slot `slotIdx`,
+// reading the raw slice rather than the sync lane. Invalid ItemSig if unresolvable or out of
+// range.
 ItemSig CaptureContainerSlotSig(void* containerActor, int32_t slotIdx);
 
-// Count instances of `x` across the WHOLE global GObjStack (all propInventory indices) + the player
-// stores. When `print`, logs EVERY matching row with its location + a scan summary (rows scanned /
-// slices / matches). Returns the total match count (-1 if the saveSlot is unresolvable). Game thread.
+// Count instances of `x` across the WHOLE global GObjStack (all propInventory indices) plus the
+// player stores. When `print`, logs every matching row with its location and a scan summary.
+// Returns the total match count, or -1 if the saveSlot is unresolvable. Game thread.
 int CountItemInstances(const ItemSig& x, bool print);
 
 }  // namespace coop::director
