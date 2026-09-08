@@ -20,6 +20,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_component.h"
 
 #include <chrono>
 #include <cstring>
@@ -60,7 +61,6 @@ int32_t g_offWidgetMaxLifetime = -1;  // ui_signal_C::MaxLifetime
 int32_t g_offWidgetAlpha = -1;        // ui_signal_C::Alpha (THE 1->0 expiry countdown)
 int32_t g_offWidgetDirection = -1;    // ui_signal_C::Direction (catch-gate parity)
 int32_t g_offWidgetDynmat = -1;       // ui_signal_C::dynmat (the dot's material instance)
-void* g_dynmatSetScalarFn = nullptr;       // UMaterialInstanceDynamic::SetScalarParameterValue
 void* g_widgetSetRenderScaleFn = nullptr;  // UWidget::SetRenderScale
 
 void* g_addSignalFn = nullptr;
@@ -98,10 +98,6 @@ void ResolvePass() {
             g_offWidgetDirection = R::FindPropertyOffset(g_uiSignalCls, L"Direction");
         if (g_offWidgetDynmat < 0)
             g_offWidgetDynmat = R::FindPropertyOffset(g_uiSignalCls, L"dynmat");
-    }
-    if (!g_dynmatSetScalarFn) {
-        if (void* mc = R::FindClass(L"MaterialInstanceDynamic"))
-            g_dynmatSetScalarFn = R::FindFunction(mc, L"SetScalarParameterValue");
     }
     if (!g_widgetSetRenderScaleFn) {
         if (void* wc = R::FindClass(L"Widget"))
@@ -202,18 +198,11 @@ bool IdentityEq(uint8_t* rp, float x, float y, float z, float frequency) {
 // mutates a rolled row's strength or direction.
 void PushAddedWidgetVisuals(void* widget, const SignalRow& w) {
     if (!widget || !R::IsLive(widget)) return;
-    if (g_offWidgetDynmat >= 0 && g_dynmatSetScalarFn) {
+    if (g_offWidgetDynmat >= 0) {
         void* dynmat = ReadAt<void*>(reinterpret_cast<uint8_t*>(widget), g_offWidgetDynmat);
         if (dynmat && R::IsLive(dynmat)) {
-            auto setScalar = [&](const wchar_t* name, float v) {
-                ue_wrap::ParamFrame f(g_dynmatSetScalarFn);
-                if (!f.valid()) return;
-                f.Set<R::FName>(L"ParameterName", ue_wrap::fname_utils::StringToFName(name));
-                f.Set<float>(L"Value", v);
-                ue_wrap::Call(dynmat, f);
-            };
-            setScalar(L"dir", w.direction ? 1.f : 0.f);
-            setScalar(L"pingSpeed", w.lifeTime / 180.f);
+            ue_wrap::engine::SetScalarParameterValue(dynmat, L"dir", w.direction ? 1.f : 0.f);
+            ue_wrap::engine::SetScalarParameterValue(dynmat, L"pingSpeed", w.lifeTime / 180.f);
         }
     }
     if (g_widgetSetRenderScaleFn) {

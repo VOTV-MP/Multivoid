@@ -66,6 +66,13 @@ void* CreateDynamicMaterialInstance(void* component, int32_t elementIndex);
 // as 'tex'. Game thread.
 bool SetTextureParameterValue(void* materialInstanceDynamic, const wchar_t* paramName, void* texture);
 
+// UMaterialInstanceDynamic::SetScalarParameterValue. The name overload takes the parameter that
+// is already an FName on the actor holding the material (grime's cleanParameter, which differs
+// per subclass), so callers with one pass it through rather than re-interning a literal.
+// Game thread.
+bool SetScalarParameterValue(void* materialInstanceDynamic, const wchar_t* paramName, float value);
+bool SetScalarParameterValue(void* materialInstanceDynamic, const reflection::FName& param, float value);
+
 // UStaticMeshComponent::SetStaticMesh, resolved on the owning class; recomputes bounds and
 // collision. Rejects null. Game thread.
 bool SetStaticMesh(void* staticMeshComponent, void* staticMeshAsset);

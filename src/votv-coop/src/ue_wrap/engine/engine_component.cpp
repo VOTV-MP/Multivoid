@@ -64,9 +64,12 @@ bool ResolveMeshFns() {
 
 void* g_midPrimCompClass = nullptr;   // UPrimitiveComponent (owns CreateDynamicMaterialInstance)
 void* g_createMidFn = nullptr;
-void* g_midClass = nullptr;           // UMaterialInstanceDynamic (owns SetTextureParameterValue)
+void* g_midClass = nullptr;           // UMaterialInstanceDynamic (owns the parameter setters)
 void* g_setTexParamFn = nullptr;
+void* g_setScalarParamFn = nullptr;
 
+// The two parameter setters share the class lookup, so a caller that needs only the scalar does
+// not pay for a second GUObjectArray walk. Every pointer is resolved once and cached.
 bool ResolveMidFns() {
     if (!g_midPrimCompClass) g_midPrimCompClass = R::FindClass(L"PrimitiveComponent");
     if (g_midPrimCompClass && !g_createMidFn)
@@ -74,7 +77,18 @@ bool ResolveMidFns() {
     if (!g_midClass) g_midClass = R::FindClass(L"MaterialInstanceDynamic");
     if (g_midClass && !g_setTexParamFn)
         g_setTexParamFn = R::FindFunction(g_midClass, L"SetTextureParameterValue");
+    if (g_midClass && !g_setScalarParamFn)
+        g_setScalarParamFn = R::FindFunction(g_midClass, L"SetScalarParameterValue");
     return g_createMidFn && g_setTexParamFn;
+}
+
+// Split out because a scalar caller needs neither CreateDynamicMaterialInstance nor the texture
+// setter, and must not be refused when one of those is missing.
+bool ResolveMidScalarFn() {
+    if (!g_midClass) g_midClass = R::FindClass(L"MaterialInstanceDynamic");
+    if (g_midClass && !g_setScalarParamFn)
+        g_setScalarParamFn = R::FindFunction(g_midClass, L"SetScalarParameterValue");
+    return g_setScalarParamFn != nullptr;
 }
 
 void* g_staticMeshCompClass = nullptr;  // owns SetStaticMesh
@@ -206,6 +220,21 @@ bool SetTextureParameterValue(void* materialInstanceDynamic, const wchar_t* para
     f.Set<R::FName>(L"ParameterName", pn);
     f.Set<void*>(L"Value", texture);
     return Call(materialInstanceDynamic, f);
+}
+
+bool SetScalarParameterValue(void* materialInstanceDynamic, const R::FName& param, float value) {
+    if (!materialInstanceDynamic || !ResolveMidScalarFn()) return false;
+    ParamFrame f(g_setScalarParamFn);
+    if (!f.valid()) return false;
+    f.Set<R::FName>(L"ParameterName", param);
+    f.Set<float>(L"Value", value);
+    return Call(materialInstanceDynamic, f);
+}
+
+bool SetScalarParameterValue(void* materialInstanceDynamic, const wchar_t* paramName, float value) {
+    if (!paramName) return false;
+    return SetScalarParameterValue(materialInstanceDynamic,
+                                   ue_wrap::fname_utils::StringToFName(paramName), value);
 }
 
 bool DestroyComponent(void* component, void* contextObject) {
