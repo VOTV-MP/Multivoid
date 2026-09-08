@@ -21,7 +21,7 @@ struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 void* g_gamemodeCls = nullptr;
 void* g_gamemode = nullptr;
 int32_t g_gamemodeIdx = -1;
-int32_t g_offSavedSignals = -1;  // mainGamemode_C::savedSignals_0 (@0x0968)
+int32_t g_offSavedSignals = -1;  // mainGamemode_C::savedSignals_0, resolved by name
 void* g_saveSignalFn = nullptr;
 void* g_deleteSignalFn = nullptr;
 

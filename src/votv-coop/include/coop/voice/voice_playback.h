@@ -1,6 +1,6 @@
 // coop/voice/voice_playback.h -- receive-side voice: a per-slot jitter buffer, PLC and opus decode
 // on the game thread, feeding per-slot PCM rings that a miniaudio callback mixes and spatializes. A
-// faithful Simple Voice Chat port, described end to end in docs/voice-and-chat.md; the numbers that
+// faithful Simple Voice Chat port, summarised in docs/voice-and-chat.md; the numbers that
 // make it faithful are a jitter threshold of 3 frames (in order delivers at once, out of order
 // sorts, an overflow pops the oldest, a stop marker flushes the buffer and resets lastSeq and the
 // decoder), a gap of up to 5 frames covered by opus PLC and a wider one resetting the decoder,

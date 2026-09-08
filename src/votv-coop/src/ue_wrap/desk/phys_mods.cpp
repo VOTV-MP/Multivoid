@@ -18,7 +18,7 @@ using Clock = std::chrono::steady_clock;
 
 // class-level (persist across level reloads)
 void*   g_deskCls = nullptr;
-int32_t g_offPhysMods = -1;      // TArray<byte> @0x12A0 (resolved live)
+int32_t g_offPhysMods = -1;      // TArray<byte>, resolved live by property name
 void*   g_updPhysModsFn = nullptr;
 void*   g_moduleBaseCls = nullptr;  // Aprop_physModule_C
 void*   g_libCdo = nullptr;         // lib_C CDO (physModToActor is a static-lib call)

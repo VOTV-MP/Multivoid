@@ -8,8 +8,8 @@
 // byte TArray used solely by the laptop photo view, which the live mirror SKIPS; a joiner converges
 // on it through the save transfer instead.
 //
-// Member offsets are dump-authoritative (struct_signalDataDynamic.hpp): the GUID-mangled cooked
-// names make FindPropertyOffset unreliable here, as with the door box.
+// Member offsets are dump-authoritative -- the kOff_* constants below -- because the GUID-mangled
+// cooked names make FindPropertyOffset unreliable here, as with the door box.
 //
 // Principle-7 engine-wrapper layer; no network logic.
 

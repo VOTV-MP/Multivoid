@@ -3,7 +3,7 @@
 // protocol, the per-tick poll, the apply, the per-window Key->actor index, the deferred retry and
 // the connect snapshot; the engine is reached only through ue_wrap::base_window.
 //
-// The model is symmetric and monotone, MTA's min register. Each peer polls every AbaseWindow_C's
+// The model is symmetric and monotone, MTA's min register. While connected, each peer polls its indexed windows'
 // `clean` once per tick -- not a UFunction observer, since cleanSponge is blueprint-internal and
 // never reaches our ProcessEvent detour, as with doors and the keypad -- and broadcasts on a
 // DECREASE, keyed by the window's Aactor_save_C::Key. A receiver resolves the window by Key,
