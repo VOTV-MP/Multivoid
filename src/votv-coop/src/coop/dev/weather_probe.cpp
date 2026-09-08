@@ -1,6 +1,5 @@
-// coop/dev/weather_probe.cpp -- see coop/dev/weather_probe.h. Bodies moved
-// VERBATIM from weather_sync.cpp (TickConnect probe block +
-// ReadComponentIsActive); the log lines keep their prefixes.
+// coop/dev/weather_probe.cpp -- see coop/dev/weather_probe.h. The bodies were moved out of
+// weather_sync.cpp unchanged, log-line prefixes included.
 
 #include "coop/dev/weather_probe.h"
 
@@ -48,12 +47,11 @@ bool ReadComponentIsActive(void* comp, bool* outOk) {
 }  // namespace
 
 void Tick(coop::net::Session* session) {
-    // [probe] weather diagnostic (2026-05-31, ini weather_probe=1): on BOTH peers,
-    // ~1 Hz log the cycle's rain + fog observable state + eff_rain IsActive. The
-    // user watches ONE rain+fog episode; comparing host vs client logs settles
-    // (a) is rain particle active on host but not client (Activate-vs-param), and
-    // (b) which fog the thick fog is (enable_fog vs enable_superfog). Gated off by
-    // default; cheap when off (one bool load).
+    // [probe] weather diagnostic (ini weather_probe=1): on BOTH peers, log the cycle's rain and
+    // fog observable state plus eff_rain's IsActive at about 1 Hz. Watch one rain-and-fog episode
+    // and compare the two logs: it settles whether the rain particle is active on the host but not
+    // the client (an Activate question rather than a parameter one), and which fog the thick fog is
+    // (enable_fog or enable_superfog). Gated off by default; cheap when off, one bool load.
     static const bool sProbe = ::coop::config::ResolveFlag(::coop::config_registry::rows::weather_probe);
     if (sProbe) {
         static uint32_t sN = 0;
@@ -66,9 +64,10 @@ void Tick(coop::net::Session* session) {
                 const bool  enFog     = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_fog);
                 const bool  enSuper   = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_enable_superfog);
                 void*       effRain   = *reinterpret_cast<void**>(b + P::off::AdaynightCycle_eff_rain);
-                // Thick-fog signals: the rolling-fog ACTOR (fogEventObject, present only during the thick fog),
-                // the visible height-fog DENSITY (finalFogDensity), and permanentFog. These are what
-                // distinguish a foggy peer from a clear one; the rain and enable flags do not.
+                // Thick-fog signals: the rolling-fog ACTOR (fogEventObject, present only during the
+                // thick fog), the visible height-fog DENSITY (finalFogDensity), and permanentFog.
+                // These are what distinguish a foggy peer from a clear one; the rain and enable
+                // flags do not.
                 void*       rollFog   = *reinterpret_cast<void**>(b + P::off::AdaynightCycle_fogEventObject);
                 const float finalFog  = *reinterpret_cast<float*>(b + P::off::AdaynightCycle_finalFogDensity);
                 const bool  permFog   = *reinterpret_cast<bool*>(b + P::off::AdaynightCycle_permanentFog);
@@ -80,14 +79,14 @@ void Tick(coop::net::Session* session) {
                         "enable_fog=%d enable_superfog=%d | isRaining=%d rainStrength=%.2f eff_rain=%p IsActive=%d(ok=%d)",
                         role, rollFog, finalFog, permFog ? 1 : 0, enFog ? 1 : 0, enSuper ? 1 : 0,
                         isRaining ? 1 : 0, rainStr, effRain, active ? 1 : 0, ok ? 1 : 0);
-                // [probe wind] 2026-07-04 desync report (client wind+dust, host calm) with a
-                // statically-sound v50 sync -- log the whole visible-wind input chain on both
-                // peers: windTarget (the synced gust input), the 4 persistent floats, and the
-                // roll interceptor counters. intensity/windOffset are derived per tick from
-                // windTarget by ReceiveTick [V bytecode @6287], so target parity = state parity;
-                // a target mismatch here = the sync write is not landing, fired==suppressed==0
-                // on the client = the roll dispatch bypasses ProcessEvent. eff_wind dust rate/
-                // speed/lifetime are all x intensity [V @5247-5726] -- no separate dust state.
+                // [probe wind] for the case of a client with wind and dust while the host is calm,
+                // with the sync itself statically sound: log the whole visible-wind input chain on
+                // both peers -- windTarget (the synced gust input), the four persistent floats, and
+                // the roll interceptor counters. ReceiveTick derives intensity and windOffset from
+                // windTarget every tick, so target parity is state parity: a target mismatch here
+                // means the sync write is not landing, and fired == suppressed == 0 on the client
+                // means the roll dispatch bypasses ProcessEvent. The eff_wind dust rate, speed and
+                // lifetime are all scaled by intensity, so there is no separate dust state.
                 {
                     ue_wrap::directionalwind::WindState w{};
                     ue_wrap::FVector tgt{};

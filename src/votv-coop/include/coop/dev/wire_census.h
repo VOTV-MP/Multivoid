@@ -1,18 +1,15 @@
-// coop/dev/wire_census.h -- env-gated inbound-wire census (DEV diagnostic;
-// probe family, RULE-2 exempt).
+// coop/dev/wire_census.h -- env-gated inbound-wire census (DEV diagnostic; probe family,
+// exempt from the no-migration-baggage rule).
 //
-// Purpose (2026-08-22, the D2 wire-window probe -- design of record
-// research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md
-// section 6): measure whether a peer whose world is DYING (exit-to-menu with the
-// layer live, before the flee's 4 s poll notices) leaks wire traffic about
-// dying-world actors that the receiving peer then applies. Armed on the HOST via
-// VOTVCOOP_WIRE_CENSUS=1, it logs EVERY inbound reliable individually and
-// per-second aggregated stream counts, each line stamped with GetTickCount64()
-// (machine-global ms, so the census aligns exactly against the quitting client's
-// own "transition NOW" marker across the two logs on one test machine).
+// Purpose: measure whether a peer whose world is DYING -- an exit to menu with the layer still
+// live, before the flee poll notices -- leaks wire traffic about dying-world actors that the
+// receiving peer then applies. Armed on the HOST with VOTVCOOP_WIRE_CENSUS=1, it logs every
+// inbound reliable individually plus per-second aggregated stream counts, each line stamped with
+// GetTickCount64(). That stamp is machine-global, so on one test machine the census lines up
+// exactly against the quitting client's own transition marker in the other log.
 //
-// All entry points are NET-THREAD only (called from Session::HandleMessage and
-// the NetThread loop); state is plain statics on that single thread.
+// All entry points are NET-THREAD only (Session::HandleMessage and the NetThread loop); state is
+// plain statics on that single thread.
 
 #pragma once
 
