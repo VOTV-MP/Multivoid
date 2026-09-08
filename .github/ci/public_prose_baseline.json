@@ -17,6 +17,7 @@
     "md.ptr_security": 1,
     "md.dead_links": 0,
     "md.dead_paths": 0,
+    "md.name_case": 0,
     "other.files": 43,
     "other.cyrillic": 1,
     "other.user": 7,

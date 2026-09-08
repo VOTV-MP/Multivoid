@@ -36,6 +36,15 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 BASELINE = os.path.join(HERE, "public_prose_baseline.json")
 
 MD_EXEMPT = ("THIRD-PARTY-NOTICES.md",)          # third-party license texts, reproduced as-is
+# The FILENAME says which half a document is in: a tracked one is public and lowercase, an
+# untracked one is ours and UPPER_CASE. The `.gitignore` allowlist already decides this, but it
+# decides invisibly -- nothing in an `ls`, an editor tree or a grep result shows which half a file
+# is in without asking git. The exception class is the files an ecosystem expects in capitals, and
+# GitHub gives several of them special treatment, so lowercasing them would add the strangeness the
+# convention exists to remove.
+DOC_ROOT = "docs/"
+DOC_NAME_EXEMPT = ("README", "LICENSE", "CONTRIBUTING", "SECURITY", "THIRD-PARTY-NOTICES",
+                   "CHANGELOG")
 SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
 SRC_EXT = (".cpp", ".h", ".inc")
 MD_HARD_CAP = 600
@@ -271,6 +280,23 @@ def measured_md(path):
 
 def measured_src(path):
     return path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT)
+
+
+def doc_name_fault(path, is_tracked):
+    """-> a reason string when a document under docs/ is named for the wrong half, else None.
+
+    A tracked doc is public and reads lowercase; an untracked one is ours and reads UPPER_CASE.
+    Only the STEM is judged, and only for the exception class's non-members. Note what this can
+    see: in a fresh clone there are no untracked docs at all, so the second half of the rule fires
+    only where the working trees coexist, which is the maintainer's disk."""
+    if not path.startswith(DOC_ROOT) or not path.endswith(".md"):
+        return None
+    stem = os.path.basename(path)[: -len(".md")]
+    if stem in DOC_NAME_EXEMPT:
+        return None
+    if is_tracked:
+        return None if stem == stem.lower() else "a tracked doc is public: name it lowercase"
+    return None if stem == stem.upper() else "an untracked doc is local: name it UPPER_CASE"
 
 
 def measured_other(path):
@@ -530,6 +556,23 @@ def measure(repo):
         c["md." + k] = 0
     c["md.dead_links"] = 0
     c["md.dead_paths"] = 0
+    # The naming convention, over BOTH halves of docs/: every tracked doc, and every .md sitting
+    # in that tree untracked. Listing the directory is what lets the untracked half be seen at all,
+    # since `tracked()` cannot report a file git does not know.
+    c["md.name_case"] = 0
+    seen_docs = [(p, True) for p in files if p.startswith(DOC_ROOT) and p.endswith(".md")]
+    doc_dir = os.path.join(repo, DOC_ROOT.rstrip("/"))
+    if os.path.isdir(doc_dir):
+        for name in sorted(os.listdir(doc_dir)):
+            rel = DOC_ROOT + name
+            if name.endswith(".md") and rel not in tracked_set:
+                seen_docs.append((rel, False))
+    for p, is_tracked in seen_docs:
+        why = doc_name_fault(p, is_tracked)
+        if why:
+            c["md.name_case"] += 1
+            who["md.name_case"][p] += 1
+            detail["md.name_case"][p].append(why)
     for p in md:
         text = read(repo, p)
         if text is None:
@@ -699,6 +742,7 @@ FIXED_DESCRIPTIONS = {
     "md.over_%d" % MD_HARD_CAP: "docs over the %d-line hard cap" % MD_HARD_CAP,
     "md.dead_links": "markdown links to a path not in the repository",
     "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
+    "md.name_case": "docs named for the wrong half (public lowercase, local UPPER_CASE)",
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
     "src.comment_dead_docpath": "comment lines naming a document that is not in the repository",

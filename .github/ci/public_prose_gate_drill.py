@@ -268,6 +268,20 @@ MUTANTS = [
     # open; letting the number drift away from the word instead flags a ratio and an enumeration,
     # and a sweep obeying that would rewrite correct prose.
     ("doc_row: matches nothing", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\bZZZZ\b"'),
+    # The naming rule needs one mutant per DIRECTION, because its two halves read different
+    # inputs: the tracked half reads git, the untracked half reads the directory. A rule with one
+    # arm would ship half-blind and the burn-down would call the tree named.
+    ("name_case: tracked half blind",
+     'return None if stem == stem.lower() else "a tracked doc is public: name it lowercase"',
+     'return None'),
+    ("name_case: untracked half blind",
+     'return None if stem == stem.upper() else "an untracked doc is local: name it UPPER_CASE"',
+     'return None'),
+    ("name_case: exceptions swallow every name", "    if stem in DOC_NAME_EXEMPT:\n",
+     "    if True:\n"),
+    ("name_case: never sees an untracked doc",
+     '            if name.endswith(".md") and rel not in tracked_set:\n',
+     '            if False:\n'),
     ("doc_row: singular only", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brow\s+[\w./-]*:\d+"'),
     ("doc_row: number may drift from the word", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\b.*:\d+"'),
     ("doc_row: slug not optional", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\s+[\w./-]+:\d+"'),
@@ -388,9 +402,14 @@ def main():
         f.write("# spaced\n")
     with open(os.path.join(repo, "docs", "six.md"), "w", encoding="utf-8") as f:
         f.write("# exactly six hundred lines\n" + "x\n" * 599)
-    # A tracked doc one directory down, so the fixture can cite it by basename alone.
+    # A tracked doc one directory down, so the fixture can cite it by basename alone. Its capitals
+    # also make it the tracked half of the naming rule: a public doc named UPPER_CASE.
     with open(os.path.join(repo, "docs", "TRACKED.md"), "w", encoding="utf-8") as f:
         f.write("# tracked\n")
+    # The naming rule's precision canary: an ecosystem file keeps its capitals and must NOT count,
+    # or the rule would make the repository stranger for the audience it serves.
+    with open(os.path.join(repo, "docs", "CHANGELOG.md"), "w", encoding="utf-8") as f:
+        f.write("# changelog\n")
     with open(os.path.join(repo, "src", "votv-coop", "src", "x.cpp"), "w", encoding="utf-8") as f:
         f.write(SRC)
     with open(os.path.join(repo, "src", "votv-coop", "src", "clean.cpp"), "w", encoding="utf-8") as f:
@@ -420,6 +439,13 @@ def main():
     git(["commit", "-q", "-m", "vendored"], vend, env)
     git(["add", "."], repo, env)
     git(["commit", "-q", "-m", "[drill] seed"], repo, env)
+    # The naming rule's UNTRACKED half, written AFTER the commit so git never learns them. A local
+    # doc reads UPPER_CASE; the lowercase one is the fault, and the capitals one is the canary that
+    # keeps the half from firing on everything it sees.
+    with open(os.path.join(repo, "docs", "local_notes.md"), "w", encoding="utf-8") as f:
+        f.write("# a local note named like a public doc\n")
+    with open(os.path.join(repo, "docs", "LOCAL_ARC.md"), "w", encoding="utf-8") as f:
+        f.write("# a local note named correctly\n")
     baseline = os.path.join(tmp, "baseline.json")
     results = []
 
@@ -431,7 +457,8 @@ def main():
     arm("init writes a baseline", r.returncode == 0 and os.path.isfile(baseline), r.stdout.strip())
     with open(baseline, encoding="utf-8") as f:
         counters = json.load(f)["counters"]
-    expect = {"md.files": 5, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
+    expect = {"md.files": 6, "md.name_case": 3,
+              "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 2, "md.ptr_research": 1, "md.ptr_claude": 1,
               "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
