@@ -122,10 +122,9 @@ long long NowMs() {
 
 // ---- the class->row map ------------------------------------------------------------------
 // ClassOf(sender) is the event's IMPLEMENTATION class, not the list_events row the replay
-// policy is keyed by. Every entry's class-to-row link is verified, from the runEvent case
-// table or live: a WRONG entry replays the wrong event, and a MISSING one logs LOUD on the
-// receiver and names the class to add -- so this map carries only verified links, never
-// guesses. Classes that register but map to no scheduled row (sub-chains like
+// policy is keyed by. A WRONG entry replays the wrong event, and a MISSING one logs LOUD on
+// the receiver and names the class to add, so a row is added only once its link has been read
+// out of the runEvent case table or seen live -- never guessed. Classes that register but map to no scheduled row (sub-chains like
 // trigger_alarm_C, weather senders, creature controllers spawned BY events) stay unmapped by
 // design: their state rides their own lanes, not replay.
 struct ClassRow { const char* className; const char* rowName; };

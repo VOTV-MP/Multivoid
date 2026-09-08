@@ -1,18 +1,18 @@
 // coop/lerp_window.h -- the shared MTA-form interpolation TIMING window.
 //
 // One concept, one implementation: the per-frame alpha/dAlpha bookkeeping that drives a
-// fixed-duration linear interpolation toward a cached error. Its owners -- the remote player,
-// element::Npc, world actors, the dish, the drone, the desk cursor and sim lanes -- each hold a
-// LerpWindow and apply the returned dAlpha to their OWN cached errors, over whatever field set
-// they interpolate; the window owns only the timing and never a pose field, which is what lets
-// those field sets differ.
+// fixed-duration linear interpolation toward a cached error. Its six owners -- the remote player,
+// element::Npc, world actors, the dish, the drone and the desk cursor -- each hold a LerpWindow
+// and apply the returned dAlpha to their OWN cached errors, over whatever field set they
+// interpolate; the window owns only the timing, never a pose field. A lane whose channels arrive
+// independently needs a deadline per channel instead, which is why desk_sim_sync has its own
+// SimInterp and not one of these.
 //
 // MTA shape (CClientPed::Interpolate): the error is cached ONCE at packet arrival, as
 // target - cur at that instant, and each frame applies dAlpha * error, so the motion is LINEAR
 // rather than a geometric decay. At alpha == 1 the whole error has been applied and the window
 // closes -- the caller snaps cur = target exactly, killing float drift -- until the next packet
-// reopens it. A pure value type: no engine or network dereference, no allocation, header-only,
-// single-threaded on the game thread, and clock-agnostic (NowMs() stays in each caller).
+// reopens it. A pure value type: header-only, allocation-free, game thread, clock-agnostic.
 
 #pragma once
 

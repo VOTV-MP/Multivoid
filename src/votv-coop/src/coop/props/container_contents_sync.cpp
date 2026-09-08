@@ -695,8 +695,14 @@ void Tick() {
         g_verbsRegistered =
             vm::RegisterVirtualVerb(L"addObject", kVerbDirty, &OnVerbEntry) &&
             vm::RegisterVirtualVerb(L"takeObj",   kVerbTakeObj, &OnVerbEntry);
-        if (!g_verbsRegistered)
+        static bool s_saidFailed = false;
+        if (!g_verbsRegistered && !s_saidFailed) {
+            // Once. This block retries every tick, and the failure it reports is the substrate
+            // refusing permanently (vm_dispatch latches an install failure), so an unlatched
+            // line here is a warning per tick for the rest of the session.
+            s_saidFailed = true;
             UE_LOGW("container_contents: verb registration FAILED -- the lane is inert");
+        }
     }
     vm::TickResolvePending();
     // This lane owns its own enable: riding another consumer's SetEnabled, its retirement would

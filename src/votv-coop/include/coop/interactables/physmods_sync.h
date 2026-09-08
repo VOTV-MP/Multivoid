@@ -9,10 +9,10 @@
 // the FULL canonical array, and every peer -- the presser included -- adopts wholesale, primes
 // and re-runs updPhysMods, which is idempotent because the verb is a pure function of the array.
 // A DENY goes back to the no-op author: a duplicate PLUG is refunded by a host respawn at the
-// desk, so the item is never lost, and a no-op UNPLUG destroys the author's hand ghost while the
-// host reaps the denied byte's fresh birth on a TTL. The module props need almost no lane code,
-// riding the destroy seam and the birth watchers. JOIN: the save transfer seeds the array and
-// the host ships the canonical array in connect-replay, which parks a still-pre-desk joiner.
+// desk, and a no-op UNPLUG destroys the author's hand ghost, or sweeps its untracked actors of
+// that byte when the module was already dropped. The module props need almost no lane code,
+// riding the destroy seam and the birth watchers. JOIN: the save transfer seeds the array and the
+// host ships the canonical array in connect-replay, which parks a still-pre-desk joiner.
 
 #pragma once
 

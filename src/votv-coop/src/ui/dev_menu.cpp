@@ -180,7 +180,7 @@ void RenderSpawnNpc() {
     // Spawn the allowlisted creatures directly, because the events that would otherwise produce
     // one do not reliably leave a catchable actor: the wisp event arms an overlap box, and the
     // eventer's ventCrawler spawn goes through EX_CallMath, bypassing our interceptor and landing
-    // in a far vent (see spawn_npc).
+    // about ten metres away in a vent (see spawn_npc).
     if (ImGui::Button("Spawn killerWisp (in front)"))  coop::dev::spawn_npc::SpawnKillerWisp();
     ImGui::SameLine();
     if (ImGui::Button("Spawn ventCrawler (in front)")) coop::dev::spawn_npc::SpawnVentCrawler();

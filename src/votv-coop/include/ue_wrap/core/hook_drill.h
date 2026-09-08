@@ -1,8 +1,9 @@
 // ue_wrap/core/hook_drill.h -- make the trampoline-retirement contract falsifiable.
 //
 // The rule it drills lives in `hook.h` under "Retirement": lift a patch, never remove it,
-// because MinHook's removal writes a free-list pointer over the trampoline's first bytes
-// while a thread may still be about to return through them.
+// because MinHook's removal writes a free-list pointer over the trampoline's first bytes while a
+// thread may still be about to return through them (FreeBuffer, reached from MH_RemoveHook, in the
+// vendored third_party/minhook/src/buffer.c).
 //
 // A rule of that shape cannot be trusted on argument alone, and a teardown fix whose only
 // evidence is a CI gate going red has shown the INSTRUMENT failing, never the defect. So this

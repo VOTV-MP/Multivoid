@@ -4,7 +4,9 @@
 // bringup (StartCoopSession wiring), and the unified 60 Hz play loop (browser-start drain,
 // pump composite, abort and death edges). harness.cpp keeps the PROCESS boot -- the one-shot
 // installs -- and the scenario timeline; it reaches the session object through Session() and
-// drives the lifecycle through the functions below.
+// drives the lifecycle through the functions below. The scenario and UX glue (the join-progress
+// cover, the server-browser reopen) is harness-side by principle 7: a coop/session module never
+// touches ui::.
 
 #pragma once
 
