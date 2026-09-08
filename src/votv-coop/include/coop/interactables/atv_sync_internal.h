@@ -1,8 +1,7 @@
-// coop/interactables/atv_sync_internal.h -- the per-ATV record, shared by the ATV lane's TUs.
-//
-// Born with the 2026-08-30 corrector extraction. atv_sync.cpp owns the map of these and every
-// structural change to it; atv_corrector.cpp mutates the fields of ONE entry when a packet
-// arrives. Nothing outside coop/interactables/ includes this -- the lane's public surface is
+// coop/interactables/atv_sync_internal.h -- the per-ATV record, shared by the ATV lane's
+// translation units. atv_sync.cpp owns the map of these and every structural change to it;
+// atv_corrector.cpp mutates the fields of ONE entry when a packet arrives. Nothing outside
+// coop/interactables/ includes this -- the lane's public surface is
 // coop/interactables/atv_sync.h.
 
 #pragma once
@@ -26,8 +25,8 @@ struct AtvEntry {
                                    // E-press from it, so a grabber must never appear here.
     uint8_t  authorSlot   = 0xFF;  // who STREAMS it (driver or grabber; 0xFF = nobody -> host syncs)
     bool     wasPoseAuthor = false;// POSE authority last tick -- the release-edge detect, and it is
-                                   // deliberately not the same variable as ownsTick (PR #9)
-    bool     isClientSpawnedMirror = false;  // v77: a runtime ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
+                                   // deliberately not the same variable as ownsTick
+    bool     isClientSpawnedMirror = false;  // a runtime ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
     // idle-syncer change gate
     ue_wrap::FVector  lastSyncPos{};
     ue_wrap::FRotator lastSyncRot{};
@@ -39,13 +38,13 @@ struct AtvEntry {
                                    // send's. Counting CONSECUTIVE re-places does not bound
                                    // anything: a teleport lands the rig exactly on the author's
                                    // pose, so the very next packet is the one most likely to be
-                                   // in band, which zeroes the count. Measured 2026-08-30: the
-                                   // "bounded at three" give-up fired three times in 46 s.
-    // ---- v147 condition lane (atv_condition_sync.cpp mutates these on ONE entry) ----
-    // The LAST-EXPRESSED baseline: the condition state as of the last time each reducer verb
-    // ran (or the actor's own state at the first apply -- seeded from the ACTOR, never zero:
-    // a zero seed would fire updTires' BreakConstraint x8 on a settled correct rig, and a
-    // baseline advanced per packet would starve updDirt forever on slow drift; qf rounds 3-4).
+                                   // in band, which zeroes the count. Measured: a give-up
+                                   // bounded at three fired three times in 46 seconds.
+    // ---- the condition lane (atv_condition_sync.cpp mutates these on ONE entry) ----
+    // The LAST-EXPRESSED baseline: the condition state as of the last time each reducer verb ran,
+    // or the actor's own state at the first apply. It is seeded from the ACTOR and never from
+    // zero, because a zero seed fires updTires' BreakConstraint x8 on a settled correct rig, and
+    // a baseline advanced per packet starves updDirt forever on slow drift.
     ue_wrap::atv_condition::Snapshot condExpressed{};
     bool  condExpressedSeeded = false;
     void* condExpressedActor  = nullptr;  // reseed when the entry repoints to a new actor
@@ -55,12 +54,12 @@ struct AtvEntry {
     bool    haveLastSentCond = false;
     int      restReplaces = 0;     // re-places of a mirror whose author is at rest, WITHIN one
                                    // episode (see lastRestPlaceMs).
-                                   // A corrector owes a convergence check on EVERY arm it has
-                                   // (docs/LESSONS.md); this is the at-rest arm's. If putting the
-                                   // rig on the author's pose and then leaving it alone still does
-                                   // not hold, the difference is not something a pose lane can
-                                   // close and the lane must say so instead of teleporting for
-                                   // the rest of the session.
+                                   // A corrector owes a convergence check on EVERY arm it
+                                   // has, and this is the at-rest arm's: if putting the rig
+                                   // on the author's pose and then leaving it alone still
+                                   // does not hold, the difference is not something a pose
+                                   // lane can close, and the lane must say so instead of
+                                   // teleporting for the rest of the session.
 };
 
 // Vector length. Shared rather than duplicated: the corrector measures the position error with
