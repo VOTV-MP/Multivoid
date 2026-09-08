@@ -24,23 +24,10 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// Cached pile UClass per class name (FindClass is a ~237k-entry GUObjectArray walk; the trash family is
-// a handful of distinct names). GT-serial -> no mutex.
-std::unordered_map<std::wstring, void*> g_clsCache;
-
-void* ResolvePileClass(const std::wstring& className) {
-    if (className.empty()) return nullptr;
-    auto it = g_clsCache.find(className);
-    if (it != g_clsCache.end() && it->second) return it->second;
-    void* cls = R::FindClass(className.c_str());
-    if (cls) g_clsCache[className] = cls;  // do not cache a miss (could load later)
-    return cls;
-}
-
-// Apply the host-authoritative APPEARANCE to a chipPile native (chipType + scale + the host's visible-mesh
-// WORLD rotation). Shared by Materialize (a fresh spawn) and RepositionBoundNative (an already-bound native
-// we reuse). Does NOT spawn / root / position / bind -- pure appearance. See Materialize for the rationale
-// on each line (init()-drives-both-mesh-components + mesh-COMPONENT rotation to avoid the double-rotate).
+// Apply the host-authoritative APPEARANCE to a chipPile native: chip type, scale, and the
+// host's visible-mesh WORLD rotation. Shared by Materialize (a fresh spawn) and
+// RepositionBoundNative (an already-bound native we reuse). It does NOT spawn, root, position or
+// bind -- appearance only. Materialize carries the reasoning for each of the three.
 void SkinPileNative(void* native, uint8_t chipType, const ue_wrap::FRotator& meshWorldRot,
                     const ue_wrap::FVector& scale) {
     ue_wrap::prop::SetChipTypeAndRebuild(native, chipType);
@@ -48,10 +35,10 @@ void SkinPileNative(void* native, uint8_t chipType, const ue_wrap::FRotator& mes
     if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
 }
 
-// The pins this module holds, OWNED. A raw AddToRoot with the release written out by hand
-// in three other modules is what this replaces: none of those paths runs at a session
-// teardown, so a materialized native that simply outlived the session stayed rooted and
-// anchored its world forever (ue_wrap/core/gc_pin.h has the measurement).
+// The pins this module holds, OWNED. This replaces a raw AddToRoot whose release was written
+// out by hand in three other modules: none of those paths ran at a session teardown, so a
+// materialized native that merely outlived its session stayed rooted and anchored its world
+// forever. A GcPin releases from its destructor, so erasing the entry is the whole release.
 std::unordered_map<void*, ue_wrap::GcPin> g_pins;
 
 }  // namespace
@@ -60,7 +47,7 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& meshWorldRot,
                   const ue_wrap::FVector& scale, int senderSlot, bool skipBind, bool rebindInPlace) {
     UE_ASSERT_GAME_THREAD("native_pile_mirror::Materialize");
-    void* cls = ResolvePileClass(className);
+    void* cls = className.empty() ? nullptr : R::FindClass(className.c_str());
     if (!cls) {
         UE_LOGW("[PILE] native_pile_mirror: class '%ls' not loaded -- cannot materialize native eid=%u",
                 className.c_str(), eid);
@@ -71,12 +58,11 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
         UE_LOGW("[PILE] native_pile_mirror: SpawnActor('%ls') FAILED eid=%u", className.c_str(), eid);
         return nullptr;
     }
-    // The PROVEN inert recipe (2026-06-30 collision-ON probe: 60s live + inert, hover GUI present):
-    // `.Pin()` on the mapped handle, NOT `= GcPin(native)`: C++17 sequences the temporary's
-    // Pin BEFORE the assignment, so on a repeated key the move-assign's Release would clear
-    // the RootSet bit the temporary just set and leave the map claiming a pin that is not
-    // held. Unreachable today (a rooted actor's address cannot be recycled) and exactly the
-    // trap this class exists to remove.
+    // `.Pin()` on the mapped handle, NOT `= GcPin(native)`: C++17 sequences the temporary's Pin
+    // BEFORE the assignment, so on a repeated key the move-assign's Release would clear the RootSet
+    // bit the temporary had just set, leaving the map claiming a pin nobody holds. Unreachable
+    // today, since a rooted actor's address cannot be recycled, and exactly the trap this class
+    // exists to remove.
     if (!g_pins[native].Pin(native)) {              // GC-pin -- a runtime spawn has no save/world ref
         // A failed pin voids the mirror's whole rules-of-existence argument (rooted -> never
         // GC'd -> never a stale index), so it must never fail silently.
@@ -86,11 +72,12 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
     }
     E::SetActorTickEnabled(native, false);         // no autonomous per-frame ubergraph
     E::SetActorSimulatePhysics(native, false);     // kinematic resting pile (the host positions it)
-    E::SetActorRootMovable(native);                // else SetActorLocation (host pose / b3) silently no-ops on a Static root
-    // Skin the host's chipType the GAME's OWN way (chipType via the pile's init() -> both mesh components;
-    // scale; and the host's visible-mesh WORLD rotation on the mesh COMPONENT, not the root -> no
-    // double-rotate). The fresh SpawnActor above ran init once via UCS with the DEFAULT chipType=0; this
-    // re-skins it to the host's variant + consumes the host's rotation (host->client, same axis as chipType).
+    E::SetActorRootMovable(native);                // else SetActorLocation silently no-ops on a Static root
+    // Skin the host's chip type the GAME's OWN way: the chip type through the pile's own init, the
+    // scale, and the host's visible-mesh WORLD rotation written to the mesh COMPONENT rather than
+    // the root, so the two do not compose into a double rotation. The SpawnActor above already ran
+    // init once, through the construction script, with the default chip type of 0; this re-skins it
+    // to the host's variant and consumes the host's rotation on the same host-to-client edge.
     SkinPileNative(native, chipType, meshWorldRot, scale);
 
     if (!skipBind) {
@@ -121,10 +108,11 @@ void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVecto
                            const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale) {
     if (!native) return;
     UE_ASSERT_GAME_THREAD("native_pile_mirror::RepositionBoundNative");
-    // Reuse an already-bound save-loaded native as the LAND mirror -- reposition + re-skin it to the host's
-    // landed transform. NO spawn, NO bind (it is already the Element's bound mirror). Movable-force first:
-    // a save-loaded native may be Static, so SetActorLocation would silently no-op (the b3 lesson). This is
-    // the create-edge CLAIM (reuse the local result) that suppresses the parallel proxy spawn entirely.
+    // Reuse an already-bound save-loaded native as the LAND mirror: reposition and re-skin it to
+    // the host's landed transform. No spawn and no bind, since it is already the Element's bound
+    // mirror. Movable-force comes first because a save-loaded native may be Static, and
+    // SetActorLocation on a Static root silently no-ops. This is the create-edge CLAIM -- the local
+    // result is taken as the answer -- which is what suppresses the parallel proxy spawn.
     E::SetActorRootMovable(native);
     E::SetActorLocation(native, loc);
     SkinPileNative(native, chipType, meshWorldRot, scale);
