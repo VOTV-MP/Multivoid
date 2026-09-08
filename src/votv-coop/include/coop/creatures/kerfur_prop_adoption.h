@@ -1,25 +1,18 @@
 // coop/kerfur_prop_adoption.h -- DEFERRED class+pose adoption for PROP-form kerfurs at join.
 //
-// THE prop-form join fix (K-6, 2026-06-16). A kerfur PROP (prop_kerfurOmega_C) is a host-owned entity
-// whose BP key is RANDOM per peer (and late-minted), so a client cannot match its host twin by key.
-// At join the host's connect snapshot expresses each kerfur prop via PropSpawn; the client's INLINE
-// fuzzy match (remote_prop_spawn::OnSpawn Gap-I-1, 30 cm class+pose) runs ONCE on receipt -- and if the
-// client's own save-loaded twin hasn't async-loaded yet, the fuzzy MISSES and OnSpawn fresh-spawns a
-// DUPLICATE beside the still-loading twin. The orphaned untracked local then (a) gets over-claimed +
-// destroyed by kerfur_convert::ClaimConversionGhosts and (b) is invisible to the conversion poll (only
-// MirrorManager<Prop> is scanned) -> a client turn-on of it never reaches the host. (Full RCA:
-// research/findings/kerfur/votv-kerfur-prop-join-adoption-RCA-AND-DESIGN-2026-06-16.md.)
+// A kerfur PROP (prop_kerfurOmega_C) is host-owned with a blueprint key minted at random per peer,
+// so a client cannot match its host twin by key. At join the host expresses each one as a PropSpawn
+// and the client's inline fuzzy match in remote_prop_spawn::OnSpawn -- class plus pose within 30 cm
+// -- runs ONCE on receipt: if the client's save-loaded twin has not async-loaded yet, it MISSES and
+// a DUPLICATE is spawned beside it. That orphan is untracked, so ClaimConversionGhosts over-claims
+// and destroys it, and the conversion poll cannot see it.
 //
-// This module is the PROP-form analogue of coop/npc_adoption.{h,cpp} (the WORKING template the NPC
-// form already uses): instead of fresh-spawning on a fuzzy miss, OnSpawn ARMS a pending adoption here;
-// a 5 Hz poll binds the local twin by class + nearest-pose once it materializes (gated on
-// HasLoadTailQuiesced), fresh-spawning only as a last resort. The bound twin becomes a single
-// host-range MIRROR -> claimed (sweep-safe), excluded from ClaimConversionGhosts (IsMirror), and
-// poll-visible (turn-on works). One logical kerfur, one prop mirror, no duplicate.
-//
-// CLIENT-only, GAME-THREAD-only (no mutex; g_pending + the latches are GT-only, exactly like
-// npc_adoption). Built on the SHIPPED K-5 (the client-mint gate keeps the local twin out of
-// g_actorToPropElementId, so it is purely a mirror after adoption).
+// So a fuzzy miss ARMS a pending adoption here instead, and a 5 Hz poll binds the local twin by
+// class and nearest pose once it materialises, gated on HasLoadTailQuiesced, fresh-spawning only as
+// a last resort. The bound twin is then one host-range MIRROR: claimed, sweep-safe, excluded from
+// ClaimConversionGhosts and poll-visible. The prop-form analogue of coop/npc_adoption. CLIENT-only,
+// GAME-THREAD-only, no mutex; the client-mint gate keeps the twin out of g_actorToPropElementId, so
+// after adoption it is purely a mirror.
 
 #pragma once
 
