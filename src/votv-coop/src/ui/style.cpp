@@ -21,31 +21,19 @@ void Rebuild() {
     const float f = ui::scale::Ui();
     st.ScaleAllSizes(f);
 
-    // THE CURSOR BUG (user 2026-07-27: "clicking multiplayer shows multiplayer pop up
-    // but no CURSOR showing"), MEASURED 2026-07-31:
+    // THE CURSOR BUG. ImGui's ScaleAllSizes() applies ImTrunc to MouseCursorScale the way it does
+    // to every other style field. Every other field is a PIXEL SIZE, where truncating toward zero
+    // is right; MouseCursorScale is a unitless MULTIPLIER, so a UI factor below 1 -- 0.833 here --
+    // truncates to 0, and RenderMouseCursor then draws a zero-area quad. With the OS cursor hidden
+    // by our WM_SETCURSOR handler that is no cursor at all, and it reads as intermittent because
+    // the factor tracks client size: at 1.0 and above the truncation is harmless, below 1.0 the
+    // cursor vanishes. Upstream has applied the same ImTrunc to both since ImGui 1.91.5.
     //
-    //   imgui.cpp:1649  ScaleAllSizes():  MouseCursorScale = ImTrunc(MouseCursorScale * f);
-    //   f = ui::scale::Ui() = 0.833 here  ->  ImTrunc(0.833f) == 0.0f
-    //   imgui.cpp:4131  RenderMouseCursor(): AddImage(tex, pos, pos + size * scale, ...)
-    //                                        scale == 0  ->  a ZERO-AREA quad, nothing drawn.
-    //
-    // Every other style field is a PIXEL SIZE, where truncating toward zero is right.
-    // `MouseCursorScale` is a unitless MULTIPLIER, and truncating a multiplier below 1
-    // to 0 deletes the thing it scales. Upstream applies the same `ImTrunc` to both
-    // (present since v1.91.5 -- `git log -S"MouseCursorScale = ImTrunc"`; NOT a 1.92
-    // regression). The live probe printed `curScale=0.000 uiScale=0.833` and
-    // `cursorInfo showing=0 hCursor=NULL` -- with the OS cursor hidden by our
-    // WM_SETCURSOR handler, a zero-size software cursor means NO cursor at all. It
-    // reads as intermittent only because the factor tracks client size: at >= 1.0 the
-    // truncation is harmless, below 1.0 the cursor vanishes.
-    //
-    // So the cursor never scales BELOW 1: a cursor smaller than its authored 12x19 is
-    // not worth having, and 0 is not a size.
-    //
-    // ImTrunc-then-floor-at-1, written without imgui_internal.h (ImTrunc(x) ==
-    // (float)(int)x for the positive factors this ever sees). VOTVCOOP_CURSOR_SCALE_DRILL=1
-    // skips the correction so the guard below can be SHOWN RED -- a guard never observed
-    // failing passes by construction.
+    // So the cursor never scales BELOW 1: a cursor smaller than its authored 12x19 is not worth
+    // having, and 0 is not a size. ImTrunc-then-floor-at-1, written without imgui_internal.h
+    // (ImTrunc(x) == (float)(int)x for the positive factors this ever sees).
+    // VOTVCOOP_CURSOR_SCALE_DRILL=1 skips the correction so the guard below can be SHOWN RED -- a
+    // guard never observed failing passes by construction.
     static int sDrill = -1;
     if (sDrill == -1) {
         char v[8]{};

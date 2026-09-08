@@ -1,12 +1,9 @@
 // ui/overlay_backend_dx11.cpp -- the D3D11 implementation of ui/overlay_backend.h.
 //
-// Bodies are a literal move out of imgui_overlay.cpp (2026-07-26 extraction;
-// design of record research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-
-// 2026-07-26.md). One documented deviation: the old BringUpDX11 committed
-// g_device/g_context only after Win32+DX11 init both succeeded; the split
-// commits them in CaptureDevice and relies on the AbandonCapture unwind arm
-// instead -- same net behavior (single-threaded on the render thread; nothing
-// reads these globals between the two bring-up steps).
+// g_device and g_context are committed in CaptureDevice, before the renderer half of bring-up
+// has run, and the AbandonCapture unwind arm is what undoes them on a later failure. That is
+// safe here and only here: bring-up is single-threaded on the render thread, and nothing reads
+// those globals between the two steps.
 
 #include "ui/overlay_backend.h"
 
@@ -77,18 +74,14 @@ bool InitRenderer(IDXGISwapChain* sc) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
         return false;
     }
-    // THE FLAG STAYS ON (2026-07-30, the flip). This is where the transitional
-    // `BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures` used to sit, and
-    // it is gone rather than conditional (RULE 2). It existed for one build's
-    // worth of time, to stop DX11's dynamic atlas and DX12's legacy-stripped one
-    // shipping TWO drawable repertoires from ONE binary, chosen by the player's
-    // GPU API. C2a put DX12 on ImGui_ImplDX12_InitInfo with our own descriptor
-    // allocator, so both RHIs can service textures and the flag is on for both --
-    // one regime, one repertoire, whatever the RHI.
+    // THE FLAG STAYS ON, for both RHIs. Clearing ImGuiBackendFlags_RendererHasTextures here would
+    // let DX11's dynamic atlas and DX12's legacy-stripped one ship TWO drawable repertoires from
+    // ONE binary, chosen by the player's GPU API. DX12 runs on ImGui_ImplDX12_InitInfo with our own
+    // descriptor allocator, so both RHIs service textures: one regime, one repertoire, whatever the
+    // RHI.
     //
-    // ONE AXIS, deliberately: a per-RHI flip would re-create the exact defect the
-    // clear was written to prevent, and a DX12-only risk is answered by the CI
-    // census in tools/text/atlas_regime_gate.ps1, not by splitting the flag.
+    // ONE AXIS, deliberately -- a per-RHI flip would re-create the exact defect this rule prevents,
+    // and a DX12-only risk is answered by the atlas-regime census in CI, not by splitting the flag.
     g_live = true;
     CreateRTV(sc);
     return true;
