@@ -1,4 +1,4 @@
-// coop/weather_lightning.cpp -- see coop/weather_lightning.h.
+// coop/world/weather_lightning.cpp -- see coop/world/weather_lightning.h.
 
 #include "coop/world/weather_lightning.h"
 
@@ -22,10 +22,10 @@ namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 
-// Atomic session pointer -- the POST observer is registered once but fires
-// for the session lifetime; on Stop/Start the harness re-stores the new
-// pointer via SetSession so the observer's role/connected checks read the
-// current session. Acquire/release matches weather_state's g_session pattern.
+// Atomic session pointer -- the POST observer is registered once but fires for the session
+// lifetime; on Stop/Start the harness re-stores the new pointer via SetSession so the observer's
+// role/connected checks read the current session. Acquire/release matches weather_sync's g_session
+// pattern.
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // Resolved-once dependencies. Once non-null, stay non-null for the process
@@ -38,20 +38,17 @@ int32_t g_spawnActorClassParamOff = -1;
 int32_t g_spawnTransformParamOff  = -1;
 bool g_observerRegistered = false;
 
-// HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY
-// deferred spawn (also drives NPC spawns / prop spawns); filtered by
-// ActorClass == lightningStrike_C. The strike's actor location IS the
-// SpawnTransform translation per
-// research/findings/weather-wind/votv-weather-RE-effect-actors-2026-05-26.md.
+// HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY deferred spawn (it also
+// carries NPC and prop spawns); filtered by ActorClass == lightningStrike_C. The strike's actor
+// location IS the SpawnTransform translation.
 void OnSpawnPostLightning(void* /*self*/, void* /*function*/, void* params) {
     if (!GT::IsGameThread()) return;       // defensive
     if (!params) return;
     if (g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) return;
     if (!g_lightningStrikeClass) return;
 
-    // ActorClass filter -- exact pointer match (lightningStrike_C has no
-    // subclasses in VOTV; the dump shows only this one). Pointer compare,
-    // no string walk -- fast path safe to run on every spawn.
+    // ActorClass filter -- exact pointer match; lightningStrike_C has no subclasses in VOTV. A
+    // pointer compare, not a string walk, so this is safe to run on every spawn.
     void* actorClass = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(params) + g_spawnActorClassParamOff);
     if (actorClass != g_lightningStrikeClass) return;
@@ -64,9 +61,7 @@ void OnSpawnPostLightning(void* /*self*/, void* /*function*/, void* params) {
     // FVector translation -- same layout as npc_sync uses).
     const uint8_t* xform = reinterpret_cast<const uint8_t*>(params) + g_spawnTransformParamOff;
     coop::net::LightningStrikePayload p{};
-    // v13 (A4 2026-05-29): host stamps its own local Player Element id.
-    // (v14 stamped paired senderContext; v16 PR-FOUNDATION-1b moved
-    // stale-gen defense to header senderEpoch.)
+    // The host stamps its own local Player Element id.
     {
         const coop::element::ElementId selfEid =
             coop::players::Registry::Get().LocalPlayerElementId();
@@ -161,9 +156,8 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
         UE_LOGW("weather: lightning Apply off-game-thread -- dropping");
         return;
     }
-    // v13 (A4 2026-05-29): the "is sender host?" trust-bound check moved
-    // up into event_feed::Update's LightningStrike dispatcher (validates
-    // msg.senderPeerSlot == 0 before posting here).
+    // The "is sender host?" trust-bound check is the world event dispatcher's: it validates
+    // senderPeerSlot == 0 before posting here.
     if (!g_gameplayStaticsCdo || !g_beginDeferredSpawnFn || !g_finishSpawnFn ||
         !g_lightningStrikeClass) {
         UE_LOGW("weather: lightning Apply spawn path not resolved "
@@ -174,12 +168,11 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
     }
 
     // Build FTransform at the received location. FTransform layout:
-    //   FQuat Rotation @ 0x00 (16 B, XYZW)
+    //   FQuat Rotation (16 B, XYZW; the identity's W is the 0x0C write below)
     //   FVector Translation @ 0x10 (12 B)
     //   FVector Scale3D @ 0x20 (12 B; identity = (1,1,1))
-    // Identity quat = (0,0,0,1). Strike orientation isn't meaningful (it's
-    // a vertical lightning bolt; the actor's mesh orients to world up
-    // internally per the RE doc).
+    // Strike orientation is not meaningful -- the bolt is vertical -- so the rotation is left
+    // identity.
     alignas(16) uint8_t xform[48] = {};
     *reinterpret_cast<float*>(xform + 0x0C) = 1.f;   // FQuat.W = 1 (identity)
     *reinterpret_cast<float*>(xform + 0x10) = payload.locX;
@@ -193,12 +186,10 @@ void Apply(const coop::net::LightningStrikePayload& payload) {
     f.Set<void*>(L"WorldContextObject", coop::players::Registry::Get().Local());
     f.Set<void*>(L"ActorClass", g_lightningStrikeClass);
     f.SetRaw(L"SpawnTransform", xform, sizeof(xform));
-    // CollisionHandlingOverride = 1 (AlwaysSpawn). UE4 enum: 0=Undefined
-    // (delegates to class default which may be collision-conditional;
-    // risks silent drop on geometry edge), 1=AlwaysSpawn, 2-4 conditional.
-    // The host already confirmed the spawn at this loc; the client should
-    // always materialise it (RULE 1 root-cause: don't let UE4 silently
-    // drop our received event).
+    // CollisionHandlingOverride = 1 (AlwaysSpawn). UE4's enum: 0 = Undefined delegates to the class
+    // default, which may be collision-conditional and would silently drop a strike landing on a
+    // geometry edge; 2-4 are the conditional modes. The host already spawned at this location, so
+    // the client always materialises it.
     f.Set<uint8_t>(L"CollisionHandlingOverride", 1);
     ue_wrap::Call(g_gameplayStaticsCdo, f);
     void* actor = f.Get<void*>(L"ReturnValue");

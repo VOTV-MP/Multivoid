@@ -1,23 +1,17 @@
-// coop/weather_lightning.h -- Phase 5W Inc2 lightning strike sync.
+// coop/world/weather_lightning.h -- lightning strike sync.
 //
-// Discrete-event broadcast of AlightningStrike_C spawns. The strike is a
-// transient actor whose own Timeline self-destructs after a few seconds;
-// no teardown wire is needed. The cycle-resolved scheduler suppression
-// (timerLightning interceptor in weather_state) prevents the client from
-// spawning lightning locally; this module only carries the spawn LOCATION
-// from host -> client + materialises it on the client.
+// Discrete-event broadcast of lightningStrike_C spawns. The strike destroys itself (InitialLifeSpan
+// = 10 on its blueprint CDO), so there is no teardown wire; the client's own lightning never fires,
+// suppressed at the scheduler by weather_sync's timerLightning interceptor. Only the spawn LOCATION
+// crosses the wire.
 //
-// Architecture:
-//   HOST observes UGameplayStatics::BeginDeferredActorSpawnFromClass POST,
-//   filters by ActorClass == AlightningStrike_C, reads SpawnTransform
-//   translation, broadcasts a LightningStrikePayload.
-//   CLIENT receives the packet (via event_feed) and dispatches Apply(),
-//   which re-spawns the actor at the wire-received location via the
-//   standard BeginDeferred + FinishSpawn pair.
+// The host observes UGameplayStatics::BeginDeferredActorSpawnFromClass POST, filters by
+// ActorClass == lightningStrike_C and broadcasts the SpawnTransform translation. The world event
+// dispatcher checks the sender is the host, then posts Apply() to the game thread, which re-spawns
+// the actor at the received location through the BeginDeferred + FinishSpawn pair.
 //
-// Decoupled from cycle/state -- depends only on UGameplayStatics CDO,
-// the lightning class, and the spawn UFunctions' param offsets. Resolve
-// is idempotent and may succeed before the cycle is live.
+// Depends only on the UGameplayStatics CDO, the lightning class and the spawn UFunctions' param
+// offsets; TryResolve is idempotent and may succeed before the cycle is live.
 
 #pragma once
 
@@ -30,22 +24,21 @@ namespace coop::weather_lightning {
 // always sees the current session. Pass nullptr to clear (e.g. after Stop).
 void SetSession(coop::net::Session* session);
 
-// Resolve the UGameplayStatics CDO + BeginDeferred / FinishSpawn UFunctions
-// + AlightningStrike_C class + the ActorClass / SpawnTransform param
-// offsets. Idempotent -- fields cached on first success. Returns true when
-// every dependency is resolved (safe to register the observer / call Apply).
+// Resolve the UGameplayStatics CDO + the BeginDeferred / FinishSpawn UFunctions + the
+// lightningStrike_C class + the ActorClass / SpawnTransform param offsets. Idempotent -- fields are
+// cached on first success. Returns true when every dependency is resolved (safe to register the
+// observer / call Apply).
 bool TryResolve();
 
-// HOST-only: register the POST observer on BeginDeferredActorSpawnFromClass
-// if not already registered AND TryResolve() succeeded. Returns true if the
-// observer is now active (whether already-registered or newly-registered).
-// Safe to call every NetPumpTick.
+// HOST-only: register the POST observer on BeginDeferredActorSpawnFromClass if not already
+// registered AND TryResolve() succeeded. Returns true if the observer is now active (whether
+// already-registered or newly-registered). Safe to call every net-pump tick.
 bool RegisterHostObserver();
 
-// Receiver: spawn AlightningStrike_C at the wire-received location via the
-// standard BeginDeferred + FinishSpawn UGameplayStatics pair. Validates
-// peerSessionId==0 (host-only sender). Game thread only. No-op if TryResolve
-// has not succeeded.
+// Receiver: spawn lightningStrike_C at the wire-received location via the standard BeginDeferred +
+// FinishSpawn UGameplayStatics pair. The host-only sender check belongs to the world event
+// dispatcher (senderPeerSlot == 0), not to this function. Game thread only. No-op if TryResolve has
+// not succeeded.
 void Apply(const coop::net::LightningStrikePayload& payload);
 
 // Disconnect hook: unregister the POST observer if it was registered.
