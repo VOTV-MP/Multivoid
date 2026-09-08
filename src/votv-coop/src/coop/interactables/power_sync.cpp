@@ -18,8 +18,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/power_control.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
-#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "ue_wrap/engine/world_identity.h"     // the gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
 #include <atomic>
 #include <chrono>
@@ -66,22 +66,22 @@ void MaskToPayload(const std::wstring& key, uint8_t mask, coop::net::PowerPanelP
     p.pressMask = static_cast<uint8_t>(mask & kMaskBits);
 }
 
-// R-2: world generation of the last completed hub pass; a stale-gen index is treated as EMPTY
-// on every read path (dead-world guard -- see the hub-consumer block below).
+// The world generation of the last completed hub pass. A stale-gen index is read as EMPTY on every
+// path -- the dead-world guard, see the hub-consumer block below.
 uint32_t g_indexGen = 0;
 bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
 
 void* ResolveFast(const std::wstring& key) {
-    if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors (R-1 class)
+    if (!IndexCurrent()) return nullptr;  // a stale-gen index holds another world's actors
     std::lock_guard<std::mutex> lk(g_mutex);
     auto it = g_index.find(key);
     if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx)) return it->second.actor;
     return nullptr;
 }
 
-// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
-// The per-module SettledObjectScan full walk is RETIRED; the hub's shared sliced pass drives
-// these callbacks. Behavior preserved verbatim from the old RebuildIndex.
+// ---- shared-scan hub consumer ------------------------------------------------------------------
+// The per-module SettledObjectScan full walk is retired; the hub's shared sliced pass drives these
+// callbacks, with the index behaviour the old RebuildIndex had.
 std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
 
 void HubPassBegin(void*, bool) { g_scanFound.clear(); }
@@ -209,8 +209,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
-    // (power panels are static level actors; the staleness window is empty in practice).
+    // No forced rebuild here: the hub keeps the index within one pass (~2 s) of fresh, and power
+    // panels are static level actors, so the staleness window is empty in practice.
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
