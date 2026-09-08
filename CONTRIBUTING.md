@@ -42,6 +42,13 @@ The architectural precedent is MTA:SA, vendored read-only in `reference/mtasa-bl
 design question has an MTA answer, that answer is the default; a deliberate divergence says so
 in a comment at the site.
 
+The rules on this page are not a one-off cleanup. The repository was once hard for a person to
+read -- half its lines were prose, much of it stale, and its own history was the only way to tell
+a working note from a document -- and it was rewritten to fix that. Everything below holds for
+every change from now on: a new file, a new comment, a new document and a new commit are written
+to the same shape as the ones already here, so the tree does not drift back. Each rule names the
+script that checks it, because a rule nothing enforces is a rule that decays.
+
 ## Where things live
 
 | Path | What |
