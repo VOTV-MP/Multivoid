@@ -11,7 +11,7 @@
 // class and nearest pose once it materialises, gated on HasLoadTailQuiesced, fresh-spawning only as
 // a last resort. The bound twin is then one host-range MIRROR: claimed, sweep-safe, excluded from
 // ClaimConversionGhosts and poll-visible. The prop-form analogue of coop/npc_adoption. CLIENT-only,
-// GAME-THREAD-only, no mutex; the client-mint gate keeps the twin out of g_actorToPropElementId, so
+// GAME-THREAD-only, no mutex; the client-mint gate keeps the twin out of the Registry's actor-to-eid map, so
 // after adoption it is purely a mirror.
 
 #pragma once
