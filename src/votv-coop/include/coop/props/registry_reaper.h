@@ -1,20 +1,17 @@
-// coop/props/registry_reaper.h -- the prop-registry <-> world-lifecycle
-// reconciler (extracted from coop/session/net_pump.cpp 2026-07-18; net_pump
-// sat at 1237 LOC with a 915-line Tick).
+// coop/props/registry_reaper.h -- the prop-registry <-> world-lifecycle reconciler: it keeps
+// the Prop Element registry coherent with the world's actor population across every
+// world-lifecycle event.
 //
-// ONE concept: keep the Prop Element registry coherent with the world's actor
-// population across every world-lifecycle event. Owns (bodies verbatim from
-// net_pump's old reaper block): the throttled dead-element reaper, purge-
-// EPISODE detection (mass GC purge = level/world transition) + the episode-end
-// world-change re-seed (+ post-purge key-index drain + save-identity re-bind),
-// the small-travel re-seed companion, the steady-world high-water re-seed
-// (spawn-menu/toolgun/ambient adoption + incremental PropSpawn delivery), the
-// host death-watch PropDestroy broadcast, and the gameplay->menu TRANSITION
-// DETECTION (the RAM-balloon guard's world scan lives here because the world
-// scan is this module's core competency; the flee ACTION stays session-owned
-// -- net_pump::FleeAfterNativeMenuTravel). The announce axis likewise keeps
-// ONE owner: this module only calls net_pump::MaybeRequestReAnnounce.
-// Game thread only (called from net_pump::Tick).
+// Owns the throttled dead-element reaper; purge-EPISODE detection (a mass GC purge is a
+// level/world transition) with the episode-end world-change re-seed, its post-purge key-index
+// drain and its save-identity re-bind; the small-travel re-seed companion; the host's
+// death-watch PropDestroy broadcast; and the gameplay->menu TRANSITION DETECTION. The steady
+// re-seed is NOT here: prop_census.cpp runs it as a scan-hub consumer with a budgeted drain.
+//
+// Two axes deliberately keep an owner elsewhere. The RAM-balloon guard's world scan lives here,
+// the world scan being this module's core competency, while the flee ACTION stays session-owned
+// (net_pump::FleeAfterNativeMenuTravel); and the announce axis is reached only through
+// net_pump::MaybeRequestReAnnounce. Game thread only (called from net_pump::Tick).
 
 #pragma once
 
@@ -22,15 +19,13 @@ namespace coop::net { class Session; }
 
 namespace coop::registry_reaper {
 
-// The ~4s-throttled reaper and re-seed scan, extracted whole from
-// net_pump. Returns true iff the gameplay->menu guard fired (session torn
-// down + fleeing) -- the caller must abort its Tick, exactly as the old
-// inline `return` did. Game thread.
+// The ~4 s-throttled reaper and re-seed scan. Returns true iff the gameplay->menu guard fired
+// (the session torn down and fleeing), in which case the caller must abort its own Tick. Game
+// thread.
 bool Tick(coop::net::Session& session);
 
-// Session-start reset for the module's cross-session state (the
-// been-in-gameplay latch the menu guard reads). Called from
-// net_pump::OnSessionStart.
+// Session-start reset for the module's cross-session state: the been-in-gameplay latch the menu
+// guard reads. Called from net_pump::OnSessionStart.
 void OnSessionStart();
 
 }  // namespace coop::registry_reaper
