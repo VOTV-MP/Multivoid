@@ -75,11 +75,11 @@ ID3D12Device* Device();
 // (nullptr while pending, and forever after a HALT).
 ID3D12CommandQueue* TryConfirmQueue(IDXGISwapChain* sc);
 
-// Swapchain-creation timing probe, installed at boot from imgui_overlay::Init:
-// hooks IDXGIFactory::CreateSwapChain(+ForHwnd) to record whether our boot
-// precedes the game's swapchain creation. Measured 2026-07-26: it does NOT on
-// this rig, which is why the ECL capture (timing-independent) is the shipping
-// mechanism and the factory route was never built into prod.
+// Swapchain-creation timing probe, installed at boot from imgui_overlay::Init: hooks
+// IDXGIFactory::CreateSwapChain (and ForHwnd) to record whether our boot precedes the game's
+// swapchain creation. It does not on the rig this was measured on, which is why the ECL
+// capture -- timing-independent -- is the shipping mechanism and the factory route was never
+// built into production.
 void InstallCreationProbe();
 
 // Re-arm after a swapchain recreation: the "this queue presents that chain"

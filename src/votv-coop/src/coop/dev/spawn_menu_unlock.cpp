@@ -53,21 +53,22 @@ DWORD WINAPI KeyWatcherThread(LPVOID) {
             }
             const bool rawQ = KeyDown('Q');
             if (rawQ && !prevRawQ) {  // one event per physical Q press
-                // Foreground AND not typing: 'Q' typed into the chat/rebind field must
-                // not ALSO toggle the spawn menu (2026-07-09 text-capture gate).
+                // Foreground AND not typing: a 'Q' typed into the chat or a rebind field must not
+                // ALSO toggle the spawn menu.
                 const bool focused = ::ui::input_focus::IsOurWindowForeground() &&
                                      !::ui::input_focus::IsOverlayCapturingText();
                 if (focused) {
                     UE_LOGI("spawn_menu_unlock: Q pressed (foreground) -- posting Toggle() to the game thread");
-                    // Toggle, not Open: Q both opens AND dismisses the menu. Open() leaves the player
-                    // in GameAndUI/cursor mode; with only an open path the player gets stranded and can
-                    // no longer interact with the world (the 2026-06-16 "all peers can't interact" bug).
+                    // Toggle, not Open: Q both opens AND dismisses the menu. Open() leaves the
+                    // player in GameAndUI cursor mode, so with only an open path the player is
+                    // stranded and can no longer interact with the world.
                     GT::Post([] {
                         ue_wrap::spawn_menu::Toggle(coop::players::Registry::Get().Local());
                     });
                 } else {
-                    // The most common "nothing happens" cause: our window isn't foreground (the
-                    // ImGui menu / another window has focus), so the press is intentionally ignored.
+                    // The most common "nothing happens" cause: our window is not foreground -- the
+                    // ImGui menu or another window has focus -- so the press is intentionally
+                    // ignored.
                     UE_LOGW("spawn_menu_unlock: Q pressed but our window is NOT foreground -- "
                             "ignoring (click into the game, then press Q)");
                 }
