@@ -1,33 +1,18 @@
-// coop/dev/container_selftest.h -- the R11b e2e instrument for the bidirectional container
+// coop/dev/container_selftest.h -- an end-to-end instrument for the bidirectional container
 // contents lane (`[dev] container_selftest=1`).
 //
-// WHY IT EXISTS. An idle join smoke cannot exercise this lane at all: nobody opens a container,
-// and a save load fills `saveSlot.GObjStack` wholesale rather than through `addObject`. So the
-// lane's single most important claim -- that the 0x45 `addObject`/`takeObj` callback actually
-// ENTERS on each peer -- is invisible to the smoke, exactly the gap
-// [[feedback-interaction-smoke-not-join-smoke]] names. R11 already cost TWO RED hands-on takes to
-// a callback that never ran while every banner reported success
-// ([[lesson-late-registrant-inert-after-all-resolved-latch]]); this instrument is what keeps a
-// third one from being spent on the same question.
+// An idle two-peer run cannot exercise this lane: nobody opens a container, and a save load
+// fills `saveSlot.GObjStack` wholesale rather than through the watched verbs, so the lane's
+// central claim -- that the 0x45 `addObject`/`takeObj` callback ENTERS on each peer -- stays
+// invisible to it.
 //
-// HOW IT STAYS ORGANIC. It dispatches `propInventory_C::addLoot()` -- a parameterless verb -- and
-// nothing else. `addLoot` calls `addObject` FOUR times through `EX_LocalVirtualFunction` (bytecode
-// census, votv-container-contents-gobjstack-RE-2026-07-22 §5), so the call WE make is the outer
-// one and the mutation that must be caught is the game's own inner dispatch. Dispatching
-// `addObject` directly would prove nothing -- it would arrive through ProcessEvent, i.e. the very
-// path the lane does NOT rely on ([[feedback-probe-must-count-not-confirm]]: never resolve through
-// the mechanism under test).
-//
-// WHAT IT PROVES, in this order:
-//   +10s HOST   addLoot on a world container -> host verb ENTERS -> host authors -> client applies
-//   +25s CLIENT addLoot on a different one   -> client verb ENTERS -> client authors -> host
-//                                               arbitrates (baseHash CAS) -> applies -> relays
-// Each peer prints a DIGEST line (eid, record count, currVol) for both containers every 5s, so the
-// smoke can compare the NUMBER across peers -- resolving a re-derive UFunction is not the same as
-// the volume converging, and only the number settles it.
-//
-// This is a dev instrument (RULE 2 does not retire probes,
-// [[feedback-rule2-exempts-probes-diagnostics-tools]]). It never runs with the flag off.
+// It dispatches `prop_container_C::extract(0)` and nothing else. extract's first act is
+// `propInventory->takeObj(index, false, ...)`, dispatched blueprint-internally, so the call WE
+// make is the outer one and the mutation to be caught is the game's own inner dispatch.
+// Dispatching `takeObj` ourselves would prove nothing: it would arrive through ProcessEvent,
+// the one path the lane does NOT rely on. The host fires at +10 s on a world container and the
+// client at +25 s on a different one; each peer prints a DIGEST line (eid, record count,
+// currVol) for both every 5 s, so the NUMBER can be compared across peers.
 
 #pragma once
 

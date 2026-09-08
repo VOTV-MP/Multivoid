@@ -52,11 +52,10 @@ uint32_t g_eidClientTarget = 0;
 
 void* g_extractFn = nullptr;
 
-// Pick only containers that actually HOLD something. An empty container cannot be extracted from,
-// and the first pass of this instrument proved why that matters: it fired on two empty containers,
-// changed nothing, and would have reported an absent "callback ENTERED" as a lane failure if the
-// inertness guard below had not caught it. Choosing by CONTENT rather than by registry order is
-// what makes the absence of a log line meaningful.
+// Pick only containers that actually HOLD something. An empty container cannot be extracted
+// from: firing on one changes nothing, and an absent "callback ENTERED" line would then read
+// as a lane failure rather than as an inert trigger, which is what the guard below catches.
+// Choosing by CONTENT rather than by registry order is what makes the trigger real.
 constexpr size_t kScan = 64;
 
 bool ResolveTargets() {
@@ -78,15 +77,15 @@ bool ResolveTargets() {
     return true;
 }
 
-// Dispatch the ORGANIC mutation: `Aprop_container_C::extract(int32 Index)`, which is the very verb
-// a player's UI extraction runs. `extract` calls `takeObj` through EX_LocalVirtualFunction
-// (bytecode census, RE §5) -- so the call WE make is the outer one and the mutation the lane must
-// catch is the game's own inner dispatch. Calling `takeObj` ourselves would arrive by ProcessEvent,
-// i.e. through the one path the lane does NOT rely on, and would prove nothing
-// ([[feedback-probe-must-count-not-confirm]]: never resolve through the mechanism under test).
+// Dispatch the ORGANIC mutation: `Aprop_container_C::extract(int32 Index)`, the very verb a
+// player's UI extraction runs. extract's first act is `propInventory->takeObj(index, false,
+// ...)`, dispatched through EX_LocalVirtualFunction, so the call WE make is the outer one and
+// the mutation the lane must catch is the game's own inner dispatch. Calling `takeObj`
+// ourselves would arrive by ProcessEvent -- the one path the lane does NOT rely on -- and
+// would prove nothing, since a probe must never resolve through the mechanism under test.
 //
-// It spawns the extracted prop into the world, exactly as a real extraction does. That is dev
-// litter in a throwaway smoke world and is the price of an HONEST trigger.
+// It spawns the extracted prop into the world, exactly as a real extraction does. That is
+// litter in a throwaway world and the price of an honest trigger.
 void FireExtract(uint32_t eid, const char* who) {
     CC::WorldContainer picks[kScan]{};
     const size_t n = CC::SnapshotWorldContainers(picks, kScan);
@@ -99,9 +98,9 @@ void FireExtract(uint32_t eid, const char* who) {
         return;
     }
     if (!g_extractFn) {
-        // Resolve from the DECLARING class: FindFunction matches Outer == class EXACTLY and does
-        // not walk the chain (reflection.cpp:427), so ClassOf(actor) -- always a subclass here --
-        // would silently yield nullptr. That is the same bug this build fixes in the lane itself.
+        // Resolve from the DECLARING class. FindFunction matches Outer == class EXACTLY and does
+        // not walk the SuperStruct chain, so ClassOf(actor) -- always a subclass here -- would
+        // silently yield nullptr.
         void* cls = R::FindClass(L"prop_container_C");
         g_extractFn = cls ? R::FindFunction(cls, L"extract") : nullptr;
         if (!g_extractFn) {
