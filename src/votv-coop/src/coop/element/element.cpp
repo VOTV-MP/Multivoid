@@ -1,15 +1,12 @@
 // coop/element/element.cpp -- Element ctor/dtor.
 //
-// Element is allocated with kInvalidId; the owning subsystem then calls
-// Registry::AllocHostId(e) on the host side OR Registry::AllocLocalId(e)
-// on the local-peer-only path BEFORE first use. The destructor releases
-// the id back to the free stack.
+// An Element is allocated with kInvalidId; the owning subsystem then calls Registry::AllocHostId(e)
+// on the host side, or Registry::AllocLocalId(e) on the local-peer-only path, BEFORE first use. The
+// destructor releases the id back to the free stack.
 //
-// Design tradeoff vs MTA: MTA's CClientEntity ctor takes an ElementID
-// parameter so the ctor itself registers. Our PoC uses an explicit
-// post-construction Alloc call so the Element type has zero role-awareness
-// -- the subsystem (which knows its role) chooses which range to allocate
-// from. Per the audit section 4.1.
+// This is a deliberate divergence from MTA, whose CClientEntity ctor takes an ElementID so the ctor
+// itself registers. Allocating after construction keeps the Element type free of any
+// role-awareness: the subsystem, which knows its role, chooses the range to allocate from.
 //
 // See coop/element/element.h for the public interface.
 
@@ -22,16 +19,14 @@
 
 namespace coop::element {
 
-// Static-destruction-order safety (audit fix 2026-05-28): the Element owner
-// containers -- the MirrorManager<T>::Instance() singletons (Player / Npc /
-// Prop) plus any remaining namespace-scope owners -- are function-local /
-// namespace-scope statics whose teardown order relative to the Registry
-// singleton (also a Meyers static-local) is not guaranteed. If an owner
-// drains AFTER the Registry is destroyed, the Element destructor would call
-// Registry::Get().FreeId()/UnregisterMirror() on torn-down storage. This latch
-// flips when the Registry singleton is about to be destroyed (set by
-// Registry's destructor) so subsequent ~Element() calls skip the Registry
-// call rather than UAF -- order-independent-safe either way.
+// Static-destruction-order safety: the Element owner containers -- the MirrorManager<T>::Instance()
+// singletons (Player / Npc / Prop) plus any remaining namespace-scope owners -- are function-local
+// or namespace-scope statics whose teardown order relative to the Registry singleton (also a Meyers
+// static-local) is not guaranteed. If an owner drains AFTER the Registry is destroyed, the Element
+// destructor would call Registry::Get().FreeId() / UnregisterMirror() on torn-down storage. This
+// latch flips when the Registry singleton is about to be destroyed (set by Registry's destructor)
+// so subsequent ~Element() calls skip the Registry call rather than use freed memory -- safe in
+// either teardown order.
 std::atomic<bool> g_registryShuttingDown{false};
 
 void NotifyRegistryShuttingDown() {
@@ -43,7 +38,7 @@ Element::Element(ElementType type) : m_type(type) {
     // m_id stays kInvalidId until then.
 }
 
-// Slot-validated actor read (see the header comment; islive-zeroav 2026-08-22).
+// Slot-validated actor read; see the header comment.
 void* Element::LiveActor() const {
     return ue_wrap::reflection::IsLiveByIndex(m_actor, m_internalIdx) ? m_actor : nullptr;
 }
