@@ -1,7 +1,9 @@
 // ui/host_session_choices.cpp -- see ui/host_session_choices.h.
 //
-// One two-answer selector, built once and driven by the caller through a `Selector` handle, so
-// the host screen's three questions share a body instead of each carrying a hand-copied one.
+// One two-answer selector, built once and driven by the caller through a `Selector` handle, so the
+// session-settings screen's two questions share a body instead of each carrying a hand-copied one.
+// The hosting window's connection selector is a third question that does NOT use this: it builds
+// its rows from its own wider row kit, which also serves the save list.
 
 #include "ui/host_session_choices.h"
 
