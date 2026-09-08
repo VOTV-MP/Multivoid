@@ -1,24 +1,18 @@
-// coop/drone_sync.h -- delivery DRONE (Adrone_C) Phase 1 body pose sync (protocol v48).
+// coop/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on ReliableKind::DroneState.
+// Gameplay/network layer (principle 7): the wire protocol, the host-authoritative transform stream,
+// the receiver's kinematic apply through a LerpWindow, and the connect snapshot, reaching the
+// engine only through ue_wrap::drone.
 //
-// Gameplay/network layer (principle 7): owns the wire protocol, the host-authoritative transform
-// stream, the receiver kinematic apply with a LerpWindow interp, and the connect-snapshot. Talks
-// to the engine ONLY through ue_wrap::drone.
+// The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
+// is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The
+// host streams the resolved transform at about 20 Hz while the drone is active; a client suppresses
+// its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
+// stream, and drives the streamed transform kinematically through the interpolation window. Host to
+// client only, never relayed, honoured only from slot 0. Identity is the singleton found by class:
+// both peers load the same placed drone, and a joiner gets the current pose with adopt=1.
 //
-// MODEL (RULE 1 / follow-MTA server-simulated-entity). The delivery drone is a SINGLETON,
-// host-simulated actor (its BP ReceiveTick is a fragile per-tick float flight integrator -- not
-// worth reproducing bit-exact on a remote). So: HOST-AUTHORITATIVE -- the host streams the resolved
-// actor transform (~20Hz while Active); the CLIENT suppresses its own drone ReceiveTick (so it
-// can't fly on its own + fight the stream -- the drone is ALWAYS a mirror on the client) and drives
-// the streamed transform kinematically, interpolated by a coop::LerpWindow. HOST->client only (not
-// relayed; trust-gated to senderPeerSlot==0, like SkyState/TimeSync). Identity = SINGLETON
-// (FindObjectByClass(drone_C) -- no key; both peers load the same placed drone). The host connect-
-// snapshots the current pose (adopt=1) to a joiner.
-//
-// Phase 1 = body pose only. The delivered CARGO (orderbox/giftbox/crate/dronesack -- all Aprop_C)
-// rides the EXISTING prop pipeline (PropSpawn/PropPose), so it needs no drone-specific packet.
-// Phase 2 = flyingType/hasSack FX gating + the console-call client->host request + the radar Active
-// edge + the economy order/sell edges. RE: research/findings/votv-delivery-drone-RE-and-coop-sync-
-// design-2026-06-03.md.
+// The delivered CARGO (orderbox, giftbox, crate, dronesack -- all Aprop_C) rides the existing prop
+// pipeline, so it needs no drone-specific packet.
 
 #pragma once
 
