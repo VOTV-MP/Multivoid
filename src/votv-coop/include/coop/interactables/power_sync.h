@@ -2,7 +2,8 @@
 //
 // Gameplay/network layer (principle 7): the wire packet, the per-tick sender poll, the receiver
 // apply, the deferred-apply retry and the connect snapshot. It reaches the engine only through
-// ue_wrap::power_control, and the key->actor index is kept for it by the shared object-scan hub.
+// ue_wrap::power_control, and its key->actor index is rebuilt in this module's own pass-complete
+// callback, from the shared object-scan hub's pass.
 //
 // Its own module rather than an interactable_sync toggle Channel because the panel is not a
 // two-state toggle: it carries FIVE latched breaker bools, one per base subsystem, packed into a
@@ -40,8 +41,7 @@ void OnReliable(const coop::net::PowerPanelPayload& payload, uint8_t senderPeerS
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Per-tick pump: the throttled deferred-apply retry, then the sender poll. The index itself is
-// refreshed by the scan hub on its own cadence, not here. Call every net-pump tick on the game
-// thread.
+// refreshed on the scan hub's own cadence, not here. Call every net-pump tick on the game thread.
 void Tick();
 
 // Session teardown: clear the key->actor index, the last-known masks and the pending applies.

@@ -45,7 +45,8 @@ void OnReliable(const coop::net::KeypadSyncPayload& payload, uint8_t senderPeerS
 // receiver idempotently skips already-matching ones. Net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick pump: throttled index rebuild and deferred-apply retry, then the sender poll. A short
+// Per-tick pump: the throttled deferred-apply retry, then the sender poll -- the index itself is
+// refreshed on the scan hub's own cadence, not here. A short
 // (under five digit) code's native submit edge -- `active` flips and the buffer clears without a
 // reset -- stamps Accept or Deny; everything else is a plain None state mirror. A code of five
 // digits or more needs no event at all, because the blueprint auto-submits as soon as the buffer

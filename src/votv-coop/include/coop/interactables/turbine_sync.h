@@ -31,8 +31,9 @@ namespace coop::turbine_sync {
 // Store the session + resolve/index lazily. Net-pump install path. Game thread.
 void Install(coop::net::Session* session);
 
-// Per net-pump tick: throttled index rebuild + deferred-apply retry; HOST
-// additionally polls ~1 Hz and broadcasts changed turbines. Game thread.
+// Per net-pump tick: the throttled deferred-apply retry -- the index itself is
+// refreshed on the scan hub's own cadence, not here -- and on the HOST a further
+// poll at about 1 Hz that broadcasts changed turbines. Game thread.
 void Tick();
 
 // Receiver entry (event_feed dispatch): apply a turbine state (client only;

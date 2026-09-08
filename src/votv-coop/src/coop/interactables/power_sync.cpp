@@ -3,7 +3,7 @@
 // receiver writes the bools + refreshes the panel visual through ue_wrap::power_control.
 //
 // Structure borrows the proven keypad_sync / interactable_sync patterns (key->actor index with
-// IsLiveByIndex self-heal, throttled rebuild, deferred-apply retry, silent first-sight prime,
+// IsLiveByIndex self-heal, hub-driven rebuild, deferred-apply retry, silent first-sight prime,
 // echo-suppress via priming g_lastKnown to the applied value) but with a 5-bit MASK state, which
 // is why it is a separate module rather than another toggle Adapter (the generic Channel is one
 // bool per key; 5 bools per actor don't fit -- RULE 2, same call the keypad made).
