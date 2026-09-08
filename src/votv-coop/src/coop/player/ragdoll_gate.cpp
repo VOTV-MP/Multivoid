@@ -14,13 +14,12 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 uint32_t g_held = 0;          // bitmask of Holder
-// The pawn we last corrected, held ACROSS ticks -- so it is a CachedObjRef, not a
-// bare pointer. `Hold`/`Release` re-apply through it at a moment of their caller's
-// choosing, which can be after a world died: a bare `IsLive` there dereferences a
-// possibly-freed object (the 2026-08-23 dying-world storm shape) and, under a
-// co-resident VEH crash reporter, the absorbed AV surfaces to the player as a
-// crash. `Get()` is array-slot reads plus the world stamp, and returns null when
-// the pawn belongs to a world that no longer exists.
+// The pawn we last corrected, held ACROSS ticks -- so it is a CachedObjRef, not a bare pointer.
+// `Hold` and `Release` re-apply through it at a moment of their caller's choosing, which can be
+// after a world died: a bare `IsLive` there dereferences a possibly-freed object, and under a
+// co-resident VEH crash reporter the absorbed access violation surfaces to the player as a
+// crash. `Get()` is array-slot reads plus the world stamp, and returns null when the pawn
+// belongs to a world that no longer exists.
 ue_wrap::CachedObjRef g_pawn;
 uint32_t g_corrections = 0;   // times the live value disagreed with us, this pawn
 

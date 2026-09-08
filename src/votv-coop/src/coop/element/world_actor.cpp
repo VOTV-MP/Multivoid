@@ -1,14 +1,13 @@
-// coop/element/world_actor.cpp -- the CLIENT-mirror pose interpolator + engine drive for
+// coop/element/world_actor.cpp -- the CLIENT-mirror pose interpolator and engine drive for
 // coop::element::WorldActor. See coop/element/world_actor.h. A SIBLING of npc_pose_drive.cpp
-// (element::Npc) but transform-ONLY with FULL rotation: pos (vector error) + pitch/yaw/roll
-// (each shortest-arc) and NO speed/CMC/kerfur (a WorldActor is a plain AActor -- UFO/ship/saucer
-// -- not an ACharacter, so there is no CMC locomotion to drive).
+// (element::Npc) but transform-ONLY with FULL rotation: position by vector error, pitch, yaw and
+// roll each by shortest arc, and no speed, CMC or kerfur -- a WorldActor is a plain AActor (a
+// UFO, a ship, a saucer), not an ACharacter, so there is no CMC locomotion to drive.
 //
-// The interp is the proven advance-before-rebase shape (the interp-starvation fix,
-// [[project-puppet-lag-interp-starvation]]): SetTargetPose advances the open window FIRST, then
-// rebases. The drive writes the mirror's transform; the mirror's actor tick is parked at spawn
-// (world_actor_sync: SetActorTickEnabled(false)) so this drive is authoritative -- no integration
-// fight with the actor's own BP movement.
+// The interp is the advance-before-rebase shape that keeps it from starving: SetTargetPose
+// advances the open window FIRST, then rebases. The drive writes the mirror's transform, and
+// the mirror's actor tick is parked at spawn (world_actor_sync: SetActorTickEnabled(false)), so
+// this drive is authoritative and cannot fight the actor's own blueprint movement.
 
 #include "coop/element/world_actor.h"
 
@@ -69,14 +68,15 @@ bool WorldActor::PoseChangedSinceLastSend(const ue_wrap::FVector& loc, const ue_
 }
 
 void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
-    // v102 aux target vec + v104 target identity: latest-wins, no interp (targets the mirror's
-    // native easing / branch selection consume).
+    // The aux target vector and the target identity are latest-wins with no interp: the mirror's
+    // native easing and branch selection consume them.
     auxX_ = snap.auxX; auxY_ = snap.auxY; auxZ_ = snap.auxZ;
     auxTargetEid_ = snap.auxTargetEid;
     const ue_wrap::FVector tgtPos{snap.x, snap.y, snap.z};
 
-    // First packet OR a teleport (error beyond the snap threshold) -> SNAP, no LERP across. WorldActors
-    // have no streamed speed, so the snap threshold is a fixed distance (generous for a fast ship).
+    // First packet OR a teleport (error beyond the snap threshold) -> SNAP, no LERP across.
+    // WorldActors have no streamed speed, so the snap threshold is a fixed distance, generous for a
+    // fast ship.
     const float dx = tgtPos.X - curPos_.X, dy = tgtPos.Y - curPos_.Y, dz = tgtPos.Z - curPos_.Z;
     const float distErr = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (!hasPose_ || distErr > kSnapBaseCm) {
@@ -94,8 +94,9 @@ void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
         return;
     }
 
-    // Advance-before-rebase (load-bearing -- the interp-starvation fix): bring cur* to NOW using the
-    // STILL-OPEN window's cached error BEFORE overwriting the target/error below.
+    // Advance-before-rebase (load-bearing -- it is what keeps the interp from starving): bring cur*
+    // to NOW using the STILL-OPEN window's cached error BEFORE overwriting the target and error
+    // below.
     AdvanceInterp();
 
     targetPos_ = tgtPos;
@@ -134,9 +135,9 @@ void WorldActor::AdvanceInterp() {
 }
 
 void WorldActor::Tick() {
-    // [WA-TRACE client-drive] 1 Hz per-mirror step/state trace (2026-07-05 0s-frozen-pyramid hunt).
-    // `pre` = the engine location that SURVIVED the last frame (a restored BP tick that fights the
-    // drive shows up as pre snapping back while cur/tgt advance); `post` = right after our write.
+    // [WA-TRACE client-drive] 1 Hz per-mirror step and state trace. `pre` is the engine location
+    // that SURVIVED the last frame -- a restored blueprint tick fighting the drive shows up as pre
+    // snapping back while cur and tgt advance; `post` is right after our write.
     const uint64_t nowMs = NowMs();
     const bool trace = (nowMs - dbgLastLogMs_ >= 1000);
     void* actor = GetActor();
@@ -171,10 +172,11 @@ void WorldActor::Tick() {
 void WorldActor::ApplyToEngine() {
     void* actor = GetActor();
     if (!actor) return;
-    // Transform-only drive with FULL rotation (a UFO/ship banks + rolls). No CMC (not an ACharacter)
-    // and no mesh-offset reconstruction -- the mirror is the same class spawned at the same pivot.
-    // Returns captured for [WA-TRACE client-drive]: K2_SetActorLocation/Rotation report failure via
-    // ReturnValue and the drive must not stay blind to a silently-refused write.
+    // Transform-only drive with FULL rotation (a UFO or ship banks and rolls). No CMC, since this
+    // is not an ACharacter, and no mesh-offset reconstruction -- the mirror is the same class
+    // spawned at the same pivot. The returns are captured for [WA-TRACE client-drive]:
+    // K2_SetActorLocation and K2_SetActorRotation report failure through ReturnValue, and the drive
+    // must not stay blind to a silently refused write.
     lastApplyLocOk_ = E::SetActorLocation(actor, curPos_);
     lastApplyRotOk_ = E::SetActorRotation(actor, ue_wrap::FRotator{curPitch_, curYaw_, curRoll_});
 }
