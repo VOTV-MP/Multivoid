@@ -52,6 +52,15 @@ uint64_t g_propEmitCount = 0;
 bool g_wasRagdolling = false;
 uint64_t g_ragdollEmitCount = 0;
 
+// The release branch below re-enters EVERY pump tick for the whole flight of a thrown clump --
+// it deliberately keeps the held cache so the stream continues -- while its verdict stays
+// constant across that window. These remember the verdict already reported so the branch logs
+// one line per DECISION rather than one per tick at the 125 Hz pump rate. File scope, cleared by
+// OnSessionStart, for the same reason the edge state above is.
+coop::element::ElementId g_relEdgeLoggedEid = coop::element::kInvalidId;
+int  g_relEdgeLoggedSkip = -1;  // -1 = nothing reported yet, else the last relSkip reported
+coop::element::ElementId g_gapLoggedEid = coop::element::kInvalidId;
+
 // The local player's pose, on the game thread at the send rate.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     if (!local) return false;
@@ -172,6 +181,9 @@ void OnSessionStart() {
     g_propEmitCount = 0;
     g_wasRagdolling = false;
     g_ragdollEmitCount = 0;
+    g_relEdgeLoggedEid = coop::element::kInvalidId;
+    g_relEdgeLoggedSkip = -1;
+    g_gapLoggedEid = coop::element::kInvalidId;
 }
 
 void Tick(coop::net::Session& session, void* local, void* controller) {
@@ -403,9 +415,13 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // continues through it, one continuous eid stream that the client's interpolation shows as
         // the real arc.
         const bool relSkip   = carrying_;
-        UE_LOGI("[REL-EDGE] eid=%u carrying=%d pendingSettle=%d -> %s",
-                (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
-                carrying_ ? 1 : 0, pending_ ? 1 : 0, relSkip ? "SKIP(carrying)" : "FIRE(release)");
+        if (g_lastHeldEid != g_relEdgeLoggedEid || (relSkip ? 1 : 0) != g_relEdgeLoggedSkip) {
+            g_relEdgeLoggedEid  = g_lastHeldEid;
+            g_relEdgeLoggedSkip = relSkip ? 1 : 0;
+            UE_LOGI("[REL-EDGE] eid=%u carrying=%d pendingSettle=%d -> %s",
+                    (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
+                    carrying_ ? 1 : 0, pending_ ? 1 : 0, relSkip ? "SKIP(carrying)" : "FIRE(release)");
+        }
         if (relSkip) {
             // Carry and flight are one stream: heldActor going null is either a one-frame flicker
             // mid-carry or a real release with the clump now flying, and in both the clump is
@@ -440,7 +456,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                             "carry flicker OR the post-release FLIGHT -- one continuous E-stream until re-pile)",
                             static_cast<unsigned>(g_lastHeldEid), pp.x, pp.y, pp.z);
                 // The held cache is kept: the stream continues, and the land path ends the carry.
-            } else {
+            } else if (g_lastHeldEid != g_gapLoggedEid) {
+                // Entering the gap for this eid. The branch itself re-enters per tick until the
+                // carry latch closes, so the line reports the transition, not the state.
+                g_gapLoggedEid = g_lastHeldEid;
                 UE_LOGI("[PILE] HOST carry SUPPRESS release eid=%u -- !carrying gate; clump re-piled/gone "
                         "(!IsLive or not-a-clump) -> the gap; await the re-grab or the land-settle close",
                         static_cast<unsigned>(g_lastHeldEid));
