@@ -1,28 +1,17 @@
-// harness/autotest_islive_drill.cpp -- deterministic zero-AV drill for the
-// CachedObjRef discipline (design of record:
-// votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md section 4.2).
+// harness/autotest/autotest_islive_drill.cpp -- a deterministic zero-AV drill for the CachedObjRef
+// discipline. Gated by VOTVCOOP_RUN_ISLIVE_DRILL=1, on its own worker thread.
 //
-// The IsLive/VEH finding is NONDETERMINISTIC in vivo: a bare IsLive on a freed
-// pointer only faults when the freed page has been DECOMMITTED (three of three
-// live exit runs were silently clean while the real env faulted twice). This
-// drill removes the nondeterminism: it manufactures the decommitted-page case
-// with VirtualAlloc/VirtualFree and PROVES, in one run,
-//   (i)  legacy bare IsLive on a decommitted "object" -> exactly 1 first-chance
-//        AV (counted by the drill's own scoped VEH), absorbed, returns false;
-//   (ii) CachedObjRef::Alive() on the same input -> false with ZERO AVs
-//        (array-slot reads only, by construction).
+// A bare IsLive on a freed pointer faults only once the freed page has been DECOMMITTED, so in a
+// live process the fault is nondeterministic. The drill manufactures that case with
+// VirtualAlloc/VirtualFree and proves both halves in one run: a legacy bare IsLive on the
+// decommitted "object" takes exactly one first-chance access violation, absorbs it and returns
+// false; CachedObjRef::Alive() on the same input returns false with ZERO, reading array slots only.
 //
-// The drill's VEH is registered ONLY for the drill body and removed before it
-// returns -- never in a normal boot or the modded profile (the co-resident-VEH
-// interaction is the entire point of the arc). It counts only AVs whose fault
-// address lands inside the drill's own page, so an unrelated fault elsewhere
-// cannot contaminate the verdict. The drill structurally CANNOT exercise the
-// ABA impostor (design section 6) and does not claim to.
-//
-// Gated by env VOTVCOOP_RUN_ISLIVE_DRILL=1; DEV smoke lane only. Runs on its own
-// worker thread; touches no engine object (the fake object never enters
-// GUObjectArray -- its planted index is out of range, which IsLiveByIndex
-// rejects via ItemAt range check).
+// The drill's VEH is registered for the drill body alone and removed before it returns, never
+// during a normal boot, and counts only faults inside the drill's own page, so an unrelated fault
+// cannot contaminate the verdict. It touches no engine object -- the fake never enters
+// GUObjectArray and its planted index is out of range, which IsLiveByIndex rejects -- and it
+// structurally cannot exercise the ABA impostor.
 
 #include "harness/autotest.h"
 
