@@ -1,21 +1,18 @@
-// coop/mirror_defer.h -- instant-world UPPER layer (SEAM 2+3): deferred-spawn visibility.
+// coop/mirror_defer.h -- the instant-world UPPER layer: deferred-spawn visibility.
 //
-// The joining client briefly sees a "dance" (dup props/kerfurs flicker in, ghosts, wrong
-// positions, self-correct over ~1-2s) because host mirrors spawn VISIBLE before the
-// quiescence-gated reconcile resolves them. This module hides each freshly-spawned host
-// mirror at the spawn choke-points, then reveals it -- either at the curtain-lift (the
-// confirmed ones) or at the quiescence backstop (the rest). The reconcile BACKUP
-// (quiescence_drain / kerfur_reconcile sweeps) is UNTOUCHED -- this is a pure visibility
-// layer on top of it (worst case = today's dance, best case = instant). See
-// docs/COOP_INSTANT_WORLD_TWO_LAYER.md.
+// A joining client briefly sees a "dance" -- duplicate props and kerfurs flickering in, ghosts,
+// wrong positions, self-correcting over a second or two -- because host mirrors spawn VISIBLE
+// before the quiescence-gated reconcile resolves them. This module hides each freshly spawned
+// host mirror at the spawn choke-points and then reveals it, either at the curtain-lift for the
+// confirmed ones or at the quiescence backstop for the rest. The reconcile underneath -- the
+// quiescence drain and the kerfur reconcile sweeps -- is UNTOUCHED: this is a pure visibility
+// layer over it, so the worst case is the dance as it is today and the best case is instant.
 //
-// The CONFIRMED/HOLD discriminator is the spawn payload's `hasMatchPos` flag, passed in by
-// the hook site (NOT a query into the reconcile pending sets -- the backup stays untouched,
-// git diff reconcile == 0): a mirror carrying a save-time key (hasMatchPos) is exactly the
-// one whose local twin is still visible until the quiescence sweep -> HOLD; one without is a
-// host-only/derived form with no local twin -> CONFIRMED (reveal at lift).
-//
-// Game-thread ONLY (every entry runs in the event_feed drain / the client reconcile tick).
+// The CONFIRMED-versus-HOLD discriminator is the spawn payload's `hasMatchPos` flag, passed in
+// by the hook site rather than queried out of the reconcile pending sets, which is what keeps
+// the layer separable. A mirror carrying a save-time key is exactly the one whose local twin
+// stays visible until the quiescence sweep, so it HOLDs; one without is a host-only or derived
+// form with no local twin, so it is CONFIRMED and revealed at the lift. Game thread ONLY.
 
 #pragma once
 

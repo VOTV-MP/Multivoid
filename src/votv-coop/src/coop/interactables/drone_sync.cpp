@@ -68,9 +68,9 @@ bool FillPayload(void* drone, bool active, bool adopt, coop::net::DroneStatePayl
     p.active = active ? 1 : 0;
     p.stateBits = D::ReadFxBits(drone);  // bit0=rotor dust active, bit1=canTakeOff (arrived) -- FX mirror
     p.adopt = adopt ? 1 : 0;
-    // v69: the dust anchor -- the BP pins the bAbsoluteLocation eff_droneDust
-    // to its ground-trace hit per tick; the mirror replays from this. A dust
-    // bit without a readable anchor is unusable on the receiver -> clear it.
+    // The dust anchor: the blueprint pins the bAbsoluteLocation eff_droneDust to its ground-trace
+    // hit every tick, and the mirror replays from this. A dust bit without a readable anchor is
+    // unusable on the receiver, so clear it.
     if (p.stateBits & D::kFxDust) {
         FVector a;
         if (D::ReadDustAnchor(drone, a)) { p.dustX = a.X; p.dustY = a.Y; p.dustZ = a.Z; }
@@ -149,11 +149,11 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     if (!drone) return;  // not streamed in yet -- the next packet applies once it resolves
     if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
     SetTarget(g_m, payload, /*snap*/ payload.adopt != 0);
-    // FX mirror: the suppressed tick kills the rotor-dust particle + the delivery alarm cue, so
-    // replay them off the synced state (host packs it in FillPayload): the dust as a PER-PACKET
-    // replay of the BP's own tick update (v69 -- see ApplyDustMirror + drone_dust_notes.md), the
-    // "items ready" cue once on the canTakeOff rising edge. All self-contained component calls on
-    // the mirror (ue_wrap::drone). Pose RE: votv-delivery-drone-RE-...-2026-06-03.md.
+    // FX mirror: the suppressed tick kills the rotor-dust particle and the delivery alarm cue, so
+    // replay them off the synced state the host packs in FillPayload -- the dust as a per-packet
+    // replay of the blueprint's own tick update (see ApplyDustMirror below), the "items ready"
+    // cue once on the canTakeOff rising edge. All of it is self-contained component calls on the
+    // mirror, through ue_wrap::drone.
     const uint8_t nb = payload.stateBits;
     const uint8_t ob = g_m.haveStateBits ? g_m.lastStateBits : 0;
     const bool canTakeOff = (nb & D::kFxArrived) != 0;
@@ -169,11 +169,11 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
                                      // address) -- RepointContainer short-circuits when the field is
                                      // already a live container, so steady-state cost is ~one deref.
 
-    // Dust (v69): replay the BP's per-tick dust update EVERY packet, not on bit
-    // edges -- the anchor moves with the drone, the intensity tracks ground
-    // distance, and the EmitterLoops=1/20s system self-completes and needs the
-    // IsActive!=want re-arm (all inside ApplyDustMirror; ~3 component calls per
-    // 50 ms packet while flying, nothing when the bit is off and already off).
+    // Dust: replay the blueprint's per-tick dust update on EVERY packet rather than on bit edges.
+    // The anchor moves with the drone, the intensity tracks ground distance, and the
+    // EmitterLoops=1/20s system self-completes and needs the IsActive != want re-arm -- all of it
+    // inside ApplyDustMirror, about three component calls per 50 ms packet while flying, and
+    // nothing when the bit is off and already off.
     const bool dustOn = (nb & D::kFxDust) != 0;
     D::ApplyDustMirror(drone, dustOn,
                        FVector{ payload.dustX, payload.dustY, payload.dustZ });

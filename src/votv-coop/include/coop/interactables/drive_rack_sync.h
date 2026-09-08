@@ -1,21 +1,18 @@
-// coop/drive_rack_sync.h -- v119 L5 lane 3, extracted 2026-07-18 from
-// drive_sync.cpp (rack-extraction design, 8-round /qf):
+// coop/drive_rack_sync.h -- the drive-rack lane, extracted from drive_sync.cpp.
 //
-//   RackState (111) -- prop_driveRack 16-row storage: presser index-ops
-//     peer->host HOST-TERMINAL + host-canonical full array + reflected
-//     gen() re-apply; deny/refund for races. The take-race axis (deny ring
-//     + taken ring + TTL + consume) lives WHOLE in this module.
+// RackState is prop_driveRack's 16-row storage: index ops go peer to host and are
+// host-terminal, the host broadcasts a canonical full array and re-applies gen() by
+// reflection, and a raced op is denied and refunded. The take-race axis -- the deny ring, the
+// taken ring, the TTL and the consume -- lives WHOLE in this module.
 //
-// Owner-API contract (dependency is strictly ONE-WAY drive_sync -> here;
-// this module never includes drive_sync.h):
-//   - drive_sync keeps ALL 0x45 verb registration (vm_dispatch is
-//     one-callback-per-verb-name and putDriveIn is shared slot/rack ctx);
-//     its bracket forwards rack marks via MarkDirtyFromVerb().
-//   - drive_sync's payload apply asks TryConsumeDenyReap() for the reap
-//     VERDICT; the reap ACTION (destroy + skip-apply) stays payload-side.
-//
-// Design of record: votv-rack-extraction-DESIGN-2026-07-18.md (on top of
-// votv-drive-chain-L5-impl-DESIGN-2026-07-18.md). Game thread throughout.
+// Owner-API contract, a strictly ONE-WAY dependency (drive_sync includes this; this never
+// includes drive_sync.h):
+//   - drive_sync keeps ALL 0x45 verb registration, because vm_dispatch is one callback per
+//     verb name and putDriveIn is a shared slot-and-rack context; its bracket forwards rack
+//     marks through MarkDirtyFromVerb().
+//   - drive_sync's payload apply asks TryConsumeDenyReap() for the reap VERDICT, while the
+//     reap ACTION -- destroy and skip-apply -- stays payload-side.
+// Game thread throughout.
 
 #pragma once
 
