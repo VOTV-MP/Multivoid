@@ -1,11 +1,11 @@
 // coop/interactables/serverbox_sync.cpp -- see coop/interactables/serverbox_sync.h.
 //
-// The verbs cannot be intercepted: breakServer, fix and break_type are dispatched as
-// EX_LocalVirtualFunction, which the ProcessEvent detour and the native seam never see and the
-// bytecode seam can only observe. So we mirror STATE and drive the box's own check() ourselves.
+// The verbs cannot be intercepted: breakServer and fix are dispatched as EX_LocalVirtualFunction,
+// which the ProcessEvent detour and the native seam never see and the bytecode seam can only
+// observe. So we mirror STATE and drive the box's own check() ourselves.
 //
 // check() is notify-free -- no delegate, no minigame, unlike the verbs -- and re-skins from
-// isBroken, resisnant, active and calc. It returns without touching anything until it has cached a
+// isBroken, the box's own `resisnant` (the blueprint's spelling), active and calc. It returns without touching anything until it has cached a
 // gamemode; while the glow effect is recently rendered it retargets only that effect's particle;
 // otherwise it sets the body material, which is the OFF instance unless active && calc. So a raw
 // IsBroken write plus a reflected check() applies the break state host-authoritatively, and the
@@ -38,7 +38,7 @@ namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-constexpr int      kMaxServers    = 64;    // the isBrokenMask width; VOTV has a handful
+constexpr int      kMaxServers    = 64;    // the isBrokenMask width; a base runs ~54 boxes
 constexpr long long kPollIntervalMs = 1000;
 
 // Resolution: lazy, retried every 2 s, and latched after a capped number of passes with a loud

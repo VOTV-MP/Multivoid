@@ -176,7 +176,8 @@ bool ApplyOpened(void* actor, bool want) {
     // apply, where the spawner would run a second time on this peer and double-spawn. Targeted
     // per-site fix (principle 4): a trigger-wired locker mirrors via the SNAP path (opened write +
     // ForceSnap swing), so door state mirrors and the trigger fires only where the player actually
-    // opened it. The other eighteen lockers carry no trigger and keep the full native verb.
+    // opened it. The test is per instance, on this locker's own triggerOnOpen: a locker whose
+    // trigger is null keeps the full native verb.
     const bool triggerWired =
         isLocker && d->offTrigger >= 0 &&
         *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(actor) + d->offTrigger) != nullptr;

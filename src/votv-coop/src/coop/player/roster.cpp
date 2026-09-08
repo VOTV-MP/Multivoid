@@ -96,10 +96,10 @@ void Refresh() {
         // There is deliberately no role branch here: asking "what can I measure about you" makes
         // one column answer transport on some rows and routing on others, side by side. The local
         // row is not special-cased either -- your own ping is a real host-measured number and
-        // belongs on your own row. DisplayLink, not the raw row: row 0 (the host) carries Local/-1
-        // because the host has no link to itself, which a client board renders as "n/a", and the
-        // host<->client RTT is one link the host already published on the viewer's OWN row, so that
-        // is what row 0 shows here. See roster_ledger.h.
+        // belongs on your own row. Read through DisplayLink, never the raw row: row 0 (the host)
+        // carries Local/-1 because the host has no link to itself, which would render as "n/a" on
+        // every client board, so DisplayLink substitutes the host<->client RTT the host already
+        // published on the viewer's OWN row. See roster_ledger.h.
         const auto link = coop::roster_ledger::DisplayLink(slot);
         r.ping = link.pingMs;
         r.linkKind = link.kind;

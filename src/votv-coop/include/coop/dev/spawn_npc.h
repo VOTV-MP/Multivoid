@@ -4,10 +4,10 @@
 // from in-game purchase or scripted events, so without this the NPC-sync paths (host
 // AllocAndInstall + broadcast, client mirror Install) have no autonomous-test coverage. Two
 // triggers: the ImGui dev menu (Content > Entities > "Spawn kerfurOmega"), for hands-on use; and a
-// trigger FILE named by env VOTVCOOP_SPAWN_TRIGGER, which spawns once and deletes itself when it
-// appears. A test harness creates that file AFTER all peers connect, because NPC EntitySpawn is not
-// part of the connect-edge replay. The actual spawn is npc_sync::DevSpawnNpcInFront, run on the
-// game thread.
+// trigger FILE named by env VOTVCOOP_SPAWN_TRIGGER: a watcher thread spawns once when the file
+// appears and then deletes it. A test harness creates that file AFTER all peers connect, because
+// NPC EntitySpawn is not part of the connect-edge replay. The spawn itself is this module's own
+// SpawnNpcInFront, posted to the game thread by PostSpawnKerfur.
 
 #pragma once
 

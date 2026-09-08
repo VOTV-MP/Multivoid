@@ -1,9 +1,9 @@
 // ue_wrap/engine/engine_audio.cpp -- positional sound spawning.
 //
 // Engine-wrapper layer (principle 7). The USoundAttenuation construct and config, plus the
-// UGameplayStatics::PlaySoundAtLocation dispatch. Declared in ue_wrap/engine/engine.h
-// (SoundAttenuationConfig / SpawnSoundAttenuation / PlaySoundAtLocation), so callers
-// (coop::flashlight_click_sound, coop::prop_sound) reach it through the umbrella header.
+// UGameplayStatics::PlaySoundAtLocation dispatch. Declared in ue_wrap/engine/engine_audio.h
+// (SoundAttenuationConfig / SpawnSoundAttenuation / PlaySoundAtLocation), which the engine.h
+// umbrella includes, so a caller reaches these through either header.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/engine/engine.h"

@@ -5,7 +5,8 @@
 // live process the fault is nondeterministic. The drill manufactures that case with
 // VirtualAlloc/VirtualFree and proves both halves in one run: a legacy bare IsLive on the
 // decommitted "object" takes exactly one first-chance access violation, absorbs it and returns
-// false; CachedObjRef::Alive() on the same input returns false with ZERO, reading array slots only.
+// false; CachedObjRef::Alive() on the same input returns false with ZERO of them, reading array
+// slots only.
 //
 // The drill's VEH is registered for the drill body alone and removed before it returns, never
 // during a normal boot, and counts only faults inside the drill's own page, so an unrelated fault
