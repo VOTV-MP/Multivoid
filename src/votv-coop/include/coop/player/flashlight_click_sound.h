@@ -1,30 +1,18 @@
-// coop/flashlight_click_sound.h -- 3D positional click sound at puppet
-// position when a remote peer toggles their flashlight (Phase 5F v6).
+// coop/flashlight_click_sound.h -- a 3D positional click at a puppet's location when a remote
+// peer toggles their flashlight.
 //
-// Plays VOTV's own `/Game/audio/effects/flashlight` USoundWave at the
-// puppet's world location via UGameplayStatics::PlaySoundAtLocation, with
-// a RUNTIME-CONSTRUCTED USoundAttenuation override (RULE 1 native path --
-// no borrowing of VOTV's cooked `att_*` content assets). Sphere shape:
-// 6.67m inner radius (full volume) -> ~73m to silence, inverse distance
-// algorithm (radius reduced 3x on 2026-06-03 per user req -- a remote
-// player's toggle carried too far; the whole envelope was scaled 1/3 from
-// the prior 20m/220m). The attenuation object is `R::AddToRoot`ed so UE4
-// GC never collects it (a C++ static void* is invisible to the GC reach
-// scan; without rooting the object dangles on the next GC pass and
-// PlaySoundAtLocation crashes on rapid toggle).
+// Plays the game's own `flashlight` USoundWave through UGameplayStatics::PlaySoundAtLocation
+// with a USoundAttenuation we build at runtime, so no cooked `att_*` content asset is borrowed.
+// Sphere, inverse distance, a third of the baseline in ue_wrap::engine::SoundAttenuationConfig:
+// full volume out to 6.67 m and silence by ~73 m, where the baseline reaches 20 m and 220 m.
+// That baseline carries a click across the whole outdoor map, which is right for the local
+// player and far too generous for someone else's toggle. SpawnSoundAttenuation pins the object
+// for the process, since a C++ static is invisible to UE's reachability scan.
 //
-// Gated on state CHANGE only: hold-F mode-change packets keep state=on
-// and mutate cones, but MUST NOT produce a click. Per-peer last-applied
-// state tracked in a fixed-size array keyed on peer slot (kMaxPeers=4) --
-// NOT raw puppet pointers (audit fix: would dangle after disconnect+
-// respawn for the same peer slot). v13 (A4 2026-05-29): the caller now
-// resolves the peer slot from the wire packet's senderElementId via
-// element::Registry::Get -> Player::PeerSlot; this entry point keeps the
-// uint8_t peer-slot interface so the per-peer state map indexing stays
-// O(1) and the dangle-immune semantics unchanged.
-//
-// Game thread only -- the reflection calls (FindObject, ParamFrame,
-// PlaySoundAtLocation) touch UObject memory directly.
+// Only a state CHANGE clicks: a hold-F mode-change packet keeps state=on and moves the cones
+// alone. The last applied state is kept per peer SLOT rather than per puppet pointer, which
+// would dangle after a disconnect and a respawn into the same slot. Game thread only -- the
+// reflection calls touch UObject memory directly.
 
 #pragma once
 
@@ -32,12 +20,10 @@
 
 namespace coop::flashlight_click_sound {
 
-// Apply the click sound effect for a wire packet's just-applied state on
-// the given puppet. If `newState` matches the LAST applied state for
-// `peerSlot`, this is a no-op (the packet was a mode-change, not a
-// state-change). Otherwise resolves cached UFunction pointers + sound
-// asset + attenuation override on first use, then dispatches
-// PlaySoundAtLocation. Game thread only.
+// Play the click for a wire packet's just-applied state on `puppetActor`. A `newState` equal to
+// the last one applied for `peerSlot` is a no-op: that packet was a mode change. Otherwise the
+// sound asset and the attenuation are resolved on first use and PlaySoundAtLocation is
+// dispatched. Game thread only.
 void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState);
 
 }  // namespace coop::flashlight_click_sound
