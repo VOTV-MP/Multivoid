@@ -1,17 +1,17 @@
-// ue_wrap/phys_mods.h -- standalone engine access for the desk's PHYSICAL
-// MODULES array (L8, v118). Principle-7 engine-wrapper layer: NO network
-// logic; coop::physmods_sync drives the mirror through here.
+// ue_wrap/phys_mods.h -- engine access for the desk's PHYSICAL MODULES array.
+// Principle-7 engine-wrapper layer: no network logic; coop::physmods_sync drives
+// the mirror through here.
 //
-// RE (2026-07-18 bytecode censuses, qf thread L8): physMods =
-// TArray<TEnumAsByte<enum_physicalModules>> @0x12A0 on AanalogDScreenTest_C,
-// fixed 12 slots, 0 = empty; the array is a SET (plugInModule's native
-// dup-check denies a byte already Contained). Writers: plugInModule (find-free
-// elem write + module prop K2_DestroyActor), the playerHitWith unplug path
-// (module reborn INTO THE HAND via lib.physModToActor -> slot := 0), setData
-// (save-load; calls updPhysMods), gatherData (save marshal). updPhysMods() =
-// the parameterless consumer re-runner, measured a PURE function of the array
-// (per-slot socket visuals + Contains-gated speed/lamp/shield effects; no
-// player refs, no spawns, no audio) => mirror-safe reflected call.
+// physMods is a TArray<TEnumAsByte<enum_physicalModules>> on
+// AanalogDScreenTest_C, fixed at 12 slots with 0 meaning empty, and behaves as a
+// SET: plugInModule's native dup-check denies a byte the array already Contains.
+// Four writers -- plugInModule (write into a free slot, then K2_DestroyActor on
+// the module prop), the playerHitWith unplug path (the module is reborn INTO THE
+// HAND through lib.physModToActor and the slot goes to 0), setData on save load
+// (which calls updPhysMods) and gatherData on save marshal. updPhysMods() is the
+// parameterless consumer re-runner and measures as a PURE function of the array
+// -- per-slot socket visuals plus Contains-gated speed, lamp and shield effects,
+// with no player references, spawns or audio -- so a mirror may call it.
 
 #pragma once
 

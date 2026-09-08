@@ -1,19 +1,15 @@
-// ue_wrap/base_window.h -- standalone engine access for VOTV's base observation
-// window (AbaseWindow_C), the "main huge window" of the base. Principle-7 engine-
-// wrapper layer: it wraps the reflection / struct-offset / UFunction-thunk details
-// of a baseWindow actor. NO network logic, NO gameplay/coop state -- coop::window_sync
-// owns those and talks to the engine through here.
+// ue_wrap/base_window.h -- engine access for the base's observation window (AbaseWindow_C), the
+// "main huge window". Principle-7 engine-wrapper layer: the reflection, struct-offset and
+// UFunction-thunk details of a baseWindow actor, with NO network logic and NO coop state --
+// coop::window_sync owns those and reaches the engine through here.
 //
-// A baseWindow is an Aactor_save_C descendant. Its dirt is the WHOLE-SURFACE scalar
-// `clean`@0x0260 (float; higher = dirtier, wiped DOWN to 0 by cleanSponge, never
-// re-raised). setClean() pushes it into the mesh shader via SetCustomPrimitiveDataFloat(0).
-// Its cross-peer-stable identity is the inherited Aactor_save_C::Key FName (assigned
-// deterministically by intComs_gamemodeMakeKeys + save-persistent, the same Key family
-// doors use). NOTE: unlike doors (AtriggerBase_C::Key@0x0260) the Key is at the
-// Aactor_save_C offset (0x0230) -- FindPropertyOffset does NOT climb to parent classes,
-// so EnsureResolved resolves it against actor_save_C explicitly.
-//
-// RE: research/findings/world-systems/votv-dirt-window-cleaning-RE-and-coop-sync-design-2026-06-07a.md.
+// A baseWindow is an Aactor_save_C descendant. Its dirt is one WHOLE-SURFACE scalar, `clean`:
+// higher is dirtier, cleanSponge wipes it DOWN toward 0 and nothing re-raises it, and setClean()
+// pushes it into the mesh shader through SetCustomPrimitiveDataFloat(0). Its cross-peer-stable
+// identity is the inherited Aactor_save_C::Key FName, assigned deterministically by
+// intComs_gamemodeMakeKeys and save-persistent, the same Key family the doors use. That inheritance
+// is the trap: a door declares its own Key and this class does not, and FindPropertyOffset does NOT
+// climb to parent classes, so EnsureResolved resolves the Key against actor_save_C explicitly.
 
 #pragma once
 
