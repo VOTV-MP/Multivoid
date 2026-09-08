@@ -228,16 +228,18 @@ bool ReleaseMainPlayerGrabIfHolding(void* localPlayer, void* actor) {
     // pointer dangling.
     if (!R::IsLive(localPlayer)) return false;
     const int32_t offGrabbing = ue_wrap::reflected_offset::MainPlayer_grabbing_actor();
-    const int32_t offHandle   = ue_wrap::reflected_offset::MainPlayer_grabHandle();
-    if (offGrabbing < 0 || offHandle < 0) return false;
+    if (offGrabbing < 0) return false;
     void** grabbingSlot = reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(localPlayer) + offGrabbing);
     if (*grabbingSlot != actor) return false;
-    if (!ResolvePhcReleaseCached()) {
-        // The physics-handle class is still not loaded (defensive). Clear the slot anyway so later
-        // reads do not see a doomed pointer; the blueprint's grab-destroyed delegate runs the
-        // handle teardown from the actor's destroyed broadcast (later, but functional).
-        UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: PHC.ReleaseComponent unresolved -- clearing grabbing_actor only; destGrabbed delegate path will run PHC teardown");
+    // Every path that cannot reach the physics handle still CLEARS the slot: callers destroy the
+    // actor whether or not this returns true, so leaving the slot set would dangle it. Only the
+    // handle teardown is lost, and the blueprint's grab-destroyed delegate runs that from the
+    // actor's own destroyed broadcast -- later, but functional.
+    const int32_t offHandle = ue_wrap::reflected_offset::MainPlayer_grabHandle();
+    if (offHandle < 0 || !ResolvePhcReleaseCached()) {
+        UE_LOGW("engine::ReleaseMainPlayerGrabIfHolding: grabHandle offset (%d) or PHC.ReleaseComponent unresolved -- clearing grabbing_actor only; destGrabbed delegate path will run PHC teardown",
+                offHandle);
         *grabbingSlot = nullptr;
         return false;
     }
