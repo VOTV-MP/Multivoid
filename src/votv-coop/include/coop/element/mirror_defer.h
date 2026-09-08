@@ -8,11 +8,11 @@
 // quiescence drain and the kerfur reconcile sweeps -- is UNTOUCHED: this is a pure visibility
 // layer over it, so the worst case is the dance as it is today and the best case is instant.
 //
-// The CONFIRMED-versus-HOLD discriminator is the spawn payload's `hasMatchPos` flag, passed in
-// by the hook site rather than queried out of the reconcile pending sets, which is what keeps
-// the layer separable. A mirror carrying a save-time key is exactly the one whose local twin
-// stays visible until the quiescence sweep, so it HOLDs; one without is a host-only or derived
-// form with no local twin, so it is CONFIRMED and revealed at the lift. Game thread ONLY.
+// CONFIRMED versus HOLD is decided by the caller, not by a query into the reconcile pending
+// sets, which is what keeps the layer separable. A prop spawn passes the payload's `hasMatchPos`
+// flag: a mirror carrying a save-time key is exactly the one whose local twin stays visible
+// until the quiescence sweep, so it HOLDs, while one without has no local twin and is revealed
+// at the lift. An NPC mirror has no such twin and always passes false. Game thread ONLY.
 
 #pragma once
 
