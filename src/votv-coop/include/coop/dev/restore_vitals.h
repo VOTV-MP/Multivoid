@@ -1,15 +1,10 @@
-// coop/dev/restore_vitals.h -- refill food/sleep/health on both peers'
-// UsaveSlot_C simultaneously. (coffeePower is intentionally excluded -- writing
-// it to 100 triggers a screen-shake post-coffee BP side-effect; see commit
-// 5421d6f for the user-retest finding.)
+// coop/dev/restore_vitals.h -- refill food, sleep and health on both peers' UsaveSlot_C at once.
+// coffeePower is deliberately excluded: writing it to 100 triggers a post-coffee screen shake in
+// the blueprint.
 //
-// Driven by the ImGui dev menu (Player > Vitals > "Restore vitals"). The legacy
-// F3 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-in-imgui-menu]]:
-// dev features live in the F1 menu, not ad-hoc hotkeys).
-//
-// Direction: any peer (host OR client) can trigger it -- Restore() applies
-// locally AND broadcasts a RestoreVitals reliable so the remote peer restores
-// too. Echo is safe: applying max-out twice is idempotent (stays at max).
+// Driven by the ImGui dev menu (Player > Vitals). Any peer can trigger it -- Restore() applies
+// locally AND broadcasts a RestoreVitals reliable, so the remote peer refills too. The echo is
+// safe, since maxing out twice is idempotent.
 
 #pragma once
 
@@ -27,12 +22,13 @@ void SetSession(coop::net::Session* session);
 // wire-thread-safe).
 void Restore();
 
-// Menu action (Player > Vitals): set THIS peer's STAMINA LOW (10) for testing the tired/exhausted
-// state (can't-sprint, the low-energy HUD/effects). VOTV has no "stamina" scalar -- the energy meter is
-// `sleep` (low sleep -> mainPlayer.isExhausted), so this writes ONLY saveSlot.sleep, leaving food + health
-// alone. LOCAL ONLY -- no broadcast: the v19 vitals DISPLAY stream (PoseSnapshot sleepFrac) already mirrors
-// the low value to peers' nameplates, so setting only the tester's value is the right scope. Host-only via
-// dev_gate (dev verbs are host-only). Safe off the game thread (the write is posted to it).
+// Menu action (Player > Vitals): set THIS peer's stamina low (10) to test the tired and exhausted
+// state -- no sprint, the low-energy HUD and effects. VOTV has no stamina scalar; the energy
+// meter is `sleep` (low sleep sets mainPlayer.isExhausted), so this writes only saveSlot.sleep
+// and leaves food and health alone. LOCAL ONLY, no broadcast: the vitals display stream
+// (PoseSnapshot sleepFrac) already mirrors the low value to peers' nameplates, so setting the
+// tester's own value is the right scope. Host-only through dev_gate. Safe off the game thread --
+// the write is posted to it.
 void SetStaminaLow();
 
 // Receiver: max-out food/sleep/health on the local UsaveSlot_C (coffeePower
