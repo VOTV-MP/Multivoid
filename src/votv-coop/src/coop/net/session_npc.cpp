@@ -1,14 +1,11 @@
-// coop/net/session_npc.cpp -- v37 NPC pose-batch send/receive for Session.
+// coop/net/session_npc.cpp -- NPC pose-batch send/receive for Session.
 //
-// Extracted from session.cpp (2026-06-07) per the 800-LOC soft cap; session.cpp
-// had grown to 841 once the EntityPose path landed. Owns the unreliable
-// HOST->client NPC pose batch (MsgType::EntityPose): the host serializes its
-// live batch ONCE per send (SerializeLocalNpcBatch) before the per-peer fan-out,
-// and clients parse + newest-wins-store each datagram (StoreRemoteNpcBatch) for
-// the game thread to drain (TakeRemoteNpcBatch). The per-peer PacketHeader stamp
-// + SendMessageToConnection stay in session.cpp's send loop (they need the
-// per-peer conn handle + a fresh seq). Mutex discipline is UNCHANGED from the
-// inline version: local* under localMutex_, remote* under remoteMutex_.
+// Owns the unreliable HOST->client NPC pose batch (MsgType::EntityPose): the host serializes
+// its live batch ONCE per send (SerializeLocalNpcBatch) before the per-peer fan-out, and
+// clients parse and newest-wins-store each datagram (StoreRemoteNpcBatch) for the game thread
+// to drain (TakeRemoteNpcBatch). The per-peer PacketHeader stamp and SendMessageToConnection
+// stay in session.cpp's send loop, which owns the per-peer conn handle and a fresh seq. Mutex
+// discipline: local* under localMutex_, remote* under remoteMutex_.
 
 #include "coop/net/session.h"
 
@@ -38,10 +35,10 @@ bool Session::TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out) {
 }
 
 int Session::SerializeLocalNpcBatch(uint8_t* buf) {
-    // Serialize ONCE per send (same body for every peer; only the per-peer header
-    // seq differs). One datagram = PacketHeader(20) + EntityPoseBatchHeader(4) +
-    // N*EntityPoseSnapshot(40, v39), MTU-capped at kMaxNpcBatchEntries. The leading
-    // PacketHeader bytes are left for the caller to stamp per-peer.
+    // Serialize ONCE per send (same body for every peer; only the per-peer header seq differs). One
+    // datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*EntityPoseSnapshot(40 B each),
+    // MTU-capped at kMaxNpcBatchEntries. The leading PacketHeader bytes are left for the caller to
+    // stamp per-peer.
     std::lock_guard<std::mutex> lk(localMutex_);
     if (!hasLocalNpcBatch_ || localNpcBatch_.empty()) return 0;
     size_t n = localNpcBatch_.size();
@@ -55,10 +52,10 @@ int Session::SerializeLocalNpcBatch(uint8_t* buf) {
 }
 
 void Session::StoreRemoteNpcBatch(const void* data, int len, uint32_t seq) {
-    // v37: HOST->client NPC pose batch. The host ORIGINATES it (never relays/receives it),
-    // so this lands only on clients. Parse + store the LATEST into the npc-batch slot the
-    // game thread drains (npc_mirror::TickClientNpcs); newest-wins via seq. Per-entry float
-    // validation happens at the game-thread apply (a NaN can't reach SetActorLocation).
+    // HOST->client NPC pose batch. The host ORIGINATES it (never relays or receives it), so this
+    // lands only on clients. Parse and store the LATEST into the npc-batch slot the game thread
+    // drains (npc_mirror::TickClientNpcs); newest-wins via seq. Per-entry float validation happens
+    // at the game-thread apply, so a NaN cannot reach SetActorLocation.
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));

@@ -86,7 +86,7 @@ void RenderOnlineSection(const coop::roster::Snapshot& rs) {
         ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.f));
         ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(52.f));
         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, S(220.f));
-        ImGui::TableHeadersRow();  // declared but never drawn until v131
+        ImGui::TableHeadersRow();
         for (int i = 0; i < rs.count; ++i) {
             const coop::roster::Row& r = rs.rows[i];
             if (r.isLocal || !r.connected || r.slot < 1) continue;

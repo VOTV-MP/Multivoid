@@ -82,8 +82,8 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                     std::snprintf(btn, sizeof(btn), "Keep line %d: %s###cfgrev_%s_%d",
                                   dl.lineNo, dl.value.c_str(), r.key.c_str(), dl.lineNo);
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(24.f));
-                    // Correlated by VALUE, not the shown line number (CRIT-2:
-                    // the snapshot ages while the panel sits on screen).
+                    // Correlated by VALUE, not the shown line number:
+                    // the snapshot ages while the panel sits on screen.
                     if (ui::menu_sfx::Button(btn, ImVec2(0, 0)))
                         CR::KeepDuplicateLine(r.key, dl.value);
                 }

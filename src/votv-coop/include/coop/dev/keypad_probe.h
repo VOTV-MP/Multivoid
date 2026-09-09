@@ -1,7 +1,7 @@
 // coop/dev/keypad_probe.h -- dev-only RE probe for the password keypad
 // (ApasswordLock_C) digit-entry state machine, gated on ini `keypad_probe=1`.
 //
-// Increment-2 (live digit-by-digit display + per-key sounds) design hinges on the
+// A live digit-by-digit display with per-key sounds hinges on the
 // semantics of inputNumber(int32): does it append the digit to inPassword, increment
 // Num, play the beep, and match-check (firing Open/falseEnterEvent)? Those verbs are
 // BP-internal so a POST observer never sees a real press -- this probe instead (a)

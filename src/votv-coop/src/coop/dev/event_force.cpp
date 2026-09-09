@@ -24,8 +24,8 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 
-// menu event name -> its level trigger volume (map census _map_untitled_1.json
-// 2026-07-03: eventer property -> trigger_TBoxActivator_C -> trigger_box_N_C).
+// menu event name -> its level trigger volume (from the map census:
+// eventer property -> trigger_TBoxActivator_C -> trigger_box_N_C).
 // All 14 volume-gated events; every box is a trigger_box_N_C with N=1.
 struct BoxRow { const char* event; const wchar_t* box; const char* boxNarrow; };
 constexpr BoxRow kBoxes[] = {
@@ -192,7 +192,7 @@ bool ForceNow(const char* eventName) {
     }
     const BoxRow* row = RowFor(eventName);
     if (!row) return false;
-    // 1) ARM through the shared fire seam (native eventer dispatch + the v95
+    // 1) ARM through the shared fire seam (native eventer dispatch + the
     //    EventFire broadcast -> clients replay the arm per policy). Re-arming an
     //    already-active box is a no-op (isActive=true twice).
     namespace efs = coop::event_fire_sync;
