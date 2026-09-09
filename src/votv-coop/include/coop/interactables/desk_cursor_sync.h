@@ -8,7 +8,7 @@
 // viewCoordinate memcpy -- the widget's own Tick repaints). Exact sibling shape of
 // the hand-item motion stream (MsgType::HandPose). Host-authority: the desk CLAIM
 // (device_occupancy) gates who may stream; the cursor content is client-authored-
-// passthrough (like player pose). See docs / the /qf design thread.
+// passthrough (like player pose).
 //
 // One concept = one folder: this lives with the other desk/device interactables.
 

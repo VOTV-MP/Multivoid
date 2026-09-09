@@ -76,8 +76,8 @@ void Seeder::Reset() {
 }
 
 bool RunSelfTest() {
-    // Engine-free delta math over a fake adapter: multiset counts + gap-deletion +
-    // both signs, deterministically (the /qf R7-R8 selftest rows).
+    // Engine-free delta math over a fake adapter: six cases covering multiset counts,
+    // gap append and deletion, a net-zero edit, and both signs at once.
     struct Case {
         const char* name;
         std::map<uint64_t, int32_t> snap, cur;

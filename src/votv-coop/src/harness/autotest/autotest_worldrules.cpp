@@ -27,7 +27,7 @@ namespace GT = ue_wrap::game_thread;
 //       UI-only, so a headless smoke can't otherwise run its code), and
 //   (2) MEASURES G1 -- diff the host's `worldrules:` lines against the client's;
 //       equal rule set == the host's rules reached the client's GI.gameRules for
-//       free via the save-load spine (the open gate from the settings /qf).
+//       free via the save-load spine.
 // Waits for gameplay + the client's save-load to settle before reading.
 void RunWorldRulesProbe() {
     UE_LOGI("worldrules: probe start (waiting 35 s for gameplay + client save-load settle)");
