@@ -109,6 +109,52 @@ OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
 DECL = re.compile(r"^[A-Za-z_][\w:<>,*&\s]*?[\s*&]([A-Za-z_]\w+)\s*\([^;{]*\)\s*(?:const\s*)?;", re.M)
 IDENT = re.compile(r"[A-Za-z_]\w*")
 INCLUDE = re.compile(r'#\s*include\s+"([^"]+)"')
+ANY_INCLUDE = re.compile(r'#\s*include\s+[<"]([^>"]+)[>"]')
+
+# ------------------------------------------------------------ the five citation axes
+# A comment that CITES something checkable -- a repository path, a log line, an environment
+# variable, an ini row, a member of a type -- makes a claim the tree itself can answer, and one
+# nothing ever compiles against. Two of these had no counter at all until the sweep that added
+# them, and both were where the rot sat: a renamed method or a reworded log line leaves its
+# citation standing with nothing to notice.
+MODULE_ROOT = "src/votv-coop/"
+WORD = re.compile(r"[A-Za-z_]\w*")
+CITED_PATH = re.compile(
+    r"(?<![\w./\\-])((?:[\w.+-]+/)+[\w.+-]+"
+    r"\.(?:h|hpp|cpp|c|inc|py|ps1|rs|md|txt|json|ya?ml|bat|toml|lua|rc|cmake|tsv|ini|csv|in))"
+    r"(?![\w]|\.[A-Za-z])")
+# A bare directory, counted only when its first segment is a top-level name of this repository or
+# one of the working trees kept beside it. Without that test the pattern reads prose alternation
+# -- `fridge/safe/microwave`, `NaN/Inf` -- as a path.
+CITED_DIR = re.compile(r"(?<![\w./\\-])((?:[\w.+-]+/){1,6})(?![\w/])")
+LOCAL_TREES = ("tools", "research", "memory", "site")
+# Trees this repository has never contained: the game's cooked content, UE's own source, the SDK
+# header dump, the install layout. A path into one of them is a citation of somewhere else, and
+# the tree cannot say whether it resolves either way.
+FOREIGN_TREE = ("Content/", "Runtime/", "CXXHeaderDump/", "Engine/", "Mods/", "Saved/",
+                "Binaries/", "Config/", "Plugins/")
+LOG_CALL = re.compile(r"\bUE_LOG[IWE]\s*\(\s*((?:\"(?:[^\"\\]|\\.)*\"\s*)+)")
+LOG_LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
+LOG_SPEC = re.compile(r"%[-+ #0-9.*]*(?:ll|l|h|z|w)?[A-Za-z]")
+CITED_MARKER = re.compile(r"`([^`\n]{4,70})`|\"([^\"\n]{6,70})\"")
+# What a quoted string must look like before it is read as a LOG marker at all: a bracketed tag in
+# capitals, or this tree's `subsystem: lowercase words` line prefix.
+MARKER_SHAPE = re.compile(r"^\[[A-Z][A-Z0-9_-]{2,}\]|^[a-z_]+(?:\.[a-z_]+)?: [a-z]")
+# What a comment writes where the format writes a %spec: a rendered value, a quoted name, a hex
+# word, or the author's own `...` elision.
+RENDERED = re.compile(r"\.\.\.|'[^']*'|\b0x[0-9A-Fa-f]+\b|\b\d+\b")
+ENV_NAME = re.compile(r"VOTVCOOP_[A-Z0-9_]+")
+CITED_INI = re.compile(r"`([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*)\s*=")
+REGISTRY_ROW = re.compile(r'CFG_[A-Z_]+\(\s*\w+\s*,\s*"([^"]+)"')
+CITED_MEMBER = re.compile(r"`?\b([A-Za-z_]\w*)::(\w+)\b`?")
+# Only a type this tree DEFINES. A citation of an engine, DirectX or blueprint member names a
+# tree that is not this one -- `IDXGISwapChain::Present` is real and appears in no source here --
+# and the repository cannot adjudicate it in either direction.
+# A BODY, not a forward declaration: `struct IDXGISwapChain;` says only that the name exists,
+# and taking it for a definition made this counter answer for DirectX, whose methods are real and
+# appear in no source here.
+TYPE_DEF = re.compile(
+    r"\b(?:class|struct)\s+(?:__declspec\([^)]*\)\s*)?([A-Z]\w+)\s*(?:final\s*)?(?::[^;{]*)?\{")
 DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", "reinterpret_cast",
              "const_cast", "dynamic_cast", "assert", "catch"}
 
@@ -325,13 +371,42 @@ class DocIndex:
         self.repo, self.subs, self._vendored = repo, list(subs), None
         self._subs_readable = 0
         self.lengths = {}
+        self.paths = set(tracked)
+        self.dirs = set()
+        for t in tracked:
+            parts = t.split("/")
+            for i in range(1, len(parts)):
+                self.dirs.add("/".join(parts[:i]))
+        self.tops = {t.split("/")[0] for t in tracked} | set(LOCAL_TREES)
+        self.includes = {}
+        self.log_formats, self.envs, self.ini_keys = [], set(), set()
+        self.our_types, self.code_words = set(), set()
         for t in tracked:
             if not t.endswith(SRC_EXT):
                 continue
             text = read(repo, t)
-            if text is not None:
-                base = t.rsplit("/", 1)[-1]
-                self.lengths[base] = max(self.lengths.get(base, 0), text.count("\n") + 1)
+            if text is None:
+                continue
+            base = t.rsplit("/", 1)[-1]
+            self.lengths[base] = max(self.lengths.get(base, 0), text.count("\n") + 1)
+            # The citation axes read OUR sources only: a vendored library's log lines and types
+            # are not what our comments cite, and indexing them would answer for a tree we do not
+            # write.
+            if not measured_src(t):
+                continue
+            bare = code_only(text)
+            self.includes[t] = set(ANY_INCLUDE.findall(bare))
+            for m in LOG_CALL.finditer(bare):
+                self.log_formats.append("".join(LOG_LITERAL.findall(m.group(1))))
+            self.envs |= set(ENV_NAME.findall(bare))
+            self.ini_keys |= set(REGISTRY_ROW.findall(bare))
+            self.our_types |= set(TYPE_DEF.findall(bare))
+            self.code_words |= set(WORD.findall(bare))
+        # The build file names env twins in a spelling no C++ line carries.
+        cmake = read(repo, MODULE_ROOT + "CMakeLists.txt")
+        if cmake:
+            self.envs |= set(ENV_NAME.findall(cmake))
+        self.log_skeletons = [LOG_SPEC.sub("\x01", f) for f in self.log_formats]
 
     def resolves(self, ref):
         return ref in self.names or ref.rsplit("/", 1)[-1] in self.names
@@ -367,6 +442,56 @@ class DocIndex:
         debt, 0 locally and 13 in CI. A counter that cannot tell must not accuse."""
         self.vendored()
         return self._subs_readable == len(self.subs)
+
+    def path_resolves(self, cand, owner):
+        """Can a reader open `cand`, written in a comment inside `owner`?
+
+        Every spelling this tree legitimately uses: a path from the repository root, one relative
+        to the citing file, and the MODULE-ROOT form (`src/ue_wrap/x.cpp`, relative to the CMake
+        project root) that hundreds of citations here use and none spell out in full. A path
+        inside a submodule resolves on its PREFIX, without reading the submodule, so this answers
+        the same in a plain CI checkout that has none."""
+        c = cand.rstrip("/")
+        if c in self.paths or c in self.dirs:
+            return True
+        if c in self.includes.get(owner, ()):
+            return True
+        if any(c.startswith(s + "/") for s in self.subs):
+            return True
+        here = owner.rsplit("/", 1)[0] if "/" in owner else ""
+        rel = os.path.normpath(os.path.join(here, c)).replace(os.sep, "/")
+        if rel in self.paths or rel in self.dirs:
+            return True
+        for base in (MODULE_ROOT, MODULE_ROOT + "include/", MODULE_ROOT + "src/"):
+            if base + c in self.paths or base + c in self.dirs:
+                return True
+            if any((base + c).startswith(s + "/") for s in self.subs):
+                return True
+        return False
+
+    def log_marker_resolves(self, marker):
+        """Is `marker` a RENDERED instance of some UE_LOG format in the tree?
+
+        Compared in the one direction that works. The comment writes what a reader will SEE
+        (`active=1`, `'starRain'`) and the format writes `%d` and `%s`, so each side's
+        substitutions become wildcards and the marker's remaining literal runs must appear in ONE
+        format, in order. Matching the marker's text against the format's -- the obvious way
+        round, and the way this was first written -- calls every rendered value a stale
+        citation."""
+        toks = [t for t in RENDERED.split(marker) if t.strip()]
+        if not toks:
+            return True
+        for fs in self.log_skeletons:
+            pos, ok = 0, True
+            for t in toks:
+                i = fs.find(t, pos)
+                if i < 0:
+                    ok = False
+                    break
+                pos = i + len(t)
+            if ok:
+                return True
+        return False
 
     def line_resolves(self, name, first):
         """A `<file>:NNN` citation resolves when the tree carries that file AND it is that long.
@@ -416,7 +541,7 @@ def doc_faults(line, docs):
     return any(not docs.resolves(m) for m in cited) or bool(DOC_UNNAMED.search(line))
 
 
-def src_comment_faults(line, docs, read_offsets, owns_offsets):
+def src_comment_faults(line, docs, read_offsets, owns_offsets, path=""):
     """-> the counter key for every rule one line of source COMMENT breaks.
 
     One implementation, called by the counting pass and by the line explainer, for the same reason
@@ -433,6 +558,31 @@ def src_comment_faults(line, docs, read_offsets, owns_offsets):
         faults.append("src.comment_doc_row")
     if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
         faults.append("src.comment_pinned_offset")
+    # Documents belong to `dead_docpath`, which resolves them by BASENAME -- the right rule for a
+    # doc and the wrong one for a source path. Counting a `.md` here too would put one habit under
+    # two numbers and let a sweep clear one of them.
+    cited = [m.group(1) for m in CITED_PATH.finditer(line) if not m.group(1).endswith(".md")]
+    cited += [d for d in CITED_DIR.findall(line)
+              if d.split("/")[0] in docs.tops and not any(d in c for c in cited)]
+    if any(not c.startswith(FOREIGN_TREE) and not docs.path_resolves(c, path) for c in cited):
+        faults.append("src.comment_dead_path")
+    # A trailing underscore is a FAMILY -- `VOTVCOOP_RUN_*`, `..._{X,Y,Z}` -- not a name.
+    if any(not n.endswith("_") and n not in docs.envs for n in ENV_NAME.findall(line)):
+        faults.append("src.comment_dead_env")
+    if any(k not in docs.ini_keys for k in CITED_INI.findall(line)):
+        faults.append("src.comment_dead_ini_key")
+    if any(t in docs.our_types and m not in docs.code_words
+           for t, m in CITED_MEMBER.findall(line)):
+        faults.append("src.comment_dead_member")
+    # An empty format index is not the answer "no format carries it"; reading it as one would
+    # accuse every marker in the tree. The same shape as vendored_known below.
+    if docs.log_formats:
+        for m in CITED_MARKER.finditer(line):
+            cand = (m.group(1) or m.group(2)).strip()
+            if MARKER_SHAPE.search(cand) and "/" not in cand \
+                    and not docs.log_marker_resolves(cand):
+                faults.append("src.comment_dead_log_marker")
+                break
     return faults
 
 
@@ -634,6 +784,8 @@ def measure(repo):
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     c["src.comment_dead_docpath"] = 0
     c["src.comment_pinned_offset"] = 0
+    for k in ("dead_path", "dead_log_marker", "dead_env", "dead_ini_key", "dead_member"):
+        c["src.comment_" + k] = 0
     bare_by_file = {}                      # path -> its code with comments and strings gone
     declared = collections.defaultdict(list)   # name -> every header that declares it
     for p in src:
@@ -663,7 +815,7 @@ def measure(repo):
             who["src.files_half_comment"][p] = len(comments)
         owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
-            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets, p):
                 if k in c:
                     c[k] += 1
                     who[k][p] += 1
@@ -746,6 +898,11 @@ FIXED_DESCRIPTIONS = {
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
     "src.comment_dead_docpath": "comment lines naming a document that is not in the repository",
+    "src.comment_dead_path": "comment lines naming a repository path that resolves to nothing",
+    "src.comment_dead_log_marker": "comment lines quoting a log line no format in the tree sends",
+    "src.comment_dead_env": "comment lines naming an environment variable no code reads",
+    "src.comment_dead_ini_key": "comment lines naming an ini row the registry does not carry",
+    "src.comment_dead_member": "comment lines naming a member our own type does not have",
     "other.dead_docpath": "lines naming a document that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
@@ -779,7 +936,7 @@ def explain(repo, path, tracked_set, subs=()):
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
         for no, line in comments + tails:
-            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets, path):
                 out.append((no, k, line))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False

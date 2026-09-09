@@ -168,7 +168,7 @@ removes.
 against these rules: the working-notes words and paths above, dead links and paths, docs over
 the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
 more than half comment, offsets pinned in prose that the code resolves elsewhere, declarations
-nothing calls, and the citation vocabulary below. CI refuses a push that makes any of those
+nothing calls, citations that name nothing, and the citation vocabulary below. CI refuses a push that makes any of those
 measures worse; the plain volume of prose is reported, not gated.
 
 ## Code comments
@@ -183,6 +183,14 @@ label -- `CRIT-1`, `Inc-2`, `take-9`, `K-5` -- points at a document that is not 
 repository, so state what the code does instead. Evidence tags (`[V]`, `[?]`) belong in the
 documentation, where the index page carries their legend; a source comment has no legend, and
 the reader is better served by the fact than by a mark on it.
+
+A citation names something, so the thing has to be there. A path must resolve -- from the
+repository root, relative to the file it sits in, or in the module-root spelling this tree
+writes (`src/ue_wrap/x.cpp`, relative to `src/votv-coop/`). A quoted log line must be one some
+`UE_LOG` format actually sends; an environment variable, one some code reads; a backticked
+`section.row=`, a row of the config registry; and a `Type::member` naming one of our own types,
+a member that type has. The gate counts all five, so a rename that leaves its citations behind
+is refused at the push rather than found by the next reader.
 
 ## Pull requests
 
