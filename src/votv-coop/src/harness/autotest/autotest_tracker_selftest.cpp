@@ -1,8 +1,7 @@
-// harness/autotest/autotest_tracker_selftest.cpp -- prop_element_tracker self-tests:
-// the dead-Prop-Element reaper check (VOTVCOOP_RUN_PROPREAP_TEST) + the
-// re-seed snapshot-completeness probe (VOTVCOOP_RUN_RESEED_TEST). Extracted
-// verbatim from harness/autotest.cpp (2026-07-19 dissolve); interfaces + docs
-// in harness/autotest.h.
+// harness/autotest/autotest_tracker_selftest.cpp -- prop_element_tracker self-tests: the
+// dead-Prop-Element reaper check (VOTVCOOP_RUN_PROPREAP_TEST) and the re-seed
+// snapshot-completeness probe (VOTVCOOP_RUN_RESEED_TEST). Both are described in
+// harness/autotest.h, which is where the interfaces live.
 
 #include "harness/autotest.h"
 
@@ -22,15 +21,10 @@ namespace GT = ue_wrap::game_thread;
 
 // ---- dead-Prop-Element reaper self-test -----------------------------------
 //
-// Runs on both peers. After stabilization, calls
-// prop_element_tracker::DebugCheckPropElementReap on the game thread: it
-// installs a synthetic DEAD local Prop Element (sentinel actor, internalIdx -1)
-// and verifies ReapDeadLocalPropElements evicts it + clears the actor-keyed maps
-// + frees the eid -- the fix for the cave/level-transition mass-purge leak
-// (~2000 props flagged PendingKill without firing K2_DestroyActor, dead shadows
-// leaking until the 16384 caps exhaust). Confirms the reap mechanism at runtime
-// without the hard-to-reproduce natural mass-purge. Gated by env
-// VOTVCOOP_RUN_PROPREAP_TEST="1".
+// Wait 15 s for the world and the prop seed to come up, post DebugCheckPropElementReap to the
+// game thread, then poll up to 5 s for its verdict. The check itself installs the synthetic
+// dead element and logs the PASS/FAIL line; this routine only reports that it ran, and names
+// the string to grep for.
 void RunAutonomousPropReapTest() {
     UE_LOGI("propreap_test: starting (waiting 15 s for world + prop seed up)");
     ::Sleep(15000);
@@ -51,11 +45,10 @@ DWORD WINAPI PropReapTestThread(LPVOID /*arg*/) {
 
 // ---- re-seed snapshot-completeness probe -----------------------------------
 //
-// Verify step (see autotest.h). After a 25 s settle -- past VOTV's boot-time
-// `open untitled_1` level travel -- runs ReSeedKnownKeyedProps on the GT and
-// logs how many NEW live keyed props it adds. A large number proves the boot
-// seed missed the story map's placed props (incomplete late-joiner snapshot).
-// Gated by env VOTVCOOP_RUN_RESEED_TEST="1".
+// Settle 25 s -- past VOTV's boot-time `open untitled_1` level travel -- then run
+// ReSeedKnownKeyedProps on the game thread and log how many NEW live keyed props it adds. A
+// large number means the boot seed ran on the pre-travel world and missed the story map's
+// placed props.
 void RunAutonomousReSeedTest() {
     UE_LOGI("reseed_test: starting (waiting 25 s for world settle past boot level-travel)");
     ::Sleep(25000);
