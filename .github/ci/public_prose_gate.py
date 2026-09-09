@@ -144,12 +144,13 @@ MARKER_SHAPE = re.compile(r"^\[[A-Z][A-Z0-9_-]{2,}\]|^[a-z_]+(?:\.[a-z_]+)?: [a-
 # word, or the author's own `...` elision.
 RENDERED = re.compile(r"\.\.\.|'[^']*'|\b0x[0-9A-Fa-f]+\b|\b\d+\b")
 ENV_NAME = re.compile(r"VOTVCOOP_[A-Z0-9_]+")
-CITED_INI = re.compile(r"`([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*)\s*=")
+CITED_INI = re.compile(r"`([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*)\s*=(?!=)")
 REGISTRY_ROW = re.compile(r'CFG_[A-Z_]+\(\s*\w+\s*,\s*"([^"]+)"')
-CITED_MEMBER = re.compile(r"`?\b([A-Za-z_]\w*)::(\w+)\b`?")
+CITED_MEMBER = re.compile(r"`?\b(?:\w+::)*([A-Za-z_]\w*)::(\w+)\b`?")
 # Only a type this tree DEFINES. A citation of an engine, DirectX or blueprint member names a
 # tree that is not this one -- `IDXGISwapChain::Present` is real and appears in no source here --
 # and the repository cannot adjudicate it in either direction.
+MIRROR_HEADER = "ue_wrap/core/types.h"
 # A BODY, not a forward declaration: `struct IDXGISwapChain;` says only that the name exists,
 # and taking it for a definition made this counter answer for DirectX, whose methods are real and
 # appear in no source here.
@@ -400,13 +401,15 @@ class DocIndex:
                 self.log_formats.append("".join(LOG_LITERAL.findall(m.group(1))))
             self.envs |= set(ENV_NAME.findall(bare))
             self.ini_keys |= set(REGISTRY_ROW.findall(bare))
-            self.our_types |= set(TYPE_DEF.findall(bare))
+            if not t.endswith(MIRROR_HEADER):
+                self.our_types |= set(TYPE_DEF.findall(bare))
             self.code_words |= set(WORD.findall(bare))
         # The build file names env twins in a spelling no C++ line carries.
         cmake = read(repo, MODULE_ROOT + "CMakeLists.txt")
         if cmake:
             self.envs |= set(ENV_NAME.findall(cmake))
         self.log_skeletons = [LOG_SPEC.sub("\x01", f) for f in self.log_formats]
+        self.ini_sections = {k.split(".")[0] for k in self.ini_keys}
 
     def resolves(self, ref):
         return ref in self.names or ref.rsplit("/", 1)[-1] in self.names
@@ -541,6 +544,12 @@ def doc_faults(line, docs):
     return any(not docs.resolves(m) for m in cited) or bool(DOC_UNNAMED.search(line))
 
 
+def foreign(cand):
+    """A tree this repository has never held. Matched anywhere in the path, not only at its
+    start: the game's own install directory carries `Content/` several segments in."""
+    return any(cand.startswith(f) or ("/" + f) in cand for f in FOREIGN_TREE)
+
+
 def src_comment_faults(line, docs, read_offsets, owns_offsets, path=""):
     """-> the counter key for every rule one line of source COMMENT breaks.
 
@@ -564,12 +573,14 @@ def src_comment_faults(line, docs, read_offsets, owns_offsets, path=""):
     cited = [m.group(1) for m in CITED_PATH.finditer(line) if not m.group(1).endswith(".md")]
     cited += [d for d in CITED_DIR.findall(line)
               if d.split("/")[0] in docs.tops and not any(d in c for c in cited)]
-    if any(not c.startswith(FOREIGN_TREE) and not docs.path_resolves(c, path) for c in cited):
+    if any(not foreign(c) and not docs.path_resolves(c, path) for c in cited):
         faults.append("src.comment_dead_path")
     # A trailing underscore is a FAMILY -- `VOTVCOOP_RUN_*`, `..._{X,Y,Z}` -- not a name.
-    if any(not n.endswith("_") and n not in docs.envs for n in ENV_NAME.findall(line)):
+    if docs.envs and any(not n.endswith("_") and n not in docs.envs
+                         for n in ENV_NAME.findall(line)):
         faults.append("src.comment_dead_env")
-    if any(k not in docs.ini_keys for k in CITED_INI.findall(line)):
+    if docs.ini_keys and any(k.split(".")[0] in docs.ini_sections and k not in docs.ini_keys
+                             for k in CITED_INI.findall(line)):
         faults.append("src.comment_dead_ini_key")
     if any(t in docs.our_types and m not in docs.code_words
            for t, m in CITED_MEMBER.findall(line)):

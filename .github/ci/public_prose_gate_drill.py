@@ -167,8 +167,15 @@ int p5() { return 0; }
 // MEMBER: Drilled::noSuchMember names a member this tree's own type does not have
 // PRECISION: Drilled::realMember is one it has, and IDXGISwapChain::Present names a type this
 // tree only forward-declares, whose real methods are DirectX's and not ours to adjudicate
+// MEMBER: dspace::Drilled::alsoMissing is the namespace-qualified form this tree actually
+// writes; a pattern that does not overlap consumes dspace as the type and never reads the member
+// PRECISION: FMirror::NoSuchMethod names an ENGINE value type this tree mirrors as a POD under
+// the engine's own name, so its real methods are not ours to adjudicate
+// PATH: Game_0.9.0n/Content/Paks/x.ini sits in the game's own tree, several segments in
+// INI: `net.no_such_row = 1` with spaces is the same row citation
+// PRECISION: `net.no_such_row == 3` in backticks is a comparison, not an ini row
 struct IDXGISwapChain;
-struct Drilled { int realMember; };
+namespace dspace { struct Drilled { int realMember; }; }
 CFG_FLAG(net_real_row, "net.real_row", "net", false, "VOTVCOOP_READ_HERE", "a row")
 void logs() { UE_LOGI("x_sync: applied active=%d", 1); }
 """
@@ -281,6 +288,13 @@ MUTANTS = [
     ("member: a forward declaration is a definition",
      r'([A-Z]\w+)\s*(?:final\s*)?(?::[^;{]*)?\{', r'([A-Z]\w+)'),
     ("member: every member resolves", 'm not in docs.code_words', 'm in ()'),
+    ("member: the pattern does not overlap", r'(?:\w+::)*([A-Za-z_]', r'(?:zzz::)*([A-Za-z_]'),
+    ("member: a mirror type is ours",
+     'if not t.endswith(MIRROR_HEADER):', 'if True:'),
+    ("ini: a comparison is a row", r'\s*=(?!=)")', r'\s*=")'),
+    ("path: a foreign tree counts only at the start",
+     'return any(cand.startswith(f) or ("/" + f) in cand for f in FOREIGN_TREE)',
+     'return cand.startswith(FOREIGN_TREE)'),
     ("label: drops the named families",
      'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
     ("label: increment needs its dash",
@@ -483,6 +497,12 @@ def main():
     # A `.in` template, so the path axis has a name that only resolves when it is read in full.
     with open(os.path.join(repo, "src", "votv-coop", "include", "v.h.in"), "w", encoding="utf-8") as f:
         f.write('#define V "@VER@"\n')
+    # The engine-mirror header: types named for the engine's own, which the member axis must not
+    # adjudicate. Its path is what the guard matches, so it lives where the real one does.
+    os.makedirs(os.path.join(repo, "src", "votv-coop", "include", "ue_wrap", "core"))
+    with open(os.path.join(repo, "src", "votv-coop", "include", "ue_wrap", "core", "types.h"),
+              "w", encoding="utf-8") as f:
+        f.write("#pragma once\nstruct FMirror { float X; };\n")
     # A real nested repository, so `tracked` sees a gitlink and `vendored` has something to read.
     vend = os.path.join(repo, "third_party", "vend")
     os.makedirs(vend)
@@ -521,7 +541,7 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 113, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 120, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
               "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
@@ -530,8 +550,8 @@ def main():
               "src.comment_review": 3, "src.comment_evidence": 4,
               "src.comment_label": 15,
               "src.comment_dead_path": 1, "src.comment_dead_log_marker": 1,
-              "src.comment_dead_env": 1, "src.comment_dead_ini_key": 1,
-              "src.comment_dead_member": 1}
+              "src.comment_dead_env": 1, "src.comment_dead_ini_key": 2,
+              "src.comment_dead_member": 2}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to

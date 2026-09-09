@@ -166,10 +166,11 @@ several of them special treatment and moving them would add exactly the strangen
 removes.
 `.github/ci/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
-the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
-more than half comment, offsets pinned in prose that the code resolves elsewhere, declarations
-nothing calls, citations that name nothing, and the citation vocabulary below. CI refuses a push that makes any of those
-measures worse; the plain volume of prose is reported, not gated.
+the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that
+are more than half comment, offsets pinned in prose that the code resolves elsewhere,
+declarations nothing calls, citations that name nothing, and the citation vocabulary below. CI
+refuses a push that makes any of those measures worse; the plain volume of prose is reported,
+not gated.
 
 ## Code comments
 
@@ -189,8 +190,9 @@ repository root, relative to the file it sits in, or in the module-root spelling
 writes (`src/ue_wrap/x.cpp`, relative to `src/votv-coop/`). A quoted log line must be one some
 `UE_LOG` format actually sends; an environment variable, one some code reads; a backticked
 `section.row=`, a row of the config registry; and a `Type::member` naming one of our own types,
-a member that type has. The gate counts all five, so a rename that leaves its citations behind
-is refused at the push rather than found by the next reader.
+a member name this tree still uses. The gate counts all five in the mod's own C++ comments, so a
+rename that leaves its citations there is refused at the push; everywhere else in the tree the
+rule holds and only a reader enforces it.
 
 ## Pull requests
 
