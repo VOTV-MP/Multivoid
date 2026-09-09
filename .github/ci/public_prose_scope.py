@@ -43,8 +43,9 @@ OTHER_SKIP = ("src/votv-coop/third_party/", "reference/")
 # This gate is a family of modules, not one file, so the first prefix names the
 # family: `public_prose_` rather than `public_prose_gate`, so that a sibling is
 # exempt for exactly the reason the entry point is, and nothing wider is.
-OTHER_MARKER_OWNERS = (".github/ci/public_prose_", ".github/ci/public_leak_gate",
-                       ".github/ci/public_leak_ack", ".github/ci/commit_msg_check")
+OTHER_MARKER_OWNERS = (".github/ci/public_prose_", ".github/ci/prose_drill_",
+                       ".github/ci/public_leak_gate", ".github/ci/public_leak_ack",
+                       ".github/ci/commit_msg_check")
 # Third-party licence texts are reproduced as-is, and the baseline is generated from the counters,
 # so it names them by construction.
 OTHER_EXEMPT = ("LICENSE", "THIRD-PARTY", "public_prose_baseline.json")
