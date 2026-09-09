@@ -31,6 +31,10 @@ DOC_NAME_EXEMPT = ("README", "LICENSE", "CONTRIBUTING", "SECURITY", "THIRD-PARTY
 SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
 SRC_EXT = (".cpp", ".h", ".inc")
 MD_HARD_CAP = 600
+# A script over this is flagged the way a doc over MD_HARD_CAP is. It is the
+# soft cap this repository asks of its own C++, applied to the tree's other
+# text, and unlike the marker counters it reads the gates themselves.
+OTHER_HARD_CAP = 800
 # The tracked text files that are neither markdown nor our own C++: build, CI, ignore rules,
 # scripts. Extension-gated so a binary is never read as prose; vendored trees are skipped whole,
 # since a third-party file is not ours to rewrite.
@@ -146,11 +150,23 @@ def doc_name_fault(path, is_tracked):
     return None if stem == stem.upper() else "an untracked doc is local: name it UPPER_CASE"
 
 
-def measured_other(path):
+def other_file(path):
+    """Membership, with NO exemption for the gates.
+
+    OTHER_MARKER_OWNERS excuses a file for NAMING a refused word, because naming
+    it is that file's job. It was written as "this gate does not read this file",
+    so it excused every other property too -- and this gate reached 1,317 lines
+    unseen, because one exemption silenced every counter at once, including the
+    ones about length. An exemption belongs to the PROPERTY it was granted for.
+    """
     return (not path.endswith(".md") and path.endswith(OTHER_EXT)
             and not path.startswith(SRC_ROOTS) and not path.startswith(OTHER_SKIP)
-            and not path.startswith(OTHER_MARKER_OWNERS)
             and not any(x in os.path.basename(path) for x in OTHER_EXEMPT))
+
+
+def measured_other(path):
+    """Read for MARKERS: `other_file` minus the files whose job those markers are."""
+    return other_file(path) and not path.startswith(OTHER_MARKER_OWNERS)
 
 
 def measured(path):
@@ -160,4 +176,4 @@ def measured(path):
     R-P8 brought in -- the build files, the workflows, the ignore rules, the scripts -- could be
     modified-but-unstaged while a baseline was written from their contents. That is the incident
     R-P12 exists to prevent, and it was open for a whole counter family."""
-    return measured_md(path) or measured_src(path) or measured_other(path)
+    return measured_md(path) or measured_src(path) or other_file(path)

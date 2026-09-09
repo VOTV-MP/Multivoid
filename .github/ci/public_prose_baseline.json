@@ -30,6 +30,7 @@
     "other.ptr_claude": 1,
     "other.ptr_security": 1,
     "other.dead_docpath": 0,
+    "other.over_800": 1,
     "src.comment_lines": 42442,
     "src.comment_cyrillic": 0,
     "src.comment_user": 0,

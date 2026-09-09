@@ -121,7 +121,7 @@ def main():
               "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
               "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
-              "other.dead_docpath": 4,
+              "other.dead_docpath": 4, "other.over_800": 0,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
               "src.comment_lines": 128, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
@@ -275,6 +275,42 @@ def main():
     git(["commit", "-q", "-am", "[drill] 601"], repo, env)
     r = run(["--repo", repo, "--baseline", baseline])
     arm("a 601-line doc crosses the 600-line cap", r.returncode == 1 and "md.over_600 0->1" in r.stdout)
+    # LENGTH is counted where markers are not. The file is a marker OWNER by path,
+    # so every marker counter ignores it -- and that exemption used to hide its
+    # size too, which is how the gate itself reached 1,317 lines unnoticed. Two
+    # arms, because "counted" and "still exempt from markers" are two claims: the
+    # fixture carries a USER attribution that must NOT be counted.
+    os.makedirs(os.path.join(repo, ".github", "ci"), exist_ok=True)
+    owner = os.path.join(repo, ".github", "ci", "public_prose_owner.py")
+    with open(owner, "w", encoding="utf-8") as f:
+        f.write("# USER said so, verbatim\n" + "# a line\n" * 800)
+    git(["add", "."], repo, env)
+    git(["commit", "-q", "-m", "[drill] an 801-line marker owner"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline])
+    arm("an 801-line marker owner is counted for SIZE",
+        "other.over_800 0->1" in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1])
+    arm("...and its markers are still not counted",
+        "other.user 1->" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1])
+    # SIZE ONLY is the answer for a marker owner that trips NOTHING: the 801-line
+    # one above trips the size counter, so --file rightly lists that counter
+    # instead. The small one is the case the fourth state exists for -- it used to
+    # be called SWEPT, telling a sweep its markers had been read when they never
+    # are, and calling it unread would now hide that its length is counted.
+    small = os.path.join(repo, ".github", "ci", "public_prose_small.py")
+    with open(small, "w", encoding="utf-8") as f:
+        f.write("# a short marker owner\n" * 3)
+    git(["add", "."], repo, env)
+    git(["commit", "-q", "-m", "[drill] a short marker owner"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "public_prose_small.py"])
+    arm("--file calls a clean marker owner SIZE ONLY, neither swept nor unread",
+        "SIZE ONLY" in r.stdout and "3 lines" in r.stdout and "SWEPT" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "public_prose_owner.py"])
+    arm("--file names the counter when a marker owner trips one",
+        "other.over_800" in r.stdout and "SIZE ONLY" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
     # --file is the sweep's own instrument, and it used to answer three different states with one
     # sentence: a path the tree does not have, a file this gate is FORBIDDEN to read, and a file it
     # read and found nothing in. Calling the second one swept tells a sweep it is finished with a

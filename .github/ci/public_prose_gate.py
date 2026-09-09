@@ -36,8 +36,8 @@ from public_prose_markers import (
     SRC_EXTRA)
 from public_prose_scope import (
     BASELINE, DOC_ROOT, HALF_COMMENT_MIN_LINES, INFORMATIONAL, MD_HARD_CAP, OTHER_COMMENTS_ONLY,
-    OTHER_MARKER_OWNERS, REPO, SRC_EXT, SRC_ROOTS, code_only, doc_name_fault, git, measured,
-    measured_md, measured_other, measured_src, names_path, read, tracked)
+    OTHER_HARD_CAP, OTHER_MARKER_OWNERS, REPO, SRC_EXT, SRC_ROOTS, code_only, doc_name_fault, git,
+    measured, measured_md, measured_other, measured_src, names_path, other_file, read, tracked)
 
 
 def measure(repo):
@@ -105,6 +105,19 @@ def measure(repo):
     # the ignore file alone carried 31 dated lines, a user quote and a paragraph that counted the
     # open rows in an unpublished security register. Whole lines are measured, not just comments:
     # in a config file the distinction does not hold, and a marker anywhere in one is the problem.
+    # Length is measured over every other file, the marker owners included: a gate
+    # that must name a refused word has no excuse for being 1,300 lines, and this
+    # one was, unnoticed, for exactly as long as nothing counted it.
+    c["other.over_%d" % OTHER_HARD_CAP] = 0
+    for p in [q for q in files if other_file(q)]:
+        text = read(repo, p)
+        if text is None:
+            continue
+        n = len(text.splitlines())
+        if n > OTHER_HARD_CAP:
+            c["other.over_%d" % OTHER_HARD_CAP] += 1
+            who["other.over_%d" % OTHER_HARD_CAP][p] = n
+
     other = [p for p in files if measured_other(p)]
     c["other.files"] = len(other)
     for k in LINE_MARKERS:
@@ -249,6 +262,8 @@ FIXED_DESCRIPTIONS = {
     "md.files": "tracked markdown files",
     "md.lines": "markdown lines",
     "md.over_%d" % MD_HARD_CAP: "docs over the %d-line hard cap" % MD_HARD_CAP,
+    "other.over_%d" % OTHER_HARD_CAP:
+        "scripts and CI files over the %d-line cap (the gates included)" % OTHER_HARD_CAP,
     "md.dead_links": "markdown links to a path not in the repository",
     "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
     "md.name_case": "docs named for the wrong half (public lowercase, local UPPER_CASE)",
@@ -398,8 +413,16 @@ def main():
                     print("{}: no tracked file matches".format(want))
                 for p in known:
                     if not measured(p):
-                        why = " (its job is these markers)" if p.startswith(OTHER_MARKER_OWNERS) else ""
-                        print("{}  NOT MEASURED -- this gate does not read this file{}".format(p, why))
+                        print("{}  NOT MEASURED -- this gate does not read this file".format(p))
+                    elif p.startswith(OTHER_MARKER_OWNERS):
+                        # A FOURTH state. Calling this file swept would say its markers had been
+                        # looked at, and they never are; calling it unread would hide that its
+                        # length is counted like everyone else's.
+                        text = read(a.repo, p)
+                        n = len(text.splitlines()) if text is not None else 0
+                        print("{}  SIZE ONLY ({} lines, cap {}) -- naming these markers is this "
+                              "file's job, so they are not counted; its length is"
+                              .format(p, n, OTHER_HARD_CAP))
                     else:
                         print("{}  SWEPT -- read by this gate, contributes to no counter".format(p))
                 continue

@@ -14,6 +14,13 @@ mutation pass must never search it for one.
 # drill must go RED. A row that stays green names a regression that would ship -- which is how
 # `[A]` and the whole named-label family were found to have no canary at all.
 MUTANTS = [
+    # The size pass reads `other_file`, which is the membership WITHOUT the marker
+    # exemption. Narrowing it back to `measured_other` is the exact blindness that
+    # let this gate reach 1,317 lines: markers exempt, and length exempt with them.
+    ("size: the cap stops reading the gates",
+     'for p in [q for q in files if other_file(q)]:',
+     'for p in [q for q in files if measured_other(q)]:'),
+    ("size: the cap is never crossed", 'if n > OTHER_HARD_CAP:', 'if n > 10 ** 9:'),
     # --file's own answers: calling an unread file swept, and matching a basename by suffix.
     ("file: an unread file is called swept", "if not measured(p):", "if False:"),
     ("file: a basename matches by suffix", 'return p == want or p.endswith("/" + want)',
