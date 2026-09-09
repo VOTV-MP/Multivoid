@@ -12,7 +12,7 @@
 //
 // VOTVCOOP_SEED_DISABLE=1 skips CaptureJoinSnapshot in email_sync and signal_sync, so the
 // in-window email never arrives -- which is what shows the seed, not a leftover retry, is
-// the delivery mechanism. Grep keys: "[SEED-DRILL] authored solo" and "... in-window".
+// the delivery mechanism. Grep keys: "[SEED-DRILL] authored [seed-drill] solo" and "... in-window".
 
 #include "harness/autotest.h"
 
