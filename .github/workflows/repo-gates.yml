@@ -45,8 +45,13 @@ jobs:
       - name: Commit-message check drill
         run: python3 .github/ci/commit_msg_check_drill.py
 
+      # A pull request is checked out as the ephemeral merge commit GitHub builds from the branch and
+      # the base. That commit's `Merge <sha> into <sha>` subject can never pass, and no contributor
+      # wrote it -- the branch head is the tip whose commits are under review (github.sha on a push).
       - name: Commit-message check (every commit since the checker was added)
-        run: python3 .github/ci/commit_msg_check.py --from-boundary
+        run: python3 .github/ci/commit_msg_check.py --from-boundary --tip "$TIP"
+        env:
+          TIP: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Public-prose gate drill
         run: python3 .github/ci/public_prose_gate_drill.py

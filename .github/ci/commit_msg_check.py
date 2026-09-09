@@ -16,6 +16,8 @@ Usage:
                                             are ignored, as git itself drops them
   commit_msg_check.py --range A..B          every commit in the range, judged as recorded (CI)
   commit_msg_check.py --from-boundary       CI default: every commit since this checker was added
+  commit_msg_check.py --from-boundary --tip REV
+                                            the same, ending at REV rather than HEAD -- see --tip
 
 Exit 0 when every message passes, 1 otherwise; each refusal names the rule it breaks.
 """
@@ -184,6 +186,10 @@ def git(args, cwd, check=True):
 
 
 def boundary(repo):
+    # Walked from the checkout, never from --tip: when the rule was adopted is a fact about this
+    # repository, while the tip only says which commits are under review. Resolving it from the tip
+    # would hand a branch that forked before the checker an empty boundary -- and "never added to
+    # this history" exits 0, so such a branch would pass by being judged not at all.
     out = git(["log", "--diff-filter=A", "--format=%H", "--", SELF_REL], repo).split()
     return out[-1] if out else None
 
@@ -221,6 +227,13 @@ def main():
     ap.add_argument("--range", help="git revision range, e.g. origin/main..HEAD")
     ap.add_argument("--from-boundary", action="store_true",
                     help="every commit since the one that added this checker")
+    # A pull request is tested on an ephemeral merge commit the forge builds from the branch and the
+    # base. Its `Merge <sha> into <sha>` subject is 92 characters and carries no scope prefix, so it
+    # can never pass -- and no contributor wrote it, nor does it ever enter the history. Judging it
+    # would refuse every pull request on a commit nobody can fix; the branch head is the real tip.
+    ap.add_argument("--tip", default="HEAD",
+                    help="the tip of the history to judge (default HEAD); on a pull request pass the "
+                         "branch head, not the forge's merge commit")
     ap.add_argument("--repo", default=REPO)
     a = ap.parse_args()
     if a.message_file:
@@ -236,6 +249,13 @@ def main():
     if a.range:
         return check_range(a.repo, a.range)
     if a.from_boundary:
+        if a.tip.startswith("-"):
+            print("commit_msg_check: a tip cannot start with '-' ({})".format(a.tip))
+            return 2
+        if subprocess.run(["git", "rev-parse", "-q", "--verify", "--end-of-options",
+                           a.tip + "^{commit}"], cwd=a.repo, capture_output=True).returncode != 0:
+            print("commit_msg_check: the tip names no commit in this clone ({})".format(a.tip))
+            return 2
         if git(["rev-parse", "--is-shallow-repository"], a.repo).strip() == "true":
             print("commit_msg_check: a shallow clone cannot find the boundary -- fetch the full history")
             return 1
@@ -245,7 +265,7 @@ def main():
             return 0
         has_parent = subprocess.run(["git", "rev-parse", "-q", "--verify", b + "~1"], cwd=a.repo,
                                     capture_output=True).returncode == 0
-        return check_range(a.repo, b + "~1..HEAD" if has_parent else "HEAD")
+        return check_range(a.repo, b + "~1.." + a.tip if has_parent else a.tip)
     ap.print_help()
     return 2
 
