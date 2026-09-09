@@ -4,7 +4,7 @@
 
 #include "coop/player/local_body.h"
 #include "coop/player/skin_registry.h"
-#include "coop/player/skin_preview.h"  // 2026-08: live in-world mannequin preview on hover
+#include "coop/player/skin_preview.h"  // the live in-world mannequin preview on hover
 #include "ui/overlay_backend.h"
 #include "ui/scale.h"
 
@@ -87,7 +87,7 @@ void Render() {
     if (perRow < 1) perRow = 1;
 
     int i = 0;
-    std::string hoveredName;  // 2026-08: the tile under the cursor -> live mannequin preview
+    std::string hoveredName;  // the tile under the cursor -> live mannequin preview
     for (const auto& e : entries) {
         // A PAK IS NOT A SKIN. The scan lists the stem of every .pak under LogicMods, so
         // another mod's pak lands here and resolves to no mesh anywhere; offering it is how
@@ -126,7 +126,7 @@ void Render() {
                                                                            : "(no preview)",
                                     ImVec2(tileW, tileImgH));
         }
-        // 2026-08: hover -> live mannequin preview of this skin.
+        // Hover -> live mannequin preview of this skin.
         if (ImGui::IsItemHovered()) hoveredName = e.name;
         if (isCurrent) ImGui::PopStyleColor(3);
         // Name line under the tile, clipped to the tile width.
@@ -139,7 +139,7 @@ void Render() {
         ImGui::EndGroup();
         ImGui::PopID();
     }
-    // 2026-08: live in-world mannequin preview -- show the hovered skin, else the
+    // The live in-world mannequin preview -- show the hovered skin, else the
     // current one. Runs every frame this section is visible; skin_preview::Tick
     // (game thread) spawns/despawns the mannequin by this keep-alive.
     coop::skin_preview::Activate(hoveredName.empty() ? current : hoveredName);
