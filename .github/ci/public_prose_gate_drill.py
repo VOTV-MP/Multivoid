@@ -8,6 +8,7 @@ count as dead; a link to an untracked one must.
 
     python .github/ci/public_prose_gate_drill.py
 """
+import glob
 import io
 import json
 import os
@@ -782,20 +783,40 @@ def main():
         return 1 if bad else 0
     mut = os.path.join(tmp, "mutant")
     os.makedirs(mut, exist_ok=True)
-    for f in ("public_prose_gate.py", "public_prose_gate_drill.py"):
-        shutil.copy(os.path.join(HERE, f), os.path.join(mut, f))
-    gate_src = io.open(os.path.join(mut, "public_prose_gate.py"), encoding="utf-8").read()
+    # The gate is a family, not a file: every public_prose_*.py sibling travels to
+    # the mutant copy, and an anchor must be unique across their UNION. That is
+    # stricter than uniqueness within one file, and it does not have to be told
+    # which sibling a given anchor lives in.
+    #
+    # This drill is a sibling by that glob and is copied like the rest, but it is
+    # never SEARCHED: MUTANTS quotes every anchor, so counting here would find a
+    # second copy of each one that carries no backslash to escape.
+    self_name = os.path.basename(__file__)
+    sources = {}
+    for path in sorted(glob.glob(os.path.join(HERE, "public_prose_*.py"))):
+        base = os.path.basename(path)
+        shutil.copy(path, os.path.join(mut, base))
+        if base != self_name:
+            sources[base] = io.open(path, encoding="utf-8").read()
     for name, a, b in MUTANTS:
-        if gate_src.count(a) != 1:
-            arm("mutant anchor is unique: " + name, False, "found {}".format(gate_src.count(a)))
+        found = sum(text.count(a) for text in sources.values())
+        if found != 1:
+            arm("mutant anchor is unique: " + name, False,
+                "found {} across {} files".format(found, len(sources)))
             continue
-        with io.open(os.path.join(mut, "public_prose_gate.py"), "w", encoding="utf-8",
-                     newline="") as f:
-            f.write(gate_src.replace(a, b))
+        holder = [f for f, text in sources.items() if a in text][0]
+        # Each round rewrites every sibling from its pristine text, so one mutant
+        # never stacks on the one before it.
+        for base, text in sources.items():
+            with io.open(os.path.join(mut, base), "w", encoding="utf-8", newline="") as f:
+                f.write(text.replace(a, b) if base == holder else text)
         chk = subprocess.run(
             [sys.executable, "-c",
-             "import importlib.util,sys\n"
-             "s=importlib.util.spec_from_file_location('g',sys.argv[1])\n"
+             # The mutant's own directory leads sys.path, so importing a sibling
+             # reaches the mutated copy and never the pristine one beside it.
+             "import importlib.util,os,sys\n"
+             "p=sys.argv[1]; sys.path.insert(0, os.path.dirname(p))\n"
+             "s=importlib.util.spec_from_file_location('g',p)\n"
              "m=importlib.util.module_from_spec(s); s.loader.exec_module(m)",
              os.path.join(mut, "public_prose_gate.py")],
             capture_output=True, text=True, encoding="utf-8", errors="replace")
