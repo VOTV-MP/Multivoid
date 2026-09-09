@@ -1,4 +1,4 @@
-// ue_wrap/asset_load.h -- load a cooked asset from a mounted .pak by /Game path.
+// ue_wrap/core/asset_load.h -- load a cooked asset from a mounted .pak by /Game path.
 //
 // VOTV ships URyRuntimeObjectHelpers (a UBlueprintFunctionLibrary) whose
 // LoadObject(FString) synchronously loads + returns a UObject by its /Game/...

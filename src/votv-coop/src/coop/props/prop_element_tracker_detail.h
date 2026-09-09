@@ -4,7 +4,7 @@
 // when the tracker passed the 800-LOC soft cap), and prop_key_index.cpp (the
 // key -> live-actor index family, extracted 2026-07-10, second slice).
 //
-// Sibling-internal header (the net/session_lanes.h / event_dispatch.h
+// Sibling-internal header (the coop/net/session_lanes.h / event_dispatch.h
 // precedent) -- NOT part of the public coop/ include surface; only the three
 // TUs above include it.
 //

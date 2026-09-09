@@ -1,4 +1,4 @@
-// ue_wrap/tape_caddy.h -- standalone engine access for the STOLAS tape recorder
+// ue_wrap/desk/tape_caddy.h -- standalone engine access for the STOLAS tape recorder
 // (Awallunit_tapes_C, ONE level-baked instance) and the reel props
 // (Aprop_reel_C base + prop_reel_big_C / prop_reel_small_C). Principle-7
 // engine-wrapper layer -- NO network logic; coop/tape_caddy_sync (the L7
@@ -6,7 +6,7 @@
 //
 // reelBig / reelSmall DOUBLE as slot state (-1.0 = slot empty, >= 0 = reel
 // present at that progress); Active is already wire-synced by the ApplianceState
-// family (ue_wrap/appliance.cpp); upd() applies mesh visibility +
+// family (ue_wrap/devices/appliance.cpp); upd() applies mesh visibility +
 // SetActorTickEnabled(Active). The reel prop's Progress lives on the Aprop_reel_C
 // BASE (declared there; FindPropertyOffset is exact-owner -- resolve on the
 // base). NOTE: the wallunit's `Active` toggle is NOT surfaced here (RULE 2 --

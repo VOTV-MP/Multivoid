@@ -1,4 +1,4 @@
-// coop/weather_event_births.cpp -- see coop/weather_event_births.h.
+// coop/world/weather_event_births.cpp -- see coop/world/weather_event_births.h.
 
 #include "coop/world/weather_event_births.h"
 

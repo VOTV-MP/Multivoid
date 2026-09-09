@@ -1,4 +1,4 @@
-// ue_wrap/hook.h -- minimal inline-hook wrapper (MinHook).
+// ue_wrap/core/hook.h -- minimal inline-hook wrapper (MinHook).
 //
 // Engine-wrapper layer (principle 7): no gameplay/network logic. The standalone
 // mod owns its own function hooking (RULE No.3 -- no UE4SS at runtime). MinHook

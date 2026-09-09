@@ -1,4 +1,4 @@
-// coop/remote_prop.cpp -- the PropPose drive (one kinematic drive per peer slot), OnRelease,
+// coop/props/remote_prop.cpp -- the PropPose drive (one kinematic drive per peer slot), OnRelease,
 // ForceRelease and the per-slot disconnect. The receivers live beside it: PropSpawn in
 // remote_prop_spawn.cpp, PropDestroy in remote_prop_destroy.cpp, PropConvert in
 // remote_prop_convert.cpp, the reflected physics thunks in remote_prop_physics.cpp.
@@ -47,7 +47,7 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 // ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState, LerpAngle, NowMs and the lerp
-// constants come from coop/active_drive.h.
+// constants come from coop/props/active_drive.h.
 using namespace coop::active_drive;
 
 // One drive per peer slot: each client drives its own held prop, so two clients holding

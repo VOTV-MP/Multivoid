@@ -1,4 +1,4 @@
-// coop/chat_bubbles.h -- MTA/SAMP-style overhead chat bubbles (12g, 2026-07-05).
+// coop/comms/chat_bubbles.h -- MTA/SAMP-style overhead chat bubbles (12g, 2026-07-05).
 //
 // Gameplay layer (principle 7), pure data like chat_feed: chat_sync feeds the
 // LAST chat message per sender slot in here (game thread, right next to its

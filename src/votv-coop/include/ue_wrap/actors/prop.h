@@ -1,4 +1,4 @@
-// ue_wrap/prop.h -- Aprop_C accessors. VOTV's physics-grabbable props share the base class
+// ue_wrap/actors/prop.h -- Aprop_C accessors. VOTV's physics-grabbable props share the base class
 // Aprop_C (about 540 derivatives), and the fields live at fixed offsets in the base: propData
 // (with `heavy` inside it), Static, frozen, Key and StaticMesh. sdk_profile.h holds every one
 // of those offsets. The cross-peer identifier is the Key FName's ToString'd value, the save

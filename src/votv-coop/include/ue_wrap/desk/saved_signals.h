@@ -1,6 +1,6 @@
-// ue_wrap/saved_signals.h -- engine access for the desk signal LIBRARY, gamemode.savedSignals_0
-// (TArray<Fstruct_signalDataDynamic>) and its two native verbs. Principle-7 engine-wrapper layer;
-// coop::signal_sync drives the mirror through here.
+// ue_wrap/desk/saved_signals.h -- engine access for the desk signal LIBRARY,
+// gamemode.savedSignals_0 (TArray<Fstruct_signalDataDynamic>) and its two native verbs. Principle-7
+// engine-wrapper layer; coop::signal_sync drives the mirror through here.
 //
 // The live list is the gamemode array, and saveSlot.savedSignals_comp_0 is its save marshal, copied
 // at saveObjects and at load, so persistence is free.

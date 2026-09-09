@@ -1,4 +1,4 @@
-// coop/deck_play_sync.cpp -- see coop/interactables/deck_play_sync.h.
+// coop/interactables/deck_play_sync.cpp -- see coop/interactables/deck_play_sync.h.
 
 #include "coop/interactables/deck_play_sync.h"
 

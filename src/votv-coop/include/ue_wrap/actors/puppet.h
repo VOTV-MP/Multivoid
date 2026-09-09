@@ -1,4 +1,4 @@
-// ue_wrap/puppet.h -- the remote player's visible body: an unpossessed mainPlayer_C spawned
+// ue_wrap/actors/puppet.h -- the remote player's visible body: an unpossessed mainPlayer_C spawned
 // inert (no controller, input blocked, its per-screen systems neutered), wearing the local
 // player's skin and AnimBP, and driven by us: its CharacterMovement velocity and mode from the
 // streamed pose, its head from the streamed look target. The same AnimBP serves the kerfur NPCs,

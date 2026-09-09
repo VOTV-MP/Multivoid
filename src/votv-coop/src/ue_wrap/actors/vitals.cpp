@@ -1,4 +1,4 @@
-// ue_wrap/vitals.cpp -- see ue_wrap/vitals.h.
+// ue_wrap/actors/vitals.cpp -- see ue_wrap/actors/vitals.h.
 
 #include "ue_wrap/actors/vitals.h"
 

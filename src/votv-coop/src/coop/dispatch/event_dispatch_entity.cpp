@@ -1,8 +1,8 @@
-// coop/event_dispatch_entity.cpp -- the entity-lifecycle and held-item reliable kinds:
+// coop/dispatch/event_dispatch_entity.cpp -- the entity-lifecycle and held-item reliable kinds:
 // PropStickState, PropRelease, PropSpawn, PropDestroy, PropConvert, PropSnapPos, the
 // owner-entity lane, EntitySpawn and EntityDestroy, the world-actor pair, PyramidGather and
 // ItemActivate. Each case validates at the trust boundary and hands off to its module. See
-// coop/event_dispatch.h.
+// coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 

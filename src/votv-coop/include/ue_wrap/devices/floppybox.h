@@ -1,4 +1,4 @@
-// ue_wrap/floppybox.h -- the disc crate (Aprop_floppyBox_C) wrapper.
+// ue_wrap/devices/floppybox.h -- the disc crate (Aprop_floppyBox_C) wrapper.
 //
 // RE ground truth: the OPEN-10 pass (votv-laptop-v2-OPEN10-impl-DESIGN-
 // 2026-07-18.md SS1 fact 6 + SS4): a LIFO stack of up to 15 discs held as two

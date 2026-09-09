@@ -1,6 +1,6 @@
-// coop/save_identity_bind.cpp -- the client binds its save-loaded natives to the host's eids from
-// the identity map the host sent: chip piles by per-family spawn order at the spawn seam and by
-// position at quiescence, off-form kerfurs by their portable save key. See the header.
+// coop/props/save_identity_bind.cpp -- the client binds its save-loaded natives to the host's eids
+// from the identity map the host sent: chip piles by per-family spawn order at the spawn seam and
+// by position at quiescence, off-form kerfurs by their portable save key. See the header.
 
 #include "coop/props/save_identity_bind.h"
 

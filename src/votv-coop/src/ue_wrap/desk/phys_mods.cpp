@@ -1,4 +1,4 @@
-// ue_wrap/phys_mods.cpp -- see ue_wrap/desk/phys_mods.h.
+// ue_wrap/desk/phys_mods.cpp -- see ue_wrap/desk/phys_mods.h.
 
 #include "ue_wrap/desk/phys_mods.h"
 

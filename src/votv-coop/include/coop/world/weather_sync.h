@@ -1,4 +1,4 @@
-// coop/weather_sync.h -- host-authoritative weather sync.
+// coop/world/weather_sync.h -- host-authoritative weather sync.
 //
 // VOTV's weather is owned by a single actor, AdaynightCycle_C. It runs the scheduler timers
 // (timerRain, timerLightning, fogEvent, superFogEvent, permaRain_timer), owns the twelve

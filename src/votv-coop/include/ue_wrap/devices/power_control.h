@@ -1,4 +1,4 @@
-// ue_wrap/power_control.h -- standalone engine access for the VOTV base POWER PANEL
+// ue_wrap/devices/power_control.h -- standalone engine access for the VOTV base POWER PANEL
 // (ApowerControl_C). Principle-7 engine-wrapper layer (no network/coop state).
 // coop::power_sync drives the cross-peer sync through here.
 //

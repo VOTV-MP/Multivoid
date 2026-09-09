@@ -1,4 +1,4 @@
-// ue_wrap/phys_mods.h -- engine access for the desk's PHYSICAL MODULES array.
+// ue_wrap/desk/phys_mods.h -- engine access for the desk's PHYSICAL MODULES array.
 // Principle-7 engine-wrapper layer: no network logic; coop::physmods_sync drives
 // the mirror through here.
 //

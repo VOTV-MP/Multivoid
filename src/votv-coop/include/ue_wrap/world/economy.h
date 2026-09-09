@@ -1,4 +1,4 @@
-// ue_wrap/economy.h -- player credit balance (saveSlot.Points) accessor and AddPoints.
+// ue_wrap/world/economy.h -- player credit balance (saveSlot.Points) accessor and AddPoints.
 //
 // Resolves AmainGamemode_C -> saveSlot, the canonical one-per-machine store, and reads and
 // writes the int32 Points by reflected field NAME. Cooked offsets shift across recooks, so the

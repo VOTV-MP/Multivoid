@@ -1,4 +1,4 @@
-// ue_wrap/dish.cpp -- see ue_wrap/dish.h.
+// ue_wrap/desk/dish.cpp -- see ue_wrap/desk/dish.h.
 
 #include "ue_wrap/desk/dish.h"
 

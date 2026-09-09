@@ -37,7 +37,7 @@ void Install();
 // so the interceptors can read the live role (host vs client) without
 // touching engine state. Stored as atomic to be safe against the
 // parallel-anim-worker ProcessEvent dispatch shape per
-// ue_wrap/game_thread.h:118-120.
+// ue_wrap/core/game_thread.h:118-120.
 void SetSession(coop::net::Session* session);
 
 }  // namespace coop::garbage_sync

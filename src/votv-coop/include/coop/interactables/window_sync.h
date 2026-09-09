@@ -1,18 +1,18 @@
-// coop/window_sync.h -- the base window's dirt scalar (AbaseWindow_C::clean, the base's "main huge
-// window"), on ReliableKind::WindowCleanState. Gameplay/network layer (principle 7): the wire
-// protocol, the per-tick poll, the apply, the per-window Key->actor index, the deferred retry and
-// the connect snapshot; the engine is reached only through ue_wrap::base_window.
+// coop/interactables/window_sync.h -- the base window's dirt scalar (AbaseWindow_C::clean, the
+// base's "main huge window"), on ReliableKind::WindowCleanState. Gameplay/network layer (principle
+// 7): the wire protocol, the per-tick poll, the apply, the per-window Key->actor index, the
+// deferred retry and the connect snapshot; the engine is reached only through ue_wrap::base_window.
 //
-// The model is symmetric and monotone, MTA's min register. While connected, each peer polls its indexed windows'
-// `clean` once per tick -- not a UFunction observer, since cleanSponge is blueprint-internal and
-// never reaches our ProcessEvent detour, as with doors and the keypad -- and broadcasts on a
-// DECREASE, keyed by the window's Aactor_save_C::Key. A receiver resolves the window by Key,
-// deferring and retrying if it has not streamed in yet, and applies MIN(local, wire): a live edge
-// can only make a window CLEANER, so two peers wiping at once converge without oscillation, and
-// nothing re-raises `clean` the way a door re-closes, so no host authority is needed. The host's
-// relay carries a client's wipe to the other clients. On a connect edge the host sends each
-// window's current value with adopt=1, applied AS SENT so a joiner takes the host's world even
-// where its own save was cleaner -- which is why an adopt counts only from the host.
+// The model is symmetric and monotone, MTA's min register. While connected, each peer polls its
+// indexed windows' `clean` once per tick -- not a UFunction observer, since cleanSponge is
+// blueprint-internal and never reaches our ProcessEvent detour, as with doors and the keypad -- and
+// broadcasts on a DECREASE, keyed by the window's Aactor_save_C::Key. A receiver resolves the
+// window by Key, deferring and retrying if it has not streamed in yet, and applies MIN(local,
+// wire): a live edge can only make a window CLEANER, so two peers wiping at once converge without
+// oscillation, and nothing re-raises `clean` the way a door re-closes, so no host authority is
+// needed. The host's relay carries a client's wipe to the other clients. On a connect edge the host
+// sends each window's current value with adopt=1, applied AS SENT so a joiner takes the host's
+// world even where its own save was cleaner -- which is why an adopt counts only from the host.
 
 #pragma once
 

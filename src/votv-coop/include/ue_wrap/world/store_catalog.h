@@ -1,4 +1,4 @@
-// ue_wrap/store_catalog.h -- the laptop shop's price list, read from the game's `list_store`
+// ue_wrap/world/store_catalog.h -- the laptop shop's price list, read from the game's `list_store`
 // UDataTable. Engine-wrapper layer (principle 7): no network, no coop state, no policy. It answers
 // "what does the game say row <name> is?" and coop/items/order_sync decides what to do about it --
 // the arbiter's table behind the rule that an intent names WHAT, never WHAT IT COSTS (the lane is

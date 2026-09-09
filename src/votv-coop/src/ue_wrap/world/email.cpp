@@ -1,4 +1,4 @@
-// ue_wrap/email.cpp -- see ue_wrap/email.h.
+// ue_wrap/world/email.cpp -- see ue_wrap/world/email.h.
 
 #include "ue_wrap/world/email.h"
 

@@ -1,4 +1,4 @@
-// ue_wrap/directionalwind.h -- AdirectionalWind_C engine wrapper (principle 7).
+// ue_wrap/world/directionalwind.h -- AdirectionalWind_C engine wrapper (principle 7).
 //
 // The wind actor is a singleton, also held by mainGamemode.directionalWind. This wraps the
 // four persistent rain and background wind fields (WindState below) and windTarget's

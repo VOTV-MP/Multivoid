@@ -1,4 +1,4 @@
-// ue_wrap/signal_dynamic.cpp -- see header.
+// ue_wrap/desk/signal_dynamic.cpp -- see header.
 
 #include "ue_wrap/desk/signal_dynamic.h"
 

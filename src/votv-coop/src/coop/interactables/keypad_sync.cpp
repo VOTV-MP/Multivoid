@@ -1,6 +1,6 @@
-// coop/keypad_sync.cpp -- the password keypad (passwordLock_C) mirror, on two axes. The digit
-// buffer is a bidirectional input mirror: the poll broadcasts on a change, and the receiver
-// replays the digit delta through inputNumber, which runs the keypad's own validator, so a
+// coop/interactables/keypad_sync.cpp -- the password keypad (passwordLock_C) mirror, on two axes.
+// The digit buffer is a bidirectional input mirror: the poll broadcasts on a change, and the
+// receiver replays the digit delta through inputNumber, which runs the keypad's own validator, so a
 // client typing the correct code unlocks the shared door through the host's validation. Power
 // (active, propagated to the gated door's lock) is host-authoritative for state packets and
 // input-replayed for press events: a plain packet never drives the host's power, while a

@@ -1,7 +1,7 @@
-// coop/prop_snapshot.cpp -- the host's prop snapshot to a joining peer: one slot at a time through
-// Session::SendReliableToSlot (a second peer connecting mid-drain queues), chunked per tick,
-// bracketed by SnapshotBegin and SnapshotComplete; plus the bracket-free incremental express for a
-// prop adopted into tracking after the join. Interface: coop/prop_snapshot.h.
+// coop/props/prop_snapshot.cpp -- the host's prop snapshot to a joining peer: one slot at a time
+// through Session::SendReliableToSlot (a second peer connecting mid-drain queues), chunked per
+// tick, bracketed by SnapshotBegin and SnapshotComplete; plus the bracket-free incremental express
+// for a prop adopted into tracking after the join. Interface: coop/props/prop_snapshot.h.
 
 #include "coop/props/prop_snapshot.h"
 

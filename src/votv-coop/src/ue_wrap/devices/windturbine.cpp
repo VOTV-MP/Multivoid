@@ -1,4 +1,4 @@
-// ue_wrap/windturbine.cpp -- see ue_wrap/windturbine.h.
+// ue_wrap/devices/windturbine.cpp -- see ue_wrap/devices/windturbine.h.
 
 #include "ue_wrap/devices/windturbine.h"
 

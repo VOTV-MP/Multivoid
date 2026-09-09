@@ -1,4 +1,4 @@
-// coop/desk_cursor_sync.cpp -- see coop/desk_cursor_sync.h.
+// coop/interactables/desk_cursor_sync.cpp -- see coop/interactables/desk_cursor_sync.h.
 //
 // The coords-panel LIVE cursor (ui_coordinates.viewCoordinate) as continuous MOTION, the fix
 // for a 3 Hz reliable-snap jaggy. Sibling of the hand-item motion stream (MsgType::HandPose):

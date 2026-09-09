@@ -1,4 +1,4 @@
-// coop/wisp_tear_mirror.cpp -- see coop/wisp_tear_mirror.h.
+// coop/creatures/wisp_tear_mirror.cpp -- see coop/creatures/wisp_tear_mirror.h.
 
 #include "coop/creatures/wisp_tear_mirror.h"
 

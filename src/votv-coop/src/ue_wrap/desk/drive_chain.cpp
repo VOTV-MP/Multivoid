@@ -1,4 +1,4 @@
-// ue_wrap/drive_chain.cpp -- see ue_wrap/desk/drive_chain.h.
+// ue_wrap/desk/drive_chain.cpp -- see ue_wrap/desk/drive_chain.h.
 
 #include "ue_wrap/desk/drive_chain.h"
 

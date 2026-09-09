@@ -1,6 +1,7 @@
-// coop/kerfur_reconcile.cpp -- see coop/kerfur_reconcile.h. The kerfur off->active dup RETIRE (scope A),
-// v91 DETERMINISTIC: retire the off-prop MIRROR bound at the host eid carried on the npc EntitySpawn. No
-// fuzzy 1cm position match (the prior position-keyed sweep is gone -- RULE 2).
+// coop/creatures/kerfur_reconcile.cpp -- see coop/creatures/kerfur_reconcile.h. The kerfur
+// off->active dup RETIRE (scope A), v91 DETERMINISTIC: retire the off-prop MIRROR bound at the host
+// eid carried on the npc EntitySpawn. No fuzzy 1cm position match (the prior position-keyed sweep
+// is gone -- RULE 2).
 
 #include "coop/creatures/kerfur_reconcile.h"
 

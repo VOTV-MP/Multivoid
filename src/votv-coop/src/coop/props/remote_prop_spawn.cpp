@@ -1,5 +1,5 @@
-// coop/remote_prop_spawn.cpp -- the PropSpawn receiver: a wire prop resolves to a local actor by
-// exact key, by eid (trash), by a position bind (a keyless pile in the join bracket) or by a
+// coop/props/remote_prop_spawn.cpp -- the PropSpawn receiver: a wire prop resolves to a local actor
+// by exact key, by eid (trash), by a position bind (a keyless pile in the join bracket) or by a
 // fuzzy same-class match within 30 cm, converges it to the host's transform when it diverged, and
 // binds it as the mirror; with no match a fresh mirror is materialised (prop_fresh_spawn.cpp).
 

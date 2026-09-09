@@ -1,4 +1,4 @@
-// coop/signal_wire.cpp -- see header.
+// coop/interactables/signal_wire.cpp -- see header.
 
 #include "coop/interactables/signal_wire.h"
 

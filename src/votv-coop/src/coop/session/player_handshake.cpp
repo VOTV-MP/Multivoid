@@ -1,7 +1,7 @@
-// coop/player_handshake.cpp -- the Join handshake: what a peer sends about itself (its element id,
-// nickname, skin, display prefs, nick colour and game target), how the receiver writes it into
-// the roster ledger, the host's roster relay, the connect and joined lines, and the slot
-// assignment. See coop/player_handshake.h.
+// coop/session/player_handshake.cpp -- the Join handshake: what a peer sends about itself (its
+// element id, nickname, skin, display prefs, nick colour and game target), how the receiver writes
+// it into the roster ledger, the host's roster relay, the connect and joined lines, and the slot
+// assignment. See coop/session/player_handshake.h.
 
 #include "coop/session/player_handshake.h"
 

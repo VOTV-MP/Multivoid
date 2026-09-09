@@ -1,4 +1,4 @@
-// coop/power_sync.h -- base POWER PANEL (ApowerControl_C) breaker mirror.
+// coop/interactables/power_sync.h -- base POWER PANEL (ApowerControl_C) breaker mirror.
 //
 // Gameplay/network layer (principle 7): the wire packet, the per-tick sender poll, the receiver
 // apply, the deferred-apply retry and the connect snapshot. It reaches the engine only through

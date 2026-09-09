@@ -1,7 +1,7 @@
 // ue_wrap/world/skysphere.cpp -- see ue_wrap/world/skysphere.h. Engine access for the night-sky
 // actor (Anewsky_C). The two actor offsets are resolved from the live class via reflection,
 // with the Alpha 0.9.0-n values as logged fallbacks; saveSlot.moonPhase is resolved lazily, by
-// name only, and stays inert if it cannot be found. Mirrors ue_wrap/daynightcycle.cpp's cache
+// name only, and stays inert if it cannot be found. Mirrors ue_wrap/world/daynightcycle.cpp's cache
 // + resolve shape.
 
 #include "ue_wrap/world/skysphere.h"

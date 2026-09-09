@@ -1,9 +1,9 @@
-// coop/kerfur_convert.cpp -- the kerfur conversion (NPC to prop and back) on the wire. The
-// radial-menu verb, its spawn and its destroy all dispatch past ProcessEvent, so no interceptor
+// coop/creatures/kerfur_convert.cpp -- the kerfur conversion (NPC to prop and back) on the wire.
+// The radial-menu verb, its spawn and its destroy all dispatch past ProcessEvent, so no interceptor
 // sees the conversion: the host detects it at the generic express and destroy chokepoints, the
 // client by a death-watch poll (a request plus the local ghost claim), and the poll is the
 // solo-host backstop. The host executor lives in kerfur_convert_host.cpp, the client apply and
-// ghost custody in kerfur_convert_client.cpp. See coop/kerfur_convert.h.
+// ghost custody in kerfur_convert_client.cpp. See coop/creatures/kerfur_convert.h.
 
 #include "coop/creatures/kerfur_convert.h"
 

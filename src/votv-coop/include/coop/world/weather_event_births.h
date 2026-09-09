@@ -1,4 +1,4 @@
-// coop/weather_event_births.h -- the weather-event BIRTH seam.
+// coop/world/weather_event_births.h -- the weather-event BIRTH seam.
 //
 // daynightCycle rolls its weather events on the settime NEW-HOUR edge -- red sky at hour 12 on a 1%
 // roll, black fog on 0.05%, rolling fog behind enable_fog on fogProbability -- and calls

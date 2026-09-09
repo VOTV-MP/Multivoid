@@ -1,6 +1,6 @@
-// coop/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that expresses
-// a keyed prop's birth on the wire, the late-load catch for the trash and food classes, the
-// install of the destroy seam, and the class predicates. The destroy seam body lives in
+// coop/props/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that
+// expresses a keyed prop's birth on the wire, the late-load catch for the trash and food classes,
+// the install of the destroy seam, and the class predicates. The destroy seam body lives in
 // prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
 
 #include "coop/props/prop_lifecycle.h"

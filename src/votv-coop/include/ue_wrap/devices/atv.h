@@ -1,4 +1,4 @@
-// ue_wrap/atv.h -- standalone engine access for the VOTV ATV/quadbike (AATV_C).
+// ue_wrap/devices/atv.h -- standalone engine access for the VOTV ATV/quadbike (AATV_C).
 // Principle-7 engine-wrapper layer (NO network/coop state); coop::atv_sync drives the sync.
 //
 // AATV_C : APawn is a CUSTOM physics rig (NOT a UWheeledVehicleMovementComponent vehicle):

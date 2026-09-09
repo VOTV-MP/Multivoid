@@ -1,4 +1,4 @@
-// coop/trash_collect_sync.h -- mirror a freshly-spawned-and-grabbed item (the VOTV trash-pile
+// coop/props/trash_collect_sync.h -- mirror a freshly-spawned-and-grabbed item (the VOTV trash-pile
 // collect).
 //
 // Pressing E on a trashBitsPile_C ("trash stack") spawns one Aprop_C trash item and auto-grabs

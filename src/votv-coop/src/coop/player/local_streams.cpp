@@ -1,5 +1,6 @@
-// coop/local_streams.cpp -- the local player's outbound streams: the pose, the held prop (with
-// its new-held and release edges) and the ragdoll pelvis physics. See coop/local_streams.h.
+// coop/player/local_streams.cpp -- the local player's outbound streams: the pose, the held prop
+// (with its new-held and release edges) and the ragdoll pelvis physics. See
+// coop/player/local_streams.h.
 
 #include "coop/player/local_streams.h"
 

@@ -1,5 +1,6 @@
-// coop/interactable_sync.h -- generic "keyed interactable open/close/on-off state" sync. ONE
-// replication engine drives three features through a shared Channel, with no per-feature copy:
+// coop/interactables/interactable_sync.h -- generic "keyed interactable open/close/on-off state"
+// sync. ONE replication engine drives three features through a shared Channel, with no
+// per-feature copy:
 //   - DoorState (9):       base doors     (Adoor_C::doorOpen / doorClose)
 //   - LightState (10):     light groups   (Atrigger_lightRoot_C::SetActive)
 //   - ContainerState (11): container lids (Aprop_swinger_C::Open / Close)

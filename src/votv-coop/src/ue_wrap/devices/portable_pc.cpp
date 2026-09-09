@@ -1,4 +1,4 @@
-// ue_wrap/portable_pc.cpp -- see ue_wrap/devices/portable_pc.h.
+// ue_wrap/devices/portable_pc.cpp -- see ue_wrap/devices/portable_pc.h.
 
 #include "ue_wrap/devices/portable_pc.h"
 

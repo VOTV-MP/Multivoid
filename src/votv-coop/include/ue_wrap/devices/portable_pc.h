@@ -1,4 +1,4 @@
-// ue_wrap/portable_pc.h -- the portable PC prop (Aprop_portablePc_C) wrapper.
+// ue_wrap/devices/portable_pc.h -- the portable PC prop (Aprop_portablePc_C) wrapper.
 //
 // RE ground truth: votv-laptop-pc-RE-2026-07-17.md + the OPEN-10 pass
 // (votv-laptop-v2-OPEN10-impl-DESIGN-2026-07-18.md SS3): the portable PC is a

@@ -1,4 +1,4 @@
-// ue_wrap/trace.h -- standalone engine access for line-of-sight traces
+// ue_wrap/core/trace.h -- standalone engine access for line-of-sight traces
 // (UKismetSystemLibrary::LineTraceSingleForObjects). Principle-7 engine-wrapper
 // layer: wraps the KSL CDO/UFunction resolve + the ParamFrame plumbing of a world
 // line trace. NO network logic, NO gameplay state.

@@ -2115,7 +2115,7 @@ static_assert(sizeof(DeskScanEventPayload) == 4, "DeskScanEventPayload must be 4
 //
 // The component index is a compile-time wire contract, never discovery order: both peers map the
 // index to the same property name on the desk screen class through the static table in
-// ue_wrap/desk_audio.cpp. The order below is frozen.
+// ue_wrap/desk/desk_audio.cpp. The order below is frozen.
 enum class DeskSndComp : uint8_t {
     KeyPress    = 0,  // audio_coordKeyPress    -- one-shot, every accepted key down/up
     CoordFail   = 1,  // audio_coordFail        -- one-shot, broken-radar fail

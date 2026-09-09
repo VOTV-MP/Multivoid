@@ -1,4 +1,4 @@
-// ue_wrap/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
+// ue_wrap/core/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
 // the detour body, the transparent bypass, the SEH crash firewalls with fault localisation,
 // the re-entrancy depth probe and the perf self-timing. What runs on a dispatch (the observer,
 // interceptor and name-diagnostic registries, the posted-task pump) is game_thread.cpp's; the

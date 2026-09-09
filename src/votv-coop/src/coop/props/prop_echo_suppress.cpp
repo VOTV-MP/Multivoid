@@ -1,4 +1,4 @@
-// coop/prop_echo_suppress.cpp -- see header for design.
+// coop/props/prop_echo_suppress.cpp -- see header for design.
 
 #include "coop/props/prop_echo_suppress.h"
 

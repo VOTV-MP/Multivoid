@@ -1,6 +1,6 @@
-// coop/net_pump.cpp -- the per-tick orchestrator: the connection edges, the death policy, the
-// reaper, the puppet drive. The sync-module fan-out lists live in coop/subsystems.cpp and the
-// outbound pose, held-prop and ragdoll streams in coop/local_streams.cpp.
+// coop/session/net_pump.cpp -- the per-tick orchestrator: the connection edges, the death policy,
+// the reaper, the puppet drive. The sync-module fan-out lists live in coop/session/subsystems.cpp
+// and the outbound pose, held-prop and ragdoll streams in coop/player/local_streams.cpp.
 
 #include "coop/session/net_pump.h"
 

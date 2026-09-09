@@ -1,4 +1,4 @@
-// coop/wisp_attack_sync.h -- Killer Wisp coop, host side.
+// coop/creatures/wisp_attack_sync.h -- Killer Wisp coop, host side.
 //
 // killerwisp_C's grab and kill verbs always hit the LOCAL player: they call getMainPlayer(), never
 // the `Target` the blueprint acquired. So on the host, once per net-pump tick, this module picks each

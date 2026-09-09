@@ -1,4 +1,4 @@
-// ue_wrap/trace.cpp -- see ue_wrap/trace.h.
+// ue_wrap/core/trace.cpp -- see ue_wrap/core/trace.h.
 
 #include "ue_wrap/core/trace.h"
 

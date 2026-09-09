@@ -1,4 +1,4 @@
-// ue_wrap/saved_signals.cpp -- see header.
+// ue_wrap/desk/saved_signals.cpp -- see header.
 
 #include "ue_wrap/desk/saved_signals.h"
 

@@ -1,8 +1,8 @@
-// coop/item_activate.cpp -- flashlight sync (the item-activation lane). See coop/item_activate.h.
-// Install resolves mainPlayer_C's flashlight UFunctions and registers POST observers (retried
-// every pump tick); the observer is the sender, reading the flashlight state after the BP ran
-// and sending an ItemActivate; ApplyToPuppet is the receiver, called from event_feed's drain
-// with the puppet.
+// coop/player/item_activate.cpp -- flashlight sync (the item-activation lane). See
+// coop/player/item_activate.h. Install resolves mainPlayer_C's flashlight UFunctions and registers
+// POST observers (retried every pump tick); the observer is the sender, reading the flashlight
+// state after the BP ran and sending an ItemActivate; ApplyToPuppet is the receiver, called from
+// event_feed's drain with the puppet.
 
 #include "coop/player/item_activate.h"
 

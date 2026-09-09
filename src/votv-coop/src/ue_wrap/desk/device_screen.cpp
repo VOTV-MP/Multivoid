@@ -1,4 +1,4 @@
-// ue_wrap/device_screen.cpp -- see ue_wrap/device_screen.h.
+// ue_wrap/desk/device_screen.cpp -- see ue_wrap/desk/device_screen.h.
 
 #include "ue_wrap/desk/device_screen.h"
 

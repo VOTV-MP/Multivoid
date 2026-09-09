@@ -1,4 +1,5 @@
-// ue_wrap/ftext_utils.cpp -- see header. Mirrors ue_wrap/fname_utils.cpp (same resolve + pin shape).
+// ue_wrap/core/ftext_utils.cpp -- see header. Mirrors ue_wrap/core/fname_utils.cpp (same resolve +
+// pin shape).
 
 #include "ue_wrap/core/ftext_utils.h"
 

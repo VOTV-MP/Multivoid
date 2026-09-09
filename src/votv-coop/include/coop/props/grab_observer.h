@@ -1,4 +1,4 @@
-// coop/grab_observer.h -- physics-prop grab/release/throw observers.
+// coop/props/grab_observer.h -- physics-prop grab/release/throw observers.
 //
 // Stage 1 of [[project-physics-object-pickup]]. Engine-native UFunction
 // observers on UPhysicsHandleComponent / UPhysicsConstraintComponent /

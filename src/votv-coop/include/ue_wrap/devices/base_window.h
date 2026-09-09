@@ -1,5 +1,5 @@
-// ue_wrap/base_window.h -- engine access for the base's observation window (AbaseWindow_C), the
-// "main huge window". Principle-7 engine-wrapper layer: the reflection, struct-offset and
+// ue_wrap/devices/base_window.h -- engine access for the base's observation window (AbaseWindow_C),
+// the "main huge window". Principle-7 engine-wrapper layer: the reflection, struct-offset and
 // UFunction-thunk details of a baseWindow actor, with NO network logic and NO coop state --
 // coop::window_sync owns those and reaches the engine through here.
 //

@@ -3,7 +3,7 @@
 // and audio, the saved-signal and comp stores, the tape caddy and daily task, the
 // stationary PC. Same family contract as the sibling routers: returns true iff
 // msg.kind is in this family (processed or validation-dropped), so the switch IS
-// the single membership declaration (see coop/event_dispatch.h).
+// the single membership declaration (see coop/dispatch/event_dispatch.h).
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 

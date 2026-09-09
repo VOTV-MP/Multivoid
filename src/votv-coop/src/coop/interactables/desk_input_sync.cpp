@@ -1,4 +1,4 @@
-// coop/desk_input_sync.cpp -- see coop/interactables/desk_input_sync.h.
+// coop/interactables/desk_input_sync.cpp -- see coop/interactables/desk_input_sync.h.
 
 #include "coop/interactables/desk_input_sync.h"
 

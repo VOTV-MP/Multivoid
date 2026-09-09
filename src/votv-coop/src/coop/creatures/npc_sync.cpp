@@ -1,7 +1,7 @@
-// coop/npc_sync.cpp -- the host side of NPC sync: the BeginDeferredSpawnFromClass interceptor
-// that enrols an allowlisted NPC as an Npc Element and broadcasts EntitySpawn (and, on a connected
-// client, suppresses the local spawn), the POST observer that binds the spawned actor, the
-// K2_DestroyActor PRE that broadcasts EntityDestroy, and the silent register and release the
+// coop/creatures/npc_sync.cpp -- the host side of NPC sync: the BeginDeferredSpawnFromClass
+// interceptor that enrols an allowlisted NPC as an Npc Element and broadcasts EntitySpawn (and, on
+// a connected client, suppresses the local spawn), the POST observer that binds the spawned actor,
+// the K2_DestroyActor PRE that broadcasts EntityDestroy, and the silent register and release the
 // kerfur conversion uses. The receivers live in npc_mirror.cpp, the pose egress in
 // npc_pose_host.cpp, the install in npc_sync_install.cpp, the world walk in npc_world_enum.cpp.
 

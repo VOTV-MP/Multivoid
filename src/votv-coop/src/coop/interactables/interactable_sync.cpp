@@ -1,9 +1,9 @@
-// coop/interactable_sync.cpp -- see coop/interactable_sync.h. The per-feature adapters and the
-// facade for the keyed-interactable sync (doors, light switches, light groups, container lids,
-// the garage, appliances, lockers). The generic engine (the Adapter vtable and the Channel with
-// its key index, deferred apply, echo suppression, connect snapshot and hold register) is
-// coop/interactable_channel.h; this TU holds one adapter per feature, the kind-to-channel router,
-// the client E-press observers and the Install, Tick and event facade.
+// coop/interactables/interactable_sync.cpp -- see coop/interactables/interactable_sync.h. The
+// per-feature adapters and the facade for the keyed-interactable sync (doors, light switches, light
+// groups, container lids, the garage, appliances, lockers). The generic engine (the Adapter vtable
+// and the Channel with its key index, deferred apply, echo suppression, connect snapshot and hold
+// register) is coop/interactables/interactable_channel.h; this TU holds one adapter per feature,
+// the kind-to-channel router, the client E-press observers and the Install, Tick and event facade.
 
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
@@ -31,7 +31,7 @@ namespace {
 namespace GT = ue_wrap::game_thread;
 namespace P = ue_wrap::profile;
 // The reflection alias, ProbeLog, the WireKey conversions, the constants, Adapter and Channel are
-// in scope from coop/interactable_channel.h, included inside this namespace.
+// in scope from coop/interactables/interactable_channel.h, included inside this namespace.
 
 // The adapters, ahead of the channels. ApplySwitchPresentation replays a switch press for its
 // visual half; defined below (it needs the channels for the role read).

@@ -1,4 +1,4 @@
-// coop/prop_sound.h -- world-space prop interaction sounds for REMOTE players' grabs and
+// coop/props/prop_sound.h -- world-space prop interaction sounds for REMOTE players' grabs and
 // throws (receiver-side synthesis).
 //
 // The native cues run ONLY inside the local actor's input chain, so a remote peer never hears

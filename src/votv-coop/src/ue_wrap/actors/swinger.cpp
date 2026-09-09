@@ -1,4 +1,4 @@
-// ue_wrap/swinger.cpp -- see ue_wrap/swinger.h. Engine access for VOTV container
+// ue_wrap/actors/swinger.cpp -- see ue_wrap/actors/swinger.h. Engine access for VOTV container
 // lids (Aprop_swinger_C). The `opened` offset is resolved from the live class via
 // reflection (version-portable); the Alpha 0.9.0-n value is a logged fallback.
 // The Key is read through ue_wrap::prop (a swinger IS an Aprop_C).

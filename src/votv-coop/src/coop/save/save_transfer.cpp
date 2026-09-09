@@ -1,8 +1,8 @@
-// coop/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
+// coop/save/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
 // world into a scratch slot (or the on-disk slot behind a torn-read guard), chunked over the
 // bulk lane behind a Begin, CRC-checked and written to the client's coop slot; plus the
 // save-time baselines (keys and positions) captured at the same instant, which the join
-// reconcile reads. See coop/save_transfer.h.
+// reconcile reads. See coop/save/save_transfer.h.
 
 #include "coop/save/save_transfer.h"
 

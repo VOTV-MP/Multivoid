@@ -1,4 +1,4 @@
-// coop/net_pump.h -- main per-tick net pump ORCHESTRATOR.
+// coop/session/net_pump.h -- main per-tick net pump ORCHESTRATOR.
 //
 // Owns the per-slot connect and disconnect edge logic, the death policy and flee-to-menu, and the
 // world-ready announce axis. The dead-prop reaper and re-seed engine live in

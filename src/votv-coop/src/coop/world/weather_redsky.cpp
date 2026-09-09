@@ -1,4 +1,4 @@
-// coop/weather_redsky.cpp -- see coop/weather_redsky.h.
+// coop/world/weather_redsky.cpp -- see coop/world/weather_redsky.h.
 
 #include "coop/world/weather_redsky.h"
 

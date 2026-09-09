@@ -1,4 +1,4 @@
-// coop/firefly_sync.h -- PEER-SYMMETRIC ambient FIREFLY mirror.
+// coop/world/firefly_sync.h -- PEER-SYMMETRIC ambient FIREFLY mirror.
 //
 // Aticker_fireflySpawner_C rolls per-peer RNG every 30 s and SpawnEmitterAtLocation's eff_fireflies
 // in a ring around the LOCAL camera. They are camera-relative, so there is no shared position: the

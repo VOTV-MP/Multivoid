@@ -1,4 +1,4 @@
-// coop/keypad_sync.h -- password-keypad (ApasswordLock_C) mirror sync.
+// coop/interactables/keypad_sync.h -- password-keypad (ApasswordLock_C) mirror sync.
 //
 // Gameplay/network layer (principle 7): owns the wire protocol, the per-tick state poll, the
 // receiver apply, the key-to-actor index, the deferred-apply retry and the connect snapshot. Talks

@@ -1,7 +1,7 @@
-// coop/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on ReliableKind::DroneState.
-// Gameplay/network layer (principle 7): the wire protocol, the host-authoritative transform stream,
-// the receiver's kinematic apply through a LerpWindow, and the connect snapshot, reaching the
-// engine only through ue_wrap::drone.
+// coop/interactables/drone_sync.h -- the delivery DRONE (Adrone_C), body pose, on
+// ReliableKind::DroneState. Gameplay/network layer (principle 7): the wire protocol, the
+// host-authoritative transform stream, the receiver's kinematic apply through a LerpWindow, and the
+// connect snapshot, reaching the engine only through ue_wrap::drone.
 //
 // The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
 // is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The

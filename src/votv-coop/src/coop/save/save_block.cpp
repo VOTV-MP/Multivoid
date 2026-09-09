@@ -1,4 +1,4 @@
-// coop/save_block.cpp -- see coop/save_block.h.
+// coop/save/save_block.cpp -- see coop/save/save_block.h.
 
 #include "coop/save/save_block.h"
 

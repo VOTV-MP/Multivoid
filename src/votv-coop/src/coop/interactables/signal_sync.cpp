@@ -1,4 +1,4 @@
-// coop/signal_sync.cpp -- see coop/signal_sync.h.
+// coop/interactables/signal_sync.cpp -- see coop/interactables/signal_sync.h.
 
 #include "coop/interactables/signal_sync.h"
 

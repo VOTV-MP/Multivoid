@@ -1,4 +1,5 @@
-// coop/window_sync.cpp -- see coop/window_sync.h. Base-window dirt scalar sync.
+// coop/interactables/window_sync.cpp -- see coop/interactables/window_sync.h. Base-window dirt
+// scalar sync.
 //
 // A trimmed sibling of interactable_sync's Channel: the same proven Key->actor index
 // (IsLiveByIndex self-heal), throttled rebuild, silent first-sight prime, deferred-apply retry,

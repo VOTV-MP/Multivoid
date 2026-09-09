@@ -1,4 +1,4 @@
-// coop/lerp_window.h -- the shared MTA-form interpolation TIMING window.
+// coop/element/lerp_window.h -- the shared MTA-form interpolation TIMING window.
 //
 // One concept, one implementation: the per-frame alpha/dAlpha bookkeeping that drives a
 // fixed-duration linear interpolation toward a cached error. Its six owners -- the remote player,

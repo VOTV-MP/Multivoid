@@ -1,4 +1,4 @@
-// ue_wrap/game_rules.cpp -- see ue_wrap/game_rules.h.
+// ue_wrap/world/game_rules.cpp -- see ue_wrap/world/game_rules.h.
 
 #include "ue_wrap/world/game_rules.h"
 

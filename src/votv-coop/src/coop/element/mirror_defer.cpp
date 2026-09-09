@@ -1,4 +1,5 @@
-// coop/mirror_defer.cpp -- see coop/mirror_defer.h. Instant-world deferred-spawn visibility.
+// coop/element/mirror_defer.cpp -- see coop/element/mirror_defer.h. Instant-world deferred-spawn
+// visibility.
 
 #include "coop/element/mirror_defer.h"
 

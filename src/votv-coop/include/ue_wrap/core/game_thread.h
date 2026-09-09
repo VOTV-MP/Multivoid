@@ -1,4 +1,4 @@
-// ue_wrap/game_thread.h -- work on the engine's game thread. UObject::ProcessEvent, and so
+// ue_wrap/core/game_thread.h -- work on the engine's game thread. UObject::ProcessEvent, and so
 // reflection::CallFunction, must run there; a UFunction called from our own thread races the
 // engine. The engine calls ProcessEvent constantly during play, always on the game thread, so a
 // detour on it is a free per-call game-thread callback: it drains a posted-task queue

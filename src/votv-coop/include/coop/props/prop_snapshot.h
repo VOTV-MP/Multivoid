@@ -1,4 +1,4 @@
-// coop/prop_snapshot.h -- the connect-time prop snapshot.
+// coop/props/prop_snapshot.h -- the connect-time prop snapshot.
 //
 // When the session reaches Connected the host enumerates every live Aprop_C derivative and
 // broadcasts a PropSpawn for each, so a joiner's world converges on the host's. The client's

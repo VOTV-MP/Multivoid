@@ -1,5 +1,5 @@
-// ue_wrap/reflection.h -- standalone UE4.27 reflection access. The engine globals and functions
-// are resolved by AOB signature (no UE4SS import), then exposed as typed accessors over
+// ue_wrap/core/reflection.h -- standalone UE4.27 reflection access. The engine globals and
+// functions are resolved by AOB signature (no UE4SS import), then exposed as typed accessors over
 // GUObjectArray and FName. No gameplay or network logic. Signatures and offsets are for the
 // targeted game build and are re-derived when the mod is brought up against a new one.
 

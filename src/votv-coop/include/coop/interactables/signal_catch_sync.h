@@ -1,4 +1,4 @@
-// coop/signal_catch_sync.h -- the STOLAS signal-catch CONSUME REPLAY. Overview:
+// coop/interactables/signal_catch_sync.h -- the STOLAS signal-catch CONSUME REPLAY. Overview:
 // docs/signals.md. Game thread throughout.
 //
 // A successful ping runs a native chain on the CATCHING peer only: coord_signalData

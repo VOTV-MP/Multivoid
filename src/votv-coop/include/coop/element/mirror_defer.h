@@ -1,4 +1,4 @@
-// coop/mirror_defer.h -- the instant-world UPPER layer: deferred-spawn visibility.
+// coop/element/mirror_defer.h -- the instant-world UPPER layer: deferred-spawn visibility.
 //
 // A joining client briefly sees a "dance" -- duplicate props and kerfurs flickering in, ghosts,
 // wrong positions, self-correcting over a second or two -- because host mirrors spawn VISIBLE

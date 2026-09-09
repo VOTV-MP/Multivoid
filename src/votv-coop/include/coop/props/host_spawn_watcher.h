@@ -1,5 +1,5 @@
-// coop/host_spawn_watcher.h -- mirroring of ambient spawner outputs (the pinecone scare and its
-// sibling forage spawners).
+// coop/props/host_spawn_watcher.h -- mirroring of ambient spawner outputs (the pinecone scare and
+// its sibling forage spawners).
 //
 // THE SEAM. VOTV's ambient spawners (pineconeSpawner_C and kin) materialize their props through
 // UGameplayStatics::BeginDeferredActorSpawnFromClass. The spawned actor's own Init() is

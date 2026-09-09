@@ -1,4 +1,4 @@
-// ue_wrap/comp_pane.cpp -- see ue_wrap/comp_pane.h.
+// ue_wrap/desk/comp_pane.cpp -- see ue_wrap/desk/comp_pane.h.
 
 #include "ue_wrap/desk/comp_pane.h"
 

@@ -1,4 +1,4 @@
-// ue_wrap/base_window.cpp -- see ue_wrap/base_window.h. Engine access for VOTV's
+// ue_wrap/devices/base_window.cpp -- see ue_wrap/devices/base_window.h. Engine access for VOTV's
 // base observation window (AbaseWindow_C).
 //
 // Offsets are resolved from the live class via reflection (FindPropertyOffset) with

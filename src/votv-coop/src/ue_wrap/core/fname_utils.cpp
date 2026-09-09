@@ -1,4 +1,4 @@
-// ue_wrap/fname_utils.cpp -- see header.
+// ue_wrap/core/fname_utils.cpp -- see header.
 
 #include "ue_wrap/core/fname_utils.h"
 

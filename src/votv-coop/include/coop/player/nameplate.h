@@ -1,4 +1,4 @@
-// coop/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
+// coop/player/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
 //
 // Gameplay/network layer (principle 7). The label is drawn by our OWN ImGui overlay as a
 // screen-space PROJECTION -- the MTA nametag shape: project the head world point to the

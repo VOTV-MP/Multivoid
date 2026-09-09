@@ -1,4 +1,4 @@
-// coop/prop_stick_sync.cpp -- see coop/prop_stick_sync.h for the design + RE.
+// coop/props/prop_stick_sync.cpp -- see coop/props/prop_stick_sync.h for the design + RE.
 
 #include "coop/props/prop_stick_sync.h"
 

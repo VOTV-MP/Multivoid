@@ -1,4 +1,4 @@
-// ue_wrap/tape_caddy.cpp -- see ue_wrap/tape_caddy.h. Offsets resolved from the
+// ue_wrap/desk/tape_caddy.cpp -- see ue_wrap/desk/tape_caddy.h. Offsets resolved from the
 // live classes via reflection (version-portable); the Alpha 0.9.0-n values are
 // logged fallbacks (wallunit reelBig 0x0288 / reelSmall 0x028C; Aprop_reel_C
 // Progress 0x0364).

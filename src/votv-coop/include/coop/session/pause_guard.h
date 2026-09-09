@@ -1,4 +1,4 @@
-// coop/pause_guard.h -- the coop no-pause invariant (ONE owner, both roles).
+// coop/session/pause_guard.h -- the coop no-pause invariant (ONE owner, both roles).
 //
 // A client pressing ESC in a session pauses ITS world: the engine stops ticking and its pose
 // stream freezes on every other screen. SP semantics: ESC opens pause_mainMenu and pauses the

@@ -1,5 +1,5 @@
-// coop/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: a client forwards
-// its order to the host, and the host performs and charges for it.
+// coop/items/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: a client
+// forwards its order to the host, and the host performs and charges for it.
 //
 // CLIENT: polls saveSlot.orders.Num as a watermark (the commit verb is blueprint-internal and
 // unobservable); on an increment it reads the new order's list_store row names, chunks them to

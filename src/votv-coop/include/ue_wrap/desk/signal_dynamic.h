@@ -1,4 +1,4 @@
-// ue_wrap/signal_dynamic.h -- the Fstruct_signalDataDynamic (0x70) bridge.
+// ue_wrap/desk/signal_dynamic.h -- the Fstruct_signalDataDynamic (0x70) bridge.
 //
 // This ONE struct is both the desk refiner's loaded signal (comp_data_0) and an element of
 // gamemode.savedSignals_0, the desk signal library. Its rows are pure POD and strings, with no

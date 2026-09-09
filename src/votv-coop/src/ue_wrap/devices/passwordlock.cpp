@@ -1,4 +1,4 @@
-// ue_wrap/passwordlock.cpp -- see ue_wrap/passwordlock.h. Engine access for VOTV
+// ue_wrap/devices/passwordlock.cpp -- see ue_wrap/devices/passwordlock.h. Engine access for VOTV
 // password keypads (ApasswordLock_C).
 //
 // All field offsets are resolved from the live class via reflection

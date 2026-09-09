@@ -1,4 +1,4 @@
-// ue_wrap/sdk_profile_names.h -- the version surface, part 2: content names.
+// ue_wrap/core/sdk_profile_names.h -- the version surface, part 2: content names.
 //
 // Everything here is a game-content identity (blueprint class names, UFunction names, level names,
 // save-landmark coordinates): it changes when the game's blueprints or maps change, not when the

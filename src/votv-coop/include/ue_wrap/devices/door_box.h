@@ -1,5 +1,5 @@
-// ue_wrap/door_box.h -- standalone engine access for the hinged-door storage boxes: the base
-// and map LOCKERS (Alocker_C and its pure subclasses locker_personal_C, locker_death_C) and
+// ue_wrap/devices/door_box.h -- standalone engine access for the hinged-door storage boxes: the
+// base and map LOCKERS (Alocker_C and its pure subclasses locker_personal_C, locker_death_C) and
 // the DRONE-CALL CONSOLE box (AdroneConsole_C). Principle-7 engine-wrapper layer -- class
 // resolve, the `opened` state, the native apply verbs and the far-peer frozen-timeline
 // force-snap. No network logic: coop::interactable_sync's door-box channel drives the mirror

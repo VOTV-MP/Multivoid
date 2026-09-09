@@ -1,4 +1,4 @@
-// coop/inventory_wire.h -- serialize the per-player inventory POD <-> a byte blob.
+// coop/items/inventory_wire.h -- serialize the per-player inventory POD <-> a byte blob.
 //
 // Increment 2b. Turns ue_wrap::inventory::PlayerInventory (read off the live saveSlot by
 // ue_wrap/inventory) into a self-contained, version-prefixed little-endian byte blob, and

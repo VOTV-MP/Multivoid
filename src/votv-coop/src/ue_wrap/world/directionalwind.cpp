@@ -1,4 +1,4 @@
-// ue_wrap/directionalwind.cpp -- see ue_wrap/directionalwind.h.
+// ue_wrap/world/directionalwind.cpp -- see ue_wrap/world/directionalwind.h.
 
 #include "ue_wrap/world/directionalwind.h"
 

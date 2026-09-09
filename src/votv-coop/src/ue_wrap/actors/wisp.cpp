@@ -1,4 +1,4 @@
-// ue_wrap/wisp.cpp -- see ue_wrap/wisp.h. Engine access for the VOTV Killer Wisp
+// ue_wrap/actors/wisp.cpp -- see ue_wrap/actors/wisp.h. Engine access for the VOTV Killer Wisp
 // (Akillerwisp_C / FName "killerwisp_C").
 //
 // All field offsets are resolved from the live class via reflection (FindPropertyOffset)

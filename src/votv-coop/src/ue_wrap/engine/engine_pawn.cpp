@@ -1,7 +1,7 @@
-// ue_wrap/engine_pawn.cpp -- Pawn / Controller / Camera operations.
+// ue_wrap/engine/engine_pawn.cpp -- Pawn / Controller / Camera operations.
 //
-// Public API lives in ue_wrap/engine.h; this TU implements the pawn/controller/camera-related
-// functions in `namespace ue_wrap::engine`.
+// Public API lives in ue_wrap/engine/engine.h; this TU implements the
+// pawn/controller/camera-related functions in `namespace ue_wrap::engine`.
 //
 // Covers:
 //   - APawn: GetController, SpawnDefaultController

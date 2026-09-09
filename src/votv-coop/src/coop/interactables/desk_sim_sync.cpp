@@ -1,4 +1,4 @@
-// coop/desk_sim_sync.cpp -- see coop/interactables/desk_sim_sync.h.
+// coop/interactables/desk_sim_sync.cpp -- see coop/interactables/desk_sim_sync.h.
 
 #include "coop/interactables/desk_sim_sync.h"
 

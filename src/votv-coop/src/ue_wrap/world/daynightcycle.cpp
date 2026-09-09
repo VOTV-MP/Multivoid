@@ -1,4 +1,4 @@
-// ue_wrap/daynightcycle.cpp -- see ue_wrap/daynightcycle.h. Engine access for VOTV's
+// ue_wrap/world/daynightcycle.cpp -- see ue_wrap/world/daynightcycle.h. Engine access for VOTV's
 // world clock (AdaynightCycle_C).
 //
 // Offsets are resolved from the live class via reflection (FindPropertyOffset); the known

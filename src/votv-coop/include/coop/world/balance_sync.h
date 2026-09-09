@@ -1,4 +1,4 @@
-// coop/balance_sync.h -- shared host-authoritative credit balance (saveSlot.Points).
+// coop/world/balance_sync.h -- shared host-authoritative credit balance (saveSlot.Points).
 //
 // The HOST owns the canonical balance. It POLLS Points each game-thread tick -- catching every
 // writer: shop orders, signal-disk sells, task rewards, the +1000 dev button -- and broadcasts

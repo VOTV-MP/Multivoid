@@ -1,6 +1,7 @@
-// coop/signal_sync.h -- the desk SIGNAL-LIBRARY mirror (gamemode.savedSignals_0): appends and
-// deletes, in the email_sync shadow shape (coop/email_sync.h carries the invariant discussion; a
-// deliberate second instance, to be extracted on a third). Game thread throughout.
+// coop/interactables/signal_sync.h -- the desk SIGNAL-LIBRARY mirror (gamemode.savedSignals_0):
+// appends and deletes, in the email_sync shadow shape (coop/world/email_sync.h carries the
+// invariant discussion; a deliberate second instance, to be extracted on a third). Game thread
+// throughout.
 //
 // Every peer shadows the array with a per-row POD instance key (raw bytes, no reflected call at
 // cadence; ue_wrap::saved_signals::RowKey), and a row's cross-peer identity is

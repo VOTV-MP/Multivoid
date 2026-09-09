@@ -1,4 +1,4 @@
-// ue_wrap/swinger.h -- standalone engine access for VOTV openable container lids
+// ue_wrap/actors/swinger.h -- standalone engine access for VOTV openable container lids
 // (Aprop_swinger_C). Principle-7 engine-wrapper layer (no network/coop state).
 //
 // Aprop_swinger_C is the generic hinged-lid prop: fridge doors, safe doors,

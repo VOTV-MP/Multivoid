@@ -1,4 +1,4 @@
-// coop/save_identity_map.cpp -- see header. Phase 1B: HOST-side build + log, NO wire.
+// coop/props/save_identity_map.cpp -- see header. Phase 1B: HOST-side build + log, NO wire.
 
 #include "coop/props/save_identity_map.h"
 

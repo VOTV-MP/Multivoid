@@ -1,4 +1,4 @@
-// coop/save_guard.h -- pre-session backup of the VOTV save directory.
+// coop/save/save_guard.h -- pre-session backup of the VOTV save directory.
 //
 // PR-FOUNDATION-2 (save-game safety) increment A. VOTV writes saves
 // NON-ATOMICALLY: stock GameplayStatics::SaveGameToSlot truncates + overwrites

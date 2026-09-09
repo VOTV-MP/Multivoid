@@ -1,5 +1,5 @@
-// ue_wrap/appliance.cpp -- see ue_wrap/appliance.h. Per-class engine access for the six
-// simple on/off appliances. Offsets/verbs resolved from the live classes via reflection
+// ue_wrap/devices/appliance.cpp -- see ue_wrap/devices/appliance.h. Per-class engine access for the
+// six simple on/off appliances. Offsets/verbs resolved from the live classes via reflection
 // (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 
 #include "ue_wrap/devices/appliance.h"

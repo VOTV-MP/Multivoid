@@ -1,4 +1,4 @@
-// ue_wrap/grime.h -- standalone engine access for VOTV surface grime (Agrime_C and its
+// ue_wrap/devices/grime.h -- standalone engine access for VOTV surface grime (Agrime_C and its
 // grime_* subclasses: grime_oil_C, grime_blood2_C, grime_dusty_C, ...). Principle-7
 // engine-wrapper layer, wrapping the reflection, struct-offset and UFunction-thunk details of
 // a grime actor: no network logic, no coop state, both of which coop::grime_sync owns.

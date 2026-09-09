@@ -1,5 +1,5 @@
-// coop/player_damage.h -- who takes a hit. Each machine keeps exactly its own player's damage
-// (MTA's victim-authoritative shape, reference/mtasa-blue/ CNetAPI.cpp): the physical impact
+// coop/player/player_damage.h -- who takes a hit. Each machine keeps exactly its own player's
+// damage (MTA's victim-authoritative shape, reference/mtasa-blue/ CNetAPI.cpp): the physical impact
 // system dispatches impactDamage, impactDamageCPP and impactSquishCPP on the hit body, and the BP
 // writes the per-machine saveSlot.health whatever body ran it, so a contact resolved against a
 // puppet in the host's world drained the host; a PRE interceptor cancels those three entries

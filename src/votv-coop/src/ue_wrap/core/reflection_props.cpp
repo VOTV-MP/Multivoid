@@ -1,4 +1,4 @@
-// ue_wrap/reflection_props.cpp -- the FProperty / FField walk family: function params, struct
+// ue_wrap/core/reflection_props.cpp -- the FProperty / FField walk family: function params, struct
 // fields, property and param offsets, and the calibrated FStructProperty::Struct and FBoolProperty
 // payload slots. Self-contained: public reflection primitives plus profile offsets, with its
 // calibration statics beside them and no shared private state.

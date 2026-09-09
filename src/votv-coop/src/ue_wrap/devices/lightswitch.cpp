@@ -1,4 +1,4 @@
-// ue_wrap/lightswitch.cpp -- see ue_wrap/lightswitch.h. Engine access for VOTV
+// ue_wrap/devices/lightswitch.cpp -- see ue_wrap/devices/lightswitch.h. Engine access for VOTV
 // light groups (Atrigger_lightRoot_C). Offsets resolved from the live class via
 // reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 

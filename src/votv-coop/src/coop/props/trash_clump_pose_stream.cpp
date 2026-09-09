@@ -1,4 +1,4 @@
-// coop/trash_clump_pose_stream.cpp -- see coop/trash_clump_pose_stream.h.
+// coop/props/trash_clump_pose_stream.cpp -- see coop/props/trash_clump_pose_stream.h.
 
 #include "coop/props/trash_clump_pose_stream.h"
 

@@ -1,4 +1,4 @@
-// coop/npc_pose_host.cpp -- HOST-side NPC transform egress.
+// coop/creatures/npc_pose_host.cpp -- HOST-side NPC transform egress.
 //
 // Owns the two host-only paths that READ live NPC actor transforms and push them
 // onto the wire:

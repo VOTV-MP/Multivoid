@@ -1,4 +1,4 @@
-// coop/weather_redsky.h -- red-sky discrete-event sync.
+// coop/world/weather_redsky.h -- red-sky discrete-event sync.
 //
 // Red sky is a story event: AmainGamemode_C::spawnRedSky() instantiates an AredSkyEvent_C actor
 // whose .set(bool isred) swaps the world colour curves. The ORGANIC trigger is in daynightCycle: on

@@ -1,4 +1,4 @@
-// ue_wrap/daily_task.h -- standalone engine access for saveSlot.taskNew (the daily
+// ue_wrap/desk/daily_task.h -- standalone engine access for saveSlot.taskNew (the daily
 // tape/signal delivery task, Fstruct_taskNew). Principle-7 engine-wrapper layer --
 // NO network logic; coop/daily_task_sync (the L7 host mirror) drives the struct
 // through here.
@@ -44,7 +44,7 @@ bool WriteScalars(bool active, int32_t rewardSig, int32_t rewardSat,
                   float reelBig, float reelSmall);
 // Overwrite one int32 array: in-place when count == Num; otherwise rebuild the
 // engine allocation (R::EngineAlloc + copy + R::EngineFree of the old buffer +
-// {ptr,num,max} write -- the ue_wrap/inventory.cpp precedent; int32 is POD).
+// {ptr,num,max} write -- the ue_wrap/actors/inventory.cpp precedent; int32 is POD).
 bool WriteArray(Which which, const int32_t* vals, int32_t count);
 
 }  // namespace ue_wrap::daily_task

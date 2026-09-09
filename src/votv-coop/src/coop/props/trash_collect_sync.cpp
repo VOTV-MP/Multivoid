@@ -1,8 +1,8 @@
-// coop/trash_collect_sync.cpp -- the held-item express and the pile seams. EnsureHeldItemBroadcast
-// runs on the pump's new-held edge: a freshly spawned, auto-grabbed prop with no Key gets a
-// stable Key and a PropSpawn, and the pose stream then mirrors it into the collector's hands. The
-// BeginDeferred Func patch is the deterministic grab and re-pile seam for chip piles. See
-// coop/trash_collect_sync.h.
+// coop/props/trash_collect_sync.cpp -- the held-item express and the pile seams.
+// EnsureHeldItemBroadcast runs on the pump's new-held edge: a freshly spawned, auto-grabbed prop
+// with no Key gets a stable Key and a PropSpawn, and the pose stream then mirrors it into the
+// collector's hands. The BeginDeferred Func patch is the deterministic grab and re-pile seam for
+// chip piles. See coop/props/trash_collect_sync.h.
 
 #include "coop/props/trash_collect_sync.h"
 

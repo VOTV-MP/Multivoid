@@ -1,4 +1,4 @@
-// coop/moderation.h -- host-side player-admin actions (the player-list action menu).
+// coop/moderation/moderation.h -- host-side player-admin actions (the player-list action menu).
 //
 // The host's interactive scoreboard (ui::scoreboard) calls these when the host clicks a player
 // row, and this module is the single entry point for the three actions: KICK and BAN are always

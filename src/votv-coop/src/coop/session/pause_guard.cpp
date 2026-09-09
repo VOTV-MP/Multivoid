@@ -1,4 +1,4 @@
-// coop/pause_guard.cpp -- see coop/pause_guard.h.
+// coop/session/pause_guard.cpp -- see coop/session/pause_guard.h.
 
 #include "coop/session/pause_guard.h"
 

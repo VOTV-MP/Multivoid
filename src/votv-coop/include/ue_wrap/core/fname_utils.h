@@ -1,6 +1,6 @@
-// ue_wrap/fname_utils.h -- engine FName construction from wide strings.
+// ue_wrap/core/fname_utils.h -- engine FName construction from wide strings.
 //
-// Extracted from coop/remote_prop.cpp on 2026-05-27 (audit IMPORTANT-4
+// Extracted from coop/props/remote_prop.cpp on 2026-05-27 (audit IMPORTANT-4
 // file-size rule: remote_prop.cpp at 907 LOC past 800 soft cap). The
 // conceptual home is engine substrate, not the prop drive state machine.
 // Pure engine helper; no gameplay/network logic (principle 7).

@@ -1,4 +1,4 @@
-// coop/prop_sound.cpp -- see coop/prop_sound.h.
+// coop/props/prop_sound.cpp -- see coop/props/prop_sound.h.
 
 #include "coop/props/prop_sound.h"
 

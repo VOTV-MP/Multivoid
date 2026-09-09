@@ -1,6 +1,6 @@
-// ue_wrap/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs. NOT public API:
-// nothing outside src/ue_wrap/{game_thread,pe_detour}.cpp may include this (subsystems use
-// ue_wrap/game_thread.h).
+// ue_wrap/core/game_thread_detail.h -- PRIVATE seam between the two game_thread TUs. NOT public
+// API: nothing outside src/ue_wrap/{game_thread,pe_detour}.cpp may include this (subsystems use
+// ue_wrap/core/game_thread.h).
 //
 // The two TUs split along one concept boundary. pe_detour.cpp is the INTERPOSITION MECHANISM: the
 // MinHook install, the detour body, the transparent bypass, the SEH crash firewalls and

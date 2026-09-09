@@ -1,4 +1,4 @@
-// ue_wrap/economy.cpp -- see ue_wrap/economy.h.
+// ue_wrap/world/economy.cpp -- see ue_wrap/world/economy.h.
 
 #include "ue_wrap/world/economy.h"
 
@@ -25,7 +25,7 @@ void* ResolveGamemode() {
 // change at runtime; a level transition re-walks the gamemode pointer but resolves the
 // SAME class), so resolve each ONCE -- FindPropertyOffset walks the class property list
 // + super chain, which the project forbids on a per-frame path (TickHost runs every
-// net-pump tick on the host; cf. ue_wrap/vitals.cpp's same caching). -1 = unresolved.
+// net-pump tick on the host; cf. ue_wrap/actors/vitals.cpp's same caching). -1 = unresolved.
 int32_t g_offSave   = -1;
 int32_t g_offPoints = -1;
 

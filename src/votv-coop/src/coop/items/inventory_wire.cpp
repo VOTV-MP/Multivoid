@@ -1,4 +1,4 @@
-// coop/inventory_wire.cpp -- see coop/inventory_wire.h.
+// coop/items/inventory_wire.cpp -- see coop/items/inventory_wire.h.
 //
 // The per-record grammar + the byte primitives moved to coop/items/save_record_wire (2026-07-22)
 // when coop/props/container_contents_sync needed the same codec; what stays here is the

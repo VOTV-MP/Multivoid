@@ -1,6 +1,7 @@
-// coop/power_sync.cpp -- see coop/power_sync.h. Base POWER PANEL (ApowerControl_C) breaker
-// mirror: poll the 5 press bools (packed into a 5-bit mask) -> broadcast on a change; the
-// receiver writes the bools + refreshes the panel visual through ue_wrap::power_control.
+// coop/interactables/power_sync.cpp -- see coop/interactables/power_sync.h. Base POWER PANEL
+// (ApowerControl_C) breaker mirror: poll the 5 press bools (packed into a 5-bit mask) -> broadcast
+// on a change; the receiver writes the bools + refreshes the panel visual through
+// ue_wrap::power_control.
 //
 // Structure borrows the proven keypad_sync / interactable_sync patterns (key->actor index with
 // IsLiveByIndex self-heal, hub-driven rebuild, deferred-apply retry, silent first-sight prime,

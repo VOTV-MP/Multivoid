@@ -1,4 +1,5 @@
-// coop/desk_sim_sync.h -- the signal-desk download sim as a HOST-AUTHORITATIVE output stream.
+// coop/interactables/desk_sim_sync.h -- the signal-desk download sim as a HOST-AUTHORITATIVE output
+// stream.
 //
 // THE ROOT: the download-rate formula (AanalogDScreenTest) rolls TWO UNSEEDED RNG terms per tick,
 // the detector needle DL_resDetecPercent and a transient noise, and integrates the filter offsets

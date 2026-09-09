@@ -1,4 +1,4 @@
-// coop/prop_element_tracker.h -- per-actor lifecycle bookkeeping for keyed interactables (the
+// coop/props/prop_element_tracker.h -- per-actor lifecycle bookkeeping for keyed interactables (the
 // Aprop_C, chipPile, clump and trashBitsPile families): three maintained sets keyed by actor. The
 // ProcessedInit set dedupes an Init POST that fires twice through a BP Super call (cap 16384). The
 // KnownKeyedProps set is the live-actor set, seeded once by a GUObjectArray walk and maintained by
