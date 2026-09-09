@@ -211,6 +211,13 @@ def run_entry_points(results):
     arm("from-boundary: a tip that forked before the checker is still judged",
         r.returncode == 1 and "1 refused" in r.stdout and "nothing to judge" not in r.stdout,
         r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:])
+    # An EMPTY range is a pass in --range (a hand-run range may legitimately be empty) and a
+    # REFUSAL in --from-boundary, where it means the CI lane judged nothing at all.
+    root4 = git(["rev-list", "--max-parents=0", "HEAD"], repo4, env).stdout.decode().strip()
+    r = rng(repo4, "--from-boundary", "--tip", root4)
+    arm("from-boundary: a tip that leaves the range empty is refused, not passed",
+        r.returncode == 1 and "EMPTY range" in r.stdout,
+        r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:])
 
 
 def main():

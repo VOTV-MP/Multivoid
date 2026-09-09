@@ -194,7 +194,11 @@ def boundary(repo):
     return out[-1] if out else None
 
 
-def check_range(repo, rng):
+def check_range(repo, rng, empty_ok=True):
+    """`empty_ok` is False for --from-boundary: an empty range there means the tip and the
+    boundary do not describe a history, and exiting 0 on it would be the CI lane passing by
+    judging nothing -- the same failure the boundary is deliberately not walked from the tip
+    to avoid. A hand-run --range may legitimately be empty and says so."""
     if rng.startswith("-"):
         print("commit_msg_check: a range cannot start with '-' ({})".format(rng))
         return 2
@@ -214,6 +218,8 @@ def check_range(repo, rng):
                 print("    - " + r)
     print("commit_msg_check: {} commit(s) in {}, {} refused{}".format(
         total, rng, bad, "" if total else " -- an EMPTY range judges nothing"))
+    if not total and not empty_ok:
+        return 1
     return 1 if bad else 0
 
 
@@ -265,7 +271,7 @@ def main():
             return 0
         has_parent = subprocess.run(["git", "rev-parse", "-q", "--verify", b + "~1"], cwd=a.repo,
                                     capture_output=True).returncode == 0
-        return check_range(a.repo, b + "~1.." + a.tip if has_parent else a.tip)
+        return check_range(a.repo, b + "~1.." + a.tip if has_parent else a.tip, empty_ok=False)
     ap.print_help()
     return 2
 
