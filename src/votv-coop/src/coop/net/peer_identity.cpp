@@ -21,12 +21,12 @@
 #include <string>
 #include <vector>
 
-// Ed25519, from the donna translation unit GNS already compiles into the static
-// library we link (`third_party/GameNetworkingSockets/src/CMakeLists.txt:73-74`
-// builds `external/ed25519-donna/ed25519_VALVE.c`; `crypto_25519_donna.cpp` is
-// its other caller). Declared here rather than including the vendored header so
-// this TU pulls in nothing from GNS's internal `src/` tree -- three prototypes
-// with C linkage are the whole dependency.
+// Ed25519, from the donna translation unit GNS already compiles into the static library we link
+// (`third_party/GameNetworkingSockets/src/CMakeLists.txt:73-74` builds
+// `third_party/GameNetworkingSockets/src/external/ed25519-donna/ed25519_VALVE.c`;
+// `crypto_25519_donna.cpp` is its other caller). Declared here rather than including the vendored
+// header so this TU pulls in nothing from GNS's internal `src/` tree -- three prototypes with C
+// linkage are the whole dependency.
 extern "C" {
 void ed25519_publickey(const unsigned char sk[32], unsigned char pk[32]);
 void ed25519_sign(const unsigned char* m, size_t mlen, const unsigned char sk[32],
