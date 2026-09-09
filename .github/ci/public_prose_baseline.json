@@ -56,6 +56,7 @@
     "src.comment_dead_ini_key": 0,
     "src.comment_dead_member": 0,
     "src.comment_pinned_offset": 63,
+    "src.string_marker": 27,
     "src.dead_declarations": 0,
     "src.comment_permille": 280,
     "src.files": 906,

@@ -178,6 +178,16 @@ struct IDXGISwapChain;
 namespace dspace { struct Drilled { int realMember; }; }
 CFG_FLAG(net_real_row, "net.real_row", "net", false, "VOTVCOOP_READ_HERE", "a row")
 void logs() { UE_LOGI("x_sync: applied active=%d", 1); }
+// ---- the string axis: a citation is a citation wherever it sits, literals included ----
+// PRECISION: a comment may quote "the v88 build tag" without the STRING axis reading it too
+const char* sm1 = "the v133 build tag, in a line a player pastes into a bug report";
+const char* sm2 = "security A65 names a row of a register that is not published";
+const char* sm3 = "added 2026-09-06, which is a diary entry inside a string as much as outside";
+const char* sm4 = "the user asked for this shape";
+const char* sm5 = "settled in a /qf round";
+const char* sm6 = "// v99 keeps its marker: the literal is lexed, not cut at the slashes";
+const char* sm7[] = {"the v41 tag", "and the WP-3 label, both on one line"};
+const char* sm8 = "\u043f\u0440\u0438\u0432\u0435\u0442 -- the fold selftests need this, and the axis must NOT read it";
 """
 
 # The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
@@ -437,6 +447,25 @@ MUTANTS = [
     # The markers must read the comment TRAILING a code line. Blinding them to it is what the
     # gate did until the tails were threaded through, and it hid 54 citations plus 98 pinned
     # offsets while calling their files swept.
+    # The string axis. Each row breaks one part of it -- the counting, the table it derives
+    # from, the lexer, the per-line dedupe, the explainer -- and the exemption that keeps it off
+    # the fold fixtures, which is the one way widening it would damage the tree.
+    ("string: literals unread", "smark = string_marker_lines(text)", "smark = []"),
+    ("string: the fold fixtures count too",
+     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"',
+     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items())'),
+    ("string: reads only the shared marker table",
+     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"',
+     'list(LINE_MARKERS.items()) if k != "cyrillic"'),
+    ("string: a line with two literals counts twice",
+     "        if no in seen:\n            continue", "        if False:\n            continue"),
+    ("string: comments stripped before the literals are read",
+     'for no, line in enumerate(text.split("\\n"), 1):',
+     'for no, line in enumerate(code_only(text).split("\\n"), 1):'),
+    ("string: counted but never explained",
+     '        for no, body in string_marker_lines(text):\n'
+     '            out.append((no, "src.string_marker", \'"\' + body + \'"\'))\n',
+     ''),
     ("markers: blind to trailing comments",
      "        for _no, line in comments + tails:\n", "        for _no, line in comments:\n"),
 ]
@@ -541,14 +570,15 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 120, "src.files": 6, "src.files_not_swept": 3,
+              "src.comment_lines": 122, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
               "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 15,
+              "src.comment_label": 16,
+              "src.string_marker": 7,
               "src.comment_dead_path": 1, "src.comment_dead_log_marker": 1,
               "src.comment_dead_env": 1, "src.comment_dead_ini_key": 2,
               "src.comment_dead_member": 2}

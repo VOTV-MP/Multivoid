@@ -263,6 +263,20 @@ SRC_EXTRA = collections.OrderedDict([
                  "comment lines citing a row, or a line, a reader cannot open")),
 ])
 
+# The marker families a STRING LITERAL may not carry either. The comment counters read comments,
+# and a literal in this tree is often the more public surface of the two: the config registry's
+# descriptions render in the mod's own settings panel, and a log line is read by anyone who opens
+# a log or pastes one into a bug report. 27 of them carried a build tag, a security-register row,
+# an increment number, a date or an attribution while every counter read zero -- one habit one
+# POSITION over, which is R-P13 arriving in a second family.
+#
+# `cyrillic` is deliberately absent. The codec and fold selftests MUST hold Cyrillic strings to
+# test the thing they test, and a detector that flagged those would push a sweep to delete its own
+# fixtures. THE GAP, stated rather than closed (R-P11): a Cyrillic string that is prose rather
+# than a fixture is unread; there is none in the tree today.
+STRING_MARKERS = [(k, rx) for k, (rx, _) in
+                  list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"]
+
 
 def git(args, cwd):
     return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
@@ -699,6 +713,80 @@ def comment_lines(text):
     return comments, code, long_blocks, tails
 
 
+def string_literals(text):
+    """-> [(1-based line number, the literal's body)] for every "..." that is CODE, not comment.
+
+    Lexed the way `comment_lines` lexes a code line, because both cheap answers are wrong: a regex
+    over the raw line reads the contents of a string that is itself commented out, and cutting the
+    line at `//` before scanning truncates a literal that contains one."""
+    out, in_block = [], False
+    for no, line in enumerate(text.split("\n"), 1):
+        s = line.strip()
+        if not s:
+            continue
+        if in_block:
+            if "*/" in s:
+                in_block = False
+            continue
+        if s.startswith("//"):
+            continue
+        if s.startswith("/*"):
+            if "*/" not in s[2:]:
+                in_block = True
+            continue
+        i, n = 0, len(s)
+        while i < n:
+            c = s[i]
+            if c == "'" and i > 0 and s[i - 1].isdigit() and i + 1 < n and s[i + 1].isdigit():
+                i += 1                                  # a digit separator, not a quote
+                continue
+            if c == "'":
+                i += 1
+                while i < n and s[i] != "'":
+                    i += 2 if s[i] == "\\" else 1
+                i += 1
+                continue
+            if c == '"':
+                j, buf = i + 1, []
+                while j < n and s[j] != '"':
+                    if s[j] == "\\":
+                        buf.append(s[j:j + 2])
+                        j += 2
+                    else:
+                        buf.append(s[j])
+                        j += 1
+                out.append((no, "".join(buf)))
+                i = j + 1
+                continue
+            if s.startswith("//", i):
+                break
+            if s.startswith("/*", i):
+                e = s.find("*/", i + 2)
+                if e < 0:
+                    in_block = True
+                    break
+                i = e + 2
+                continue
+            i += 1
+    return out
+
+
+def string_marker_lines(text):
+    """-> [(line number, the literal)] ONCE PER LINE, for every string carrying a marker.
+
+    One implementation for the counting pass and the line explainer, as `src_comment_faults` is:
+    a line carrying two offending literals must be one number in both, or `--lines` would name
+    more lines than the gate counts and a sweep would chase a hit that is not there."""
+    seen, out = set(), []
+    for no, body in string_literals(text):
+        if no in seen:
+            continue
+        if any(rx.search(body) for _k, rx in STRING_MARKERS):
+            seen.add(no)
+            out.append((no, body))
+    return out
+
+
 def measure(repo):
     """-> (counters dict, contributors dict: counter -> Counter(path -> hits), detail dict:
     counter -> path -> [note]). `detail` carries the counters whose unit is not a line, so
@@ -795,6 +883,7 @@ def measure(repo):
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     c["src.comment_dead_docpath"] = 0
     c["src.comment_pinned_offset"] = 0
+    c["src.string_marker"] = 0
     for k in ("dead_path", "dead_log_marker", "dead_env", "dead_ini_key", "dead_member"):
         c["src.comment_" + k] = 0
     bare_by_file = {}                      # path -> its code with comments and strings gone
@@ -824,6 +913,10 @@ def measure(repo):
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
+        smark = string_marker_lines(text)
+        if smark:
+            c["src.string_marker"] += len(smark)
+            who["src.string_marker"][p] = len(smark)
         owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
             for k in src_comment_faults(line, docs, read_offsets, owns_offsets, p):
@@ -921,6 +1014,7 @@ FIXED_DESCRIPTIONS = {
     "src.files_not_swept": "sources still carrying at least one counter above",
     "src.comment_pinned_offset": "comment lines pinning an offset this file's own code never reads",
     "src.dead_declarations": "declared functions nothing in the tree calls",
+    "src.string_marker": "string literals carrying a marker a comment may not carry",
 }
 
 
@@ -949,6 +1043,8 @@ def explain(repo, path, tracked_set, subs=()):
         for no, line in comments + tails:
             for k in src_comment_faults(line, docs, read_offsets, owns_offsets, path):
                 out.append((no, k, line))
+        for no, body in string_marker_lines(text):
+            out.append((no, "src.string_marker", '"' + body + '"'))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False
     comments_only = path.endswith(OTHER_COMMENTS_ONLY)
