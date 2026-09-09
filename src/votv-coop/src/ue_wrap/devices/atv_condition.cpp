@@ -35,7 +35,7 @@ void* g_fnUpdHealth = nullptr;
 
 // FScriptArray head = { void* Data; int32 Num; int32 Max }. Returns Num (clamped view), or -1
 // when the head reads as garbage -- the caller's all-or-nothing contract needs "unreadable"
-// kept distinct from "empty" (the tire probe's own lesson).
+// kept distinct from "empty".
 int32_t ArrayHead(void* obj, int32_t off, void** dataOut) {
     *dataOut = nullptr;
     if (!obj || off < 0) return -1;

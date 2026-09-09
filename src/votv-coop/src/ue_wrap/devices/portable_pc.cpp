@@ -14,7 +14,7 @@ namespace {
 namespace R = reflection;
 
 // ClassOf verdict cache: UClass* -> is-portable-pc. NameOf runs ONCE per
-// distinct class (the cheap-filter-before-NameOf lesson); the class itself is
+// distinct class, on a cache miss only; the class itself is
 // buyable so a FindClass poll would walk GUObjectArray forever (device_screen
 // measured trap) -- verdicts resolve lazily from live instances instead.
 std::unordered_map<void*, bool> g_verdict;

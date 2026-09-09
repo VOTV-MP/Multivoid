@@ -1,12 +1,9 @@
 // ue_wrap/devices/portable_pc.h -- the portable PC prop (Aprop_portablePc_C) wrapper.
 //
-// RE ground truth: votv-laptop-pc-RE-2026-07-17.md + the OPEN-10 pass
-// (votv-laptop-v2-OPEN10-impl-DESIGN-2026-07-18.md SS3): the portable PC is a
-// REMOTE TERMINAL to the base laptop (bindPC(gamemode.laptop.laptop)); its only
-// own world state is the LID (`opened` @0x398, runtime-only). The class is
-// BUYABLE (loads on purchase) -- NO FindClass polling (the device_screen
-// forever-walk lesson); identity resolves per-instance via a ClassOf verdict
-// cache (NameOf runs once per distinct UClass ever seen).
+// The portable PC is a REMOTE TERMINAL to the base laptop (bindPC(gamemode.laptop.laptop));
+// its only own world state is the LID (`opened`, runtime-only). The class is BUYABLE and
+// loads on purchase, so a FindClass poll would walk GUObjectArray forever; identity resolves
+// per-instance from a ClassOf verdict cache (NameOf runs once per distinct UClass ever seen).
 //
 // No network logic, no coop state (principle 7). Game thread only.
 

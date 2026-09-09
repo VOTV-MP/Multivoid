@@ -17,7 +17,7 @@ namespace {
 
 // Cached GameInstance + its GUObjectArray index (the bug2 pattern from
 // engine.cpp::EnsureWorldContext: validate the CACHED pointer by INDEX, never
-// deref it first -- [[lesson-islive-recycled-slot-blind-use-by-index]]). The
+// deref it first: a freed slot is reused and the index is what says so). The
 // GameInstance persists for the process lifetime once created, so after the
 // first resolve the steady path is a single IsLiveByIndex.
 void* g_gameInstance = nullptr;
