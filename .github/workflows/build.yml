@@ -1,11 +1,27 @@
 # build.yml -- the CI lane's entry (design D1/D2/D11). Based on PR #2 by
 # huoyan1231 (thanks!) -- the vcpkg/CMake build steps he authored now live in
 # build-core.yml, which this file dispatches; his authorship stays in this
-# PR's history. Reworked per the maintainers' design: MANUAL-ONLY
-# (workflow_dispatch; the nightly cron was deliberately dropped -- builds are
-# human-paced), and a THIN entry so the CI lane and the release lane share ONE
-# build implementation (build-core@main, remote form on purpose -- a
-# local-path uses: would resolve from the triggering branch).
+# PR's history. Reworked per the maintainers' design: a THIN entry so the CI
+# lane and the release lane share ONE build implementation (build-core@main,
+# remote form on purpose -- a local-path uses: would resolve from the
+# triggering branch).
+#
+# Triggers: a pull request, a push to main, and a manual dispatch. The
+# automatic ones are what put the D-3 slim contract under machine check --
+# abi_gate.py, inside build-core, proves the DLL imports ZERO symbols from
+# UE4SS -- so a fork's pull request gets a build verdict and the contract no
+# longer depends on someone remembering to click; on main it is the TIP of a
+# push that gets the verdict, since an automatic run supersedes the one before
+# it. The nightly cron stays dropped: a clock is not a reason to build.
+#
+# A pull request builds the MERGED tree, which is the tree a merge would
+# produce. Note what the @main pin does and does not do: on a pull request
+# GitHub runs the workflow file from the merge commit -- the contributor's copy
+# of THIS file -- so a branch can point `uses:` wherever it likes. The pin
+# rules out the accidental local-path resolution build-core's header describes
+# and makes any other change visible in the diff; it is not a barrier. What
+# bounds a fork's run is that no secret is passed, the token is read-only, and
+# the runner is ephemeral.
 # Artifacts are CI evidence, NOT distribution -- releases are the supported
 # install channel.
 name: build
@@ -18,10 +34,18 @@ on:
         required: false
         type: boolean
         default: false
+  pull_request:
+  push:
+    branches: [main]
 
 concurrency:
-  group: ci-build-${{ github.ref }}
-  cancel-in-progress: false
+  # cancel-in-progress is read from the ARRIVING run and says what that run does to runs already
+  # in flight -- it cannot protect a run from being cancelled. A dispatch on main and a push to
+  # main would otherwise share one group, so a push would kill the cacheless release-path smoke.
+  # The GROUP is what protects it: a dispatch gets one of its own and neither cancels nor queues.
+  group: ci-build-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  # An automatic run supersedes the previous one on the same ref.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 permissions:
   contents: read
@@ -30,6 +54,10 @@ jobs:
   build:
     uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@main
     with:
+      # On a pull request github.sha IS the merge commit, so both inputs name it and
+      # build-core's HEAD-equals-source-sha self-check still holds.
       ref: ${{ github.sha }}
       source-sha: ${{ github.sha }}
+      # Only a dispatch can ask for a cacheless build; on the automatic triggers the
+      # inputs context is empty, so this reads true and the CI lane keeps its caches.
       use-cache: ${{ !inputs.cacheless }}

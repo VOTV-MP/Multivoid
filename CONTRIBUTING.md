@@ -84,7 +84,7 @@ A change is not done when it compiles. Before a pull request:
 4. Per-frame and per-packet code is measured, not assumed: no full-object-array scans on a hot
    path, no allocation in the pose tick, engine functions only on the game thread.
 
-CI runs the same gates on every push (`.github/workflows/`): the build, the zero-import ABI
+CI runs the same gates on every pull request and every push to `main` (`.github/workflows/`): the build, the zero-import ABI
 gate, the config-registry gate, the atlas gate, the package drill, the public-leak gate, and the
 commit-message and public-prose checks described below.
 

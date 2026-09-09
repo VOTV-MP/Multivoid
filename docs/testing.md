@@ -65,7 +65,7 @@ grabs a game window from outside the process for the screenshot scenarios.
 
 ### The gates a push runs
 
-Every push builds and gates in CI (`.github/workflows/`). The build workflow checks out the
+Every pull request and every push to `main` builds and gates in CI (`.github/workflows/`). The build workflow checks out the
 requested source, initialises only the third-party submodules, and runs the code gates before
 the compile: the config registry, the peer-slot generation, the master contact (nothing tells
 an outside server where a player is unasked), the reliable-kind routing (every wire kind reaches
