@@ -4,8 +4,7 @@
 // present's CaptureDevice picks it by what the game's swapchain actually is:
 // a DX11 device comes straight off the swapchain, while DX12 additionally has
 // to capture its presenting command queue first (a few frames -- see
-// overlay_backend_dx12_capture.cpp). Design of record:
-// research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md.
+// overlay_backend_dx12_capture.cpp).
 
 #include "ui/overlay_backend.h"
 
@@ -98,12 +97,12 @@ void DestroyTexture(void* id) {
 
 void InstallCreationProbe() { dx12_capture::InstallCreationProbe(); }
 
-// RULE 2, 2026-08-26: a `Shutdown()` used to live here. `[V]` It was reachable ONLY from
-// ui::imgui_overlay::Shutdown(), which had zero callers tree-wide for its entire life and
-// was deleted in 42af8cc0 -- so this ran exactly never. No InitRenderer failure path used
-// it either; those call ReleaseRendererState(). At process exit the OS reclaims what it
-// released, and the one thing a dying process actually needs -- stop new detour entries --
-// is hook::Shutdown's blanket disable. See docs/UE4SS_ARC.md section 4c.
+// RULE 2: a `Shutdown()` used to live here. It was reachable ONLY from
+// ui::imgui_overlay::Shutdown(), which had zero callers tree-wide for its entire life and was
+// deleted -- so this ran exactly never. No InitRenderer failure path used it either; those call
+// ReleaseRendererState(). At process exit the OS reclaims what it released, and the one thing a
+// dying process actually needs -- stop new detour entries -- is hook::Shutdown's blanket
+// disable.
 
 namespace detail {
 

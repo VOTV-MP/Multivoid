@@ -6,9 +6,8 @@
 // vocabulary; the .cpp maps it to SteamNetworkingUtils()->SetGlobalConfigValue*.
 //
 // One session per process, so the config is applied GLOBALLY (the shape the
-// working test_p2p example proves), not per-connection. The design doc's
-// "opts array" idea is an equivalent alternative; global is simpler + proven.
-// See research/findings/network/votv-zero-ports-connectivity-ladder-design-2026-06-05.md s3.6.
+// working test_p2p example proves), not per-connection. A per-connection "opts
+// array" is an equivalent alternative; global is simpler + proven.
 
 #pragma once
 

@@ -1,9 +1,6 @@
 // coop/config/config_review.h -- the T10 config review: boot-time
 // file-vs-schema sweep + the row store behind the review panel.
 //
-// (ini rework arc 2; design research/findings/tooling/
-// votv-ini-config-registry-DESIGN-2026-07-24.md T10.)
-//
 // The sweep validates the ini FILE (and the set env twins) against the
 // registry schema -- statically, off each row's kind -- so even never-read
 // gated keys (F11: desk_diag_ms behind desk_diag) get their verdicts. It
