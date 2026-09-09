@@ -1,5 +1,5 @@
-// ue_wrap/engine/spawn_gate.cpp -- see spawn_gate.h for the contract + the 2026-07-04
-// join-window BeginDeferred-null post-mortem this closes.
+// ue_wrap/engine/spawn_gate.cpp -- see spawn_gate.h for the contract and the
+// join-window BeginDeferred-null failure it closes.
 
 #include "ue_wrap/engine/spawn_gate.h"
 

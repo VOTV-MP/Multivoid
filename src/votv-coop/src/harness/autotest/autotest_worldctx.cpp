@@ -1,8 +1,7 @@
 // harness/autotest/autotest_worldctx.cpp -- the bug2 world-context staleness guard
 // self-test (VOTVCOOP_RUN_WORLDCTX_TEST): forces the cached world context
-// stale and verifies engine::EnsureWorldContext recovers. Extracted verbatim
-// from harness/autotest.cpp (2026-07-19 dissolve); interface + doc in
-// harness/autotest.h.
+// stale and verifies engine::EnsureWorldContext recovers. The interface and
+// the description live in harness/autotest.h.
 
 #include "harness/autotest.h"
 

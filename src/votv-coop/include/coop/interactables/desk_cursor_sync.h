@@ -1,4 +1,4 @@
-// coop/interactables/desk_cursor_sync.h -- v109: the coords-panel LIVE cursor as a continuous
+// coop/interactables/desk_cursor_sync.h -- the coords-panel LIVE cursor as a continuous
 // motion stream (fixes the 3Hz-reliable-snap jaggy).
 //
 // The reliable DishAimState (console_state_sync) carries the COMMITTED-coord

@@ -2,9 +2,9 @@
 //
 // Engine-wrapper layer (principle 7): thin reflected access to UE4.27's navigation
 // system + APawn movement input, holding NO gameplay/network logic. The foundation the
-// bot-director (coop/dev/director) drives the possessed player with. Proven at runtime by
-// the Phase-0 HALT probe (harness/autotest/autotest_navprobe, 2026-07-23): FindPath returns a
-// traversable path over the baked NavMesh; AddMovementInput moves the possessed body.
+// bot-director (coop/dev/director) drives the possessed player with. Measured against the
+// running game by harness/autotest/autotest_navprobe: FindPath returns a traversable path
+// over the baked NavMesh, and AddMovementInput moves the possessed body.
 //
 // NavMesh calls are STATIC UFunctions on UNavigationSystemV1 -> dispatched on its CDO.
 // AddMovementInput is declared on APawn (NOT the leaf mainPlayer_C) -> resolved on the
