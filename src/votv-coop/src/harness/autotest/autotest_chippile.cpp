@@ -378,8 +378,8 @@ void RunAutonomousChipPileTest() {
     }
     ::Sleep(5000);  // let the clump fall + impact + re-pile + the land-watch poll catch it
 
-    UE_LOGI("chippile_test: DONE -- grab-clump-holding=%d eid=%u. VERDICT is now the log-truth harness "
-            "(tools/pile-test-assert.ps1): host '[PILE] HOST GRAB ADOPT' + '[TRASH-CH] HOST carry OPEN' + "
+    UE_LOGI("chippile_test: DONE -- grab-clump-holding=%d eid=%u. VERDICT is now the log-assert harness: "
+            "host '[PILE] HOST GRAB ADOPT' + '[TRASH-CH] HOST carry OPEN' + "
             "'HOST RE-PILE(thunk)' + 'LAND COMMIT'; CLIENT '[PILE] CLIENT recv convert GRAB/LAND -> PROXY "
             "re-skinned' + 'CLIENT ToPile SNAP ... drift=~0'. (The old 'pile_morph: grab armed/ADOPTED' "
             "markers are RETIRED -- the morph was replaced by the host-auth trash channel + proxy.)",

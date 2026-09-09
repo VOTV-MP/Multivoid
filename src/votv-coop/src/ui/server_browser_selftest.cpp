@@ -330,8 +330,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                             "the list still has rows=%d (want %d) and overflow=%.1f (want "
                             "%.0f). With nothing past the viewport there is nowhere to "
                             "scroll and the wheel question is not askable. Seed rows "
-                            "first: tools/fake_master.py, pointed at by "
-                            "VOTVCOOP_MASTER_URL (mp.py browser --fake-master N).",
+                            "first: point VOTVCOOP_MASTER_URL at a "
+                            "fake master with rows on it, which the browser scenario can seed.",
                             static_cast<unsigned long long>(kRowWaitMs), rows, kMinRows,
                             static_cast<double>(end), static_cast<double>(kMinOverflow));
                     g_selfCheckStep = kScrimMoveOut;
