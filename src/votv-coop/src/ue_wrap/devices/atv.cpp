@@ -1,8 +1,8 @@
 // ue_wrap/devices/atv.cpp -- see ue_wrap/devices/atv.h. Engine access for the ATV/quadbike
-// (AATV_C). Offsets resolved from the live class via reflection (version-portable); the Alpha
-// 0.9.0-n values are logged fallbacks. Transform reads/writes go through ue_wrap::engine at the
-// actor level (the root Mesh@0x0570 is the actor root, so the actor transform IS the physics body
-// transform).
+// (AATV_C). Offsets are resolved from the live class through reflection, with the Alpha
+// 0.9.0-n values kept as logged fallbacks. Transform reads and writes go through
+// ue_wrap::engine at the actor level: the root Mesh IS the actor root, so the actor transform
+// is the physics body transform.
 
 #include "ue_wrap/devices/atv.h"
 
@@ -129,8 +129,8 @@ bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot) {
     return Call(atv, f);
 }
 
-// The seven ComponentHitSignature bound events, by exact UFunction name. Taken verbatim from the
-// class's own function list rather than derived from component names: two of the seven components
+// The seven ComponentHitSignature bound events, by exact UFunction name. Taken from the class's
+// own function list rather than derived from component names: two of the seven components
 // (`car1_Capsule`, `car1_frontWheelRoot`) are NOT in ATV.uasset's name table at all, so a
 // component-flag guard would silently have covered five of seven -- the same shape as the
 // root-only guard it would have replaced. Function names have no such ambiguity.
@@ -144,14 +144,14 @@ const wchar_t* const kHitDelegateNames[] = {
     L"BndEvt__car1_backWheelRoot_K2Node_ComponentBoundEvent_2_ComponentHitSignature__DelegateSignature",
 };
 
-// POSITIONAL, not compacted -- changed 2026-08-30 after a post-ship audit. The caller pairs
-// out[i] with a per-delegate callback carrying BIT i, so a COMPACTING walk (skip a miss, keep
-// filling from the front) would shift every later delegate down one and apply the wrong bit to
-// the wrong collision -- silently suppressing the wrong things, which is the exact bug class the
-// per-delegate mask exists to fix. It was safe only because the caller refuses to arm at all
-// unless all seven resolve, i.e. by a fail-closed rule in a different branch rather than by the
-// construction its comment claimed. A miss now leaves out[i] NULL; the return is the count of
-// non-null entries, so `ok == 7` still means what it meant.
+// POSITIONAL, not compacted. The caller pairs out[i] with a per-delegate callback carrying BIT
+// i, so a COMPACTING walk -- skip a miss, keep filling from the front -- would shift every
+// later delegate down one and apply the wrong bit to the wrong collision, silently suppressing
+// the wrong things, which is the exact bug class the per-delegate mask exists to fix. It was
+// safe only because the caller refuses to arm at all unless all seven resolve, i.e. by a
+// fail-closed rule in a different branch rather than by the construction it claimed. A miss
+// now leaves out[i] NULL; the return is the count of non-null entries, so `ok == 7` still
+// means what it meant.
 int ResolveHitDelegates(void** out, int max) {
     if (!out || max <= 0 || !EnsureResolved()) return 0;
     int n = 0, i = -1;

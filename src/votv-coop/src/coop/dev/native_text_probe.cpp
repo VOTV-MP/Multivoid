@@ -131,9 +131,9 @@ void Tick(void* panel) {
             const bool setText = CallTextFn(g_box, L"SetText", L"InText", L"");
             const bool focused = CallNoArg(g_box, L"SetKeyboardFocus");
 
-            // Logged, but NOT the verdict: this is the exact predicate the 2026-07-31
-            // finding says lies about a live field. It is here to tell a future reader
-            // WHICH way it lied this time, not to decide anything.
+            // Logged, but NOT the verdict: this is the exact predicate the header says lies about a
+            // live field. It is here to tell a future reader WHICH way it lied this time, not to
+            // decide anything.
             bool hasFocus = false;
             const bool focusReadable = CallBoolNoArg(g_box, L"HasKeyboardFocus", hasFocus);
 
