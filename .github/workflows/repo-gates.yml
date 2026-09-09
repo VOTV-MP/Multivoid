@@ -1,6 +1,6 @@
 # repo-gates -- the checks on the repository's public surface, on every push.
 #
-# Three gates, each with the drill that shows it RED first (a gate nothing can
+# Four gates, each with the drill that shows it RED first (a gate nothing can
 # show failing is a gate nobody can trust):
 #   - public-leak: a leaked security coordinate in the public tree (its verbatim-overlap
 #     ratchet needs the maintainer's local trees and reports n/a here; the three line
@@ -11,6 +11,10 @@
 #   - public prose: the working-notes markers, dead links and oversized files
 #     in the public tree may not grow (.github/ci/public_prose_gate.py, a
 #     ratchet against its committed baseline)
+#   - ledger lint, offline: the ledger's fold grammar, and the claims the README
+#     and docs/install.md make about the tree they ship from
+#     (.github/ci/ledger_lint.ps1 -SkipApi; the release-drift rows need the API
+#     and stay in the release lane)
 #
 # Its own workflow file on purpose: build-core.yml's sha256 is part of the
 # release fingerprint, so a gate step there would cost the fingerprint ritual
@@ -67,6 +71,19 @@ jobs:
 
       - name: Public-prose gate
         run: python3 .github/ci/public_prose_gate.py
+
+      # ledger_lint reads the ledger and the public docs, so most of it needs no
+      # API and no compiler -- but it ran only in the manual build (advisory
+      # there) and at release time. That is how README_COUNTS came to sit RED for
+      # days after a prose sweep reworded the sentence it reads: the same silence
+      # that let peerconn_gate fail unseen, and the same answer.
+      - name: Ledger lint drill
+        shell: pwsh
+        run: ./.github/ci/ledger_lint_drill.ps1
+
+      - name: Ledger lint, offline (fold grammar; the README's and install doc's claims)
+        shell: pwsh
+        run: ./.github/ci/ledger_lint.ps1 -SkipApi
 
       # The SOURCE invariants, which need no compiler and so do not belong behind a
       # twenty-minute Windows build. They lived only inside build-core once, and while the build
