@@ -53,13 +53,13 @@ void RegisterOn(void* cls, const wchar_t* fnName, const char* label) {
 bool     g_installed = false;
 void*    g_cls       = nullptr;
 void*    g_inputNumFn = nullptr;  // inputNumber(int32 Num)
-int32_t  g_numOff    = -1;        // Num         @0x0378
-int32_t  g_isAccOff  = -1;        // isAcc       @0x037C
-int32_t  g_isDenyOff = -1;        // isDeny      @0x037D
-int32_t  g_inPwOff   = -1;        // inPassword  @0x0380 (FString)
-int32_t  g_pwOff     = -1;        // password    @0x0350 (FString)
-int32_t  g_focusOff  = -1;        // isFocused   @0x0391
-int32_t  g_doorOff   = -1;        // door        @0x0338 (Adoor_C* the keypad gates)
+int32_t  g_numOff    = -1;        // Num
+int32_t  g_isAccOff  = -1;        // isAcc
+int32_t  g_isDenyOff = -1;        // isDeny
+int32_t  g_inPwOff   = -1;        // inPassword (FString)
+int32_t  g_pwOff     = -1;        // password (FString)
+int32_t  g_focusOff  = -1;        // isFocused
+int32_t  g_doorOff   = -1;        // door (Adoor_C* the keypad gates)
 uint64_t g_tick      = 0;
 bool     g_testDone  = false;
 

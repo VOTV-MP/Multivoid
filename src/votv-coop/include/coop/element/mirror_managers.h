@@ -1,20 +1,17 @@
-// coop/element/mirror_managers.h -- the ONE canonical home for the entity mirror
-// managers. There are exactly THREE streamed-mirror kinds, each a process-wide
-// MirrorManager<T> singleton (the MTA per-type CClient*Manager analog):
+// coop/element/mirror_managers.h -- the ONE canonical home for the entity mirror managers.
+// There are exactly THREE streamed-mirror kinds, each a process-wide MirrorManager<T> singleton
+// (the MTA per-type CClient*Manager analog):
 //
-//   PropMirrors()  -> MirrorManager<Prop>        chipPiles / trash / kerfur OFF-props / all grabbable props
-//   NpcMirrors()   -> MirrorManager<Npc>         kerfur NPC form / zombies / ariral / wisps / all AI characters
-//   WaMirrors()    -> MirrorManager<WorldActor>  UFOs / ships / jellyfish (non-Character event actors)
+//   PropMirrors() -> MirrorManager<Prop>        chipPiles, trash, kerfur OFF-props, grabbables
+//   NpcMirrors()  -> MirrorManager<Npc>         kerfur NPC form, zombies, ariral, wisps, AI
+//   WaMirrors()   -> MirrorManager<WorldActor>  UFOs, ships, jellyfish (non-Character actors)
 //
-// (Player is NOT here -- it has its own coop::players::Registry. Kerfur is a
-// host-only logical id record with no manager; its rendered form is a Prop/Npc
-// mirror above.)
+// (Player is NOT here -- it has its own coop::players::Registry. Kerfur is a host-only logical
+// id record with no manager; its rendered form is a Prop or Npc mirror above.)
 //
-// RULE 2 (one concept, one implementation): these accessors were previously
-// re-declared as a local `inline` 1-liner in 11 subsystem .cpp files
-// (PropMirrors x4, NpcMirrors x6, WaMirrors x1). Consolidated here 2026-06-29 --
-// include this header and `using coop::element::{Prop,Npc,Wa}Mirrors;` (or call
-// fully-qualified) instead of re-defining the wrapper.
+// RULE 2, one concept and one implementation: include this header and
+// `using coop::element::{Prop,Npc,Wa}Mirrors;`, or call fully qualified, rather than declaring a
+// local inline wrapper of your own.
 
 #pragma once
 

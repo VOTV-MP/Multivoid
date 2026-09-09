@@ -53,7 +53,7 @@ void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
     }
 
     // seedDelta(h) = cur - snap, per hash over the union. No pending-mask term:
-    // these lanes have no cross-edge resend structure (measured, design doc par.2.6);
+    // these lanes have no cross-edge resend structure (measured);
     // the live leg is CLOSED for the whole capture->ready gap by the B2 gate.
     std::map<uint64_t, int32_t> delta = cur;
     for (const auto& [h, c] : snap.counts) delta[h] -= c;
