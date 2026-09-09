@@ -79,6 +79,9 @@ int f() { return 0; } // trailing comments are code lines for the VOLUME counter
 int t1() { return 0; } // WP-4 names a work package from a trailing comment
 int t2() { return 0; } // this one was settled by an audit nobody outside can read
 int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
+// a month with no day, as 2026-08: opens a diary entry too
+// PRECISION: 0x2026-08 is hex and a dash, and v2026-08 names no day either
+// PRECISION: a bare year 2026 on its own is not a date, and neither is a port 20260
 int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
 // one user attribution per line, so dropping any one of them turns this drill red. The capitals
 // form needs a line of its OWN: every earlier one read "USER asked" or "USER said", which the
@@ -450,6 +453,9 @@ MUTANTS = [
     # The string axis. Each row breaks one part of it -- the counting, the table it derives
     # from, the lexer, the per-line dedupe, the explainer -- and the exemption that keeps it off
     # the fold fixtures, which is the one way widening it would damage the tree.
+    ("dated: a month is not a date", r'r"\b20\d\d-\d\d(?:-\d\d)?\b"',
+     r'r"\b20\d\d-\d\d-\d\d\b"'),
+    ("dated: a day is not required", r'r"\b20\d\d-\d\d(?:-\d\d)?\b"', r'r"\b20\d\d\b"'),
     ("string: literals unread", "smark = string_marker_lines(text)", "smark = []"),
     ("string: the fold fixtures count too",
      'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"',
@@ -570,9 +576,9 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 122, "src.files": 6, "src.files_not_swept": 3,
+              "src.comment_lines": 125, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 16, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 4, "src.comment_dated": 4, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
@@ -621,8 +627,8 @@ def main():
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
         ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:3", "src/votv-coop/src/x.cpp:20",
-                                                                     "src/votv-coop/src/x.cpp:49",
-                                                                     "src/votv-coop/src/x.cpp:74"],
+                                                                     "src/votv-coop/src/x.cpp:52",
+                                                                     "src/votv-coop/src/x.cpp:77"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():

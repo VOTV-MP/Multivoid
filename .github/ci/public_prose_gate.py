@@ -70,7 +70,12 @@ INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.f
                  "other.files")  # reported, never compared
 
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
-DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
+# The DAY is optional: "2026-08:" opens a diary entry as surely as "2026-08-25" does, and
+# four of them sat in one file while this counter read zero and its burn-down called the
+# file swept. Nothing else in the tree matches the shorter form -- measured over every
+# tracked doc, script and source -- and a leading word character keeps a hex literal or a
+# version out of it, since \b cannot fire inside 0x2026 or v2026.
+DATE = re.compile(r"\b20\d\d-\d\d(?:-\d\d)?\b")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
 # A document named in a source comment, in the three spellings the tree uses. All resolve the
