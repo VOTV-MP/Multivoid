@@ -1,19 +1,18 @@
-// coop/interactables/desk_sim_sync.h -- the signal-desk download sim as a HOST-AUTHORITATIVE output
-// stream.
+// coop/interactables/desk_sim_sync.h -- the signal-desk download sim as a host-authored
+// output stream.
 //
-// THE ROOT: the download-rate formula (AanalogDScreenTest) rolls TWO UNSEEDED RNG terms per tick,
-// the detector needle DL_resDetecPercent and a transient noise, and integrates the filter offsets
-// from per-peer frame dt, so the OUTPUTS diverge across peers even from identical knob inputs.
-// Streaming them on the occupant-authored, claim-gated DeskState cannot fix that: unclaimed means
-// no stream and self-divergence, and a client occupant would author shared-world RNG. Seeding is
-// impossible against an unseeded roll plus transient noise, so the host owns the simulation and
-// streams the output vector (DeskSimPose, about 10 Hz, newest-wins, interpolated like the cursor)
-// and the client overwrites its own local sim, whose garbage the overwrite hides.
+// THE ROOT: the download-rate formula (AanalogDScreenTest) rolls TWO UNSEEDED RNG terms per
+// tick, the detector needle DL_resDetecPercent and a transient noise, and integrates the
+// filter offsets from per-peer frame dt, so the OUTPUTS diverge across peers even from
+// identical knob inputs. Streaming them on the occupant-authored, claim-gated DeskState cannot
+// fix that: unclaimed means no stream and self-divergence, and a client occupant would author
+// shared-world RNG. Seeding is impossible against an unseeded roll plus transient noise, so
+// the host owns the simulation and streams the output vector (DeskSimPose, about 10 Hz,
+// newest-wins, interpolated like the cursor) and the client overwrites its own local sim.
 //
 // The knob INTENTS (speeds, active, dir) stay occupant-authored on DeskState, the host applies
-// them and its own blueprint integrates the offset, so this vector is host-down only: one author.
-// frData and poData ride the vector rather than converging natively -- they read a filter-size
-// upgrade that has no sync lane of its own.
+// them and its own blueprint integrates the offset, so this vector is host-down only: one
+// author. frData and poData ride the vector rather than converging natively.
 
 #pragma once
 

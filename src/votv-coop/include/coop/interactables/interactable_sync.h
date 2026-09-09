@@ -1,19 +1,18 @@
-// coop/interactables/interactable_sync.h -- generic "keyed interactable open/close/on-off state"
-// sync. ONE replication engine drives three features through a shared Channel, with no
-// per-feature copy:
+// coop/interactables/interactable_sync.h -- keyed interactable open/close/on-off state sync. ONE
+// replication engine drives three features through a shared Channel, with no per-feature copy:
 //   - DoorState (9):       base doors     (Adoor_C::doorOpen / doorClose)
 //   - LightState (10):     light groups   (Atrigger_lightRoot_C::SetActive)
 //   - ContainerState (11): container lids (Aprop_swinger_C::Open / Close)
 //
 // Gameplay/network layer (principle 7): owns the wire protocol, the sender observers, the receiver
-// apply, the per-channel key-to-actor index, the deferred-apply retry and the connect snapshot,
-// and talks to the engine ONLY through ue_wrap::door, ::lightswitch, ::swinger and ::prop.
+// apply, the per-channel key-to-actor index, the deferred-apply retry and the connect snapshot, and
+// talks to the engine ONLY through ue_wrap::door, ::lightswitch, ::swinger and ::prop.
 //
 // The model is SYMMETRIC: each peer POLLS every indexed instance's state field once per tick and,
-// on a delta, broadcasts the new state with the instance's cross-peer-stable Key. Polling, not a
-// UFunction observer, because the open, close and toggle verbs are BP-internal and bypass our
-// ProcessEvent detour -- and because it catches EVERY writer (an E-press, an NPC auto-open, a
-// keypad unlock, a script), which a per-verb observer cannot.
+// on a delta, broadcasts the new state with the instance's cross-peer-stable Key. Polling rather
+// than a UFunction observer, because the open, close and toggle verbs are BP-internal and bypass
+// our ProcessEvent detour, and because polling catches EVERY writer -- an E-press, an NPC
+// auto-open, a keypad unlock, a script -- which a per-verb observer cannot.
 
 #pragma once
 
