@@ -1,4 +1,4 @@
-// harness/autotest_weather.cpp -- the weather-sync tests: forced rain cycles
+// harness/autotest/autotest_weather.cpp -- the weather-sync tests: forced rain cycles
 // (VOTVCOOP_RUN_WEATHER_TEST) and the red-sky variant (VOTVCOOP_RUN_REDSKY_TEST). Both are
 // host-only drivers; clients apply through the wire. Interfaces and docs in harness/autotest.h.
 

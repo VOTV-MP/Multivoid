@@ -1,4 +1,5 @@
-// harness/autotest_alarmforce.cpp -- base radar alarm lane e2e driver (v101, docs/events/alarm.md).
+// harness/autotest/autotest_alarmforce.cpp -- base radar alarm lane e2e driver (v101,
+// docs/events/alarm.md).
 //
 // HOST-ONLY. After a client-settle window, forces the native trigger_alarm_C ON through
 // alarm_sync::DevForce (a game-thread runTrigger(1) -- the exact call the radar makes), waits,

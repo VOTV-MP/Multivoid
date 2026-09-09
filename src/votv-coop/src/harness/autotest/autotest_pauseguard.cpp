@@ -1,4 +1,4 @@
-// harness/autotest_pauseguard.cpp -- coop pause_guard e2e (2026-07-04).
+// harness/autotest/autotest_pauseguard.cpp -- coop pause_guard e2e (2026-07-04).
 //
 // USER REPORT: a client pressing ESC pauses its world -- the engine stops ticking, its
 // pose stream freezes on every other screen. The fix (coop/session/pause_guard) enforces

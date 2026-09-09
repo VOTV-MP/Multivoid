@@ -1,4 +1,4 @@
-// harness/autotest_tracker_selftest.cpp -- prop_element_tracker self-tests:
+// harness/autotest/autotest_tracker_selftest.cpp -- prop_element_tracker self-tests:
 // the dead-Prop-Element reaper check (VOTVCOOP_RUN_PROPREAP_TEST) + the
 // re-seed snapshot-completeness probe (VOTVCOOP_RUN_RESEED_TEST). Extracted
 // verbatim from harness/autotest.cpp (2026-07-19 dissolve); interfaces + docs

@@ -1,4 +1,4 @@
-// harness/autotest_eventforce.cpp -- event force-NOW smoke driver (coop/dev/event_force).
+// harness/autotest/autotest_eventforce.cpp -- event force-NOW smoke driver (coop/dev/event_force).
 //
 // HOST-ONLY (client observes via wire). Verifies the 2026-07-03 volume-gate feature end to end
 // on the canonical row (obelisk -- the user's own repro event):

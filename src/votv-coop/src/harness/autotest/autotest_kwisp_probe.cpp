@@ -1,4 +1,4 @@
-// harness/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE.
+// harness/autotest/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE.
 //
 // A killerwisp reportedly ignores peers and never runs its kill sequence on them, so the built
 // chain (SpawnKillerWispOnClient -> the wisp acquires the PUPPET as Target -> the inRange

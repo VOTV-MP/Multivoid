@@ -1,4 +1,4 @@
-// harness/autotest_menutravel_probe.cpp -- SP-solo probe for VOTV's menu-travel verb.
+// harness/autotest/autotest_menutravel_probe.cpp -- SP-solo probe for VOTV's menu-travel verb.
 //
 // A dead player has to be able to leave the gameplay world for the main menu, and neither
 // engine verb does it: `disconnect` is a no-op (VOTV is single-player, no netdriver) and a

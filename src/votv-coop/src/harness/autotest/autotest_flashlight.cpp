@@ -1,4 +1,4 @@
-// harness/autotest_flashlight.cpp -- the flashlight-toggle end-to-end test
+// harness/autotest/autotest_flashlight.cpp -- the flashlight-toggle end-to-end test
 // (VOTVCOOP_RUN_FLASHLIGHT_TEST): both peers toggle, and the ItemActivate wire path drives
 // the other peer's puppet. Interface and doc in harness/autotest.h.
 

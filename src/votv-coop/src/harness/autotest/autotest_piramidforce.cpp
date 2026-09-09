@@ -1,4 +1,4 @@
-// harness/autotest_piramidforce.cpp -- piramid mirror-lane end-to-end smoke driver.
+// harness/autotest/autotest_piramidforce.cpp -- piramid mirror-lane end-to-end smoke driver.
 //
 // HOST-ONLY; the client observes over the wire, so its side is asserted by log diff. It runs the
 // whole lane on the REAL native chain:

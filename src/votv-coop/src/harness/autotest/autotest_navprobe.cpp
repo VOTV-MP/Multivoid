@@ -1,7 +1,7 @@
-// harness/autotest_navprobe.cpp -- the two navigation measurements an autonomous bot-director
-// is gated on: does FindPath return a traversable path over VOTV's baked NavMesh (GATE A), and
-// does a reflected APawn::AddMovementInput actually move the possessed body (GATE B). Each is
-// commented at its own section below. Neither is an inference the static RE can settle, so
+// harness/autotest/autotest_navprobe.cpp -- the two navigation measurements an autonomous
+// bot-director is gated on: does FindPath return a traversable path over VOTV's baked NavMesh (GATE
+// A), and does a reflected APawn::AddMovementInput actually move the possessed body (GATE B). Each
+// is commented at its own section below. Neither is an inference the static RE can settle, so
 // nothing of a director is built until both are measured on a real running game.
 //
 // The gates are NECESSARY-not-sufficient: they gate the ATTEMPT, and closed-loop convergence

@@ -7,7 +7,7 @@
 // puppet's own kel meshes for it. We never call ragdollMode: it is globally scoped and kills the
 // host, firing the death event whatever its params say.
 //
-// The recipe, from an SP-solo probe (harness/autotest_ragdoll_spawn_probe.cpp):
+// The recipe, from an SP-solo probe (harness/autotest/autotest_ragdoll_spawn_probe.cpp):
 // BeginDeferredSpawn(playerRagdoll_C); write Player, an Expose-On-Spawn field that must land
 // BEFORE Finish for ReceiveBeginPlay to self-configure the visible kel mesh; FinishDeferredSpawn;
 // then StartBodySim for collision and the two simulate-physics calls, since BeginPlay builds the

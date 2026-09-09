@@ -1,11 +1,11 @@
-// harness/autotest_death.cpp -- the native death-chain instrument (VOTVCOOP_RUN_DEATH_TEST), one
-// process in two configurations. `mp.py death --session` is a solo host (a session with zero
-// clients), the acceptance run: the native death plays out (about 10 s, the black screen at
-// +5 s), the level travel is refused at UGameplayStatics::OpenLevel, and the player comes back
-// standing at the KPP with the pause menu reachable. `mp.py death` is sessionless, the negative
-// control: single player is untouched, so the travel must still happen and the seam refuse
-// nothing. Neither needs a second peer. The observation half never fails (the measured
-// timeline from a real lethal Add Player Damage to the travel or its refusal, a memory
+// harness/autotest/autotest_death.cpp -- the native death-chain instrument
+// (VOTVCOOP_RUN_DEATH_TEST), one process in two configurations. `mp.py death --session` is a solo
+// host (a session with zero clients), the acceptance run: the native death plays out (about 10 s,
+// the black screen at +5 s), the level travel is refused at UGameplayStatics::OpenLevel, and the
+// player comes back standing at the KPP with the pause menu reachable. `mp.py death` is
+// sessionless, the negative control: single player is untouched, so the travel must still happen
+// and the seam refuse nothing. Neither needs a second peer. The observation half never fails (the
+// measured timeline from a real lethal Add Player Damage to the travel or its refusal, a memory
 // profile, the seam's counters); the acceptance half does, asserted in `death_test:` lines and
 // never inferred from a module's own log. The hit is the game's own Add Player Damage, so the
 // real lethal chain runs; only the trigger is synthetic.

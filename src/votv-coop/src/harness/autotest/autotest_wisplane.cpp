@@ -1,4 +1,4 @@
-// harness/autotest_wisplane.cpp -- wisp mirror-lane e2e smoke driver (2026-07-03).
+// harness/autotest/autotest_wisplane.cpp -- wisp mirror-lane e2e smoke driver (2026-07-03).
 //
 // HOST-ONLY (client observes via wire). Drives the full event-swarm wisp lifecycle:
 //   1. T+55s  ForceNow("wisps") -- arm via HostFire + drive TB_event_wispSwarm's own overlap

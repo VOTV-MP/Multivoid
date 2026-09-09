@@ -1,4 +1,4 @@
-// harness/autotest_worldrules.cpp -- the world-rules probe
+// harness/autotest/autotest_worldrules.cpp -- the world-rules probe
 // (VOTVCOOP_RUN_WORLDRULES_PROBE): exercises the F1>World>Rules read path on
 // both peers + measures G1. Extracted verbatim from harness/autotest.cpp
 // (2026-07-19 dissolve); interface + doc in harness/autotest.h.

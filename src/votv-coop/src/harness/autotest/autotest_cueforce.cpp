@@ -1,9 +1,10 @@
-// harness/autotest_cueforce.cpp -- starRain cue-force driver (event_cue join-snapshot e2e).
+// harness/autotest/autotest_cueforce.cpp -- starRain cue-force driver (event_cue join-snapshot
+// e2e).
 //
 // HOST-ONLY. Posts runEvent('starRain') through the F1 seam (event_fire_sync::HostFire)
 // DELIBERATELY BEFORE any client connects (unlike eventfire_test's 55 s client settle). The e2e
-// orchestration launches a client AFTER the host's "runEvent('starRain'...) dispatched" line: the host
-// cue poll starts at transport connect and broadcasts the live starRain PSC (dropped for the
+// orchestration launches a client AFTER the host's "runEvent('starRain'...) dispatched" line: the
+// host cue poll starts at transport connect and broadcasts the live starRain PSC (dropped for the
 // still-loading slot by the world-ready send gate), and the world-ready join re-send
 // (event_cue_sync::QueueConnectBroadcastForSlot) must deliver exactly ONE copy. Expect:
 //   host log:   "event_cue: connect-snapshot -- re-sent live 'starRain' (cue 0) to slot 1"
