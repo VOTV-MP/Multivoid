@@ -1,18 +1,18 @@
-// coop/creatures/kerfur_prop_adoption.h -- deferred class and pose adoption for PROP-form
-// kerfurs at join.
+// coop/creatures/kerfur_prop_adoption.h -- deferred class and pose adoption for PROP-form kerfurs.
 //
-// A kerfur PROP (prop_kerfurOmega_C) is host-owned with a blueprint key minted at random per
-// peer, so a client cannot match its host twin by key. At join the host expresses each one as
-// a PropSpawn and the client's inline fuzzy match in remote_prop_spawn::OnSpawn -- class plus
-// pose within 30 cm -- runs ONCE on receipt: if the client's save-loaded twin has not
-// async-loaded yet it MISSES, and a DUPLICATE is spawned beside it. That orphan is untracked,
-// so ClaimConversionGhosts over-claims and destroys it, and the conversion poll cannot see it.
+// A kerfur PROP (prop_kerfurOmega_C) is host-owned with a blueprint key minted at random per peer,
+// so a client cannot match its host twin by key. At join the host expresses each one as a PropSpawn
+// and the client's inline fuzzy match in remote_prop_spawn::OnSpawn -- class plus pose within 30 cm
+// -- runs ONCE on receipt: if the client's save-loaded twin has not async-loaded yet it MISSES, and
+// a DUPLICATE is spawned beside it. That orphan is untracked, so ClaimConversionGhosts over-claims
+// and destroys it, and the conversion poll never sees it.
 //
-// So a fuzzy miss ARMS a pending adoption here instead, and a 5 Hz poll binds the local twin
-// by class and nearest pose once it materialises, gated on HasLoadTailQuiesced, fresh-spawning
-// only as a last resort. The bound twin is then one host-range MIRROR: claimed, sweep-safe,
-// excluded from ClaimConversionGhosts and poll-visible. CLIENT-only and GAME-THREAD-only, no
-// mutex; the client-mint gate keeps the twin out of the Registry's actor-to-eid map.
+// So a fuzzy miss ARMS a pending adoption here instead, and a 5 Hz poll binds the local twin by
+// class and nearest pose once it materialises, gated on HasLoadTailQuiesced, fresh-spawning only as
+// a last resort. The bound twin is then one host-range MIRROR: claimed, sweep-safe, excluded from
+// ClaimConversionGhosts and poll-visible. CLIENT-only and GAME-THREAD-only, no mutex; the
+// client-mint gate keeps the twin out of the Registry's actor-to-eid map, so after adoption it is
+// purely a mirror. The prop-form analogue of coop/creatures/npc_adoption.h.
 
 #pragma once
 

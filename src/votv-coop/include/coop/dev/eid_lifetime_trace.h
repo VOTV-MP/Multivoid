@@ -7,9 +7,9 @@
 // silently. Prove it before building the bind.
 //
 // THE TRACE: record actor-to-eid at capture, through the same GetPropElementIdForActor the map will
-// use, then at the wire-expression compare the eid the host is about to send against the recorded
-// one. The verdict at drain-complete is STABLE (every wire-eid equals its capture-eid) or DIVERGES.
-// It observes and counts only.
+// use, then at the wire-expression (BuildPropSpawnPayload_) compare the eid it sends against the
+// recorded one. The verdict at drain-complete is STABLE (every wire-eid equals its capture-eid) or
+// DIVERGES. It observes and counts only.
 //
 // RULE-2-exempt diagnostic. Ini-gated [dev] eid_lifetime_trace=1 on the HOST; absent or 0 makes
 // every call a cheap no-op. Game-thread only.

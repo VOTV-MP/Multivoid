@@ -10,7 +10,7 @@
 // path.
 //
 // Game-thread for the Take (it touches the manager and the registry under their mutexes); the
-// Enqueue is any-thread-safe. A bare-actor retire, a proxy un-root or an echo-suppress, keeps its
+// Enqueue is any-thread-safe. A bare-actor retire -- a proxy un-root, an echo-suppress -- keeps its
 // site-specific pre-steps -- this funnel is only the Element teardown.
 
 #pragma once

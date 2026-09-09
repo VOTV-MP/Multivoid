@@ -6,7 +6,8 @@
 //
 // It lives in the gameplay layer, beside the two modules that COMPOSE chat lines (chat_sync and
 // peer_action_feed), because the colour is resolved once when the line is composed and then FROZEN
-// into it -- chat history is a frozen history. Resolving late, at draw time, would repaint a
+// into it -- an old chat line keeps the colour it was drawn with. Resolving late, at draw
+// time, would repaint a
 // two-hour-old message when the peer whose slot has since been recycled picks a new colour. That
 // also means the render half needs no palette at all.
 //
