@@ -223,7 +223,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
     peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
-    // The admitted peer takes the slot.
+    // GEN: mint -- the admitted peer takes the slot (the generation store is the line above).
     peerConns_[slot].store(hConn);
     // The peer is now entitled to everything a connected peer gets.
     FinishPeerConnected(slot, hConn);
@@ -456,9 +456,9 @@ void Session::HandleConnStatusChanged(void* info) {
             peer_admission::ClientReset();
         }
         if (slot >= 0) {
-            // The generation is cleared at the end of this path, after the inbox erase: its drop to
-            // 0 is what tells the ledger the slot emptied, and clearing it here would let a
-            // still-queued reliable from this peer dispatch after the teardown.
+            // GEN: clear -- deferred to the END of this close path, after the inbox erase: its
+            // drop to 0 is what tells the ledger the slot emptied, and clearing it here would let
+            // a still-queued reliable from this peer dispatch after the teardown.
             peerConns_[slot].store(0);
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
             // The departing peer's queued reliable state dies with it.
@@ -516,10 +516,11 @@ bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const cha
                 static_cast<unsigned>(expectedGeneration), static_cast<unsigned>(liveGen));
         return false;
     }
-    // Claim by handle, not by slot: the generation check can go stale between these two
-    // instructions (the net thread closes and re-accepts), and a plain exchange(0) would hand us
-    // the successor's connection; the CAS fails on a different handle. The generation itself is
-    // cleared at the end of KickClaimed.
+    // GEN: clear -- the claim only; the generation itself is cleared at the end of KickClaimed's
+    // teardown, after the inbox erase, exactly like the other two close paths. Claim by handle,
+    // not by slot: the generation check can go stale between these two instructions (the net
+    // thread closes and re-accepts), and a plain exchange(0) would hand us the successor's
+    // connection; the CAS fails on a different handle.
     uint32_t claimed = hConnAtCapture;
     if (!peerConns_[peerSlot].compare_exchange_strong(claimed, 0)) {
         UE_LOGW("net: kick/ban on slot %d REFUSED -- the connection changed under us", peerSlot);
@@ -541,9 +542,11 @@ bool Session::GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
 bool Session::Kick(int peerSlot, const char* reason) {
     // Slot 0 is the host itself, never kickable.
     if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
-    // Claim the slot atomically so a concurrent ClosedByPeer on the net thread and this kick cannot
-    // both run the teardown (0 back means someone already closed it). The generation is cleared at
-    // the end of the teardown; this site is an exchange, not a store.
+    // GEN: clear -- deferred to the end of the teardown, exactly as the ClosedByPeer path does.
+    // Claim the slot atomically so a concurrent ClosedByPeer on the net thread and this kick
+    // cannot both run the teardown (0 back means someone already closed it). This site is an
+    // exchange, not a store: a census of `.store(` alone MISSES it, and missing it would leave a
+    // kicked slot holding a live generation, so the ledger would never see the row empty.
     const uint32_t hConn = peerConns_[peerSlot].exchange(0);
     if (hConn == 0) return false;
     return KickClaimed(peerSlot, hConn, reason);
@@ -578,7 +581,8 @@ void Session::LeaveHost(const char* why) {
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
         if (hostCloseReason_.empty() && why) hostCloseReason_ = why;
     }
-    // No generation on a client: slot 0 is the host link, not a roster seat.
+    // GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a peer-slot occupancy. The
+    // client owns no roster generations and the flee path tears down whole.
     const uint32_t hConn = peerConns_[0].exchange(0);
     if (hConn == 0) return;  // already claimed by another path; its teardown owns it
     KickClaimed(0, hConn, why);

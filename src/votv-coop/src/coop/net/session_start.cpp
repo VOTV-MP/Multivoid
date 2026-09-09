@@ -238,9 +238,9 @@ bool Session::StartLanDirect() {
             UE_LOGE("net: ConnectByIPAddress(%s:%u) failed", cfg_.peerIp.c_str(), cfg_.port);
             return false;
         }
-        // Slot 0 is the host. No occupancy generation: a client never mints one, since the
+        // GEN: none -- a client never mints an occupancy generation. Slot 0 is the host; the
         // generation is the host's authority over slot recycling and a client's roster is
-        // wire-driven; minting here would fight the wire.
+        // wire-driven, so minting here would fight the wire.
         peerConns_[0].store(hConn);
         UE_LOGI("net: client dialed %s:%u (hConn=0x%08x slot=0)",
                 cfg_.peerIp.c_str(), cfg_.port, static_cast<unsigned>(hConn));
@@ -354,7 +354,8 @@ bool Session::StartP2P() {
             signaling_.reset();
             return false;
         }
-        // Slot 0 is the host, as for the direct transport; a client mints no generation.
+        // GEN: none -- client dial; see the LanDirect site above for the reason. Slot 0 is the
+        // host, as for the direct transport.
         peerConns_[0].store(hConn);
         UE_LOGI("net: P2P client dialing '%s' via signaling %s (hConn=0x%08x slot=0)",
                 cfg_.hostIdentity.c_str(), cfg_.signalingUrl.c_str(),
@@ -381,9 +382,9 @@ void Session::Stop() {
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {
         for (int i = 0; i < kMaxPeers; ++i) {
-            // The generations cleared: a Session sits stopped between Stop and the next Start, and
-            // a generation left live across that window would read as an occupied slot with no
-            // session behind it.
+            // GEN: clear -- session teardown empties every slot. A Session sits stopped between
+            // Stop and the next Start, and a generation left live across that window would read
+            // as an occupied slot with no session behind it.
             const uint32_t hConn = peerConns_[i].exchange(0);
             peerGenBySlot_[i].store(0, std::memory_order_release);
             backlog_.FreeSlot(i);  // queued state dies with the session
