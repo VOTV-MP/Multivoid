@@ -1,7 +1,6 @@
 // coop/props/trash_channel_detail.h -- INTERNAL seam between trash_channel.cpp
 // (the ctx/carry-latch/land-settle/birth-certificate core) and
-// trash_grab_intent.cpp (the client-initiated grab/throw intent lane,
-// extracted 2026-07-10 when trash_channel passed the 800-LOC soft cap).
+// trash_grab_intent.cpp (the client-initiated grab/throw intent lane).
 //
 // Sibling-internal header (the prop_element_tracker_detail.h precedent) -- NOT
 // part of the public coop/ include surface; only the two TUs above include it.

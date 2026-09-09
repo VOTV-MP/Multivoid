@@ -1,6 +1,6 @@
 // coop/dev/door_probe.cpp -- see coop/dev/door_probe.h.
 //
-// SURVEY mode (2026-06-04 deep-dig): the first run proved doorOpen(true) sets
+// SURVEY mode: the first run proved doorOpen(true) sets
 // isMoving=1 but isOpened NEVER flips and isMoving never clears -- the `move`
 // timeline starts but never finishes. Two questions remain: (a) is the timeline
 // actually ADVANCING (its alpha changing) or frozen, and (b) is this every door

@@ -69,7 +69,7 @@ void Render() {
     if (ImGui::Button("Refresh list")) {
         PublishNamesForResolve(coop::skins::Entries(true));
         // Release the cached preview textures before dropping the map -- clearing
-        // alone leaked one texture+SRV per preview per refresh (fixed 2026-07-26).
+        // alone leaks one texture+SRV per preview per refresh.
         for (auto& [name, pv] : g_previews)
             ui::overlay_backend::DestroyTexture(pv.srv);
         g_previews.clear();

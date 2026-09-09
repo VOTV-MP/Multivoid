@@ -21,8 +21,8 @@ namespace R = ue_wrap::reflection;
 // Recording is CONTINUOUS while enabled (NOT gated on a join-arm window): the keyless natives can spawn
 // BEFORE the snapshot bracket opens (the client's own-save boot load precedes connect; the host-blob load
 // can precede SnapshotBegin), so gating recording to [ArmForJoin..quiescence] would MISS them and read a
-// false fired=0. The first probe run (2026-06-25 16:15) hit exactly this -- the boot 871 piles loaded at
-// 16:14:44, the probe armed at 16:15:04, so fired=0 told us nothing. Recording from the first thunk fire
+// false fired=0. The first probe run hit exactly this: the boot's 871 piles loaded twenty seconds
+// before the probe armed, so fired=0 said nothing at all. Recording from the first thunk fire
 // answers the real question (does the thunk EVER fire for a keyless spawn?) regardless of bracket timing.
 bool g_verdictPending = false;  // a join armed -> EmitVerdictAtQuiescence should report (set by ArmForJoin)
 // Recorded keyless spawns this session, by actor ptr -> family. A map so the quiescence walk can confirm the

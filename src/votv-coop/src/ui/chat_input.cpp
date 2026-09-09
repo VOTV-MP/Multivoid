@@ -22,7 +22,7 @@ std::atomic<bool> g_open{false};
 char g_buf[204] = {};          // render-thread only (matches ChatMessagePayload.text + NUL)
 bool g_focusPending = false;   // focus the field on the first frame after Open
 
-// Up/Down send-history recall (2026-07-04, the chat-imgui-samp shape): the last
+// Up/Down send-history recall, the chat-imgui-samp shape: the last
 // kHistoryMax sent lines, newest LAST. g_histPos = -1 means "live" (not browsing);
 // entering history stashes the live text so Down past the newest restores it.
 // Render thread only (the InputText callback + Render run there).

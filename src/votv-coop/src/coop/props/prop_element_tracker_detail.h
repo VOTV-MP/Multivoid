@@ -1,8 +1,7 @@
 // coop/props/prop_element_tracker_detail.h -- INTERNAL shared state between
 // prop_element_tracker.cpp (Mark/Unmark maintenance + reaper),
-// prop_census.cpp (the seed/re-seed GUObjectArray walk, extracted 2026-07-10
-// when the tracker passed the 800-LOC soft cap), and prop_key_index.cpp (the
-// key -> live-actor index family, extracted 2026-07-10, second slice).
+// prop_census.cpp (the seed/re-seed GUObjectArray walk) and prop_key_index.cpp
+// (the key -> live-actor index family).
 //
 // Sibling-internal header (the coop/net/session_lanes.h / event_dispatch.h
 // precedent) -- NOT part of the public coop/ include surface; only the three

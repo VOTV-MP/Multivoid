@@ -93,7 +93,7 @@ void RunWalkGrabDirector() {
             std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
             if (cands.size() > kMaxCandidates) cands.resize(kMaxCandidates);
             // Score by TOTAL ROUTE LENGTH (not point count): a pile in genuinely open space has a route ~=
-            // its straight distance, while a pile behind a wall winds far around (measured 2026-07-23: a
+            // its straight distance, while a pile behind a wall winds far around (measured: a
             // 553cm-straight pile had a 24m NavMesh detour that straight-steer could not traverse). Prefer
             // the shortest actual walk, and REJECT a pile whose route detours > 3x its straight distance.
             float bestLen = 1e30f; int bestPts = -1;
@@ -102,7 +102,7 @@ void RunWalkGrabDirector() {
                 if (!E::FindNavPath(rsv->player, at, c.pos, p)) continue;   // unreachable
                 // GRAB-REACHABILITY: the route must END within grab distance of the pile. A pile up on a
                 // desk/shelf sits far off the navmesh -- the bot reaches the route-end but never the pile
-                // (measured 2026-07-23: a pile 833cm out whose route ended 500cm short -> ungrabbable).
+                // (measured: a pile 833cm out whose route ended 500cm short -> ungrabbable).
                 if (HorizDist(p.back(), c.pos) > 160.f) continue;
                 float len = 0.f;
                 for (size_t i = 1; i < p.size(); ++i) len += HorizDist(p[i - 1], p[i]);

@@ -27,7 +27,7 @@ namespace R = ue_wrap::reflection;
 // Off-prop host EIDs to retire (the kerfur turned ON in the join window; its save-loaded off-prop on the
 // joiner is the stale dup). Armed from the npc EntitySpawn's retireOffEid; retired at the quiescence sweep
 // once the off-prop has bound to its host eid. Game-thread only (no mutex).
-// BOUNDED (2026-07-03, docs/piles/12): value = post-quiescence passes the eid stayed unbound. An off-prop
+// BOUNDED: value = post-quiescence passes the eid stayed unbound. An off-prop
 // that never binds (host-only kerfur / bind stolen) must not retry forever -- HasPendingRetire feeds
 // quiescence_drain::HasPendingWork, and one unbindable entry pins the 4 Hz full-array drain in perpetuity
 // (the same uncapped-leg class as the pos-corrections). ~10 s at the 250 ms debounce, then a LOUD drop.

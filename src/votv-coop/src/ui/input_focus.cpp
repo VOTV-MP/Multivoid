@@ -16,7 +16,7 @@ bool IsOurWindowForeground() {
     return ownerPid == ::GetCurrentProcessId();
 }
 
-// Overlay-text-capture gate (2026-07-09). Set by the render thread each frame, read
+// Overlay-text-capture gate. Set by the render thread each frame, read
 // by the hotkey pollers on their own threads -> a plain atomic, relaxed (a single
 // independent bool; a one-frame staleness is harmless for a held-key poll).
 static std::atomic<bool> g_overlayCapturingText{false};

@@ -110,7 +110,7 @@ void Install(coop::net::Session* session) {
     g_session = session;
     // subsystems::Install is a RETRY pump, not a one-shot -- it is re-entered
     // every tick so modules whose engine classes are not resolved yet get another
-    // chance. Measured 2026-07-27: ~57 re-entries/second. Without this latch the
+    // chance, measured at ~57 re-entries a second. Without this latch the
     // arming line printed 14,095 times in one 4-minute run and the subscribe ran
     // just as often (harmless only because the ledger dedupes by function
     // pointer). Every well-behaved neighbour in that list latches; this one did
