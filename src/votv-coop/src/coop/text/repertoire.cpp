@@ -7,10 +7,10 @@
 namespace coop::text {
 namespace {
 
-// Both tables are GENERATED (tools/text/build_repertoire.py) from the fonts in
-// assets/fonts. Regenerate -- never hand-edit -- when a family or the donor
-// changes; the script re-derives the base-coverage gap and FAILS if it moved,
-// because that set decides which names render and therefore which names fold.
+// Both tables are GENERATED from the fonts in assets/fonts. Regenerate -- never
+// hand-edit -- when a family or the donor changes; the generator re-derives the
+// base-coverage gap and FAILS if it moved, because that set decides which names
+// render and therefore which names fold.
 constexpr CodepointRange kRepertoire[] = {
 #include "coop/text/repertoire_ranges.inc"
 };

@@ -8,10 +8,10 @@
 // legibility knob rather than a correctness input.
 //
 // The table is a BUILD CONSTANT, not the live atlas, or one player's font install would be
-// the authority over everyone else's name. tools/text/build_repertoire.py generates it from
-// the fonts on disk and emits the ranges ui::fonts::Load bakes in the same run. The two
-// fallback font paths bake no embedded family and their atlas is short of this table, which
-// the boot font selftest logs; the FOLD does not move there, so peers still agree.
+// the authority over everyone else's name. It is generated from the fonts on disk, and the
+// ranges ui::fonts::Load bakes are emitted in the same run. The two fallback font paths bake
+// no embedded family and their atlas is short of this table, which the boot font selftest
+// logs; the FOLD does not move there, so peers still agree.
 #pragma once
 
 #include <cstddef>
