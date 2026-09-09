@@ -21,6 +21,12 @@ MUTANTS = [
      'for p in [q for q in files if other_file(q)]:',
      'for p in [q for q in files if measured_other(q)]:'),
     ("size: the cap is never crossed", 'if n > OTHER_HARD_CAP:', 'if n > 10 ** 9:'),
+    # `measured` is what the unstaged-write guard reads. Narrowing it back to the
+    # marker-exempt set leaves the gate reading marker owners for length while the
+    # guard cannot see them dirty -- a baseline written from a tree no commit has.
+    ("size: the guard stops seeing marker owners",
+     'return measured_md(path) or measured_src(path) or other_file(path)',
+     'return measured_md(path) or measured_src(path) or measured_other(path)'),
     # --file's own answers: calling an unread file swept, and matching a basename by suffix.
     ("file: an unread file is called swept", "if not measured(p):", "if False:"),
     ("file: a basename matches by suffix", 'return p == want or p.endswith("/" + want)',

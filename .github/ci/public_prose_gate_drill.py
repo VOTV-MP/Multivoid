@@ -69,6 +69,12 @@ def main():
         f.write(OTHER_IGNORE)
     with open(os.path.join(repo, "Cargo.toml"), "w", encoding="utf-8") as f:
         f.write(OTHER_TOML)
+    # A marker OWNER: exempt from every marker counter because naming those markers
+    # is its job, and read all the same for its LENGTH.
+    os.makedirs(os.path.join(repo, ".github", "ci"))
+    with open(os.path.join(repo, ".github", "ci", "public_prose_small.py"), "w",
+              encoding="utf-8") as f:
+        f.write("# a short marker owner\n" * 3)
     os.makedirs(os.path.join(repo, "src", "votv-coop", "include"))
     with open(os.path.join(repo, "src", "votv-coop", "include", "d.h"), "w", encoding="utf-8") as f:
         f.write(HDR)
@@ -248,7 +254,8 @@ def main():
     # modified-but-unstaged under a baseline written from its contents.
     for rel, family in (("src/votv-coop/src/x.cpp", "src"),
                         ("docs/a.md", "md"),
-                        ("tools/x.py", "other")):
+                        ("tools/x.py", "other"),
+                        (".github/ci/public_prose_small.py", "marker-owner")):
         with open(os.path.join(repo, *rel.split("/")), "a", encoding="utf-8") as f:
             f.write("\n" if family == "md" else "\n// probe\n" if family == "src" else "\n# probe\n")
         r = run(["--repo", repo, "--baseline", baseline, "--update"])
@@ -298,11 +305,6 @@ def main():
     # instead. The small one is the case the fourth state exists for -- it used to
     # be called SWEPT, telling a sweep its markers had been read when they never
     # are, and calling it unread would now hide that its length is counted.
-    small = os.path.join(repo, ".github", "ci", "public_prose_small.py")
-    with open(small, "w", encoding="utf-8") as f:
-        f.write("# a short marker owner\n" * 3)
-    git(["add", "."], repo, env)
-    git(["commit", "-q", "-m", "[drill] a short marker owner"], repo, env)
     r = run(["--repo", repo, "--baseline", baseline, "--file", "public_prose_small.py"])
     arm("--file calls a clean marker owner SIZE ONLY, neither swept nor unread",
         "SIZE ONLY" in r.stdout and "3 lines" in r.stdout and "SWEPT" not in r.stdout,
