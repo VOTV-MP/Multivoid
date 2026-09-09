@@ -24,14 +24,14 @@ namespace R = ue_wrap::reflection;
 struct HiddenRec { void* actor; int32_t idx; bool collisionOff; bool hold; };
 
 // eid -> hidden record. This IS the authoritative hidden set: a mirror is hidden ONLY via
-// OnMirrorSpawned (which records here), so walking this map at quiescence reveals everything
-// we hid -> nothing can be stuck hidden (the audit's stuck-hidden third category, closed by
-// construction). Game-thread only (no mutex).
+// OnMirrorSpawned, which records here, so walking this map at quiescence reveals everything we
+// hid and nothing can be left stuck hidden -- by construction, not by a sweep that looks for
+// strays. Game-thread only (no mutex).
 std::unordered_map<uint32_t, HiddenRec> g_hidden;
-// eids already revealed this join -- OnMirrorSpawned must NEVER re-hide one (a proxy SpawnProxy is
-// idempotent + re-skins for the same eid; a post-lift re-spawn convergence of an already-revealed
-// confirmed proxy would otherwise vanish it until quiescence). The audit's "do not re-hide on the
-// idempotent re-spawn return", generalized to all mirror kinds.
+// eids already revealed this join -- OnMirrorSpawned must NEVER re-hide one. A proxy
+// SpawnProxy is idempotent and re-skins for the same eid, so a post-lift re-spawn convergence
+// of an already-revealed confirmed proxy would otherwise vanish it until quiescence. The rule
+// is: do not re-hide on the idempotent re-spawn return, for any mirror kind.
 std::unordered_set<uint32_t> g_revealed;
 bool g_armed = false;
 
