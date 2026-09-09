@@ -72,10 +72,12 @@ INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.f
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 # The DAY is optional: "2026-08:" opens a diary entry as surely as "2026-08-25" does, and
 # four of them sat in one file while this counter read zero and its burn-down called the
-# file swept. Nothing else in the tree matches the shorter form -- measured over every
-# tracked doc, script and source -- and a leading word character keeps a hex literal or a
-# version out of it, since \b cannot fire inside 0x2026 or v2026.
-DATE = re.compile(r"\b20\d\d-\d\d(?:-\d\d)?\b")
+# file swept. Nothing the gate reads matches the shorter form -- measured over every tracked
+# doc, script and source. The MONTH is spelled out rather than left as two digits, or a plain
+# number range reads as a date: "frames 2000-24 dropped" is not a diary entry. A leading word
+# character keeps a hex literal or a version out of it either way, since \b cannot fire
+# inside 0x2026 or v2026.
+DATE = re.compile(r"\b20\d\d-(?:0[1-9]|1[0-2])(?:-\d\d)?\b")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
 # A document named in a source comment, in the three spellings the tree uses. All resolve the
@@ -272,15 +274,22 @@ SRC_EXTRA = collections.OrderedDict([
 # and a literal in this tree is often the more public surface of the two: the config registry's
 # descriptions render in the mod's own settings panel, and a log line is read by anyone who opens
 # a log or pastes one into a bug report. 27 of them carried a build tag, a security-register row,
-# an increment number, a date or an attribution while every counter read zero -- one habit one
-# POSITION over, which is R-P13 arriving in a second family.
+# an increment number, a date or an attribution while every counter read zero -- one habit, one
+# POSITION over.
 #
-# `cyrillic` is deliberately absent. The codec and fold selftests MUST hold Cyrillic strings to
-# test the thing they test, and a detector that flagged those would push a sweep to delete its own
-# fixtures. THE GAP, stated rather than closed (R-P11): a Cyrillic string that is prose rather
-# than a fixture is unread; there is none in the tree today.
+# FOUR families are exempt, because in a literal they are ordinary product English rather than
+# our vocabulary, and this counter is ratcheted at zero -- so flagging one would refuse a push
+# over correct code. `review` is the word "audit" ("the audit of slot %d failed", an include path
+# with `audit` in it); `agent` is the "User-Agent" header and a muted voice agent; `lesson` is the
+# word itself. None of the three fired on the 27 this axis was built from. `cyrillic` is exempt
+# because the codec and fold selftests MUST hold Cyrillic to test what they test, and flagging
+# those would push a sweep to delete its own fixtures.
+#
+# THE GAP, stated rather than closed: a Cyrillic string that is prose rather than a fixture is
+# unread, and so is our vocabulary spelled in one of those four words inside a literal.
+STRING_EXEMPT = ("cyrillic", "review", "agent", "lesson")
 STRING_MARKERS = [(k, rx) for k, (rx, _) in
-                  list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"]
+                  list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k not in STRING_EXEMPT]
 
 
 def git(args, cwd):
@@ -718,61 +727,94 @@ def comment_lines(text):
     return comments, code, long_blocks, tails
 
 
-def string_literals(text):
-    """-> [(1-based line number, the literal's body)] for every "..." that is CODE, not comment.
+RAW_OPEN = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\\t]{0,16})\(')
 
-    Lexed the way `comment_lines` lexes a code line, because both cheap answers are wrong: a regex
-    over the raw line reads the contents of a string that is itself commented out, and cutting the
-    line at `//` before scanning truncates a literal that contains one."""
-    out, in_block = [], False
-    for no, line in enumerate(text.split("\n"), 1):
-        s = line.strip()
-        if not s:
-            continue
-        if in_block:
-            if "*/" in s:
-                in_block = False
-            continue
-        if s.startswith("//"):
-            continue
-        if s.startswith("/*"):
-            if "*/" not in s[2:]:
-                in_block = True
-            continue
-        i, n = 0, len(s)
-        while i < n:
-            c = s[i]
-            if c == "'" and i > 0 and s[i - 1].isdigit() and i + 1 < n and s[i + 1].isdigit():
-                i += 1                                  # a digit separator, not a quote
-                continue
-            if c == "'":
-                i += 1
-                while i < n and s[i] != "'":
-                    i += 2 if s[i] == "\\" else 1
-                i += 1
-                continue
-            if c == '"':
-                j, buf = i + 1, []
-                while j < n and s[j] != '"':
-                    if s[j] == "\\":
-                        buf.append(s[j:j + 2])
-                        j += 2
-                    else:
-                        buf.append(s[j])
-                        j += 1
-                out.append((no, "".join(buf)))
-                i = j + 1
-                continue
-            if s.startswith("//", i):
-                break
-            if s.startswith("/*", i):
-                e = s.find("*/", i + 2)
-                if e < 0:
-                    in_block = True
-                    break
-                i = e + 2
-                continue
+
+def string_literals(text):
+    """-> [(1-based line number, body)] for every "..." that is CODE, and for every RUN of
+    adjacent literals the compiler concatenates, the joined body under the run's first line.
+
+    The run matters as much as the parts. This tree wraps a long log line by splitting its format
+    across two adjacent literals, so a marker can sit astride the join -- `"... security " "A65"`
+    -- where testing each half alone sees nothing. A sweep that re-wraps such a line would drive
+    this counter to zero without removing anything.
+
+    Walked over the whole text rather than line by line, because the three shapes that broke a
+    line-based scan all cross or contain line boundaries: a raw string's body (where `//` is
+    ordinary text), a block comment that closes mid-line (whose tail is code), and a literal
+    continued with a trailing backslash."""
+    out, run, run_line = [], [], 0
+    i, n, line = 0, len(text), 1
+
+    def emit(body, at):
+        nonlocal run_line
+        out.append((at, body))
+        if not run:
+            run_line = at
+        run.append(body)
+
+    def flush():
+        nonlocal run
+        if len(run) > 1:
+            out.append((run_line, "".join(run)))
+        run = []
+
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            line += 1
             i += 1
+            continue
+        if c in " \t\r":
+            i += 1
+            continue
+        # Neither a comment nor whitespace ends a concatenation run: `"a" /* why */ "b"` is one
+        # string to the compiler, so it must be one string here too.
+        if text.startswith("//", i):
+            k = text.find("\n", i)
+            i = n if k < 0 else k
+            continue
+        if text.startswith("/*", i):
+            k = text.find("*/", i + 2)
+            end = n if k < 0 else k + 2
+            line += text.count("\n", i, end)
+            i = end
+            continue
+        m = RAW_OPEN.match(text, i)
+        if m:
+            close = ")" + m.group(1) + '"'
+            k = text.find(close, m.end())
+            end = n if k < 0 else k + len(close)
+            emit(text[m.end():(n if k < 0 else k)], line)
+            line += text.count("\n", i, end)
+            i = end
+            continue
+        if c == '"':
+            k, buf, at = i + 1, [], line
+            while k < n and text[k] != '"':
+                if text[k] == "\\":
+                    buf.append(text[k:k + 2])
+                    if text[k + 1:k + 2] == "\n":
+                        line += 1
+                    k += 2
+                elif text[k] == "\n":
+                    break                       # unterminated: stop at the line end
+                else:
+                    buf.append(text[k])
+                    k += 1
+            emit("".join(buf), at)
+            i = k + 1
+            continue
+        if c == "'":
+            k = i + 1
+            while k < n and text[k] not in ("'", "\n"):
+                k += 2 if text[k] == "\\" else 1
+            flush()
+            i = k + 1
+            continue
+        flush()
+        i += 1
+    flush()
     return out
 
 

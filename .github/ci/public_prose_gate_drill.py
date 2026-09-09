@@ -81,7 +81,7 @@ int t2() { return 0; } // this one was settled by an audit nobody outside can re
 int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
 // a month with no day, as 2026-08: opens a diary entry too
 // PRECISION: 0x2026-08 is hex and a dash, and v2026-08 names no day either
-// PRECISION: a bare year 2026 on its own is not a date, and neither is a port 20260
+// PRECISION: a bare year 2026, a port 20260 and a range 2000-24 are none of them dates
 int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
 // one user attribution per line, so dropping any one of them turns this drill red. The capitals
 // form needs a line of its OWN: every earlier one read "USER asked" or "USER said", which the
@@ -191,6 +191,15 @@ const char* sm5 = "settled in a /qf round";
 const char* sm6 = "// v99 keeps its marker: the literal is lexed, not cut at the slashes";
 const char* sm7[] = {"the v41 tag", "and the WP-3 label, both on one line"};
 const char* sm8 = "\u043f\u0440\u0438\u0432\u0435\u0442 -- the fold selftests need this, and the axis must NOT read it";
+// PRECISION: three families are exempt in a LITERAL because they are ordinary product English
+const char* sm9 = "save: the audit of slot 3 failed, the agent muted, lesson learned";
+// the compiler joins these two, so the marker astride the join has to be read
+const char* sm10 = "bounded per security " "A65 -- refused";
+int bc() { return 0; } /* closes here */ const char* sm11 = "the v42 tag after a block comment";
+const char* sm12 = R"(a raw string whose "v43" sits inside its own quotes)";
+// a comment between two literals does not end the concatenation, and the marker is astride it
+const char* sm13 = "the v4"   // the join has to survive this
+                   "4 tag, split across a comment";
 """
 
 # The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
@@ -453,21 +462,32 @@ MUTANTS = [
     # The string axis. Each row breaks one part of it -- the counting, the table it derives
     # from, the lexer, the per-line dedupe, the explainer -- and the exemption that keeps it off
     # the fold fixtures, which is the one way widening it would damage the tree.
-    ("dated: a month is not a date", r'r"\b20\d\d-\d\d(?:-\d\d)?\b"',
-     r'r"\b20\d\d-\d\d-\d\d\b"'),
-    ("dated: a day is not required", r'r"\b20\d\d-\d\d(?:-\d\d)?\b"', r'r"\b20\d\d\b"'),
+    ("dated: a month is not a date", r'r"\b20\d\d-(?:0[1-9]|1[0-2])(?:-\d\d)?\b"',
+     r'r"\b20\d\d-(?:0[1-9]|1[0-2])-\d\d\b"'),
+    ("dated: a day is not required", r'r"\b20\d\d-(?:0[1-9]|1[0-2])(?:-\d\d)?\b"',
+     r'r"\b20\d\d\b"'),
+    ("dated: any two digits are a month",
+     r'r"\b20\d\d-(?:0[1-9]|1[0-2])(?:-\d\d)?\b"', r'r"\b20\d\d-\d\d(?:-\d\d)?\b"'),
     ("string: literals unread", "smark = string_marker_lines(text)", "smark = []"),
-    ("string: the fold fixtures count too",
-     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"',
-     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items())'),
+    ("string: nothing is exempt", 'STRING_EXEMPT = ("cyrillic", "review", "agent", "lesson")',
+     'STRING_EXEMPT = ()'),
+    ("string: ordinary product English counts",
+     'STRING_EXEMPT = ("cyrillic", "review", "agent", "lesson")', 'STRING_EXEMPT = ("cyrillic",)'),
     ("string: reads only the shared marker table",
-     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k != "cyrillic"',
-     'list(LINE_MARKERS.items()) if k != "cyrillic"'),
+     'list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if k not in STRING_EXEMPT',
+     'list(LINE_MARKERS.items()) if k not in STRING_EXEMPT'),
+    # The four shapes a line-based lexer got wrong. Each is a literal the counter must SEE; the
+    # mutant blinds it one way and the count falls.
+    ("string: adjacent literals are never joined", "        if len(run) > 1:", "        if False:"),
+    ("string: a comment ends a concatenation run",
+     '        if text.startswith("//", i):\n            k = text.find("\\n", i)',
+     '        if text.startswith("//", i):\n            flush()\n            k = text.find("\\n", i)'),
+    ("string: a block comment eats the rest of its line",
+     '            k = text.find("*/", i + 2)\n            end = n if k < 0 else k + 2',
+     '            k = text.find("\\n", i)\n            end = n if k < 0 else k'),
+    ("string: a raw string is not one literal", "        m = RAW_OPEN.match(text, i)", "        m = None"),
     ("string: a line with two literals counts twice",
      "        if no in seen:\n            continue", "        if False:\n            continue"),
-    ("string: comments stripped before the literals are read",
-     'for no, line in enumerate(text.split("\\n"), 1):',
-     'for no, line in enumerate(code_only(text).split("\\n"), 1):'),
     ("string: counted but never explained",
      '        for no, body in string_marker_lines(text):\n'
      '            out.append((no, "src.string_marker", \'"\' + body + \'"\'))\n',
@@ -576,7 +596,7 @@ def main():
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
               "other.dead_docpath": 4,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 125, "src.files": 6, "src.files_not_swept": 3,
+              "src.comment_lines": 128, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
               "src.comment_blocks_over_15": 4, "src.comment_dated": 4, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
@@ -584,7 +604,7 @@ def main():
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
               "src.comment_label": 16,
-              "src.string_marker": 7,
+              "src.string_marker": 11,
               "src.comment_dead_path": 1, "src.comment_dead_log_marker": 1,
               "src.comment_dead_env": 1, "src.comment_dead_ini_key": 2,
               "src.comment_dead_member": 2}
