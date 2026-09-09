@@ -1,17 +1,16 @@
-// harness/autotest/autotest_ragdoll_spawn_probe.cpp -- the single-player ragdoll feasibility
-// probe. The game's own ragdoll verb is a method of the player pawn and acts on that player,
-// so it cannot be reused on a puppet; the plan is to spawn the game's ragdoll body manually
-// (a deferred world spawn) on the puppet and skin it. This probe answers, by observing live
-// objects in plain single-player with no connection, the decisive questions before any
-// production code: whether a manual deferred spawn with the owning player set before the
-// finish leaves the body's skeletal mesh visible, physically simulating and falling (does
-// the body self-configure in its own BeginPlay from the player reference); whether that
-// manual spawn is death-free for the player it names (the dead and ragdoll flags before and
-// after); and the ground truth, the real verb's own body dumped with the same fields, then
-// recovered with the get-up verb. Single instance: the ragdollspawn scenario of tools/mp.py
-// launches it and captures screenshots on the shot-ready log markers. Gated by
-// VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1. A throwaway diagnostic: raw offset reads cited to the
-// SDK header dump, not a shipping path.
+// harness/autotest/autotest_ragdoll_spawn_probe.cpp -- the single-player ragdoll feasibility probe.
+// The game's own ragdoll verb is a method of the player pawn and acts on that player, so it cannot
+// be reused on a puppet; the plan is to spawn the game's ragdoll body manually (a deferred world
+// spawn) on the puppet and skin it. This probe answers, by observing live objects in plain
+// single-player with no connection, the decisive questions before any production code: whether a
+// manual deferred spawn with the owning player set before the finish leaves the body's skeletal
+// mesh visible, physically simulating and falling (does the body self-configure in its own
+// BeginPlay from the player reference); whether that manual spawn is death-free for the player it
+// names (the dead and ragdoll flags before and after); and the ground truth, the real verb's own
+// body dumped with the same fields, then recovered with the get-up verb. Single instance: the
+// ragdollspawn scenario launches it and captures screenshots on the shot-ready log markers. Gated
+// by VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1. A throwaway diagnostic: raw offset reads cited to the SDK
+// header dump, not a shipping path.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "harness/autotest.h"

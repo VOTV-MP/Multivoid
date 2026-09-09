@@ -1,7 +1,7 @@
-// coop/config/config.h -- the env and ini configuration readers. multivoid.ini lives next to
-// the mod DLL; the LAN test framework overrides through environment variables, since one DLL
-// location serves two instances and per-file configs would alias. Precedence: the environment
-// variable (set by the launcher, tools/mp.py), then the ini value, then the row default.
+// coop/config/config.h -- the env and ini configuration readers. multivoid.ini lives next to the
+// mod DLL; the LAN test framework overrides through environment variables, since one DLL location
+// serves two instances and per-file configs would alias. Precedence: the environment variable (set
+// by the test launcher), then the ini value, then the row default.
 
 #pragma once
 

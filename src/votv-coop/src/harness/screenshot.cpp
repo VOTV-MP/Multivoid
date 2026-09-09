@@ -62,12 +62,11 @@ bool GetEncoderClsid(const wchar_t* mime, CLSID* out) {
     return false;
 }
 
-// Capture the client area to a PNG via PrintWindow (PW_RENDERFULLCONTENT, no focus
-// theft). Works for flat UMG/UI (e.g. the OMEGA screen). NOTE: VOTV's 3D gameplay
-// is a hardware DX swapchain that GDI cannot read from inside the game's own
-// process -> a black frame. For autonomous GAMEPLAY verification use the external
-// tools/capture_window.ps1 (a separate process: PrintWindow with a screen BitBlt
-// fallback grabs the composited frame). This in-process path is a UI-capture dev aid only.
+// Capture the client area to a PNG via PrintWindow (PW_RENDERFULLCONTENT, no focus theft). Works
+// for flat UMG/UI (e.g. the OMEGA screen). NOTE: VOTV's 3D gameplay is a hardware DX swapchain that
+// GDI cannot read from inside the game's own process -> a black frame. For autonomous GAMEPLAY
+// verification use the external window capture (a separate process: PrintWindow with a screen
+// BitBlt fallback grabs the composited frame). This in-process path is a UI-capture dev aid only.
 bool CapturePng(HWND hwnd, const std::wstring& path) {
     RECT rc{};
     if (!::GetClientRect(hwnd, &rc)) return false;

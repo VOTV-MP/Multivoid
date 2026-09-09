@@ -386,14 +386,14 @@ void RunAutonomousChipPileTest() {
             sawClumpHolding ? 1 : 0, sel->eid);
 }
 
-// The puppet-grab probe, host only (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1). The host runs the real
-// grab verb on a peer's puppet (an unpossessed mainPlayer_C) through playerGrabbed; the grab
-// path touches no controller state, so it should engage. What bytecode cannot show is whether an
+// The puppet-grab probe, host only (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1). The host runs the real grab
+// verb on a peer's puppet (an unpossessed mainPlayer_C) through playerGrabbed; the grab path
+// touches no controller state, so it should engage. What bytecode cannot show is whether an
 // unpossessed puppet's tick runs the per-tick physics-handle maintenance, so the clump tracks to
-// the hand rather than floating at the spawn spot. Verdicts, asserted by
-// tools/pile-test-assert.ps1: ENGAGED (grabbing_actor became a clump), HELD (it stayed),
-// TRACKED (the clump was pulled to the hand: the tick runs), FLOATING (held but not tracked:
-// the tick is suppressed, and the hand must be driven from the synced aim).
+// the hand rather than floating at the spawn spot. Verdicts, asserted by the log-assert harness:
+// ENGAGED (grabbing_actor became a clump), HELD (it stayed), TRACKED (the clump was pulled to the
+// hand: the tick runs), FLOATING (held but not tracked: the tick is suppressed, and the hand must
+// be driven from the synced aim).
 void RunPuppetGrabProbe() {
     const bool isHost = !IsClientRole();
     if (!isHost) {
