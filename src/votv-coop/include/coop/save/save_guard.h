@@ -1,16 +1,14 @@
 // coop/save/save_guard.h -- pre-session backup of the VOTV save directory.
 //
-// PR-FOUNDATION-2 (save-game safety) increment A. VOTV writes saves
-// NON-ATOMICALLY: stock GameplayStatics::SaveGameToSlot truncates + overwrites
-// the .sav in place (4 in-place writes per save via saveSlot_C:saveToSlot, no
-// temp+rename), so a crash or a bad coop-era write leaves a corrupt save with
-// NO engine-side recovery (RE: research/findings/saves/votv-save-path-RE-2026-05-30.md).
-// A pre-session snapshot is therefore the ONLY recovery path.
+// VOTV writes saves NON-ATOMICALLY: stock GameplayStatics::SaveGameToSlot truncates and
+// overwrites the .sav in place -- four in-place writes per save through
+// saveSlot_C::saveToSlot, with no temp-and-rename -- so a crash or a bad coop-era write
+// leaves a corrupt save and the engine has no recovery of its own. A pre-session snapshot is
+// therefore the ONLY recovery path.
 //
-// Policy (host-only persistence, user decision 2026-05-30): the HOST's save is
-// the canonical one being written during coop; clients are blocked from saving
-// (their save is left untouched), so only the host needs the backup. The caller
-// gates on role.
+// Persistence is host-only: the HOST's save is the canonical one being written during coop
+// and clients are blocked from saving, their own save left untouched, so only the host needs
+// the backup. The caller gates on role.
 #pragma once
 
 #include <filesystem>
@@ -18,7 +16,7 @@
 namespace coop::save_guard {
 
 // %LOCALAPPDATA%\VotV\Saved\SaveGames (empty path if LOCALAPPDATA is unset).
-// Shared with coop/save_transfer (v56) -- the one save-dir resolver.
+// Shared with coop/save/save_transfer -- the one save-dir resolver.
 std::filesystem::path SaveGamesDir();
 
 // Snapshot %LOCALAPPDATA%\VotV\Saved\SaveGames into a timestamped
