@@ -1,19 +1,18 @@
-// harness/autotest/autotest_pauseguard.cpp -- coop pause_guard e2e (2026-07-04).
+// harness/autotest/autotest_pauseguard.cpp -- the coop pause_guard end-to-end test.
 //
-// USER REPORT: a client pressing ESC pauses its world -- the engine stops ticking, its
-// pose stream freezes on every other screen. The fix (coop/session/pause_guard) enforces
-// the no-pause invariant while connected. This test drives the exact STATE the native
-// ESC path engages: mainGamemode pauses via GameplayStatics::SetGamePaused (EX_CallMath,
-// PE-invisible -- so we reproduce the state through our own engine wrapper of the SAME
-// verb rather than replaying the input event; save_button_disable's autotest already
-// established a reflective InpActEvt_Escape does not produce a real pause).
+// A client pressing ESC pauses its own world: the engine stops ticking and its pose stream
+// freezes on every other screen. coop/session/pause_guard enforces the no-pause invariant
+// while connected, and this test drives the exact STATE the native ESC path engages.
+// mainGamemode pauses through GameplayStatics::SetGamePaused, an EX_CallMath dispatch our
+// ProcessEvent detour cannot see, so the state is reproduced through our own engine wrapper of
+// the SAME verb rather than by replaying the input event; save_button_disable's test already
+// established that a reflective InpActEvt_Escape produces no real pause.
 //
-// CLIENT-ONLY flow: settle 75 s (connect + world + possession) -> baseline IsGamePaused
-// (expect 0) -> SetGamePaused(true) -> sample IsGamePaused every 100 ms for 3 s. The
-// guard runs in the TickGameplay chain, which keeps pumping while paused (the pause
-// menu widget's own Tick dispatches ProcessEvent every Slate frame), so the pause must
-// read FALSE within ~1 s. VERDICT PASS/FAIL logged; cross-check this client log for
-// "pause_guard: world pause detected". Gated by env VOTVCOOP_RUN_PAUSE_TEST=1.
+// CLIENT-ONLY: settle 75 s (connect, world, possession), read IsGamePaused for a baseline of
+// 0, call SetGamePaused(true), then sample every 100 ms for 3 s. The guard runs in the
+// TickGameplay chain, which keeps pumping while paused, so the pause must read FALSE within
+// about a second. The verdict is logged; cross-check the client log for "pause_guard: world
+// pause detected". Gated by env VOTVCOOP_RUN_PAUSE_TEST=1.
 
 #include "harness/autotest.h"
 
