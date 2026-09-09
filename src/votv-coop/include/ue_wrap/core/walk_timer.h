@@ -1,15 +1,14 @@
-// ue_wrap/core/walk_timer.h -- [WALK-TIME] profiling for periodic heavy passes (the L5 FPS-stutter
-// hunt).
+// ue_wrap/core/walk_timer.h -- [WALK-TIME] profiling for periodic heavy passes.
 //
 // WHY: a periodic full-GUObjectArray walk (FindObjectByClass / a NumObjects() loop /
 // SnapshotActorsByType) runs on the GAME THREAD, so a pass that takes several ms IS a frame-time
 // spike. The ~3-4s FPS stutter survived two one-at-a-time walk gates because we GUESSED which walk
 // caused it instead of measuring. Wrap each periodic walk in a ScopedWalkTimer and the smoke log
 // shows EXACTLY which pass ate the frame, with its duration -- profile the drop, don't assume. Only
-// passes over the threshold log (a cheap/gated/ skipped walk stays silent), so [WALK-TIME] lines
+// passes over the threshold log (a cheap, gated or skipped walk stays silent), so [WALK-TIME] lines
 // ARE the frame-relevant passes, rankable by duration.
 //
-// The harness (tools/pile-test-assert.ps1) asserts the max [WALK-TIME] duration stays under a frame
+// The log-assert harness holds the max [WALK-TIME] duration under a frame
 // budget -- so an FPS regression (a new or un-gated heavy walk) FAILS the script instead of only
 // being felt. Game-thread diagnostic; negligible cost (one steady_clock read per wrapped pass).
 #pragma once

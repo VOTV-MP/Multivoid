@@ -1,5 +1,5 @@
 // harness/autotest/autotest_reloadchurn.cpp -- the re-load churn probe
-// (VOTVCOOP_RUN_RELOAD_CHURN=1; "python tools/mp.py reloadchurn"). A client that joined, left to
+// (VOTVCOOP_RUN_RELOAD_CHURN=1; "the reload-churn scenario"). A client that joined, left to
 // the menu and joined again died two seconds into the second world load: UEngine::LoadMap's
 // CreateGameModeForURL reads AWorldSettings::DefaultGameMode off the world's
 // PersistentLevel->WorldSettings, and that pointer was null (a shipping build compiles the check

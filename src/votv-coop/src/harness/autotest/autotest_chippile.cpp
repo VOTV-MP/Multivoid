@@ -4,7 +4,7 @@
 // (VOTVCOOP_RUN_GRAB_INTENT_TEST=1) and the host-drift scenario (VOTVCOOP_RUN_PILE_DRIFT=1). The
 // grab rides the game's own path: the E-press UFunction the input system dispatches, so the PRE
 // observer fires as for a real player, and the pile's own playerGrabbed verb. The verdicts are read
-// off the logs by tools/pile-test-assert.ps1. VOTVCOOP_PILE_SHOWCASE=1 additionally aims the client
+// off the logs by the log-assert harness. VOTVCOOP_PILE_SHOWCASE=1 additionally aims the client
 // camera at a mirrored pile and holds.
 
 #include "harness/autotest.h"

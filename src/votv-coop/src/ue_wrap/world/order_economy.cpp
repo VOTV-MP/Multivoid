@@ -43,7 +43,7 @@ constexpr int32_t kReadItemCap = 256;
 // kMaxOrderItems independently; this is the engine layer's own bound (principle 7: no net dependency).
 constexpr size_t  kCommitItemCap = 64;
 
-// ---- cached resolution (mirrors ue_wrap/world/economy.cpp) ----------------------------------
+// ---- cached resolution (mirrors ue_wrap/world/economy.cpp) --------------------------------------
 ue_wrap::CachedObjRef g_gm;
 void* ResolveGamemode() {
     if (g_gm.Alive()) return g_gm.Raw();
