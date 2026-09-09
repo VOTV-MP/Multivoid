@@ -1,10 +1,9 @@
 // coop/dev/dev_gate.h -- the CLIENT lockout for every dev feature.
 //
-// User rule (2026-06-12): "The dev features shouldn't work when you're
-// client. Strictly." Dev tools exist for development and for a HOST
-// administering their own world; a JOINED CLIENT firing them (freecam,
-// +points into the SHARED balance, vitals refill, local NPC spawns) is
-// cheating in someone else's game.
+// Dev features do not work when you are a client, strictly. They exist for
+// development and for a HOST administering their own world; a JOINED CLIENT firing
+// them (freecam, +points into the SHARED balance, vitals refill, local NPC spawns)
+// is cheating in someone else's game.
 //
 // Allowed() is false IFF a coop session is RUNNING and the local role is not
 // Host. Solo / pre-session = allowed (dev testing); host = allowed (their

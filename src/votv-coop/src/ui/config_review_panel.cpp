@@ -21,8 +21,8 @@ namespace {
 namespace CR = coop::config_review;
 
 // Last Tidy-press outcome, rendered as a status line so the button is never
-// silent (user 2026-07-26: pressing it looked dead -- the old reformat moved
-// layout only, so the panel's rows survived every press with zero feedback).
+// silent: a reformat that only moves layout leaves every panel row where it
+// was, so without a status line the press looks dead.
 bool               g_tidyPressed = false;
 CR::ReformatOutcome g_tidyOutcome;
 

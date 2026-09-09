@@ -88,8 +88,8 @@ bool RunRepertoireSelftest() {
     wellFormed(kIgnorable, kIgnorableCount, "ignorable table is sorted and disjoint");
     wellFormed(kExclude, kExcludeCount, "exclude table is sorted and disjoint");
 
-    // The four membership facts the fold rests on. Two IN (the scripts the user
-    // asked for, and the emoji the donor exists for), two OUT (the script whose
+    // The four membership facts the fold rests on. Two IN (Latin and Cyrillic,
+    // and the emoji the donor exists for), two OUT (the script whose
     // absence is the whole reason the fold changed, and an invisible character).
     ok(InRepertoire(U'A') && InRepertoire(0x043F), "Latin and Cyrillic are in");
     // Latin Extended-A/B and Greek cost nothing: the embedded faces already carried them and the

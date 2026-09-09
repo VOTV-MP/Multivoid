@@ -27,8 +27,6 @@ void EnsureLoaded() {
     });
 }
 
-// (ToUtf8 shared from chat_feed.h -- the local copy retired 2026-07-10, RULE 2.)
-
 }  // namespace
 
 void SetEnabled(bool on) {
@@ -44,9 +42,9 @@ bool Enabled() {
 }
 
 void AnnounceDirect(uint8_t slot, const std::wstring& action) {
-    // The subject is ALWAYS a nickname (Minecraft feed principle, user
-    // 2026-07-18): the local actor's own line renders its own nick, same as
-    // every other peer sees it. Roster's resolution pattern (roster.cpp).
+    // The subject is ALWAYS a nickname (the Minecraft feed principle): the local actor's own line
+    // renders its own nick, same as every other peer sees it. Roster's resolution pattern
+    // (coop/player/roster.cpp).
     const bool isLocal = (slot == coop::players::Registry::Get().LocalPeerId());
     const std::wstring& nickW =
         isLocal ? coop::player_handshake::LocalNickname()
@@ -54,10 +52,10 @@ void AnnounceDirect(uint8_t slot, const std::wstring& action) {
     const std::string nick = coop::chat_feed::ToUtf8(nickW.empty() ? std::wstring(L"Player") : nickW);
     const std::string line = nick + " " + coop::chat_feed::ToUtf8(action);
 
-    // PushAction colors the first nickLen BYTES per `slot` (chat parity); the rest is
-    // the action predicate in the ACTION color (yellow -- user 2026-07-11), so a
-    // world-state action reads apart from typed chat. Out-of-range slot (a local
-    // actor before slot assignment) clamps to 0 for the color lookup only.
+    // PushAction colors the first nickLen BYTES per `slot` (chat parity); the rest is the action
+    // predicate in the ACTION color (yellow), so a world-state action reads apart from typed chat.
+    // Out-of-range slot (a local actor before slot assignment) clamps to 0 for the color lookup
+    // only.
     const uint8_t colorSlot = slot < coop::players::kMaxPeers ? slot : 0;
     coop::chat_feed::PushAction(line,
                                 static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
