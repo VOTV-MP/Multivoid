@@ -1,20 +1,18 @@
 // ui/server_browser.h -- the MULTIPLAYER server browser (ImGui overlay surface).
 //
-// A third overlay surface alongside the F1 dev menu + the tilde scoreboard
-// (ui/imgui_overlay.cpp drives all three). Opened from the native MULTIPLAYER
-// button injected into VOTV's main menu (coop::multiplayer_menu) and rendered as
-// a modal panel over the menu.
+// A third overlay surface alongside the F1 dev menu and the tilde scoreboard (ui/imgui_overlay.cpp
+// drives all three). Opened from the native MULTIPLAYER button injected into VOTV's main menu
+// (coop::multiplayer_menu) and rendered as a modal panel over the menu.
 //
-// The ROW MODEL is ported from MTA's CServerListItem (name / address / players /
-// ping / version / world / locked) -- reference/mtasa-blue/Client/core/
-// ServerBrowser/CServerList.h. The RENDERER is ImGui (not MTA's CEGUI): we already
-// host an ImGui overlay in-process, so the table is a BeginTable, not a new GUI
-// dependency. The live data feed (master-server fetch + LAN discovery + per-server
-// ping) is P3; this surface owns the table + the Connect/Host/Direct-IP controls.
+// The ROW MODEL is ported from MTA's CServerListItem -- name, players, version, world, locked --
+// but the RENDERER is ImGui, not MTA's CEGUI: we already host an ImGui overlay in-process, so the
+// table is a BeginTable rather than a new GUI dependency. There is no ping column, deliberately:
+// ping is measured post-connect through GNS instead of by a per-server pre-list query, and the list
+// shows the lobby's heartbeat age. The live feed is coop::session_manager's master fetch; this
+// surface owns the table and the Connect, Host and Direct-IP controls.
 //
-// Threading: Open/Close/Toggle/IsOpen are atomic (set from the game thread by the
-// menu click poll; read by the render thread). Render() + the row list are
-// render-thread only.
+// Threading: Open, Close, Toggle and IsOpen are atomic (set from the game thread by the menu click
+// poll, read by the render thread). Render() and the row list are render-thread only.
 
 #pragma once
 
