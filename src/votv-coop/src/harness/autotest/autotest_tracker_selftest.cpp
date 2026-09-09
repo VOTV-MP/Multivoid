@@ -23,8 +23,8 @@ namespace GT = ue_wrap::game_thread;
 //
 // Wait 15 s for the world and the prop seed to come up, post DebugCheckPropElementReap to the
 // game thread, then poll up to 5 s for its verdict. The check itself installs the synthetic
-// dead element and logs the PASS/FAIL line; this routine only reports that it ran, and names
-// the string to grep for.
+// dead element and logs the PASS/FAIL line; this routine reports the posted check's result
+// and names the string to grep for the full line.
 void RunAutonomousPropReapTest() {
     UE_LOGI("propreap_test: starting (waiting 15 s for world + prop seed up)");
     ::Sleep(15000);

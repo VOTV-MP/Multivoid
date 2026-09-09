@@ -5,8 +5,8 @@
 // kerfurOmega_C::actionName) is EX_LocalVirtualFunction, INVISIBLE to our single ProcessEvent
 // detour, so it cannot be hooked -- the old actionName interceptor never fired. A State-delta poll
 // on the mirror loses the race too: the host streams kerfState every pose tick at 60 Hz and the
-// client re-applies it every frame before a 5 Hz poll could read the local change, which measured
-// about 0% detection. The ONE ProcessEvent-dispatched seam is AmainPlayer_C::InpActEvt_use, the E
+// client re-applies it every frame before a 5 Hz poll could read the local change, so the poll
+// sees nothing. The ONE ProcessEvent-dispatched seam is AmainPlayer_C::InpActEvt_use, the E
 // input action interactable_sync already hooks for doors. A PRE observer on it, gated on the radial
 // confirm (releaseEToUse) while the local player is aiming at a kerfur (lookAtActor), reads the
 // selected verb BEFORE the local dispatch runs and relays it -- race-free. CLIENT-only: the host's

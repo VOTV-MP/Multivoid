@@ -10,9 +10,9 @@
 // codepoints, with no edit to the function and nothing to notice. Measured before this file
 // existed: 649 of 890 cased-and-drawable codepoints folded to THEMSELVES; none folded wrong.
 //
-// Minted from Unicode 14.0.0, frozen in tools/text/unicode_case_14_0_0.py. A live unicodedata
-// census fails the build on any cased-and-drawable codepoint this table leaves unfolded: the
-// freeze governs the emission, the census guards the claim. 890 codepoints in 575 runs.
+// Minted from Unicode 14.0.0 against a frozen table, so the emission is reproducible, and the
+// generator re-checks it against a live unicodedata census: any cased-and-drawable codepoint
+// this table leaves unfolded fails that run. 890 codepoints in 575 runs.
 
     { 0x00041, 0x0005A, 32 },
     { 0x000C0, 0x000D6, 32 },

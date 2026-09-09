@@ -1,7 +1,7 @@
 // ue_wrap/core/reflected_offset.cpp -- reflection-resolved BP property offsets.
 //
-// See ue_wrap/core/reflected_offset.h for the interface, for what each field is, and for why
-// no number lives on this side.
+// See ue_wrap/core/reflected_offset.h for the interface, for the fields that need explaining,
+// and for why no number lives on this side.
 
 #include "ue_wrap/core/reflected_offset.h"
 

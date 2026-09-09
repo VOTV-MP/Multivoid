@@ -149,7 +149,8 @@ const wchar_t* const kHitDelegateNames[] = {
 // later delegate down one and apply the wrong bit to the wrong collision, silently suppressing
 // the wrong things, which is the exact bug class the per-delegate mask exists to fix. It was
 // safe only because the caller refuses to arm at all unless all seven resolve, i.e. by a
-// fail-closed rule in a different branch rather than by the construction it claimed. A miss
+// fail-closed rule in a different branch rather than by the construction this comment used
+// to claim. A miss
 // now leaves out[i] NULL; the return is the count of non-null entries, so `ok == 7` still
 // means what it meant.
 int ResolveHitDelegates(void** out, int max) {
