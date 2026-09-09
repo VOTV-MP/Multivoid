@@ -1,19 +1,18 @@
-// coop/dev/eid_lifetime_trace.h -- Phase 1 step 8.2: eid-lifetime TRACE (read-only, dev-only, HOST-side).
+// coop/dev/eid_lifetime_trace.h -- the eid-lifetime TRACE (read-only, dev-only, HOST-side).
 //
-// THE QUESTION (eid-range bind mini-design S8.2): the whole index->eid map + the bind rest on ONE unproven
-// assumption -- the host eid minted for a keyless native at SAVE-CAPTURE is the SAME eid the host later puts
-// on the WIRE for that native. If a capture-eid != its wire-eid (a re-mint / reap+re-seed between capture and
-// expression), the map would bind the client native to one eid while the host expresses/poses another -> the
-// bind never matches -> Phase 1 silently fails. This is the last unproven correctness link; prove it before
-// building the bind (probe-first discipline, as spawn-order was proven before the map -- step 1A).
+// THE QUESTION: the index-to-eid map and the bind on top of it rest on ONE unproven assumption --
+// that the eid minted for a keyless native at SAVE-CAPTURE is the SAME eid the host later puts on
+// the WIRE for it. If a re-mint, or a reap and re-seed, comes between them, the map binds the
+// client native to one eid while the host poses another, the bind never matches, and the lane fails
+// silently. Prove it before building the bind.
 //
-// THE TRACE (read-only, HOST-side): record actor->eid at capture (the same GetPropElementIdForActor the
-// IdMap will use, from CollectTrackedPileTransforms / CollectTrackedKerfurTransforms), then at the snapshot
-// wire-expression (BuildPropSpawnPayload_) compare the eid the host is about to send against the recorded
-// capture-eid for the same actor. Verdict at drain-complete: STABLE (every wire-eid == its capture-eid) or
-// DIVERGES (a re-mint happened -> mini-design needs a fix before the bind). Observes + counts only.
-// RULE-2-exempt diagnostic ([[feedback-rule2-exempts-probes-diagnostics-tools]]). Ini-gated
-// [dev] eid_lifetime_trace=1 on the HOST; absent/0 = every call is a cheap no-op. Game-thread only.
+// THE TRACE: record actor-to-eid at capture, through the same GetPropElementIdForActor the map will
+// use, then at the wire-expression compare the eid the host is about to send against the recorded
+// one. The verdict at drain-complete is STABLE (every wire-eid equals its capture-eid) or DIVERGES.
+// It observes and counts only.
+//
+// RULE-2-exempt diagnostic. Ini-gated [dev] eid_lifetime_trace=1 on the HOST; absent or 0 makes
+// every call a cheap no-op. Game-thread only.
 #pragma once
 
 #include <cstdint>
