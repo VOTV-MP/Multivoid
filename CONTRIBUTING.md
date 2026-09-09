@@ -84,9 +84,12 @@ A change is not done when it compiles. Before a pull request:
 4. Per-frame and per-packet code is measured, not assumed: no full-object-array scans on a hot
    path, no allocation in the pose tick, engine functions only on the game thread.
 
-CI runs the same gates on every pull request and every push to `main` (`.github/workflows/`): the build, the zero-import ABI
-gate, the config-registry gate, the atlas gate, the package drill, the public-leak gate, and the
-commit-message and public-prose checks described below.
+Every push and pull request runs the source gates (`.github/workflows/repo-gates.yml`): the
+config-registry gate, the peer-slot generation gate, the atlas gate, the master-contact and
+reliable-kind gates, the MinHook free-call and GC-pin rules, the public-leak gate, and the
+commit-message and public-prose checks described below. The Windows build is run by hand
+(Actions -> **build** -> Run workflow); it is what runs the zero-import ABI gate on the built
+DLL and the package drill, since those need a compiled artifact.
 
 ## Commits
 

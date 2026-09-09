@@ -67,3 +67,35 @@ jobs:
 
       - name: Public-prose gate
         run: python3 .github/ci/public_prose_gate.py
+
+      # The SOURCE invariants, which need no compiler and so do not belong behind a
+      # twenty-minute Windows build. They lived only inside build-core once, and while the build
+      # lane was manual a prose sweep deleted every `// GEN:` annotation in the net layer --
+      # peerconn_gate had been failing for days with nothing to say so. These
+      # scripts read source text, run on any platform, and cost about ten seconds together.
+      # Anything that needs a BUILT DLL (abi_gate, the package drill) stays in build-core.
+      - name: Peer-slot generation gate (every peerConns_ write decides occupancy)
+        shell: pwsh
+        run: ./.github/ci/peerconn_gate.ps1
+
+      - name: Config registry gate (dead rows / write-only / alias / ratchet surface)
+        shell: pwsh
+        run: ./.github/ci/registry_gate.ps1
+
+      - name: GC pin gate (a root-set pin is owned by a GcPin, never a hand-written pair)
+        shell: pwsh
+        run: ./.github/ci/gc_pin_gate.ps1
+
+      - name: Atlas regime gate (the ImGui lazy atlas is on, watched, and bounded)
+        shell: pwsh
+        run: ./.github/ci/atlas_regime_gate.ps1
+
+      - name: MinHook free-call gate (nothing may free a trampoline the process still calls)
+        shell: pwsh
+        run: ./.github/ci/minhook_free_gate.ps1
+
+      - name: Master-contact gate (nothing tells an outside server where a player is, unasked)
+        run: python3 .github/ci/master_contact_gate.py
+
+      - name: ReliableKind routing gate (every wire kind reaches a receiver, or names why not)
+        run: python3 .github/ci/reliablekind_gate.py

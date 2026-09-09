@@ -299,8 +299,7 @@ jobs:
         run: python .github/ci/abi_gate.py --drill "${{ env.BUILD_DIR }}/Release/main.dll"
 
       - name: Package the r2modman zip + verify it (CI evidence, pak-less by construction)
-        # THE DISTRIBUTABLE IS ASSEMBLED ON EVERY PULL REQUEST AND EVERY PUSH TO MAIN,
-        # not first at release time.
+        # THE DISTRIBUTABLE IS ASSEMBLED ON EVERY BUILD RUN, not first at release time.
         # `package.ps1` is the same script the release lane runs, and it verifies the
         # zip it just wrote with the predicate the drill above proved can fail -- so a
         # change that quietly breaks the package tree (a moved payload, a manifest key,
@@ -349,13 +348,6 @@ jobs:
           "name=multivoid-ci-$($head.Substring(0,12))" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Upload artifact
-        # NOT for a fork's pull request. That build is contributor source, and an artifact named
-        # multivoid-ci-<sha> on a run page under this repo reads like an official build to anyone
-        # who finds it -- for a mod whose install step is "drop the DLL in by hand", that is a
-        # credible lure. The pull request needs the build VERDICT, not the binary; a same-repo
-        # branch still gets its artifact, and the release lane is untouched.
-        if: ${{ github.event_name != 'pull_request'
-                || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.artname.outputs.name }}

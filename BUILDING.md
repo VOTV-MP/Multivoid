@@ -25,9 +25,9 @@ Visual Studio, CMake, or vcpkg at all:
 
 1. **Fork** the repo and **enable Actions** on your fork (GitHub disables
    workflows on fresh forks until you press the button on the Actions tab).
-2. Actions → **build** → **Run workflow** on the branch you want. A pull
-   request and a push to `main` build on their own; any other branch builds
-   only when you press the button.
+2. Actions → **build** → **Run workflow** on the branch you want. The build is
+   manual by design — a twenty-minute Windows runner is not spent on every
+   push. The source gates that need no compiler run on every push instead.
 3. When the run goes green, download the **`multivoid-ci-<sha12>`** artifact
    from the run page. It contains `main.dll` and `build-info.txt` with the
    exact source commit.
