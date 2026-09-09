@@ -7,7 +7,7 @@
 // sub-element reuses the coop/signal_wire serializer rather than a second one.
 //
 // The blob is what coop/blob_chunks carries in chunks (client->host), what persists to
-// <save>/coop_players/<guid>.json, and what the join apply reads back.
+// <gameDir>/coop_players/<hostSlot>/<guid>.json, and what the join apply reads back.
 
 #pragma once
 

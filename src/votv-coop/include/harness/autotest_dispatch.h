@@ -1,10 +1,9 @@
 // harness/autotest_dispatch.h -- env-gated autonomous-test thread dispatch.
 //
-// The cluster of `if (ReadEnv("VOTVCOOP_RUN_*_TEST")) CreateThread(...)` blocks lives
-// here rather than in harness/harness.cpp: five near-identical copies of one shape.
-// They are boot/scenario glue, but a cohesive and still-growing unit -- one per
-// autonomous test -- so they get their own home, plus a single SpawnIf helper that
-// removes the copy-paste.
+// Every `if (ReadEnv("VOTVCOOP_RUN_*_TEST")) CreateThread(...)` block lives here rather
+// than in harness/harness.cpp: one per autonomous test, forty-odd copies of one shape and
+// still growing. They are boot/scenario glue, but a cohesive unit, so they get their own
+// home plus a single SpawnIf helper that removes the copy-paste.
 #pragma once
 
 #include "coop/net/session.h"  // coop::net::Role

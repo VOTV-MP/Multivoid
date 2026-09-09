@@ -7,7 +7,8 @@
 // The module's location is loader-dependent: UE4SS maps us at Mods\Multivoid\dlls\, and
 // unreal_shimloader additionally virtualizes Mods\ into the r2modman profile, where
 // module-dir writes were measured landing. The exe dir is the one real, loader-independent
-// home of the install, and this helper is its only reader.
+// home of the install, so every artifact above resolves its directory through this one
+// helper rather than computing it per file.
 
 #pragma once
 

@@ -3,8 +3,8 @@
 // (the MTA per-type CClient*Manager analog):
 //
 //   PropMirrors() -> MirrorManager<Prop>        chipPiles, trash, kerfur OFF-props, grabbables
-//   NpcMirrors()  -> MirrorManager<Npc>         kerfur NPC form, zombies, ariral, wisps, AI
-//   WaMirrors()   -> MirrorManager<WorldActor>  UFOs, ships, jellyfish (non-Character actors)
+//   NpcMirrors()  -> MirrorManager<Npc>         kerfur NPC form, zombies, ariral, wisps, AI chars
+//   WaMirrors()   -> MirrorManager<WorldActor>  UFOs, ships, jellyfish (allowlisted event actors)
 //
 // (Player is NOT here -- it has its own coop::players::Registry. Kerfur is a host-only logical
 // id record with no manager; its rendered form is a Prop or Npc mirror above.)

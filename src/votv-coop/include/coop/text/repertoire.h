@@ -30,8 +30,8 @@ struct CodepointRange {
 // bakes. Binary search over 453 ranges.
 bool InRepertoire(uint32_t cp);
 
-// The COMPLEMENT, within the render set -- every codepoint some embedded face or the donor
-// carries that we refuse to bake.
+// The codepoints we REFUSE to bake: a coarse cover holding everything the render set carries
+// that InRepertoire omits, merged across unassigned space to stay under ImGui's list cap.
 //
 // It exists because the atlas is lazy. ImGui bakes a codepoint the first time something draws
 // it and ignores ImFontConfig::GlyphRanges, so the only surviving lever is subtractive:

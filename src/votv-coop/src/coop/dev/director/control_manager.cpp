@@ -20,7 +20,7 @@ namespace GT = ue_wrap::game_thread;
 constexpr int kTickMs      = 4;     // near frame rate: AddMovementInput must re-land each frame or the
                                     // CharacterMovement (which consumes+clears ControlInputVector per
                                     // frame ~9ms) brakes between inputs -> near-zero net speed (measured
-                                    // a 20 ms tick gave ~5 cm/s). The RunGT round-trip paces
+                                    // -- a 20 ms tick gave ~5 cm/s). The RunGT round-trip paces
                                     // the real rate; this just removes the extra sleep between frames.
 constexpr int kGtTimeoutMs = 4000;  // bound the GT wait -- a stalled game thread must NOT hang the run
 

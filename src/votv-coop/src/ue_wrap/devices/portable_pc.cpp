@@ -19,13 +19,21 @@ namespace R = reflection;
 // measured trap) -- verdicts resolve lazily from live instances instead.
 std::unordered_map<void*, bool> g_verdict;
 void* g_cls = nullptr;             // latched on first positive verdict
+// `opened` on the alpha 0.9.0-n cook, used only when the property lookup fails: without it a
+// recook that renames the field silently disables the lid lane instead of degrading to the last
+// known layout.
+constexpr int32_t kOpenedFallback = 0x398;
 int32_t g_offOpened = -1;
 void* g_fnOpen = nullptr;
 
 void ResolveMembers(void* cls) {
     g_cls = cls;
     g_offOpened = R::FindPropertyOffset(cls, L"opened");
-    if (g_offOpened < 0) { UE_LOGW("portable_pc: 'opened' offset -- fallback 0x398"); g_offOpened = 0x398; }
+    if (g_offOpened < 0) {
+        UE_LOGW("portable_pc: 'opened' not found by name -- using the measured fallback 0x%X",
+                kOpenedFallback);
+        g_offOpened = kOpenedFallback;
+    }
     g_fnOpen = R::FindFunction(cls, L"Open");
     if (!g_fnOpen)
         UE_LOGW("portable_pc: Open() not found -- lid replay disabled");

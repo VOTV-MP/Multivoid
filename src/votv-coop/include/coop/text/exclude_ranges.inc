@@ -2,17 +2,17 @@
 // when a face or the donor changes, or this and the atlas fall out of step with nothing to say so.
 //
 // THE EXCLUDE SET, handed to ImGui as ImFontConfig::GlyphExcludeRanges on every font source. It
-// is a COARSE cover rather than a complement: it holds every codepoint some face carries and
-// repertoire_ranges.inc omits, holds nothing that table holds, and merges across unassigned space
-// to stay short -- 143797 codepoints in 32 ranges, of which 1884 are in a face at all. ImGui
-// asserts 64 values or fewer at imgui_draw.cpp:3115, because it scans the list once per codepoint.
-// Both tables come out of ONE source set in one run, which is what keeps `fold == bake` true
-// under a lazy atlas.
+// is a COARSE cover, not a complement: it holds every codepoint the render set carries and
+// repertoire_ranges.inc omits -- save U+0000, below -- and nothing that table holds. 143797
+// codepoints in 32 ranges, only 1884 of them in the render set at all. ImGui asserts 64 values
+// or fewer at imgui_draw.cpp:3115 because it scans the list per codepoint; that is advisory (a
+// longer scan, not a break) and NDEBUG strips it. Both tables come from ONE source set in one
+// run, which keeps `fold == bake` true under a lazy atlas.
 //
 // U+0000 IS DELIBERATELY ABSENT and must stay absent: ImGui walks this list as a zero-terminated
 // array, so a leading zero would silently make the whole list a no-op. It is the one codepoint
-// the two emissions differ by, asserted by the generator and by a static_assert in
-// repertoire.cpp. ImGui text is NUL-terminated, so nothing can request it.
+// the two emissions differ by, asserted by the generator; repertoire.cpp's static_assert covers
+// only the narrower half, that the table does not begin at zero. ImGui text is NUL-terminated.
 
     { 0x00001, 0x0001F },
     { 0x0007F, 0x000A0 },

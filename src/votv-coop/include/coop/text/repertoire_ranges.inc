@@ -7,12 +7,12 @@
 // folds names against this table; ui::fonts hands the complement to ImGui. What a name folds by
 // is what a name renders as.
 //
-// 7593 codepoints, 453 ranges, max U+1FBF9. The render set is the 9478-codepoint UNION of the
-// embedded faces (8148) and the donor TwemojiMozilla-Subset.ttf (1418), which share 88. Held out
-// of it: 1778 private-use, 19 Default_Ignorable, 88 with no ink. Combining marks are IN -- 335 of
-// the render set's 337, which is how Thaana, Tamil, Thai, Arabic and Hebrew are actually written;
-// the two held out are Default_Ignorable. No embedded face carries U+0378, U+0379, U+0380,
-// U+0381, U+0382, U+0383, U+038B, U+038D, U+03A2 or U+A69E.
+// 7593 codepoints, 453 ranges, max U+1FBF9. The render set is the 9478-codepoint UNION -- not the
+// sum -- of the embedded faces (8148) and the donor TwemojiMozilla-Subset.ttf (1418). It loses
+// 1885 to the fold: 1778 private-use, 19 Default_Ignorable, the rest blank. Combining marks are
+// IN, 335 of the render set's 337, which is how Thaana, Tamil, Thai, Arabic and Hebrew are
+// written; the two held out are Default_Ignorable. The generator re-derives the base-ask gap and
+// fails if it moves: U+0378, U+0379, U+0380..U+0383, U+038B, U+038D, U+03A2 and U+A69E have none.
 
     { 0x00020, 0x0007E },
     { 0x000A1, 0x000AC },

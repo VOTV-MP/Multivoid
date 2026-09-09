@@ -1,7 +1,7 @@
 // coop/props/prop_wire_parity.cpp -- see coop/props/prop_wire_parity.h.
 //
-// The log prefixes read "remote_prop::OnSpawn" because that is where these bodies sat before,
-// and log greps in use match on that wording.
+// The log prefixes read "remote_prop::OnSpawn" because that is where these bodies sat before;
+// the wording is kept so older log captures stay searchable.
 
 #include "coop/props/prop_wire_parity.h"
 

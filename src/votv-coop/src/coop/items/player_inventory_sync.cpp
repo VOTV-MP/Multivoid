@@ -553,7 +553,7 @@ void EnsurePlayerFile(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;  // the host owns the per-player files
     const std::string& guid = coop::player_handshake::GuidForSlot(peerSlot);
     if (guid.empty()) {
-        UE_LOGI("player_inventory: slot %d has no GUID yet (Join not landed) -- "
+        UE_LOGI("player_inventory: slot %d has no proved GUID yet -- "
                 "no file this edge", peerSlot);
         return;
     }
