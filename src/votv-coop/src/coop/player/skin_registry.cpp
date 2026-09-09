@@ -34,8 +34,9 @@ bool g_scanned = false;
 // 'rootKerfur_010', a Blender-side duplicate absent from the skeleton, and applying it poisons the
 // player AnimInstance so locomotion never recovers across later mesh swaps. The game never loads
 // that asset; its antibreather kerfur wears kerfurOmega_antibreatherSkin, which is in this list.
-// Re-run the census at every game-version re-target before trusting this table. kerfurOmega_KelSkin
-// is deliberately absent: dr_kel already provides that look through the pristine native mesh.
+// Re-check those four properties at every game-version re-target before trusting this table.
+// kerfurOmega_KelSkin is deliberately absent: dr_kel already provides that look through the
+// pristine native mesh.
 struct BuiltinSkin { const char* name; const wchar_t* path; };
 constexpr BuiltinSkin kBuiltinSkins[] = {
     { "kerfur_omega",          L"/Game/meshes/kerfurAnthro/sk/kerfurOmegaV1.kerfurOmegaV1" },

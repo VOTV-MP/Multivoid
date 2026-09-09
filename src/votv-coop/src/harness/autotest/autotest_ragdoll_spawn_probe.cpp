@@ -8,9 +8,9 @@
 // BeginPlay from the player reference); whether that manual spawn is death-free for the player it
 // names (the dead and ragdoll flags before and after); and the ground truth, the real verb's own
 // body dumped with the same fields, then recovered with the get-up verb. Single instance: the
-// ragdollspawn scenario launches it and captures screenshots on the shot-ready log markers. Gated
-// by VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1. A throwaway diagnostic: raw offset reads cited to the SDK
-// header dump, not a shipping path.
+// ragdollspawn scenario arms it, and an external capture takes the shots on the shot-ready log
+// markers. Gated by VOTVCOOP_RUN_RAGDOLL_SPAWN_PROBE=1. A throwaway diagnostic: raw offset reads
+// cited to the SDK header dump, not a shipping path.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "harness/autotest.h"

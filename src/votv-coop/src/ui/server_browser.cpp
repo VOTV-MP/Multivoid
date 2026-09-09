@@ -5,9 +5,8 @@
 // players cur/max, version, world, locked. The LIVE feed is coop::session_manager (master GET
 // /v1/lobbies via lobby_client); the Connect / Host / Direct-IP controls drive
 // coop::session_manager (which announces / joins on a worker thread and queues a coop::net::Config
-// the harness boots). No ping column: per the connectivity-ladder design, ping is measured
-// post-connect via GNS, not pre-listed (MTA's ASE-UDP per-server query is intentionally dropped) --
-// we show the lobby's heartbeat age instead.
+// the harness boots). No ping column: ping is measured post-connect via GNS, not pre-listed (MTA's
+// ASE-UDP per-server query is intentionally dropped) -- we show the lobby's heartbeat age instead.
 
 #include "ui/server_browser.h"
 

@@ -97,12 +97,10 @@ void DestroyTexture(void* id) {
 
 void InstallCreationProbe() { dx12_capture::InstallCreationProbe(); }
 
-// RULE 2: a `Shutdown()` used to live here. It was reachable ONLY from
-// ui::imgui_overlay::Shutdown(), which had zero callers tree-wide for its entire life and was
-// deleted -- so this ran exactly never. No InitRenderer failure path used it either; those call
-// ReleaseRendererState(). At process exit the OS reclaims what it released, and the one thing a
-// dying process actually needs -- stop new detour entries -- is hook::Shutdown's blanket
-// disable.
+// RULE 2: there is deliberately no Shutdown() here, and nothing needs one. InitRenderer's
+// failure paths call ReleaseRendererState(); at process exit the OS reclaims what that released;
+// and the one thing a dying process actually needs -- stopping new detour entries -- is
+// hook::Shutdown's blanket disable.
 
 namespace detail {
 

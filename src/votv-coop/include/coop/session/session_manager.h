@@ -26,9 +26,9 @@ void Configure(const std::string& masterUrl, const coop::net::Config& fallbackHo
 // The master URL ("host:port") as set by Configure, or the env/localhost default before it.
 std::string MasterUrl();
 
-// The mod's version identity is a pair: GameTarget is the VOTV cook this build targets (generated
-// from coop/version.h.in), and the build number is kProtocolVersion, which moves exactly when
-// compatibility moves. DisplayVersion is the composite the menu shows.
+// The mod's version identity is a pair: GameTarget names the VOTV cook this build targets, compiled
+// in from the header generated out of coop/version.h.in; the build number is kProtocolVersion,
+// which moves exactly when compatibility moves. DisplayVersion is the composite the menu shows.
 const char* GameTarget();
 std::string DisplayVersion();
 
