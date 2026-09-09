@@ -276,7 +276,7 @@ void ApplyMirrorSnapshot(void* mirrorActor, const HookSnapshot& state, void* pup
     }
 
     // `dist` is the gameplay rope allowance, not necessarily the chord length
-    // of its rendered endpoints.  Copying it verbatim leaves slack in a
+    // of its rendered endpoints.  Copying it directly leaves slack in a
     // CableComponent mirror, so a rope whose two ends are fixed visibly sags
     // on receivers.  A fixed/fixed rope has no permitted slack: make the
     // visual cable exactly the endpoint distance.  Dynamic states retain the

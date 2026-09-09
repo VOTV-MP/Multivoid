@@ -12,7 +12,7 @@
 //   - Head B (hook_single1, UStaticMeshComponent)
 //   - Cable (UCableComponent) rendering the rope between Head A and Head B.
 //
-// RE: Dumper-7/4.27.2-18319896+++UE4+Release-4.27-VotV/CppSDK/SDK/hook_classes.hpp
+// RE: hook_classes.hpp from Dumper-7 SDK
 
 #pragma once
 
