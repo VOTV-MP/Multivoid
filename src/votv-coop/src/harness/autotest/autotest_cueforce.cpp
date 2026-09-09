@@ -34,12 +34,12 @@ void RunAutonomousCueForceTest() {
     UE_LOGI("cueforce_test: starting on host (waiting 20 s for the world, then firing pre-client)");
     ::Sleep(20000);
 
-    // HostFire's return only reports the client-role refusal -- the fire itself (ResolvePass +
+    // HostFire's return only reports the client-role refusal -- the fire itself (ResolvePass and
     // NativeFire) runs in its posted game-thread task and logs its OWN outcome. So no retry loop
     // here (it would never retry), and the marker below says POSTED, not fired: the orchestration
     // must gate the client launch on the authoritative host log line
     //   "event_fire: runEvent('starRain', special='None') dispatched"
-    // (a world-not-up failure is a loud event_fire WARN instead; audit 2026-07-05).
+    // and a world-not-up failure shows up as a loud event_fire warning instead.
     namespace efs = coop::event_fire_sync;
     if (!efs::HostFire(efs::FireKind::RunEvent, L"starRain", L"None")) {
         UE_LOGW("cueforce_test: HostFire refused (client role?) -- giving up");
