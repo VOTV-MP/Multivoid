@@ -1,17 +1,13 @@
 // ue_wrap/actors/swinger.h -- standalone engine access for VOTV openable container lids
 // (Aprop_swinger_C). Principle-7 engine-wrapper layer (no network/coop state).
 //
-// Aprop_swinger_C is the generic hinged-lid prop: fridge doors, safe doors,
-// microwave doors, cabinet / cupboard / drawer lids all inherit it. Its open
-// state is `opened`; the canonical entry points are Open(bool Damage) / Close().
-// It is an Aprop_C, so its cross-peer identity is the inherited Aprop_C::Key
-// (read via ue_wrap::prop::GetKeyString) -- NOTE: a child-actor lid (e.g. a
-// fridge door spawned by its parent) may carry a per-peer NewGuid Key that is
-// NOT cross-peer stable; coop::interactable_sync's install-time keysHash
-// diagnostic surfaces that, and an unresolvable key simply expires harmlessly.
-//
-// RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md +
-// CXXHeaderDump/prop_swinger.hpp.
+// Aprop_swinger_C is the generic hinged-lid prop: fridge doors, safe doors, microwave doors,
+// cabinet, cupboard and drawer lids all inherit it. Its open state is `opened`; the canonical
+// entry points are Open(bool Damage) and Close(). It is an Aprop_C, so its cross-peer identity
+// is the inherited Aprop_C::Key (read through ue_wrap::prop::GetKeyString) -- NOTE: a
+// child-actor lid, a fridge door spawned by its parent say, may carry a per-peer NewGuid Key
+// that is NOT cross-peer stable; coop::interactable_sync's install-time keysHash diagnostic
+// surfaces that, and an unresolvable key simply expires harmlessly.
 
 #pragma once
 

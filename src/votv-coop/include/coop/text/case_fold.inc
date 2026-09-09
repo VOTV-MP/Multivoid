@@ -4,22 +4,15 @@
 // SIMPLE LOWERCASE, restricted to pairs this build can DRAW.
 // { begin, end, delta }: lower(cp) == cp + delta for begin <= cp <= end.
 //
-// IT REPLACES A HAND TABLE THAT WENT 73% STALE IN SILENCE. That table
-// covered ASCII, Latin-1 and Cyrillic and its comment called those
-// "exactly the cased scripts the repertoire draws" -- true when written,
-// falsified by the Latin-Ext/Greek widening and by the lazy-atlas flip's
-// +4,741 codepoints, with no edit to the function and nothing to notice.
-// Measured before this file existed: 649 of 890 cased-and-drawable
-// codepoints folded to THEMSELVES (LATIN 374, GREEK 146, ARMENIAN 38,
-// GEORGIAN 38, CIRCLED 26, ROMAN 17, COPTIC 7); none folded WRONG.
+// It replaces a hand table that went stale in silence: that one covered ASCII, Latin-1 and
+// Cyrillic and called those "exactly the cased scripts the repertoire draws", which stopped
+// being true when Latin-Ext and Greek were added and the lazy atlas brought in another 4,741
+// codepoints, with no edit to the function and nothing to notice. Measured before this file
+// existed: 649 of 890 cased-and-drawable codepoints folded to THEMSELVES; none folded wrong.
 //
-// Minted from Unicode 14.0.0, FROZEN in
-// tools/text/unicode_case_14_0_0.py. A live unicodedata census in
-// tools/text/case_fold.py fails the build on any cased-and-drawable
-// codepoint this table leaves unfolded -- the freeze governs the
-// emission, the census guards the claim.
-//
-// 890 codepoints in 575 runs.
+// Minted from Unicode 14.0.0, frozen in tools/text/unicode_case_14_0_0.py. A live unicodedata
+// census fails the build on any cased-and-drawable codepoint this table leaves unfolded: the
+// freeze governs the emission, the census guards the claim. 890 codepoints in 575 runs.
 
     { 0x00041, 0x0005A, 32 },
     { 0x000C0, 0x000D6, 32 },
