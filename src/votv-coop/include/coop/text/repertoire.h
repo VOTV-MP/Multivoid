@@ -27,7 +27,7 @@ struct CodepointRange {
 };
 
 // Can this build draw `cp`? The predicate FoldKey folds against and the atlas
-// bakes. Binary search over ~441 ranges.
+// bakes. Binary search over 453 ranges.
 bool InRepertoire(uint32_t cp);
 
 // The COMPLEMENT, within the render set -- every codepoint some embedded face or the donor
