@@ -66,6 +66,24 @@ jobs:
         env:
           TIP: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # The trail's COMPOSITION, which no per-message check can see: the share of the recent
+      # commits whose scope is `[docs]`. It reads the same window a person does -- the last 100,
+      # ending at the branch head for the reason above -- so the number is about what the commit
+      # list looks like now and not about a stretch that has scrolled out of sight.
+      - name: Commit-trail drill
+        run: python3 .github/ci/commit_trail_gate_drill.py
+
+      - name: Commit trail ([docs] share of the last 100 commits)
+        # The same fetch the message gate does, and for the same reason: the tip is normally the
+        # merge commit's second parent and already present, but a merge ref lagging the branch
+        # head would leave this naming a commit nobody can act on. Repeated rather than inherited
+        # from the step above, so reordering these steps cannot break this one.
+        run: |
+          git fetch --no-tags origin "$TIP" || true
+          python3 .github/ci/commit_trail_gate.py --tip "$TIP"
+        env:
+          TIP: ${{ github.event.pull_request.head.sha || github.sha }}
+
       - name: Public-prose gate drill
         run: python3 .github/ci/public_prose_gate_drill.py
 
