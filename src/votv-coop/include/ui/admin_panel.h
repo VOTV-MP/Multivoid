@@ -1,6 +1,6 @@
 // ui/admin_panel.h -- the F1 > Administration > Players content pane (host-only).
 //
-// Three sections (user spec 2026-07-05):
+// Three sections:
 //   Online  -- every connected remote peer: full row (nick / ping / link) +
 //              Teleport / Kick / Ban actions.
 //   Offline -- every player this host has ever seen (coop::seen_players) that is

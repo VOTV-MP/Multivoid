@@ -16,9 +16,9 @@ namespace harness {
 // thread (each engine action is posted to the game thread). Requires the
 // game-thread dispatcher to be installed first. Non-blocking.
 //
-// The scenario comes from the VOTVCOOP_SCENARIO env var (per-launch signal;
-// the on-disk scenario.txt fallback was RETIRED 2026-06-06 because a leftover
-// file aliased later native launches -- see coop::config::ReadScenario).
+// The scenario comes from the VOTVCOOP_SCENARIO env var, a per-launch signal.
+// There is deliberately NO on-disk scenario.txt fallback: a leftover file
+// aliases later native launches -- see coop::config::ReadScenario.
 // No env (a native launch) -> "menu": boot to VOTV's own main menu.
 void Start();
 

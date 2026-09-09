@@ -1,6 +1,6 @@
 // coop/props/trash_use_intercept.h -- the CLIENT-grab bridge on the "use" (E) input.
 //
-// Extracted from trash_collect_sync (2026-07-07 modularization B1a). Owns the
+// Owns the
 // InpActEvt_use PRE-interceptor family (the _41 grab intercept, the _38/_42 use_deny
 // suppressors, and the _58/_59 LMB hard-throw bridge). On a CLIENT it cancels the native
 // pile grab / carry-throw press and routes GrabIntent/ThrowIntent to the host; on the HOST

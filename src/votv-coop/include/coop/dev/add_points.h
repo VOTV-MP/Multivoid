@@ -1,7 +1,7 @@
 // coop/dev/add_points.h -- dev cheat: add credits to the LOCAL balance.
 //
-// Calls AmainGamemode_C::AddPoints(int32) -- the single credit-writer (RE
-// 2026-06-03, mainGamemode.hpp:447; the same path the drone-sell economy uses to
+// Calls AmainGamemode_C::AddPoints(int32) -- the single credit-writer
+// (mainGamemode.hpp:447; the same path the drone-sell economy uses to
 // pay out, so the UI/email/achievement side-effects fire identically). Intended
 // for testing the delivery drone: the HOST needs a balance to afford laptop-shop
 // orders. Local-only -- each peer's saveSlot.Points is its own (clients don't

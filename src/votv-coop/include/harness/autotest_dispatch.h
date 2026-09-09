@@ -1,10 +1,9 @@
 // harness/autotest_dispatch.h -- env-gated autonomous-test thread dispatch.
 //
-// Extracted from harness/harness.cpp (2026-05-30, soft-cap discipline): the
-// cluster of `if (ReadEnv("VOTVCOOP_RUN_*_TEST")) CreateThread(...)` blocks had
-// grown to five near-identical copies and pushed harness.cpp past 800 LOC. They
-// are boot/scenario glue, but a cohesive, still-growing unit -- one per
-// autonomous test -- so they get their own home + a single SpawnIf helper that
+// The cluster of `if (ReadEnv("VOTVCOOP_RUN_*_TEST")) CreateThread(...)` blocks lives
+// here rather than in harness/harness.cpp: five near-identical copies of one shape.
+// They are boot/scenario glue, but a cohesive and still-growing unit -- one per
+// autonomous test -- so they get their own home, plus a single SpawnIf helper that
 // removes the copy-paste.
 #pragma once
 

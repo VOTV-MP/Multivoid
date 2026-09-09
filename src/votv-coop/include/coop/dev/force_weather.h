@@ -6,9 +6,9 @@
 // broadcasts a WeatherState packet and the client mirrors via ApplyFromHost; a
 // client SetSnow is a no-op (weather is host-authoritative).
 //
-// 2026-06-01: the legacy F5 hotkey was RETIRED (RULE [[feedback-dev-features-in-
-// imgui-menu]]: dev features live in the F1 menu, not ad-hoc hotkeys). The action
-// now lives behind ui::dev_menu's Snow checkbox, which calls SetSnow().
+// There is no hotkey for it: dev features live in the F1 menu rather than on
+// ad-hoc keys. The action lives behind ui::dev_menu's Snow checkbox, which
+// calls SetSnow().
 
 #pragma once
 

@@ -1,8 +1,8 @@
 // coop/net/wire_key_util.h -- shared WireKey <-> wstring converters + the FNV-1a
 // key hash used by the keyed-sync modules (interactable_sync / keypad_sync /
-// window_sync). Extracted 2026-06-08 (RULE 2: these byte-identical pure helpers had
-// been copy-pasted into each keyed-sync TU; window_sync would have been the third
-// copy). Header-only inline (ODR-safe across TUs); no engine/network state.
+// window_sync). RULE 2: ONE implementation of these byte-identical pure helpers,
+// rather than a copy in each keyed-sync TU. Header-only inline (ODR-safe across
+// TUs); no engine/network state.
 //
 // VOTV instance Keys (Aactor_save_C::Key / AtriggerBase_C::Key / Aprop_C::Key) are
 // ASCII FNames; the wire carries them as a fixed 32-byte WireKey (len + 31 chars).

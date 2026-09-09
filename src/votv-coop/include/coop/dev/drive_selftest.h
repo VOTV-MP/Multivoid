@@ -1,5 +1,5 @@
-// coop/dev/drive_selftest.h -- [dev] drive_selftest: the rack-lane e2e circles
-// (rack-extraction design §4, votv-rack-extraction-DESIGN-2026-07-18.md).
+// coop/dev/drive_selftest.h -- [dev] drive_selftest: the rack-lane end-to-end
+// circles.
 //
 // Standalone INSTRUMENT for the extraction's digest-equality measurement: uses
 // ONLY public APIs (ue_wrap drive_chain, signal_wire, blob_chunks Fnv64,
