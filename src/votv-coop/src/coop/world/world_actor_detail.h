@@ -1,15 +1,14 @@
-// coop/world/world_actor_detail.h -- INTERNAL (src-tree) shared header for
-// the world_actor_sync module's two translation units:
+// coop/world/world_actor_detail.h -- INTERNAL (src-tree) shared header for the
+// world_actor_sync module's two translation units:
 //   world_actor_sync.cpp   -- HOST half + Install/lifecycle owner (interceptor,
 //                             POST/destroy observers, pose stream, ex-enroll,
 //                             connect snapshot; owns the session pointer, the
 //                             Install-resolved spawn path and the bypass slot)
 //   world_actor_mirror.cpp -- CLIENT half (wire materialize, wire destroy,
 //                             pose apply + drive) -- the npc_mirror shape.
-// Split 2026-07-05 (modular file-size rule; the audit-endorsed extraction after
-// world_actor_sync.cpp reached 834 LOC at v102). NOT part of the public module
-// API (that is include/coop/world/world_actor_sync.h); nothing outside
-// these two TUs may include this.
+// The two halves were split apart under the modular file-size rule. NOT part of the public
+// module API (that is include/coop/world/world_actor_sync.h); nothing outside these two
+// translation units may include this.
 
 #pragma once
 
