@@ -1,7 +1,7 @@
 // ui/server_browser.h -- the MULTIPLAYER server browser (ImGui overlay surface).
 //
-// A third overlay surface alongside the F1 dev menu and the tilde scoreboard (ui/imgui_overlay.cpp
-// drives all three). Opened from the native MULTIPLAYER button injected into VOTV's main menu
+// One of the surfaces ui/imgui_overlay.cpp composites, alongside the F1 dev menu and the
+// tilde scoreboard. Opened from the native MULTIPLAYER button injected into VOTV's main menu
 // (coop::multiplayer_menu) and rendered as a modal panel over the menu.
 //
 // The ROW MODEL is ported from MTA's CServerListItem -- name, players, version, world, locked --
