@@ -30,7 +30,7 @@ bool Init();
 // target's module: it is memory MinHook can OVERWRITE OR UNMAP, and it stays valid
 // only because nothing here asks MinHook to release it. The parameter is
 // `trampoline` and never `original`, because MinHook's out-param IS the trampoline
-// (`minhook/src/hook.c:634`) and `original` invites the reading that it aims at the
+// (`third_party/minhook/src/hook.c:634`) and `original` invites the reading that it aims at the
 // engine's own ProcessEvent -- a reader who believes that clears a real
 // use-after-free as safe. Returns false on any MinHook error (logged).
 //
@@ -44,7 +44,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
 // Disable is the ONLY retirement this facade offers, and the absence of a
 // remove/uninitialize counterpart fixes a live use-after-free. A MinHook
 // `MEMORY_SLOT` is a UNION of a `pNext` link and the trampoline bytes
-// (`minhook/src/buffer.c:43-50`), so `FreeBuffer` writes eight bytes AT OFFSET 0
+// (`third_party/minhook/src/buffer.c:43-50`), so `FreeBuffer` writes eight bytes AT OFFSET 0
 // OF THE TRAMPOLINE, over the stolen prologue (`buffer.c:282`), from
 // `MH_RemoveHook` (`hook.c:702`) -- in place, with no drain window that helps,
 // and a thread still holding the pointer runs a list link as code. Disable only

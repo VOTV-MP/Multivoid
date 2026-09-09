@@ -7,7 +7,7 @@
 // target then sits dead ahead of the body, where it can never visibly lead. The "head first, then
 // body" behaviour the source never produces is synthesized HERE, by Update below.
 //
-// MTA precedent: reference/mtasa-blue Client/mods/deathmatch/logic/CClientPed.cpp:3450-3474, where
+// MTA precedent: reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:3450-3474, where
 // a remote ped's body rotation is its own interpolated presentation state, never slammed from the
 // wire.
 

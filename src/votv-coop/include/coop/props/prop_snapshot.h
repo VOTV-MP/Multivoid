@@ -44,7 +44,8 @@ void DrainChunk();
 // payload logic DrainChunk uses (keyed vs keyless/eid-only pile handling, wire-suppress and
 // per-player skips, physics + identity). Host-only; a silent no-op for a non-expressible actor
 // (dead / suppressed / per-player / unkeyed-non-pile). MTA's shape: one CEntityAddPacket per
-// runtime entity, never a world re-send (Server/.../CStaticFunctionDefinitions.cpp).
+// runtime entity, never a world re-send
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp).
 void ExpressIncrementalSpawn(void* actor);
 
 // Does the express path above actually BROADCAST right now? It returns immediately on a client,
