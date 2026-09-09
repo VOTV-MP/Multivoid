@@ -191,7 +191,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
                 const ue_wrap::FVector rbLoc = ue_wrap::engine::GetActorLocation(a);
                 UE_LOGW("join_membership_sweep: keyed churn RE-BIND -- unclaimed '%ls' key='%ls' "
                         "loc=(%.1f,%.1f,%.1f) is the re-create of already-expressed eid=%u (mirror row held "
-                        "a dead actor) -> row rebound, actor claimed, NOT doomed (docs/piles/12 eid=2947 upstream)",
+                        "a dead actor) -> row rebound, actor claimed, NOT doomed",
                         acls.c_str(), key.c_str(), rbLoc.X, rbLoc.Y, rbLoc.Z,
                         static_cast<unsigned>(dr->second));
                 deadKeyedRows.erase(dr);
@@ -338,7 +338,7 @@ static void RunDivergenceSweep_(void* localPlayer) {
                 const auto cit = claimedByClass.find(c);
                 const int claimedOfC = (cit == claimedByClass.end()) ? 0 : cit->second;
                 UE_LOGW("join_membership_sweep: completeness FLOOR kept %d unclaimed '%ls' -- host census %d, "
-                        "claimed only %d this bracket (INCOMPLETE snapshot, NOT a divergence; docs/piles/10 guard)",
+                        "claimed only %d this bracket (INCOMPLETE snapshot, NOT a divergence)",
                         v, c.c_str(), hostHas, claimedOfC);
             }
             UE_LOGW("join_membership_sweep: completeness floor KEPT %zu of %zu doomed actor(s) across %zu class(es) "

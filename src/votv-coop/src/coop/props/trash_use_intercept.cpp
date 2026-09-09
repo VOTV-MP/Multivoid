@@ -309,7 +309,7 @@ void Install(coop::net::Session* session) {
     g_grabObserverInstalled = true;
     UE_LOGI("trash_use_intercept: pile use INTERCEPTOR installed on InpActEvt_use (host: records the pending grab, "
             "always runs native; client: cancels the native use for a pile GRAB/THROW -> no native grab, no "
-            "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host; docs/piles/08)");
+            "use_deny 'EHHH'; routes GrabIntent/ThrowIntent to the host)");
 
     // The use action's other two bindings, the second press and the release, also reach the deny:
     // the second press gets the press-condition suppressor, the release the pairing-only one.

@@ -424,7 +424,7 @@ int BindUnboundReCreates(bool* ghostRetireDrained) {
         }
         if (dupArmed)
             UE_LOGI("save_identity_bind: DUP-RETIRE -- armed %d save-time twin(s) from the identity map (eid bound "
-                    "@new but a stale UNBOUND native lingers @save-pos = FLOOR-kept mass-move dup, docs/piles/12) "
+                    "@new but a stale UNBOUND native lingers @save-pos = FLOOR-kept mass-move dup) "
                     "-> the sweep retires each per-eid (confirmed -> no cap)", dupArmed);
 
         // The ghost-retire tail, after quiescence (client-only by construction: the host never

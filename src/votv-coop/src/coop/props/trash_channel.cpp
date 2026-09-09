@@ -144,7 +144,7 @@ uint8_t BroadcastConvert(coop::net::Session& s, coop::element::ElementId E, uint
             kind == coop::net::propconvert_kind::kToClump ? "ToClump" : "ToPile",
             static_cast<unsigned>(E), static_cast<unsigned>(ctx), why,
             p.locX, p.locY, p.locZ, static_cast<unsigned>(chipType),
-            p.hasMatchPos ? " [+saveTimeKey docs/piles/09]" : "");
+            p.hasMatchPos ? " [+saveTimeKey]" : "");
     return ctx;
 }
 

@@ -2,9 +2,9 @@
 //
 // The portable PC is a REMOTE TERMINAL to the base laptop (bindPC(gamemode.laptop.laptop));
 // its only own world state is the LID (`opened`, runtime-only; the .cpp resolves it by name
-// over a measured fallback). The class is BUYABLE and
-// loads on purchase, so a FindClass poll would walk GUObjectArray forever; identity resolves
-// per-instance from a ClassOf verdict cache (NameOf runs once per distinct UClass ever seen).
+// over a measured fallback). The class is BUYABLE and loads on purchase, so a FindClass poll
+// would walk GUObjectArray forever; identity resolves per-instance from a ClassOf verdict
+// cache (NameOf runs once per distinct UClass ever seen).
 //
 // No network logic, no coop state (principle 7). Game thread only.
 

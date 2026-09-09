@@ -290,7 +290,7 @@ void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& old
     g_pendingSaveTimeTwin[static_cast<uint32_t>(eid)] =
         PendingTwin{oldPos.X, oldPos.Y, oldPos.Z, kAnyChipType, 0, /*hostVacate=*/true};
     UE_LOGI("[PILE-B3] CLIENT armed HOST-VACATE twin eid=%u @old=(%.1f,%.1f,%.1f) -- host authoritatively moved E "
-            "@new; the sweep retires whatever save-loaded native@old lingers here (docs/piles/12 owner)",
+            "@new; the sweep retires whatever save-loaded native@old lingers here",
             static_cast<unsigned>(eid), oldPos.X, oldPos.Y, oldPos.Z);
 }
 
