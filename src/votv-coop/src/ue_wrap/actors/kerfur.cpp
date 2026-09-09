@@ -27,10 +27,10 @@ void* ResolveKerfurClass() {
 // skin subclass, so resolving on the base is correct + stable). Sentinel -2 = "not attempted";
 // FindPropertyOffset returns -1 when absent (>= 0 is a valid offset). The hot reads
 // (ReadKerfurState per tick) never re-walk once these settle.
-int32_t g_offState     = -2;  // TEnumAsByte<enum_kerfurCommand> "State"      @0x05C8
-int32_t g_offSpooky    = -2;  // bool "isSpooky"                              @0x09E1
-int32_t g_offFace      = -2;  // int32 "faceMaterialIndex"                    @0x09EC
-int32_t g_offKill      = -2;  // bool "kill" (murderfur-mode guard)          @0x05E0
+int32_t g_offState     = -2;  // TEnumAsByte<enum_kerfurCommand> "State"
+int32_t g_offSpooky    = -2;  // bool "isSpooky"
+int32_t g_offFace      = -2;  // int32 "faceMaterialIndex"
+int32_t g_offKill      = -2;  // bool "kill" (murderfur-mode guard)
 
 void ResolveKerfurOffsets() {
     void* kc = ResolveKerfurClass();

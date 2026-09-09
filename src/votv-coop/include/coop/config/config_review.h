@@ -50,7 +50,8 @@ void Dismiss();         // session-local; a fresh launch re-arms by re-sweeping
 
 // Owner actions (panel buttons). Both re-run the sweep on success; the keep
 // action also re-sweeps on REFUSAL (a stale snapshot means the panel must
-// show fresh state). Correlated by VALUE (audit CRIT-2), never line number.
+// show fresh state). Correlated by VALUE, never line number: a position goes
+// stale the moment anything rewrites the file between snapshot and click.
 bool KeepDuplicateLine(const std::string& key, const std::string& keepValue);
 struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0, retired = 0; };
 ReformatOutcome ReformatNow();
