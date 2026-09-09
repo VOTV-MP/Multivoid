@@ -264,6 +264,10 @@ inline constexpr int kThing = 0x1234;
 # drill must go RED. A row that stays green names a regression that would ship -- which is how
 # `[A]` and the whole named-label family were found to have no canary at all.
 MUTANTS = [
+    # --file's own answers: calling an unread file swept, and matching a basename by suffix.
+    ("file: an unread file is called swept", "if not measured(p):", "if False:"),
+    ("file: a basename matches by suffix", 'return p == want or p.endswith("/" + want)',
+     "return p.endswith(want)"),
     ("review: no inflections", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit\\b", re.I'),
     ("review: case-sensitive", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit(?:s|ed|ing)?\\b"'),
     ("review: matches nothing", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\bZZZZ\\b", re.I'),
@@ -748,6 +752,28 @@ def main():
     git(["commit", "-q", "-am", "[drill] 601"], repo, env)
     r = run(["--repo", repo, "--baseline", baseline])
     arm("a 601-line doc crosses the 600-line cap", r.returncode == 1 and "md.over_600 0->1" in r.stdout)
+    # --file is the sweep's own instrument, and it used to answer three different states with one
+    # sentence: a path the tree does not have, a file this gate is FORBIDDEN to read, and a file it
+    # read and found nothing in. Calling the second one swept tells a sweep it is finished with a
+    # file nobody looked at, so each state gets an arm of its own.
+    with open(os.path.join(repo, "LICENSE"), "w", encoding="utf-8") as f:
+        f.write("a licence text, reproduced as-is\n")
+    git(["add", "-A"], repo, env)
+    git(["commit", "-q", "-m", "add an unmeasured tracked file"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "LICENSE"])
+    arm("--file: a tracked file the gate does not read says NOT MEASURED",
+        r.returncode == 0 and "NOT MEASURED" in r.stdout and "SWEPT" not in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "notes.md"])
+    arm("--file: a basename is anchored on a path segment, not a suffix",
+        r.returncode == 0 and "no tracked file matches" in r.stdout
+        and "local_notes.md" not in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", ".nosuch/x.md"])
+    arm("--file: an absent path is echoed with its leading dot intact",
+        r.returncode == 0 and ".nosuch/x.md: no tracked file matches" in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "docs/a.md", "--lines"])
+    arm("--file: a measured file still reports the counters it owes",
+        r.returncode == 0 and "md.user" in r.stdout and "comment lines" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
     # The mutation arms run the drill again against a broken copy of the gate, so the nested run
     # must not mutate in turn: one level is the proof, two is a fork bomb.
     if os.environ.get("PPG_DRILL_NESTED"):

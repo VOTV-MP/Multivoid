@@ -311,6 +311,13 @@ def tracked(repo):
     return files, subs
 
 
+def names_path(p, want):
+    """Does tracked path `p` answer to `want`? Anchored on a path SEGMENT: a bare endswith let
+    `notes.md` answer for `local_notes.md` and `gate.py` for every *gate.py, so a sweep reading
+    the first block reported edited a file it had not asked about."""
+    return p == want or p.endswith("/" + want)
+
+
 def read(repo, path):
     try:
         with io.open(os.path.join(repo, path), encoding="utf-8", errors="replace") as f:
@@ -1172,18 +1179,42 @@ def main():
         pass
     counters, who, detail = measure(a.repo)
     if a.file:
-        tracked_files, tracked_subs = tracked(a.repo) if a.lines else ((), ())
+        tracked_files, tracked_subs = tracked(a.repo)
         tracked_set = set(tracked_files)
         for want in a.file:
-            want = want.replace("\\", "/").lstrip("./")
-            hits = sorted({p for k in who for p in who[k] if p.endswith(want)})
+            # lstrip takes a CHARACTER SET, so lstrip("./") ate the leading dot of every .github
+            # path and echoed it back that way. It cost no lookup -- endswith matched regardless
+            # -- but the name printed back was not the name it was handed.
+            want = want.replace("\\", "/")
+            while want.startswith(("./", "../")):
+                want = want.split("/", 1)[1]
+            hits = sorted({p for k in who for p in who[k] if names_path(p, want)})
             if not hits:
-                print("{}: no tracked file matches".format(want))
+                # THREE states shared one sentence here, and two of them were false. A file this
+                # gate is not allowed to READ is not a file that is finished: OTHER_MARKER_OWNERS
+                # holds the gates whose job is to name these markers, and calling one of them
+                # swept tells a sweep it is done with a file nobody looked at.
+                known = sorted(p for p in tracked_set if names_path(p, want))
+                if not known:
+                    print("{}: no tracked file matches".format(want))
+                for p in known:
+                    if not measured(p):
+                        why = " (its job is these markers)" if p.startswith(OTHER_MARKER_OWNERS) else ""
+                        print("{}  NOT MEASURED -- this gate does not read this file{}".format(p, why))
+                    else:
+                        print("{}  SWEPT -- read by this gate, contributes to no counter".format(p))
                 continue
             for p in hits:
                 owed = [(k, who[k][p]) for k in counters
                         if k not in INFORMATIONAL and k != "src.files_not_swept" and p in who[k]]
-                print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                # src.comment_lines is filled for the mod's own C++ only, and `who` is a
+                # defaultdict -- so printing it unconditionally told every workflow and every
+                # document it had 0 comment lines (build.yml has 20), and inserted the file into
+                # the counter on the way past. Say it only where it was measured.
+                if p in who["src.comment_lines"]:
+                    print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                else:
+                    print(p)
                 # Each counter's lines print UNDER its own heading -- a flat list of every
                 # offending line in the file would not say which rule each one answers to, and
                 # one line often answers to two. Anything owed that the explainer did not account
