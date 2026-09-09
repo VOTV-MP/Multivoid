@@ -729,7 +729,7 @@ void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
         // exists to hold.
         if (g_tombs.size() >= kTombstoneCap) {
             UE_LOGW("meadow_db: tombstone REFUSED (hash=%016llx, from slot %u) -- at the "
-                    "%zu-entry bound (security W9)",
+                    "%zu-entry bound",
                     static_cast<unsigned long long>(p.contentHash),
                     static_cast<unsigned>(senderSlot), kTombstoneCap);
             return;

@@ -287,7 +287,7 @@ bool HandleJoinMessage(net::Session& session,
     // the peer without the stale-generation defence for the session; the sender's retry produces a
     // well-formed one. The header's protocol version keeps an older layout from misaligning here.
     if (msg.payloadLen < 4) {
-        UE_LOGW("player_handshake: Join payload %zu B too short for v16 prefix "
+        UE_LOGW("player_handshake: Join payload %zu B too short for the 4-byte prefix "
                 "(senderSlot=%d) -- dropping",
                 static_cast<size_t>(msg.payloadLen), senderSlot);
         return true;

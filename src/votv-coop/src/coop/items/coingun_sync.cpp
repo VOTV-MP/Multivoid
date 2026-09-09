@@ -152,7 +152,7 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
         }
         g_capturedCoins.fetch_add(1, std::memory_order_relaxed);
         UE_LOGI("coingun[client birth]: captured coin %p from our own shot -- held for the barrier, "
-                "which destroys it ONLY if this shot actually authored a sale (v140)", spawned);
+                "which destroys it ONLY if this shot actually authored a sale", spawned);
         return;
     }
 

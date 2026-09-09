@@ -180,7 +180,7 @@ bool InstallSpawnerSuppressors() {
     const int total = static_cast<int>(sizeof(targets) / sizeof(targets[0]));
     if (registered == total) {
         g_spawnersInstalled.store(true, std::memory_order_release);
-        UE_LOGI("garbage_sync[spawner]: Inc 3 install complete -- %d spawners suppressed on client (tool_garbageSpawner_C deliberately allow-through per principle 6)",
+        UE_LOGI("garbage_sync[spawner]: install complete -- %d spawners suppressed on client (tool_garbageSpawner_C deliberately allow-through per principle 6)",
                 registered);
         return true;
     }
@@ -227,7 +227,7 @@ void Install() {
         return;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("garbage_sync: Inc 1 installed -- prop_openContainer_C::ReceiveTick + checkPickup PRE-interceptors (client-side, garbageContainer UClass=%p)",
+    UE_LOGI("garbage_sync: installed -- prop_openContainer_C::ReceiveTick + checkPickup PRE-interceptors (client-side, garbageContainer UClass=%p)",
             g_garbageContainerCls);
     // Try the spawner suppressors in the same call; an independent retry path if any spawner
     // class has not loaded yet.

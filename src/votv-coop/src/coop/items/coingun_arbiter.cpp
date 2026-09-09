@@ -342,7 +342,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // by world_actor_sync, which allocates each eid and broadcasts the spawn; nothing here enrolls
     // anything.
     UE_LOGI("coingun[host]: SOLD slot=%u artifact='%ls' (resolved by %ls) name='%ls' price=%d -> "
-            "minted via gun=%p comp=%p, and WE destroyed the prop ourselves (v140 A50: the arbiter "
+            "minted via gun=%p comp=%p, and WE destroyed the prop ourselves (the arbiter "
             "performs the whole transaction; the destroy rides the ordinary K2_DestroyActor seam out "
             "to every peer). Coins are HOST-OWNED; whoever's body trips one credits the host.",
             senderSlot, artifact.c_str(), how, propNameStr.c_str(), points, gun, meshComp);

@@ -361,7 +361,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         // The prop stuck while held (PropStickState arrived first on the same reliable lane): no
         // physics re-enable and no velocity, the camera stays on the wall; the drive cache still
         // clears.
-        UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off (v68)",
+        UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off",
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;

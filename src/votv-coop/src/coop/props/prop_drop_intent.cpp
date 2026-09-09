@@ -148,7 +148,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
     if (fromContainerExtract)
-        UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (v126 -- admitted at drain)", actor);
+        UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
 }
 
 // Host: spawn the authoritative prop by key at the transform. Mirrors the spawn receiver's

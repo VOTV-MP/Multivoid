@@ -450,7 +450,7 @@ void RunPuppetGrabProbe() {
     // 3. The puppet grab: the pile's own playerGrabbed with the puppet as the player. It spawns the
     // clump, sets its holder and calls the puppet's pickupObjectDirect; the pile self-destructs. No
     // observer arming, no lookAtActor injection.
-    UE_LOGI("puppet_grab_probe: >>> executing playerGrabbed on the PUPPET (the Increment-2 host-side move) <<<");
+    UE_LOGI("puppet_grab_probe: >>> executing playerGrabbed on the PUPPET (the host-side move) <<<");
     if (RunGT([pup, sel](std::atomic<int>& d) {
             void* pileCls = R::ClassOf(sel->pile);
             void* grabFn  = pileCls ? R::FindFunction(pileCls, L"playerGrabbed") : nullptr;
@@ -518,11 +518,11 @@ void RunPuppetGrabProbe() {
                 "grabbing_actor/holding_actor. The RE predicted ENGAGED; investigate (param frame? clump self-freed?).");
     else if (tracked)
         UE_LOGI("puppet_grab_probe: RESULT = TRACKED (tick ALIVE) -- the puppet HOLDS the clump at its hand; the "
-                "per-tick PHC maintenance RUNS on the unpossessed puppet. Increment-2 host-side grab works as-is "
+                "per-tick PHC maintenance RUNS on the unpossessed puppet. A host-side grab works as-is "
                 "(verdict A); the only remaining input is syncing the puppet aim, which the mod already streams.");
     else
         UE_LOGI("puppet_grab_probe: RESULT = FLOATING (held, tick likely DEAD) -- the clump did not reach the "
-                "puppet's hand (dist/last=%.0f cm, dZ=%.0f cm). Increment-2 must drive SetTargetLocationAndRotation "
+                "puppet's hand (dist/last=%.0f cm, dZ=%.0f cm). The host must drive SetTargetLocationAndRotation "
                 "on the puppet each tick from the synced remote aim (verdict B-fallback).", distLast, dzLast);
 }
 

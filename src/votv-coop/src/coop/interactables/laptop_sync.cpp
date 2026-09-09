@@ -519,7 +519,7 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
             g_lidPending[p.eid] = PendingLid{opened, NowMs() + kPendingTtlMs};
         } else {
             UE_LOGW("laptop_sync: lid stash REFUSED for eid=%u (from slot %u) -- pending "
-                    "table at its %zu-entry bound (security W9); the inserting case is the "
+                    "table at its %zu-entry bound; the inserting case is the "
                     "unresolved-eid case, so a wire eid stream cannot grow it",
                     p.eid, static_cast<unsigned>(senderSlot), kLidPendingCap);
         }

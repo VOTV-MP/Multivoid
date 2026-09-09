@@ -998,7 +998,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             }
             UE_LOGW("server_browser_native: INPUT DIRECT PASS -- the direct-connect window "
                     "opened, prefilled and focused. This is where an address is typed; the "
-                    "browser itself has no text entry, by the user's decision.");
+                    "browser itself has no text entry.");
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
@@ -1069,7 +1069,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             if (up && gone)
                 UE_LOGW("host_session_settings: SESSION PASS -- a real click on Next opened "
                         "the session-settings window and closed the hosting one. The two-step "
-                        "hosting flow the user asked for is walkable end to end.");
+                        "hosting flow is walkable end to end.");
             else
                 UE_LOGE("host_session_settings: SESSION FAIL -- after a real click on Next: "
                         "settings open=%d, hosting window closed=%d. Both must be true.",

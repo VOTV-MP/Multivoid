@@ -221,7 +221,7 @@ bool RunUtf8CodecSelftest() {
         // far smaller still. Must be non-empty and well-formed.
         CopyUtf8ToBuffer(narrowBuf, L"Пельменьмень");
         std::wstring sink;
-        ok(narrowBuf[0] != '\0', "egress truncates instead of blanking (the v132 cliff)");
+        ok(narrowBuf[0] != '\0', "egress truncates instead of blanking at the cliff");
         ok(std::strlen(narrowBuf) <= 7, "egress respects the buffer bound");
         ok(FromUtf8Strict(narrowBuf, std::strlen(narrowBuf), &sink),
            "egress output is well-formed after truncation");

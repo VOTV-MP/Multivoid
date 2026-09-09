@@ -105,7 +105,7 @@ void ApplyGameModeFromSlot(void* gi, const wchar_t* slot, int forceGameMode = -1
         uint8_t* gm = reinterpret_cast<uint8_t*>(gi) + profile::off::mainGameInstance_GameMode;
         const uint8_t old = *gm;
         *gm = static_cast<uint8_t>(forceGameMode);
-        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %u; v56 coop slot)",
+        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %u; coop slot)",
                 slot, forceGameMode, static_cast<unsigned>(old));
         return;
     }

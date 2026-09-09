@@ -255,7 +255,7 @@ void Tick() {
         // The SAME slot re-claimed within the window -- a real flap candidate. An ordinary X->Y
         // handoff must not fire this.
         UE_LOGW("desk_cursor: claim FLAP -- slot %d re-claimed %.0f ms after release "
-                "(occupancy flicker attribution, qf R3)",
+                "(occupancy flicker attribution)",
                 holder, static_cast<double>(now - g_lastReleaseMs));
     }
     g_lastHolder = holder;

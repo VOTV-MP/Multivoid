@@ -24,7 +24,7 @@ namespace {
 // idle gate cannot drift from the struct silently.
 constexpr size_t kCondOff = offsetof(coop::net::AtvStatePayload, tiresDurability);
 constexpr size_t kCondBytes = sizeof(coop::net::AtvStatePayload) - kCondOff;
-static_assert(kCondBytes == 64, "v147 condition block must be 64 bytes (and AtvEntry::lastSentCond with it)");
+static_assert(kCondBytes == 64, "the condition block must be 64 bytes (and AtvEntry::lastSentCond with it)");
 
 // Change-edge quanta -- purely visual, not correctness bounds. Dirt domain is
 // 0..1 (a 1% step is invisible in the shader lerp); health domain 0..100 drives smoke

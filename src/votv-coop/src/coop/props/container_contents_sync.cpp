@@ -347,7 +347,7 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
     }
     if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
         UE_LOGW("container_contents: eid=%u blob %zu B exceeds the transport ceiling -- dropped "
-                "(contents stay diverged; increment 2 owes a bulk path)", eid, blob.size());
+                "(contents stay diverged; there is no bulk path)", eid, blob.size());
         return true;
     }
     const bool ok = (toSlot < 0)

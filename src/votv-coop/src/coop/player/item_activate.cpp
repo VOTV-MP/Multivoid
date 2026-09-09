@@ -188,7 +188,7 @@ void OnUpdateFlashlightPost(void* self, void* function, void* /*params*/) {
     // sent.
     if (crankFlashlight) {
         if (ProbeLogEnabled()) {
-            UE_LOGI("flashlight: crank lantern (_c) -- wire send deferred to Inc6");
+            UE_LOGI("flashlight: crank lantern (_c) -- nothing sent");
         }
         return;
     }
