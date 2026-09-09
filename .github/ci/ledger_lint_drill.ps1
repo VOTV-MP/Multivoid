@@ -5,7 +5,7 @@
 # went RED unnoticed when a prose sweep reworded the sentence it reads, which is
 # the fault this drill exists to catch: a check nobody has seen fail is a check
 # nobody can trust. Each case copies the files the row reads into a sandbox,
-# mutates one of them, and asserts the row is RED -- and, for the two GREEN
+# mutates one of them, and asserts the row is RED -- and, for the three GREEN
 # cases, that it stays quiet when it should.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -103,6 +103,27 @@ Check 'M6 sentence reworded away' $true (Invoke-Gate)
 Reset-Sandbox
 Edit-File 'README.md' 'performs.' 'performs. The wire carries 122 message kinds.'
 Check 'M7 kinds claim stated twice' $true (Invoke-Gate)
+
+# An enumerator written WITHOUT a value is still an enumerator: C++ increments it
+# implicitly. Counting it is what keeps the next case honest, so this one is
+# GREEN -- the parser must accept the shape, not merely survive it.
+Reset-Sandbox
+Edit-File 'src/votv-coop/include/coop/net/protocol.h' '    VoiceFrame = 64,' '    VoiceFrame,'
+Check 'M8 implicit value still counted' $false (Invoke-Gate)
+
+# ...so a new lane written that way cannot slip past the balance. The first
+# version of this parser demanded `= <n>` and would have passed this silently.
+Reset-Sandbox
+Edit-File 'src/votv-coop/include/coop/net/protocol.h' '    VoiceFrame = 64,' `
+    "    VoiceFrame = 64,`n`n    // drill-only lane, no explicit value.`n    DrillLane,"
+Check 'M9 new implicit MsgType, README silent' $true (Invoke-Gate)
+
+# A row the parser cannot read is reported, never skipped: dropping one quietly
+# is indistinguishable from the enumerator not being there.
+Reset-Sandbox
+Edit-File 'src/votv-coop/include/coop/net/protocol.h' '    VoiceFrame = 64,' `
+    "    VoiceFrame = 64, DrillPair = 65,"
+Check 'M10 unreadable enum row is reported' $true (Invoke-Gate)
 
 Remove-Item -Recurse -Force $sandbox
 $failed = @($results | Where-Object { -not $_.Pass })

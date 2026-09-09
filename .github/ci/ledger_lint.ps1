@@ -102,27 +102,46 @@ if (-not (Test-Path -LiteralPath $protoHeaderPath)) {
     Fail "README_COUNTS: $($script:ProtocolHeaderPath) missing -- cannot check the README's wire-lane counts"
 } else {
     $protoSrc = Get-Content -LiteralPath $protoHeaderPath -Raw
-    # Enumerator NAMES of one `enum class <name>` body: lines of the form
-    # `  Something = <n>`. Explicit values are the house style in this header.
+    # Enumerator NAMES of one `enum class <name>` body. The value is OPTIONAL: C++
+    # increments implicitly, so a row written `NewLane,` is a lane like any other,
+    # and a parser demanding `= <n>` drops it in silence -- which fails OPEN for
+    # exactly the drift this row exists to catch. reliablekind_gate.py parses the
+    # same enum and carries the same fix, after its first regex did the same
+    # thing. Every non-blank, non-comment row must be recognised: one that is not
+    # is REPORTED, because dropping a row quietly is indistinguishable from the
+    # enumerator not existing.
     function Get-EnumeratorNames {
         param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$EnumName)
         $start = $Source.IndexOf("enum class $EnumName")
         if ($start -lt 0) { return $null }
         $end = $Source.IndexOf("`n};", $start)
         if ($end -lt 0) { return $null }
-        ,@([regex]::Matches($Source.Substring($start, $end - $start),
-                            '(?m)^\s{2,}([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\d+') |
-            ForEach-Object { $_.Groups[1].Value })
+        $names = @(); $bad = @()
+        # Skip 1: the `enum class X : uint8_t {` line that opens the body.
+        foreach ($line in (($Source.Substring($start, $end - $start) -split "`n") | Select-Object -Skip 1)) {
+            $t = $line.Trim()
+            if (-not $t -or $t.StartsWith("//")) { continue }
+            $m = [regex]::Match($t,
+                '^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(?:0[xX][0-9a-fA-F]+|\d+))?\s*,?$')
+            if ($m.Success) { $names += $m.Groups[1].Value }
+            else { $bad += $t.Substring(0, [Math]::Min(80, $t.Length)) }
+        }
+        [pscustomobject]@{ Names = $names; Bad = $bad }
     }
     # The MsgType members that are not pose/state streams.
     $nonStreamMsgTypes = @('Reliable', 'VoiceFrame')
-    $reliableNames = Get-EnumeratorNames -Source $protoSrc -EnumName 'ReliableKind'
-    $msgTypeNames  = Get-EnumeratorNames -Source $protoSrc -EnumName 'MsgType'
+    $reliableEnum = Get-EnumeratorNames -Source $protoSrc -EnumName 'ReliableKind'
+    $msgTypeEnum   = Get-EnumeratorNames -Source $protoSrc -EnumName 'MsgType'
     $readmePath    = Join-Path $repoRoot 'README.md'
     $readmeSrc     = Get-Content -LiteralPath $readmePath -Raw
-    if ($null -eq $reliableNames -or $null -eq $msgTypeNames) {
+    if ($null -eq $reliableEnum -or $null -eq $msgTypeEnum) {
         Fail 'README_COUNTS: could not read ReliableKind/MsgType enumerators (header shape changed?)'
+    } elseif ((@($reliableEnum.Bad) + @($msgTypeEnum.Bad)).Count -gt 0) {
+        $bad = @($reliableEnum.Bad) + @($msgTypeEnum.Bad)
+        Fail "README_COUNTS: $($bad.Count) enum row(s) this gate cannot read, so any count it took would be wrong -- teach the parser this shape: $($bad -join ' | ')"
     } else {
+        $reliableNames = @($reliableEnum.Names)
+        $msgTypeNames  = @($msgTypeEnum.Names)
         $reliableCount = $reliableNames.Count
         $missing = @($nonStreamMsgTypes | Where-Object { $msgTypeNames -notcontains $_ })
         if ($missing.Count -gt 0) {
