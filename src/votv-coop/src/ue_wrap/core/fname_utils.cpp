@@ -18,8 +18,8 @@ namespace {
 void* g_kslCdo = nullptr;
 void* g_convStrToNameFn = nullptr;
 // Param-name resolution: stock UE4 uses `InString` but some VOTV cooks emit
-// lowercase `inString` (same drift as Conv_StringToText). Audit H6
-// (2026-05-27): probe both via FindParamOffset (doesn't log on miss).
+// lowercase `inString` (same drift as Conv_StringToText), so probe
+// both via FindParamOffset, which does not log on a miss.
 const wchar_t* g_convStrToNameInputParam = nullptr;
 
 bool Resolve() {

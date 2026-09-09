@@ -1,10 +1,8 @@
 // ue_wrap/core/component_calls.h -- GENERIC reflected component/widget calls.
 //
-// Promoted out of ue_wrap/desk/console_desk.cpp (2026-07-19; the six helpers
-// are not desk-specific: each resolves its UFunction lazily from the PASSED
-// object's own class and caches it -- reusable by any module that drives a
-// UTextBlock / UAudioComponent / UActorComponent / USceneComponent through
-// reflection). Bodies verbatim from the console_desk file-local originals.
+// The six helpers are not desk-specific: each resolves its UFunction lazily from the PASSED
+// object's own class and caches it, so any module driving a UTextBlock / UAudioComponent /
+// UActorComponent / USceneComponent through reflection can use them.
 // Game thread (reflected UFunction dispatch).
 
 #pragma once

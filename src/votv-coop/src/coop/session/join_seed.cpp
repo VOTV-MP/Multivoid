@@ -38,7 +38,7 @@ void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
         // No snapshot = no save-baseline knowledge; seeding the full array would
         // duplicate the joiner's save copy. Loud only at the slot's FIRST replay
         // (ConnectReplayForSlot re-fires on every mid-session world-change
-        // re-announce, where a consumed snapshot is normal -- meadow audit fix 2).
+        // re-announce, where a consumed snapshot is normal).
         if (!seededOnce_[peerSlot])
             UE_LOGW("%s: no join snapshot for slot %d -- seed skipped", a_.name, peerSlot);
         return;

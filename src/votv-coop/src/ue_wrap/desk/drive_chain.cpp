@@ -156,7 +156,7 @@ void* SlotActor(int role) {
         if (g_offEraserSlot >= 0) {
             void* eraser = Revalidate(g_eraser);
             if (!eraser) {
-                // Perf-audit F-3: the census is a full GUObjectArray walk --
+                // The census is a full GUObjectArray walk --
                 // negative-cache the miss (5 s) or an eraser-less world pays
                 // a 1 Hz multi-ms hitch forever.
                 static Clock::time_point s_nextCensus{};

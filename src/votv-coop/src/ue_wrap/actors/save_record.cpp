@@ -1,7 +1,4 @@
 // ue_wrap/actors/save_record.cpp -- see ue_wrap/actors/save_record.h.
-//
-// Extracted verbatim from inventory.cpp 2026-07-22 (behavior preserved; the field-offset
-// table, the strides, the plausibility gates and the per-group lambdas are unchanged).
 
 #include "ue_wrap/actors/save_record.h"
 

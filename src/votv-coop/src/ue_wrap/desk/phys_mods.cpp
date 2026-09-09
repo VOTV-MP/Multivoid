@@ -121,7 +121,7 @@ void* ClassForByte(uint8_t byte) {
     if (!g_resolved || byte >= kProbeMax) return nullptr;
     if (g_probed[byte]) return g_classForByte[byte];
     ue_wrap::ParamFrame f(g_physModToActorFn);
-    if (!f.valid()) return nullptr;  // transient -- do NOT negative-cache (audit MINOR-2)
+    if (!f.valid()) return nullptr;  // transient -- do NOT negative-cache
     f.Set<uint8_t>(L"physmod", byte);
     // __WorldContext: the lib CDO itself suffices for a pure class-map call
     // (the function only reads a static mapping -- bytecode-verified no world use

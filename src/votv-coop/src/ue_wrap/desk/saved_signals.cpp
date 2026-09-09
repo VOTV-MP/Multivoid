@@ -109,7 +109,7 @@ bool ApplySaveSignal(const SD::Row& row) {
     f.Set<bool>(L"new", false);          // dead param (RE: never read)
     f.Set<bool>(L"checkOnly", false);
     f.Set<float>(L"downloadedAtQuality", row.downloadedAtQuality);
-    f.Set<bool>(L"selfQuality", true);   // keep the row's own quality verbatim
+    f.Set<bool>(L"selfQuality", true);   // keep the row's own quality unchanged
     if (!ue_wrap::Call(gm, f)) return false;
     const bool succ = f.Get<bool>(L"succ");
     if (!succ)
