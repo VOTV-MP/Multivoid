@@ -57,10 +57,10 @@ constexpr auto kReconnectBackoff = std::chrono::seconds(5);
 // instead of a silent hang. Matches the server's pre-auth budget.
 constexpr auto kChallengeTimeout = std::chrono::seconds(15);
 
-// Must equal REGISTER_TAG in tools/coop-server-rs/src/bin/signaling.rs. The instrument that
+// Must equal REGISTER_TAG in server/src/bin/signaling.rs. The instrument that
 // covers the pair is the p2p_smoke scenario, whose two peers sign with this code and register
 // against the real relay: if the bytes drift, both fail to register and the verdict goes red.
-// sig_gate.py carries its own copy of the tag and never runs this client.
+// The release gate carries its own copy of the tag and never runs this client.
 constexpr char kRegisterTag[] = "multivoid-signaling-register-v1";
 constexpr char kChallengePrefix[] = "nonce ";
 constexpr size_t kNonceHexLen = 64;

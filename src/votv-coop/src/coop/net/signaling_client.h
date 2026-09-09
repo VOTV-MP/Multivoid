@@ -4,7 +4,7 @@
 // <hex-payload>", routed by the server to the connection registered under that identity.
 // Registration is proved: the server sends "nonce <64 hex>" and we answer "auth <128 hex>", an
 // Ed25519 signature by the key our identity names; a relay that never challenges is refused
-// (tools/sig_gate.py proves the deployed relay speaks the challenge before a release). One
+// (a release gate proves the deployed relay speaks the challenge before a release). One
 // client per P2P Session: it keeps the connection (auto-reconnect), hands GNS a per-connection
 // signaling object whose SendSignal hex-encodes and enqueues, and Poll() drains inbound lines
 // into ReceivedP2PCustomSignal. SendSignal may run on any thread and Poll() on the net thread;
