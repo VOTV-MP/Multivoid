@@ -1,5 +1,5 @@
-// coop/text/exclude_ranges.inc -- GENERATED from the fonts on disk, so the folded set and the
-// drawable set cannot drift. Never hand-edit; add or swap a face and re-mint.
+// coop/text/exclude_ranges.inc -- GENERATED from the fonts on disk, never hand-edited. Re-mint
+// when a face or the donor changes, or this and the atlas fall out of step with nothing to say so.
 //
 // THE EXCLUDE SET, handed to ImGui as ImFontConfig::GlyphExcludeRanges on
 // every font source. It is the complement of repertoire_ranges.inc within

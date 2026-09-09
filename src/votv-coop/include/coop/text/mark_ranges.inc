@@ -1,5 +1,5 @@
-// coop/text/mark_ranges.inc -- GENERATED from the fonts on disk, so the folded set and the
-// drawable set cannot drift. Never hand-edit; add or swap a face and re-mint.
+// coop/text/mark_ranges.inc -- GENERATED from Unicode's mark categories, never hand-edited.
+// Re-mint when a face changes, or this and the atlas fall out of step with nothing to say so.
 //
 // The combining marks this build can DRAW (General_Category Mn/Me/Mc, intersected with the render
 // set, minus anything the exclude set still holds). Its ONE consumer is the leading-mark rule in

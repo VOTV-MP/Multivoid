@@ -1,5 +1,5 @@
-// coop/text/case_fold.inc -- GENERATED from the fonts on disk, so the folded set and the
-// drawable set cannot drift. Never hand-edit; add or swap a face and re-mint.
+// coop/text/case_fold.inc -- GENERATED from Unicode's case data, never hand-edited. Re-mint when
+// a face changes, or this and the atlas fall out of step with nothing to say so.
 //
 // SIMPLE LOWERCASE, restricted to pairs this build can DRAW.
 // { begin, end, delta }: lower(cp) == cp + delta for begin <= cp <= end.

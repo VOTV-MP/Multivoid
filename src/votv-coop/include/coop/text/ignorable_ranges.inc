@@ -1,10 +1,10 @@
-// coop/text/ignorable_ranges.inc -- GENERATED from the fonts on disk, so the folded set and the
-// drawable set cannot drift. Never hand-edit; add or swap a face and re-mint.
+// coop/text/ignorable_ranges.inc -- GENERATED from Unicode's own property data, never
+// hand-edited. Re-emitted whenever the repertoire tables beside it are re-minted.
 //
 // Unicode 15.1 Default_Ignorable_Code_Point=Yes. Characters DEFINED to
 // have no visible rendering, which is why a nickname may not contain one:
 // a name whose codepoints differ only here is a distinct fold key with
-// identical pixels -- the exact failure arc D2 exists to close.
+// identical pixels -- the exact failure this table exists to close.
 //
 // 4174 codepoints, 17 ranges.
 

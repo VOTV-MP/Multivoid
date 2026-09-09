@@ -1,5 +1,5 @@
-// coop/text/repertoire_ranges.inc -- GENERATED from the fonts on disk, so the folded set and the
-// drawable set cannot drift. Never hand-edit; add or swap a face and re-mint.
+// coop/text/repertoire_ranges.inc -- GENERATED from the fonts on disk, never hand-edited. Re-mint
+// when a face or the donor changes, or this and the atlas fall out of step with nothing to say so.
 //
 // THE FOLD SET: every codepoint this build can DRAW, as inclusive
 // (begin, end) runs. Derived as `render - exclude` where render is the
@@ -13,9 +13,11 @@
 // 7593 codepoints, 453 ranges, max U+1FBF9.
 // Render set 9478 = faces 8148 + donor 1418 (TwemojiMozilla-Subset.ttf).
 // Excluded from it: 105 no-ink, 19 Default_Ignorable, 1778 private-use.
-// Combining marks are IN: 335 of 337 admitted (commit 2), which is how Thaana, Tamil, Thai, Arabic and Hebrew
-// are actually written. The rest are held out by Default_Ignorable.
-// Base-ask coverage gap (no embedded face has it): U+0378, U+0379, U+0380, U+0381, U+0382, U+0383, U+038B, U+038D, U+03A2, U+A69E.
+// Combining marks are IN: 335 of 337 admitted, which is how Thaana, Tamil,
+// Thai, Arabic and Hebrew are actually written. The rest are held out by
+// Default_Ignorable.
+// Base-ask coverage gap (no embedded face has it): U+0378, U+0379, U+0380,
+// U+0381, U+0382, U+0383, U+038B, U+038D, U+03A2, U+A69E.
 
     { 0x00020, 0x0007E },
     { 0x000A1, 0x000AC },
