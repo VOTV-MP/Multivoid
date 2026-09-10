@@ -67,7 +67,7 @@ host validates and commits contested writes), `local` (never shared).
 | Laptop | power, floppies and discs, the shared file buffer | presser; the buffer is arbitrated | seed | built; the buffer tested |
 | Meadow database, saved signals | the signal database as a merge of both peers' saves | presser and host | seed | tested |
 | Server boxes | the signal-server simulation state and its notices | host | snapshot | built |
-| Disc slots | the slot a laptop or a signal server holds a disc in, and the disc that comes back out of one | host owns the slot; the peer whose game changed it reports the outcome | every device's slot at the barrier | built |
+| Disc slots | the slot a laptop or a signal server holds a disc in, and the disc that comes back out of one | host owns the slot; the peer whose game changed it reports the outcome | every device's slot at the barrier | tested |
 | Shop orders | the client names a row, the host performs and prices it | arbiter | primed by a watermark | built |
 | ATV | the driver authors the pose; a non-driving peer runs the rig natively and is corrected; condition (tyres, fuel, health) travels | driver, host for the rest | snapshot | tested; eject and configuration intents not built |
 | Sleep | the sleep tally | arbiter | joins awake | built |

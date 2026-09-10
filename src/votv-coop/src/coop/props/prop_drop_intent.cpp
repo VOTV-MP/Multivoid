@@ -328,9 +328,8 @@ void Tick(coop::net::Session* session) {
         // drive payload broadcast at adoption, so no birth scalar is needed) and to floppy discs.
         //
         // The disc is the one that is NOT born into a hand: a device's eject drops it in the world
-        // at the slot's mouth. Before it was admitted, a disc a client ejected from a device it had
-        // not itself filled reached no other peer at all -- it lived on one machine until a rejoin
-        // loaded the host's world without it. The park covers only a disc that same client put in.
+        // at the slot's mouth. It needs the whitelist because the park below covers only a disc
+        // this same client put into that device, and an eject reaches every other case.
         const bool isDiscBirth = ue_wrap::floppy_disc::EnsureResolved() &&
                                  ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(e.actor));
         const bool freshBirth = !parked &&
@@ -370,6 +369,9 @@ void Tick(coop::net::Session* session) {
             // the slot's mouth with nobody holding it, and a sleeping host copy would park in mid
             // air while the client's own copy fell, and then drag the client's back up the moment
             // the pose stream took over. It falls on the host, which is the peer that owns it.
+            // Not a clearing: the transform block above reads the prop's real physics state, so a
+            // disc that has already come to rest during the key wait still crosses asleep, which
+            // is where it is.
             if (!isDiscBirth) p.physFlags |= pf::kSleep;
             // A locally born drive carries its payload in its data slot: note the authorship, so
             // the drive sync broadcasts it at adoption (the first eid sight); un-noted first sights

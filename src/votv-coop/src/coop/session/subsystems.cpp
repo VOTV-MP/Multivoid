@@ -423,7 +423,7 @@ DisconnectStats DisconnectAll() {
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
-    coop::floppy_slot_entry::OnDisconnect();  // the transit marks are actors of the dying world; the counters print first
+    coop::floppy_slot_entry::OnDisconnect();  // counters, then the transit marks and the interceptors: the line above drops the UFunctions they name
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();  // restore parked spawner ticks (loan repayment belt)

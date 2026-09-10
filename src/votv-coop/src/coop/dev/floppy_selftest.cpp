@@ -115,12 +115,11 @@ const Step kSteps[] = {
 constexpr size_t kStepCount = sizeof(kSteps) / sizeof(kSteps[0]);
 
 // `lateLive` is the reading the acceptance turns on: not whether the eject produced a disc, but
-// whether the disc was STILL there twelve seconds later. The re-swallow takes about a second, so a
+// whether the disc is STILL there ten seconds later. The re-swallow takes about a second, so a
 // post-picture alone can catch a disc that is already doomed. -1 = never sampled.
 // `preLive` is what keeps the ratio honest. An eject whose named disc is ALREADY lying in this
 // peer's world is not ejecting that disc -- its insert never consumed it -- so the episode measures
-// nothing and must not be counted as a survival. One run read 7 of 9 ejects as survivals when five
-// of them had never moved a disc at all.
+// nothing and must not be counted as a survival.
 struct Outcome {
     bool        done     = false;
     bool        fired    = false;  // the verb was dispatched AND the game acted on it
@@ -467,9 +466,8 @@ void Tick() {
         ReportContent(static_cast<size_t>(g_postStep), isHost, "post", false);
         g_postStep = -1;
     }
-    // The second look. A disc the post-picture found can still be eaten a second later, and until
-    // this run nothing sampled twice -- so "the eject produced a disc" was being read as "the disc
-    // survived", which is the very difference this arc is about.
+    // The second look. A disc the post-picture found can still be eaten a second later, and "the
+    // eject produced a disc" is not "the disc survived" -- which is the whole difference here.
     if (g_lateStep >= 0 && now >= g_lateAtMs) {
         ReportContent(static_cast<size_t>(g_lateStep), isHost, "late", true);
         g_lateStep = -1;

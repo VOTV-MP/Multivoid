@@ -192,7 +192,7 @@ disc is not held by anyone, so it falls on the host instead.
 A device takes a disc by two entries, and only one of them is a player. Pressing E with a disc in
 hand is deliberate, happens on one machine, and the slot carries its outcome. The other is the
 hitbox reporting whatever touches the slot -- and an eject spawns the disc INSIDE the box it came
-out of, which the Blueprint handles by turning that box's hitbox off for a second. In single player
+out of, which the Blueprint handles by turning that device's own hitbox off for a moment. In single player
 the only birth that can land in a slot is that eject, so guarding the one box is enough; in coop
 the disc is also born on the other machine, in a box whose hitbox nobody turned off and where
 nobody ejected anything. So the rule sits on the disc rather than the box: a disc is in transit for
@@ -203,12 +203,10 @@ event and neither waits on a message; when it lapses, the native rule simply res
 The window is one number for every device, because the mark is on the disc and a disc does not know
 which slot it came out of. It has to clear the frame or two the hitbox entry needs to fire, and it
 has to end before the device that ejected re-enables its own hitbox -- re-enabling a collider
-re-reports every body already inside it, which is how the game deliberately re-takes a disc still
-sitting in the slot. The two devices disagree on that pause: a signal server waits a second, a
-laptop half of one. The window is set under the server's and over the laptop's, so a laptop's own
-re-take is delayed by a quarter second. Nothing else changes -- it still happens, the slot carries
-it, and the peers still agree, which is also true of the server, since the peer that did not eject
-re-takes in neither case.
+re-reports every body already inside it, which is how the game re-takes a disc still sitting in the
+slot, and that report comes once. The two devices disagree on the pause: a signal server waits a
+second, a laptop half of one. The window is set under the shorter of the two, so neither device's
+own re-take is touched and an ejecting peer behaves exactly as it does in single player.
 
 ## Who owns what
 

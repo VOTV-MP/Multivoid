@@ -27,12 +27,12 @@ namespace FS = ue_wrap::floppy_slot;
 namespace P  = ue_wrap::profile;
 
 // One window for every device, because the mark is on the DISC and a disc does not know which slot
-// it came out of. It clears the frame or two the entry needs to fire, sits under the pause the
-// signal server holds its hitbox off for and OVER the laptop's shorter one -- deliberately, since
-// splitting the constant would cost a disc having to remember its origin for a quarter second of
-// parity. Lapsing costs nothing: the native rule resumes, with nobody waiting on it. The two
-// device constants and what the difference does: docs/devices.md, "The floppy slot".
-constexpr uint64_t kTransitMs = 750;
+// it came out of. It has to clear the frame or two the hitbox entry needs to fire, and to end
+// before the SHORTER of the two pauses a device holds its own hitbox off for -- the entry is edge
+// triggered at that re-enable, so cancelling it does not postpone the device's own re-take, it
+// removes it. Under both, nothing an ejecting peer does changes. Lapsing costs nothing: the native
+// rule resumes, with nobody waiting on it. Both constants: docs/devices.md, "The floppy slot".
+constexpr uint64_t kTransitMs = 400;
 
 // A disc materialising is a spawn, and a spawn burst is a join. Sized so a join's worth of discs
 // keeps its marks; the eviction counter says when it was not, rather than going quietly blind.
@@ -49,14 +49,31 @@ Transit g_transit[kMaxTransit];
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool> g_installed{false};
 std::atomic<bool> g_spawnSeam{false};
-std::atomic<bool> g_finishSeam{false};
+
+// The install runs off a 125 Hz pump, and the resolvers behind it walk the whole object array on a
+// hit as well as a miss with no cache of their own -- so an unresolved name is not a slow start, it
+// is tens of millions of iterations a second on the game thread for the rest of the session. The
+// pointer is therefore resolved once and kept, the retry is throttled, and a resolve that never
+// lands gives up loudly instead of quietly costing the frame.
+constexpr uint64_t kResolveRetryMs  = 1000;
+constexpr int      kMaxResolveTries = 30;
+void*    g_deferredFn    = nullptr;
+uint64_t g_nextResolveMs = 0;
+int      g_resolveTries  = 0;
+bool     g_resolveGaveUp = false;
+
+// The interceptor registrations, kept so the session teardown can hand them back: the overlap
+// UFunctions are dropped with the rest of the device cache when the world goes, and an entry left
+// pointing at a stale one would judge whatever recycles that address.
+void*  g_registered[FS::kDeviceKindCount * FS::kMaxSlotOverlapEntries] = {};
+size_t g_registeredCount = 0;
+bool   g_registerWarned  = false;
 
 // Counters, read at the session summary. A refusal is the lane doing its job; an eviction is the
 // lane admitting it lost a mark it should have kept.
 std::atomic<unsigned long long> g_seen{0};
 std::atomic<unsigned long long> g_refused{0};
 std::atomic<unsigned long long> g_marked{0};
-std::atomic<unsigned long long> g_markedLate{0};   // marks the finish seam added the deferred one missed
 std::atomic<unsigned long long> g_evicted{0};
 
 uint64_t NowMs() {
@@ -72,12 +89,11 @@ unsigned long long g_lastReported = ~0ull;
 
 void ReportCounters(const char* when) {
     UE_LOGI("floppy_slot_entry: %s -- overlaps seen=%llu, inserts refused as in-transit=%llu, "
-            "discs marked=%llu (of them %llu seen only by the finish backstop), marks evicted "
-            "before their window closed=%llu. Seen=0 means the entry is not dispatched where this "
-            "interceptor sits; refused=0 with seen>0 means no disc was in transit when one came.",
+            "discs marked=%llu, marks evicted before their window closed=%llu. Seen=0 means the "
+            "entry is not dispatched where this interceptor sits; refused=0 with seen>0 means no "
+            "disc was in transit when one came.",
             when, g_seen.load(std::memory_order_relaxed),
             g_refused.load(std::memory_order_relaxed), g_marked.load(std::memory_order_relaxed),
-            g_markedLate.load(std::memory_order_relaxed),
             g_evicted.load(std::memory_order_relaxed));
 }
 
@@ -110,11 +126,14 @@ Transit& SlotFor(uint64_t now) {
 // themselves, and neither birth is a player putting the disc anywhere.
 //
 // Re-marking would push the window out, so an actor that already holds a live mark keeps it and
-// the caller learns nothing was added.
+// the caller learns nothing was added. The liveness test is what makes that safe: this lane
+// destroys and re-spawns discs continuously, so a new disc lands on a just-freed address often,
+// and matching a DEAD entry by address alone would hand the new one an expired mark and give it
+// none of its own.
 bool Mark(void* disc) {
     const uint64_t now = NowMs();
     for (auto& t : g_transit)
-        if (t.disc.Raw() == disc && now - t.bornMs < kTransitMs) return false;
+        if (t.disc.Raw() == disc && t.disc.Alive() && now - t.bornMs < kTransitMs) return false;
     Transit& t = SlotFor(now);
     t.disc.Set(disc);
     t.bornMs = now;
@@ -123,8 +142,10 @@ bool Mark(void* disc) {
     return true;
 }
 
-// Is this actor a disc still inside its transit window? Pointer identity through the slot-
-// validated ref, so a recycled object array slot cannot inherit a mark.
+// Is this actor a disc still inside its transit window? Pointer identity plus the ref's slot and
+// world check. The zero-serial impostor the ref's own header documents as open stays open here,
+// and costs at most one refused insert on a disc that replaced a marked one at the same address
+// within the window.
 Transit* FindTransit(void* actor, uint64_t now) {
     for (auto& t : g_transit) {
         if (t.disc.Raw() != actor) continue;
@@ -150,15 +171,6 @@ void OnBeginDeferredSpawn(void* /*context*/, void* /*sourceObject*/, void* spawn
     if (!spawnedResult) return;                       // a spawn the world refused
     if (!FD::IsDiscClass(R::ClassOf(spawnedResult))) return;
     Mark(spawnedResult);
-}
-
-// The finish half is kept as a BACKSTOP for a disc that reaches the world without the deferred
-// call -- a plain SpawnActor has no deferred half at all. It marks nothing the deferred seam
-// already covered, and its own counter says how often it was the only one that saw a birth.
-void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResult) {
-    if (!spawnedResult) return;
-    if (!FD::IsDiscClass(R::ClassOf(spawnedResult))) return;
-    if (Mark(spawnedResult)) g_markedLate.fetch_add(1, std::memory_order_relaxed);
 }
 
 // The overlap entry, one interceptor for every device kind and both roles.
@@ -199,22 +211,29 @@ bool OnSlotOverlapPre(void* self, void* params) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 
-    // The spawn seams first: without them every mark is missing and the interceptors below would
+    // The spawn seam first: without it every mark is missing and the interceptors below would
     // register and refuse nothing.
     if (!g_spawnSeam.load(std::memory_order_acquire)) {
-        void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
-        void* deferred = gsCls ? R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn) : nullptr;
-        void* finish   = gsCls ? R::FindFunction(gsCls, P::name::FinishSpawningActorFn) : nullptr;
-        if (finish && !g_finishSeam.load(std::memory_order_acquire) &&
-            ue_wrap::ufunction_hook::InstallPostHook(finish, &OnFinishSpawn))
-            g_finishSeam.store(true, std::memory_order_release);
-        if (deferred && ue_wrap::ufunction_hook::InstallPostHook(deferred, &OnBeginDeferredSpawn)) {
+        if (g_resolveGaveUp) return;
+        const uint64_t now = NowMs();
+        if (now < g_nextResolveMs) return;
+        g_nextResolveMs = now + kResolveRetryMs;
+        if (!g_deferredFn) {
+            if (void* gsCls = R::FindClass(P::name::GameplayStaticsClass))
+                g_deferredFn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
+        }
+        if (g_deferredFn && ue_wrap::ufunction_hook::InstallPostHook(g_deferredFn,
+                                                                    &OnBeginDeferredSpawn)) {
             g_spawnSeam.store(true, std::memory_order_release);
-            UE_LOGI("floppy_slot_entry: spawn seams installed on %ls (backstop %ls=%d) -- a disc "
-                    "that materialises is marked in transit for %llu ms",
-                    P::name::BeginDeferredSpawnFn, P::name::FinishSpawningActorFn,
-                    g_finishSeam.load(std::memory_order_acquire) ? 1 : 0,
+            UE_LOGI("floppy_slot_entry: spawn seam installed on %ls -- a disc that materialises is "
+                    "marked in transit for %llu ms", P::name::BeginDeferredSpawnFn,
                     static_cast<unsigned long long>(kTransitMs));
+        } else if (++g_resolveTries >= kMaxResolveTries) {
+            g_resolveGaveUp = true;
+            UE_LOGE("floppy_slot_entry: %ls did not resolve or would not take a post hook in %d "
+                    "tries -- GIVING UP. Nothing is marked in transit, so a device on the peer that "
+                    "did not eject will swallow a disc and its destroy will be relayed.",
+                    P::name::BeginDeferredSpawnFn, kMaxResolveTries);
         }
         return;   // one step a tick; the interceptors go on once the marks exist
     }
@@ -226,16 +245,31 @@ void Install(coop::net::Session* session) {
         void* fns[FS::kMaxSlotOverlapEntries] = {};
         const size_t n = FS::SlotOverlapEntries(static_cast<FS::DeviceKind>(k), fns,
                                                 FS::kMaxSlotOverlapEntries);
-        if (n == 0) return;   // a kind whose class has not loaded: retry next tick, all or nothing
+        // A kind that declares no entry has nothing to guard and must not hold the install open;
+        // a kind whose class has not loaded answers the same way, so the two are told apart by
+        // asking the wrapper whether this kind names any entry at all.
+        if (n == 0) {
+            if (FS::SlotOverlapEntryCount(static_cast<FS::DeviceKind>(k)) == 0) continue;
+            return;   // not loaded yet: all or nothing, retried on the wrapper's own backoff
+        }
         named += n;
-        for (size_t i = 0; i < n; ++i)
-            if (GT::RegisterInterceptor(fns[i], &OnSlotOverlapPre)) ++registered;
+        for (size_t i = 0; i < n; ++i) {
+            if (!GT::RegisterInterceptor(fns[i], &OnSlotOverlapPre)) continue;
+            ++registered;
+            if (g_registeredCount < sizeof(g_registered) / sizeof(g_registered[0]))
+                g_registered[g_registeredCount++] = fns[i];
+        }
     }
     if (registered != named) {
-        UE_LOGE("floppy_slot_entry: %zu of %zu overlap entries took an interceptor (table full?) "
-                "-- the unregistered ones still swallow a disc in transit and relay its destroy",
-                registered, named);
-        return;   // retry: a full table can free up, and a partial guard is the bug on some devices
+        // Once. RegisterInterceptor refuses only a full table, which does not clear on its own, so
+        // repeating this on a 125 Hz pump would flush the log to disk at that rate.
+        if (!g_registerWarned) {
+            g_registerWarned = true;
+            UE_LOGE("floppy_slot_entry: %zu of %zu overlap entries took an interceptor (table "
+                    "full) -- the unregistered ones still swallow a disc in transit and relay its "
+                    "destroy. Retrying silently.", registered, named);
+        }
+        return;   // a full table can free up, and a partial guard is the bug on some devices
     }
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("floppy_slot_entry: installed -- %zu overlap entries intercepted across %u device "
@@ -247,13 +281,18 @@ void OnDisconnect() {
     g_seen.store(0, std::memory_order_relaxed);
     g_refused.store(0, std::memory_order_relaxed);
     g_marked.store(0, std::memory_order_relaxed);
-    g_markedLate.store(0, std::memory_order_relaxed);
     g_evicted.store(0, std::memory_order_relaxed);
     g_nextReportMs = 0;
     g_lastReported = ~0ull;
-    // The marks are actors of the world that is going away. The interceptors and the spawn seam
-    // stay: both are UFunction registrations, not world state, and re-registering the same pair is
-    // a no-op.
+    // The marks are actors of the world that is going away. The interceptors go back too: the
+    // device wrapper drops its overlap UFunctions with the rest of its cache, so a registration
+    // left against one would have the table judging whatever takes that address next. The spawn
+    // seam stays -- a Func patch has no unpatch, and its callback is world-agnostic.
+    for (size_t i = 0; i < g_registeredCount; ++i)
+        GT::UnregisterInterceptor(g_registered[i], &OnSlotOverlapPre);
+    g_registeredCount = 0;
+    g_registerWarned = false;
+    g_installed.store(false, std::memory_order_release);
     for (auto& t : g_transit) { t.disc.Reset(); t.bornMs = 0; t.logged = 0; }
     g_session.store(nullptr, std::memory_order_release);
 }

@@ -55,9 +55,11 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
 // reelbox), the desk module, the drive and the floppy disc. The kind's name predates the other
 // three and now understates it; the receiver gate and the client's own fresh-birth gate name the
 // same four. The kSleep flag makes the host copy spawn inert until the client's held-prop pose
-// stream drives it, and it is set for the three born INTO A HAND -- a disc is dropped at its
-// device's mouth with nobody holding it, so it falls on the host instead. The prop's own state
-// follows on PropSaveDataIntent in the same FIFO.
+// stream drives it, and the birth adds it for the three born INTO A HAND. A disc is dropped at its
+// device's mouth with nobody holding it, so the birth does not add it and the disc falls on the
+// host -- unless the prop's own physics already reads asleep, which the transform block above
+// reports for any prop and is the truer answer. The prop's own state follows on PropSaveDataIntent
+// in the same FIFO.
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                        uint8_t senderSlot);
 

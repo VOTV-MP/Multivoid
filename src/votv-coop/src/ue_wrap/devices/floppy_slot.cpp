@@ -31,6 +31,10 @@ uint64_t NowMs() {
 // element counts the engine wrote, and anything outside this is not one.
 constexpr int32_t kMaxCount = 200000;
 
+// How many passes a delegate name gets before the resolver stops asking. Each miss is a full
+// object-array walk with no cache, so a name this build does not have must not be asked forever.
+constexpr int kMaxOverlapTries = 30;
+
 // One device class's slot. `hasZip` and `hasNametype` say which members the CLASS declares, so
 // an absent member is a fact about the game's class and an unresolved one is a fact about our
 // resolve -- the two never look alike. There are no offset fallbacks: a member that does not
@@ -62,6 +66,8 @@ struct Desc {
     void*    fnOverlap[kMaxSlotOverlapEntries] = {};
     size_t   overlapCount     = 0;
     bool     overlapResolved  = false;
+    bool     overlapGaveUp    = false;
+    int      overlapTries     = 0;
     uint64_t overlapNextTryMs = 0;
 };
 
@@ -143,9 +149,8 @@ bool Refresh(const Desc& d, void* device, int32_t type) {
         void* mesh = nullptr;
         if (!comp) done = false;
         else if (!MeshForType(device, type, mesh)) done = false;
-        // An empty slot shows nothing, and that is a call in its own right: sending the null
-        // through SetStaticMesh hit its no-invisible-proxy guard, so the box on the peer that did
-        // not eject kept displaying the disc it no longer holds.
+        // An empty slot shows nothing, and that is a call in its own right: SetStaticMesh
+        // refuses a null mesh, so the empty case says what it means instead.
         else if (mesh) engine::SetStaticMesh(comp, mesh);
         else           engine::ClearStaticMesh(comp);
     }
@@ -216,26 +221,40 @@ bool EnsureResolved(DeviceKind kind) {
     return true;
 }
 
+size_t SlotOverlapEntryCount(DeviceKind kind) {
+    const Desc* d = DescOf(kind);
+    if (!d) return 0;
+    size_t n = 0;
+    while (n < kMaxSlotOverlapEntries && d->overlapFns[n]) ++n;
+    return n;
+}
+
 size_t SlotOverlapEntries(DeviceKind kind, void* out[], size_t cap) {
     Desc* d = DescOf(kind);
     if (!d || !out || cap == 0) return 0;
     if (!d->overlapResolved) {
+        if (d->overlapGaveUp) return 0;
         const uint64_t now = NowMs();
         if (now < d->overlapNextTryMs) return 0;
         d->overlapNextTryMs = now + 1000;
         void* cls = R::FindClass(d->className);
         if (!cls) return 0;   // world not loaded yet
-        size_t found = 0, named = 0;
-        for (size_t i = 0; i < kMaxSlotOverlapEntries && d->overlapFns[i]; ++i) {
-            ++named;
+        const size_t named = SlotOverlapEntryCount(kind);
+        size_t found = 0;
+        for (size_t i = 0; i < named; ++i)
             if (void* fn = R::FindFunction(cls, d->overlapFns[i])) d->fnOverlap[found++] = fn;
-        }
         if (found != named) {
             // Named and not found is a fact about THIS build, not about the device: the delegate's
             // name carries the component's name and the K2Node index the asset assigned it, so a
-            // renamed hitbox silently unbinds the entry. Say which, and keep retrying.
-            UE_LOGW("floppy_slot: %ls resolved %zu of %zu overlap entries -- an entry nobody holds "
-                    "is an unattended way into the slot", d->className, found, named);
+            // renamed hitbox silently unbinds the entry. The resolver walks the whole object array
+            // per name with no cache, so a name that will never resolve has to stop being asked --
+            // once said, once given up on.
+            if (++d->overlapTries >= kMaxOverlapTries) {
+                d->overlapGaveUp = true;
+                UE_LOGE("floppy_slot: %ls resolved %zu of %zu overlap entries in %d tries -- GIVING "
+                        "UP. An entry nobody holds is an unattended way into the slot.",
+                        d->className, found, named, kMaxOverlapTries);
+            }
             return 0;
         }
         d->overlapCount = found;
@@ -333,11 +352,15 @@ void ResetCache() {
         d.offType = d.offReadWrites = d.offData = d.offObjectData = -1;
         d.offZip = d.offNametype = d.offWidget = d.offMesh = -1;
         d.fnUpdFloppy = nullptr;
-        // The overlap entries deliberately SURVIVE this. They are UFunctions of a Blueprint class
-        // the asset keeps loaded, not offsets into a world's actor, and a caller has registered a
-        // ProcessEvent interceptor against each pointer -- dropping them here would re-resolve to
-        // the same UFunction and leave the old registration behind as a duplicate. The coin's
-        // collect delegate is held across sessions for the same reason.
+        // The overlap entries go with the rest: a resolved UFunction of a world's Blueprint class
+        // is cached on the same terms as this file's offsets and its widget verb, and a caller
+        // holding one past a level change would be holding it on a guess.
+        for (auto& fn : d.fnOverlap) fn = nullptr;
+        d.overlapCount = 0;
+        d.overlapResolved = false;
+        d.overlapGaveUp = false;
+        d.overlapTries = 0;
+        d.overlapNextTryMs = 0;
     }
     g_libCdo = nullptr;
     g_fnFloppyFromType = nullptr;

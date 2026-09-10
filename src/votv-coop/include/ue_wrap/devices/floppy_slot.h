@@ -72,6 +72,11 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out);
 inline constexpr size_t kMaxSlotOverlapEntries = 2;
 size_t SlotOverlapEntries(DeviceKind kind, void* out[], size_t cap);
 
+// How many entries this kind DECLARES, which is a fact about the class and needs no resolve. It
+// separates the two answers `SlotOverlapEntries` folds into zero: a kind that has no entry to give,
+// and one whose class has not loaded yet.
+size_t SlotOverlapEntryCount(DeviceKind kind);
+
 // Receiver-side apply: the scalars raw (the game writes them raw too), the strings through an
 // engine-side mint, then the kind's own refresh.
 bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& content);

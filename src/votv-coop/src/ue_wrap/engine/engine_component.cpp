@@ -296,9 +296,9 @@ bool SetStaticMesh(void* component, void* staticMeshAsset) {
 }
 
 bool ClearStaticMesh(void* component) {
-    // The deliberate null. Routing it through SetStaticMesh took the guard above and reported an
-    // unresolved FUNCTION, which is a different fault with a different fix, so a caller that meant
-    // "empty" read as a broken resolve in the log and the component kept the mesh it had.
+    // The same call with no mesh, which UE reads as "show nothing". Its own verb because the guard
+    // above refuses null on purpose, and a caller that means "empty" must not have to defeat a
+    // guard that exists for a different caller.
     if (!component || !ResolveStaticMeshFn()) {
         UE_LOGE("engine: ClearStaticMesh unresolved (comp=%p fn=%p)", component,
                 g_setStaticMeshFn);
