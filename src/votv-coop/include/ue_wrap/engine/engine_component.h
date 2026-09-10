@@ -74,8 +74,15 @@ bool SetScalarParameterValue(void* materialInstanceDynamic, const wchar_t* param
 bool SetScalarParameterValue(void* materialInstanceDynamic, const reflection::FName& param, float value);
 
 // UStaticMeshComponent::SetStaticMesh, resolved on the owning class; recomputes bounds and
-// collision. Rejects null. Game thread.
+// collision. Rejects null, because a mirror proxy must never go invisible: a caller with no mesh
+// to show resolves a fallback instead. Game thread.
 bool SetStaticMesh(void* staticMeshComponent, void* staticMeshAsset);
+
+// The same call with no mesh, which UE takes to mean "show nothing". A separate verb because
+// SetStaticMesh's null rejection is a real guard for the proxies, and a caller that genuinely
+// wants an empty component -- a device slot with nothing in it -- was being answered with a log
+// line that named the wrong cause. Game thread.
+bool ClearStaticMesh(void* staticMeshComponent);
 
 // USceneComponent::SetMobility (0 Static, 1 Stationary, 2 Movable). A runtime-spawned
 // AStaticMeshActor defaults to Static, on which SetStaticMesh and SetActorLocation are silent

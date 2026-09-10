@@ -142,8 +142,12 @@ bool Refresh(const Desc& d, void* device, int32_t type) {
             reinterpret_cast<const uint8_t*>(device) + d.offMesh);
         void* mesh = nullptr;
         if (!comp) done = false;
-        else if (MeshForType(device, type, mesh)) engine::SetStaticMesh(comp, mesh);
-        else done = false;
+        else if (!MeshForType(device, type, mesh)) done = false;
+        // An empty slot shows nothing, and that is a call in its own right: sending the null
+        // through SetStaticMesh hit its no-invisible-proxy guard, so the box on the peer that did
+        // not eject kept displaying the disc it no longer holds.
+        else if (mesh) engine::SetStaticMesh(comp, mesh);
+        else           engine::ClearStaticMesh(comp);
     }
     return done;
 }

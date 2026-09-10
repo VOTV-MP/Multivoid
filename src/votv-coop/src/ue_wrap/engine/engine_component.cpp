@@ -295,6 +295,20 @@ bool SetStaticMesh(void* component, void* staticMeshAsset) {
     return Call(component, f);
 }
 
+bool ClearStaticMesh(void* component) {
+    // The deliberate null. Routing it through SetStaticMesh took the guard above and reported an
+    // unresolved FUNCTION, which is a different fault with a different fix, so a caller that meant
+    // "empty" read as a broken resolve in the log and the component kept the mesh it had.
+    if (!component || !ResolveStaticMeshFn()) {
+        UE_LOGE("engine: ClearStaticMesh unresolved (comp=%p fn=%p)", component,
+                g_setStaticMeshFn);
+        return false;
+    }
+    ParamFrame f(g_setStaticMeshFn);
+    f.Set<void*>(L"NewMesh", nullptr);
+    return Call(component, f);
+}
+
 bool SetComponentMobility(void* component, uint8_t mobility) {
     // USceneComponent::SetMobility(NewMobility). Movable (2) re-registers the render state so a
     // runtime SetStaticMesh + SetActorLocation actually apply (a Static component no-ops both).
