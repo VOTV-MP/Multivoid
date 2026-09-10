@@ -75,7 +75,7 @@ constexpr uint64_t kSeedMs   =  8000;
 constexpr uint64_t kPickMs   = 16000;
 constexpr uint64_t kCensusMs =  6000;
 constexpr uint64_t kPostMs   =  4000;   // the after-picture of one episode
-constexpr uint64_t kFinalMs  = 98000;
+constexpr uint64_t kFinalMs  = 110000;
 
 constexpr int kTargets = 3;  // boxes, and discs: one of each per insert episode
 
@@ -107,7 +107,7 @@ struct Step {
     uint64_t    atMs;
     bool        onHost;   // the role that fires it; the other role only watches
     int         box;
-    int         disc;     // inserts only
+    int         disc;     // the disc this episode moves: the one inserted, or the one expected out
     Verb        verb;
     const char* under_test;
 };
@@ -117,17 +117,19 @@ struct Step {
 const Step kSteps[] = {
     { "E1-insert", 20000, false, 0,  0, Verb::Insert,
       "a client insert: the disc dies here and the destroy is what crosses" },
-    { "E1-eject",  30000, true,  0, -1, Verb::Eject,
+    { "E1-eject",  30000, true,  0,  0, Verb::Eject,
       "the host ejecting a client's insert: an empty slot means the transfer never crossed" },
     { "E2-insert", 42000, true,  1,  1, Verb::Insert,
       "a host insert: the slot state is authored on the host" },
-    { "E2-eject",  52000, false, 1, -1, Verb::Eject,
+    { "E2-eject",  52000, false, 1,  1, Verb::Eject,
       "the client ejecting a host insert: an empty slot means the slot state never crossed" },
-    { "E2-reject", 62000, true,  1, -1, Verb::Eject,
+    { "E4-insert", 64000, true,  1,  1, Verb::Insert,
+      "the host re-inserting the disc E2 handed back: the same-peer control needs its own insert" },
+    { "E4-eject",  74000, true,  1,  1, Verb::Eject,
       "the host ejecting its own insert: the disc and its content come back here" },
-    { "E3-insert", 74000, false, 2,  2, Verb::Insert,
+    { "E3-insert", 86000, false, 2,  2, Verb::Insert,
       "a client insert whose eject is the same client's" },
-    { "E3-eject",  84000, false, 2, -1, Verb::Eject,
+    { "E3-eject",  96000, false, 2,  2, Verb::Eject,
       "a client eject: the disc is born on the client, through its own place seam" },
 };
 constexpr size_t kStepCount = sizeof(kSteps) / sizeof(kSteps[0]);
@@ -143,6 +145,7 @@ uint64_t g_connectedAtMs = 0;
 uint64_t g_nextCensusMs  = 0;
 uint64_t g_postAtMs      = 0;
 int      g_postStep      = -1;
+bool     g_watched[8]    = {};   // the non-firing role's one-shot arm per episode
 bool     g_seeded        = false;
 bool     g_picked        = false;
 bool     g_finalDone     = false;
@@ -446,6 +449,52 @@ void Fire(size_t i) {
             s.under_test);
 }
 
+// After an episode, what THIS peer can see of the disc it names: whether the actor is here, and
+// whether the content on it is the seeded content. A cross-peer eject is proven by this line on
+// the peer that did not eject, and by nothing else -- the box census says where the state is, and
+// only this says whether the disc came back carrying it.
+void ReportContent(size_t stepIdx, bool isHost) {
+    const Step& s = kSteps[stepIdx];
+    if (s.disc < 0 || s.disc >= kTargets) return;
+    const std::wstring& key = g_discKey[s.disc];
+    if (key.empty()) return;
+    const char* role = isHost ? "HOST" : "CLIENT";
+
+    void* actor = PR::FindByKeyString(key);
+    const bool live = actor && R::IsLive(actor);
+    if (s.verb == Verb::Insert) {
+        UE_LOGI("floppy_selftest: CONTENT %s role=%s -- disc key='%ls' is %s here (an insert "
+                "consumes it, so PRESENT on the peer that did not insert means the destroy has "
+                "not landed yet)", s.id, role, key.c_str(), live ? "PRESENT" : "gone");
+        return;
+    }
+    if (!live) {
+        UE_LOGW("floppy_selftest: CONTENT %s role=%s -- the ejected disc key='%ls' is NOT in this "
+                "peer's world: the eject produced no actor here", s.id, role, key.c_str());
+        return;
+    }
+    FD::DiscContent c;
+    if (!FD::ReadDiscContent(actor, c)) {
+        UE_LOGW("floppy_selftest: CONTENT %s role=%s -- disc key='%ls' is here but its content "
+                "fields did not read", s.id, role, key.c_str());
+        return;
+    }
+    bool marked = false;
+    for (const std::wstring& row : c.data)
+        if (row.find(kMarker) != std::wstring::npos) { marked = true; break; }
+    const int32_t wantRw = kMarkerReadWrites + s.disc;
+    if (marked && c.readWrites == wantRw) {
+        UE_LOGI("floppy_selftest: CONTENT %s role=%s -- disc key='%ls' came back INTACT "
+                "(rw=%d rows=%zu, marker present)", s.id, role, key.c_str(), c.readWrites,
+                c.data.size());
+        return;
+    }
+    UE_LOGW("floppy_selftest: CONTENT %s role=%s -- disc key='%ls' came back EMPTIED: rw=%d "
+            "(seeded %d) rows=%zu marker=%s -- the actor crossed and its save data did not",
+            s.id, role, key.c_str(), c.readWrites, wantRw, c.data.size(),
+            marked ? "present" : "ABSENT");
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -506,9 +555,17 @@ void Tick() {
     }
     if (g_picked) {
         for (size_t i = 0; i < kStepCount; ++i) {
-            if (g_outcome[i].done || kSteps[i].onHost != isHost || since < kSteps[i].atMs) continue;
-            Census("before", isHost);
-            Fire(i);
+            if (since < kSteps[i].atMs) continue;
+            const bool mine = kSteps[i].onHost == isHost;
+            if (mine ? g_outcome[i].done : g_watched[i]) continue;
+            if (mine) {
+                Census("before", isHost);
+                Fire(i);
+            } else {
+                // The peer that did NOT act still owes an after-picture: whether a cross-peer
+                // transfer arrived is a fact only this side can report.
+                g_watched[i] = true;
+            }
             g_postAtMs = now + kPostMs;
             g_postStep = static_cast<int>(i);
             break;  // one verb per tick, so two episodes can never share an after-picture
@@ -516,6 +573,7 @@ void Tick() {
     }
     if (g_postStep >= 0 && now >= g_postAtMs) {
         Census(kSteps[g_postStep].id, isHost);
+        ReportContent(static_cast<size_t>(g_postStep), isHost);
         g_postStep = -1;
     }
     if (now >= g_nextCensusMs) {
@@ -536,6 +594,7 @@ void OnDisconnect() {
     g_postAtMs = 0;
     g_postStep = -1;
     g_seeded = g_picked = g_finalDone = false;
+    for (size_t i = 0; i < kStepCount; ++i) g_watched[i] = false;
     g_nextResolveMs = 0;
     g_resolvePasses = 0;
     g_resolveLatchedOff = false;
