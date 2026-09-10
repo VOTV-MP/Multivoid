@@ -64,11 +64,15 @@ constexpr int32_t kMarkerReadWrites = 900;  // + the disc index; the class defau
 // and a box that swallows one of those can never hand it back. Seed the coloured classes instead,
 // one per episode, so the type in the slot also says which disc is in there. The white one is the
 // zip drive, which a server refuses outright, so it is not among them.
-struct DiscClass { const wchar_t* name; int32_t type; };
+struct DiscClass { const wchar_t* name; int32_t type; bool zip; };
 const DiscClass kDiscClasses[] = {
-    { L"prop_floppyDisc_R_C", 0 },
-    { L"prop_floppyDisc_G_C", 1 },
-    { L"prop_floppyDisc_Y_C", 2 },
+    { L"prop_floppyDisc_R_C",  0, false },
+    { L"prop_floppyDisc_G_C",  1, false },
+    { L"prop_floppyDisc_Y_C",  2, false },
+    { L"prop_floppyDisc_Bl_C", 3, false },
+    { L"prop_floppyDisc_Wh_C", 4, true  },  // the zip drive, which a server refuses outright
+    { L"prop_floppyDisc_B_C",  5, false },
+    { L"prop_floppyDisc_O_C",  6, false },
 };
 
 enum class Verb { Insert, Eject };
@@ -128,23 +132,29 @@ std::wstring          g_discKey[kTargets];
 struct DiscRow {
     void*        actor = nullptr;
     std::wstring key;
-    std::wstring cls;              // the class is the disc's slot type, so it belongs in the census
-    bool         typed = false;    // ... and a class the library types is the only insertable one
+    std::wstring cls;            // the class is the disc's slot type, so it belongs in the census
+    int32_t      type = -1;      // as the library types it; -1 = a class it does not know at all
+    bool         zip = false;    // the one class a server refuses rather than swallows
     int32_t      readWrites = -1;
     int32_t      rows = 0;
+    bool insertable() const { return type >= 0 && !zip; }
 };
 
-bool IsTypedDiscClass(const std::wstring& cls) {
+const DiscClass* DiscClassOf(const std::wstring& cls) {
     for (const DiscClass& dc : kDiscClasses)
-        if (cls == dc.name) return true;
-    return false;
+        if (cls == dc.name) return &dc;
+    return nullptr;
 }
 
 // Every live disc actor of any disc class, sorted by key so both peers index the same disc with
 // the same number. One object-array walk per call on the census period, with the class verdict
 // cached so the descendant test runs once per distinct class instead of once per object.
+std::unordered_map<void*, bool> g_discVerdict;  // UClass* -> is a disc; dropped with the world
+
+void ResetClassVerdicts() { g_discVerdict.clear(); }
+
 std::vector<DiscRow> DiscCensus() {
-    static std::unordered_map<void*, bool> verdict;
+    auto& verdict = g_discVerdict;
     std::vector<DiscRow> out;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
@@ -160,7 +170,7 @@ std::vector<DiscRow> DiscCensus() {
         row.actor = obj;
         row.key = PR::GetKeyString(obj);
         row.cls = R::ToString(R::NameOf(cls));
-        row.typed = IsTypedDiscClass(row.cls);
+        if (const DiscClass* dc = DiscClassOf(row.cls)) { row.type = dc->type; row.zip = dc->zip; }
         LP::DiscContent c;
         if (LP::ReadDiscContent(obj, c)) {
             row.readWrites = c.readWrites;
@@ -177,8 +187,8 @@ std::wstring DescribeDiscs(const std::vector<DiscRow>& discs) {
     std::wstring s;
     for (size_t i = 0; i < discs.size() && i < 8; ++i) {
         if (!s.empty()) s += L"; ";
-        s += L"key='" + discs[i].key + L"' cls='" + discs[i].cls + L"'" +
-             (discs[i].typed ? L"" : L" UNTYPED") +
+        s += L"key='" + discs[i].key + L"' cls='" + discs[i].cls + L"' type=" +
+             std::to_wstring(discs[i].type) + (discs[i].zip ? L" ZIP" : L"") +
              L" rw=" + std::to_wstring(discs[i].readWrites) +
              L" rows=" + std::to_wstring(discs[i].rows);
     }
@@ -213,8 +223,18 @@ void Census(const char* tag, bool isHost) {
 // The first boxes in the gamemode's own order whose slot is empty: one rule, run on both peers. A
 // busy slot refuses an insert, which is why the rule skips one, and every pick is logged with its
 // index, label and location so a divergent pick is visible instead of silent.
+constexpr uint64_t kResolveRetryMs = 2000;
+constexpr int      kMaxResolvePasses = 15;  // ~30 s of world load, then say so and stop
+uint64_t g_nextResolveMs = 0;
+int      g_resolvePasses = 0;
+bool     g_resolveLatchedOff = false;
+
 bool ResolveBoxes() {
     if (g_box[kTargets - 1].Raw()) return true;
+    if (g_resolveLatchedOff) return false;
+    const uint64_t now = NowMs();
+    if (now < g_nextResolveMs) return false;   // a per-tick retry would allocate and re-read the
+    g_nextResolveMs = now + kResolveRetryMs;   // whole box list for as long as the world says no
     if (!SB::EnsureResolved()) return false;
     std::vector<void*> servers;
     const size_t n = SB::ReadServers(servers);
@@ -230,9 +250,16 @@ bool ResolveBoxes() {
         ++taken;
     }
     if (taken < kTargets) {
-        UE_LOGW("floppy_selftest: only %d of %d empty-slot boxes among %zu servers -- not armed",
-                taken, kTargets, n);
         for (int t = 0; t < kTargets; ++t) { g_box[t].Reset(); g_boxSlot[t] = -1; }
+        if (++g_resolvePasses >= kMaxResolvePasses) {
+            g_resolveLatchedOff = true;
+            UE_LOGW("floppy_selftest: %d of %d empty-slot boxes among %zu servers after %d passes -- "
+                    "NOT ARMED, and no episode below will run; empty three server slots by hand and "
+                    "rerun", taken, kTargets, n, g_resolvePasses);
+        } else {
+            UE_LOGW("floppy_selftest: only %d of %d empty-slot boxes among %zu servers -- retrying "
+                    "(pass %d of %d)", taken, kTargets, n, g_resolvePasses, kMaxResolvePasses);
+        }
         return false;
     }
     for (int t = 0; t < kTargets; ++t) {
@@ -248,10 +275,10 @@ bool ResolveBoxes() {
 // inference. A spawned disc is keyed through the game's own getKey, which is what mints one.
 void SeedAndStamp() {
     std::vector<DiscRow> discs = DiscCensus();
-    int typed = 0;
-    for (const DiscRow& d : discs) if (d.typed) ++typed;
-    for (int i = typed; i < kTargets; ++i) {
-        const DiscClass& dc = kDiscClasses[i % (sizeof(kDiscClasses) / sizeof(kDiscClasses[0]))];
+    int usable = 0;
+    for (const DiscRow& d : discs) if (d.insertable()) ++usable;
+    for (int i = usable; i < kTargets; ++i) {
+        const DiscClass& dc = kDiscClasses[i];   // the first rows are non-zip colours
         void* cls = R::FindClass(dc.name);
         void* anchor = g_box[i % kTargets].Get();
         if (!cls || !anchor) {
@@ -263,21 +290,23 @@ void SeedAndStamp() {
         void* disc = E::SpawnActor(cls, { base.X, base.Y + static_cast<float>(30 * i),
                                           base.Z + 80.f });
         if (!disc) { UE_LOGW("floppy_selftest: disc seed %d SPAWN FAILED", i); continue; }
-        // No key verb here: reading the key through the wrapper leaves the disc keyed, which the
-        // line below both uses and shows.
+        // No key verb here: the prop's own Init mints the Key inside the spawn, and the line below
+        // is a plain field read of it.
         UE_LOGI("floppy_selftest: seeded disc %d class='%ls' (slot type %d) key='%ls'", i, dc.name,
                 dc.type, PR::GetKeyString(disc).c_str());
     }
     discs = DiscCensus();
     int stamped = 0;
     for (const DiscRow& d : discs) {
-        if (!d.typed || stamped >= kTargets) continue;
+        if (!d.insertable() || stamped >= kTargets) continue;
         LP::DiscContent c;
         c.readWrites = kMarkerReadWrites + stamped;
         c.data.push_back(std::wstring(kMarker) + L"-" + std::to_wstring(stamped));
         const bool ok = LP::WriteDiscContent(d.actor, c);
-        UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw=%d rows=1 write=%d",
-                stamped, d.key.c_str(), d.cls.c_str(), c.readWrites, ok ? 1 : 0);
+        UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw %d -> %d rows %d -> 1 "
+                "write=%d (a disc the world already held keeps none of its own content)",
+                stamped, d.key.c_str(), d.cls.c_str(), d.readWrites, c.readWrites, d.rows,
+                ok ? 1 : 0);
         ++stamped;
     }
 }
@@ -290,7 +319,9 @@ void PickDiscs(bool isHost) {
     std::wstring picked;
     int taken = 0, marked = 0;
     for (const DiscRow& d : discs) {
-        if (!d.typed || taken >= kTargets) continue;   // an untyped disc is refused by the server
+        // Skip a class the library does not type -- a box swallows one of those and can never hand
+        // it back -- and the zip drive, which a server refuses outright.
+        if (!d.insertable() || taken >= kTargets) continue;
         g_discKey[taken] = d.key;
         if (d.readWrites >= kMarkerReadWrites) ++marked;
         picked += (taken ? L", " : L"") + std::to_wstring(taken) + L"='" + d.key + L"' cls='" +
@@ -480,6 +511,10 @@ void OnDisconnect() {
     g_postAtMs = 0;
     g_postStep = -1;
     g_seeded = g_picked = g_finalDone = false;
+    g_nextResolveMs = 0;
+    g_resolvePasses = 0;
+    g_resolveLatchedOff = false;
+    ResetClassVerdicts();
     for (size_t i = 0; i < kStepCount; ++i) g_outcome[i] = Outcome{};
     for (int t = 0; t < kTargets; ++t) {
         g_box[t].Reset();

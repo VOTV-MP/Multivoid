@@ -74,11 +74,8 @@ bool EnsureResolved() {
     g_nextTryMs = now + 1000;
 
     void* cls = R::FindClass(L"serverBox_C");
-    void* gmCls = R::FindClass(P::name::GamemodeClass);
-    if (!cls || !gmCls) return false;  // world not loaded yet
+    if (!cls) return false;  // world not loaded yet
 
-
-    g_offServers = R::FindPropertyOffset(gmCls, L"servers");
     struct Row { const wchar_t* name; int32_t* slot; };
     const Row rows[] = {
         { L"name",             &g_offName },

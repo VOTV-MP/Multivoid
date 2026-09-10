@@ -1,4 +1,5 @@
-// coop/dev/floppy_selftest.h -- the disc-into-server media transfer, driven (`[dev] floppy_selftest=1`).
+// coop/dev/floppy_selftest.h -- the disc-into-server media transfer, driven
+// (`VOTVCOOP_FLOPPY_SELFTEST=1` for one run).
 //
 // An idle two-peer run never moves a disc between a prop and a device, so the seams that carry a
 // prop's own save data -- the keyed destroy an insert relays, the birth an eject drives -- stay
@@ -9,8 +10,9 @@
 // Each episode records the slot and the world's disc census on BOTH peers around the verb, so a
 // disc lost between them is a diff of two logs rather than an absence in one, and an episode that
 // could not fire says which precondition stopped it instead of leaving a silent gap. It MUTATES
-// the world -- it inserts, ejects, and seeds discs when the world has none -- so it is armed per
-// run from the environment (VOTVCOOP_FLOPPY_SELFTEST) and never left standing in an ini.
+// the world: it inserts, ejects, seeds discs when the world holds too few, and OVERWRITES the
+// content of up to three discs it did not create -- so it is armed per run from the environment
+// and never left standing in an ini.
 
 #pragma once
 
