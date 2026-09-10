@@ -286,6 +286,14 @@ CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,
     "Diagnostic probe: inventory store contents.")
 CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
     "Diagnostic probe: actor spawn ordering.")
+CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, nullptr,
+    "Diagnostic probe (CLIENT): the place/birth seam -- how many drain ticks the save Key takes to "
+    "restore after a spawn, and which of the seven drain exits each pending spawn leaves by. Set it "
+    "on the CLIENT; the host places through a different path.")
+CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
+    "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
+    "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "
+    "destroy landing on an adopted actor. Walks the whole object array per fuzzy spawn while on.")
 CFG_FLAG(eid_lifetime_trace, "eid_lifetime_trace", "dev", false, nullptr,
     "Diagnostic trace: entity-id lifetimes (mint/adopt/destroy).")
 CFG_FLAG(pinecone_probe, "pinecone_probe", "dev", false, nullptr,

@@ -19,6 +19,7 @@
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
 #include "coop/dev/spawn_order_probe.h"  // the keyless load-spawn coverage probe
 #include "coop/dev/join_window_pos_trace.h"  // the keyed-prop join-window position trace
+#include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and the adoption watch
 #include "coop/props/save_identity_bind.h"     // the eid-range bind summary at quiescence
 #include "coop/props/snapshot_census.h"  // the per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
@@ -409,11 +410,19 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     constexpr float kFuzzyRadiusCm = 30.f;
     // A clump skips the fuzzy dedupe (its rekey through setKey is meaningless) and goes to a fresh
     // eid-bound spawn.
+    const ue_wrap::FVector fuzzyAnchor{payload.locX, payload.locY, payload.locZ};
+    const bool traceFuzzy = coop::dev::spawn_match_probe::IsEnabled();
+    ue_wrap::prop::NearbyTrace fuzzyTrace;
     void* fuzzy = eidOnly ? nullptr : ue_wrap::prop::FindNearbySameClass(
             classW,
-            ue_wrap::FVector{payload.locX, payload.locY, payload.locZ},
+            fuzzyAnchor,
             kFuzzyRadiusCm,
-            propNameW == L"None" ? std::wstring() : propNameW);
+            propNameW == L"None" ? std::wstring() : propNameW,
+            traceFuzzy ? &fuzzyTrace : nullptr);
+    if (traceFuzzy && !eidOnly) {
+        coop::dev::spawn_match_probe::NoteFuzzyScan(payload.elementId, keyW, classW, propNameW,
+                                                    fuzzyAnchor, fuzzyTrace);
+    }
     // The kerfur anti-collision gate: a kerfur prop's Key is cross-peer stable (save-persisted), so
     // a fuzzy match whose key differs from the wire key is a different kerfur, never rekeyed or
     // stolen; the match is dropped and a fresh spawn follows. Kerfur only: the divergent-key
@@ -453,6 +462,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         if (HostAuthorityHandback_(fuzzy, keyW, classW, senderSlot, "fuzzy")) return;
         // The claim, as on the exact-key path; it covers the early returns below.
         coop::join_membership_sweep::RecordClaimIfTracking(fuzzy);
+        // Past every gate: this actor is the adoption, whichever of the three bindings below runs.
+        coop::dev::spawn_match_probe::NoteFuzzyBound(
+            fuzzy, payload.elementId, keyW,
+            fuzzyTrace.candidates.empty() ? -1.f : fuzzyTrace.candidates[0].distCm);
         // The local-held guard, as on the exact-key path (reached when an earlier bracket rekeyed
         // the held prop and this one fuzzy-matches it); the rekey is skipped too, and correctness
         // rides the eid binding.

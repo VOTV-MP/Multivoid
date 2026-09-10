@@ -40,6 +40,8 @@
 #include "coop/creatures/wisp_tear_mirror.h"  // Killer Wisp coop: victim kill + tear mirror
 #include "coop/session/pause_guard.h"  // coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
+#include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
+#include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
 #include "coop/dev/inventory_probe.h"  // SP self-test for the apply (engine write) path
 #include "coop/dev/live_store_readout.h"  // READ-ONLY live personal store observability
 #include "coop/dev/sleep_probe.h"
@@ -381,6 +383,9 @@ DisconnectStats DisconnectAll() {
     coop::piramid_sync::OnDisconnect();  // drop pending gather + gather-edge map + restored-tick set (hooks stay latched)
     coop::npc_adoption::OnSessionEnd();  // drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd();  // drop pending prop-form kerfur adoptions
+    // The two prop-seam probes print their run totals before the state they describe is cleared.
+    coop::dev::prop_birth_key_probe::EmitVerdict();
+    coop::dev::spawn_match_probe::EmitVerdict();
     coop::prop_drop_intent::Reset();  // clear the client park set + pending places
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();  // drop pending host-menu converges
@@ -499,6 +504,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
+    coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
+    coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)

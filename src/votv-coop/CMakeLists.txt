@@ -533,6 +533,8 @@ add_library(votv-coop SHARED
     src/ui/voice_panel.cpp
     src/coop/dev/add_points.cpp
     src/coop/dev/spawn_order_probe.cpp
+    src/coop/dev/prop_birth_key_probe.cpp
+    src/coop/dev/spawn_match_probe.cpp
     src/coop/dev/native_text_probe.cpp
     src/coop/dev/eid_lifetime_trace.cpp
     src/coop/dev/join_window_pos_trace.cpp

@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_drop_intent.h"
 
+#include "coop/dev/prop_birth_key_probe.h"   // the seam's key-timing and drain-exit instrumentation
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -140,12 +141,19 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     if (coop::hand_item::IsHandAxisActor(actor)) return;
     if (g_pending.size() >= kMaxPending) {
         UE_LOGW("[PROP-DROP] client pending-place cap %zu hit -- dropping %p", kMaxPending, actor);
+        coop::dev::prop_birth_key_probe::NotePendingCapHit(actor);
         return;
     }
     // Was a container extraction in flight when this actor spawned? The extracted item's actor
     // materialises inside the take call, so the latch is live exactly here. Marks the entry as a
     // container-extraction birth, admitted at drain.
     const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
+    if (coop::dev::prop_birth_key_probe::IsEnabled()) {
+        // The seam reading the probe exists for: is the Key there before any drain tick waits?
+        const std::wstring seamKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        coop::dev::prop_birth_key_probe::NoteEnqueue(
+            actor, R::ClassNameOf(actor), !(seamKey.empty() || seamKey == L"None"), fromContainerExtract);
+    }
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
     if (fromContainerExtract)
         UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
@@ -268,23 +276,38 @@ void Tick(coop::net::Session* session) {
         return;
     }
     std::vector<PendingPlace> keep;
+    namespace probe = coop::dev::prop_birth_key_probe;
     for (PendingPlace& e : g_pending) {
-        if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;                 // died before drain
-        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) continue; // got tracked/bound
-        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) continue;          // a late echo mark -> not a place
+        if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) {                          // died before drain
+            probe::NoteDrainExit(e.actor, "died-before-drain", e.tries, std::wstring());
+            continue;
+        }
+        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) { // got tracked/bound
+            probe::NoteDrainExit(e.actor, "already-tracked", e.tries, std::wstring());
+            continue;
+        }
+        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) {                   // a late echo mark -> not a place
+            probe::NoteDrainExit(e.actor, "late-echo", e.tries, std::wstring());
+            continue;
+        }
         // The drain-time hand-axis re-check: the enqueue-time check runs before the hold update
         // writes the holding actor (the host spawn watcher documents this window and excludes at
         // drain for the same reason). Without it a hold-to-pick-up's hand view husk, carrying the
         // item's parked key, authors a false drop intent: the host spawns a duplicate world prop
         // while the item is still in the player's hand, and the park is consumed. Drop the entry
         // permanently.
-        if (coop::hand_item::IsHandAxisActor(e.actor)) continue;
+        if (coop::hand_item::IsHandAxisActor(e.actor)) {
+            probe::NoteDrainExit(e.actor, "hand-axis-drop", e.tries, std::wstring());
+            continue;
+        }
         std::wstring key = ue_wrap::prop::GetInteractableKeyString(e.actor);
         if (key.empty() || key == L"None") {
             // The key is not restored yet (the load runs after the finish). Re-defer a few ticks.
             if (++e.tries <= kMaxKeyTries) keep.push_back(e);
+            else probe::NoteDrainExit(e.actor, "key-wait-expired", e.tries, std::wstring());
             continue;
         }
+        probe::NoteKeyReadable(e.actor, e.tries);
         const bool parked = (g_parkedKeys.find(key) != g_parkedKeys.end());
         // The fresh births. A client's fresh prop spawn never broadcasts (the lifecycle's client
         // skip), so a caddy or reel-box eject on a client is a local-only ghost; an unparked
@@ -306,7 +329,10 @@ void Tick(coop::net::Session* session) {
         // extracted item as a world actor, and without this the fresh-birth whitelist (reel, module
         // and drive only) drops it at drain and the item never reaches the host's world. The host's
         // duplicate guard keeps the intent safe.
-        if (!parked && !freshBirth && !e.containerExtract) continue;  // not a place / not a whitelisted birth / not a container extract
+        if (!parked && !freshBirth && !e.containerExtract) {   // not a place / not a whitelisted birth / not a container extract
+            probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
+            continue;
+        }
         // Author the host-authoritative spawn intent (a place, or a fresh birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
@@ -352,6 +378,8 @@ void Tick(coop::net::Session* session) {
                                          : coop::net::ReliableKind::PropDropIntent,
                               &p, sizeof(p));
         if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
+        probe::NoteDrainExit(e.actor, freshBirth ? "authored-fresh-birth" : "authored-drop-intent",
+                             e.tries, key);
         UE_LOGI("[PROP-DROP] CLIENT authored %s key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f)%s",
                 freshBirth ? "FRESH-BIRTH intent" : "drop intent",
                 key.c_str(), cls.c_str(),
@@ -368,6 +396,7 @@ void NoteClientKeyedDestroy(const std::wstring& key) {
     if (g_parkedKeys.insert(key).second) {
         g_parkFifo.push_back(key);
         while (g_parkFifo.size() > kMaxParked) {
+            coop::dev::prop_birth_key_probe::NoteParkEvict(g_parkFifo.front());
             g_parkedKeys.erase(g_parkFifo.front());
             g_parkFifo.pop_front();
         }
