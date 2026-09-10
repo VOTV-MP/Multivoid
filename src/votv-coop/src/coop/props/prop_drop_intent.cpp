@@ -272,6 +272,12 @@ void Tick(coop::net::Session* session) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Tick");
     if (g_pending.empty()) return;
     if (!session || !session->connected() || session->role() != coop::net::Role::Client) {
+        // Tally these before dropping them: an entry discarded here is one the seam accepted and
+        // never resolved, and a count of enqueues that does not balance against the exits cannot
+        // say which bound lost a prop.
+        for (const PendingPlace& e : g_pending)
+            coop::dev::prop_birth_key_probe::NoteDrainExit(e.actor, "session-gone", e.tries,
+                                                           std::wstring());
         g_pending.clear();
         return;
     }
@@ -458,6 +464,11 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
 
 void Reset() {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Reset");
+    // The drain's session gate normally empties this first; anything still here reached teardown
+    // unresolved, and the tally says so rather than losing it.
+    for (const PendingPlace& e : g_pending)
+        coop::dev::prop_birth_key_probe::NoteDrainExit(e.actor, "reset-dropped", e.tries,
+                                                       std::wstring());
     g_pending.clear();
     g_parkedKeys.clear();
     g_parkFifo.clear();
