@@ -26,7 +26,8 @@ namespace R = reflection;
 // Game-thread writes; observer reads.
 std::atomic<bool> g_resolved{false};
 
-void*   g_doorCls      = nullptr;  // door_C UClass
+void*   g_doorCls[7]   = {};      // door class variants (door_C, door_server_C, door_heavy_C, door_base_C, TheDoor_C, door_pryable_C, door_scaled_C)
+int32_t g_doorClsCount = 0;
 int32_t g_keyOff       = -1;       // AtriggerBase_C::Key
 int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened
 int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
@@ -115,6 +116,17 @@ bool EnsureResolved() {
     void* doorCls = R::FindClass(L"door_C");
     if (!doorCls) return false;  // BP class not loaded yet -- caller retries
 
+    // Collect all door class variants (door_C is primary; the others may or may not exist in
+    // every game build). IsDoor checks the full list so server-mode and heavy doors also
+    // participate in coop lock-step.
+    static const wchar_t* kDoorVariants[] = { L"door_C", L"door_server_C", L"door_heavy_C", L"door_base_C",
+                                              L"TheDoor_C", L"door_pryable_C", L"door_scaled_C" };
+    g_doorClsCount = 0;
+    for (const wchar_t* name : kDoorVariants) {
+        void* c = (name == L"door_C") ? doorCls : R::FindClass(name);
+        if (c && g_doorClsCount < 7) g_doorCls[g_doorClsCount++] = c;
+    }
+
     // The key is declared on the trigger base; the property lookup does not climb to the
     // superclass, so query the declaring class. The opened flag is declared on the door.
     int32_t keyOff = -1;
@@ -168,7 +180,7 @@ bool EnsureResolved() {
 
     g_moveFinishFn = moveFinishFn;
     g_moveUpdateFn = moveUpdateFn;
-    g_doorCls      = doorCls;
+    // (g_doorCls[] already populated above)
     g_keyOff       = keyOff;
     g_isOpenedOff  = isOpenedOff;
     g_isMovingOff  = isMovingOff;
@@ -188,11 +200,10 @@ bool EnsureResolved() {
 }
 
 bool IsDoor(void* obj) {
-    if (!obj || !g_doorCls) return false;
+    if (!obj || g_doorClsCount == 0) return false;
     void* cls = R::ClassOf(obj);
     if (!cls) return false;
-    void* bases[1] = { g_doorCls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    return R::IsDescendantOfAny(cls, g_doorCls, g_doorClsCount);
 }
 
 std::wstring GetKeyString(void* door) {
