@@ -80,6 +80,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/trace.cpp
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
+    src/ue_wrap/actors/hook.cpp
     src/ue_wrap/engine/engine_pawn.cpp
     src/ue_wrap/engine/world_identity.cpp
     src/ue_wrap/engine/engine_nav.cpp
@@ -164,6 +165,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/coingun_sync.cpp
     src/coop/items/coingun_arbiter.cpp
     src/coop/items/coingun_collect.cpp
+    src/coop/items/hook_sync.cpp
     src/coop/items/order_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp
