@@ -49,11 +49,13 @@ void NoteClientKeyedDestroy(const std::wstring& key);
 void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                       uint8_t senderSlot);
 
-// HOST handler for ReliableKind::ReelEjectIntent -- a CLIENT's caddy or reelbox eject birthed a
-// reel prop in its hands, and a client Aprop_C spawn never broadcasts, so the host authors it
-// through the SAME HostSpawnPlacedProp path. CLASS-WHITELISTED to the Aprop_reel_C lineage, not a
-// general client-spawn door. The payload's savedScalar carries the reel's Progress, and the kSleep
-// flag makes the host copy spawn inert until the client's held-prop pose stream drives it.
+// HOST handler for ReliableKind::ReelEjectIntent -- a CLIENT's device eject birthed a prop in its
+// hands, and a client Aprop_C spawn never broadcasts, so the host authors it through the SAME
+// HostSpawnPlacedProp path. CLASS-WHITELISTED to THREE lineages, not a general client-spawn door:
+// the reel (caddy and reelbox), the desk module, and the drive. The kind's name predates the other
+// two and now understates it; the receiver gate and the client's own fresh-birth gate name the same
+// three. The payload's savedScalar carries a reel's Progress, and the kSleep flag makes the host copy
+// spawn inert until the client's held-prop pose stream drives it.
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                        uint8_t senderSlot);
 
