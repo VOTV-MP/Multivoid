@@ -11,6 +11,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/devices/floppy_slot.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -29,6 +30,30 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace PR = ue_wrap::prop;
 namespace SB = ue_wrap::serverbox;
+namespace FS = ue_wrap::floppy_slot;
+
+// One slot reading for a log line: the scalars plus the two sizes that say whether the box took
+// the disc's content. The strings are minted here because this is an episode boundary, not a
+// poll -- the lane's own sweep pre-filters on floppy_slot::ReadDigest instead.
+struct BoxSlot {
+    int32_t floppyType    = -1;
+    int32_t readWrites    = -1;
+    int32_t dataNum       = 0;
+    int32_t objectDataLen = 0;
+};
+
+bool ReadBoxSlot(void* box, BoxSlot& out) {
+    FS::Scalars st{};
+    FS::Content c;
+    if (!FS::EnsureResolved(FS::DeviceKind::ServerBox)) return false;
+    if (!FS::ReadScalars(FS::DeviceKind::ServerBox, box, st)) return false;
+    FS::ReadContent(FS::DeviceKind::ServerBox, box, c);
+    out.floppyType    = st.floppyType;
+    out.readWrites    = st.readWrites;
+    out.dataNum       = static_cast<int32_t>(c.data.size());
+    out.objectDataLen = static_cast<int32_t>(c.objectData.size());
+    return true;
+}
 namespace FD = ue_wrap::floppy_disc;  // the disc prop's own content fields
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -202,8 +227,8 @@ std::wstring DescribeBoxes() {
         void* box = g_box[t].Get();
         if (!s.empty()) s += L"; ";
         s += std::to_wstring(t) + L" '" + g_boxName[t] + L"'";
-        SB::SlotState st{};
-        if (!box || !SB::ReadSlot(box, st)) { s += L" GONE"; continue; }
+        BoxSlot st{};
+        if (!box || !ReadBoxSlot(box, st)) { s += L" GONE"; continue; }
         s += L" type=" + std::to_wstring(st.floppyType) + L" rw=" + std::to_wstring(st.readWrites) +
              L" rows=" + std::to_wstring(st.dataNum) + L" json=" + std::to_wstring(st.objectDataLen);
     }
@@ -242,8 +267,8 @@ bool ResolveBoxes() {
     int taken = 0;
     for (size_t i = 0; i < servers.size() && taken < kTargets; ++i) {
         void* box = servers[i];
-        SB::SlotState st{};
-        if (!box || !R::IsLive(box) || !SB::ReadSlot(box, st) || st.floppyType >= 0) continue;
+        BoxSlot st{};
+        if (!box || !R::IsLive(box) || !ReadBoxSlot(box, st) || st.floppyType >= 0) continue;
         g_box[taken].Set(box);
         g_boxSlot[taken] = static_cast<int>(i);
         g_boxName[taken] = SB::ReadName(box);
@@ -350,8 +375,8 @@ void Fire(size_t i) {
         UE_LOGW("floppy_selftest: %s NOT FIRED -- %s", s.id, o.note.c_str());
         return;
     }
-    SB::SlotState before{};
-    SB::ReadSlot(box, before);
+    BoxSlot before{};
+    ReadBoxSlot(box, before);
 
     if (s.verb == Verb::Insert) {
         if (g_discKey[s.disc].empty()) {
@@ -369,8 +394,8 @@ void Fire(size_t i) {
         FD::DiscContent dc;
         FD::ReadDiscContent(disc, dc);
         const bool called = SB::CallProcessFloppy(box, disc);
-        SB::SlotState after{};
-        SB::ReadSlot(box, after);
+        BoxSlot after{};
+        ReadBoxSlot(box, after);
         const bool discGone = !R::IsLive(disc);
         o.fired = called;
         UE_LOGI("floppy_selftest: %s %s box=%d '%ls' disc key='%ls' rw=%d rows=%zu -- slot type "
@@ -409,8 +434,8 @@ void Fire(size_t i) {
         return;
     }
     const bool called = SB::CallEjectFloppy(box);
-    SB::SlotState after{};
-    SB::ReadSlot(box, after);
+    BoxSlot after{};
+    ReadBoxSlot(box, after);
     o.fired = called;
     o.note = "slot drained";
     UE_LOGI("floppy_selftest: %s %s box=%d '%ls' -- slot type %d -> %d rw %d -> %d rows %d -> %d "

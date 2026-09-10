@@ -3,11 +3,14 @@
 //
 // What the wrapper reaches:
 //   - the power and boot axis: isOpened, powered, and the native power-button press
-//   - the floppy slot: floppyType, zip, readWrites, nametype, the objectData JSON, the data array
-//   - the disc props themselves (Aprop_floppyDisc_C, its data array and readWrites)
 //   - the file-buffer quad (floppyData, floppyBuffer, floppyBufferUIDs, floppyReadwrites), the
 //     widget rebuild a write to it must be followed by, and a digest of the widget's own mirror
 //     of that buffer
+//
+// The floppy SLOT is not here: every device that has one holds the same fields, so they live in
+// ue_wrap/devices/floppy_slot. floppyData is the one field the two share -- the game keeps the
+// disc's rows and the laptop's file buffer in it -- so a quad write and a slot write both reach
+// it, and the quad is the one that rebuilds the widget's own copy.
 //
 // No network logic, no coop state (principle 7). Game thread only.
 
@@ -38,29 +41,6 @@ bool ReadPower(PowerState& out);
 // passes a default-initialised FHitResult with the same action byte, and the ubergraph
 // stores that parameter without ever reading it.
 bool CallPowerToggle();
-
-// ---- floppy slot axis ----
-struct SlotState {
-    int32_t floppyType = -1;   // -1 = empty
-    bool    zip        = false;
-    int32_t readWrites = -1;
-};
-bool ReadSlot(SlotState& out);
-
-struct SlotContent {
-    std::wstring nametype;               // floppyNametype
-    std::wstring objectData;             // floppyObjectData (JSON of the disc's struct_save)
-    std::vector<std::wstring> data;      // floppyData
-};
-bool ReadSlotContent(SlotContent& out);
-
-// Receiver-side insert/eject scalar apply: floppyType/zip/readWrites raw
-// (native writes them raw too), nametype/objectData via engine-side FString
-// mint, data[] via EngineAlloc'd TArray<FString> mint. Refreshes the widget
-// (updFloppy) when reachable.
-bool WriteSlot(const SlotState& st, const SlotContent& content);
-bool WriteSlotScalars(const SlotState& st);  // scalars only; strings untouched
-bool ClearSlot();  // floppyType=-1 + arrays/strings emptied + widget refresh
 
 // ---- the file-buffer quad ----
 struct BufferQuad {

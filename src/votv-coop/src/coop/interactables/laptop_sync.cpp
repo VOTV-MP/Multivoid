@@ -11,6 +11,7 @@
 #include "coop/net/session.h"
 
 #include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/devices/floppy_slot.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
 #include "ue_wrap/core/log.h"
@@ -31,6 +32,24 @@ namespace {
 namespace L = ue_wrap::laptop;
 namespace PPC = ue_wrap::portable_pc;
 namespace R = ue_wrap::reflection;
+namespace FS = ue_wrap::floppy_slot;
+
+// The laptop's slot is the same slot every disc-holding device has: one owner
+// (ue_wrap/devices/floppy_slot), reached here with the laptop's own instance.
+constexpr FS::DeviceKind kSlotDev = FS::DeviceKind::Laptop;
+
+bool ReadSlot(FS::Scalars& st) {
+    return FS::EnsureResolved(kSlotDev) && FS::ReadScalars(kSlotDev, L::Instance(), st);
+}
+bool ReadSlotContent(FS::Content& c) {
+    return FS::EnsureResolved(kSlotDev) && FS::ReadContent(kSlotDev, L::Instance(), c);
+}
+bool WriteSlot(const FS::Scalars& st, const FS::Content& c) {
+    return FS::EnsureResolved(kSlotDev) && FS::WriteSlot(kSlotDev, L::Instance(), st, c);
+}
+bool ClearSlot() {
+    return FS::EnsureResolved(kSlotDev) && FS::ClearSlot(kSlotDev, L::Instance());
+}
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -108,7 +127,7 @@ uint64_t g_nextLidSweep = 0;
 struct PendingSlot {
     bool valid = false;
     uint8_t sender = 0xFF;
-    L::SlotState st;
+    FS::Scalars st;
     uint64_t deadline = 0;
 };
 // The park is per sender: two peers' concurrent inserts (both portals view the one laptop,
@@ -122,7 +141,7 @@ bool g_announced = false;
 // Serialisation: fields joined by 0x1F, UTF-8.
 constexpr char kSep = '\x1F';
 
-std::string PackSlotContent(const L::SlotContent& c) {
+std::string PackSlotContent(const FS::Content& c) {
     std::string out = coop::chat_feed::ToUtf8(c.nametype);
     out += kSep;
     out += coop::chat_feed::ToUtf8(c.objectData);
@@ -130,8 +149,8 @@ std::string PackSlotContent(const L::SlotContent& c) {
     return out;
 }
 
-L::SlotContent UnpackSlotContent(const std::string& bytes) {
-    L::SlotContent c;
+FS::Content UnpackSlotContent(const std::string& bytes) {
+    FS::Content c;
     std::vector<std::string> parts;
     size_t start = 0;
     for (size_t i = 0; i <= bytes.size(); ++i) {
@@ -179,8 +198,8 @@ void SendContentBlob(coop::net::Session* s, const std::string& bytes) {
 
 void PrimeBaselines() {
     L::PowerState ps;
-    L::SlotState st;
-    if (L::ReadPower(ps) && L::ReadSlot(st)) {
+    FS::Scalars st;
+    if (L::ReadPower(ps) && ReadSlot(st)) {
         g_prevOpened = ps.isOpened;
         g_prevType = st.floppyType;
         g_havePrev = true;
@@ -194,9 +213,9 @@ void PrimeBaselines() {
 // happens, since receivers write raw, primed). Reads the laptop's live scalars and strings
 // and ships the edge plus the chunks.
 void BroadcastInsert(coop::net::Session* s) {
-    L::SlotState st;
-    L::SlotContent c;
-    if (!L::ReadSlot(st) || !L::ReadSlotContent(c)) return;
+    FS::Scalars st;
+    FS::Content c;
+    if (!ReadSlot(st) || !ReadSlotContent(c)) return;
     coop::net::LaptopStatePayload p{};
     p.op = 1;
     p.zip = st.zip ? 1 : 0;
@@ -211,15 +230,15 @@ void BroadcastInsert(coop::net::Session* s) {
 void ApplyAssembledContent(const std::string& bytes, uint8_t senderSlot) {
     // Laptop slot content: pair it with the parked scalars from the edge that preceded these
     // chunks in-lane, and land both in one write (the atomic occupied apply).
-    L::SlotState st;
+    FS::Scalars st;
     auto pit = g_pendingSlots.find(senderSlot);
     if (pit != g_pendingSlots.end() && pit->second.valid) {
         st = pit->second.st;
         g_pendingSlots.erase(pit);
-    } else if (!L::ReadSlot(st)) {
+    } else if (!ReadSlot(st)) {
         return;
     }
-    L::WriteSlot(st, UnpackSlotContent(bytes));
+    WriteSlot(st, UnpackSlotContent(bytes));
     PrimeBaselines();
     UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, from slot %u)",
             st.floppyType, bytes.size(), static_cast<unsigned>(senderSlot));
@@ -334,8 +353,8 @@ void Tick() {
             UE_LOGW("laptop_sync: parked slot edge EXPIRED without content (type=%d, sender=%u) "
                     "-- scalar-only apply", it->second.st.floppyType,
                     static_cast<unsigned>(it->first));
-            L::SlotContent empty;
-            L::WriteSlot(it->second.st, empty);
+            FS::Content empty;
+            WriteSlot(it->second.st, empty);
             it = g_pendingSlots.erase(it);
             PrimeBaselines();
         } else {
@@ -346,8 +365,8 @@ void Tick() {
     ApplyPowerTarget(s);
 
     L::PowerState ps;
-    L::SlotState st;
-    if (!L::ReadPower(ps) || !L::ReadSlot(st)) return;
+    FS::Scalars st;
+    if (!L::ReadPower(ps) || !ReadSlot(st)) return;
 
     if (s->connected()) {
         // The power edge.
@@ -429,13 +448,13 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
         g_wantOpened = p.isOpened != 0;
         ApplyPowerTarget(s);
         if (p.op == 3) {
-            L::SlotState st;
+            FS::Scalars st;
             st.floppyType = p.floppyType;
             st.zip = p.zip != 0;
             st.readWrites = p.readWrites;
             if (st.floppyType < 0) {
                 // An empty slot: nothing follows, so apply the scalars now.
-                L::WriteSlotScalars(st);
+                ClearSlot();
             } else {
                 // Occupied: park until the content stream right behind lands; the scalars and
                 // strings apply atomically there.
@@ -462,7 +481,7 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
         break;
     }
     case 2: { // eject edge: clear scalars; the spawn arrives on the birth channels
-        L::ClearSlot();
+        ClearSlot();
         PrimeBaselines();
         UE_LOGI("laptop_sync: wire EJECT applied (from slot %u)",
                 static_cast<unsigned>(senderSlot));
@@ -506,9 +525,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!L::EnsureResolved() || !L::Instance()) return;
     L::PowerState ps;
-    L::SlotState st;
-    L::SlotContent c;
-    if (!L::ReadPower(ps) || !L::ReadSlot(st)) return;
+    FS::Scalars st;
+    FS::Content c;
+    if (!L::ReadPower(ps) || !ReadSlot(st)) return;
     coop::net::LaptopStatePayload p{};
     p.op = 3;
     p.isOpened = ps.isOpened ? 1 : 0;
@@ -516,7 +535,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     p.floppyType = st.floppyType;
     p.readWrites = st.readWrites;
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::LaptopState, &p, sizeof(p));
-    if (st.floppyType >= 0 && L::ReadSlotContent(c)) {
+    if (st.floppyType >= 0 && ReadSlotContent(c)) {
         // Point-to-point content toward the joiner only, in-lane after the state line (the state
         // and the blob share one lane, one FIFO).
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
@@ -562,6 +581,7 @@ void OnDisconnect() {
     g_nextLidSweep = 0;
     g_announced = false;
     L::ResetCache();
+    FS::ResetCache();
     ue_wrap::floppy_disc::ResetCache();  // the disc's class and offsets are world-scoped too
     PPC::ResetCache();
 }

@@ -35,8 +35,7 @@ uint64_t NowMs() {
 // ---- resolved state ----
 void*   g_cls          = nullptr;  // laptop_C
 int32_t g_offPowered = -1, g_offIsOpened = -1, g_offAnim = -1;
-int32_t g_offFloppyType = -1, g_offZip = -1, g_offReadWrites = -1;
-int32_t g_offNametype = -1, g_offObjectData = -1, g_offFloppyData = -1;
+int32_t g_offReadWrites = -1, g_offFloppyData = -1;
 int32_t g_offWidget = -1;
 void*   g_fnAction = nullptr;      // actionOptionIndex
 void*   g_fnUpdButton = nullptr;   // updButton
@@ -80,11 +79,7 @@ bool EnsureResolved() {
         { L"powered",          &g_offPowered,     0x42B },
         { L"isOpened",         &g_offIsOpened,    0x418 },
         { L"Anim",             &g_offAnim,        0x42A },
-        { L"floppyType",       &g_offFloppyType,  0x450 },
-        { L"zip",              &g_offZip,         0x4F8 },
         { L"floppyReadwrites", &g_offReadWrites,  0x4E8 },
-        { L"floppyNametype",   &g_offNametype,    0x4A0 },
-        { L"floppyObjectData", &g_offObjectData,  0x4C8 },
         { L"floppyData",       &g_offFloppyData,  0x458 },
         { L"Widget",           &g_offWidget,      0x420 },
     };
@@ -127,8 +122,8 @@ bool EnsureResolved() {
 
     g_cls = cls;
     g_resolved = true;
-    UE_LOGI("laptop: resolved (isOpened=0x%X floppyType=0x%X objectData=0x%X action=%p)",
-            g_offIsOpened, g_offFloppyType, g_offObjectData, g_fnAction);
+    UE_LOGI("laptop: resolved (isOpened=0x%X floppyData=0x%X readWrites=0x%X action=%p)",
+            g_offIsOpened, g_offFloppyData, g_offReadWrites, g_fnAction);
     return true;
 }
 
@@ -171,64 +166,6 @@ bool CallPowerToggle() {
         return false;
     }
     return Call(l, f);
-}
-
-bool ReadSlot(SlotState& out) {
-    void* l = Instance();
-    if (!l) return false;
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(l);
-    out.floppyType = *reinterpret_cast<const int32_t*>(p + g_offFloppyType);
-    out.zip        = p[g_offZip] != 0;
-    out.readWrites = *reinterpret_cast<const int32_t*>(p + g_offReadWrites);
-    return true;
-}
-
-bool ReadSlotContent(SlotContent& out) {
-    void* l = Instance();
-    if (!l) return false;
-    out.nametype   = ReadFStringAt(l, g_offNametype);
-    out.objectData = ReadFStringAt(l, g_offObjectData);
-    out.data       = ReadFStringArrayField(l, g_offFloppyData);
-    return true;
-}
-
-bool WriteSlotScalars(const SlotState& st) {
-    void* l = Instance();
-    if (!l) return false;
-    uint8_t* p = reinterpret_cast<uint8_t*>(l);
-    *reinterpret_cast<int32_t*>(p + g_offFloppyType) = st.floppyType;
-    p[g_offZip] = st.zip ? 1 : 0;
-    *reinterpret_cast<int32_t*>(p + g_offReadWrites) = st.readWrites;
-    CallWidgetUpdFloppy(l);
-    return true;
-}
-
-bool WriteSlot(const SlotState& st, const SlotContent& content) {
-    void* l = Instance();
-    if (!l) return false;
-    uint8_t* p = reinterpret_cast<uint8_t*>(l);
-    *reinterpret_cast<int32_t*>(p + g_offFloppyType) = st.floppyType;
-    p[g_offZip] = st.zip ? 1 : 0;
-    *reinterpret_cast<int32_t*>(p + g_offReadWrites) = st.readWrites;
-    WriteFStringField(l, g_offNametype, content.nametype);
-    WriteFStringField(l, g_offObjectData, content.objectData);
-    WriteFStringArrayField(l, g_offFloppyData, content.data);
-    CallWidgetUpdFloppy(l);
-    return true;
-}
-
-bool ClearSlot() {
-    void* l = Instance();
-    if (!l) return false;
-    uint8_t* p = reinterpret_cast<uint8_t*>(l);
-    *reinterpret_cast<int32_t*>(p + g_offFloppyType) = -1;
-    *reinterpret_cast<int32_t*>(p + g_offReadWrites) = -1;
-    p[g_offZip] = 0;
-    WriteFStringField(l, g_offNametype, std::wstring());
-    WriteFStringField(l, g_offObjectData, std::wstring());
-    WriteFStringArrayField(l, g_offFloppyData, {});
-    CallWidgetUpdFloppy(l);
-    return true;
 }
 
 // ---- the file-buffer quad --------------------------------------------------

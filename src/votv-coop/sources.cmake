@@ -65,6 +65,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
     src/ue_wrap/desk/tape_caddy.cpp
+    src/ue_wrap/devices/floppy_slot.cpp
     src/ue_wrap/devices/laptop.cpp
     src/ue_wrap/devices/portable_pc.cpp
     src/ue_wrap/devices/floppybox.cpp
