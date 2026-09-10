@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 153;
+inline constexpr uint16_t kProtocolVersion = 154;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -653,6 +653,12 @@ enum class ReliableKind : uint8_t {
     // is what a blob the arbiter cannot parse costs) and re-publishes it as PropSaveData. Never
     // relayed: a client's record reaches other peers only after the host has taken it.
     PropSaveDataIntent = 131,
+
+    // A disc-holding device's slot, addressed by the device's index in its own kind's list. Host
+    // to all with the canonical set; a peer to the host with the outcome of a slot its own game
+    // changed, which the host validates and answers with that canonical. Chunked blob; on
+    // PropSpawn's lane, so a claim cannot overtake the destroy of the disc it absorbed.
+    FloppySlotState = 132,
 };
 
 #pragma pack(push, 1)

@@ -70,8 +70,7 @@ Desc* DescOf(DeviceKind kind) {
 // ---- the box's mesh swap ---------------------------------------------------------------------
 //
 // lib_C::floppyFromType(type, getMesh, getType, __WorldContext, out class, out staticMeshes,
-// out typeName) indexes a seven-entry mesh list. An empty slot's -1 indexes out of range, which
-// hands back the list's default -- a null mesh -- so clearing needs no separate branch.
+// out typeName) indexes a seven-entry mesh list, so a type is a valid index or it is not a type.
 
 void* g_libCdo = nullptr;
 void* g_fnFloppyFromType = nullptr;
@@ -88,6 +87,9 @@ bool EnsureLib() {
 
 // The static mesh the game would show for this slot type, or null for an empty slot.
 void* MeshForType(void* worldContext, int32_t type) {
+    // An empty slot shows no mesh. floppyFromType would answer the same, by indexing its list out
+    // of range -- which is the game's own array-bounds warning, once per box, on every join.
+    if (type < 0) return nullptr;
     if (!EnsureLib()) return nullptr;
     ParamFrame f(g_fnFloppyFromType);
     if (!f.valid()) return nullptr;

@@ -307,6 +307,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/laptop_sync.cpp
     src/coop/interactables/laptop_buffer_sync.cpp
+    src/coop/interactables/floppy_slot_sync.cpp
     src/coop/interactables/floppybox_sync.cpp
     src/coop/interactables/signal_catch_sync.cpp
     src/coop/player/sleep_sync.cpp

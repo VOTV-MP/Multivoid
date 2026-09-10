@@ -1,22 +1,16 @@
 // ue_wrap/devices/floppy_slot.h -- the floppy slot: the fields a VOTV device holds a disc in,
 // for every device class that has one.
 //
-// Two devices carry the slot today and they carry the same four fields: floppyType (negative
-// when empty, and the index lib_C::floppyFromType reads a class and a mesh out of),
-// floppyReadwrites, floppyData (the disc's own data rows) and floppyObjectData (the JSON of the
-// disc's whole save struct, which the insert captures and the eject spawns the disc back from).
-// Alaptop_C adds the two members its second hitbox needs, zip and floppyNametype; AserverBox_C
-// has neither. AkerfurOmega_C carries three of the four -- no JSON, and it reconstitutes a disc
-// by property name instead -- and is not a row here: the robot has no lane of its own, so a slot
-// row for it would have no identity to travel under.
+// Alaptop_C and AserverBox_C carry the same four: floppyType (negative when empty, and the index
+// lib_C::floppyFromType reads a class and a mesh out of), floppyReadwrites, floppyData, and
+// floppyObjectData, the JSON of the disc's save struct that the insert captures and the eject
+// spawns the disc back from. The laptop adds the two its second hitbox needs. AkerfurOmega_C has
+// three of the four and rebuilds a disc by property name instead; it is not a row here, because
+// the robot has no lane and a slot row would have no identity to travel under.
 //
-// Applying a slot is more than the fields. The laptop's own widget refreshes through updFloppy.
-// The box has no notify-free refresh at all -- its mesh swap is inline in insertFloppy and
-// ejectFloppy, both EX_LocalVirtualFunction, and neither can be reached with a disc the
-// receiver does not have -- so an applied box slot sets the mesh here, from the same
-// lib_C::floppyFromType the game calls. The mesh's own relative pose needs no help: the eject
-// parks it at the in-slot transform before it animates the carrier out, so a peer that has
-// never inserted and a peer that last ejected are both already there.
+// Applying a slot is more than the fields: the laptop's widget refreshes through updFloppy, and
+// the box, whose mesh swap is inline in two EX_LocalVirtualFunction verbs, gets its mesh set
+// here. The mesh's pose needs no help -- the eject parks it at the in-slot transform first.
 //
 // No network logic, no coop state (principle 7). Game thread only.
 
