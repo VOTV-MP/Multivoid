@@ -31,9 +31,14 @@ Nothing about a prop is reflected as replication, so the mod watches four seams:
 | was spawned by the spawn menu or extracted from a container on the host | the engine's finish-spawning call, because those births run their initialisation inside the Blueprint where no hook sees it |
 | was destroyed | the engine's destroy call on either role: eaten, broken, picked up into a pocket (`coop/props/prop_lifecycle`); a prop that vanishes inside a Blueprint (the truck, culling, a lifespan) is caught by the host's death-watch and destroyed by id on every peer (`coop/props/registry_reaper`) |
 
-A birth message carries the prop's class, key, id, transform, physics flags and, for classes
-that keep one, the save scalar the prop was born with (a tape reel's progress), read by one
-reader on every birth path so a mirror never starts from a class default.
+A birth message carries the prop's class, key, id, transform and physics flags. For a class that
+keeps save state of its own -- a tape reel's progress, a floppy disc's files -- a second message
+follows it on the same lane with the prop's whole save record, the bytes the prop's own `getData`
+produces, addressed by key (`coop/props/prop_save_data`). Which classes those are is not a list we
+keep: it is whether the class declares a `getData` of its own, read from the live class chain, so a
+save-backed class the game adds is carried without a change here. A record that arrives for a prop
+this peer has not created yet waits under its key until that prop appears, because a key survives
+the destroy-and-recreate that made the record need to travel in the first place.
 
 ### Who authors a prop
 
