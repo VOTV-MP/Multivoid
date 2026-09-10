@@ -222,6 +222,16 @@ int32_t Count() {
     return a->num;
 }
 
+int32_t IndexOf(void* actor) {
+    if (!actor) return -1;
+    TArrayView* a = Dishs();
+    if (!a || a->num < 0 || a->num > 64) return -1;  // sanity (the map places ~10)
+    for (int32_t i = 0; i < a->num; ++i) {
+        if (DishAt(a, i) == actor) return i;          // membership in the array IS the validation
+    }
+    return -1;
+}
+
 int32_t MovingCount() {
     TArrayView* a = Dishs();
     if (!a || !g_coreResolved) return -1;

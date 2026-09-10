@@ -30,6 +30,14 @@ bool EnsureResolved();
 // Number of live dishes in gamemode.dishs (0 if unresolved / no world).
 int32_t Count();
 
+// The ordinal of `actor` in the level-authored mainGamemode.dishs array, or -1 if it is not a
+// live dish in that array. This is the dish's STABLE cross-peer identity: the array is
+// index-sorted by level-authored dish.Index and both peers load the same blob, so the same
+// physical dish has the same ordinal on every machine. Exposed so coop::element::
+// PortableIdentity can give a keyless, non-WasLoaded dish (a level-placed Adish_C) a portable
+// identity for its child actors (doors), which otherwise would resolve to NO identity at all.
+int32_t IndexOf(void* actor);
+
 // Per-dish diagnostic snapshot: the commanded TARGET (lookAt, absolute) + the
 // slew flag, per live dish. lookAt is the SETTLED discriminator (readable while
 // isMoving=true), so a HOST-vs-CLIENT diff can compare aim targets even mid-slew.

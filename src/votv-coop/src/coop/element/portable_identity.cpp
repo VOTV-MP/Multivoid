@@ -8,6 +8,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"   // UObject_ObjectFlags
 #include "ue_wrap/engine/engine.h"      // IsChildActor / ParentActorOf
+#include "ue_wrap/desk/dish.h"          // IndexOf (the keyless dish's stable ordinal)
 
 #include <mutex>
 #include <set>
@@ -65,6 +66,17 @@ std::wstring PortableIdentity(void* actor) {
                 key = ue_wrap::prop::GetActorSaveKeyString(cur);   // the OTHER half of the key surface
             if (!key.empty() && key != L"None") {
                 anchor = L"k:" + key;
+            } else if (int dishIdx = ue_wrap::dish::IndexOf(cur); dishIdx >= 0) {
+                // The dish (Adish_C) is a level-placed anchor with NO save Key (not Aprop_C /
+                // Aactor_save_C) and -- per the measurement above -- never RF_WasLoaded, so it
+                // reaches here with nothing to anchor on and its child (the door) used to resolve
+                // to NO identity. Its stable cross-peer identity is its ordinal in the
+                // level-authored, index-sorted mainGamemode.dishs array: the SAME quantity
+                // dish_sync pairs on, identical on every machine that loads this build. (The
+                // name branch below would be per-process and is deliberately NOT used for it.)
+                wchar_t idxBuf[16];
+                swprintf(idxBuf, 16, L"d:%d", static_cast<int>(dishIdx));
+                anchor = idxBuf;
             } else if (WasLoaded(cur)) {
                 anchor = L"n:" + R::ToString(R::NameOf(cur));
             } else {
@@ -147,6 +159,13 @@ bool RunSelfTest() {
     //    under two parents, and two components under one parent.
     CHECK(IdentityHash(L"n:dish19/door") != IdentityHash(L"n:dish5/door"), "parent distinguishes");
     CHECK(IdentityHash(L"n:dish19/door") != IdentityHash(L"n:dish19/lightswitch"), "component distinguishes");
+
+    // 3b. The DISH-INDEX shape (`d:<ordinal>`) is the portable identity a keyless,
+    //     non-WasLoaded dish (a level-placed Adish_C) gives its child actors such as the door.
+    //     It must be a well-formed identity of its own: distinct from the name anchor of the
+    //     same component, and two different dish indices must not collide.
+    CHECK(IdentityHash(L"d:5/door") != IdentityHash(L"n:dish5/door"), "dish-index anchor distinct from name");
+    CHECK(IdentityHash(L"d:5/door") != IdentityHash(L"d:19/door"), "dish index distinguishes");
 
     // 4. NON-ASCII must not be truncated to its low byte -- two Cyrillic names one code unit
     //    apart must not collide (the wchar-truncation bug class the text lane already paid for).
