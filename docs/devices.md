@@ -240,6 +240,7 @@ an error line.
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
 | A disc ejected from a signal server is born where that box turned its own collision off, and the box on the other machine, which never ejected, takes it through the same overlap an insert uses. The disc dies about a second later on both machines, and the slot lane replicates the swallow faithfully | `[V]` a two-peer run: the box that could not reach the disc gave it back intact, the two that could hold a content-less one |
+| A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried | `[V]` the lane polls at 1 Hz; a faster poll would narrow the window rather than close it |
 
 ## Code map
 

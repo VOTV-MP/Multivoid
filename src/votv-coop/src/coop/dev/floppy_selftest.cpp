@@ -149,7 +149,9 @@ uint64_t g_connectedAtMs = 0;
 uint64_t g_nextCensusMs  = 0;
 uint64_t g_postAtMs      = 0;
 int      g_postStep      = -1;
-bool     g_watched[8]    = {};   // the non-firing role's one-shot arm per episode
+bool     g_watched[kStepCount] = {};  // the non-firing role's one-shot arm per episode
+static_assert(sizeof(g_watched) / sizeof(g_watched[0]) == kStepCount,
+              "one watch flag per episode, or a new row overruns it silently");
 bool     g_seeded        = false;
 bool     g_picked        = false;
 bool     g_finalDone     = false;
