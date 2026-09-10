@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/net/session.h"
+#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -68,8 +69,11 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// The schedule, measured from the first tick at which this peer is connected. The gaps are wide
-// enough that the two peers reaching that tick a second apart cannot reorder two episodes, and
+// The schedule, measured from the first tick at which BOTH peers are in the world. Anchoring on
+// this peer's own connect instead put the two clocks about ten seconds apart -- the host binds
+// and the client joins after a save transfer and a world load -- so a client's insert at its
+// t+20s and the host's eject of that insert at the host's t+30s landed in the same wall second,
+// and the eject read an empty slot. The gaps below are wide next to the lane's 1 Hz poll and
 // wider than the box's out-timeline, which is what hands an eject its disc.
 constexpr uint64_t kSeedMs   =  8000;
 constexpr uint64_t kPickMs   = 16000;
@@ -531,7 +535,11 @@ void Tick() {
     if (!s || !s->connected()) return;
     const bool isHost = s->role() == coop::net::Role::Host;
     const uint64_t now = NowMs();
+    // The shared origin: this peer is in the world, and so is the other one.
     if (!g_connectedAtMs) {
+        // The two roles ask different questions: only a CLIENT announces ClientWorldReady, and
+        // the host learns the same fact as that slot going world-ready.
+        if (isHost ? !s->IsSlotWorldReady(1) : !coop::net_pump::HasAnnouncedWorldReady()) return;
         g_connectedAtMs = now;
         g_nextCensusMs = now + kCensusMs;
         UE_LOGI("floppy_selftest: ARMED role=%s (seed +%llus, discs named +%llus, first episode "
