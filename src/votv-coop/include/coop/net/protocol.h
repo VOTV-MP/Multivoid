@@ -27,7 +27,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // The build number of the version pair (game target + build). Two peers must carry the same
 // value to share a lobby; the check is byte equality per lobby, an older cohort keeps playing
 // among itself. Bumped on every wire change and on every release.
-inline constexpr uint16_t kProtocolVersion = 152;
+inline constexpr uint16_t kProtocolVersion = 153;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -529,9 +529,9 @@ enum class ReliableKind : uint8_t {
     // Host to all: the daily task mirror. TaskNewStatePayload.
     TaskNewState = 103,
 
-    // Client to host: my eject birthed this reel in my hands; author it. PropDropIntentPayload with
-    // the progress in savedScalar; class-whitelisted to the reels; Bulk lane, so a pocket destroy
-    // cannot overtake it.
+    // Client to host: my eject birthed this prop in my hands; author it. PropDropIntentPayload;
+    // class-whitelisted to the fresh-birth lineages; Bulk lane, so a pocket destroy cannot overtake
+    // it. The prop's own state follows on PropSaveDataIntent, in the same FIFO.
     ReelEjectIntent = 104,
 
     // From the presser, relayed: play a desk one-shot cue, or switch a desk loop on or off, on this
@@ -636,6 +636,20 @@ enum class ReliableKind : uint8_t {
     // a group are host-owned world systems. A client's press still reaches the host as a LightState
     // edge. KeyedTogglePayload.
     LightGroupState = 129,
+
+    // Host to all: one prop's OWN save record, the bytes its getData produced, addressed by the
+    // prop's Key inside the blob body (a chunk header carries no key). Chunked; rides PropSpawn's
+    // lane so a record can never overtake the birth it belongs to. A record for a prop this peer
+    // has not got yet is parked BY KEY and applied when that prop appears -- an identity, unlike an
+    // element id, is still the same identity after the actor it named has been destroyed and
+    // remade.
+    PropSaveData = 130,
+
+    // Client to host: the same record for a prop the client just authored -- an eject, a drop, a
+    // hand release. The host validates it (size and rate; the content is the holder's claim, which
+    // is what a blob the arbiter cannot parse costs) and re-publishes it as PropSaveData. Never
+    // relayed: a client's record reaches other peers only after the host has taken it.
+    PropSaveDataIntent = 131,
 };
 
 #pragma pack(push, 1)
@@ -1063,11 +1077,8 @@ struct PropSpawnPayload {
     // this rather than the current pose, so a pile the host moved during the join window is
     // reconciled instead of duplicated. Valid iff hasMatchPos.
     float         matchX, matchY, matchZ;   // 12 -- save-time position (world cm); valid iff hasMatchPos
-    // A per-class save scalar (a reel's progress) applied at mirror birth, filled by the one shared
-    // reader ue_wrap::prop::ReadSavedScalarForClass. Valid iff kHasSavedScalar.
-    float         savedScalar;      // 4 -- per-class save scalar (reels: Progress); valid iff kHasSavedScalar
 };
-static_assert(sizeof(PropSpawnPayload) == 212, "PropSpawnPayload must be 212 bytes");
+static_assert(sizeof(PropSpawnPayload) == 208, "PropSpawnPayload must be 208 bytes");
 static_assert(sizeof(PropSpawnPayload) <= 256 - 20 - 8,
               "PropSpawnPayload must fit in one reliable datagram");
 
@@ -1080,7 +1091,11 @@ inline constexpr uint8_t kFrozen          = 0x04;
 inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static
 inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep
 inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn
-inline constexpr uint8_t kHasSavedScalar  = 0x40;  // PropSpawnPayload.savedScalar / PropDropIntentPayload.savedScalar is valid
+// 0x40 was kHasSavedScalar, the one hand-picked save field a spawn row carried. PropSaveData now
+// carries the whole record for any class that has one, so the flag and its float went with it. The
+// four bits above stay: they are the BIRTH recipe, raw-written before FinishSpawningActor so the
+// prop's own init() derives physics and collision from them, which is a moment no later message
+// can reach.
 }  // namespace propspawn_flags
 
 // A prop death (PropDestroy): the key, and the sender's element id for the mirror binding. The
@@ -1105,10 +1120,8 @@ struct PropDropIntentPayload {
     float         scaleX, scaleY, scaleZ;       // 12 -- placed actor's GetActorScale3D
     uint8_t       physFlags;                    // 1  -- propspawn_flags (kStatic/kFrozen/kSleep/kRemoveWOrespawn parity)
     uint8_t       _pad[3];                      // 3  -- 4-byte alignment; zero on the wire
-    // The per-class save scalar (ReelEjectIntent carries a reel's progress); valid iff kHasSavedScalar.
-    float         savedScalar;                  // 4 -- valid iff physFlags & kHasSavedScalar
 };
-static_assert(sizeof(PropDropIntentPayload) == 172, "PropDropIntentPayload must be 172 bytes");
+static_assert(sizeof(PropDropIntentPayload) == 168, "PropDropIntentPayload must be 168 bytes");
 static_assert(sizeof(PropDropIntentPayload) <= 256 - 20 - 8, "PropDropIntentPayload must fit one datagram");
 
 // --- The save transfer ---

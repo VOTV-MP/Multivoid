@@ -54,8 +54,8 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
 // HostSpawnPlacedProp path. CLASS-WHITELISTED to THREE lineages, not a general client-spawn door:
 // the reel (caddy and reelbox), the desk module, and the drive. The kind's name predates the other
 // two and now understates it; the receiver gate and the client's own fresh-birth gate name the same
-// three. The payload's savedScalar carries a reel's Progress, and the kSleep flag makes the host copy
-// spawn inert until the client's held-prop pose stream drives it.
+// three. The kSleep flag makes the host copy spawn inert until the client's held-prop pose stream
+// drives it, and the prop's own state follows on PropSaveDataIntent in the same FIFO.
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                        uint8_t senderSlot);
 

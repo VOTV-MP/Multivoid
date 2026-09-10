@@ -53,10 +53,10 @@ struct SaveRecord {
 // In a dump the bottom-line `Size:` is PropertiesSize; the per-field embedded `size:` is the
 // stride.
 inline constexpr int32_t kSaveStride   = 0x100;
-// The record's own FIELD span: the last group (`names`) sits at 0xE8 and is a 16-byte TArray, so
-// every field lives below 0xF8. The stride above is that rounded to the struct's 16 alignment, and
-// the difference is real padding -- copying a record BETWEEN two parameter frames must move 0xF8,
-// because the 8 bytes past it belong to whatever parameter the engine laid down next.
+// The record's own FIELD span: the last value group is a TArray, and every field ends inside this
+// many bytes. The stride above is that rounded up to the struct's 16 alignment, and the difference
+// is real padding -- copying a record BETWEEN two parameter frames must move the SPAN, because the
+// bytes past it belong to whatever parameter the engine laid down next.
 inline constexpr int32_t kSaveRecordBytes = 0xF8;
 inline constexpr int32_t kMxStride     = 0x10;  // Fstruct_mX wraps a single TArray<X> @ +0; already 16-aligned
 inline constexpr int32_t kSignalStride = 0x70;  // Fstruct_signalDataDynamic; no 16-aligned member

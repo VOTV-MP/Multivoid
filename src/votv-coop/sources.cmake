@@ -217,6 +217,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_container_extract.cpp
     src/coop/props/prop_drop_intent.cpp
     src/coop/props/prop_snapshot.cpp
+    src/coop/props/prop_save_data.cpp
     src/coop/props/prop_stick_sync.cpp
     src/coop/props/prop_synth_key.cpp
     src/coop/props/prop_fresh_spawn.cpp

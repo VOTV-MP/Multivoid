@@ -9,6 +9,7 @@
 #include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkIncomingSpawn
 #include "coop/props/prop_element_tracker.h"  // IndexActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
+#include "coop/props/prop_save_data.h"
 #include "coop/props/remote_prop.h"           // RegisterPropMirror / DriveSimulate / DriveSet*Velocity
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
@@ -262,15 +263,11 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         UE_LOGI("remote_prop::OnSpawn: applied chipType=%u variant to '%ls'",
                 static_cast<unsigned>(variant), classW.c_str());
     }
-    // The save-scalar birth channel: write the reel's progress onto the fully constructed mirror
-    // (post-finish is measured safe; the reel's only progress consumers are the look-at and the
-    // load). One apply site for the live express and the join snapshot.
-    if (payload.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
-        if (ue_wrap::prop::ApplySavedScalarForClass(spawned, payload.savedScalar)) {
-            UE_LOGI("remote_prop::OnSpawn: applied savedScalar=%.2f to '%ls'",
-                    payload.savedScalar, classW.c_str());
-        }
-    }
+    // The prop's own save record, if it is already parked for this Key. This is the declared
+    // readiness point: the record's own key field is the saved identity, so a mirror that takes it
+    // ends up with the state AND the identity the authority has, rather than a fresh mint from the
+    // spawn seam. A record still in flight lands on this actor by Key when it arrives.
+    if (!keyW.empty()) coop::prop_save_data::ApplyParked(spawned, keyW);
     // A landed pile needs no morph: it spawns and sits. turnToPile is the pile-to-clump grab morph
     // (it spawns a clump, throws it and destroys the pile), so calling it on a fresh pile
     // destroyed the pile and spawned a stray self-converting clump, the persistent clump dupe.

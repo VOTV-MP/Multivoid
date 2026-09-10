@@ -10,7 +10,6 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
-#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
 #include "ue_wrap/core/log.h"
@@ -22,15 +21,13 @@
 #include <chrono>
 #include <cstring>
 #include <map>
-#include <set>
 #include <string>
 #include <vector>
 
 namespace coop::laptop_sync {
 namespace {
 
-namespace L  = ue_wrap::laptop;
-namespace FD = ue_wrap::floppy_disc;
+namespace L = ue_wrap::laptop;
 namespace PPC = ue_wrap::portable_pc;
 namespace R = ue_wrap::reflection;
 
@@ -38,9 +35,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr uint64_t kPollMs        = 250;    // the 4 Hz edge poll
 constexpr uint64_t kLidSweepMs    = 1000;   // 1 Hz portable-PC lid sweep (the rack cadence)
-constexpr uint64_t kEjectWatchMs  = 10000;  // post-eject disc-content publish window
 constexpr uint64_t kChunkTtlMs    = 10000;  // half-assembled content stream TTL
-constexpr uint64_t kPendingTtlMs  = 30000;  // deferred disc-content apply TTL
+constexpr uint64_t kPendingTtlMs  = 30000;  // deferred lid apply TTL
 constexpr size_t   kContentCapBytes = 4096;  // the total content cap (truncate with a warning)
 // The pending-lid table is keyed by a wire eid and inserted into precisely when that eid does
 // not resolve: the garbage case is the inserting case, so an attacker-chosen eid stream grows
@@ -55,7 +51,10 @@ constexpr size_t   kContentCapBytes = 4096;  // the total content cap (truncate 
 // is a window.
 constexpr size_t   kLidPendingCap = 64;
 
-// The content-blob head: a kind byte and the eid; kind 0 is the slot, 1 a disc.
+// The content-blob head: a kind byte and an eid the slot lane does not use (kind 0, eid 0). The
+// disc's own content left this lane with kind 1: a disc's state is its SAVE RECORD, addressed by
+// Key, and coop/props/prop_save_data carries it -- an eid names an actor, and this content's whole
+// problem was that the actor is destroyed and remade.
 constexpr size_t kBlobHead = 5;
 
 uint64_t NowMs() {
@@ -86,8 +85,6 @@ bool g_wantOpened = false;
 
 // The post-eject disc-content publish watch (both roles; the client sends to the host, the
 // host broadcasts).
-uint64_t g_ejectWatchUntil = 0;
-std::set<uint32_t> g_publishedContentEids;
 
 // The content-blob reassembly (keyed by sender and sequence) and the per-sender sequence mint
 // shared by the broadcast and to-slot sends: one counter per kind owner, so the pair is
@@ -101,13 +98,6 @@ std::map<uint32_t, bool> g_lidPrev;
 struct PendingLid { bool opened; uint64_t deadline; };
 std::map<uint32_t, PendingLid> g_lidPending;
 uint64_t g_nextLidSweep = 0;
-
-// Deferred disc-content applies (the mirror not materialised yet).
-struct PendingDisc {
-    FD::DiscContent content;
-    uint64_t deadline = 0;
-};
-std::map<uint32_t, PendingDisc> g_pendingDisc;
 
 // The occupied-slot scalar edge is not applied on arrival: it parks here until its content
 // stream assembles, and the scalars and strings land in one write (applying scalars with
@@ -153,27 +143,6 @@ L::SlotContent UnpackSlotContent(const std::string& bytes) {
     if (!parts.empty()) c.nametype = FromUtf8(parts[0]);
     if (parts.size() > 1) c.objectData = FromUtf8(parts[1]);
     for (size_t i = 2; i < parts.size(); ++i) c.data.push_back(FromUtf8(parts[i]));
-    return c;
-}
-
-std::string PackDiscContent(const FD::DiscContent& c) {
-    std::string out = std::to_string(c.readWrites);
-    for (const auto& d : c.data) { out += kSep; out += coop::chat_feed::ToUtf8(d); }
-    return out;
-}
-
-FD::DiscContent UnpackDiscContent(const std::string& bytes) {
-    FD::DiscContent c;
-    std::vector<std::string> parts;
-    size_t start = 0;
-    for (size_t i = 0; i <= bytes.size(); ++i) {
-        if (i == bytes.size() || bytes[i] == kSep) {
-            parts.push_back(bytes.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    if (!parts.empty()) c.readWrites = atoi(parts[0].c_str());
-    for (size_t i = 1; i < parts.size(); ++i) c.data.push_back(FromUtf8(parts[i]));
     return c;
 }
 
@@ -244,94 +213,30 @@ void BroadcastInsert(coop::net::Session* s) {
             st.floppyType, static_cast<unsigned>(p.zip), st.readWrites);
 }
 
-// The post-eject content publish: find a content-bearing disc row not yet published; the
-// client sends it to the host (the authority), the host broadcasts. Bounded: it runs only
-// inside the post-eject window, with the cheap class gate first, and it walks the element
-// snapshot, not the object array.
-void DriveEjectContentWatch(coop::net::Session* s, uint64_t now) {
-    if (!g_ejectWatchUntil) return;
-    if (now > g_ejectWatchUntil) { g_ejectWatchUntil = 0; return; }
-    static std::vector<coop::element::Prop*> rows;
-    coop::element::MirrorManager<coop::element::Prop>::Instance().Snapshot(rows);
-    for (coop::element::Prop* row : rows) {
-        if (!row) continue;
-        void* actor = row->GetActor();
-        if (!actor) continue;
-        void* cls = R::ClassOf(actor);
-        if (!FD::IsDiscClass(cls)) continue;
-        const uint32_t eid = static_cast<uint32_t>(row->GetId());
-        if (!eid || g_publishedContentEids.count(eid)) continue;
-        FD::DiscContent dc;
-        if (!FD::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
-        g_publishedContentEids.insert(eid);
-        g_ejectWatchUntil = 0;
-        SendContentBlob(s, /*kind*/1, eid, PackDiscContent(dc));
-        UE_LOGI("laptop_sync: post-eject disc content published (eid=%u, %zu string(s), rw=%d)",
-                eid, dc.data.size(), dc.readWrites);
-        return;
-    }
-}
-
-void DrivePendingDiscApplies(uint64_t now) {
-    for (auto it = g_pendingDisc.begin(); it != g_pendingDisc.end();) {
-        coop::element::Prop* row =
-            coop::element::MirrorManager<coop::element::Prop>::Instance().Get(it->first);
-        void* actor = row ? row->GetActor() : nullptr;
-        if (actor) {
-            if (FD::WriteDiscContent(actor, it->second.content))
-                UE_LOGI("laptop_sync: deferred disc content applied (eid=%u)", it->first);
-            it = g_pendingDisc.erase(it);
-            continue;
-        }
-        if (now > it->second.deadline) {
-            UE_LOGW("laptop_sync: deferred disc content EXPIRED unapplied (eid=%u -- mirror "
-                    "never materialized)", it->first);
-            it = g_pendingDisc.erase(it);
-            continue;
-        }
-        ++it;
-    }
-}
-
 void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
                            const std::string& bytes, uint8_t senderSlot) {
-    if (kind == 0) {
-        // Laptop slot content: pair it with the parked scalars from the edge that preceded these
-        // chunks in-lane, and land both in one write (the atomic occupied apply).
-        L::SlotState st;
-        auto pit = g_pendingSlots.find(senderSlot);
-        if (pit != g_pendingSlots.end() && pit->second.valid) {
-            st = pit->second.st;
-            g_pendingSlots.erase(pit);
-        } else if (!L::ReadSlot(st)) {
-            return;
-        }
-        L::WriteSlot(st, UnpackSlotContent(bytes));
-        PrimeBaselines();
-        UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, "
-                "from slot %u)", st.floppyType, bytes.size(),
-                static_cast<unsigned>(senderSlot));
+    (void)s;
+    (void)eid;
+    if (kind != 0) {
+        UE_LOGW("laptop_sync: content blob kind=%u from slot %u -- this lane carries the LAPTOP "
+                "SLOT only; a disc's own state rides PropSaveData by Key",
+                static_cast<unsigned>(kind), static_cast<unsigned>(senderSlot));
         return;
     }
-    // Kind 1, disc content by eid: write the target (the host's authoritative actor, the
-    // client's mirror) or defer. The host re-fan is per chunk in the chunk receiver,
-    // attribution-stable; no post-apply re-fan.
-    const FD::DiscContent dc = UnpackDiscContent(bytes);
-    coop::element::Prop* row =
-        coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
-    void* actor = row ? row->GetActor() : nullptr;
-    if (actor && FD::WriteDiscContent(actor, dc)) {
-        UE_LOGI("laptop_sync: disc content applied (eid=%u, from slot %u)",
-                eid, static_cast<unsigned>(senderSlot));
-    } else {
-        PendingDisc pd;
-        pd.content = dc;
-        pd.deadline = NowMs() + kPendingTtlMs;
-        g_pendingDisc[eid] = pd;
-        UE_LOGI("laptop_sync: disc content deferred (eid=%u not materialized yet)", eid);
+    // Laptop slot content: pair it with the parked scalars from the edge that preceded these
+    // chunks in-lane, and land both in one write (the atomic occupied apply).
+    L::SlotState st;
+    auto pit = g_pendingSlots.find(senderSlot);
+    if (pit != g_pendingSlots.end() && pit->second.valid) {
+        st = pit->second.st;
+        g_pendingSlots.erase(pit);
+    } else if (!L::ReadSlot(st)) {
+        return;
     }
-    g_publishedContentEids.insert(eid);  // idempotence across the watch + wire
-    (void)s;
+    L::WriteSlot(st, UnpackSlotContent(bytes));
+    PrimeBaselines();
+    UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, from slot %u)",
+            st.floppyType, bytes.size(), static_cast<unsigned>(senderSlot));
 }
 
 // The portable-PC lid axis (op 6).
@@ -452,7 +357,6 @@ void Tick() {
         }
     }
 
-    DrivePendingDiscApplies(now);
     ApplyPowerTarget(s);
 
     L::PowerState ps;
@@ -482,10 +386,8 @@ void Tick() {
             coop::net::LaptopStatePayload p{};
             p.op = 2;
             SendOut(s, p, -1);
-            g_ejectWatchUntil = now + kEjectWatchMs;
-            UE_LOGI("laptop_sync: local EJECT edge -- broadcast (content watch armed)");
+            UE_LOGI("laptop_sync: local EJECT edge -- broadcast");
         }
-        DriveEjectContentWatch(s, now);
     }
 
     g_prevOpened = ps.isOpened;
@@ -640,25 +542,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
                                           g_blobSeq++, MakeContentBlob(0, 0, PackSlotContent(c)));
     }
-    // Live content-bearing discs (mid-session ejects the save transfer cannot carry): ground
-    // truth read off the element snapshot, no bookkeeping.
-    static std::vector<coop::element::Prop*> rows;
-    coop::element::MirrorManager<coop::element::Prop>::Instance().Snapshot(rows);
-    int shipped = 0;
-    for (coop::element::Prop* row : rows) {
-        if (!row) continue;
-        void* actor = row->GetActor();
-        if (!actor) continue;
-        if (!FD::IsDiscClass(R::ClassOf(actor))) continue;
-        FD::DiscContent dc;
-        if (!FD::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
-        const uint32_t eid = static_cast<uint32_t>(row->GetId());
-        if (!eid) continue;
-        coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
-                                          g_blobSeq++,
-                                          MakeContentBlob(1, eid, PackDiscContent(dc)));
-        ++shipped;
-    }
+    // Live discs are NOT seeded here any more: a disc's content is its save record, and
+    // coop/props/prop_save_data seeds one per keyed prop by Key, after the prop snapshot.
     // The current lid state per portable PC (a runtime-only field; the joiner always arrives
     // lid-closed, so these rows are the only source).
     int lids = 0;
@@ -680,9 +565,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             ++lids;
         }
     }
-    UE_LOGI("laptop_sync: connect state -> slot %d (isOpened=%u type=%d, %d disc content "
-            "row(s), %d lid row(s))",
-            peerSlot, static_cast<unsigned>(p.isOpened), p.floppyType, shipped, lids);
+    UE_LOGI("laptop_sync: connect state -> slot %d (isOpened=%u type=%d, %d lid row(s))",
+            peerSlot, static_cast<unsigned>(p.isOpened), p.floppyType, lids);
 }
 
 void OnDisconnect() {
@@ -691,10 +575,7 @@ void OnDisconnect() {
     g_prevType = -1;
     g_nextPoll = 0;
     g_wantValid = false;
-    g_ejectWatchUntil = 0;
-    g_publishedContentEids.clear();
     g_blobAsm.Clear();
-    g_pendingDisc.clear();
     g_pendingSlots.clear();
     g_lidPrev.clear();
     g_lidPending.clear();

@@ -15,6 +15,7 @@
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass
 #include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm, the conversion-successor peek
 #include "coop/props/prop_echo_suppress.h"
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"
@@ -241,13 +242,6 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
-        // The save scalar (a reel's Progress) at birth, the same reader the snapshot and extract
-        // fills use.
-        float sc = 0.f;
-        if (ue_wrap::prop::ReadSavedScalarForClass(self, sc)) {
-            p.savedScalar = sc;
-            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
-        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
@@ -271,6 +265,8 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
                 (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
         s->SendPropSpawn(p);
+        // The prop's own save record, behind the spawn row in the same FIFO.
+        coop::prop_save_data::PublishWithSpawn(s, self, p.key);
     }
     // Self-claim: this peer just expressed the spawn, so an open snapshot bracket's sweep must not
     // destroy it as unclaimed.

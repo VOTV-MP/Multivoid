@@ -237,13 +237,4 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist 
 // False if the mesh or the UFunction does not resolve. Idempotent.
 bool ForceRestoreDefaultCollision(void* prop);
 
-// The per-class save-scalar birth channel: state VOTV's own save carries in struct_save.mFloat[0]
-// and loadData restores, which a mirror must receive at birth or a peer interacting with it
-// reads a CDO default and re-broadcasts it as truth. Currently the Aprop_reel_C lineage (Progress,
-// through ue_wrap::tape_caddy). Read is false for a class with no scalar; Apply is
-// the one mirror-birth write site, safe after Finish (the reel's consumers are lookAt and
-// loadData).
-bool ReadSavedScalarForClass(void* actor, float& out);
-bool ApplySavedScalarForClass(void* actor, float value);
-
 }  // namespace ue_wrap::prop

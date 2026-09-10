@@ -755,22 +755,4 @@ bool ForceRestoreDefaultCollision(void* prop) {
     return true;
 }
 
-// The save-scalar birth channel (see prop.h).
-
-bool ReadSavedScalarForClass(void* actor, float& out) {
-    if (!actor) return false;
-    // The reel lineage declares Progress; tape_caddy resolves lazily, and an unresolved state
-    // reads as no scalar.
-    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
-    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
-    return ue_wrap::tape_caddy::ReadProgress(actor, out);
-}
-
-bool ApplySavedScalarForClass(void* actor, float value) {
-    if (!actor) return false;
-    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
-    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
-    return ue_wrap::tape_caddy::WriteProgress(actor, value);
-}
-
 }  // namespace ue_wrap::prop

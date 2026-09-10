@@ -8,7 +8,7 @@
 //                client per-channel EXACT-SNAP only when local != -1 AND wire != -1
 //                (sentinel transitions live exclusively on the reliable lane) + an
 //                IsRecent window after a local insert.
-//   PROP BIRTH-- NOT here: PropSpawn.savedScalar + ReelEjectIntent (prop_drop_intent).
+//   PROP BIRTH-- NOT here: PropSaveData (coop/props/prop_save_data), the prop's own record.
 //   TOGGLE    -- NOT here: the symmetric ApplianceState lane owns wallunit.Active.
 
 #include "coop/interactables/tape_caddy_sync.h"

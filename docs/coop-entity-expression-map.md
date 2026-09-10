@@ -64,14 +64,18 @@ are peer-gated. `[V]`
   intent for a parked key placed after a pickup, and the whitelisted births (a reel, a module, a
   drive, a container extract) the client cannot avoid; the host performs both. Any other
   client-born keyed prop is dropped at the door. `[V]`
-- **A save scalar at birth.** Per-prop save state a class keeps (a reel's progress) rides the
-  spawn payload on every birth path through one reader, so a mirror never starts from a class
-  default. `[V]`
+- **The prop's own save record, beside its birth.** A class that keeps save state of its own --
+  a reel's progress, a disc's files -- has that state serialized by the game's own `getData` and
+  carried on its own message, addressed by Key and sent behind the spawn row on the same lane, so
+  a mirror never starts from a class default. Membership is the class declaring a `getData` below
+  `Aprop_C`, read off the live class chain rather than from a list. A record whose prop has not
+  arrived parks by Key with no expiry: an element id names an actor, and the whole reason the
+  record has to travel is that the actor is destroyed and remade. `[V]`
 - **Destroy.** The engine's destroy call is caught before it runs on either role, on every
   route, at the native seam; a Blueprint-internal vanish (the truck, culling, a lifespan) is
   caught by the host's reaper death-watch and destroyed by id. `[V]` A floppy disc inserted into
   the laptop dies into laptop scalars through that seam, and an ejected one is born through the
-  birth channels with its content on the laptop lane. **A signal server is the opposite case and
+  birth channels with its content on the save-record lane above. **A signal server is the opposite case and
   the one that loses discs:** its slot is on no wire, so an insert crosses as a plain death and the
   disc leaves the shared world, and an ejected disc is taken by the other peer's box, whose own
   eject never ran and whose collision was therefore never disabled — the disc dies about a second

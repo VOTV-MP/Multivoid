@@ -121,6 +121,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_element_tracker.h"  // reseed hub consumer install + drain
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
@@ -174,6 +175,7 @@ void Install(coop::net::Session& session) {
     coop::device_occupancy::Install(&session);  // enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);  // the signal-catch consume replay (dish slew + downloader arm on every peer)
+    coop::prop_save_data::SetSession(&session);  // the per-prop save-record lane's join seed
     coop::laptop_sync::Install(&session);  // the stationary PC power + floppy lane
     coop::laptop_buffer_sync::Install(&session);  // the PC buffer quad
     coop::floppybox_sync::Install(&session);  // the disc crate stack
@@ -254,6 +256,9 @@ void ConnectReplayForSlot(int slot) {
     // position in the snapshot). After the snapshot, so it rides the bulk lane behind it; the
     // client snaps the bound native at quiescence.
     coop::save_transfer::FlushDivergedSavePositionsForSlot(slot);
+    // Each covered prop's own save record, behind the snapshot on the same lane: a prop whose state
+    // changed after this joiner's transferred save was written is not in that save. Budgeted.
+    coop::prop_save_data::QueueConnectBroadcastForSlot(slot);
     coop::item_activate::QueueConnectBroadcastForSlot(slot);
     coop::weather_sync::QueueConnectBroadcastForSlot(slot);
     coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
@@ -340,6 +345,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     session.MarkSlotWorldReady(slot, false);
     // A slot teardown is a roster row transition: the leaver's half assemblies and seed brackets
     // must not survive into a recycled occupant.
+    coop::prop_save_data::OnPeerGone(static_cast<uint8_t>(slot));
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
     // Shut the chat lane's per-slot seed gate: the next occupant's applied range starts empty, so
@@ -424,6 +430,7 @@ DisconnectStats DisconnectAll() {
     coop::device_occupancy::OnDisconnect();
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
+    coop::prop_save_data::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler + selftest
     coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + pendings
@@ -521,6 +528,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); }  // chunk-assembler TTL sweep only
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power/floppy edge polls (4 Hz) + content watches + lid sweep (1 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:floppybox"}; coop::floppybox_sync::Tick(); }  // box sweep (1 Hz)

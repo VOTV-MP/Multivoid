@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
@@ -228,14 +229,10 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     if (p.scaleX > 0.001f || p.scaleY > 0.001f || p.scaleZ > 0.001f) {
         E::SetActorScale3D(actor, ue_wrap::FVector{p.scaleX, p.scaleY, p.scaleZ});
     }
-    // The save-scalar birth channel: write it now, so the next-tick express drain re-reads the
-    // live actor and the broadcast spawn carries it (the reel progress; post-finish is safe,
-    // since the reel's consumers are the look-at and the load only).
-    if (p.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
-        if (!ue_wrap::prop::ApplySavedScalarForClass(actor, p.savedScalar)) {
-            UE_LOGW("[PROP-DROP] HOST savedScalar=%.2f apply failed on '%ls'", p.savedScalar, cls.c_str());
-        }
-    }
+    // The prop's own save record, if the author's copy is already here. It usually is not -- it
+    // rides behind this intent in the same FIFO -- and then it lands on this actor by Key the
+    // moment it arrives, which is what makes the store keyed by identity rather than by actor.
+    coop::prop_save_data::ApplyParked(actor, key);
     return actor;
 }
 
@@ -353,15 +350,6 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::prop::IsFrozen(e.actor))           p.physFlags |= pf::kFrozen;
             if (ue_wrap::prop::IsSleeping(e.actor))         p.physFlags |= pf::kSleep;
             if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
-            // The save-scalar birth channel rides both intent kinds: the parked place (pocket to
-            // place of a reel) must carry the progress exactly like the eject birth, or the host
-            // respawn resets it to the default (a blank tape) and broadcasts that as truth. A no-op
-            // for classes without a save scalar.
-            float sc = 0.f;
-            if (ue_wrap::prop::ReadSavedScalarForClass(e.actor, sc)) {
-                p.savedScalar = sc;
-                p.physFlags |= pf::kHasSavedScalar;
-            }
         }
         if (freshBirth) {
             // Born asleep on the host (no free fall; the held-prop pose stream takes over).
@@ -383,6 +371,10 @@ void Tick(coop::net::Session* session) {
         session->SendReliable(freshBirth ? coop::net::ReliableKind::ReelEjectIntent
                                          : coop::net::ReliableKind::PropDropIntent,
                               &p, sizeof(p));
+        // The prop's own save record behind the intent, same lane, same FIFO: the host respawns
+        // this prop from the intent and would otherwise author a class-default copy -- a blank
+        // tape, an empty disc -- and broadcast that as truth.
+        coop::prop_save_data::Publish(session, e.actor, key);
         if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
         probe::NoteDrainExit(e.actor, freshBirth ? "authored-fresh-birth" : "authored-drop-intent",
                              e.tries, key);
@@ -391,7 +383,7 @@ void Tick(coop::net::Session* session) {
                 key.c_str(), cls.c_str(),
                 WireToWide(p.propName.len, p.propName.data, sizeof(p.propName.data)).c_str(),
                 p.locX, p.locY, p.locZ,
-                (p.physFlags & pf::kHasSavedScalar) ? " +savedScalar" : "");
+                coop::prop_save_data::Covers(e.actor) ? " +record" : "");
     }
     g_pending.swap(keep);
 }

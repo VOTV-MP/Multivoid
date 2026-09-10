@@ -7,10 +7,10 @@
 // reelBig / reelSmall DOUBLE as slot state (-1.0 = slot empty, >= 0 = reel
 // present at that progress); Active is already wire-synced by the ApplianceState
 // family (ue_wrap/devices/appliance.cpp); upd() applies mesh visibility +
-// SetActorTickEnabled(Active). The reel prop's Progress lives on the Aprop_reel_C
-// BASE (declared there; FindPropertyOffset is exact-owner -- resolve on the
-// base). NOTE: the wallunit's `Active` toggle is NOT surfaced here (RULE 2 --
-// one owner: the appliance adapter).
+// SetActorTickEnabled(Active). A reel's own progress is NOT read here: it is part
+// of the reel's save record, which coop/props/prop_save_data carries whole
+// through the prop's own getData. NOTE: the wallunit's `Active` toggle is NOT
+// surfaced here either (RULE 2 -- one owner: the appliance adapter).
 
 #pragma once
 
@@ -50,10 +50,6 @@ bool CallUpd();
 
 // True if `cls` is Aprop_reel_C or a subclass (the eject-birth whitelist).
 bool IsReelClass(void* cls);
-
-// Read/write Aprop_reel_C::Progress (reflected offset, base-declared).
-bool ReadProgress(void* reelActor, float& out);
-bool WriteProgress(void* reelActor, float value);
 
 // Session teardown: drop the cached singleton (the next call re-resolves).
 void ResetCache();
