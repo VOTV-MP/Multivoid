@@ -77,6 +77,12 @@ void Tick() {
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;  // host broadcasts; client applies on receipt
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastBroadcast < kPushInterval) return;
+    // A joiner is connected for tens of seconds before it has a world, and SkyState is not on the
+    // pre-world allowlist, so the fan-out drops it per slot and reports no delivery. That is a
+    // vacuous success for this lane, not a failure: QueueConnectBroadcastForSlot seeds the sky the
+    // moment the slot goes world-ready. Asking with nobody eligible is what turned a real warning
+    // into 24 false alarms per join. Gated after the interval so it costs nothing per frame.
+    if (!s->AnyWorldReadyPeer()) return;
     coop::net::SkyStatePayload p{};
     if (!MakePayload(p)) return;
     g_lastBroadcast = now;
