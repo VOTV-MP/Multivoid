@@ -76,7 +76,7 @@ are peer-gated. `[V]`
   caught by the host's reaper death-watch and destroyed by id. `[V]` A floppy disc inserted into
   a laptop or a signal server dies into that device's slot through that seam, and an ejected one is
   born through the birth channels with its content on the save-record lane above. The slot itself
-  is state on the wire, so the destroy is no longer the only thing that crosses: the host owns
+  is state on the wire, so the destroy is not the only thing that crosses: the host owns
   every device's slot, a peer reports the outcome of one its own game changed, and the host's
   re-publish is the answer ([devices.md](devices.md)). `[V]` **What still loses a disc is the
   other peer's box:** an ejected disc is born where the box that ejected it disabled its own
