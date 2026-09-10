@@ -232,7 +232,11 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     // The prop's own save record, if the author's copy is already here. It usually is not -- it
     // rides behind this intent in the same FIFO -- and then it lands on this actor by Key the
     // moment it arrives, which is what makes the store keyed by identity rather than by actor.
-    coop::prop_save_data::ApplyParked(actor, key);
+    // Until then this key is AWAITED: the host has just spawned a class-default copy, and
+    // publishing that as canonical would overwrite the author's real state on the author's own
+    // machine.
+    if (!coop::prop_save_data::ApplyParked(actor, key))
+        coop::prop_save_data::ExpectRecordFor(key);
     return actor;
 }
 

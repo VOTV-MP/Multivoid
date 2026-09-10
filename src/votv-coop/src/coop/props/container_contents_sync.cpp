@@ -4,6 +4,7 @@
 // engine's own verbs; a client's edit is a compare-and-swap the host arbitrates and relays. See
 // coop/props/container_contents_sync.h.
 
+#include "coop/props/prop_save_data.h"
 #include "coop/props/container_contents_sync.h"
 
 #include "coop/element/registry.h"
@@ -684,6 +685,9 @@ bool TakeObjInFlight() {
 }
 
 void Install(coop::net::Session* session) {
+    // This lane owns a container's GObjStack slice behind a host-arbitrated compare-and-swap; the
+    // container's own save record carries the index into that stack, with none of the arbitration.
+    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_container_C");
     g_session.store(session, std::memory_order_release);
 }
 

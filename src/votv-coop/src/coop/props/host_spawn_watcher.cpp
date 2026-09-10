@@ -8,7 +8,6 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (drain: hotbar view-actor exclusion)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (mirror-spawn exclusion)
-#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/remote_prop_spawn.h"
@@ -186,8 +185,9 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
     p.elementId = static_cast<uint32_t>(eid);
 
     if (s->SendPropSpawn(p)) {
-        // The prop's own save record, behind the spawn row in the same FIFO.
-        coop::prop_save_data::PublishWithSpawn(s, actor, p.key);
+        // No save record: these ambient mirrors are broadcast KEYLESS (the eid is the identity, a
+        // few lines up), and a record is addressed by Key. Nothing to carry either way -- a
+        // spawner's fresh prop has no save state yet.
         UE_LOGI("host_spawn_watcher: MIRROR ambient spawn cls='%ls' eid=%u at (%.0f,%.0f,%.0f) "
                 "-- client spawns + drops it under local physics",
                 cls.c_str(), p.elementId, p.locX, p.locY, p.locZ);

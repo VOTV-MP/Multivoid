@@ -27,6 +27,9 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // The build number of the version pair (game target + build). Two peers must carry the same
 // value to share a lobby; the check is byte equality per lobby, an older cohort keeps playing
 // among itself. Bumped on every wire change and on every release.
+// This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
+// rule names. One wire format, whose enum, payload structs and static_asserts are read together;
+// splitting it would put a kind's number in one file and its bytes in another.
 inline constexpr uint16_t kProtocolVersion = 153;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").

@@ -1,5 +1,6 @@
 // coop/interactables/floppybox_sync.cpp -- see coop/interactables/floppybox_sync.h.
 
+#include "coop/props/prop_save_data.h"
 #include "coop/interactables/floppybox_sync.h"
 
 #include "coop/comms/chat_feed.h"  // ToUtf8
@@ -360,6 +361,9 @@ void ReapDeniedPop(uint32_t eid, uint64_t hash) {
 }  // namespace
 
 void Install(coop::net::Session* session) {
+    // This lane owns the crate's floppyTypes/floppyData stack, which is exactly what the crate's
+    // own save record serializes.
+    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_floppyBox_C");
     g_session.store(session, std::memory_order_release);
 }
 

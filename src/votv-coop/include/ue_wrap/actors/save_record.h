@@ -128,10 +128,17 @@ bool OverridesGetData(void* cls);
 // resolve or the call fails.
 bool CaptureRecord(void* actor, SaveRecord& out);
 
-// Hand a record back to `actor` through its own `loadData`. Note what the game's loadData does
-// with it, because a caller is choosing this over a field write: on the Aprop_C lineage it
-// restores the save Key, name, nametag, the four saved bools, scale and lifespan, then re-runs
-// `init()` -- the same work a save load does, which is why the apply belongs at a birth seam.
+// Hand a record back to `actor` through its own `loadData` -- the LEAF half of it only.
+//
+// Aprop_C::loadData restores the save Key, the two names, the four saved bools, the scale and the
+// lifespan from whatever record it is handed, then re-runs `init()`, `physicsImpact->init()` and
+// `setNametag()`. Taken at face value that is a primitive for rewriting any prop's identity and for
+// destroying it through SetLifeSpan, and every one of those fields already rides the prop's spawn
+// row, which is their authority. So the receiver's OWN base record is read first and spliced over
+// the incoming one: what survives from `r` is exactly the groups Aprop_C::getData does not write,
+// which is the leaf class's own save state and the only thing this pair exists to move. Which
+// groups those are is read off the base class at runtime, never listed here. Two dispatches: the
+// base capture and the apply.
 bool ApplyRecord(void* actor, const SaveRecord& r);
 
 // Drop the cached class lookups (level change / disconnect).

@@ -15,7 +15,6 @@
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass
 #include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm, the conversion-successor peek
 #include "coop/props/prop_echo_suppress.h"
-#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"
@@ -265,8 +264,12 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
                 (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
         s->SendPropSpawn(p);
-        // The prop's own save record, behind the spawn row in the same FIFO.
-        coop::prop_save_data::PublishWithSpawn(s, self, p.key);
+        // NO save record here. This seam is the prop's own init(), which runs BEFORE the leaf
+        // class's loadData has filled anything on a save load, and on a fresh spawn there is
+        // nothing to carry yet -- the record would be the class default, and broadcasting a
+        // default over an author's real copy is how a client's ejected disc came back blank. The
+        // record's publishers are the seams where the state exists: the container extract POST,
+        // the snapshot drain, the runtime-adoption express and the client's own drop intent.
     }
     // Self-claim: this peer just expressed the spawn, so an open snapshot bracket's sweep must not
     // destroy it as unclaimed.

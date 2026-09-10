@@ -10,6 +10,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 
+#include <chrono>
 #include <cstring>
 #include <unordered_map>
 
@@ -224,21 +225,36 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r) {
 
 namespace {
 
-void* g_propCls    = nullptr;  // Aprop_C -- the root the override test measures against
-bool  g_propTried  = false;
+void*    g_propCls      = nullptr;  // Aprop_C -- the root the override test measures against
+void*    g_baseGetData  = nullptr;  // Aprop_C::getData, for the base half of a record
+uint64_t g_nextPropTryMs = 0;
 
-// Class -> "declares a getData of its own below Aprop_C". A UClass is immortal once loaded, so
-// this is keyed by the pointer and only ResetCodecCache drops it.
-std::unordered_map<void*, bool> g_overrides;
+// Class -> "declares a getData of its own below Aprop_C", and the resolved verbs. A UClass is
+// immortal once loaded, so these are keyed by the pointer and only ResetCodecCache drops them.
+// The verbs are cached because FindFunction walks the WHOLE object array: uncached, every capture
+// and every apply paid that walk, at join-drain rates.
+struct ClassVerbs { void* getData = nullptr; void* loadData = nullptr; bool overrides = false; };
+std::unordered_map<void*, ClassVerbs> g_verbs;
 
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Blueprint classes load on demand, so a first call before prop_C exists must not disable the lane
+// for the session: retried at most once a second, the idiom the device wrappers use.
 bool EnsurePropClass() {
     if (g_propCls) return true;
-    if (g_propTried) return false;   // one walk per world; ResetCodecCache re-arms it
-    g_propTried = true;
+    const uint64_t now = NowMs();
+    if (now < g_nextPropTryMs) return false;
+    g_nextPropTryMs = now + 1000;
     g_propCls = R::FindClass(L"prop_C");
-    if (!g_propCls)
-        UE_LOGW("save_record: prop_C unresolved -- no prop carries its own save record");
-    return g_propCls != nullptr;
+    if (!g_propCls) return false;
+    g_baseGetData = R::FindFunction(g_propCls, L"getData");
+    if (!g_baseGetData)
+        UE_LOGW("save_record: prop_C has no getData -- the base half of a record cannot be read, "
+                "so no record will be applied");
+    return true;
 }
 
 // The most-derived declaration of `name` on `cls`'s chain. FindFunction is exact-owner, so the
@@ -249,28 +265,25 @@ void* MostDerived(void* cls, const wchar_t* name) {
     return nullptr;
 }
 
-}  // namespace
-
-bool OverridesGetData(void* cls) {
-    if (!cls || !EnsurePropClass()) return false;
-    const auto it = g_overrides.find(cls);
-    if (it != g_overrides.end()) return it->second;
-    bool owns = false;
-    // The prop lane's membership test, so a class off that chain is not walked to no purpose.
+// The per-class row, resolved once.
+const ClassVerbs* VerbsFor(void* cls) {
+    if (!cls || !EnsurePropClass()) return nullptr;
+    const auto it = g_verbs.find(cls);
+    if (it != g_verbs.end()) return &it->second;
+    ClassVerbs v;
+    v.getData  = MostDerived(cls, L"getData");
+    v.loadData = MostDerived(cls, L"loadData");
     if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
         // Stop AT Aprop_C: its own getData is the base record, and every field of it already
         // rides the prop spawn row (class, key, name, the saved bools, the transform).
-        for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c)) {
-            if (R::FindFunction(c, L"getData")) { owns = true; break; }
-        }
+        for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c))
+            if (R::FindFunction(c, L"getData")) { v.overrides = true; break; }
     }
-    g_overrides[cls] = owns;
-    return owns;
+    return &(g_verbs[cls] = v);
 }
 
-bool CaptureRecord(void* actor, SaveRecord& out) {
-    if (!actor) return false;
-    void* fn = MostDerived(R::ClassOf(actor), L"getData");
+// Run `fn` on `actor` and read the Fstruct_save it leaves in the frame's `data` parameter.
+bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
     if (!fn) return false;
     ParamFrame f(fn);
     const int32_t off = f.ParamOffset(L"data");
@@ -278,28 +291,77 @@ bool CaptureRecord(void* actor, SaveRecord& out) {
     if (!Call(actor, f)) return false;
     // The record the call left in the frame owns engine-allocated nested arrays; ReadSaveRecord
     // copies every one out, and the frame's own buffers are the deliberate leak this layer's
-    // out-param doctrine already carries (fstring_utils.h). Bounded here by the membership test:
-    // only a class that declares its own getData is ever captured, at birth rates.
+    // out-param doctrine already carries (fstring_utils.h).
     ReadSaveRecord(static_cast<const uint8_t*>(f.data()) + off, out);
     return true;
 }
 
-bool ApplyRecord(void* actor, const SaveRecord& r) {
+// Overwrite `dst[i]` with `src[i]` wherever src holds a group -- the receiver's own value for a
+// group the BASE class wrote, the sender's for one only the leaf class knows about.
+template <class V>
+void SpliceGroups(std::vector<V>& dst, const std::vector<V>& src) {
+    if (dst.size() < src.size()) dst.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i)
+        if (!src[i].empty()) dst[i] = src[i];
+}
+
+}  // namespace
+
+bool OverridesGetData(void* cls) {
+    const ClassVerbs* v = VerbsFor(cls);
+    return v && v->overrides;
+}
+
+bool CaptureRecord(void* actor, SaveRecord& out) {
     if (!actor) return false;
-    void* fn = MostDerived(R::ClassOf(actor), L"loadData");
-    if (!fn) return false;
-    ParamFrame f(fn);
+    const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
+    return v && CallForRecord(actor, v->getData, out);
+}
+
+bool ApplyRecord(void* actor, const SaveRecord& r) {
+    if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
+    const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
+    if (!v || !v->loadData) return false;
+
+    // THE BASE HALF IS NEVER THE SENDER'S. Aprop_C::loadData restores the save Key, the transform
+    // scale, the four saved bools, the lifespan and the two names from whatever record it is
+    // handed -- so a record taken at face value is a primitive for rewriting any prop's identity
+    // and for destroying it through SetLifeSpan. Every one of those fields already rides the spawn
+    // row, which is the authority for them. So the receiver's OWN base record is read here and
+    // spliced over the incoming one: what survives from the sender is exactly the groups the base
+    // class does not write, which is the leaf's own save state and the only thing this codec
+    // exists to move.
+    SaveRecord base;
+    if (!CallForRecord(actor, g_baseGetData, base)) return false;
+    SaveRecord merged = r;
+    merged.className = base.className;
+    merged.xform     = base.xform;
+    merged.key       = base.key;
+    SpliceGroups(merged.bools,      base.bools);
+    SpliceGroups(merged.floats,     base.floats);
+    SpliceGroups(merged.ints,       base.ints);
+    SpliceGroups(merged.strings,    base.strings);
+    SpliceGroups(merged.classes,    base.classes);
+    SpliceGroups(merged.vectors,    base.vectors);
+    SpliceGroups(merged.rotators,   base.rotators);
+    SpliceGroups(merged.transforms, base.transforms);
+    SpliceGroups(merged.bytes,      base.bytes);
+    SpliceGroups(merged.names,      base.names);
+    if (!base.signals.empty()) merged.signals = base.signals;
+
+    ParamFrame f(v->loadData);
     const int32_t off = f.ParamOffset(L"data");
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
     // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
-    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r);
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged);
     return Call(actor, f);
 }
 
 void ResetCodecCache() {
     g_propCls = nullptr;
-    g_propTried = false;
-    g_overrides.clear();
+    g_baseGetData = nullptr;
+    g_nextPropTryMs = 0;
+    g_verbs.clear();
 }
 
 }  // namespace ue_wrap::save_record

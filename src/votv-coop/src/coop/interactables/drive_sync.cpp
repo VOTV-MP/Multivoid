@@ -9,6 +9,7 @@
 // (one-callback-per-verb-name; putDriveIn is shared slot/rack ctx) and
 // forwards rack marks to drive_rack_sync::MarkDirtyFromVerb().
 
+#include "coop/props/prop_save_data.h"
 #include "coop/interactables/drive_sync.h"
 
 #include "coop/element/registry.h"
@@ -464,6 +465,9 @@ void PrimeAll() {
 // --------------------------------------------------------------------------
 
 void Install(coop::net::Session* session) {
+    // DrivePayload owns prop_drive's data_0, by eid, with a per-verb dirty mark and a 1 Hz diff
+    // poll. The prop save-record lane must not write the same field from a second address space.
+    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_drive_C");
     g_session.store(session, std::memory_order_release);
     if (g_verbsRegistered) return;
     if (!DC::EnsureResolved()) return;

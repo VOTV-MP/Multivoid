@@ -10,6 +10,7 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
 #include "ue_wrap/core/log.h"
@@ -51,11 +52,10 @@ constexpr size_t   kContentCapBytes = 4096;  // the total content cap (truncate 
 // is a window.
 constexpr size_t   kLidPendingCap = 64;
 
-// The content-blob head: a kind byte and an eid the slot lane does not use (kind 0, eid 0). The
-// disc's own content left this lane with kind 1: a disc's state is its SAVE RECORD, addressed by
-// Key, and coop/props/prop_save_data carries it -- an eid names an actor, and this content's whole
-// problem was that the actor is destroyed and remade.
-constexpr size_t kBlobHead = 5;
+// The blob carries the LAPTOP SLOT's content and nothing else, so it has no head: the kind byte
+// and the eid that used to select between the slot and a disc went with the disc. A disc's state
+// is its save record, addressed by Key (coop/props/prop_save_data) -- an eid names an actor, and
+// this content's whole problem was that the actor is destroyed and remade.
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(::GetTickCount64());
@@ -160,26 +160,21 @@ void SendOut(coop::net::Session* s, const coop::net::LaptopStatePayload& p, int 
 }
 
 // Build the content-blob bytes (kind, eid, content) with the cap warning.
-std::vector<uint8_t> MakeContentBlob(uint8_t kind, uint32_t eid, const std::string& bytes) {
+std::vector<uint8_t> MakeContentBlob(const std::string& bytes) {
     std::string data = bytes;
     if (data.size() > kContentCapBytes) {
-        UE_LOGW("laptop_sync: content (kind=%u eid=%u) %zu B over the %zu cap -- TRUNCATED "
-                "(OPEN-9 residual)", kind, eid, data.size(), kContentCapBytes);
+        UE_LOGW("laptop_sync: slot content %zu B over the %zu cap -- TRUNCATED (OPEN-9 residual)",
+                data.size(), kContentCapBytes);
         data.resize(kContentCapBytes);
     }
-    std::vector<uint8_t> blob(kBlobHead + data.size());
-    blob[0] = kind;
-    std::memcpy(blob.data() + 1, &eid, 4);
-    if (!data.empty()) std::memcpy(blob.data() + kBlobHead, data.data(), data.size());
-    return blob;
+    return std::vector<uint8_t>(data.begin(), data.end());
 }
 
 // Broadcast content (the host to every ready slot; the client to the host, which re-fans
 // each chunk unchanged with the origin byte).
-void SendContentBlob(coop::net::Session* s, uint8_t kind, uint32_t eid,
-                     const std::string& bytes) {
+void SendContentBlob(coop::net::Session* s, const std::string& bytes) {
     coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopBlob,
-                                g_blobSeq++, MakeContentBlob(kind, eid, bytes));
+                                g_blobSeq++, MakeContentBlob(bytes));
 }
 
 void PrimeBaselines() {
@@ -208,21 +203,12 @@ void BroadcastInsert(coop::net::Session* s) {
     p.floppyType = st.floppyType;
     p.readWrites = st.readWrites;
     SendOut(s, p, -1);
-    SendContentBlob(s, /*kind*/0, /*eid*/0, PackSlotContent(c));
+    SendContentBlob(s, PackSlotContent(c));
     UE_LOGI("laptop_sync: local INSERT edge (type=%d zip=%u rw=%d) -- broadcast + content",
             st.floppyType, static_cast<unsigned>(p.zip), st.readWrites);
 }
 
-void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
-                           const std::string& bytes, uint8_t senderSlot) {
-    (void)s;
-    (void)eid;
-    if (kind != 0) {
-        UE_LOGW("laptop_sync: content blob kind=%u from slot %u -- this lane carries the LAPTOP "
-                "SLOT only; a disc's own state rides PropSaveData by Key",
-                static_cast<unsigned>(kind), static_cast<unsigned>(senderSlot));
-        return;
-    }
+void ApplyAssembledContent(const std::string& bytes, uint8_t senderSlot) {
     // Laptop slot content: pair it with the parked scalars from the edge that preceded these
     // chunks in-lane, and land both in one write (the atomic occupied apply).
     L::SlotState st;
@@ -507,18 +493,12 @@ void OnLaptopBlobChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot)
     }
     std::vector<uint8_t> blob;
     if (!g_blobAsm.OnChunk(p, senderSlot, blob)) return;
-    if (blob.size() < kBlobHead) return;
-    const uint8_t kind = blob[0];
-    if (kind > 1) return;
-    uint32_t eid = 0;
-    std::memcpy(&eid, blob.data() + 1, 4);
     if (!L::EnsureResolved() || !L::Instance()) {
-        UE_LOGW("laptop_sync: content blob (kind=%u) declined (laptop unresolved)", kind);
+        UE_LOGW("laptop_sync: slot content blob declined (laptop unresolved)");
         return;
     }
-    const std::string bytes(reinterpret_cast<const char*>(blob.data()) + kBlobHead,
-                            blob.size() - kBlobHead);
-    ApplyAssembledContent(s, kind, eid, bytes, senderSlot);
+    ApplyAssembledContent(std::string(reinterpret_cast<const char*>(blob.data()), blob.size()),
+                          senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -540,7 +520,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // Point-to-point content toward the joiner only, in-lane after the state line (the state
         // and the blob share one lane, one FIFO).
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
-                                          g_blobSeq++, MakeContentBlob(0, 0, PackSlotContent(c)));
+                                          g_blobSeq++, MakeContentBlob(PackSlotContent(c)));
     }
     // Live discs are NOT seeded here any more: a disc's content is its save record, and
     // coop/props/prop_save_data seeds one per keyed prop by Key, after the prop snapshot.
@@ -582,6 +562,7 @@ void OnDisconnect() {
     g_nextLidSweep = 0;
     g_announced = false;
     L::ResetCache();
+    ue_wrap::floppy_disc::ResetCache();  // the disc's class and offsets are world-scoped too
     PPC::ResetCache();
 }
 
