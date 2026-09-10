@@ -173,10 +173,15 @@ constexpr size_t kStepCount = sizeof(kSteps) / sizeof(kSteps[0]);
 // `lateLive` is the reading the acceptance turns on: not whether the eject produced a disc, but
 // whether the disc was STILL there twelve seconds later. The re-swallow takes about a second, so a
 // post-picture alone can catch a disc that is already doomed. -1 = never sampled.
+// `preLive` is what keeps the ratio honest. An eject whose named disc is ALREADY lying in this
+// peer's world is not ejecting that disc -- its insert never consumed it -- so the episode measures
+// nothing and must not be counted as a survival. One run read 7 of 9 ejects as survivals when five
+// of them had never moved a disc at all.
 struct Outcome {
     bool        done     = false;
-    bool        fired    = false;  // the verb was dispatched
+    bool        fired    = false;  // the verb was dispatched AND the game acted on it
     int         lateLive = -1;     // -1 not sampled, 0 gone, 1 present
+    int         preLive  = -1;     // eject only: -1 not sampled, 0 the disc was away, 1 still here
     std::string note;              // the refusal reason, or what the slot did
 };
 Outcome g_outcome[kStepCount];
@@ -189,18 +194,25 @@ uint64_t g_lateAtMs      = 0;
 int      g_lateStep      = -1;
 
 // The fast-destroy watch: after an eject episode, whether the disc that came out was destroyed
-// again within two seconds. That is the re-swallow's signature and nothing else's -- a player is
-// not in the room, and the only other actor that can reach the disc is a box. One at a time is
-// enough: episodes are eight seconds apart and the watch runs for two and a half.
-constexpr uint64_t kFastWatchMs = 2500;
-constexpr uint64_t kFastPollMs  =  250;
+// again within moments. That is the re-swallow's signature and nothing else's -- no player is in
+// the room, and the only other actor that can reach the disc is a device.
+//
+// TWO cadences, because one cannot do it. FINDING the disc costs an object-array walk, so it runs
+// on a throttle; WATCHING it must not miss, because the whole defect is that the disc lives for
+// well under a second -- a quarter-second poll walked straight past it, and this counter read ZERO
+// through a run in which the disc was measurably eaten. So the moment the walk finds it, the actor
+// is held in a slot-validated ref and its liveness is read EVERY tick, which touches no memory and
+// costs nothing. One watch at a time: episodes are eight seconds apart.
+constexpr uint64_t kFastWatchMs = 4000;
+constexpr uint64_t kFastFindMs  =  100;   // the object-array walk, until the disc is found
 struct EjectWatch {
-    std::wstring key;
-    uint64_t     atMs      = 0;
-    uint64_t     nextPoll  = 0;
-    bool         sawLive   = false;
-    bool         counted   = false;
-    int          step      = -1;
+    std::wstring          key;
+    uint64_t              atMs      = 0;
+    uint64_t              nextFind  = 0;
+    ue_wrap::CachedObjRef actor;          // held from the first sighting; Alive() is a slot read
+    bool                  sawLive   = false;
+    bool                  counted   = false;
+    int                   step      = -1;
 };
 EjectWatch g_fastWatch;
 int        g_fastLost = 0;
@@ -457,6 +469,11 @@ void Fire(size_t i) {
         }
         FD::DiscContent dc;
         FD::ReadDiscContent(disc, dc);
+        // The game refuses a busy slot outright ("Floppy disc slot is busy"), and the refusal is
+        // silent to us: the verb dispatches, the slot keeps the value it had, and reading the
+        // AFTER value alone says "filled". Say it here, before the verb, so the episode is on
+        // record as having moved nothing.
+        const bool wasBusy = before.floppyType >= 0;
         const bool called = SB::CallProcessFloppy(box, disc);
         BoxSlot after{};
         ReadBoxSlot(box, after);
@@ -472,7 +489,15 @@ void Fire(size_t i) {
         const bool tookContent = after.objectDataLen > before.objectDataLen ||
                                  after.dataNum > before.dataNum ||
                                  after.readWrites != before.readWrites;
-        if (after.floppyType >= 0) {
+        if (wasBusy) {
+            o.fired = false;
+            o.note = "the slot was ALREADY OCCUPIED -- the game refuses a busy slot";
+            UE_LOGW("floppy_selftest: %s REFUSED box=%d '%ls' -- the slot already held type %d "
+                    "before the verb, so the game answered its busy hint and this episode moved "
+                    "NOTHING. Its eject below has nothing of this run's to hand back, and a box "
+                    "that stays occupied after a cross-peer eject is the re-swallow itself.",
+                    s.id, s.box, g_boxName[s.box].c_str(), before.floppyType);
+        } else if (after.floppyType >= 0) {
             o.note = "slot filled";
         } else if (tookContent) {
             o.note = "the slot took the content but no type";
@@ -488,7 +513,18 @@ void Fire(size_t i) {
         return;
     }
 
-    // Eject. An empty slot here is not a failure of the instrument: it is the outcome the episode
+    // Eject. Sight the named disc first: if it is already lying here, its insert never consumed
+    // it, so whatever this slot holds is not that disc and the episode cannot speak for it.
+    if (s.disc >= 0 && s.disc < kDiscs && !g_discKey[s.disc].empty()) {
+        void* already = PR::FindByKeyString(g_discKey[s.disc]);
+        o.preLive = (already && R::IsLive(already)) ? 1 : 0;
+        if (o.preLive == 1)
+            UE_LOGW("floppy_selftest: %s PRE-SIGHTED box=%d -- the disc key='%ls' this episode "
+                    "names is ALREADY in this peer's world, so its insert never consumed it and "
+                    "this eject speaks for some other content. Excluded from the survival ratio.",
+                    s.id, s.box, g_discKey[s.disc].c_str());
+    }
+    // An empty slot here is not a failure of the instrument: it is the outcome the episode
     // exists to record, and the game answers it with its own refusal hint.
     if (before.floppyType < 0) {
         o.fired = false;
@@ -596,14 +632,27 @@ void EmitVerdict() {
         if (kSteps[i].verb != Verb::Eject) continue;
         ++ejects;
         if (kSteps[i].onHost && kSteps[i].box == 0) ++repeats;   // the cross-peer pair
-        if (g_outcome[i].lateLive < 0) continue;
+        if (g_outcome[i].lateLive < 0 || g_outcome[i].preLive == 1) continue;
         ++sampled;
         if (g_outcome[i].lateLive == 1) ++survived;
     }
+    int inserts = 0, admitted = 0;
+    for (size_t i = 0; i < kStepCount; ++i) {
+        if (kSteps[i].verb != Verb::Insert || !g_outcome[i].done) continue;
+        ++inserts;
+        if (g_outcome[i].fired) ++admitted;
+    }
+    UE_LOGI("floppy_selftest: INSERT ADMISSION role=%s -- %d of %d insert episodes this role "
+            "reached found an EMPTY slot and moved their disc; %d found the slot already occupied, "
+            "which the game refuses. A box that is still occupied when the next repeat comes round "
+            "was refilled by something, and after a cross-peer eject the only candidate is the "
+            "other peer's copy of that box.", isHost ? "HOST" : "CLIENT", admitted, inserts,
+            inserts - admitted);
     UE_LOGI("floppy_selftest: EJECT SURVIVAL role=%s -- %d of %d sampled eject episodes still had "
             "their disc in THIS peer's world %llus after the verb (%d eject episodes total, %d "
-            "never sampled); fast-destroys seen here = %d. The cross-peer pair is repeated %d "
-            "times, so a survival short of the sampled count is a RATE, not an anecdote.",
+            "not counted -- never sampled, or the disc was already lying here when the verb ran); "
+            "fast-destroys seen here = %d. The cross-peer pair is repeated %d times, so a survival "
+            "short of the sampled count is a RATE, not an anecdote.",
             isHost ? "HOST" : "CLIENT", survived, sampled,
             static_cast<unsigned long long>(kLateMs / 1000), ejects, ejects - sampled, g_fastLost,
             repeats);
@@ -691,23 +740,36 @@ void Tick() {
     }
     if (g_fastWatch.step >= 0) {
         if (now - g_fastWatch.atMs > kFastWatchMs) {
+            if (!g_fastWatch.sawLive)
+                UE_LOGW("floppy_selftest: FAST-WATCH %s role=%s -- disc key='%ls' was NEVER seen "
+                        "alive here in the %llu ms after the eject, so this peer cannot say whether "
+                        "it was destroyed or never arrived. The survival reading below is what "
+                        "answers that.", kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
+                        g_fastWatch.key.c_str(), static_cast<unsigned long long>(kFastWatchMs));
             g_fastWatch.step = -1;
-        } else if (now >= g_fastWatch.nextPoll) {
-            g_fastWatch.nextPoll = now + kFastPollMs;
-            void* a = PR::FindByKeyString(g_fastWatch.key);
-            const bool live = a && R::IsLive(a);
-            if (live) {
-                g_fastWatch.sawLive = true;
-            } else if (g_fastWatch.sawLive && !g_fastWatch.counted) {
-                g_fastWatch.counted = true;
-                ++g_fastLost;
-                UE_LOGW("floppy_selftest: FAST-DESTROY %s role=%s -- disc key='%ls' was in this "
-                        "peer's world after the eject and was GONE %llu ms later. Nobody is holding "
-                        "it and no player is near it, so a device took it: that is the re-swallow.",
-                        kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
-                        g_fastWatch.key.c_str(),
-                        static_cast<unsigned long long>(now - g_fastWatch.atMs));
+        } else if (!g_fastWatch.sawLive) {
+            if (now >= g_fastWatch.nextFind) {
+                g_fastWatch.nextFind = now + kFastFindMs;
+                void* a = PR::FindByKeyString(g_fastWatch.key);
+                if (a && R::IsLive(a)) {
+                    g_fastWatch.sawLive = true;
+                    g_fastWatch.actor.Set(a);
+                    UE_LOGI("floppy_selftest: FAST-WATCH %s role=%s -- disc key='%ls' appeared here "
+                            "%llu ms after the eject; watching it every tick from now on",
+                            kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
+                            g_fastWatch.key.c_str(),
+                            static_cast<unsigned long long>(now - g_fastWatch.atMs));
+                }
             }
+        } else if (!g_fastWatch.counted && !g_fastWatch.actor.Alive()) {
+            g_fastWatch.counted = true;
+            ++g_fastLost;
+            UE_LOGW("floppy_selftest: FAST-DESTROY %s role=%s -- disc key='%ls' was in this peer's "
+                    "world after the eject and was GONE %llu ms later. Nobody is holding it and no "
+                    "player is near it, so a device took it: that is the re-swallow.",
+                    kSteps[g_fastWatch.step].id, isHost ? "HOST" : "CLIENT",
+                    g_fastWatch.key.c_str(),
+                    static_cast<unsigned long long>(now - g_fastWatch.atMs));
         }
     }
     if (now >= g_nextCensusMs) {
