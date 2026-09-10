@@ -61,6 +61,17 @@ bool ReadContent(DeviceKind kind, void* device, Content& out);
 // pre-filter, so a full read runs only where the digest moved.
 bool ReadDigest(DeviceKind kind, void* device, uint64_t& out);
 
+// The slot's OVERLAP entries: the BeginOverlap delegates a device binds on the hitbox that feeds
+// its slot, which take a disc without anybody pressing anything. The box binds one on `Box`, the
+// laptop two -- `floppyHitbox` and `zipHitbox`. They are delegate broadcasts, so ProcessEvent
+// dispatches them and a caller may intercept one; the insert verb they end in is
+// EX_LocalVirtualFunction and cannot be reached at all.
+//
+// Resolved on their own backoff, independent of the members above: a device whose slot fields
+// moved is a device we must not WRITE, but its entries are still worth naming.
+inline constexpr size_t kMaxSlotOverlapEntries = 2;
+size_t SlotOverlapEntries(DeviceKind kind, void* out[], size_t cap);
+
 // Receiver-side apply: the scalars raw (the game writes them raw too), the strings through an
 // engine-side mint, then the kind's own refresh.
 bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& content);

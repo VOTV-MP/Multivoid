@@ -42,6 +42,9 @@ struct Desc {
     bool           hasNametype;
     bool           refreshWidget;  // laptop: Widget -> ui_laptop.updFloppy
     bool           refreshMesh;    // box: floppyMesh -> lib_C::floppyFromType + SetStaticMesh
+    // The BeginOverlap delegates on the hitboxes that feed the slot, null-terminated. The names
+    // carry the K2Node_ segment the decompiler's rendering drops; without it FindFunction misses.
+    const wchar_t* overlapFns[kMaxSlotOverlapEntries + 1];
 
     int32_t offType       = -1;
     int32_t offReadWrites = -1;
@@ -55,11 +58,21 @@ struct Desc {
 
     bool     resolved  = false;
     uint64_t nextTryMs = 0;
+
+    void*    fnOverlap[kMaxSlotOverlapEntries] = {};
+    size_t   overlapCount     = 0;
+    bool     overlapResolved  = false;
+    uint64_t overlapNextTryMs = 0;
 };
 
 Desc g_desc[kDeviceKindCount] = {
-    { L"laptop_C",    /*zip*/ true,  /*nametype*/ true,  /*widget*/ true,  /*mesh*/ false },
-    { L"serverBox_C", /*zip*/ false, /*nametype*/ false, /*widget*/ false, /*mesh*/ true  },
+    { L"laptop_C",    /*zip*/ true,  /*nametype*/ true,  /*widget*/ true,  /*mesh*/ false,
+      { L"BndEvt__laptop_floppyHitbox_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
+        L"BndEvt__laptop_zipHitbox_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+        nullptr } },
+    { L"serverBox_C", /*zip*/ false, /*nametype*/ false, /*widget*/ false, /*mesh*/ true,
+      { L"BndEvt__serverBox_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+        nullptr, nullptr } },
 };
 
 Desc* DescOf(DeviceKind kind) {
@@ -199,6 +212,37 @@ bool EnsureResolved(DeviceKind kind) {
     return true;
 }
 
+size_t SlotOverlapEntries(DeviceKind kind, void* out[], size_t cap) {
+    Desc* d = DescOf(kind);
+    if (!d || !out || cap == 0) return 0;
+    if (!d->overlapResolved) {
+        const uint64_t now = NowMs();
+        if (now < d->overlapNextTryMs) return 0;
+        d->overlapNextTryMs = now + 1000;
+        void* cls = R::FindClass(d->className);
+        if (!cls) return 0;   // world not loaded yet
+        size_t found = 0, named = 0;
+        for (size_t i = 0; i < kMaxSlotOverlapEntries && d->overlapFns[i]; ++i) {
+            ++named;
+            if (void* fn = R::FindFunction(cls, d->overlapFns[i])) d->fnOverlap[found++] = fn;
+        }
+        if (found != named) {
+            // Named and not found is a fact about THIS build, not about the device: the delegate's
+            // name carries the component's name and the K2Node index the asset assigned it, so a
+            // renamed hitbox silently unbinds the entry. Say which, and keep retrying.
+            UE_LOGW("floppy_slot: %ls resolved %zu of %zu overlap entries -- an entry nobody holds "
+                    "is an unattended way into the slot", d->className, found, named);
+            return 0;
+        }
+        d->overlapCount = found;
+        d->overlapResolved = true;
+        UE_LOGI("floppy_slot: %ls overlap entries resolved (%zu)", d->className, found);
+    }
+    const size_t n = d->overlapCount < cap ? d->overlapCount : cap;
+    for (size_t i = 0; i < n; ++i) out[i] = d->fnOverlap[i];
+    return n;
+}
+
 bool ReadScalars(DeviceKind kind, void* device, Scalars& out) {
     const Desc* d = DescOf(kind);
     if (!device || !d || !d->resolved) return false;
@@ -285,6 +329,11 @@ void ResetCache() {
         d.offType = d.offReadWrites = d.offData = d.offObjectData = -1;
         d.offZip = d.offNametype = d.offWidget = d.offMesh = -1;
         d.fnUpdFloppy = nullptr;
+        // The overlap entries deliberately SURVIVE this. They are UFunctions of a Blueprint class
+        // the asset keeps loaded, not offsets into a world's actor, and a caller has registered a
+        // ProcessEvent interceptor against each pointer -- dropping them here would re-resolve to
+        // the same UFunction and leave the old registration behind as a duplicate. The coin's
+        // collect delegate is held across sessions for the same reason.
     }
     g_libCdo = nullptr;
     g_fnFloppyFromType = nullptr;

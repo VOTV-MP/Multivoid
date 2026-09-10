@@ -441,6 +441,24 @@ void PickDiscs(bool isHost) {
 
 // ---- the episodes ------------------------------------------------------------------------------
 
+// Sight the disc an EJECT episode names, at the moment the verb runs, on BOTH roles -- the peer
+// that fires and the peer that only watches. A disc already lying here was never consumed by its
+// insert, so this eject cannot be handing it back and the episode must not count as a survival.
+// Recorded on the firing side alone, the watching peer's ratio counted five episodes that had
+// moved nothing as five successes.
+void PreSight(size_t i, bool isHost) {
+    const Step& s = kSteps[i];
+    if (s.verb != Verb::Eject) return;
+    if (s.disc < 0 || s.disc >= kDiscs || g_discKey[s.disc].empty()) return;
+    void* already = PR::FindByKeyString(g_discKey[s.disc]);
+    g_outcome[i].preLive = (already && R::IsLive(already)) ? 1 : 0;
+    if (g_outcome[i].preLive == 1)
+        UE_LOGW("floppy_selftest: %s PRE-SIGHTED role=%s box=%d -- the disc key='%ls' this episode "
+                "names is ALREADY in this peer's world, so its insert never consumed it and this "
+                "eject speaks for some other content. Excluded from the survival ratio.",
+                s.id, isHost ? "HOST" : "CLIENT", s.box, g_discKey[s.disc].c_str());
+}
+
 void Fire(size_t i) {
     const Step& s = kSteps[i];
     Outcome& o = g_outcome[i];
@@ -513,17 +531,6 @@ void Fire(size_t i) {
         return;
     }
 
-    // Eject. Sight the named disc first: if it is already lying here, its insert never consumed
-    // it, so whatever this slot holds is not that disc and the episode cannot speak for it.
-    if (s.disc >= 0 && s.disc < kDiscs && !g_discKey[s.disc].empty()) {
-        void* already = PR::FindByKeyString(g_discKey[s.disc]);
-        o.preLive = (already && R::IsLive(already)) ? 1 : 0;
-        if (o.preLive == 1)
-            UE_LOGW("floppy_selftest: %s PRE-SIGHTED box=%d -- the disc key='%ls' this episode "
-                    "names is ALREADY in this peer's world, so its insert never consumed it and "
-                    "this eject speaks for some other content. Excluded from the survival ratio.",
-                    s.id, s.box, g_discKey[s.disc].c_str());
-    }
     // An empty slot here is not a failure of the instrument: it is the outcome the episode
     // exists to record, and the game answers it with its own refusal hint.
     if (before.floppyType < 0) {
@@ -695,6 +702,7 @@ void Tick() {
             if (since < kSteps[i].atMs) continue;
             const bool mine = kSteps[i].onHost == isHost;
             if (mine ? g_outcome[i].done : g_watched[i]) continue;
+            PreSight(i, isHost);
             if (mine) {
                 Census("before", isHost);
                 Fire(i);

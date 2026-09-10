@@ -25,6 +25,7 @@
 #include "coop/world/email_sync.h"
 #include "coop/interactables/laptop_sync.h"  // the stationary PC lane and its lid
 #include "coop/interactables/laptop_buffer_sync.h"  // the PC buffer quad lane
+#include "coop/interactables/floppy_slot_entry.h"
 #include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"  // the disc crate LIFO lane
 #include "coop/props/container_contents_sync.h"  // the world-container GObjStack slice
@@ -165,6 +166,7 @@ void Install(coop::net::Session& session) {
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
     coop::floppy_slot_sync::Install(&session);  // a disc-holding device's slot: host-canonical, a peer claims the outcome of its own insert or eject
+    coop::floppy_slot_entry::Install(&session);  // the slot's overlap entry: no device swallows a disc still in transit out of one
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session);  // owner-entity lane: eyer per-peer owned + cross-peer display mirrors
     coop::inventory_pickup_sync::Install(&session);  // inventory-collect blip (PlaySound2D observer)
@@ -421,6 +423,7 @@ DisconnectStats DisconnectAll() {
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
+    coop::floppy_slot_entry::OnDisconnect();  // the transit marks are actors of the dying world; the counters print first
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();  // restore parked spawner ticks (loan repayment belt)
