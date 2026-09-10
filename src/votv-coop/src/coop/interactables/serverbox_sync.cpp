@@ -22,6 +22,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/serverbox.h"
 
 #include <atomic>
 #include <chrono>
@@ -35,6 +36,7 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
+namespace SB = ue_wrap::serverbox;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -44,7 +46,6 @@ constexpr long long kPollIntervalMs = 1000;
 // Resolution: lazy, retried every 2 s, and latched after a capped number of passes with a loud
 // warning (the alarm_sync / event_active pattern).
 void*   g_gmCls = nullptr;        // mainGamemode_C
-int32_t g_offServers  = -1;       // TArray<serverBox_C*>
 int32_t g_offBroken   = -1;       // int32 brokenServers
 int32_t g_offEffCalc  = -1;       // float serverEfficiency_calc
 int32_t g_offEffDownl = -1;       // float serverEfficiency_downl
@@ -58,7 +59,7 @@ bool g_resolveLatched = false;
 constexpr int kMaxPostClassAttempts = 5;
 
 bool Resolved() {
-    return g_offServers >= 0 && g_offBroken >= 0 && g_offEffCalc >= 0 && g_offEffDownl >= 0 &&
+    return g_offBroken >= 0 && g_offEffCalc >= 0 && g_offEffDownl >= 0 &&
            g_offIsBroken >= 0 && g_maskIsBroken != 0 && g_checkFn != nullptr;
 }
 
@@ -70,7 +71,6 @@ void ResolvePass() {
     if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
     if (!g_sbCls) g_sbCls = R::FindClass(L"serverBox_C");
     if (!g_gmCls || !g_sbCls) return;  // world not loaded yet
-    if (g_offServers  < 0) g_offServers  = R::FindPropertyOffset(g_gmCls, L"servers");
     if (g_offBroken   < 0) g_offBroken   = R::FindPropertyOffset(g_gmCls, L"brokenServers");
     if (g_offEffCalc  < 0) g_offEffCalc  = R::FindPropertyOffset(g_gmCls, L"serverEfficiency_calc");
     if (g_offEffDownl < 0) g_offEffDownl = R::FindPropertyOffset(g_gmCls, L"serverEfficiency_downl");
@@ -78,16 +78,16 @@ void ResolvePass() {
     if (!g_checkFn) g_checkFn = R::FindFunction(g_sbCls, L"check");
     if (Resolved()) {
         g_resolveLatched = true;
-        UE_LOGI("serverbox_sync: resolved (servers=0x%X broken=0x%X eff=0x%X/0x%X IsBroken=0x%X mask=0x%02X "
-                "check=yes)", g_offServers, g_offBroken, g_offEffCalc, g_offEffDownl, g_offIsBroken,
+        UE_LOGI("serverbox_sync: resolved (broken=0x%X eff=0x%X/0x%X IsBroken=0x%X mask=0x%02X "
+                "check=yes)", g_offBroken, g_offEffCalc, g_offEffDownl, g_offIsBroken,
                 g_maskIsBroken);
         return;
     }
     if (++g_postClassAttempts >= kMaxPostClassAttempts) {
         g_resolveLatched = true;
-        UE_LOGW("serverbox_sync: resolution INCOMPLETE after %d passes (servers=0x%X broken=0x%X "
+        UE_LOGW("serverbox_sync: resolution INCOMPLETE after %d passes (broken=0x%X "
                 "IsBroken=0x%X check=%s) -- latched OFF; game version mismatch?",
-                g_postClassAttempts, g_offServers, g_offBroken, g_offIsBroken, g_checkFn ? "yes" : "no");
+                g_postClassAttempts, g_offBroken, g_offIsBroken, g_checkFn ? "yes" : "no");
     }
 }
 
@@ -103,19 +103,12 @@ void* Gamemode() {
     return g_gm;
 }
 
-// Raw TArray header (UE4 layout: Data ptr, Num, Max).
-struct FArrayRaw { void* Data; int32_t Num; int32_t Max; };
-
-// Read servers[] into `out` (bounded to kMaxServers). Returns the true Num (may exceed kMaxServers).
-int32_t ReadServers(void* gm, std::vector<void*>& out) {
+// The box list has one owner, ue_wrap/devices/serverbox: this lane keeps only its own cap, since
+// the mask it broadcasts is that many bits wide.
+int32_t ReadServers(std::vector<void*>& out) {
     out.clear();
-    if (!gm || g_offServers < 0) return 0;
-    const FArrayRaw* arr = reinterpret_cast<const FArrayRaw*>(reinterpret_cast<uint8_t*>(gm) + g_offServers);
-    const int32_t num = arr->Num;
-    if (!arr->Data || num <= 0) return num;
-    void* const* elems = reinterpret_cast<void* const*>(arr->Data);
-    const int32_t take = num < kMaxServers ? num : kMaxServers;
-    for (int32_t i = 0; i < take; ++i) out.push_back(elems[i]);
+    const int32_t num = static_cast<int32_t>(SB::ReadServers(out));
+    if (num > kMaxServers) out.resize(kMaxServers);
     return num;
 }
 
@@ -142,7 +135,7 @@ bool ReadState(coop::net::ServerStatePayload& p) {
     void* gm = Gamemode();
     if (!gm) return false;
     std::vector<void*> servers;
-    const int32_t num = ReadServers(gm, servers);
+    const int32_t num = ReadServers(servers);
     if (num > kMaxServers) {
         static bool warned = false;
         if (!warned) { warned = true; UE_LOGW("serverbox_sync: %d servers > cap %d -- syncing first %d only",
@@ -196,7 +189,7 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
     WriteFlt(gm, g_offEffCalc, p.effCalc);
     WriteFlt(gm, g_offEffDownl, p.effDownl);
     std::vector<void*> servers;
-    ReadServers(gm, servers);
+    ReadServers(servers);
     int applied = 0;
     const int32_t n = static_cast<int32_t>(servers.size());
     const int32_t take = n < p.serverCount ? n : p.serverCount;

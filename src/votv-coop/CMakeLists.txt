@@ -268,6 +268,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/devices/laptop.cpp
     src/ue_wrap/devices/portable_pc.cpp
     src/ue_wrap/devices/floppybox.cpp
+    src/ue_wrap/devices/serverbox.cpp
     src/ue_wrap/desk/desk_audio.cpp
     src/ue_wrap/desk/phys_mods.cpp
     src/ue_wrap/desk/drive_chain.cpp
