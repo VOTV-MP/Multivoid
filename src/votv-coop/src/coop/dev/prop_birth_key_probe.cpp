@@ -24,7 +24,7 @@ constexpr auto   kVerdictPeriod = std::chrono::seconds(15);
 
 struct Entry {
     std::wstring cls;
-    bool         keyAtSeam        = false;
+    std::wstring seamKey;          // as read at the seam; empty when the Key was not there yet
     bool         containerExtract = false;
 };
 std::unordered_map<void*, Entry> g_live;  // enqueued, not yet drained
@@ -34,6 +34,7 @@ int g_keyAtSeam    = 0;   // ... of which the Key read back with no waiting
 int g_capHit       = 0;   // refused at enqueue, pending vector full
 int g_parkEvict    = 0;   // a parked key evicted before a place consumed it
 int g_keyNeverRead = 0;   // left the vector with the Key still unreadable
+int g_seamKeyChanged = 0; // the Key at the seam was NOT the one the entry left with
 int g_tries[kTriesBuckets] = {};  // drain tick on which the Key became readable
 
 // Ordered, so the verdict block prints the same exits in the same order run to run.
@@ -52,14 +53,17 @@ bool IsEnabled() {
     return s;
 }
 
-void NoteEnqueue(void* actor, const std::wstring& cls, bool keyAtSeam, bool containerExtract) {
+void NoteEnqueue(void* actor, const std::wstring& cls, const std::wstring& seamKey,
+                 bool containerExtract) {
     if (!IsEnabled() || !actor) return;
     g_anyRecorded = true;
     ++g_enqueued;
-    if (keyAtSeam) ++g_keyAtSeam;
-    if (g_live.size() < kLiveCap) g_live[actor] = Entry{cls, keyAtSeam, containerExtract};
-    UE_LOGW("prop_birth_key_probe: ENQUEUE actor=%p cls='%ls' key-at-seam=%d container-extract=%d",
-            actor, cls.c_str(), keyAtSeam ? 1 : 0, containerExtract ? 1 : 0);
+    const bool present = !(seamKey.empty() || seamKey == L"None");
+    if (present) ++g_keyAtSeam;
+    if (g_live.size() < kLiveCap)
+        g_live[actor] = Entry{cls, present ? seamKey : std::wstring(), containerExtract};
+    UE_LOGW("prop_birth_key_probe: ENQUEUE actor=%p cls='%ls' key-at-seam='%ls' container-extract=%d",
+            actor, cls.c_str(), present ? seamKey.c_str() : L"<none>", containerExtract ? 1 : 0);
     g_dirty = true;
 }
 
@@ -102,14 +106,19 @@ void NoteDrainExit(void* actor, const char* verdict, int tries, const std::wstri
 
     Entry e;
     if (auto it = g_live.find(actor); it != g_live.end()) { e = it->second; g_live.erase(it); }
+    // A Key that was there at the seam and is a DIFFERENT one at the exit is the case a flag hides:
+    // the identity was not ready, it was merely occupied.
+    const bool seamKeyChanged = !e.seamKey.empty() && !key.empty() && e.seamKey != key;
+    if (seamKeyChanged) ++g_seamKeyChanged;
 
     if (int& printed = g_exitLines[v]; printed < kPerExitLines) {
         ++printed;
         UE_LOGW("prop_birth_key_probe: EXIT %s actor=%p cls='%ls' key='%ls' waited=%d tick(s) "
-                "key-at-seam=%d container-extract=%d",
+                "key-at-seam='%ls'%s container-extract=%d",
                 v.c_str(), actor, e.cls.empty() ? L"?" : e.cls.c_str(),
                 key.empty() ? L"<unread>" : key.c_str(), tries,
-                e.keyAtSeam ? 1 : 0, e.containerExtract ? 1 : 0);
+                e.seamKey.empty() ? L"<none>" : e.seamKey.c_str(),
+                seamKeyChanged ? " CHANGED-BY-EXIT" : "", e.containerExtract ? 1 : 0);
     }
 
     g_dirty = true;
@@ -135,10 +144,11 @@ void EmitVerdict() {
         if (i >= 7) atCeiling += g_tries[i];
     }
     // Totals are cumulative: each print is the whole run so far, and the last one is the run.
-    UE_LOGW("prop_birth_key_probe: VERDICT enqueued=%d key-at-seam=%d key-observed-at-drain=%d "
-            "restored-late=%d at-ceiling(>=7)=%d key-never-read=%d cap-hit=%d park-evict=%d",
-            g_enqueued, g_keyAtSeam, observed, restoredLate, atCeiling, g_keyNeverRead,
-            g_capHit, g_parkEvict);
+    UE_LOGW("prop_birth_key_probe: VERDICT enqueued=%d key-at-seam=%d seam-key-changed=%d "
+            "key-observed-at-drain=%d restored-late=%d at-ceiling(>=7)=%d key-never-read=%d "
+            "cap-hit=%d park-evict=%d",
+            g_enqueued, g_keyAtSeam, g_seamKeyChanged, observed, restoredLate, atCeiling,
+            g_keyNeverRead, g_capHit, g_parkEvict);
     UE_LOGW("prop_birth_key_probe: tick histogram 0=%d 1=%d 2=%d 3=%d 4=%d 5=%d 6=%d 7=%d 8=%d 9+=%d",
             g_tries[0], g_tries[1], g_tries[2], g_tries[3], g_tries[4],
             g_tries[5], g_tries[6], g_tries[7], g_tries[8], g_tries[9]);
@@ -151,7 +161,8 @@ void EmitVerdict() {
     const char* reading =
         (g_enqueued == 0)     ? "NO DATA -- no client keyed spawn was enqueued; drive the seam (place, eject, extract) first"
         : (observed == 0)     ? "NO KEY OBSERVED -- entries were enqueued but every one exited before the Key was read, so nothing here rules the wait in or out; read the exit tally above"
-        : (restoredLate == 0) ? "KEY IS READY AT THE SEAM -- every Key read back with zero waiting, so the wait never ran and cannot be the loss"
+        : (g_seamKeyChanged)  ? "KEY AT THE SEAM IS NOT THE IDENTITY -- a Key was there and the entry left under a different one, so a lane reading identity at the seam reads the wrong prop"
+        : (restoredLate == 0) ? "KEY IS READY AT THE SEAM -- every Key read back with zero waiting, and the one at the seam is the one the entry left with, so the wait never ran and cannot be the loss"
         : (atCeiling == 0)    ? "KEY RESTORES EARLY -- late restores exist, none near the ceiling; the wait has headroom and is not the loss"
                               : "KEY RESTORES AT THE CEILING -- the wait is a live bound, and a declared readiness point removes it at the root";
     UE_LOGW("prop_birth_key_probe: reading :: %s", reading);

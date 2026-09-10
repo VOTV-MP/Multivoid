@@ -20,9 +20,13 @@ namespace coop::dev::prop_birth_key_probe {
 
 bool IsEnabled();
 
-// A spawn entered the pending vector. `keyAtSeam` is whether the Key already read back at
-// FinishSpawningActor return, before any drain tick waited for loadData.
-void NoteEnqueue(void* actor, const std::wstring& cls, bool keyAtSeam, bool containerExtract);
+// A spawn entered the pending vector. `seamKey` is the Key as it read at FinishSpawningActor
+// return, before any drain tick waited for loadData -- empty or None when there was none. The
+// probe keeps the string rather than a flag because a Key that is PRESENT at the seam and a Key
+// that is the actor's FINAL identity are different facts: a spawn can carry a freshly minted key
+// there and take its saved one a statement later, and only comparing the two tells them apart.
+void NoteEnqueue(void* actor, const std::wstring& cls, const std::wstring& seamKey,
+                 bool containerExtract);
 
 // The pending vector was full, so this spawn was never enqueued.
 void NotePendingCapHit(void* actor);

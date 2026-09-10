@@ -150,9 +150,9 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
     if (coop::dev::prop_birth_key_probe::IsEnabled()) {
         // The seam reading the probe exists for: is the Key there before any drain tick waits?
-        const std::wstring seamKey = ue_wrap::prop::GetInteractableKeyString(actor);
         coop::dev::prop_birth_key_probe::NoteEnqueue(
-            actor, R::ClassNameOf(actor), !(seamKey.empty() || seamKey == L"None"), fromContainerExtract);
+            actor, R::ClassNameOf(actor), ue_wrap::prop::GetInteractableKeyString(actor),
+            fromContainerExtract);
     }
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
     if (fromContainerExtract)
