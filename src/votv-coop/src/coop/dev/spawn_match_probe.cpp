@@ -79,8 +79,9 @@ void NoteFuzzyScan(uint32_t wireEid, const std::wstring& wireKey, const std::wst
         if (bestDist < 0.f || c.distCm < bestDist) { bestDist = c.distCm; bestAt = i; }
         if (i >= static_cast<size_t>(kMaxCandLines)) continue;
         const std::wstring localKey = ue_wrap::prop::GetKeyString(c.actor);
-        // Each resolve copies the whole mirror table, and this runs inside OnSpawn -- the very path
-        // whose ORDERING against an inbound destroy is the thing being measured. So the wire-mirror
+        // Each resolve takes the mirror table's lock and builds a pointer vector over every row,
+        // and this runs inside OnSpawn -- the very path whose ORDERING against an inbound destroy
+        // is the thing being measured. So the wire-mirror
         // row, which is what the identity-steal gate itself reads, is resolved for every printed
         // candidate; the any-row column, which only separates a save-loaded twin from an untracked
         // actor, is resolved for the taken one alone.
