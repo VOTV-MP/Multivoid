@@ -10,7 +10,7 @@
 //
 // STRICTLY a dev/test tool (RULE 3): gated by env VOTVCOOP_MENU_PROCEED=1, NEVER on
 // by default -- the content warning is a real legal/content gate the shipping mod
-// must never auto-skip. Exists only for agent-run menu captures.
+// must never auto-skip.
 
 #pragma once
 

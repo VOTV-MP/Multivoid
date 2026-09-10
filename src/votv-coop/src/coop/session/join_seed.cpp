@@ -38,7 +38,7 @@ void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
         // No snapshot = no save-baseline knowledge; seeding the full array would
         // duplicate the joiner's save copy. Loud only at the slot's FIRST replay
         // (ConnectReplayForSlot re-fires on every mid-session world-change
-        // re-announce, where a consumed snapshot is normal -- meadow audit fix 2).
+        // re-announce, where a consumed snapshot is normal).
         if (!seededOnce_[peerSlot])
             UE_LOGW("%s: no join snapshot for slot %d -- seed skipped", a_.name, peerSlot);
         return;
@@ -53,7 +53,7 @@ void Seeder::SeedForSlot(coop::net::Session* s, int peerSlot) {
     }
 
     // seedDelta(h) = cur - snap, per hash over the union. No pending-mask term:
-    // these lanes have no cross-edge resend structure (measured, design doc par.2.6);
+    // these lanes have no cross-edge resend structure (measured);
     // the live leg is CLOSED for the whole capture->ready gap by the B2 gate.
     std::map<uint64_t, int32_t> delta = cur;
     for (const auto& [h, c] : snap.counts) delta[h] -= c;
@@ -76,8 +76,8 @@ void Seeder::Reset() {
 }
 
 bool RunSelfTest() {
-    // Engine-free delta math over a fake adapter: multiset counts + gap-deletion +
-    // both signs, deterministically (the /qf R7-R8 selftest rows).
+    // Engine-free delta math over a fake adapter: six cases covering multiset counts,
+    // gap append and deletion, a net-zero edit, and both signs at once.
     struct Case {
         const char* name;
         std::map<uint64_t, int32_t> snap, cur;

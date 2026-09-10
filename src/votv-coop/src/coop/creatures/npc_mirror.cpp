@@ -1,6 +1,6 @@
-// coop/npc_mirror.cpp -- the client-side NPC mirror: materialising a host EntitySpawn (a fresh
-// spawn, or the adoption of a local twin), the wire destroy, the disconnect and world-swap
-// drains, the ghost sweep and the per-tick pose drive. See coop/npc_mirror.h.
+// coop/creatures/npc_mirror.cpp -- the client-side NPC mirror: materialising a host EntitySpawn (a
+// fresh spawn, or the adoption of a local twin), the wire destroy, the disconnect and world-swap
+// drains, the ghost sweep and the per-tick pose drive. See coop/creatures/npc_mirror.h.
 
 #include "coop/creatures/npc_mirror.h"
 

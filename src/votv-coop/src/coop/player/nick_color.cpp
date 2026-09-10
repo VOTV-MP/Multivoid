@@ -16,8 +16,8 @@ namespace coop::nick_color {
 namespace {
 
 // Per-slot packed colors (0 = default) + the local pref. ALL atomic: written by
-// game-thread wire handlers, the render-thread F1 picker path and the bringup-
-// thread session-start reset (the coop::nameplate v94 thread shape).
+// game-thread wire handlers, the render-thread F1 picker path and the
+// bringup-thread session-start reset.
 std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<uint32_t>            g_local{0};
 std::array<std::atomic<uint32_t>, coop::players::kMaxPeers> g_bySlot{};
@@ -43,10 +43,10 @@ void PersistLocal(uint32_t packed) {
 }  // namespace
 
 void SetInitialLocalFromIniHex(const std::string& hex) {
-    // Moved verbatim from the harness boot glue (s27 Tier-C): the v103 (12f)
-    // persisted nick color. "unset" (key absent, a new identity) = custom WHITE
-    // by default (user 2026-07-05); an explicitly EMPTY value = the per-surface
-    // defaults; a 6-digit RRGGBB hex = that color (malformed -> defaults).
+    // The persisted nick colour, raw from multivoid.ini. "unset" (the key is
+    // ABSENT, so a new identity) = custom WHITE; an explicitly EMPTY value = the
+    // per-surface defaults; a 6-digit RRGGBB hex = that colour, and a malformed one
+    // falls back to the defaults.
     uint32_t packed = 0;
     if (hex == "unset") {
         packed = Pack(255, 255, 255);
@@ -124,14 +124,18 @@ void Install(coop::net::Session* session) {
 }
 
 void ResetSlots() {
-    // Session-start reset -- runs on the BRINGUP thread (TimelineThread) via
-    // player_handshake::Reset; the store is atomic, so no game-thread hop.
+    // Session-start reset, from event_feed::OnSessionStart on the BRINGUP thread;
+    // the stores are atomic, so no game-thread hop. Not occupancy-gated, unlike
+    // OnSlotDisconnected: a peer's colour arrives with its Join, before its roster
+    // row exists, so a slot that never became occupied would otherwise carry that
+    // colour into the next session.
     for (auto& c : g_bySlot) c.store(0, std::memory_order_relaxed);
 }
 
 void OnSlotDisconnected(int slot) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // A reused slot must not inherit the departed peer's color.
+    // From the ledger's occupant-change edge, which fires on a replacement too, so a
+    // reused slot never inherits the departed peer's color.
     g_bySlot[slot].store(0, std::memory_order_relaxed);
 }
 

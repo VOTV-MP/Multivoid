@@ -1,7 +1,7 @@
-// coop/save_button_disable.h -- grey out and disable the client's pause-menu Save button.
+// coop/save/save_button_disable.h -- grey out and disable the client's pause-menu Save button.
 //
-// The visible half of the guarantee in coop/save_block.cpp: persistence is host-only, so a client
-// must not write the world save, and the block already stops the write at
+// The visible half of the guarantee in coop/save/save_block.cpp: persistence is host-only, so a
+// client must not write the world save, and the block already stops the write at
 // UGameplayStatics::SaveGameToSlot. This makes the restriction READ as one rather than as a silent
 // failed save -- on the client's pause menu (ui_menu_C with isPause set) button_Save is disabled
 // and dimmed with SetRenderOpacity. The native disableSave bool stays untouched on purpose: it

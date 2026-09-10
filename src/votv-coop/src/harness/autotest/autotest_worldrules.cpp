@@ -1,7 +1,7 @@
-// harness/autotest_worldrules.cpp -- the world-rules probe
+// harness/autotest/autotest_worldrules.cpp -- the world-rules probe
 // (VOTVCOOP_RUN_WORLDRULES_PROBE): exercises the F1>World>Rules read path on
-// both peers + measures G1. Extracted verbatim from harness/autotest.cpp
-// (2026-07-19 dissolve); interface + doc in harness/autotest.h.
+// both peers and measures G1. The interface and the description live in
+// harness/autotest.h.
 
 #include "harness/autotest.h"
 
@@ -27,7 +27,7 @@ namespace GT = ue_wrap::game_thread;
 //       UI-only, so a headless smoke can't otherwise run its code), and
 //   (2) MEASURES G1 -- diff the host's `worldrules:` lines against the client's;
 //       equal rule set == the host's rules reached the client's GI.gameRules for
-//       free via the save-load spine (the open gate from the settings /qf).
+//       free via the save-load spine.
 // Waits for gameplay + the client's save-load to settle before reading.
 void RunWorldRulesProbe() {
     UE_LOGI("worldrules: probe start (waiting 35 s for gameplay + client save-load settle)");

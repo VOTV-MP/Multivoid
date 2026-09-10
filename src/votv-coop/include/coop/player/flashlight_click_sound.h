@@ -1,5 +1,5 @@
-// coop/flashlight_click_sound.h -- a 3D positional click at a puppet's location when a remote
-// peer toggles their flashlight.
+// coop/player/flashlight_click_sound.h -- a 3D positional click at a puppet's location when a
+// remote peer toggles their flashlight.
 //
 // Plays the game's own `flashlight` USoundWave through UGameplayStatics::PlaySoundAtLocation
 // with a USoundAttenuation we build at runtime, so no cooked `att_*` content asset is borrowed.

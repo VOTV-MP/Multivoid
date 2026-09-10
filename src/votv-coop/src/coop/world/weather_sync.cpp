@@ -1,6 +1,6 @@
-// coop/weather_sync.cpp -- the weather lane's hub: the host's cycle observers broadcast
+// coop/world/weather_sync.cpp -- the weather lane's hub: the host's cycle observers broadcast
 // WeatherState, the client's interceptors suppress its own scheduler rolls, and the fog, rain,
-// lightning, red-sky and event-birth modules hang off Install. See coop/weather_sync.h.
+// lightning, red-sky and event-birth modules hang off Install. See coop/world/weather_sync.h.
 
 #include "coop/world/weather_sync.h"
 

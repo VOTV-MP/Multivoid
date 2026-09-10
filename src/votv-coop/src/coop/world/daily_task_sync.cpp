@@ -1,4 +1,4 @@
-// coop/world/daily_task_sync.cpp -- see the header + the L7 design doc (D3).
+// coop/world/daily_task_sync.cpp -- see coop/world/daily_task_sync.h.
 
 #include "coop/world/daily_task_sync.h"
 

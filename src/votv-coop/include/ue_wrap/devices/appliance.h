@@ -1,4 +1,4 @@
-// ue_wrap/appliance.h -- standalone engine access for VOTV's simple on/off APPLIANCES
+// ue_wrap/devices/appliance.h -- standalone engine access for VOTV's simple on/off APPLIANCES
 // (faucet / sink / shower / kitchen-oven / serverBox / wallunit-tapes). Principle-7
 // engine-wrapper layer (no network/coop state). coop::interactable_sync drives the sync
 // through here via ONE Adapter -- this wrapper is the per-class dispatch.

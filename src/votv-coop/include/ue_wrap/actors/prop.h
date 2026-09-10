@@ -1,4 +1,4 @@
-// ue_wrap/prop.h -- Aprop_C accessors. VOTV's physics-grabbable props share the base class
+// ue_wrap/actors/prop.h -- Aprop_C accessors. VOTV's physics-grabbable props share the base class
 // Aprop_C (about 540 derivatives), and the fields live at fixed offsets in the base: propData
 // (with `heavy` inside it), Static, frozen, Key and StaticMesh. sdk_profile.h holds every one
 // of those offsets. The cross-peer identifier is the Key FName's ToString'd value, the save
@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "ue_wrap/engine/engine.h"      // FVector
 #include "ue_wrap/core/reflection.h"  // FName
@@ -50,7 +51,9 @@ bool IsGarbageClump(void* obj);
 bool IsTrashBitsPile(void* obj);
 // A readiness probe for the scan hub: attempts the extra-base resolve once and says whether
 // trashBitsPile_C is known, so the hub benches that consumer instead of letting IsTrashBitsPile
-// re-run FindClass (a full GUObjectArray walk) per memo-missed class per pass.
+// re-run FindClass per memo-missed class per pass. FindClass keeps its own cache, so a resolved
+// class costs a lookup rather than a walk -- but that cache never memoises a MISS, so a class
+// that is not loaded walks the whole object array on every single call.
 bool EnsureTrashBitsPileResolved();
 
 // True once the Aprop base class resolves; IsKeyedInteractable is vacuously false before that,
@@ -190,17 +193,36 @@ struct VelocityState {
 };
 VelocityState GetPhysicsVelocity(void* prop);
 
+// One actor the nearby-same-class scan accepted: right class, right list_props row, inside the
+// radius. `objIndex` is its GUObjectArray slot, which is the order the scan walks in.
+struct NearbyCandidate {
+    void*   actor    = nullptr;
+    int32_t objIndex = -1;
+    float   distCm   = 0.f;
+};
+
+// Everything the scan saw, filled only for a caller that asks. `candidates[0]` is what the scan
+// returns, so a trace records the choice without changing it.
+struct NearbyTrace {
+    std::vector<NearbyCandidate> candidates;        // accepted, in scan order
+    int32_t classMatches       = 0;                 // live, non-CDO actors of the class, any distance
+    int32_t rowNameRejects     = 0;                 // ... rejected because the list_props row differed
+    float   nearestOutsideCm   = -1.f;              // nearest row-matching actor outside the radius, -1 if none
+};
+
 // The fuzzy dedupe for divergent-key spawns: the per-peer natural spawners (mushrooms,
 // underground garbage) place the same logical entity with a different Key at a slightly different
 // position, so the exact-key resolve fails and a duplicate follows. The first same-class Aprop
 // within `radiusCm` of `anchor` in GUObjectArray order, or null; class by leaf name.
 // `expectedPropName`, when non-empty, must also match the list_props row (cube and cubicleP_1 are
 // both class prop_C; merging them rekeys the wrong object). One array walk per call; for spawn
-// events, not hot paths.
+// events, not hot paths. Passing `outTrace` walks the whole array instead of stopping at the
+// first hit, which costs the rest of the walk and returns the same actor.
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm,
-                          const std::wstring& expectedPropName);
+                          const std::wstring& expectedPropName,
+                          NearbyTrace* outTrace = nullptr);
 
 // The nearest chipPile-family actor within `radiusCm`, or null; these are not Aprop_C, so the
 // Aprop finders cannot see them. Trash piles load independently on each peer with key None, so
@@ -214,14 +236,5 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist 
 // that completes; the fresh-spawn path runs init in FinishSpawningActor and needs nothing.
 // False if the mesh or the UFunction does not resolve. Idempotent.
 bool ForceRestoreDefaultCollision(void* prop);
-
-// The per-class save-scalar birth channel: state VOTV's own save carries in struct_save.mFloat[0]
-// and loadData restores, which a mirror must receive at birth or a peer interacting with it
-// reads a CDO default and re-broadcasts it as truth. Currently the Aprop_reel_C lineage (Progress,
-// through ue_wrap::tape_caddy). Read is false for a class with no scalar; Apply is
-// the one mirror-birth write site, safe after Finish (the reel's consumers are lookAt and
-// loadData).
-bool ReadSavedScalarForClass(void* actor, float& out);
-bool ApplySavedScalarForClass(void* actor, float value);
 
 }  // namespace ue_wrap::prop

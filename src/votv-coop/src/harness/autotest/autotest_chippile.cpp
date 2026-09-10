@@ -1,10 +1,11 @@
-// harness/autotest_chippile.cpp -- the autonomous chipPile scenarios: the host grab, carry and
-// throw (VOTVCOOP_RUN_CHIPPILE_TEST=1), the puppet-grab probe (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1),
-// the synthetic grab-intent test (VOTVCOOP_RUN_GRAB_INTENT_TEST=1) and the host-drift scenario
-// (VOTVCOOP_RUN_PILE_DRIFT=1). The grab rides the game's own path: the E-press UFunction the
-// input system dispatches, so the PRE observer fires as for a real player, and the pile's own
-// playerGrabbed verb. The verdicts are read off the logs by tools/pile-test-assert.ps1.
-// VOTVCOOP_PILE_SHOWCASE=1 additionally aims the client camera at a mirrored pile and holds.
+// harness/autotest/autotest_chippile.cpp -- the autonomous chipPile scenarios: the host grab, carry
+// and throw (VOTVCOOP_RUN_CHIPPILE_TEST=1), the puppet-grab probe
+// (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1), the synthetic grab-intent test
+// (VOTVCOOP_RUN_GRAB_INTENT_TEST=1) and the host-drift scenario (VOTVCOOP_RUN_PILE_DRIFT=1). The
+// grab rides the game's own path: the E-press UFunction the input system dispatches, so the PRE
+// observer fires as for a real player, and the pile's own playerGrabbed verb. The verdicts are read
+// off the logs by the log-assert harness. VOTVCOOP_PILE_SHOWCASE=1 additionally aims the client
+// camera at a mirrored pile and holds.
 
 #include "harness/autotest.h"
 
@@ -377,22 +378,22 @@ void RunAutonomousChipPileTest() {
     }
     ::Sleep(5000);  // let the clump fall + impact + re-pile + the land-watch poll catch it
 
-    UE_LOGI("chippile_test: DONE -- grab-clump-holding=%d eid=%u. VERDICT is now the log-truth harness "
-            "(tools/pile-test-assert.ps1): host '[PILE] HOST GRAB ADOPT' + '[TRASH-CH] HOST carry OPEN' + "
+    UE_LOGI("chippile_test: DONE -- grab-clump-holding=%d eid=%u. VERDICT is now the log-assert harness: "
+            "host '[PILE] HOST GRAB ADOPT' + '[TRASH-CH] HOST carry OPEN' + "
             "'HOST RE-PILE(thunk)' + 'LAND COMMIT'; CLIENT '[PILE] CLIENT recv convert GRAB/LAND -> PROXY "
             "re-skinned' + 'CLIENT ToPile SNAP ... drift=~0'. (The old 'pile_morph: grab armed/ADOPTED' "
             "markers are RETIRED -- the morph was replaced by the host-auth trash channel + proxy.)",
             sawClumpHolding ? 1 : 0, sel->eid);
 }
 
-// The puppet-grab probe, host only (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1). The host runs the real
-// grab verb on a peer's puppet (an unpossessed mainPlayer_C) through playerGrabbed; the grab
-// path touches no controller state, so it should engage. What bytecode cannot show is whether an
+// The puppet-grab probe, host only (VOTVCOOP_RUN_PUPPET_GRAB_PROBE=1). The host runs the real grab
+// verb on a peer's puppet (an unpossessed mainPlayer_C) through playerGrabbed; the grab path
+// touches no controller state, so it should engage. What bytecode cannot show is whether an
 // unpossessed puppet's tick runs the per-tick physics-handle maintenance, so the clump tracks to
-// the hand rather than floating at the spawn spot. Verdicts, asserted by
-// tools/pile-test-assert.ps1: ENGAGED (grabbing_actor became a clump), HELD (it stayed),
-// TRACKED (the clump was pulled to the hand: the tick runs), FLOATING (held but not tracked:
-// the tick is suppressed, and the hand must be driven from the synced aim).
+// the hand rather than floating at the spawn spot. Verdicts, asserted by the log-assert harness:
+// ENGAGED (grabbing_actor became a clump), HELD (it stayed), TRACKED (the clump was pulled to the
+// hand: the tick runs), FLOATING (held but not tracked: the tick is suppressed, and the hand must
+// be driven from the synced aim).
 void RunPuppetGrabProbe() {
     const bool isHost = !IsClientRole();
     if (!isHost) {
@@ -449,7 +450,7 @@ void RunPuppetGrabProbe() {
     // 3. The puppet grab: the pile's own playerGrabbed with the puppet as the player. It spawns the
     // clump, sets its holder and calls the puppet's pickupObjectDirect; the pile self-destructs. No
     // observer arming, no lookAtActor injection.
-    UE_LOGI("puppet_grab_probe: >>> executing playerGrabbed on the PUPPET (the Increment-2 host-side move) <<<");
+    UE_LOGI("puppet_grab_probe: >>> executing playerGrabbed on the PUPPET (the host-side move) <<<");
     if (RunGT([pup, sel](std::atomic<int>& d) {
             void* pileCls = R::ClassOf(sel->pile);
             void* grabFn  = pileCls ? R::FindFunction(pileCls, L"playerGrabbed") : nullptr;
@@ -517,11 +518,11 @@ void RunPuppetGrabProbe() {
                 "grabbing_actor/holding_actor. The RE predicted ENGAGED; investigate (param frame? clump self-freed?).");
     else if (tracked)
         UE_LOGI("puppet_grab_probe: RESULT = TRACKED (tick ALIVE) -- the puppet HOLDS the clump at its hand; the "
-                "per-tick PHC maintenance RUNS on the unpossessed puppet. Increment-2 host-side grab works as-is "
+                "per-tick PHC maintenance RUNS on the unpossessed puppet. A host-side grab works as-is "
                 "(verdict A); the only remaining input is syncing the puppet aim, which the mod already streams.");
     else
         UE_LOGI("puppet_grab_probe: RESULT = FLOATING (held, tick likely DEAD) -- the clump did not reach the "
-                "puppet's hand (dist/last=%.0f cm, dZ=%.0f cm). Increment-2 must drive SetTargetLocationAndRotation "
+                "puppet's hand (dist/last=%.0f cm, dZ=%.0f cm). The host must drive SetTargetLocationAndRotation "
                 "on the puppet each tick from the synced remote aim (verdict B-fallback).", distLast, dzLast);
 }
 

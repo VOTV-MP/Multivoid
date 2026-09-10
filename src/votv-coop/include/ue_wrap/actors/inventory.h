@@ -1,4 +1,4 @@
-// ue_wrap/inventory.h -- read/write the player-scoped inventory off the live UsaveSlot_C.
+// ue_wrap/actors/inventory.h -- read/write the player-scoped inventory off the live UsaveSlot_C.
 //
 // Engine-wrapper layer: it owns the saveSlot reflection and the Fstruct_save /
 // Fstruct_equipment struct walk. The field offsets and the TArray element strides are named

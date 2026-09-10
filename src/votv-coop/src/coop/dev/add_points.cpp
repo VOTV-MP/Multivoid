@@ -18,8 +18,8 @@ void GivePoints(int amount) {
     // Apply through the shared-balance feature so the credit lands on the HOST's canonical
     // balance and both peers stay mirrored: on the host (or solo) it applies locally via
     // AddPoints and the host poll then broadcasts the new total. A connected client is
-    // refused there too -- since v135 there is no client->host economy write at all
-    // (security A5). CreditLocal is render-thread safe.
+    // refused there too: there is no client->host economy write at all.
+    // CreditLocal is render-thread safe.
     coop::balance_sync::CreditLocal(amount);
 }
 

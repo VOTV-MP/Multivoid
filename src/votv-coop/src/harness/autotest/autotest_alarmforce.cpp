@@ -1,18 +1,18 @@
-// harness/autotest_alarmforce.cpp -- base radar alarm lane e2e driver (v101, docs/events/alarm.md).
+// harness/autotest/autotest_alarmforce.cpp -- base radar alarm lane end-to-end driver. HOST-ONLY.
+// After a client-settle window, forces the native trigger_alarm_C ON through alarm_sync::DevForce
+// (a game-thread runTrigger(1) -- the exact call the radar makes), waits, then forces OFF. The
+// lane's own 1 Hz poll must detect both transitions and broadcast; the assert is per-axis
+// DISCRIMINATING -- the state bit and the applied line on the RECEIVING peer, not an arrival line,
+// which proves delivery and not application. Expect:
 //
-// HOST-ONLY. After a client-settle window, forces the native trigger_alarm_C ON through
-// alarm_sync::DevForce (a game-thread runTrigger(1) -- the exact call the radar makes), waits,
-// then forces OFF. The lane's own 1 Hz poll must detect both transitions and broadcast; the
-// assert is per-axis DISCRIMINATING (the state bit + the applied line on the RECEIVING peer,
-// not an arrival line -- [[lesson-e2e-assert-must-discriminate-the-axis]]). Expect:
 //   host log:   "alarm_sync: applied active=1 (native runTrigger replay)"
 //               "alarm_sync: host broadcast active=1"   (poll edge -> wire)
 //   client log: "alarm_sync: applied active=1 (native runTrigger replay)"
 //   ...then the same pair with active=0.
-// A mid-alarm JOIN leg instead gates the client launch on the host's "broadcast active=1"
-// line and expects "alarm_sync: connect-snapshot -- sent active=1 to slot 1" + one client apply.
 //
-// Gated by env VOTVCOOP_RUN_ALARMFORCE_TEST=1 (autonomous mp.py only; not an ini flag).
+// A mid-alarm JOIN leg instead gates the client launch on the host's "broadcast active=1" line and
+// expects "alarm_sync: connect-snapshot -- sent active=1 to slot 1" plus one client apply. Gated by
+// env VOTVCOOP_RUN_ALARMFORCE_TEST=1.
 
 #include "harness/autotest.h"
 

@@ -25,6 +25,7 @@
 #include "coop/world/email_sync.h"
 #include "coop/interactables/laptop_sync.h"  // the stationary PC lane and its lid
 #include "coop/interactables/laptop_buffer_sync.h"  // the PC buffer quad lane
+#include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"  // the disc crate LIFO lane
 #include "coop/props/container_contents_sync.h"  // the world-container GObjStack slice
 #include "coop/interactables/signal_catch_sync.h"
@@ -40,6 +41,8 @@
 #include "coop/creatures/wisp_tear_mirror.h"  // Killer Wisp coop: victim kill + tear mirror
 #include "coop/session/pause_guard.h"  // coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
+#include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
+#include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
 #include "coop/dev/inventory_probe.h"  // SP self-test for the apply (engine write) path
 #include "coop/dev/live_store_readout.h"  // READ-ONLY live personal store observability
 #include "coop/dev/sleep_probe.h"
@@ -56,6 +59,7 @@
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
+#include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/world/spawn_authority.h"  // the client shared-world spawner park and cancel
@@ -119,6 +123,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_element_tracker.h"  // reseed hub consumer install + drain
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
@@ -161,6 +166,7 @@ void Install(coop::net::Session& session) {
     coop::event_active_sync::Install(&session);  // the host's 1 Hz activeEvents membership diff, a begin/end edge log
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
+    coop::floppy_slot_sync::Install(&session);  // a disc-holding device's slot: host-canonical, a peer claims the outcome of its own insert or eject
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session);  // owner-entity lane: eyer per-peer owned + cross-peer display mirrors
     coop::inventory_pickup_sync::Install(&session);  // inventory-collect blip (PlaySound2D observer)
@@ -204,6 +210,7 @@ void Install(coop::net::Session& session) {
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::container_selftest::Install(&session);  // [dev] the container-lane e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
+    coop::dev::floppy_selftest::Install(&session);  // [dev] disc/server insert+eject episodes (no-op unless floppy_selftest=1)
     coop::dev::roster_token_selftest::Install(&session);  // [dev] successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
     coop::host_spawn_watcher::Install(&session);  // HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
     coop::prop_drop_intent::Install(&session);  // CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
@@ -306,6 +313,7 @@ void ConnectReplayForSlot(int slot) {
     // joiner starts its klaxon on arrival.
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
     coop::serverbox_sync::QueueConnectBroadcastForSlot(slot);  // current server state to the joiner
+    coop::floppy_slot_sync::QueueConnectBroadcastForSlot(slot);  // every device slot: the joiner's world came from a save frozen before the first insert
     coop::roach_sync::QueueConnectBroadcastForSlot(slot);  // current roach population to the joiner
     // The piramid lane's late-join answer: re-send an in-flight gather commit to the slot, after
     // the world-actor and NPC snapshots above, since the replay's eid lookups need the joiner's
@@ -339,6 +347,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     session.MarkSlotWorldReady(slot, false);
     // A slot teardown is a roster row transition: the leaver's half assemblies and seed brackets
     // must not survive into a recycled occupant.
+    coop::prop_save_data::OnPeerGone(static_cast<uint8_t>(slot));
+    coop::floppy_slot_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
     // Shut the chat lane's per-slot seed gate: the next occupant's applied range starts empty, so
@@ -384,6 +394,10 @@ DisconnectStats DisconnectAll() {
     coop::piramid_sync::OnDisconnect();  // drop pending gather + gather-edge map + restored-tick set (hooks stay latched)
     coop::npc_adoption::OnSessionEnd();  // drop pending deferred adoptions + reset latches
     coop::kerfur_prop_adoption::OnSessionEnd();  // drop pending prop-form kerfur adoptions
+    // The two prop-seam probes print their run totals before the state they describe is cleared.
+    coop::dev::prop_birth_key_probe::EmitVerdict();
+    coop::dev::spawn_match_probe::EmitVerdict();
+    coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
     coop::prop_drop_intent::Reset();  // clear the client park set + pending places
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();  // drop pending host-menu converges
@@ -410,6 +424,7 @@ DisconnectStats DisconnectAll() {
     coop::event_active_sync::OnDisconnect();  // drop tracked membership + cached gamemode
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
+    coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();  // restore parked spawner ticks (loan repayment belt)
@@ -420,11 +435,13 @@ DisconnectStats DisconnectAll() {
     coop::device_occupancy::OnDisconnect();
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
+    coop::prop_save_data::OnDisconnect();
     coop::laptop_sync::OnDisconnect();
     coop::laptop_buffer_sync::OnDisconnect();  // quad shadow + assembler + selftest
     coop::floppybox_sync::OnDisconnect();  // box shadows + taken-ring + pendings
     coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
     coop::dev::container_selftest::OnDisconnect();  // [dev] re-arm the circle on reconnect
+    coop::dev::floppy_selftest::OnDisconnect();  // [dev] re-arm the disc episodes on reconnect
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
     coop::dish_sync::OnDisconnect();  // wire-residue sweep + ticker restores (the suppression loan)
@@ -499,12 +516,16 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // host 1 Hz activeEvents_senders diff -> BEGIN/END edge log (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
+    coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
+    coop::dev::spawn_match_probe::Tick();  // [dev] periodic fuzzy-match totals (a single bool read when off)
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
+    coop::dev::floppy_selftest::Tick();  // [dev] disc/server episodes (single bool read when off; 6 s census period)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();  // the client spawner park driver (a client-session gate; cheap when idle)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
@@ -513,6 +534,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }  // device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }  // the catch and cleared detectors, 1 Hz
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:propsave"}; coop::prop_save_data::Drive(); }  // budgeted park applies + the 1 Hz assembler sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop"}; coop::laptop_sync::Tick(); }  // PC power/floppy edge polls (4 Hz) + content watches + lid sweep (1 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:laptop_quad"}; coop::laptop_buffer_sync::Tick(); }  // quad int pre-filter poll (4 Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:floppybox"}; coop::floppybox_sync::Tick(); }  // box sweep (1 Hz)

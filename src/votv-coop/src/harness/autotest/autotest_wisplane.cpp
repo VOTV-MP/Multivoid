@@ -1,23 +1,18 @@
-// harness/autotest_wisplane.cpp -- wisp mirror-lane e2e smoke driver (2026-07-03).
-//
-// HOST-ONLY (client observes via wire). Drives the full event-swarm wisp lifecycle:
-//   1. T+55s  ForceNow("wisps") -- arm via HostFire + drive TB_event_wispSwarm's own overlap
-//             (the events NOW! seam, verified 2026-07-03) -> trigger_wispSwarm_2's ubergraph
-//             spawns up to 32x wisp_C via EX_CallMath BeginDeferred, one per 0.25-1.0 s.
-//             Each spawn must be CAUGHT by the Func-thunk (host log "npc-sync[ex-spawn]:
-//             enrolled 'wisp_C' eid=N") and MIRRORED (client log "materialized mirror ...
-//             class='wisp_C'"). Pose streams while they descend/wander; the client's
-//             fade-in fires via the lane-driven landing edge (DriveWispLanding).
+// harness/autotest/autotest_wisplane.cpp -- wisp mirror-lane end-to-end smoke driver.
+// HOST-ONLY (the client observes over the wire); drives the whole event-swarm lifecycle:
+//   1. T+55s  ForceNow("wisps") through HostFire, plus TB_event_wispSwarm's own overlap --
+//             the events NOW! seam -- so trigger_wispSwarm_2's ubergraph spawns up to 32
+//             wisp_C by EX_CallMath BeginDeferred. Each spawn must be CAUGHT by the
+//             Func-thunk (host log "npc-sync[ex-spawn]: enrolled 'wisp_C' eid=N") and
+//             MIRRORED (client log "materialized mirror ... class='wisp_C'"). Pose streams
+//             as they descend; the fade-in fires on the landing edge (DriveWispLanding).
 //   2. T+130s SetTimeFraction(0.5) -- midday sun. A LANDED wisp's next tick fails the
-//             night-band check -> dir(false) -> 3s fade -> EX_VirtualFunction self-destroy,
-//             which the K2 PRE cannot see: the pose-walk dead-retire must broadcast it
-//             (host log "npc-sync[pose dead-retire]: Npc eid=N"; client OnDestroy lines).
-//             (If the fresh save starts in daytime the despawn leg simply runs early --
-//             the log evidence is the same, just earlier.)
-//   3. T+165s DONE marker. The assert is the LOG DIFF: enrolled count == materialized count
-//             > 0, dead-retire count == client destroy count, zero errors.
-//
-// Gated by env VOTVCOOP_RUN_WISPLANE_TEST=1 (autonomous mp.py only; not an ini flag).
+//             night-band check -> 3 s fade -> EX_VirtualFunction self-destroy, which the K2
+//             PRE cannot see, so the pose-walk dead-retire broadcasts it (host log
+//             "npc-sync[pose dead-retire]: Npc eid=N"; client OnDestroy lines).
+//   3. T+165s DONE marker. The assert is the LOG DIFF: enrolled == materialized > 0,
+//             dead-retire == client destroy, zero errors.
+// Gated by env VOTVCOOP_RUN_WISPLANE_TEST=1 (the autonomous harness only; not an ini flag).
 
 #include "harness/autotest.h"
 

@@ -1,4 +1,4 @@
-// ue_wrap/lightswitch.cpp -- see ue_wrap/lightswitch.h. Engine access for VOTV
+// ue_wrap/devices/lightswitch.cpp -- see ue_wrap/devices/lightswitch.h. Engine access for VOTV
 // light groups (Atrigger_lightRoot_C). Offsets resolved from the live class via
 // reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 
@@ -208,8 +208,8 @@ void SetGroupGate(void* root, bool open) {
     if (!root || g_gateOff < 0) return;  // fail CLOSED on an unresolved offset: never write a guess
     // The pointer may be an actor of a world that has since been torn down -- the restore half of
     // a hold can outlive the press that took it. A raw write at a known-good offset into freed
-    // memory corrupts whatever now owns the page, and by the recorded lesson it faults nowhere
-    // near here, so liveness is checked rather than assumed.
+    // memory corrupts whatever now owns the page, and such a write faults nowhere near here, so
+    // liveness is checked rather than assumed.
     if (!R::IsLive(root)) return;
     *reinterpret_cast<bool*>(reinterpret_cast<char*>(root) + g_gateOff) = open;
 }

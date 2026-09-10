@@ -40,7 +40,7 @@ void OnReliable(const coop::net::AlarmStatePayload& payload, int senderPeerSlot)
 
 // Test/dev seam: post a game-thread native runTrigger(active) on the LOCAL trigger -- the
 // lane's own poll then detects + broadcasts, so an e2e exercises the shipping path
-// (harness/autotest_alarmforce; RULE-2-exempt diagnostics).
+// (harness/autotest/autotest_alarmforce; RULE-2-exempt diagnostics).
 void DevForce(bool active);
 
 // Teardown: drop the cached trigger + baseline, clear the session.

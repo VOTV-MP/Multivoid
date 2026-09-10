@@ -1,16 +1,12 @@
-// coop/config/config_review.h -- the T10 config review: boot-time
-// file-vs-schema sweep + the row store behind the review panel.
+// coop/config/config_review.h -- the config review: boot-time file-vs-schema sweep + the row store
+// behind the review panel.
 //
-// (ini rework arc 2; design research/findings/tooling/
-// votv-ini-config-registry-DESIGN-2026-07-24.md T10.)
-//
-// The sweep validates the ini FILE (and the set env twins) against the
-// registry schema -- statically, off each row's kind -- so even never-read
-// gated keys (F11: desk_diag_ms behind desk_diag) get their verdicts. It
-// REPORTS, never rewrites; the in-memory default substitution still happens
-// at each read site. The panel re-arms every launch while any row lives;
-// dismissal is in-memory, session-local. The only writes are the OWNER
-// actions (keep-line / reformat), routed through config's guarded file ops.
+// The sweep validates the ini FILE (and the set env twins) against the registry schema --
+// statically, off each row's kind -- so even never-read gated keys (desk_diag_ms behind desk_diag)
+// get their verdicts. It REPORTS, never rewrites; the in-memory default substitution still happens
+// at each read site. The panel re-arms every launch while any row lives; dismissal is in-memory,
+// session-local. The only writes are the OWNER actions (keep-line / reformat), routed through
+// config's guarded file ops.
 
 #pragma once
 
@@ -53,7 +49,8 @@ void Dismiss();         // session-local; a fresh launch re-arms by re-sweeping
 
 // Owner actions (panel buttons). Both re-run the sweep on success; the keep
 // action also re-sweeps on REFUSAL (a stale snapshot means the panel must
-// show fresh state). Correlated by VALUE (audit CRIT-2), never line number.
+// show fresh state). Correlated by VALUE, never line number: a position goes
+// stale the moment anything rewrites the file between snapshot and click.
 bool KeepDuplicateLine(const std::string& key, const std::string& keepValue);
 struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0, retired = 0; };
 ReformatOutcome ReformatNow();

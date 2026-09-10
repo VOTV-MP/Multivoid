@@ -1,4 +1,4 @@
-// coop/npc_world_enum.h -- HOST-side OFF-INTERCEPTOR NPC enrollment.
+// coop/creatures/npc_world_enum.h -- HOST-side OFF-INTERCEPTOR NPC enrollment.
 //
 // ONE domain concept: enrolling host NPCs the PE interceptor can NEVER see,
 // through the SAME end state the interceptor and its POST reach for a fresh spawn

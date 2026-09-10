@@ -1,4 +1,4 @@
-// coop/physmods_sync.h -- the desk PHYSICAL-MODULES array sync (PhysModsState).
+// coop/interactables/physmods_sync.h -- the desk PHYSICAL-MODULES array sync (PhysModsState).
 //
 // Value ops over a host-canonical array. The array is a SET -- the native dup-check makes every
 // module byte unique -- so an op needs no slot. DETECT is a 1 Hz 12-byte poll on every peer,
@@ -36,8 +36,9 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot);
 // HOST: ship the canonical array to a joiner (connect replay).
 void QueueConnectBroadcastForSlot(int slot);
 
-// HOST consult from the kind-104 birth author: reap a module birth that
-// matches a fresh unplug-deny for this sender (the r8 ghost). True = refuse.
+// HOST consult from the ReelEjectIntent birth author: reap a module birth that matches a
+// fresh unplug-deny for this sender, which makes it the ghost of a drop that raced the
+// deny. True = refuse.
 bool HostShouldReapModuleBirth(uint8_t senderSlot, void* moduleClass);
 
 // Full state reset. Wired into the subsystems teardown fanout.

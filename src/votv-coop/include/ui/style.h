@@ -1,8 +1,7 @@
 // ui/style.h -- the ImGui STYLE at the current UI factor: who owns it, and when it
 // is re-derived.
 //
-// Extracted from ui/imgui_overlay.cpp 2026-07-31 (the modular file-size rule: that
-// file crossed the 800 LOC soft cap). The seam is deliberately narrow -- the overlay
+// The seam from ui/imgui_overlay.cpp is deliberately narrow -- the overlay
 // owns the swap chain, the hooks and the surfaces; this owns exactly one question:
 // what does the style look like at `ui::scale::Ui()`, and what has to be rebuilt when
 // that factor moves.

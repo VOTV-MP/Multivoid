@@ -1,4 +1,4 @@
-// ue_wrap/comp_pane.h -- the main desk's refiner (comp) pane surface: the
+// ue_wrap/desk/comp_pane.h -- the main desk's refiner (comp) pane surface: the
 // decode scalars + the comp_data_0 struct base + the pane repaint / direct
 // paints / cue actions -- one desk sub-surface per file, so the desk actor
 // and the atlas widget chain stay owned

@@ -1,4 +1,4 @@
-// ue_wrap/log.h -- minimal levelled logger for the standalone mod.
+// ue_wrap/core/log.h -- minimal levelled logger for the standalone mod.
 //
 // Writes to multivoid.log beside the game exe. The point is fast diagnosis:
 // when the mod is brought up against a new game build and something is wrong,

@@ -1,12 +1,12 @@
-// coop/atv_sync.cpp -- see coop/atv_sync.h. The ATV (AATV_C) rig sync. The mirror simulates: a peer
-// that does not author an ATV runs the rig natively, physics and tick on, and is corrected toward
-// the authority through velocity, never frozen or teleported. AATV_C is a five-body constraint rig
-// whose visible output is suspension travel, and SetActorLocation moves the root only, so a
-// kinematic apply dragged four constrained bodies behind one teleported root. The one thing a
-// mirror may not do is author collision damage (the hit guard). MTA's shape (a hard velocity
-// write per packet, a warp past a speed-scaled threshold, an elected syncer for an unoccupied
-// vehicle that sends only on change) with one divergence: correction through velocity, since
-// their vehicle is one rigid body. Two predicates: IsPoseAuthor (I drive or carry it) and
+// coop/interactables/atv_sync.cpp -- see coop/interactables/atv_sync.h. The ATV (AATV_C) rig sync.
+// The mirror simulates: a peer that does not author an ATV runs the rig natively, physics and tick
+// on, and is corrected toward the authority through velocity, never frozen or teleported. AATV_C is
+// a five-body constraint rig whose visible output is suspension travel, and SetActorLocation moves
+// the root only, so a kinematic apply dragged four constrained bodies behind one teleported root.
+// The one thing a mirror may not do is author collision damage (the hit guard). MTA's shape (a hard
+// velocity write per packet, a warp past a speed-scaled threshold, an elected syncer for an
+// unoccupied vehicle that sends only on change) with one divergence: correction through velocity,
+// since their vehicle is one rigid body. Two predicates: IsPoseAuthor (I drive or carry it) and
 // OwnsTick (that, or I am the host and nobody authors it); the seat (occupantSlot, which the
 // mount deny reads) and the author (authorSlot, who streams) stay separate, since a grabbing
 // peer must not deny the seat. Keyed by the save key. The seat is self-elected, and two peers

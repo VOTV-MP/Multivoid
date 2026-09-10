@@ -1,4 +1,4 @@
-// harness/autotest_hud_tint.cpp -- SP-solo HUD RED-TINT discriminator.
+// harness/autotest/autotest_hud_tint.cpp -- SP-solo HUD RED-TINT discriminator.
 //
 // A red wash over the screen survives a frame whose health is 100, dead 0, quadrants 0, with no
 // bloodLoss actors and fade, fog, blendables and grading all clean. The remaining candidate is

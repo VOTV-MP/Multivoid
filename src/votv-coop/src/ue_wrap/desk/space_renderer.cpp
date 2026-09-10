@@ -1,4 +1,4 @@
-// ue_wrap/space_renderer.cpp -- see ue_wrap/space_renderer.h.
+// ue_wrap/desk/space_renderer.cpp -- see ue_wrap/desk/space_renderer.h.
 //
 // What the blueprint does, read off its bytecode. spawnSignal is the self-re-arming roller:
 // entering it binds a delegate back to itself, rolls a 20-60 s delay and hands both to

@@ -12,7 +12,7 @@ bool HostSkipChipPileExpression() {
         const bool on = coop::config::ResolveFlag(::coop::config_registry::rows::force_chippile_unclaim);
         if (on) {
             UE_LOGW("force_overdestroy_test: ARMED -- HOST will SKIP expressing ALL chipPiles this "
-                    "session (injecting the docs/piles/10 over-destroy to PROVE the Phase 0 floor). "
+                    "session (injecting the over-destroy to PROVE the Phase 0 floor). "
                     "The joiner's seeded natives stay UNCLAIMED -> its sweep dooms them; the floor "
                     "binary KEEPs them, a no-floor baseline WIPES them.");
         }

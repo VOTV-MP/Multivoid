@@ -1,4 +1,4 @@
-// coop/sleep_sync.cpp -- see coop/sleep_sync.h.
+// coop/player/sleep_sync.cpp -- see coop/player/sleep_sync.h.
 
 #include "coop/player/sleep_sync.h"
 

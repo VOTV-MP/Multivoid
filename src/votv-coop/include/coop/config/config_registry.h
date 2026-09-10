@@ -82,7 +82,7 @@ struct Row {
 
 // The row list. Completeness against the call-site universe is enforced by the ratchet
 // itself (no string-keyed read or write API exists); the reverse direction, a row nobody
-// references, is policed by tools/config/registry_gate.ps1 in CI.
+// references, is policed by .github/ci/registry_gate.ps1 in CI.
 const Row* Rows(size_t& count);
 
 // The first row whose key equals `key` case-insensitively, or null. For the schema's own

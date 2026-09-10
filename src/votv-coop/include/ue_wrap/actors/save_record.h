@@ -53,6 +53,12 @@ struct SaveRecord {
 // In a dump the bottom-line `Size:` is PropertiesSize; the per-field embedded `size:` is the
 // stride.
 inline constexpr int32_t kSaveStride   = 0x100;
+// The record's own FIELD span: the last value group is a TArray, and every field ends inside this
+// many bytes. The stride above is that rounded up to the struct's 16 alignment, and the difference
+// is real padding. This is the bound a parameter frame is checked against before the codec reads or
+// writes a record inside it -- the bytes past the span belong to whatever parameter the engine laid
+// down next, so a frame with less than this much room after the offset is refused.
+inline constexpr int32_t kSaveRecordBytes = 0xF8;
 inline constexpr int32_t kMxStride     = 0x10;  // Fstruct_mX wraps a single TArray<X> @ +0; already 16-aligned
 inline constexpr int32_t kSignalStride = 0x70;  // Fstruct_signalDataDynamic; no 16-aligned member
 
@@ -100,5 +106,43 @@ void ReadSaveRecord(const void* base, SaveRecord& rec);
 // a buffer it has lost the pointer to. Buffers WE allocate are GMalloc-owned (EngineAlloc), so
 // the engine's later Array realloc / GC free of them is allocator-matched.
 void WriteSaveRecord(uint8_t* base, const SaveRecord& r);
+
+// ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
+//
+// The two functions above read and write a record at a raw address. The two below get one FROM a
+// live actor and give one back TO it, through the actor's own `getData` and `loadData`. That is
+// the difference between a set of carried fields WE enumerate per class and the one the game
+// serializes: a class that adds save state is carried without a line of our code changing.
+//
+// Both climb to the most-derived declaration, because reflection::FindFunction is exact-owner and
+// the override is the whole point -- Aprop_floppyDisc_C::getData calls its parent's and then
+// appends the disc's `data` and `readWrites`, so a call resolved at Aprop_C would return the base
+// record and silently drop exactly the state this exists to carry.
+
+// True when `actor`'s class declares a `getData` of its own somewhere below Aprop_C -- i.e. it
+// serializes state beyond the base prop record. Resolved from the live class chain and cached per
+// UClass, so it is a membership test the GAME answers; a hand-written class list would go stale
+// the first time VOTV adds a save-backed prop. False for a non-prop or an unresolvable class.
+bool OverridesGetData(void* cls);
+
+// Capture `actor`'s save record as the actor itself serializes it. False when `getData` does not
+// resolve or the call fails.
+bool CaptureRecord(void* actor, SaveRecord& out);
+
+// Hand a record back to `actor` through its own `loadData` -- the LEAF half of it only.
+//
+// Aprop_C::loadData restores the save Key, the two names, the four saved bools, the scale and the
+// lifespan from whatever record it is handed, then re-runs `init()`, `physicsImpact->init()` and
+// `setNametag()`. Taken at face value that is a primitive for rewriting any prop's identity and for
+// destroying it through SetLifeSpan, and every one of those fields already rides the prop's spawn
+// row, which is their authority. So the receiver's OWN base record is read first and spliced over
+// the incoming one: what survives from `r` is exactly the groups Aprop_C::getData does not write,
+// which is the leaf class's own save state and the only thing this pair exists to move. Which
+// groups those are is read off the base class at runtime, never listed here. Two dispatches: the
+// base capture and the apply.
+bool ApplyRecord(void* actor, const SaveRecord& r);
+
+// Drop the cached class lookups (level change / disconnect).
+void ResetCodecCache();
 
 }  // namespace ue_wrap::save_record

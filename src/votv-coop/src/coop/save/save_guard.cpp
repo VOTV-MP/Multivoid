@@ -1,4 +1,4 @@
-// coop/save_guard.cpp -- see coop/save_guard.h.
+// coop/save/save_guard.cpp -- see coop/save/save_guard.h.
 
 #include "coop/save/save_guard.h"
 

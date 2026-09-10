@@ -1,12 +1,11 @@
 // coop/dev/delivery_census_probe.h -- see the .cpp. Diagnostic only; ini-gated OFF by default
-// ([dev] delivery_census=1). Settles gate O-1 of
-// research/findings/inventory-items/votv-order-delivery-pipeline-RE-2026-07-22.md by COUNTING
-// the delivery-path actors (FindObjectsByClass) and comparing POINTERS -- never by looking a
-// container up by key, since the broken key lookup is the thing under investigation.
+// ([dev] delivery_census=1). Settles the order-delivery open question by COUNTING the delivery-path
+// actors (FindObjectsByClass) and comparing POINTERS -- never by looking a container up by key,
+// since the broken key lookup is the thing under investigation.
 //
 // Run it across TWO CONSECUTIVE deliveries: whether the receiving container's actor ptr / eid /
 // propInventory.Index change between them is the churn answer, and that decides whether stable
-// element-key addressing is applicable to the R11 lane at all.
+// element-key addressing is applicable to a delivery container at all.
 
 #pragma once
 

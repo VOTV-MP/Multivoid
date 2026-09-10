@@ -1,20 +1,18 @@
 // coop/items/save_record_wire.h -- serialize ONE Fstruct_save record (the engine-agnostic
 // ue_wrap::save_record::SaveRecord POD) <-> bytes, plus the little-endian byte primitives the
-// record grammar is built from.
+// record grammar is built from. ONE implementation for both callers: the player inventory
+// (inventory_wire) and a container's TArray<Fstruct_save> contents (container_contents_sync);
+// neither keeps a copy.
 //
-// Extracted from coop/items/inventory_wire.cpp 2026-07-22 when coop/props/container_contents_sync
-// (take-4 R11) needed the SAME per-record codec: a container's contents are a TArray<Fstruct_save>
-// in the global saveSlot.GObjStack -- the identical serialization currency as the player
-// inventory. RULE 2: ONE implementation; inventory_wire consumes this, it does not keep a copy.
+// FNames and UClasses ride as STRINGS, since a pointer is not portable across peers -- the
+// applier re-interns the name and FindClass'es the leaf, exact case preserved. An FTransform
+// packs as 10 floats (quat, location, scale). A signal row defers to
+// coop/interactables/signal_wire, length-prefixed.
 //
-// FNames + UClasses are wired as STRINGS (non-portable as pointers; re-interned / FindClass'd on
-// apply, exact case preserved). The FTransform packs as 10 floats. The 0x70 signal sub-element
-// reuses the proven coop/signal_wire serializer (no reinvention).
-//
-// HOSTILE-INPUT CONTRACT: every Rd*/De* is bounds-checked and fails cleanly on overrun. Counts are
-// gated by Feasible() -- a declared count of n needs >= n bytes remaining -- so every reserve/resize
-// is proportional to the ACTUAL blob size and a small tampered blob cannot balloon RSS.
-// (Adversarial-verify MEDIUM, 2026-06-14.) Pure byte work; no engine access, callable off the GT.
+// HOSTILE-INPUT CONTRACT: every Rd*/De* is bounds-checked and fails cleanly on overrun, and each
+// count is gated by Feasible() -- a declared count of n needs >= n bytes remaining -- so every
+// reserve/resize is proportional to the ACTUAL blob size and a small tampered blob cannot
+// balloon RSS. Pure byte work: no engine access, callable off the game thread.
 
 #pragma once
 

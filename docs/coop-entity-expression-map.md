@@ -64,14 +64,25 @@ are peer-gated. `[V]`
   intent for a parked key placed after a pickup, and the whitelisted births (a reel, a module, a
   drive, a container extract) the client cannot avoid; the host performs both. Any other
   client-born keyed prop is dropped at the door. `[V]`
-- **A save scalar at birth.** Per-prop save state a class keeps (a reel's progress) rides the
-  spawn payload on every birth path through one reader, so a mirror never starts from a class
-  default. `[V]`
+- **The prop's own save record, beside its birth.** A class that keeps save state of its own --
+  a reel's progress, a disc's files -- has that state serialized by the game's own `getData` and
+  carried on its own message, addressed by Key and sent behind the spawn row on the same lane, so
+  a mirror never starts from a class default. Membership is the class declaring a `getData` below
+  `Aprop_C`, read off the live class chain rather than from a list. A record whose prop has not
+  arrived parks by Key with no expiry: an element id names an actor, and the whole reason the
+  record has to travel is that the actor is destroyed and remade. `[V]`
 - **Destroy.** The engine's destroy call is caught before it runs on either role, on every
   route, at the native seam; a Blueprint-internal vanish (the truck, culling, a lifespan) is
   caught by the host's reaper death-watch and destroyed by id. `[V]` A floppy disc inserted into
-  the laptop dies into laptop scalars through that seam, and an ejected one is born through the
-  birth channels with its content on the laptop lane. A desk module plugged in is destroyed in the
+  a laptop or a signal server dies into that device's slot through that seam, and an ejected one is
+  born through the birth channels with its content on the save-record lane above. The slot itself
+  is state on the wire, so the destroy is not the only thing that crosses: the host owns
+  every device's slot, a peer reports the outcome of one its own game changed, and the host's
+  re-publish is the answer ([devices.md](devices.md)). `[V]` **What still loses a disc is the
+  other peer's box:** an ejected disc is born where the box that ejected it disabled its own
+  collision, and the box on the other machine, whose eject never ran, takes it through the same
+  overlap the insert uses — the disc dies about a second after it appears, on both machines, and
+  the swallow is now replicated as the agreed slot state. `[V]` A desk module plugged in is destroyed in the
   hand by the native path and rides the same seam; an unplugged one is born into the hand. `[V]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor

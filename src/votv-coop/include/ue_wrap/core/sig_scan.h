@@ -1,4 +1,4 @@
-// ue_wrap/sig_scan.h -- AOB (array-of-bytes) signature scanner.
+// ue_wrap/core/sig_scan.h -- AOB (array-of-bytes) signature scanner.
 //
 // Engine-wrapper layer (principle 7): no gameplay/network logic. Scans the
 // main module image for a byte pattern so the standalone mod can resolve

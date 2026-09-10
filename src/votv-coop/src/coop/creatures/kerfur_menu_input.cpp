@@ -1,4 +1,4 @@
-// coop/kerfur_menu_input.cpp -- see coop/kerfur_menu_input.h.
+// coop/creatures/kerfur_menu_input.cpp -- see coop/creatures/kerfur_menu_input.h.
 
 #include "coop/creatures/kerfur_menu_input.h"
 

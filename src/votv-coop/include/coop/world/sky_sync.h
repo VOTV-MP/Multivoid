@@ -1,10 +1,8 @@
-// coop/sky_sync.h -- host-authoritative NIGHT-SKY sync (star-dome orientation + moon phase).
-// Mirrors coop/time_sync.h: a tiny host->client push (throttle + connect edge), the client
+// coop/world/sky_sync.h -- host-authoritative NIGHT-SKY sync (star-dome orientation + moon phase).
+// Mirrors coop/world/time_sync.h: a tiny host->client push (throttle + connect edge), the client
 // direct-writes, the BP's own per-tick code keeps rendering. Fixes the per-peer-random star
 // orientation + save-derived moon phase that TimeSync(29) does NOT cover (TimeSync syncs the
 // clock-derived sun/moon orbit + brightness, not the random dome yaw / save moonPhase).
-//
-// RE: research/findings/weather-wind/votv-sky-stars-celestial-sync-RE-2026-06-08.md.
 
 #pragma once
 

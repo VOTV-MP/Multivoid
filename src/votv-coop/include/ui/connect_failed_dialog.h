@@ -6,9 +6,9 @@
 // abort, this surface renders + clears it. Dependency direction is ui -> session
 // (loading_screen reads join_progress the same way); join_progress never calls ui.
 //
-// A user CANCEL sets no reason, so cancelling a join is silent (no modal). Born
-// 2026-07-16: a timed-out browser connect used to leak a false "Remote player left
-// the game" toast into the menu with no explanation of why the join failed.
+// A user CANCEL sets no reason, so cancelling a join is silent (no modal). Every other
+// failure gets its reason here, so a timed-out browser connect is explained instead of
+// surfacing only as a departure line in the feed.
 //
 // Threading: IsOpen()/Render() are render-thread only (they peek join_progress's
 // reason under its mutex). No engine calls.

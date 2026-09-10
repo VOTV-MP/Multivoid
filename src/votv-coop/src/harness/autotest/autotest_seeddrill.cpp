@@ -10,9 +10,9 @@
 //      only the ready-edge seed can deliver it; the client logging "email_sync: applied
 //      email from slot 0" for this topic is the pass.
 //
-// VOTVCOOP_SEED_DISABLE=1 skips CaptureJoinSnapshot in email_sync and signal_sync, so the
-// in-window email never arrives -- which is what shows the seed, not a leftover retry, is
-// the delivery mechanism. Grep keys: "[SEED-DRILL] authored solo" and "... in-window".
+// VOTVCOOP_SEED_DISABLE=1 skips CaptureJoinSnapshot in email_sync and signal_sync, so the in-window
+// email never arrives -- which is what shows the seed, not a leftover retry, is the delivery
+// mechanism. Grep key: "[SEED-DRILL] authored", once per topic.
 
 #include "harness/autotest.h"
 
@@ -77,7 +77,7 @@ DWORD WINAPI SeedDrillThread(LPVOID /*arg*/) {
                 // within ~2-5 s of the connect and the load window is 30-60 s long, so a 3 s wait
                 // races ahead of the request and the email rides the SAVE instead, leaving the loss
                 // case unexercised. 12 s is safely post-snapshot and still deep in the window. The
-                // log ORDER is the per-run proof: "[SEED-DRILL] authored ... in-window" must follow
+                // log ORDER is the per-run proof: the in-window "[SEED-DRILL] authored" must follow
                 // the host's "captured ... at blob instant" line.
                 ::Sleep(12000);
                 if (s.IsSlotWorldReady(slot)) {

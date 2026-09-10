@@ -1,4 +1,4 @@
-// coop/multiplayer_menu.h -- the MULTIPLAYER entry point in VOTV's main menu.
+// ui/multiplayer_menu.h -- the MULTIPLAYER entry point in VOTV's main menu.
 //
 // Injects a native "MULTIPLAYER" UButton into ui_menu_C, positioned just ABOVE
 // button_start (NEW GAME). A click asks ui::server_browser_surface to open; WHICH

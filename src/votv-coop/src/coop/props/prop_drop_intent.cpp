@@ -2,11 +2,13 @@
 
 #include "coop/props/prop_drop_intent.h"
 
+#include "coop/dev/prop_birth_key_probe.h"   // the seam's key-timing and drain-exit instrumentation
 #include "coop/element/registry.h"          // EidForActor (drain: tracked/mirror exclusion)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
@@ -140,15 +142,22 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     if (coop::hand_item::IsHandAxisActor(actor)) return;
     if (g_pending.size() >= kMaxPending) {
         UE_LOGW("[PROP-DROP] client pending-place cap %zu hit -- dropping %p", kMaxPending, actor);
+        coop::dev::prop_birth_key_probe::NotePendingCapHit(actor);
         return;
     }
     // Was a container extraction in flight when this actor spawned? The extracted item's actor
     // materialises inside the take call, so the latch is live exactly here. Marks the entry as a
     // container-extraction birth, admitted at drain.
     const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
+    if (coop::dev::prop_birth_key_probe::IsEnabled()) {
+        // The seam reading the probe exists for: is the Key there before any drain tick waits?
+        coop::dev::prop_birth_key_probe::NoteEnqueue(
+            actor, R::ClassNameOf(actor), ue_wrap::prop::GetInteractableKeyString(actor),
+            fromContainerExtract);
+    }
     g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
     if (fromContainerExtract)
-        UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (v126 -- admitted at drain)", actor);
+        UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (admitted at drain)", actor);
 }
 
 // Host: spawn the authoritative prop by key at the transform. Mirrors the spawn receiver's
@@ -156,7 +165,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
 // mark an incoming spawn, so the host's own finish-spawn watcher catches it and broadcasts
 // the authoritative spawn to every peer. Returns the spawned actor, or null.
 void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::wstring& cls,
-                          const std::wstring& key) {
+                          const std::wstring& key, uint8_t authorSlot) {
     void* clsObj = R::FindClass(cls.c_str());
     if (!clsObj) {
         UE_LOGW("[PROP-DROP] HOST FindClass('%ls') failed -- cannot spawn placed prop key='%ls'",
@@ -220,14 +229,14 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     if (p.scaleX > 0.001f || p.scaleY > 0.001f || p.scaleZ > 0.001f) {
         E::SetActorScale3D(actor, ue_wrap::FVector{p.scaleX, p.scaleY, p.scaleZ});
     }
-    // The save-scalar birth channel: write it now, so the next-tick express drain re-reads the
-    // live actor and the broadcast spawn carries it (the reel progress; post-finish is safe,
-    // since the reel's consumers are the look-at and the load only).
-    if (p.physFlags & coop::net::propspawn_flags::kHasSavedScalar) {
-        if (!ue_wrap::prop::ApplySavedScalarForClass(actor, p.savedScalar)) {
-            UE_LOGW("[PROP-DROP] HOST savedScalar=%.2f apply failed on '%ls'", p.savedScalar, cls.c_str());
-        }
-    }
+    // The prop's own save record, if the author's copy is already here. It usually is not -- it
+    // rides behind this intent in the same FIFO -- and then it lands on this actor by Key the
+    // moment it arrives, which is what makes the store keyed by identity rather than by actor.
+    // Until then this key is AWAITED: the host has just spawned a class-default copy, and
+    // publishing that as canonical would overwrite the author's real state on the author's own
+    // machine.
+    if (!coop::prop_save_data::ApplyParked(actor, key))
+        coop::prop_save_data::ExpectRecordFor(key, authorSlot);
     return actor;
 }
 
@@ -264,27 +273,48 @@ void Tick(coop::net::Session* session) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Tick");
     if (g_pending.empty()) return;
     if (!session || !session->connected() || session->role() != coop::net::Role::Client) {
+        // Tally these before dropping them: an entry discarded here is one the seam accepted and
+        // never resolved, and a count of enqueues that does not balance against the exits cannot
+        // say which bound lost a prop.
+        for (const PendingPlace& e : g_pending)
+            coop::dev::prop_birth_key_probe::NoteDrainExit(e.actor, "session-gone", e.tries,
+                                                           std::wstring());
         g_pending.clear();
         return;
     }
     std::vector<PendingPlace> keep;
+    namespace probe = coop::dev::prop_birth_key_probe;
     for (PendingPlace& e : g_pending) {
-        if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) continue;                 // died before drain
-        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) continue; // got tracked/bound
-        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) continue;          // a late echo mark -> not a place
+        if (!e.actor || !R::IsLiveByIndex(e.actor, e.idx)) {                          // died before drain
+            probe::NoteDrainExit(e.actor, "died-before-drain", e.tries, std::wstring());
+            continue;
+        }
+        if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId) { // got tracked/bound
+            probe::NoteDrainExit(e.actor, "already-tracked", e.tries, std::wstring());
+            continue;
+        }
+        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) {                   // a late echo mark -> not a place
+            probe::NoteDrainExit(e.actor, "late-echo", e.tries, std::wstring());
+            continue;
+        }
         // The drain-time hand-axis re-check: the enqueue-time check runs before the hold update
         // writes the holding actor (the host spawn watcher documents this window and excludes at
         // drain for the same reason). Without it a hold-to-pick-up's hand view husk, carrying the
         // item's parked key, authors a false drop intent: the host spawns a duplicate world prop
         // while the item is still in the player's hand, and the park is consumed. Drop the entry
         // permanently.
-        if (coop::hand_item::IsHandAxisActor(e.actor)) continue;
+        if (coop::hand_item::IsHandAxisActor(e.actor)) {
+            probe::NoteDrainExit(e.actor, "hand-axis-drop", e.tries, std::wstring());
+            continue;
+        }
         std::wstring key = ue_wrap::prop::GetInteractableKeyString(e.actor);
         if (key.empty() || key == L"None") {
             // The key is not restored yet (the load runs after the finish). Re-defer a few ticks.
             if (++e.tries <= kMaxKeyTries) keep.push_back(e);
+            else probe::NoteDrainExit(e.actor, "key-wait-expired", e.tries, std::wstring());
             continue;
         }
+        probe::NoteKeyReadable(e.actor, e.tries);
         const bool parked = (g_parkedKeys.find(key) != g_parkedKeys.end());
         // The fresh births. A client's fresh prop spawn never broadcasts (the lifecycle's client
         // skip), so a caddy or reel-box eject on a client is a local-only ghost; an unparked
@@ -306,7 +336,10 @@ void Tick(coop::net::Session* session) {
         // extracted item as a world actor, and without this the fresh-birth whitelist (reel, module
         // and drive only) drops it at drain and the item never reaches the host's world. The host's
         // duplicate guard keeps the intent safe.
-        if (!parked && !freshBirth && !e.containerExtract) continue;  // not a place / not a whitelisted birth / not a container extract
+        if (!parked && !freshBirth && !e.containerExtract) {   // not a place / not a whitelisted birth / not a container extract
+            probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
+            continue;
+        }
         // Author the host-authoritative spawn intent (a place, or a fresh birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
@@ -321,15 +354,6 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::prop::IsFrozen(e.actor))           p.physFlags |= pf::kFrozen;
             if (ue_wrap::prop::IsSleeping(e.actor))         p.physFlags |= pf::kSleep;
             if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
-            // The save-scalar birth channel rides both intent kinds: the parked place (pocket to
-            // place of a reel) must carry the progress exactly like the eject birth, or the host
-            // respawn resets it to the default (a blank tape) and broadcasts that as truth. A no-op
-            // for classes without a save scalar.
-            float sc = 0.f;
-            if (ue_wrap::prop::ReadSavedScalarForClass(e.actor, sc)) {
-                p.savedScalar = sc;
-                p.physFlags |= pf::kHasSavedScalar;
-            }
         }
         if (freshBirth) {
             // Born asleep on the host (no free fall; the held-prop pose stream takes over).
@@ -351,13 +375,19 @@ void Tick(coop::net::Session* session) {
         session->SendReliable(freshBirth ? coop::net::ReliableKind::ReelEjectIntent
                                          : coop::net::ReliableKind::PropDropIntent,
                               &p, sizeof(p));
+        // The prop's own save record behind the intent, same lane, same FIFO: the host respawns
+        // this prop from the intent and would otherwise author a class-default copy -- a blank
+        // tape, an empty disc -- and broadcast that as truth.
+        coop::prop_save_data::Publish(session, e.actor, key);
         if (parked) UnparkKey(key);   // consume from BOTH the set AND the FIFO (mirror invariant)
+        probe::NoteDrainExit(e.actor, freshBirth ? "authored-fresh-birth" : "authored-drop-intent",
+                             e.tries, key);
         UE_LOGI("[PROP-DROP] CLIENT authored %s key='%ls' cls='%ls' name='%ls' loc=(%.1f,%.1f,%.1f)%s",
                 freshBirth ? "FRESH-BIRTH intent" : "drop intent",
                 key.c_str(), cls.c_str(),
                 WireToWide(p.propName.len, p.propName.data, sizeof(p.propName.data)).c_str(),
                 p.locX, p.locY, p.locZ,
-                (p.physFlags & pf::kHasSavedScalar) ? " +savedScalar" : "");
+                coop::prop_save_data::Covers(e.actor) ? " +record" : "");
     }
     g_pending.swap(keep);
 }
@@ -368,6 +398,7 @@ void NoteClientKeyedDestroy(const std::wstring& key) {
     if (g_parkedKeys.insert(key).second) {
         g_parkFifo.push_back(key);
         while (g_parkFifo.size() > kMaxParked) {
+            coop::dev::prop_birth_key_probe::NoteParkEvict(g_parkFifo.front());
             g_parkedKeys.erase(g_parkFifo.front());
             g_parkFifo.pop_front();
         }
@@ -391,7 +422,7 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
         UE_LOGW("[PROP-DROP] HOST already has key='%ls' live -- skip drop-intent re-spawn (no dup)", key.c_str());
         return;
     }
-    void* actor = HostSpawnPlacedProp(p, cls, key);
+    void* actor = HostSpawnPlacedProp(p, cls, key, senderSlot);
     if (actor) {
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
                 "-- FinishSpawn watcher broadcasts it this tick",
@@ -429,6 +460,11 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
 
 void Reset() {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Reset");
+    // The drain's session gate normally empties this first; anything still here reached teardown
+    // unresolved, and the tally says so rather than losing it.
+    for (const PendingPlace& e : g_pending)
+        coop::dev::prop_birth_key_probe::NoteDrainExit(e.actor, "reset-dropped", e.tries,
+                                                       std::wstring());
     g_pending.clear();
     g_parkedKeys.clear();
     g_parkFifo.clear();

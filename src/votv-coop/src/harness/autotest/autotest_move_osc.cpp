@@ -1,4 +1,4 @@
-// harness/autotest_move_osc.cpp -- TEST-ONLY autonomous local-player movement.
+// harness/autotest/autotest_move_osc.cpp -- TEST-ONLY autonomous local-player movement.
 //
 // It drives the LOCAL player around a small horizontal circle so the OTHER peer's RemotePlayer
 // interpolation has a MOVING source to track. Against a STATIC source the receiver's

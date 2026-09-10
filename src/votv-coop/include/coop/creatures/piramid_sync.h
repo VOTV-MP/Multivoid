@@ -1,4 +1,4 @@
-// coop/piramid_sync.h -- the walking-pyramid (piramid2_C) event mirror lane.
+// coop/creatures/piramid_sync.h -- the walking-pyramid (piramid2_C) event mirror lane.
 //
 // The pyramid rides the GENERIC rails for four of its five axes -- spawn/pose/despawn =
 // world_actor_sync (piramid2_C on kWorldActorAllowlist), the 4 killerwisps + their deaths =

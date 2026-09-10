@@ -1,4 +1,4 @@
-// ue_wrap/desk_audio.h -- standalone engine access for the desk's unit-1 AUDIO components.
+// ue_wrap/desk/desk_audio.h -- standalone engine access for the desk's unit-1 AUDIO components.
 // Principle-7 engine-wrapper layer: no network logic; coop::desk_snd_fx drives the forward and the
 // replay through here.
 //

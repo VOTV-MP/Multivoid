@@ -1,6 +1,5 @@
-// ue_wrap/core/component_calls.cpp -- see component_calls.h. Bodies verbatim
-// from the console_desk.cpp file-local originals (2026-07-19 promotion); the
-// lazy per-function caches moved with them.
+// ue_wrap/core/component_calls.cpp -- see component_calls.h. Each helper keeps its own
+// lazy per-function cache.
 
 #include "ue_wrap/core/component_calls.h"
 

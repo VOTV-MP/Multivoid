@@ -1,4 +1,4 @@
-// ue_wrap/begin_equipment.cpp -- see ue_wrap/begin_equipment.h.
+// ue_wrap/actors/begin_equipment.cpp -- see ue_wrap/actors/begin_equipment.h.
 
 #include "ue_wrap/actors/begin_equipment.h"
 

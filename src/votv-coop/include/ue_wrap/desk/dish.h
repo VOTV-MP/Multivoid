@@ -1,4 +1,4 @@
-// ue_wrap/dish.h -- standalone engine access for the satellite dishes
+// ue_wrap/desk/dish.h -- standalone engine access for the satellite dishes
 // (Adish_C, level-placed immortal actors), the gamemode's dishs/activeDishes
 // arrays, and the two dish tickers (ticker_disher_C / ticker_dishUncalib_C).
 // Principle-7 engine-wrapper layer -- NO network logic; coop/signal_catch_sync

@@ -1,7 +1,8 @@
-// coop/drone_sync.cpp -- see coop/drone_sync.h. Delivery drone (Adrone_C) Phase 1 body pose sync.
-// Host-authoritative singleton transform stream: the host reads the live drone transform +
-// throttled-streams it while Active; the client suppresses the drone's own ReceiveTick (so it is
-// purely a mirror) and drives the streamed transform kinematically with a LerpWindow interp.
+// coop/interactables/drone_sync.cpp -- see coop/interactables/drone_sync.h. Delivery drone
+// (Adrone_C) Phase 1 body pose sync. Host-authoritative singleton transform stream: the host reads
+// the live drone transform + throttled-streams it while Active; the client suppresses the drone's
+// own ReceiveTick (so it is purely a mirror) and drives the streamed transform kinematically with a
+// LerpWindow interp.
 //
 // Singleton (no key) -> the sky_sync host-auth push shape (host streams; client applies; host
 // early-returns) + the atv_sync LerpWindow interp. No index (one drone).

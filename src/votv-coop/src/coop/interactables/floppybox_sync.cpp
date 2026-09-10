@@ -1,5 +1,6 @@
 // coop/interactables/floppybox_sync.cpp -- see coop/interactables/floppybox_sync.h.
 
+#include "coop/props/prop_save_data.h"
 #include "coop/interactables/floppybox_sync.h"
 
 #include "coop/comms/chat_feed.h"  // ToUtf8
@@ -11,7 +12,7 @@
 #include "coop/session/net_pump.h"      // HasAnnouncedWorldReady
 
 #include "ue_wrap/devices/floppybox.h"
-#include "ue_wrap/devices/laptop.h"     // IsDiscClass (the reap target gate)
+#include "ue_wrap/actors/floppy_disc.h"  // IsDiscClass (the reap target gate)
 #include "ue_wrap/engine/engine.h"      // ReadMainPlayerGrabState
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -347,7 +348,7 @@ void ReapDeniedPop(uint32_t eid, uint64_t hash) {
     if (localPlayer && ue_wrap::engine::ReadMainPlayerGrabState(localPlayer, gs)) {
         void* held = gs.grabbingActor ? gs.grabbingActor : gs.holdingActor;
         if (held && R::IsLive(held) &&
-            ue_wrap::laptop::IsDiscClass(R::ClassOf(held))) {
+            ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(held))) {
             coop::prop_lifecycle::DestroyLocalProp(held, /*deferred*/true);
             UE_LOGW("floppybox: pop DENIED (eid=%u) -- held disc reaped", eid);
             return;
@@ -360,6 +361,9 @@ void ReapDeniedPop(uint32_t eid, uint64_t hash) {
 }  // namespace
 
 void Install(coop::net::Session* session) {
+    // This lane owns the crate's floppyTypes/floppyData stack, which is exactly what the crate's
+    // own save record serializes.
+    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_floppyBox_C");
     g_session.store(session, std::memory_order_release);
 }
 

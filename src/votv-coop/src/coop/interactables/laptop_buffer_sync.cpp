@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady (client send gate)
 
+#include "ue_wrap/devices/floppy_slot.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/core/log.h"
 
@@ -498,8 +499,11 @@ void Tick() {
     // floppyType predicate: the slot machinery owns slot transitions (insert
     // transports floppyData via LaptopBlob kind=0; eject clears it) -- on any
     // type change prime-and-skip this tick, ordering-independent.
-    L::SlotState st;
-    if (!L::ReadSlot(st)) return;
+    ue_wrap::floppy_slot::Scalars st;
+    if (!ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) ||
+        !ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
+                                           L::Instance(), st))
+        return;
     if (st.floppyType != g_prevType) {
         g_prevType = st.floppyType;
         L::BufferQuad q;
@@ -567,8 +571,11 @@ void PrimeQuadBaseline() {
     L::BufferQuad q;
     if (L::ReadQuad(q)) {
         PrimeFrom(q);
-        L::SlotState st;
-        if (L::ReadSlot(st)) g_prevType = st.floppyType;
+        ue_wrap::floppy_slot::Scalars st;
+        if (ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) &&
+            ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
+                                              L::Instance(), st))
+            g_prevType = st.floppyType;
     }
 }
 

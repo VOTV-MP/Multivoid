@@ -1,8 +1,8 @@
-// coop/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
+// coop/save/save_transfer.cpp -- the host's world to a joining client: a live capture of the host's
 // world into a scratch slot (or the on-disk slot behind a torn-read guard), chunked over the
 // bulk lane behind a Begin, CRC-checked and written to the client's coop slot; plus the
 // save-time baselines (keys and positions) captured at the same instant, which the join
-// reconcile reads. See coop/save_transfer.h.
+// reconcile reads. See coop/save/save_transfer.h.
 
 #include "coop/save/save_transfer.h"
 
@@ -18,7 +18,7 @@
 #include "coop/props/save_identity_bind.h"  // the client's eid-range bind
 #include "coop/props/save_identity_map.h"  // the host's keyless index-to-eid map
 #include "coop/save/save_guard.h"
-#include "coop/save/save_indicator_suppress.h"  // suppress the SAVED HUD on the join scratch save
+#include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
 #include "ue_wrap/engine/engine.h"      // the host's current prop position
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream
@@ -439,9 +439,10 @@ void OnRequest(int peerSlot) {
     // NPC) is captured in its live state, so the joiner's loadObjects builds a correct world and
     // the reconcile has nothing to fix. The canonical slot is never named or written. On the game
     // thread (net_pump::Tick asserts it), so the save UFunctions are legal; the scratch file is
-    // read synchronously, then deleted. The native SAVED HUD is suppressed for this capture only:
-    // the bracket spans the synchronous capture, and a manual save uses a BP path the mod never
-    // calls.
+    // read synchronously, then deleted. The bracket around the capture DETECTS the native SAVED
+    // HUD rather than suppressing it -- nothing suppresses it yet: the bracket spans the
+    // synchronous capture, and a manual save uses a BP path the mod never calls, so a fire inside
+    // it belongs to the join save.
     coop::save_indicator_suppress::Begin();
     const bool captured = ue_wrap::save_capture::CaptureLiveWorldToScratchSlot(kHostXferSlot);
     coop::save_indicator_suppress::End();

@@ -1,4 +1,4 @@
-// harness/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE.
+// harness/autotest/autotest_kwisp_probe.cpp -- killerwisp-vs-peers ACQUISITION PROBE.
 //
 // A killerwisp reportedly ignores peers and never runs its kill sequence on them, so the built
 // chain (SpawnKillerWispOnClient -> the wisp acquires the PUPPET as Target -> the inRange
@@ -80,12 +80,12 @@ void RunAutonomousKwispProbe() {
 
     // 1. Resolve host pawn + slot-1 puppet; teleport the host outside the 5000u acquire
     // radius. POLL up to ~95 s more (first-launch shader compiles / a loaded machine can
-    // push the client's world-up well past the 55 s settle -- the 2026-07-03 late-night
-    // re-run aborted at exactly this line on a fixed sleep).
+    // push the client's world-up well past the 55 s settle, and a re-run on a fixed
+    // sleep aborted at exactly this line).
     struct Setup { void* host = nullptr; void* puppet = nullptr; bool ok = false; };
     auto setup = std::make_shared<Setup>();
     // 64 x 3 s (~3.2 min past the settle): a cold FRESH-client join = world load + 21 MB
-    // save transfer + reload; the 2026-07-03 night runs blew the old ~96 s window twice.
+    // save transfer + reload, and runs have blown a ~96 s window twice.
     for (int attempt = 0; attempt < 64 && !setup->ok; ++attempt) {
         RunGT([setup](std::atomic<int>& d) {
             setup->host = LocalPlayerPawn();

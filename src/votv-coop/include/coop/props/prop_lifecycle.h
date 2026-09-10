@@ -1,4 +1,4 @@
-// coop/prop_lifecycle.h -- Aprop_C spawn/destroy/extract wire observers.
+// coop/props/prop_lifecycle.h -- Aprop_C spawn/destroy/extract wire observers.
 //
 // The host-authoritative prop sync layer, three seams:
 //   - Aprop_C::Init POST (subclass-aware GUObjectArray scan): the host broadcasts PropSpawn

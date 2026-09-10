@@ -1,4 +1,4 @@
-// coop/order_sync.h -- delivery-drone ECONOMY: the client-to-host shop-order forward.
+// coop/items/order_sync.h -- delivery-drone ECONOMY: the client-to-host shop-order forward.
 //
 // Gameplay and network layer (principle 7): it owns the OrderRequest wire, chunked serialize and
 // assemble, the client's poll-and-forward policy and the host's re-commit, and reaches the

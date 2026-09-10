@@ -1,15 +1,14 @@
-// coop/chat_bubbles.h -- MTA/SAMP-style overhead chat bubbles (12g, 2026-07-05).
+// coop/comms/chat_bubbles.h -- MTA/SAMP-style overhead chat bubbles.
 //
-// Gameplay layer (principle 7), pure data like chat_feed: chat_sync feeds the
-// LAST chat message per sender slot in here (game thread, right next to its
-// PushChat calls); coop::nameplate's Update() reads the current bubble + fade
-// for each slot into the Plate snapshot; ui::hud draws it above the nameplate.
-// A bubble rides the nameplate anchor BY DESIGN: a peer that hid its plate
-// (v94 pref) shows no bubble either -- the whole overhead unit is one privacy
-// surface. Self never renders (you have no puppet of yourself).
+// Gameplay layer (principle 7), pure data like chat_feed: chat_sync feeds the LAST chat
+// message per sender slot in here (game thread, right next to its PushChat calls);
+// coop::nameplate's Update() reads the current bubble and fade for each slot into the Plate
+// snapshot; ui::hud draws it above the nameplate. A bubble rides the nameplate anchor BY
+// DESIGN: a peer that hid its plate shows no bubble either -- the whole overhead unit is one
+// privacy surface. Self never renders (you have no puppet of yourself).
 //
-// Store is mutex-guarded (writers + the Update reader are all game-thread
-// today; the lock keeps the module correct if a reader ever moves).
+// Store is mutex-guarded (writers and the Update reader are all game-thread today; the lock
+// keeps the module correct if a reader ever moves).
 
 #pragma once
 

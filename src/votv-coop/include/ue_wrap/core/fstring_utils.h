@@ -1,4 +1,4 @@
-// ue_wrap/fstring_utils.h -- engine-allocated FString construction.
+// ue_wrap/core/fstring_utils.h -- engine-allocated FString construction.
 //
 // A param-frame FString may point at OUR buffer for a call's duration (the
 // callee deep-copies; the economy order-struct precedent). A LIVE STRUCT

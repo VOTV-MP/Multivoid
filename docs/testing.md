@@ -65,14 +65,17 @@ grabs a game window from outside the process for the screenshot scenarios.
 
 ### The gates a push runs
 
-Every push builds and gates in CI (`.github/workflows/`). The build workflow checks out the
-requested source, initialises only the third-party submodules, and runs the code gates before
-the compile: the config registry, the peer-slot generation, the master contact (nothing tells
-an outside server where a player is unasked), the reliable-kind routing (every wire kind reaches
-a receiver or says why not), the MinHook free-call rule, the GC pin ownership, the font atlas
-regime, and the package drill. Then it restores the pinned dependency cache, builds Release,
-runs the zero-import ABI gate on the built DLL, packages and verifies the mod zip, and uploads
-the artifacts. A second workflow gates the repository itself: the public-leak gate, the
+Every push and pull request runs the source gates, which need no compiler and take about ten
+seconds (`.github/workflows/repo-gates.yml`): the config registry, the peer-slot generation, the
+master contact (nothing tells an outside server where a player is unasked), the reliable-kind
+routing (every wire kind reaches a receiver or says why not), the MinHook free-call rule, the GC
+pin ownership, and the font atlas regime.
+
+The Windows build is run by hand (Actions -> **build** -> Run workflow), because a twenty-minute
+runner on every push buys little the source gates do not already cover. It checks out the
+requested source, initialises only the third-party submodules, re-runs those same gates, then
+restores the pinned dependency cache, builds Release, runs the zero-import ABI gate on the built
+DLL, packages and verifies the mod zip, and uploads the artifacts. A second workflow gates the repository itself: the public-leak gate, the
 commit-message check over every commit since the checker was added, and the public-prose gate,
 each preceded by a drill that proves the gate can fail.
 

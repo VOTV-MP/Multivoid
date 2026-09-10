@@ -1,5 +1,5 @@
-// ue_wrap/spawn_gate.cpp -- see spawn_gate.h for the contract + the 2026-07-04
-// join-window BeginDeferred-null post-mortem this closes.
+// ue_wrap/engine/spawn_gate.cpp -- see spawn_gate.h for the contract and the
+// join-window BeginDeferred-null failure it closes.
 
 #include "ue_wrap/engine/spawn_gate.h"
 
@@ -17,7 +17,8 @@ namespace {
 
 // Cached GameInstance + its GUObjectArray index (the bug2 pattern from
 // engine.cpp::EnsureWorldContext: validate the CACHED pointer by INDEX, never
-// deref it first -- [[lesson-islive-recycled-slot-blind-use-by-index]]). The
+// deref it first: a purged or recycled slot no longer points back at the object,
+// and reading the index off the object itself is the use-after-free). The
 // GameInstance persists for the process lifetime once created, so after the
 // first resolve the steady path is a single IsLiveByIndex.
 void* g_gameInstance = nullptr;

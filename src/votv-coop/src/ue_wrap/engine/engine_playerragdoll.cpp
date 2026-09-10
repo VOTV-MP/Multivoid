@@ -1,4 +1,4 @@
-// ue_wrap/engine_playerragdoll.cpp -- AplayerRagdoll_C engine substrate (principle 7).
+// ue_wrap/engine/engine_playerragdoll.cpp -- AplayerRagdoll_C engine substrate (principle 7).
 //
 // VOTV's `playerRagdoll_C` is the plushie ragdoll body ragdollMode spawns when a player faints: the
 // visible flopping kel body, whose SkeletalMesh self-configures to `kel_lmao` / `inst_kel_body` and
@@ -7,7 +7,7 @@
 // puppet's own kel meshes for it. We never call ragdollMode: it is globally scoped and kills the
 // host, firing the death event whatever its params say.
 //
-// The recipe, from an SP-solo probe (harness/autotest_ragdoll_spawn_probe.cpp):
+// The recipe, from an SP-solo probe (harness/autotest/autotest_ragdoll_spawn_probe.cpp):
 // BeginDeferredSpawn(playerRagdoll_C); write Player, an Expose-On-Spawn field that must land
 // BEFORE Finish for ReceiveBeginPlay to self-configure the visible kel mesh; FinishDeferredSpawn;
 // then StartBodySim for collision and the two simulate-physics calls, since BeginPlay builds the

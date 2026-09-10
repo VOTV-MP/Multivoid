@@ -1,4 +1,4 @@
-// ue_wrap/store_catalog.cpp -- see ue_wrap/world/store_catalog.h.
+// ue_wrap/world/store_catalog.cpp -- see ue_wrap/world/store_catalog.h.
 //
 // Build = walk `UDataTable::RowMap` for {row name -> live row bytes, price}, then verify every price
 // against `GetDataTableColumnAsString`, which is fully reflected and needs no layout. One

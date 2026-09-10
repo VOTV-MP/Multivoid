@@ -1,18 +1,18 @@
 // ui/link_format.h -- the ONE renderer for a player's connection facts.
 //
-// Three surfaces show "how is this player connected to the session": the tilde
-// scoreboard, the host's admin panel, and the world nameplate. Before v131 each
-// one hand-copied the same `>0 / ==0 / else` cascade, so the vocabulary could
-// drift a panel at a time -- and it had, silently. One fact, one renderer.
+// Three surfaces show "how is this player connected to the session": the tilde scoreboard,
+// the host's admin panel, and the world nameplate. Each one used to hand-copy the same
+// `>0 / ==0 / else` cascade, so the vocabulary could drift a panel at a time -- and it had,
+// silently. One fact, one renderer.
 //
 // TWO DISTINCT TOKENS, deliberately:
 //   "n/a"  -- NOT APPLICABLE. The host has no network link to the session; they
 //             ARE it. There is no number to report and never will be.
 //   "--"   -- NOT KNOWN YET. A sample has not landed (a row younger than the
 //             host's ~1 Hz RTT sampler, or a connection that just dropped).
-// One glyph for both would say "empty" where the truth is "there is nothing to
-// measure", which is how "VIA HOST" read as information. ASCII on purpose: our
-// fonts fall back to '?' on missing glyphs, so an em dash is not safe here.
+// One glyph for both would say "empty" where the truth is "there is nothing to measure",
+// which is how "VIA HOST" read as information. ASCII on purpose: our fonts fall back to '?'
+// on missing glyphs, so an em dash is not safe here.
 
 #pragma once
 

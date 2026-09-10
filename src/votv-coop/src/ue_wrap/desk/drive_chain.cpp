@@ -1,4 +1,4 @@
-// ue_wrap/drive_chain.cpp -- see ue_wrap/desk/drive_chain.h.
+// ue_wrap/desk/drive_chain.cpp -- see ue_wrap/desk/drive_chain.h.
 
 #include "ue_wrap/desk/drive_chain.h"
 
@@ -27,9 +27,9 @@ void*   g_primCompCls = nullptr;  // PrimitiveComponent (IsOverlappingActor owne
 int32_t g_offSlotDrive = -1;        // driveSlot_C::drive
 int32_t g_offSlotDetached = -1;     // driveSlot_C::isRecentlyDetached (plain EX_Let bool)
 int32_t g_offSlotPort = -1;         // driveSlot_C::drivePort (component ptr)
-int32_t g_offDriveData = -1;        // prop_drive_C::data_0 (@0x550, Fstruct_signalDataDynamic)
-int32_t g_offDeskSlotPlay = -1;     // analogDScreenTest_C::obj_driveSlot_play (@0x0648)
-int32_t g_offDeskSlotComp = -1;     // analogDScreenTest_C::obj_driveSlot_comp (@0x0A88)
+int32_t g_offDriveData = -1;        // prop_drive_C::data_0 (Fstruct_signalDataDynamic)
+int32_t g_offDeskSlotPlay = -1;     // analogDScreenTest_C::obj_driveSlot_play
+int32_t g_offDeskSlotComp = -1;     // analogDScreenTest_C::obj_driveSlot_comp
 int32_t g_offEraserSlot = -1;       // signalDriveEraser_C::driveSLot_obj (typo'd in the BP)
 int32_t g_offRackData = -1;         // prop_driveRack_C::data (TArray<row>, stride 0x70)
 int32_t g_offRackHas = -1;          // prop_driveRack_C::has  (TArray<bool>)
@@ -156,7 +156,7 @@ void* SlotActor(int role) {
         if (g_offEraserSlot >= 0) {
             void* eraser = Revalidate(g_eraser);
             if (!eraser) {
-                // Perf-audit F-3: the census is a full GUObjectArray walk --
+                // The census is a full GUObjectArray walk --
                 // negative-cache the miss (5 s) or an eraser-less world pays
                 // a 1 Hz multi-ms hitch forever.
                 static Clock::time_point s_nextCensus{};

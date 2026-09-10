@@ -1,4 +1,4 @@
-// coop/flashlight_click_sound.cpp -- see flashlight_click_sound.h.
+// coop/player/flashlight_click_sound.cpp -- see flashlight_click_sound.h.
 
 #include "coop/player/flashlight_click_sound.h"
 

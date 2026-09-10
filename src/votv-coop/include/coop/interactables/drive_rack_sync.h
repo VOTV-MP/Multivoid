@@ -1,4 +1,4 @@
-// coop/drive_rack_sync.h -- the drive-rack lane, extracted from drive_sync.cpp.
+// coop/interactables/drive_rack_sync.h -- the drive-rack lane, extracted from drive_sync.cpp.
 //
 // RackState is prop_driveRack's 16-row storage: index ops go peer to host and are
 // host-terminal, the host broadcasts a canonical full array and re-applies gen() by

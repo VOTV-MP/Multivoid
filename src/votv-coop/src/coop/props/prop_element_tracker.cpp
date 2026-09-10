@@ -1,8 +1,8 @@
-// coop/prop_element_tracker.cpp -- the enrolment owner for keyed props: the processed-Init dedupe
-// set, the known-keyed set, MarkPropElement (the one place a local Prop Element is minted, with
-// the host's key-uniqueness authority), the actor-to-eid reads, the save-time transform captures,
-// the dead-Element reaper and its self-test. The census walk lives in prop_census.cpp and the key
-// index in prop_key_index.cpp.
+// coop/props/prop_element_tracker.cpp -- the enrolment owner for keyed props: the processed-Init
+// dedupe set, the known-keyed set, MarkPropElement (the one place a local Prop Element is minted,
+// with the host's key-uniqueness authority), the actor-to-eid reads, the save-time transform
+// captures, the dead-Element reaper and its self-test. The census walk lives in prop_census.cpp and
+// the key index in prop_key_index.cpp.
 
 #include "coop/props/prop_element_tracker.h"
 

@@ -70,9 +70,9 @@ void DumpParams(const wchar_t* className, const wchar_t* funcName) {
 
 // Runs on the game thread (posted): log enough to confirm where we are.
 void Report(const char* label) {
-    // NumObjects is O(1). Avoid CountObjectsByClass here (a full GUObjectArray
-    // walk) -- Report runs in the play path too, and per the post-ship audit we
-    // don't pay a 100k-object scan just for a log line.
+    // NumObjects is O(1), so the count costs nothing; CountObjectsByClass would be a full
+    // GUObjectArray walk and Report runs in the play path too. The world lookup below is an
+    // early-exiting walk, and is the one scan this line does pay for.
     const int32_t n = R::NumObjects();
     void* world = R::FindObjectByClass(P::name::WorldClass);
     std::wstring worldName = world ? R::ToString(R::NameOf(world)) : L"(none)";

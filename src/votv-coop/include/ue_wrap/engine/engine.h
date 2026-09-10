@@ -1,4 +1,4 @@
-// ue_wrap/engine.h -- the world and the actors in it: spawning, transforms, the console, the
+// ue_wrap/engine/engine.h -- the world and the actors in it: spawning, transforms, the console, the
 // pause. Engine operations built on reflection, where each call marshals one UFunction call or one
 // reflected field access. No gameplay, network or coop state. Nearly every call must run on the
 // game thread (ue_wrap::game_thread::Post); the raw reads that are safe elsewhere say so.

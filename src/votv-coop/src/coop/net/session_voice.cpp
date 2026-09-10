@@ -1,16 +1,13 @@
-// coop/net/session_voice.cpp -- v66 voice-frame send/receive for Session.
+// coop/net/session_voice.cpp -- voice-frame send/receive for Session.
 //
-// Extracted from session.cpp (2026-06-12) per the 800-LOC soft cap (the
-// session_npc.cpp precedent; session.cpp hit 894 when the VoiceFrame path
-// landed). Owns the unreliable voice STREAM (MsgType::VoiceFrame): the game
-// thread fan-out send (SendVoiceFrame -- GNS send APIs are thread-safe, the
-// SendReliable calling convention), the receive-side inbox store
-// (StoreVoiceFrame, net thread, called from HandleMessage's case) and the
-// game-thread batch drain (DrainVoiceFrames). A per-sender FIFO STREAM, not
-// the newest-wins pose model: every arrival queues; ordering/loss live in the
-// per-payload voice seq at the jitter buffer (coop/voice/voice_playback).
-// The inbox is per-slot fixed rings (audit I-3): no net-thread heap alloc,
-// per-sender overflow fairness. Mutex discipline: voiceInboxMutex_ only.
+// Owns the unreliable voice STREAM (MsgType::VoiceFrame): the game-thread fan-out send
+// (SendVoiceFrame -- GNS send APIs are thread-safe, the SendReliable calling convention), the
+// receive-side inbox store (StoreVoiceFrame, net thread, called from HandleMessage's case) and
+// the game-thread batch drain (DrainVoiceFrames). A per-sender FIFO STREAM, not the newest-wins
+// pose model: every arrival queues, and ordering and loss live in the per-payload voice seq at
+// the jitter buffer (coop/voice/voice_playback). The inbox is per-slot fixed rings: no
+// net-thread heap alloc, per-sender overflow fairness. Mutex discipline: voiceInboxMutex_
+// only.
 
 #include "coop/net/session.h"
 

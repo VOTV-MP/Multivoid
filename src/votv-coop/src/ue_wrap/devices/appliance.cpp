@@ -1,5 +1,5 @@
-// ue_wrap/appliance.cpp -- see ue_wrap/appliance.h. Per-class engine access for the six
-// simple on/off appliances. Offsets/verbs resolved from the live classes via reflection
+// ue_wrap/devices/appliance.cpp -- see ue_wrap/devices/appliance.h. Per-class engine access for the
+// six simple on/off appliances. Offsets/verbs resolved from the live classes via reflection
 // (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 
 #include "ue_wrap/devices/appliance.h"
@@ -156,11 +156,12 @@ bool ApplyState(void* a, bool on) {
         f.Set<bool>(L"bNewActive", on);
         return Call(a, f);
     }
-    // The rest: direct-write the bool, then call the no-arg refresh verb (upd/updIsOn) so the
-    // mesh/FX/audio repaint from the new state. The toggle itself lives in the BP's player_use;
-    // we set the authoritative state, the refresh renders it (the lights' "drive the visual via
-    // the verb, not a bare field write" lesson). The channel only applies when cur != want
-    // (idempotent guard), so a refresh verb with toggle semantics would also converge.
+    // The rest: direct-write the bool, then call the no-arg refresh verb (upd/updIsOn) so the mesh,
+    // FX and audio repaint from the new state. The toggle itself lives in the BP's player_use; we
+    // set the authoritative state and the refresh renders it -- the same rule the lights follow,
+    // drive the visual through the verb rather than a bare field write. The channel only applies
+    // when cur != want (idempotent guard), so a refresh verb with toggle semantics would also
+    // converge.
     if (d->boolOff < 0) return false;
     *reinterpret_cast<bool*>(reinterpret_cast<char*>(a) + d->boolOff) = on;
     bool ok = true;

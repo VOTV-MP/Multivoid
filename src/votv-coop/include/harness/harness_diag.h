@@ -1,12 +1,8 @@
 // harness/harness_diag.h -- autonomous-scenario diagnostic dumps.
 //
-// Extracted from harness.cpp (2026-06-06, modular file-size audit: the
-// DriveHostBootIfPending host-with-save orchestration pushed harness.cpp past the
-// 800-LOC soft cap). These are pure reflection-based logging helpers used by the
-// autonomous TimelineThread scenarios (paramdump / skin / show / the intro widget
-// sampling) -- NO g_session / coop-session-lifecycle coupling, so they lift cleanly out.
-// Game thread only (they read engine state via reflection). NOT shipped behaviour --
-// diagnostics for the autonomous test scenarios.
+// Pure reflection-based logging helpers for the autonomous TimelineThread scenarios (paramdump
+// / skin / show / the intro widget sampling), with NO g_session or coop-session-lifecycle
+// coupling. Game thread only (they read engine state via reflection). NOT shipped behaviour.
 
 #pragma once
 

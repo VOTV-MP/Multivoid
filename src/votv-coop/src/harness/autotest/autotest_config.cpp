@@ -1,4 +1,4 @@
-// harness/autotest_config.cpp -- the config-corpus selftest (ini rework arc 1).
+// harness/autotest/autotest_config.cpp -- the config-corpus selftest (ini rework arc 1).
 //
 // Runs the REAL C++ lexer (coop/config selftest seams) over a corpus directory
 // of ini files and prints one verdict line per (file, key) for BOTH value

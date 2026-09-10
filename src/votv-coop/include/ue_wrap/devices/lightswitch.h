@@ -1,4 +1,4 @@
-// ue_wrap/lightswitch.h -- standalone engine access for VOTV light groups
+// ue_wrap/devices/lightswitch.h -- standalone engine access for VOTV light groups
 // (Atrigger_lightRoot_C). Principle-7 engine-wrapper layer (no network/coop
 // state). coop::interactable_sync drives the sync through here.
 //

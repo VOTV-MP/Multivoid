@@ -1,9 +1,9 @@
-// coop/interactable_channel.h -- the keyed-interactable replication engine shared by every keyed
-// channel (doors, lights, light groups, containers, the garage, appliances, door boxes): the
-// key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a throttled
-// retry, echo suppression, the connect snapshot and the hold register for doors. A feature is an
-// Adapter (a vtable over its ue_wrap wrapper) plus a Channel instance in interactable_sync.cpp,
-// this header's one includer. Nothing per-class lives here.
+// coop/interactables/interactable_channel.h -- the keyed-interactable replication engine shared by
+// every keyed channel (doors, lights, light groups, containers, the garage, appliances, door
+// boxes): the key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a
+// throttled retry, echo suppression, the connect snapshot and the hold register for doors. A
+// feature is an Adapter (a vtable over its ue_wrap wrapper) plus a Channel instance in
+// interactable_sync.cpp, this header's one includer. Nothing per-class lives here.
 
 #pragma once
 

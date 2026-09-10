@@ -1,4 +1,4 @@
-// coop/roster.h -- thread-safe player-roster snapshot for the player-list scoreboard.
+// coop/player/roster.h -- thread-safe player-roster snapshot for the player-list scoreboard.
 //
 // Gameplay/network layer (principle 7). The scoreboard renders on the RENDER
 // thread but the roster facts live in game-thread-owned state (Session connection

@@ -1,4 +1,4 @@
-// ue_wrap/desk_audio.cpp -- see ue_wrap/desk_audio.h.
+// ue_wrap/desk/desk_audio.cpp -- see ue_wrap/desk/desk_audio.h.
 
 #include "ue_wrap/desk/desk_audio.h"
 
@@ -38,14 +38,14 @@ void*   g_playFn = nullptr;       // AudioComponent:Play(StartTime)
 void*   g_setSoundFn = nullptr;   // AudioComponent:SetSound(NewSound)
 void*   g_setActiveFn = nullptr;  // ActorComponent:SetActive(bNewActive, bReset)
 void*   g_activateFn = nullptr;   // ActorComponent:Activate(bReset)
-void*   g_deactivateFn = nullptr; // ActorComponent:Deactivate() -- L6 deck stop edge
-int32_t g_sigOff = -1;            // signalSound ObjectProperty (L6 -- NOT in the wire table)
+void*   g_deactivateFn = nullptr; // ActorComponent:Deactivate() -- the deck stop edge
+int32_t g_sigOff = -1;            // signalSound ObjectProperty -- NOT in the wire table
 int32_t g_soundOff = -1;          // AudioComponent::Sound (USoundBase*)
 int32_t g_activeByteOff = -1;     // ActorComponent::bIsActive bitfield
 uint8_t g_activeMask = 0;
 
-// Failure backoff (the install-loop-bomb guard, L7 lesson): while anything is
-// unresolved, retry at most 1/s -- EnsureResolved is called from ticks.
+// Failure backoff, the install-loop guard: while anything is unresolved, retry at most once
+// a second -- EnsureResolved is called from ticks.
 Clock::time_point g_nextResolveTry{};
 
 // ---- instance-level cache (refreshed ONLY here / on EnsureResolved -- the
@@ -53,7 +53,7 @@ Clock::time_point g_nextResolveTry{};
 void*   g_desk = nullptr;
 int32_t g_deskIdx = -1;
 void*   g_comps[kCompCount] = {};
-void*   g_sigComp = nullptr;      // L6: the desk's signalSound (same lifecycle as g_comps)
+void*   g_sigComp = nullptr;      // the desk signalSound (same lifecycle as g_comps)
 bool    g_compsValid = false;
 
 // Mirror-side cue cache: short name -> USoundBase* (validated live on use).
@@ -258,9 +258,9 @@ bool ReplaySetActive(int compIdx, bool on) {
     if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }
     ue_wrap::ParamFrame f(g_setActiveFn);
     if (!f.valid()) return false;
-    // ALL measured native ON sites use reset semantics (corrds_loop
-    // SetActive(x,true); pingLoop Activate(true)); bReset is ignored by the
-    // engine on deactivate -- static mapping, no wire bit (qf R2).
+    // ALL measured native ON sites use reset semantics (corrds_loop SetActive(x, true);
+    // pingLoop Activate(true)), and the engine ignores bReset on a deactivate, so the mapping is
+    // static and costs no wire bit.
     f.Set<bool>(L"bNewActive", on);
     f.Set<bool>(L"bReset", on);
     return ue_wrap::Call(g_comps[compIdx], f);

@@ -1,8 +1,8 @@
-// ue_wrap/drone.cpp -- see ue_wrap/drone.h. Engine access for the delivery drone (Adrone_C).
-// Offsets resolved from the live class via reflection (version-portable); the Alpha 0.9.0-n value
-// is a logged fallback. Transform reads/writes go through ue_wrap::engine at the actor level (the
-// drone moves the actor via its BP ReceiveTick, no physics body). Find() mirrors the skysphere/
-// daynightcycle cached-singleton + throttled-scan shape.
+// ue_wrap/devices/drone.cpp -- see ue_wrap/devices/drone.h. Engine access for the delivery drone
+// (Adrone_C). Offsets resolved from the live class via reflection (version-portable); the Alpha
+// 0.9.0-n value is a logged fallback. Transform reads/writes go through ue_wrap::engine at the
+// actor level (the drone moves the actor via its BP ReceiveTick, no physics body). Find() mirrors
+// the skysphere and daynightcycle cached-singleton + throttled-scan shape.
 
 #include "ue_wrap/devices/drone.h"
 

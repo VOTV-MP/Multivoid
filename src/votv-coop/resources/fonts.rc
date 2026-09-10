@@ -14,6 +14,6 @@ IDR_FONT_CASCADIA_BOLD    RCDATA "../assets/fonts/CascadiaCode-Bold.ttf"
 IDR_FONT_FIXEDSYS_REGULAR RCDATA "../assets/fonts/FSEX300.ttf"
 // The emoji donor (Twemoji Mozilla, CC-BY 4.0 artwork + Apache 2.0 build;
 // LICENSE-TwemojiMozilla.txt). Generated, not vendored by hand --
-// tools/text/build_repertoire.py mints it and the repertoire table together so
-// what folds and what renders cannot drift apart.
+// minted with the repertoire table in one run, so what folds and what renders
+// agree for as long as they are re-minted together.
 IDR_FONT_EMOJI_DONOR      RCDATA "../assets/fonts/TwemojiMozilla-Subset.ttf"

@@ -581,12 +581,15 @@ VelocityState GetPhysicsVelocity(void* prop) {
 void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm,
-                          const std::wstring& expectedPropName) {
+                          const std::wstring& expectedPropName,
+                          NearbyTrace* outTrace) {
     if (className.empty() || radiusCm <= 0.f) return nullptr;
     void* base = PropBaseClass();
     if (!base) return nullptr;
     const float r2 = radiusCm * radiusCm;
     const int32_t n = R::NumObjects();
+    // The first accepted candidate, which is the result whether or not the walk runs to the end.
+    void* first = nullptr;
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
@@ -603,18 +606,33 @@ void* FindNearbySameClass(const std::wstring& className,
         if (nm.rfind(L"Default__", 0) == 0) continue;
         // Class match on the leaf name.
         if (R::ClassNameOf(obj) != className) continue;
+        if (outTrace) ++outTrace->classMatches;
         // Same class is not the same prop for a generic prop: the list-props row name is the
         // identity (a cube and a wall panel are both prop_C). When the wire carries a row it must
         // match, or two co-located different props would fuzzy-merge and the rekey would bind the
         // wrong object; an empty expected name is a class-only match.
-        if (!expectedPropName.empty() && GetPropNameString(obj) != expectedPropName) continue;
+        if (!expectedPropName.empty() && GetPropNameString(obj) != expectedPropName) {
+            if (outTrace) ++outTrace->rowNameRejects;
+            continue;
+        }
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;
         const float dz = loc.Z - anchor.Z;
-        if (dx * dx + dy * dy + dz * dz <= r2) return obj;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > r2) {
+            if (outTrace) {
+                const float d = std::sqrt(d2);
+                if (outTrace->nearestOutsideCm < 0.f || d < outTrace->nearestOutsideCm)
+                    outTrace->nearestOutsideCm = d;
+            }
+            continue;
+        }
+        if (!first) first = obj;
+        if (!outTrace) return first;   // untraced: the walk stops at the result, as before
+        outTrace->candidates.push_back(NearbyCandidate{obj, i, std::sqrt(d2)});
     }
-    return nullptr;
+    return first;
 }
 
 void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist) {
@@ -735,24 +753,6 @@ bool ForceRestoreDefaultCollision(void* prop) {
         return false;
     }
     return true;
-}
-
-// The save-scalar birth channel (see prop.h).
-
-bool ReadSavedScalarForClass(void* actor, float& out) {
-    if (!actor) return false;
-    // The reel lineage declares Progress; tape_caddy resolves lazily, and an unresolved state
-    // reads as no scalar.
-    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
-    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
-    return ue_wrap::tape_caddy::ReadProgress(actor, out);
-}
-
-bool ApplySavedScalarForClass(void* actor, float value) {
-    if (!actor) return false;
-    if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
-    if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
-    return ue_wrap::tape_caddy::WriteProgress(actor, value);
 }
 
 }  // namespace ue_wrap::prop

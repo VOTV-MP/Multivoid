@@ -339,9 +339,9 @@ void RemotePlayer::Tick() {
     // SetTargetPose.
     AdvanceInterp();
 
-    // Advance the body-yaw presentation (the turn in place, coop/puppet_body_yaw.h), which keeps
-    // moving while the wire is quiet, so it sets dirty_ itself. Skipped while ragdolled: the pelvis
-    // attachment owns the transform.
+    // Advance the body-yaw presentation (the turn in place, coop/player/puppet_body_yaw.h), which
+    // keeps moving while the wire is quiet, so it sets dirty_ itself. Skipped while ragdolled: the
+    // pelvis attachment owns the transform.
     if (!ragdoll_.Active() &&
         bodyYaw_.Update(NowMs(), curSpeed_, curYaw_, curHeadYawDelta_)) {
         dirty_ = true;
@@ -501,10 +501,10 @@ void RemotePlayer::ApplyToEngine() {
             actor_, curSpeed_ > coop::puppet_footsteps::Stride::kRunSpeedCmS);
         // Footstep audio: the native accumulator lives in the puppet's suppressed BP tick, so the
         // coop layer strides the interpolated displacement and dispatches the game's own
-        // lib_C::step (coop/puppet_footsteps.h). One StepDue verdict drives both the native step
-        // and the skin step effects (two accumulators drift apart into doubled steps). The default
-        // step's volume is the skin layer's call: a replace-mode variant mutes it to 0, and lib
-        // step still runs its trace, water and friction side effects.
+        // lib_C::step (coop/player/puppet_footsteps.h). One StepDue verdict drives both the native
+        // step and the skin step effects (two accumulators drift apart into doubled steps). The
+        // default step's volume is the skin layer's call: a replace-mode variant mutes it to 0, and
+        // lib step still runs its trace, water and friction side effects.
         if (footsteps_.StepDue(curPos_, curSpeed_, !inAir)) {
             ue_wrap::votv_lib::CharacterStep(
                 actor_, coop::skin_effects::DefaultStepVolume(

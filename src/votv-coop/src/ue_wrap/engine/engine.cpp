@@ -683,7 +683,7 @@ void* GetWorldContext() {
     return R::FindObjectByClass(P::name::WorldClass);
 }
 
-// SpawnSoundAttenuation and PlaySoundAtLocation live in ue_wrap/engine_audio.cpp; the
+// SpawnSoundAttenuation and PlaySoundAtLocation live in ue_wrap/engine/engine_audio.cpp; the
 // declarations remain in engine.h.
 
 void RotatorToQuat(float pitchDeg, float yawDeg, float rollDeg,

@@ -1,4 +1,4 @@
-// ue_wrap/hook.h -- minimal inline-hook wrapper (MinHook).
+// ue_wrap/core/hook.h -- minimal inline-hook wrapper (MinHook).
 //
 // Engine-wrapper layer (principle 7): no gameplay/network logic. The standalone
 // mod owns its own function hooking (RULE No.3 -- no UE4SS at runtime). MinHook
@@ -30,7 +30,7 @@ bool Init();
 // target's module: it is memory MinHook can OVERWRITE OR UNMAP, and it stays valid
 // only because nothing here asks MinHook to release it. The parameter is
 // `trampoline` and never `original`, because MinHook's out-param IS the trampoline
-// (`minhook/src/hook.c:634`) and `original` invites the reading that it aims at the
+// (`third_party/minhook/src/hook.c:634`) and `original` invites the reading that it aims at the
 // engine's own ProcessEvent -- a reader who believes that clears a real
 // use-after-free as safe. Returns false on any MinHook error (logged).
 //
@@ -41,15 +41,15 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
 
 // ---- Retirement -------------------------------------------------------------
 //
-// Disable is the ONLY retirement this facade offers, and the absence of a
-// remove/uninitialize counterpart fixes a live use-after-free. A MinHook
-// `MEMORY_SLOT` is a UNION of a `pNext` link and the trampoline bytes
-// (`minhook/src/buffer.c:43-50`), so `FreeBuffer` writes eight bytes AT OFFSET 0
-// OF THE TRAMPOLINE, over the stolen prologue (`buffer.c:282`), from
-// `MH_RemoveHook` (`hook.c:702`) -- in place, with no drain window that helps,
-// and a thread still holding the pointer runs a list link as code. Disable only
-// writes the original prologue back, so a thread already inside the detour
-// returns through intact memory. The full account is docs/architecture.md.
+// Disable is the ONLY retirement this facade offers, and the absence of a remove/uninitialize
+// counterpart fixes a live use-after-free. A MinHook `MEMORY_SLOT` is a UNION of a `pNext` link and
+// the trampoline bytes (`third_party/minhook/src/buffer.c:43-50`), so `FreeBuffer` writes eight
+// bytes AT OFFSET 0 OF THE TRAMPOLINE, over the stolen prologue
+// (`third_party/minhook/src/buffer.c:282`), from `MH_RemoveHook`
+// (`third_party/minhook/src/hook.c:702`) -- in place, with no drain window that helps, and a thread
+// still holding the pointer runs a list link as code. Disable only writes the original prologue
+// back, so a thread already inside the detour returns through intact memory. The full account is
+// docs/architecture.md.
 
 // Disable the hook on `target`: the patch is lifted (the detour stops firing)
 // but the trampoline slot stays allocated and intact. Pair with Enable to

@@ -1,4 +1,4 @@
-// coop/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
+// coop/player/nameplate.h -- floating nickname labels above remote players (ImGui screen-space).
 //
 // Gameplay/network layer (principle 7). The label is drawn by our OWN ImGui overlay as a
 // screen-space PROJECTION -- the MTA nametag shape: project the head world point to the
@@ -89,10 +89,10 @@ void RequestLocalVisible(bool visible);
 void StoreVisibleForSlot(int slot, bool visible);
 bool VisibleForSlot(int slot);
 
-// Session wiring + lifecycle edges (called by subsystems / player_handshake's
-// reset paths -- the session-start reset runs on the BRINGUP thread by design).
-// Disconnect resets the slot to VISIBLE so a reused slot never inherits the
-// departed peer's pref.
+// Session wiring and lifecycle edges. subsystems installs; ResetSlots runs at
+// session start (bringup thread) and again at the leave-world funnel; and the
+// roster ledger's occupant-change edge calls OnSlotDisconnected, which resets the
+// slot to VISIBLE so a reused slot never inherits the departed peer's pref.
 void Install(coop::net::Session* session);
 void ResetSlots();
 void OnSlotDisconnected(int slot);

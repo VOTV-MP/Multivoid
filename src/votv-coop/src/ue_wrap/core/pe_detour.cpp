@@ -1,4 +1,4 @@
-// ue_wrap/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
+// ue_wrap/core/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
 // the detour body, the transparent bypass, the SEH crash firewalls with fault localisation,
 // the re-entrancy depth probe and the perf self-timing. What runs on a dispatch (the observer,
 // interceptor and name-diagnostic registries, the posted-task pump) is game_thread.cpp's; the
@@ -115,10 +115,10 @@ inline void RecordCbBodyNs(void* function, unsigned long long ns) {
     }
 }
 
-// Fault localisation for the firewalls: an absorbed fault logs its faulting instruction, the
-// access address and the containing module and RVA, so it names its own site. A payload-DLL RVA
-// maps to a function through the payload's .map (tools/maprva.py); a game-exe hit is a fault
-// inside a ProcessEvent-dispatched UFunction on a bad object.
+// Fault localisation for the firewalls: an absorbed fault logs its faulting instruction, the access
+// address and the containing module and RVA, so it names its own site. A payload-DLL RVA maps to a
+// function through the payload's .map; a game-exe hit is a fault inside a ProcessEvent-dispatched
+// UFunction on a bad object.
 thread_local D::TaskFaultInfo t_lastTaskFault{};
 
 // The SEH filter runs in the faulting context before the unwind, so it only stashes, never

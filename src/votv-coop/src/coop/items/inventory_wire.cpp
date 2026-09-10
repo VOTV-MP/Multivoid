@@ -1,7 +1,7 @@
-// coop/inventory_wire.cpp -- see coop/inventory_wire.h.
+// coop/items/inventory_wire.cpp -- see coop/items/inventory_wire.h.
 //
-// The per-record grammar + the byte primitives moved to coop/items/save_record_wire (2026-07-22)
-// when coop/props/container_contents_sync needed the same codec; what stays here is the
+// The per-record grammar and the byte primitives live in coop/items/save_record_wire, shared
+// with coop/props/container_contents_sync; what stays here is the
 // player-scoped envelope: the version byte, the three arrays, and Fstruct_equipment.
 
 #include "coop/items/inventory_wire.h"

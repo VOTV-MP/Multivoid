@@ -2,7 +2,7 @@
 //
 // One ImGui window: a left nav tree (Category > SubCategory) + a right content
 // pane of the selected subcategory's controls. STRICT nested categorization
-// (RULE [[feedback-dev-features-in-imgui-menu]]). The menu is visible to ALL
+// (a category per concept, never a flat list). The menu is visible to ALL
 // players (the overlay hosts it); DEV-flagged categories/subs/items are hidden
 // unless the dev switch ([dev] devkeys) is on. Each feature module exposes a plain
 // function the menu calls -- no gameplay/network logic lives here (principle 7).

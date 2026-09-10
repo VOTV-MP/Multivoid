@@ -1,4 +1,4 @@
-// coop/atv_sync.h -- ATV/quadbike (AATV_C) rig sync.
+// coop/interactables/atv_sync.h -- ATV/quadbike (AATV_C) rig sync.
 //
 // Gameplay/network layer (principle 7): owns the wire protocol, the two authority predicates, the
 // per-tick stream, the receiver-side CORRECTOR, the key->actor index, and the connect-snapshot.

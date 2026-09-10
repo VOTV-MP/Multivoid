@@ -1,6 +1,6 @@
 // coop/dev/door_probe.h -- dev-only ground-truth probe for the base door state
 // machine (ini door_probe=1). Answers, by direct observation rather than
-// inference, the question that blocked door coop sync 2026-06-04: when the host
+// inference, the question that blocked door coop sync: when the host
 // opens a door with no local player at it, WHAT re-closes it, and does the
 // autoclose=0 + sensor-overlap-off suppression actually hold it open?
 //

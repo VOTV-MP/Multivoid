@@ -1,4 +1,4 @@
-// coop/meadow_db_sync.h -- the MEADOW signal-DATABASE mirror
+// coop/interactables/meadow_db_sync.h -- the MEADOW signal-DATABASE mirror
 // (saveSlot.savedSignals_0 and the boot-persistent ui_laptop widget arrays).
 // Overview: docs/signals.md. Game thread throughout.
 //

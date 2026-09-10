@@ -1,4 +1,4 @@
-// coop/dev/atv_eject_drill.h -- the forced-eject acceptance arm for the v147 ATV condition
+// coop/dev/atv_eject_drill.h -- the forced-eject acceptance arm for the ATV condition
 // lane. Env-gated (VOTVCOOP_ATV_EJECT_TEST = "host" | "client"), fires ONCE per process
 // through the game's own damageWheel path. See the .cpp header for the two arms' contracts.
 // RULE-2-exempt diagnostic.

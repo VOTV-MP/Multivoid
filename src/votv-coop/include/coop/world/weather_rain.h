@@ -1,4 +1,4 @@
-// coop/weather_rain.h -- the rain and snow half of the day-night cycle's weather lane.
+// coop/world/weather_rain.h -- the rain and snow half of the day-night cycle's weather lane.
 //
 // The module owns the rain and snow engine substrate on AdaynightCycle_C: its own five mutator
 // UFunction resolves (causeRain, setRainProperties, setWindParameters, intComs_triggerSnow,

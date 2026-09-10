@@ -13,6 +13,7 @@
 #include "coop/props/remote_prop.h"
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
+#include "coop/dev/spawn_match_probe.h"        // NoteDestroy (the fuzzy-adoption watch)
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"     // PropMirrors() (UnregisterPropMirror)
 #include "coop/element/quiescence_drain.h"    // ArmPendingDestroy (destroy-before-load capture)
@@ -187,6 +188,7 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         }
         return false;
     }
+    coop::dev::spawn_match_probe::NoteDestroy(actor, payload.elementId);
     DestroyResolvedLocalActor_(actor, keyW, payload, localPlayer);
     return true;
 }

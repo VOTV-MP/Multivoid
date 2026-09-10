@@ -1,11 +1,11 @@
-// coop/balance_sync.h -- shared host-authoritative credit balance (saveSlot.Points).
+// coop/world/balance_sync.h -- shared host-authoritative credit balance (saveSlot.Points).
 //
 // The HOST owns the canonical balance. It POLLS Points each game-thread tick -- catching every
 // writer: shop orders, signal-disk sells, task rewards, the +1000 dev button -- and broadcasts
 // BalanceSync on CHANGE, and to a joining client on its connect edge, so every peer MIRRORS the
 // host's balance. The CLIENT writes the host's absolute value directly, with no AddPoints
 // side-effects -- the MTA server-economy shape. SetSession, Tick and the connect edge run on the
-// net-pump game thread, and the receivers GT::Post their UObject writes.
+// net-pump game thread, and a received value is stashed for Tick to write.
 //
 // THE WIRE IS ONE-WAY, HOST TO CLIENT. A client-to-host BalanceDelta request lane once existed and
 // the host applied it through AddPoints with NO value bound, so any peer could set the shared
@@ -44,8 +44,9 @@ void Tick();
 // path came to be designed around a second function that did the same thing.
 void SendCurrentToSlot(int slot);
 
-// RECEIVER (client): apply the host's ABSOLUTE balance -- write saveSlot.Points. No-op
-// on the host (authoritative). GT::Posts the write.
+// RECEIVER (client): take the host's ABSOLUTE balance for saveSlot.Points. No-op on the host
+// (authoritative). The write itself is Tick's, on the game thread: this stashes the value, and Tick
+// retries the write until the saveSlot resolves.
 void ApplyFromHost(int32_t total);
 
 // Apply a LOCAL credit (the +1000 dev button) on the host or solo, through AddPoints. On a

@@ -1,10 +1,10 @@
-// ue_wrap/trace.h -- standalone engine access for line-of-sight traces
+// ue_wrap/core/trace.h -- standalone engine access for line-of-sight traces
 // (UKismetSystemLibrary::LineTraceSingleForObjects). Principle-7 engine-wrapper
 // layer: wraps the KSL CDO/UFunction resolve + the ParamFrame plumbing of a world
 // line trace. NO network logic, NO gameplay state.
 //
-// One owner of the trace primitive (extracted 2026-07-04 from wisp.cpp's canReach
-// parity trace when nameplate occlusion became the second consumer).
+// One owner of the trace primitive, with two consumers: wisp.cpp's canReach parity
+// trace and nameplate occlusion.
 
 #pragma once
 

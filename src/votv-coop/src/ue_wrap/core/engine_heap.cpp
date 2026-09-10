@@ -1,19 +1,15 @@
-// ue_wrap/engine_heap.cpp -- engine-heap (GMalloc) allocate / free.
-//
-// Split from reflection.cpp (2026-06-14): the EngineAlloc/EngineFree allocator pair + the GMalloc
-// slot resolution are a self-contained concern, logically distinct from the GUObjectArray / GNames
-// / ProcessEvent reflection primitives -- and adding EngineAlloc (inventory Inc 4) pushed
-// reflection.cpp past the 800-LOC soft cap. The PUBLIC API (EngineAlloc / EngineFree) is declared
-// in reflection.h and stays in the ue_wrap::reflection namespace (callers are unchanged); only the
-// implementation + the &GMalloc slot move here. ResolveEngineHeap() is called once, eagerly, from
-// reflection::Resolve() alongside the other primitives -- behavior is byte-identical to before.
+// ue_wrap/core/engine_heap.cpp -- engine-heap (GMalloc) allocate and free. The PUBLIC API,
+// EngineAlloc and EngineFree, is declared in reflection.h and stays in the
+// ue_wrap::reflection namespace; only the implementation and the &GMalloc slot live here.
+// ResolveEngineHeap() is called once, eagerly, from reflection::Resolve() alongside the other
+// primitives.
 //
 // Mechanism: decode &GMalloc from the FMemory::Realloc signature (that wrapper is `return
-// GMalloc->Realloc(...)`), keep the SLOT (deref at use time -- GMalloc is set once early in boot
-// and never moves), and call FMalloc::Free / FMalloc::Realloc via their vtable byte offsets
-// (IDA-verified for this UE4.27 build; sdk_profile.h kFMallocFreeVtOff +0x30 / kFMallocReallocVtOff
-// +0x20). Allocator-matched: a buffer EngineAlloc'd is freed by the engine's later Array realloc /
-// GC with the same GMalloc, and EngineFree releases engine-allocated buffers, with no mismatch.
+// GMalloc->Realloc(...)`), keep the SLOT and deref at use time -- GMalloc is set once early in
+// boot and never moves -- then call FMalloc::Free and FMalloc::Realloc through the vtable byte
+// offsets sdk_profile.h names (kFMallocFreeVtOff, kFMallocReallocVtOff). Allocator-matched: a
+// buffer EngineAlloc'd is freed by the engine's later Array realloc or GC through the same
+// GMalloc, and EngineFree releases engine-allocated buffers, with no mismatch.
 
 #include "ue_wrap/core/reflection.h"
 

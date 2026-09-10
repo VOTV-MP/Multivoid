@@ -1,7 +1,7 @@
-// ue_wrap/engine_component.cpp -- Scene/Actor component operations.
+// ue_wrap/engine/engine_component.cpp -- Scene/Actor component operations.
 //
-// Public API lives in ue_wrap/engine.h; this TU implements the component-related functions in
-// `namespace ue_wrap::engine`.
+// Public API lives in ue_wrap/engine/engine.h; this TU implements the component-related functions
+// in `namespace ue_wrap::engine`.
 
 #include "ue_wrap/engine/engine.h"
 

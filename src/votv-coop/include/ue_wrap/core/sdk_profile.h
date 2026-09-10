@@ -1,4 +1,4 @@
-// ue_wrap/sdk_profile.h -- the version surface: everything specific to one game build.
+// ue_wrap/core/sdk_profile.h -- the version surface: everything specific to one game build.
 //
 //   * AOB signatures   break on any engine recompile (even a patch);
 //   * struct offsets   stable within an engine version, shift across them;
@@ -541,7 +541,7 @@ inline constexpr size_t kKerfurModifyBone_1       = 0x2A28;
 inline constexpr size_t kKerfurModifyBone         = 0x2C60;
 }  // namespace anim
 
-// ---- content names: ue_wrap/sdk_profile_names.h, included below so P::name:: resolves
+// ---- content names: ue_wrap/core/sdk_profile_names.h, included below so P::name:: resolves
 //      through this single header.
 
 }  // namespace ue_wrap::profile

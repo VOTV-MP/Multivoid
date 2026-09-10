@@ -1,12 +1,11 @@
-// ue_wrap/desk/coords_panel.h -- standalone engine access for the coords-panel
-// widget (Uui_coordinates_C): the REAL dish-aim state + its repaint verb.
-// The widget is a SINGLETON child of the desk's atlas widget, reached through
-// the desk's own field chain (desk.Widget -> atlas.ui_coordinates -- the
-// game's access path, getCoordWidget). Split out of console_desk.cpp
-// 2026-07-19 (one engine class per ue_wrap file); bodies verbatim.
-// Principle-7 engine-wrapper layer -- NO network logic; coop::desk_cursor_sync
-// (the 60Hz live cursor stream) + coop::console_state_sync (the committed
-// locks) drive the mirror through here. Game thread.
+// ue_wrap/desk/coords_panel.h -- standalone engine access for the coords-panel widget
+// (Uui_coordinates_C): the REAL dish-aim state and its repaint verb. The widget is a SINGLETON
+// child of the desk's atlas widget, reached through the desk's own field chain (desk.Widget ->
+// atlas.ui_coordinates), which is the game's own access path, getCoordWidget.
+//
+// Principle-7 engine-wrapper layer -- NO network logic. coop::desk_cursor_sync (the 60 Hz live
+// cursor stream) and coop::console_state_sync (the committed locks) drive the mirror through here.
+// Game thread.
 
 #pragma once
 
@@ -24,7 +23,7 @@ struct DishAim {
     float c1X = 0, c1Y = 0;       // Coordinate_1
     float c2X = 0, c2Y = 0;       // Coordinate_2
     int32_t selected = 0;         // the selected cursor index
-    uint8_t direction = 0;        // Direction @0x441 -- the catch-gate toggle (v70)
+    uint8_t direction = 0;        // Direction -- the catch-gate toggle
 };
 
 // The live validated ui_coordinates_C instance (cached + index-revalidated;
@@ -36,11 +35,12 @@ struct DishAim {
 void* Instance();
 
 bool ReadDishAim(DishAim& out);
-// v109: the LIVE cursor and the COMMITTED locks are SEPARATE writes (see the
-// .cpp). WriteCursorOnly = viewCoordinate memcpy, NO dispatch (the 60Hz interpolated
-// stream; the widget's own Tick repaints). WriteDishCommitted = the discrete locks +
-// updCursorLocations repaint (commit rate). WriteDishAim (wrote both + dispatched at
-// 3Hz) is RETIRED -- two authors on viewCoordinate is the dupe shape (RULE 2).
+// The LIVE cursor and the COMMITTED locks are SEPARATE writes (see the .cpp). WriteCursorOnly
+// is a viewCoordinate memcpy with NO dispatch -- it serves the 60 Hz interpolated stream, and the
+// widget's own Tick repaints. WriteDishCommitted writes the discrete locks, runs the
+// updCursorLocations repaint and the desk's own updateCoordCoords text repaint, at commit rate. A
+// single call that wrote both and dispatched at 3 Hz is retired: two authors on viewCoordinate is
+// the duplicate-writer shape.
 bool WriteCursorOnly(float viewX, float viewY);
 bool WriteDishCommitted(const DishAim& in);
 

@@ -25,10 +25,11 @@ namespace coop::element {
 // goes in the log beside the wire token. THE RULE is recursive, total and structural:
 //
 //   portable(a) = a is a CHILD ACTOR -> portable(parent(a)) + "/" + <component name>
+//                 Key(a) != None     -> "k:" + <Key>              // tried FIRST; save-persisted
 //                 RF_WasLoaded(a)    -> "n:" + <UObject name>     // baked into the cooked level
-//                 Key(a) != None     -> "k:" + <Key>              // top-level: save-persisted
-//                 otherwise          -> ""                        // NO identity; say so, never
-//                 guess
+//                 otherwise          -> ""                        // NO identity; never a guess
+//
+// The key wins the name because a level-placed anchor is replaced by its save-loaded twin mid-load.
 //
 // Uniqueness is STRUCTURAL rather than measured: UE requires component names to be unique within an
 // actor, so two children of one parent differ by component and two children of different parents

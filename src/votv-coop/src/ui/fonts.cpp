@@ -116,7 +116,7 @@ const void* ResourceTtf(int id, int* outSize) {
     return p;
 }
 
-// The exclude set (coop/text/repertoire.h) in ImGui's range form: the complement, within what
+// The exclude set (coop/text/repertoire.h) in ImGui's range form: a coarse cover of what
 // our faces carry, of the table the nickname arbiter folds against. One generator emits both,
 // so what is refused for baking and what folds to the sentinel cannot drift. Subtractive
 // because the lazy atlas ignores an inclusion list and bakes whatever is drawn; the only lever

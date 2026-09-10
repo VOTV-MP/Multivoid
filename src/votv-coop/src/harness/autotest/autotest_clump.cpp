@@ -1,4 +1,4 @@
-// harness/autotest_clump.cpp -- garbage-clump autonomous tests: the held-clump
+// harness/autotest/autotest_clump.cpp -- garbage-clump autonomous tests: the held-clump
 // ATTACH e2e (VOTVCOOP_RUN_CLUMP_TEST) + the clump VISIBILITY probe
 // (VOTVCOOP_RUN_CLUMPVIS_PROBE). The interfaces and the per-routine docs live
 // in harness/autotest.h.

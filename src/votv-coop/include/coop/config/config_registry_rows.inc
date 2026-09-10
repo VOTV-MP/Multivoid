@@ -134,9 +134,9 @@ CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
     "Show peer action lines (joins, pickups, device use) in the chat feed.")
 CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefaultDirectAddr, nullptr, false,
     "The last address typed into the server browser's direct-connect box (remembered "
-    "automatically). Its default names the port a host actually listens on (net.port) -- "
-    "it read 127.0.0.1:7777 until 2026-09-01, which is Unreal's default port and never "
-    "ours, so the box offered a port nothing in the mod has ever bound.")
+    "automatically). Its default names the port a host actually listens on (net.port), "
+    "not Unreal's 7777, which nothing in the mod has ever bound. Replacing the address "
+    "while keeping the port is the natural edit.")
 CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
     "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
 // The composed font family, per-role enum rows. The default family per role: the menus, chat
@@ -228,6 +228,11 @@ CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
     "Autonomous selftest: desk sound mirror.")
 CFG_FLAG(container_selftest, "container_selftest", "dev", false, nullptr,
     "Autonomous selftest: container contents sync.")
+CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
+    "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
+    "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "
+    "(it inserts, ejects, and seeds discs when the world has none), so arm it from the environment "
+    "for one run rather than leaving it here. Set it on BOTH peers; each drives its own role.")
 CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
     "Autonomous selftest: player inventory sync.")
 CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
@@ -286,6 +291,14 @@ CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,
     "Diagnostic probe: inventory store contents.")
 CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
     "Diagnostic probe: actor spawn ordering.")
+CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, nullptr,
+    "Diagnostic probe (CLIENT): the place/birth seam -- how many drain ticks the save Key takes to "
+    "restore after a spawn, and which of the seven drain exits each pending spawn leaves by. Set it "
+    "on the CLIENT; the host places through a different path.")
+CFG_FLAG(spawn_match_probe, "spawn_match_probe", "dev", false, nullptr,
+    "Diagnostic probe: the OnSpawn fuzzy-match candidate set -- every same-class prop inside the "
+    "30 cm radius with its slot, distance, own key and mirror binding, plus a watch that reports a "
+    "destroy landing on an adopted actor. Walks the whole object array per fuzzy spawn while on.")
 CFG_FLAG(eid_lifetime_trace, "eid_lifetime_trace", "dev", false, nullptr,
     "Diagnostic trace: entity-id lifetimes (mint/adopt/destroy).")
 CFG_FLAG(pinecone_probe, "pinecone_probe", "dev", false, nullptr,
@@ -366,7 +379,7 @@ CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
     "send a flipped signature; silent = open the exchange and never answer. Both must "
     "leave this peer unseated and with no save. mismatch = pretend we were sent to a "
     "DIFFERENT host than the one that answered, which THIS peer must refuse itself "
-    "(security A65) -- it is the only arm whose refusal is ours, not the host's. "
+    "-- it is the only arm whose refusal is ours, not the host's. "
     "Drill only.")
 CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "VOTVCOOP_ATLAS_NO_EXCLUDE",
@@ -388,7 +401,7 @@ CFG_FLAG(native_text_probe, "native_text_probe", "dev", false, "VOTVCOOP_NATIVE_
     "field's own Text back, and removes it. Answers the one fact every native "
     "text-entry design forks on -- whether Slate routes keystrokes into a hand-wired, "
     "never-Initialize()d widget tree. Asserts on the TEXT, never on HasKeyboardFocus, "
-    "which the 2026-07-31 input-ownership finding measured as lying about a live field.")
+    "which was measured lying about a field that was live at the time.")
 CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
     "VOTVCOOP_NATIVE_UI_PROBE_WRITE",
     "RUNG 1 of native_ui_probe, and it WRITES: adds a throwaway UUserWidget to the "

@@ -10,6 +10,13 @@ The mod is written by one maintainer (pelmentor) with Claude as the day-to-day e
 pair. That is stated openly here, in the README and in every commit's trailer. Outside
 contributions are adopted with their original authorship preserved (`git log --author=<you>`).
 
+**Author your commits as yourself.** Set `user.name` and `user.email` to your own before you
+commit, and check with `git log -1 --format='%an <%ae>'` that the branch you are about to push
+carries your name. The maintainer's name and email are visible in every commit of this
+repository's history; they are not a convention to copy, and a pull request authored under them
+cannot be adopted with the authorship promised above. If you use an AI coding tool, check this
+before your first commit: it has already happened once, and the contributor lost the credit.
+
 ## Ground rules
 
 Three rules govern every change:
@@ -84,9 +91,12 @@ A change is not done when it compiles. Before a pull request:
 4. Per-frame and per-packet code is measured, not assumed: no full-object-array scans on a hot
    path, no allocation in the pose tick, engine functions only on the game thread.
 
-CI runs the same gates on every push (`.github/workflows/`): the build, the zero-import ABI
-gate, the config-registry gate, the atlas gate, the package drill, the public-leak gate, and the
-commit-message and public-prose checks described below.
+Every push and pull request runs the source gates (`.github/workflows/repo-gates.yml`): the
+config-registry gate, the peer-slot generation gate, the atlas gate, the master-contact and
+reliable-kind gates, the MinHook free-call and GC-pin rules, the public-leak gate, and the
+commit-message and public-prose checks described below. The Windows build is run by hand
+(Actions -> **build** -> Run workflow); it is what runs the zero-import ABI gate on the built
+DLL and the package drill, since those need a compiled artifact.
 
 ## Commits
 
@@ -166,10 +176,11 @@ several of them special treatment and moving them would add exactly the strangen
 removes.
 `.github/ci/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
-the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that are
-more than half comment, offsets pinned in prose that the code resolves elsewhere, declarations
-nothing calls, and the citation vocabulary below. CI refuses a push that makes any of those
-measures worse; the plain volume of prose is reported, not gated.
+the hard cap, dated lines, and in the source the comment blocks over 15 lines, the files that
+are more than half comment, offsets pinned in prose that the code resolves elsewhere,
+declarations nothing calls, citations that name nothing, and the citation vocabulary below. CI
+refuses a push that makes any of those measures worse; the plain volume of prose is reported,
+not gated.
 
 ## Code comments
 
@@ -183,6 +194,15 @@ label -- `CRIT-1`, `Inc-2`, `take-9`, `K-5` -- points at a document that is not 
 repository, so state what the code does instead. Evidence tags (`[V]`, `[?]`) belong in the
 documentation, where the index page carries their legend; a source comment has no legend, and
 the reader is better served by the fact than by a mark on it.
+
+A citation names something, so the thing has to be there. A path must resolve -- from the
+repository root, relative to the file it sits in, or in the module-root spelling this tree
+writes (`src/ue_wrap/x.cpp`, relative to `src/votv-coop/`). A quoted log line must be one some
+`UE_LOG` format actually sends; an environment variable, one some code reads; a backticked
+`section.row=`, a row of the config registry; and a `Type::member` naming one of our own types,
+a member name this tree still uses. The gate counts all five in the mod's own C++ comments, so a
+rename that leaves its citations there is refused at the push; everywhere else in the tree the
+rule holds and only a reader enforces it.
 
 ## Pull requests
 

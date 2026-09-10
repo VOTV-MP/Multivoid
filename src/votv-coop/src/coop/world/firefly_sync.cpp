@@ -1,4 +1,4 @@
-// coop/firefly_sync.cpp -- see coop/firefly_sync.h.
+// coop/world/firefly_sync.cpp -- see coop/world/firefly_sync.h.
 //
 // PEER-SYMMETRIC: every peer runs its OWN firefly spawner, captures its own spawns by
 // PRE+POST-observing the spawner's ReceiveTick and diffing the live ParticleSystemComponent

@@ -1,6 +1,7 @@
-// ue_wrap/reflected_offset.cpp -- reflection-resolved BP property offsets.
+// ue_wrap/core/reflected_offset.cpp -- reflection-resolved BP property offsets.
 //
-// See ue_wrap/reflected_offset.h for the public interface + rationale.
+// See ue_wrap/core/reflected_offset.h for the interface, for the fields that need explaining,
+// and for why no number lives on this side.
 
 #include "ue_wrap/core/reflected_offset.h"
 
@@ -19,24 +20,21 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// Internal: do the resolve + log-once.
-//   Returns the FProperty.Offset_Internal of `fieldName` on the UClass
-//   named `className`, or -1 if either lookup fails. Logs once per
-//   (class, field) pair regardless of outcome -- on success we get a
-//   one-time "resolved to 0x%X" line; on failure a one-time WARN. The
-//   logged-pairs set is process-static (covers every accessor call).
+// Internal: resolve, and log once.
+//   Returns the FProperty.Offset_Internal of `fieldName` on the UClass named `className`, or
+//   -1 if either lookup fails. Logs once per (class, field) pair whatever the outcome: a
+//   one-time resolved line on success, a one-time warning on failure. The logged-pair sets
+//   are process-static, so they cover every accessor call.
 int32_t Resolve(const wchar_t* className, const wchar_t* fieldName) {
     void* cls = R::FindClass(className);
     int32_t off = -1;
     if (cls) {
         off = R::FindPropertyOffset(cls, fieldName);
     }
-    // Audit fix 2026-05-25: separate success + failure sets so the
-    // success log line is NOT suppressed when an earlier "class not
-    // loaded yet" warning landed first. Previous single-set design
-    // meant the log permanently showed the WARN even after the BP
-    // class loaded + the offset resolved successfully -- misleading
-    // for debugging.
+    // Success and failure are memoised in SEPARATE sets, so a "class not loaded yet" warning that
+    // lands first cannot suppress the success line that follows it. Sharing one set left the log
+    // showing the warning for good, including after the BP class had loaded and the offset had
+    // resolved.
     static std::mutex sLogMtx;
     static std::set<std::wstring> sLoggedSuccess;
     static std::set<std::wstring> sLoggedFail;
@@ -62,14 +60,12 @@ int32_t Resolve(const wchar_t* className, const wchar_t* fieldName) {
     return off;
 }
 
-// Accessor body: static cache that only memorizes on success.
-// First call before BP class loads -> -1; next call retries.
-// Once resolved, every subsequent call is a single atomic load.
+// Accessor body: a static cache that memoises only on success. A first call before the BP
+// class loads returns -1; the next call retries. Once resolved, every later call is a single
+// atomic load.
 //
-// Thread-safety: the std::atomic<int32_t> race is benign -- two threads
-// racing to resolve the same pair will both call Resolve(); both write
-// the same value to the atomic. Resolve's own logging mutex prevents
-// double-logging.
+// Thread-safety: the race on the atomic is benign -- two threads resolving the same pair both
+// call Resolve() and both store the same value. Resolve's own mutex prevents double logging.
 struct OffsetCache {
     std::atomic<int32_t> value{-1};
 };
@@ -96,13 +92,13 @@ VC_DEFINE_OFFSET(MainPlayer_grabsHeavy,           L"mainPlayer_C", L"grabsHeavy"
 VC_DEFINE_OFFSET(MainPlayer_grabLen,              L"mainPlayer_C", L"grabLen")
 VC_DEFINE_OFFSET(MainPlayer_Heavy,                L"mainPlayer_C", L"Heavy")
 VC_DEFINE_OFFSET(MainPlayer_holding_actor,        L"mainPlayer_C", L"holding_actor")
-VC_DEFINE_OFFSET(MainPlayer_lookAtActor,          L"mainPlayer_C", L"lookAtActor")  // 0x0AA0: the actor the player is aiming at (door target on E-press)
+VC_DEFINE_OFFSET(MainPlayer_lookAtActor,          L"mainPlayer_C", L"lookAtActor")
 VC_DEFINE_OFFSET(MainPlayer_isRagdoll,            L"mainPlayer_C", L"isRagdoll")
 VC_DEFINE_OFFSET(MainPlayer_dead,                 L"mainPlayer_C", L"dead")
-VC_DEFINE_OFFSET(MainPlayer_activeInterface,      L"mainPlayer_C", L"activeInterface")  // 0x07E0: THE inside-a-device discriminator (v63 occupancy)
-VC_DEFINE_OFFSET(MainPlayer_HitResult,            L"mainPlayer_C", L"HitResult")        // 0x0744: FHitResult(0x88); Actor weakptr at +0x68 (deny aim-clear)
-VC_DEFINE_OFFSET(MainPlayer_releaseEToUse,        L"mainPlayer_C", L"releaseEToUse")    // 0x0E88: radial "release E to use" confirm flag (kerfur menu detect)
-VC_DEFINE_OFFSET(MainPlayer_actionIndex,          L"mainPlayer_C", L"actionIndex")      // 0x0A98: highlighted radial-menu option index
+VC_DEFINE_OFFSET(MainPlayer_activeInterface,      L"mainPlayer_C", L"activeInterface")
+VC_DEFINE_OFFSET(MainPlayer_HitResult,            L"mainPlayer_C", L"HitResult")
+VC_DEFINE_OFFSET(MainPlayer_releaseEToUse,        L"mainPlayer_C", L"releaseEToUse")
+VC_DEFINE_OFFSET(MainPlayer_actionIndex,          L"mainPlayer_C", L"actionIndex")
 
 VC_DEFINE_OFFSET(AnimBP_kerfur_walkSpeed,           P::name::AnimBPKerfurRegularClass, L"walkSpeed")
 VC_DEFINE_OFFSET(AnimBP_kerfur_Pawn,                P::name::AnimBPKerfurRegularClass, L"Pawn")
@@ -117,8 +113,8 @@ VC_DEFINE_OFFSET(AnimBP_kerfur_spd,                 P::name::AnimBPKerfurRegular
 VC_DEFINE_OFFSET(AnimBP_kerfur_useLegIK,            P::name::AnimBPKerfurRegularClass, L"useLegIK")
 VC_DEFINE_OFFSET(AnimBP_kerfur_removeArms,          P::name::AnimBPKerfurRegularClass, L"removeArms")
 VC_DEFINE_OFFSET(AnimBP_kerfur_isFace,              P::name::AnimBPKerfurRegularClass, L"isFace")
-VC_DEFINE_OFFSET(AnimBP_kerfur_lookAt,              P::name::AnimBPKerfurRegularClass, L"lookAt")        // v39: head-look WORLD target (head/neck LookAt nodes)
-VC_DEFINE_OFFSET(AnimBP_kerfur_customLookAt,        P::name::AnimBPKerfurRegularClass, L"customLookAt")  // v39: gate BUA auto-recompute of lookAt
+VC_DEFINE_OFFSET(AnimBP_kerfur_lookAt,              P::name::AnimBPKerfurRegularClass, L"lookAt")
+VC_DEFINE_OFFSET(AnimBP_kerfur_customLookAt,        P::name::AnimBPKerfurRegularClass, L"customLookAt")
 
 #undef VC_DEFINE_OFFSET
 

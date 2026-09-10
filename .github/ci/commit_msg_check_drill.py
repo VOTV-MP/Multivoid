@@ -4,7 +4,8 @@
 Every rule in the checker gets one message that must be REFUSED and the good shapes get
 messages that must PASS; then the real entry points are exercised: the hook (a message file,
 including a legacy-encoded one) and the CI range mode on throwaway repositories (a bad commit,
-a merge with a bad body, a boundary that is the root commit).
+a merge with a bad body, a boundary that is the root commit, and a forge's pull-request merge
+commit, which is refused while it is the tip and gone once the branch head is the tip).
 
     python .github/ci/commit_msg_check_drill.py
 """
@@ -161,6 +162,62 @@ def run_entry_points(results):
                    check=True, capture_output=True, env=env)
     r = rng(shallow, "--from-boundary")
     arm("from-boundary: a shallow clone is refused", r.returncode == 1 and "shallow" in r.stdout)
+    # The forge tests a pull request on a merge commit it builds itself, and checks it out as HEAD.
+    # Judged as the tip it is refused for a subject no contributor wrote; the branch head is the tip
+    # whose commits are under review. Both directions are armed, so neither can rot unseen.
+    repo3 = new_repo(tmp, "pullreq", env)
+    os.makedirs(os.path.join(repo3, "tools", "git"))
+    shutil.copy(script, os.path.join(repo3, "tools", "git", "commit_msg_check.py"))
+    git(["add", "."], repo3, env)
+    git(["commit", "-q", "-F", "-"], repo3, env, "[tools] the checker arrives")
+    commit(repo3, env, "base.txt", "[coop] the base moves on")
+    base = git(["rev-parse", "HEAD"], repo3, env).stdout.decode().strip()
+    git(["checkout", "-q", "-b", "contrib"], repo3, env)
+    commit(repo3, env, "contrib.txt", "[coop] a contributor's good commit")
+    head = git(["rev-parse", "HEAD"], repo3, env).stdout.decode().strip()
+    git(["checkout", "-q", "main"], repo3, env)
+    # GitHub's own subject for refs/pull/N/merge, to the character: `Merge <head> into <base>`, 92
+    git(["merge", "-q", "--no-ff", head, "-m", "Merge {} into {}".format(head, base)], repo3, env)
+    r = rng(repo3, "--from-boundary")
+    arm("from-boundary: the forge's merge commit is refused while it is the tip",
+        r.returncode == 1 and "1 refused" in r.stdout and "92 characters" in r.stdout)
+    r = rng(repo3, "--from-boundary", "--tip", head)
+    arm("from-boundary --tip: the branch head judges the contributor's commits and passes",
+        r.returncode == 0 and "0 refused" in r.stdout,
+        r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:])
+    # Named by its own message: --end-of-options already keeps an option-shaped tip out of git's
+    # hands, so exit 2 alone passes this arm with the guard deleted. The diagnostic is the guard.
+    r = rng(repo3, "--from-boundary", "--tip=--output=" + os.path.join(tmp, "tipped.txt"))
+    arm("from-boundary: an option-shaped tip is refused",
+        r.returncode == 2 and "cannot start with" in r.stdout
+        and not os.path.exists(os.path.join(tmp, "tipped.txt")))
+    r = rng(repo3, "--from-boundary", "--tip", "0" * 40)
+    arm("from-boundary: a tip that names no commit is refused",
+        r.returncode == 2 and "names no commit" in r.stdout)
+    # The boundary is walked from the checkout, not from the tip. A branch that forked before the
+    # checker arrived has no boundary of its own, and "never added to this history" exits 0 -- so a
+    # tip-walked boundary would pass this bad commit by judging nothing. Exit 1 is the whole arm.
+    repo4 = new_repo(tmp, "oldbase", env)
+    commit(repo4, env, "root.txt", "[coop] before the checker existed")
+    git(["checkout", "-q", "-b", "old"], repo4, env)
+    commit(repo4, env, "old.txt", "a contributor commit with no scope")
+    old_head = git(["rev-parse", "HEAD"], repo4, env).stdout.decode().strip()
+    git(["checkout", "-q", "main"], repo4, env)
+    os.makedirs(os.path.join(repo4, "tools", "git"))
+    shutil.copy(script, os.path.join(repo4, "tools", "git", "commit_msg_check.py"))
+    git(["add", "."], repo4, env)
+    git(["commit", "-q", "-F", "-"], repo4, env, "[tools] the checker arrives")
+    r = rng(repo4, "--from-boundary", "--tip", old_head)
+    arm("from-boundary: a tip that forked before the checker is still judged",
+        r.returncode == 1 and "1 refused" in r.stdout and "nothing to judge" not in r.stdout,
+        r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:])
+    # An EMPTY range is a pass in --range (a hand-run range may legitimately be empty) and a
+    # REFUSAL in --from-boundary, where it means the CI lane judged nothing at all.
+    root4 = git(["rev-list", "--max-parents=0", "HEAD"], repo4, env).stdout.decode().strip()
+    r = rng(repo4, "--from-boundary", "--tip", root4)
+    arm("from-boundary: a tip that leaves the range empty is refused, not passed",
+        r.returncode == 1 and "EMPTY range" in r.stdout,
+        r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:])
 
 
 def main():

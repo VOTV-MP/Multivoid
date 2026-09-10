@@ -13,6 +13,7 @@
 
 #include "coop/element/element.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/join_membership_sweep.h"  // self-claim after the wire express
@@ -125,13 +126,6 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
-        // The save-scalar birth channel: a reel extracted from a container keeps its Progress on
-        // every peer's mirror.
-        float sc = 0.f;
-        if (ue_wrap::prop::ReadSavedScalarForClass(spawnedActor, sc)) {
-            p.savedScalar = sc;
-            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
-        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
@@ -155,6 +149,9 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
             (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0,
             p.elementId);
     s->SendPropSpawn(p);  // channel queues internally
+    // The prop's own save record, behind the spawn row in the same FIFO: a reel extracted from a
+    // container keeps its progress, a disc its files.
+    coop::prop_save_data::PublishWithSpawn(s, spawnedActor, p.key);
     // Self-claim (see the Init POST site).
     coop::join_membership_sweep::RecordClaimIfTracking(spawnedActor);
 }

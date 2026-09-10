@@ -1,17 +1,18 @@
 // ue_wrap/actors/save_record.cpp -- see ue_wrap/actors/save_record.h.
-//
-// Extracted verbatim from inventory.cpp 2026-07-22 (behavior preserved; the field-offset
-// table, the strides, the plausibility gates and the per-group lambdas are unchanged).
 
 #include "ue_wrap/actors/save_record.h"
 
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/fstring_utils.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 
+#include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 namespace ue_wrap::save_record {
 namespace {
@@ -217,6 +218,210 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r) {
         ue_wrap::signal_dynamic::WriteStructLive(
             reinterpret_cast<uint8_t*>(sb) + i * kSignalStride, r.signals[i]);
     WriteArrHeader(base, kSave_signals, sb, static_cast<int32_t>(r.signals.size()));
+}
+
+
+// ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
+
+namespace {
+
+void*    g_propCls      = nullptr;  // Aprop_C -- the root the override test measures against
+void*    g_baseGetData  = nullptr;  // Aprop_C::getData, for the base half of a record
+uint64_t g_nextPropTryMs = 0;
+
+// Class -> "declares a getData of its own below Aprop_C", and the resolved verbs. A UClass is
+// immortal once loaded, so these are keyed by the pointer and only ResetCodecCache drops them.
+// The verbs are cached because FindFunction walks the WHOLE object array: uncached, every capture
+// and every apply paid that walk, at join-drain rates.
+struct ClassVerbs { void* getData = nullptr; void* loadData = nullptr; bool overrides = false;
+                    bool conventionChecked = false; };
+std::unordered_map<void*, ClassVerbs> g_verbs;
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// Blueprint classes load on demand, so a first call before prop_C exists must not disable the lane
+// for the session: retried at most once a second, the idiom the device wrappers use.
+bool EnsurePropClass() {
+    if (g_propCls) return true;
+    const uint64_t now = NowMs();
+    if (now < g_nextPropTryMs) return false;
+    g_nextPropTryMs = now + 1000;
+    g_propCls = R::FindClass(L"prop_C");
+    if (!g_propCls) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("save_record: prop_C not loaded -- no prop carries its own save record yet; "
+                    "retrying at 1 Hz (this line prints once)");
+        }
+        return false;
+    }
+    g_baseGetData = R::FindFunction(g_propCls, L"getData");
+    if (!g_baseGetData)
+        UE_LOGW("save_record: prop_C has no getData -- the base half of a record cannot be read, "
+                "so no record will be applied");
+    return true;
+}
+
+// The most-derived declaration of `name` on `cls`'s chain. FindFunction is exact-owner, so the
+// first hit walking UP from the leaf is the override the engine would dispatch.
+void* MostDerived(void* cls, const wchar_t* name) {
+    for (void* c = cls; c; c = R::SuperStructOf(c))
+        if (void* fn = R::FindFunction(c, name)) return fn;
+    return nullptr;
+}
+
+// The per-class row, resolved once.
+const ClassVerbs* VerbsFor(void* cls) {
+    if (!cls || !EnsurePropClass()) return nullptr;
+    const auto it = g_verbs.find(cls);
+    if (it != g_verbs.end()) return &it->second;
+    ClassVerbs v;
+    // The lineage FIRST: a class off the Aprop_C chain resolves nothing. MostDerived walks the
+    // whole object array once per level of the chain, and the key index this lane is driven from
+    // also holds trash piles, clumps and chip piles, none of which descend from Aprop_C.
+    if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
+        v.getData  = MostDerived(cls, L"getData");
+        v.loadData = MostDerived(cls, L"loadData");
+        // Stop AT Aprop_C: its own getData is the base record, and every field of it already
+        // rides the prop spawn row (class, key, name, the saved bools, the transform).
+        for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c))
+            if (R::FindFunction(c, L"getData")) { v.overrides = true; break; }
+    }
+    return &(g_verbs[cls] = v);
+}
+
+// Run `fn` on `actor` and read the Fstruct_save it leaves in the frame's `data` parameter.
+bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
+    if (!fn) return false;
+    ParamFrame f(fn);
+    const int32_t off = f.ParamOffset(L"data");
+    if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
+    if (!Call(actor, f)) return false;
+    // The record the call left in the frame owns engine-allocated nested arrays; ReadSaveRecord
+    // copies every one out, and the frame's own buffers are the deliberate leak this layer's
+    // out-param doctrine already carries (fstring_utils.h).
+    ReadSaveRecord(static_cast<const uint8_t*>(f.data()) + off, out);
+    return true;
+}
+
+// Element 0 of a group is the base class's by convention, and the splice below depends on it. A
+// rule that names a gate should have one: the first apply for a class captures the LEAF record too
+// and says so if the leaf wrote where the base writes. Once per class, then never again.
+// The splice keeps element 0 of a group for the base class. That is the game's own convention --
+// its slot setter takes an explicit index per group -- but it is NOT universal, and a class that
+// breaks it would not LOSE its field, it would read the base's unrelated value into it: a lifespan
+// arriving as a timer. So the convention is MEASURED per class, once, against the game rather than
+// asserted from a reading, and a class that fails it leaves the lane. Its save state then travels
+// no worse than before this codec existed; the warning names it for a carrier of its own.
+//
+// Both dispatches are paid once per class and cached with the verbs.
+bool EnsureConventionChecked(void* actor, void* cls) {
+    auto it = g_verbs.find(cls);
+    if (it == g_verbs.end()) return false;
+    if (it->second.conventionChecked) return it->second.overrides;
+    it->second.conventionChecked = true;
+    if (!it->second.overrides) return false;
+    SaveRecord base, leaf;
+    if (!CallForRecord(actor, g_baseGetData, base)) return true;    // unresolvable: re-checked never; the apply's own guard catches it
+    if (!CallForRecord(actor, it->second.getData, leaf)) return true;
+    const wchar_t* which = nullptr;
+    auto clash = [](const auto& a, const auto& b) {
+        return !a.empty() && !b.empty() && a[0] != b[0];
+    };
+    if (clash(leaf.bools,  base.bools))  which = L"bools";
+    else if (clash(leaf.floats, base.floats)) which = L"floats";
+    else if (clash(leaf.names,  base.names))  which = L"names";
+    if (!which) return true;
+    it->second.overrides = false;   // and so Covers() is false for this class from here on
+    UE_LOGW("save_record: '%ls' writes element 0 of `%ls`, where Aprop_C writes too -- the base "
+            "splice would hand it the base's value instead of its own, so this class LEAVES the "
+            "save-record lane. Its state needs a carrier of its own.",
+            R::ToString(R::NameOf(cls)).c_str(), which);
+    return false;
+}
+
+// Overwrite `dst[i]` with `src[i]` wherever src holds a group -- the receiver's own value for a
+// group the BASE class wrote, the sender's for one only the leaf class knows about.
+template <class V>
+void SpliceGroups(std::vector<V>& dst, const std::vector<V>& src) {
+    if (dst.size() < src.size()) dst.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i)
+        if (!src[i].empty()) dst[i] = src[i];
+}
+
+}  // namespace
+
+bool OverridesGetData(void* cls) {
+    const ClassVerbs* v = VerbsFor(cls);
+    return v && v->overrides;
+}
+
+bool CaptureRecord(void* actor, SaveRecord& out) {
+    if (!actor) return false;
+    void* cls = R::ClassOf(actor);
+    const ClassVerbs* v = VerbsFor(cls);
+    if (!v || !v->getData) return false;
+    // Measured before the first record of this class ever leaves: a class that fails the splice
+    // convention must not be published, or every receiver would drop what it sent.
+    if (!EnsureConventionChecked(actor, cls)) return false;
+    return CallForRecord(actor, v->getData, out);
+}
+
+bool ApplyRecord(void* actor, const SaveRecord& r) {
+    if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
+    const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
+    // `overrides` and not merely "a loadData exists somewhere": this function dispatches
+    // Aprop_C::getData on `actor` below, and Aprop_C::getData reads key, name, nametag and four
+    // bools at Aprop_C's own property offsets. On an actor off that chain those offsets address
+    // unrelated memory, and the caller's actor comes from a KEY the wire chose -- the key index
+    // also holds trash piles, clumps and chip piles, none of which descend from Aprop_C. So the
+    // lineage is a precondition of the codec, checked here rather than trusted from a call site.
+    if (!v || !v->overrides || !v->loadData) return false;
+    if (!EnsureConventionChecked(actor, R::ClassOf(actor))) return false;
+
+    // THE BASE HALF IS NEVER THE SENDER'S. Aprop_C::loadData restores the save Key, the transform
+    // scale, the four saved bools, the lifespan and the two names from whatever record it is
+    // handed -- so a record taken at face value is a primitive for rewriting any prop's identity
+    // and for destroying it through SetLifeSpan. Every one of those fields already rides the spawn
+    // row, which is the authority for them. So the receiver's OWN base record is read here and
+    // spliced over the incoming one: what survives from the sender is exactly the groups the base
+    // class does not write, which is the leaf's own save state and the only thing this codec
+    // exists to move.
+    SaveRecord base;
+    if (!CallForRecord(actor, g_baseGetData, base)) return false;
+    SaveRecord merged = r;
+    merged.className = base.className;
+    merged.xform     = base.xform;
+    merged.key       = base.key;
+    SpliceGroups(merged.bools,      base.bools);
+    SpliceGroups(merged.floats,     base.floats);
+    SpliceGroups(merged.ints,       base.ints);
+    SpliceGroups(merged.strings,    base.strings);
+    SpliceGroups(merged.classes,    base.classes);
+    SpliceGroups(merged.vectors,    base.vectors);
+    SpliceGroups(merged.rotators,   base.rotators);
+    SpliceGroups(merged.transforms, base.transforms);
+    SpliceGroups(merged.bytes,      base.bytes);
+    SpliceGroups(merged.names,      base.names);
+    if (!base.signals.empty()) merged.signals = base.signals;
+
+    ParamFrame f(v->loadData);
+    const int32_t off = f.ParamOffset(L"data");
+    if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
+    // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged);
+    return Call(actor, f);
+}
+
+void ResetCodecCache() {
+    g_propCls = nullptr;
+    g_baseGetData = nullptr;
+    g_nextPropTryMs = 0;
+    g_verbs.clear();
 }
 
 }  // namespace ue_wrap::save_record

@@ -44,11 +44,11 @@ std::string ReadEnv(const char* name) {
 }
 
 std::string ReadScenario() {
-    // The test-launch signal is the process-scoped VOTVCOOP_SCENARIO (set by tools/mp.py); a native
-    // launch inherits none and boots to VOTV's own main menu, where the MULTIPLAYER button drives
-    // coop. No on-disk fallback: a scenario file a launcher wrote into the game dir once survived
-    // and auto-loaded the next native launch into gameplay; a per-launch mode needs a per-launch
-    // signal.
+    // The test-launch signal is the process-scoped VOTVCOOP_SCENARIO (set by the test launcher); a
+    // native launch inherits none and boots to VOTV's own main menu, where the MULTIPLAYER button
+    // drives coop. No on-disk fallback: a scenario file a launcher wrote into the game dir once
+    // survived and auto-loaded the next native launch into gameplay; a per-launch mode needs a
+    // per-launch signal.
     const std::string env = ReadEnv("VOTVCOOP_SCENARIO");
     return env.empty() ? "menu" : env;
 }

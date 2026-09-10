@@ -24,20 +24,19 @@ namespace fs = std::filesystem;
 std::vector<SkinEntry> g_entries;
 bool g_scanned = false;
 
-// Builtin skins: the game's own anthro-kerfur bodies, loaded by asset path. No pak, and
-// materials ship WITH the mesh, so client_model applies no 'tex' MID override for them.
+// Builtin skins: the game's own anthro-kerfur bodies, loaded by asset path. No pak, and materials
+// ship WITH the mesh, so client_model applies no 'tex' MID override for them.
 //
-// Every entry passed the four-check census (tools/client_model/builtin_skin_census.py): the
-// Skeleton import is kerfurOmegaV1_Skeleton (the player-body rig), refskel bone 0 is
-// rootKerfur, every refskel bone exists in the skeleton asset, and exactly one SkeletalMesh
-// export is named for the stem (the LoadObject path). Sharing the Skeleton asset is not
-// enough -- sk/assbreather points at the same skeleton but its root bone is
-// 'rootKerfur_010', a Blender-side duplicate absent from the skeleton, and applying it
-// poisons the player AnimInstance so locomotion never recovers across later mesh swaps. The
-// game never loads that asset; its antibreather kerfur wears kerfurOmega_antibreatherSkin,
-// which is in this list. Re-run the census at every game-version re-target before trusting
-// this table. kerfurOmega_KelSkin is deliberately absent: dr_kel already provides that look
-// through the pristine native mesh.
+// Every entry passed the four-check census: the Skeleton import is kerfurOmegaV1_Skeleton (the
+// player-body rig), refskel bone 0 is rootKerfur, every refskel bone exists in the skeleton asset,
+// and exactly one SkeletalMesh export is named for the stem (the LoadObject path). Sharing the
+// Skeleton asset is not enough -- sk/assbreather points at the same skeleton but its root bone is
+// 'rootKerfur_010', a Blender-side duplicate absent from the skeleton, and applying it poisons the
+// player AnimInstance so locomotion never recovers across later mesh swaps. The game never loads
+// that asset; its antibreather kerfur wears kerfurOmega_antibreatherSkin, which is in this list.
+// Re-check those four properties at every game-version re-target before trusting this table.
+// kerfurOmega_KelSkin is deliberately absent: dr_kel already provides that look through the
+// pristine native mesh.
 struct BuiltinSkin { const char* name; const wchar_t* path; };
 constexpr BuiltinSkin kBuiltinSkins[] = {
     { "kerfur_omega",          L"/Game/meshes/kerfurAnthro/sk/kerfurOmegaV1.kerfurOmegaV1" },

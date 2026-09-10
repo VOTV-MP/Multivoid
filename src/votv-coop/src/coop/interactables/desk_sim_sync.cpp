@@ -1,4 +1,4 @@
-// coop/desk_sim_sync.cpp -- see coop/interactables/desk_sim_sync.h.
+// coop/interactables/desk_sim_sync.cpp -- see coop/interactables/desk_sim_sync.h.
 
 #include "coop/interactables/desk_sim_sync.h"
 
@@ -26,15 +26,13 @@ uint64_t NowMs() {
 // The interp window: 1.5x the 100 ms (10 Hz) send interval -- the jitter bridge.
 constexpr uint64_t kInterpWindowMs = 150;
 
-// v112 PER-CHANNEL interp (BUGS-v111 bug 4 fix). The v111 shape -- one shared
-// LerpWindow reopened by EVERY packet -- meant a channel whose target stopped
-// moving (the detector needle latched at exactly 1.0) never ARRIVED: the window
-// rebase re-derived err each packet and the ease asymptoted a hair under the
-// host's bitwise-exact 1.0, so the client's own detector block re-crossed the
-// <1.0 gate every frame = the stuck beep loop. Now each channel keeps its OWN
-// deadline: an incoming target that is bitwise-unchanged KEEPS the deadline ->
-// the channel arrives -> cur[i] = target[i] EXACT SNAP (the mirrored-threshold-
-// latch lesson); only a CHANGED target rebases err + deadline.
+// PER-CHANNEL interp. ONE shared LerpWindow reopened by EVERY packet leaves a channel whose
+// target has stopped moving (the detector needle latched at exactly 1.0) never ARRIVING: the
+// window rebase re-derives err on each packet and the ease asymptotes a hair under the host's
+// bitwise-exact 1.0, so the client's own detector block re-crosses the <1.0 gate every frame --
+// the stuck beep loop. Each channel therefore keeps its OWN deadline: an incoming target that is
+// bitwise-unchanged KEEPS the deadline -> the channel arrives -> cur[i] = target[i] EXACT SNAP;
+// only a CHANGED target rebases err + deadline.
 struct SimInterp {
     static constexpr int N = 7;
     float    cur[N] = {};

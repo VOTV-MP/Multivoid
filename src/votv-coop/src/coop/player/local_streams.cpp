@@ -1,5 +1,6 @@
-// coop/local_streams.cpp -- the local player's outbound streams: the pose, the held prop (with
-// its new-held and release edges) and the ragdoll pelvis physics. See coop/local_streams.h.
+// coop/player/local_streams.cpp -- the local player's outbound streams: the pose, the held prop
+// (with its new-held and release edges) and the ragdoll pelvis physics. See
+// coop/player/local_streams.h.
 
 #include "coop/player/local_streams.h"
 
@@ -69,7 +70,7 @@ bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) 
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
     // Body yaw from the actor (sending the controller yaw made the puppet body face the camera
     // while moving); on foot the actor yaw follows the camera almost immediately, so the receiver
-    // synthesises the standing turn-in-place itself (RemotePlayer::UpdateBodyYaw). Head pitch from
+    // synthesises the standing turn-in-place (puppet_body_yaw::State::Update). Head pitch from
     // the controller (an upright character's actor pitch is 0); net_pump caches the controller.
     out.x = loc.X;
     out.y = loc.Y;

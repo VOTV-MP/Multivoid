@@ -1,4 +1,4 @@
-// ue_wrap/inventory.cpp -- see ue_wrap/inventory.h.
+// ue_wrap/actors/inventory.cpp -- see ue_wrap/actors/inventory.h.
 //
 // The Fstruct_save record codec + the TArray primitives live in ue_wrap/actors/save_record, which
 // coop/props/container_contents_sync needs for the same walk; what stays here is the

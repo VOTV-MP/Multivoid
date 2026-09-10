@@ -1,5 +1,5 @@
-// coop/dev/weather_probe.h -- the ini-gated weather diagnostics (2026-07-19,
-// extracted from weather_sync::TickConnect; dev tooling, RULE-2-exempt).
+// coop/dev/weather_probe.h -- the ini-gated weather diagnostics (dev tooling,
+// RULE-2-exempt).
 //
 // [probe weather]: ~1 Hz cycle rain+fog observable state + eff_rain IsActive
 // on BOTH peers (ini weather_probe=1). [probe wind]: the visible-wind input

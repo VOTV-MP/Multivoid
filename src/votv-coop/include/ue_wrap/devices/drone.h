@@ -1,4 +1,4 @@
-// ue_wrap/drone.h -- standalone engine access for the VOTV delivery DRONE (Adrone_C).
+// ue_wrap/devices/drone.h -- standalone engine access for the VOTV delivery DRONE (Adrone_C).
 // Principle-7 engine-wrapper layer (NO network/coop state). coop::drone_sync drives the
 // host-authoritative pose mirror through here.
 //

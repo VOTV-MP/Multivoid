@@ -1,8 +1,8 @@
 #pragma once
 // kerfur_census -- a DIAGNOSTIC census of every live kerfur form (NPC active + prop off)
-// on THIS peer. Created 2026-06-24 to pin the forward off->active dup root (doc kerfur/07);
-// extended 2026-06-30 to run on the HOST too (the client-only + hardcoded "Host=6" literal
-// made the 5-vs-6 unmeasurable -- we were blind to the host's real count).
+// on THIS peer, to pin the forward off->active dup root. Under [dev] kerfur_census=1 it runs
+// on the HOST too: a client-only census with a hardcoded "Host=6" literal made the 5-vs-6
+// unmeasurable, because the host's real count was never read.
 //
 // Two modes:
 //  - DEFAULT (flag off): CLIENT-only, one-shot at load-tail quiescence (the original

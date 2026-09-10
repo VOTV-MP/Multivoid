@@ -1,11 +1,20 @@
 # build.yml -- the CI lane's entry (design D1/D2/D11). Based on PR #2 by
 # huoyan1231 (thanks!) -- the vcpkg/CMake build steps he authored now live in
 # build-core.yml, which this file dispatches; his authorship stays in this
-# PR's history. Reworked per the maintainers' design: MANUAL-ONLY
-# (workflow_dispatch; the nightly cron was deliberately dropped -- builds are
-# human-paced), and a THIN entry so the CI lane and the release lane share ONE
-# build implementation (build-core@main, remote form on purpose -- a
-# local-path uses: would resolve from the triggering branch).
+# PR's history. Reworked per the maintainers' design: a THIN entry so the CI
+# lane and the release lane share ONE build implementation (build-core@main,
+# remote form on purpose -- a local-path uses: would resolve from the
+# triggering branch).
+#
+# MANUAL ONLY, and deliberately: a ~20-minute Windows runner is the heaviest
+# thing this project can ask for, and asking for it on
+# every push spends it on commits that cannot reach the DLL. What the automatic
+# lane was there to protect -- the source invariants -- is now checked by
+# repo-gates.yml instead, which runs the same gate scripts on every push in
+# about ten seconds and needs no compiler. Only the checks that genuinely
+# require a built DLL wait for a dispatch: abi_gate.py (the D-3 slim contract,
+# ZERO imported UE4SS symbols) and the package drill. The nightly cron stays
+# dropped: a clock is not a reason to build.
 # Artifacts are CI evidence, NOT distribution -- releases are the supported
 # install channel.
 name: build

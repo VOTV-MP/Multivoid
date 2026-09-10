@@ -1,4 +1,4 @@
-// ue_wrap/floppybox.cpp -- see ue_wrap/devices/floppybox.h.
+// ue_wrap/devices/floppybox.cpp -- see ue_wrap/devices/floppybox.h.
 
 #include "ue_wrap/devices/floppybox.h"
 

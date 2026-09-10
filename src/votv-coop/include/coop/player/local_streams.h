@@ -1,4 +1,4 @@
-// coop/local_streams.h -- the OUTBOUND local-state streams: read the local player's pose,
+// coop/player/local_streams.h -- the OUTBOUND local-state streams: read the local player's pose,
 // held-prop transform and ragdoll pelvis physics each pump tick and publish them to the
 // session's send side. net_pump stays the orchestrator; this module owns the per-stream edge
 // state (the held-prop edge, the ragdoll recover edge) and the wire-boundary normalization

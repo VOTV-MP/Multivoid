@@ -1,7 +1,7 @@
-// coop/prop_snapshot.cpp -- the host's prop snapshot to a joining peer: one slot at a time through
-// Session::SendReliableToSlot (a second peer connecting mid-drain queues), chunked per tick,
-// bracketed by SnapshotBegin and SnapshotComplete; plus the bracket-free incremental express for a
-// prop adopted into tracking after the join. Interface: coop/prop_snapshot.h.
+// coop/props/prop_snapshot.cpp -- the host's prop snapshot to a joining peer: one slot at a time
+// through Session::SendReliableToSlot (a second peer connecting mid-drain queues), chunked per
+// tick, bracketed by SnapshotBegin and SnapshotComplete; plus the bracket-free incremental express
+// for a prop adopted into tracking after the join. Interface: coop/props/prop_snapshot.h.
 
 #include "coop/props/prop_snapshot.h"
 
@@ -13,6 +13,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
@@ -283,13 +284,6 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
         for (size_t j = 0; j < nm.size() && j < 31; ++j) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
         }
-        // The saved scalar (a reel's Progress): a reel ejected in the join window is not in the
-        // transferred save, so the row carries it. The same reader as the live express.
-        float sc = 0.f;
-        if (ue_wrap::prop::ReadSavedScalarForClass(obj, sc)) {
-            p.savedScalar = sc;
-            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
-        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
@@ -449,6 +443,9 @@ void DrainChunk() {
         s->SendReliableToSlot(g_currentTargetSlot,
                               coop::net::ReliableKind::PropSpawn,
                               &p, sizeof(p));
+        // The prop's own save record to the same slot, behind its spawn row: a prop whose state
+        // changed after the transferred save was written is not in that save.
+        coop::prop_save_data::PublishWithSpawn(s, obj, p.key, g_currentTargetSlot);
         ++sent;
     }
     g_snapshotSentTotal += static_cast<uint32_t>(sent);
@@ -472,6 +469,7 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
     // to stamp a match key for.
     if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible
     s->SendPropSpawn(p);
+    coop::prop_save_data::PublishWithSpawn(s, actor, p.key);
     UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted %sprop %p (eid=%u, key='%.*s') "
             "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
             kindTag, actor, p.elementId, static_cast<int>(p.key.len), p.key.data);

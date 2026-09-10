@@ -1,4 +1,4 @@
-// ue_wrap/engine_attach.cpp -- generic actor root-physics substrate (Principle 7 engine
+// ue_wrap/engine/engine_attach.cpp -- generic actor root-physics substrate (Principle 7 engine
 // wrapper; no network or gameplay state).
 //
 // These operate on an actor's ROOT primitive component via K2_GetRootComponent, NEVER the

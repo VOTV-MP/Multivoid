@@ -1,4 +1,4 @@
-// coop/session_manager.cpp -- the session actions behind the menus: host (listed, direct,
+// coop/session/session_manager.cpp -- the session actions behind the menus: host (listed, direct,
 // hidden), join by lobby, direct and P2P connect, the listing transitions, the update check and
 // the pending-start hand-off to the harness. Master-server HTTP runs on detached workers.
 
@@ -37,8 +37,8 @@ constexpr const char* kDefaultMaster = coop::net::kOfficialMasterUrl;
 
 
 // Leaked process-lifetime singletons: no thread join runs at static destruction or DLL unload
-// (coop/shutdown.h forbids join-from-teardown, a loader-lock deadlock), and the detached HTTP
-// workers' captures stay valid for the process life.
+// (coop/session/shutdown.h forbids join-from-teardown, a loader-lock deadlock), and the detached
+// HTTP workers' captures stay valid for the process life.
 lobby::LobbyClient& Client() { static auto* c = new lobby::LobbyClient(); return *c; }
 lobby::LobbyAnnouncer& Announcer() { static auto* a = new lobby::LobbyAnnouncer(); return *a; }
 

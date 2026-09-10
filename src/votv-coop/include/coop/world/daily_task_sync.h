@@ -5,8 +5,6 @@
 // GUID census across all dumped assets). Wire: ReliableKind::TaskNewState=103
 // (host ~1 Hz change-hash poll; fires a few times per game-day). Rewards themselves
 // ride the existing balance_sync (points) + email_sync (mail) lanes.
-//
-// Design of record: research/findings/computers-devices/votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md (D3).
 
 #pragma once
 

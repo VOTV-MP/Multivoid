@@ -27,515 +27,17 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
-from urllib.parse import unquote
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
-BASELINE = os.path.join(HERE, "public_prose_baseline.json")
-
-MD_EXEMPT = ("THIRD-PARTY-NOTICES.md",)          # third-party license texts, reproduced as-is
-# The FILENAME says which half a document is in: a tracked one is public and lowercase, an
-# untracked one is ours and UPPER_CASE. The `.gitignore` allowlist already decides this, but it
-# decides invisibly -- nothing in an `ls`, an editor tree or a grep result shows which half a file
-# is in without asking git. The exception class is the files an ecosystem expects in capitals, and
-# GitHub gives several of them special treatment, so lowercasing them would add the strangeness the
-# convention exists to remove.
-DOC_ROOT = "docs/"
-DOC_NAME_EXEMPT = ("README", "LICENSE", "CONTRIBUTING", "SECURITY", "THIRD-PARTY-NOTICES",
-                   "CHANGELOG")
-SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
-SRC_EXT = (".cpp", ".h", ".inc")
-MD_HARD_CAP = 600
-# The tracked text files that are neither markdown nor our own C++: build, CI, ignore rules,
-# scripts. Extension-gated so a binary is never read as prose; vendored trees are skipped whole,
-# since a third-party file is not ours to rewrite.
-OTHER_EXT = (".py", ".ps1", ".yml", ".yaml", ".json", ".toml", ".rs", ".cs", ".txt", ".tsv",
-             ".rc", ".in", ".cmake", "CMakeLists.txt", ".gitignore", ".gitattributes")
-OTHER_SKIP = ("src/votv-coop/third_party/", "reference/")
-# The files whose JOB is these markers: a gate that refuses a word must name it, and a drill
-# that proves the refusal must carry a fixture containing it. Counting those would push a sweep
-# to break the very checks it is measured by -- the same trap the offset detector hit.
-OTHER_MARKER_OWNERS = (".github/ci/public_prose_gate", ".github/ci/public_leak_gate",
-                       ".github/ci/public_leak_ack", ".github/ci/commit_msg_check")
-# Third-party licence texts are reproduced as-is, and the baseline is generated from the counters,
-# so it names them by construction.
-OTHER_EXEMPT = ("LICENSE", "THIRD-PARTY", "public_prose_baseline.json")
-# In an ignore file the RULE is data and only the comment is prose: a rule cannot ignore a path
-# without naming it, so `docs/AGENT_SPAWNING.md` must appear for the rule to work at all.
-OTHER_COMMENTS_ONLY = (".gitignore", ".gitattributes")
-HALF_COMMENT_MIN_LINES = 300
-INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille", "src.files",
-                 "other.files")  # reported, never compared
-
-CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
-DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
-LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
-BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
-# A document named in a source comment, in the three spellings the tree uses. All resolve the
-# same way -- by BASENAME against the tracked set -- because a comment cites `COOP_EVENT_JOIN.md`
-# as readily as `docs/COOP_EVENT_JOIN.md`, and both point at the same absent file.
-DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")
-# The bare filename, with no directory. The leading `-` in the lookbehind is what keeps this off
-# the TAIL of a research finding's name: `votv-x-DESIGN-2026-08-21.md` ends in a token this would
-# otherwise read as a document of its own, and that pointer belongs to `ptr_research`.
-DOC_BARE = re.compile(r"(?<![\w/.-])([A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)*\.md)\b")
-# The same name with the extension dropped and a locator in its place -- `DEATH_ARC section 3.1`,
-# `COOP_SYNCER_MODEL par.2b`. The locator is required: without it the shape is indistinguishable
-# from an environment variable, and `COOP_MASTER_PORT` / `COOP_TURN_SECRET` are configuration a
-# contributor needs, not prose to sweep away.
-DOC_SECTIONED = re.compile(r"\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"
-                           r"\s+(?:section\b|par\.|paragraph\b|Tier-|S\d)")
-# A document with no name at all, which no lookup can resolve for the reader either.
-DOC_UNNAMED = re.compile(r"\bdesign doc\b", re.I)
-# A citation of a LINE of one of our own sources. This one is judged by resolution rather than by
-# shape, because the shape is identical whether it works or not: `session_streams.cpp :198` is a
-# pointer a reader can follow and `pe_detour.cpp:645` is not, in a file of 601 lines. Counted only
-# when the file is untracked or the line is past its end.
-SRC_LINE_CITE = re.compile(r"\b([A-Za-z0-9_]+\.(?:cpp|h|inc))\s*:(\d{1,5})")
-LONG_COMMENT_BLOCK = 15
-# A struct offset pinned in prose. The offset CONTEXT is required, not merely a hex literal: the
-# tree is full of correct hex that is not an offset -- bytecode opcodes (0x45), sentinels (0xFF),
-# struct sizes, colour components -- and flagging those would push a sweep to make good comments
-# worse. Matching any hex over-reported by 118 lines when this was measured.
-RAW_OFFSET = re.compile(r"(?:@\s*\+?|\+|\bat\s+\+?|\boffset\s+)(0x[0-9A-Fa-f]{2,4})\b")
-HEX_LITERAL = re.compile(r"0x[0-9A-Fa-f]{2,4}\b")
-# The files whose JOB is offsets. Everywhere else a pinned number duplicates them and rots when the
-# game is recooked, silently, because nothing ever compiles against a comment.
-OFFSET_OWNERS = ("sdk_profile", "reflected_offset", "gvas_meta")
-# A free-function declaration in one of our headers. An identifier appearing at most twice in the
-# whole tree is its own declaration plus its definition: nothing calls it.
-DECL = re.compile(r"^[A-Za-z_][\w:<>,*&\s]*?[\s*&]([A-Za-z_]\w+)\s*\([^;{]*\)\s*(?:const\s*)?;", re.M)
-IDENT = re.compile(r"[A-Za-z_]\w*")
-INCLUDE = re.compile(r'#\s*include\s+"([^"]+)"')
-DECL_SKIP = {"if", "for", "while", "return", "switch", "sizeof", "static_cast", "reinterpret_cast",
-             "const_cast", "dynamic_cast", "assert", "catch"}
-
-# name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
-LINE_MARKERS = collections.OrderedDict([
-    ("cyrillic",     (CYRILLIC, "lines with Cyrillic")),
-    # The same attribution in lower case. `\bUSER\b` reads 3 lines of source, 3 of the build and CI
-    # files and 1 markdown line; "per the user", `user: "..."`, "the user-requested X", "a user
-    # report" and "user 2026-07-08" add 21 source lines and 4 build/CI lines on the tree this was
-    # measured against. One habit, one counter.
-    # The attribution has to be EXPLICIT, and the capitals alternative stays case-SENSITIVE: this
-    # tree writes about the person playing the game in the same word, so "the user types into a
-    # user widget as user 0" and "a per-user setting" are correct prose, and a detector that
-    # flagged them would push a sweep to damage them.
-    # The noun group is the ten words that actually occur, with their inflections -- a group that
-    # claims more than the drill tests is a group whose mutant proves nothing. THE GAP, stated
-    # rather than closed (R-P11): "the user wants/wanted/picked/chose", "the user's call/premise/
-    # verdict", a word between the possessive and the noun ("the user's key ask"), a noun that
-    # wraps onto the next comment line, and `user-mandated` / `user-retest` are unread.
-    ("user",         (re.compile(r"\bUSER\b"
-                                 r"|(?i:\bper (?:the )?user\b)"
-                                 r"|(?i:\buser'?s?\s*:\s*\S)"
-                                 r"|(?i:\buser-request(?:ed)?\b)"
-                                 r"|(?i:\buser'?s?\s+(?:ask(?:s|ed)?"
-                                 r"|report(?:s|ed)?"
-                                 r"|req(?:s|uest(?:s|ed)?)?"
-                                 r"|retest(?:s|ed)?"
-                                 r"|say(?:s)?|said"
-                                 r"|choice|decision|rule)\b)"
-                                 r"|(?i:\buser \d{4}-\d{2}-\d{2})"),
-                     "lines attributing a decision to the user")),
-    ("verbatim",     (re.compile(r"\bverbatim\b", re.I), "lines saying verbatim")),
-    ("qf",           (re.compile(r"(?<![\w/])/qf\b|\bqf\b(?!\.)"), "lines naming the /qf ritual")),
-    ("agent",        (re.compile(r"\b(?:sub)?agents?\b", re.I), "lines naming an agent")),
-    ("dated",        (DATE, "lines carrying a date")),
-    # Both notations for the same pointer. `memory/x.md` is the path; `[[x]]` is the wiki link the
-    # memory files use among themselves, and 84 of them sat in public source naming 49 slugs, none
-    # of which is or will be a tracked file. One habit, one counter.
-    #
-    # The bracket form is the fussy one, because `[[...]]` is also C++ attribute syntax and TOML
-    # array-of-table syntax. A slug is THREE OR MORE words joined by `-` or `_` (either separator:
-    # the files are named with underscores and cited with hyphens), optionally followed by `|alias`
-    # or `#anchor`. That shape excludes every TOML header (`[[bin]]`, `[[test]]`) and all but the
-    # three-word attributes, which are named outright -- `[[no_unique_address]]` is otherwise
-    # indistinguishable from a slug, and flagging an attribute would push a sweep to damage code.
-    ("ptr_memory",   (re.compile(r"(?<![\w.])memory/"
-                                 r"|\[\[(?!(?:no_unique_address|carries_dependency|maybe_unused"
-                                 r"|nodiscard|fallthrough|noreturn|deprecated|likely|unlikely)"
-                                 r"[\]|#])[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){2,}(?:[|#][^\]]*)?\]\]"),
-                      "pointers into the memory directory")),
-    ("ptr_research", (re.compile(r"(?<![\w.])research/"), "pointers into research/")),
-    ("ptr_claude",   (re.compile(r"\bCLAUDE\.md\b|\.claude/"), "pointers to CLAUDE.md or .claude/")),
-    ("ptr_security", (re.compile(r"\bdocs/security/"), "pointers into docs/security/")),
-])
-SRC_EXTRA = collections.OrderedDict([
-    ("lesson", (re.compile(r"\bLESSONS\b|\blessons?\b", re.I), "comment lines citing a lesson")),
-    ("sha",    (re.compile(r"`[0-9a-f]{8,10}`|\bcommit [0-9a-f]{7,10}\b"), "comment lines citing a commit")),
-    # "audit F-3", "audit MINOR-6", "the audit's third category": a review of ours, named in a
-    # comment. A maintainer cannot look any of them up -- the reviews are not in the tree and
-    # never will be -- so the citation carries no information and the finding it stands for has
-    # to be restated as what the code does. The word IS the vocabulary, as with `lesson`.
-    ("review", (re.compile(r"\baudit(?:s|ed|ing)?\b", re.I), "comment lines citing an internal review")),
-    # `[V]` / `[?]` / `[RD]` / `[A]`: the evidence tags of our own working docs, which carry a
-    # legend on the docs index. Source has no legend, so in a comment the tag is noise around
-    # the fact.
-    ("evidence", (re.compile(r"\[(?:V|\?|RD|A)\]"), "comment lines carrying an evidence tag")),
-    # The same citation without the word: a work item, a review finding or a register row named
-    # by its label. `CRIT-1`, `security A34`, `Inc-2`, `Inc3`, `Increment 2b`, `take-9`, `WP-2`,
-    # `s28 cut`, `K-5`, `R-2`
-    # all name a document outside the tree, and the security register is deliberately
-    # unpublished, so those rows name something a reader is not meant to have. The named
-    # families are exact; the one-letter form counts only where it OPENS the comment or carries
-    # a colon, which is how a label is written and how arithmetic is not: `leave N-1 host
-    # props`, `X -> X-93` and `1->(P-2)` all read as prose and none of them counts.
-    # `v133`, `v85`, `v42` -- the BUILD a change landed in, which is the same citation again: join
-    # compatibility is byte-equality on the version pair, so there is no "from build N onward"
-    # semantics for a comment to be stating, only a diary entry. Two to three digits, and not after
-    # a word character, a slash or a dot, so `IPv4`, a path and a decimal are left alone.
-    ("label", (re.compile(r"\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\d+\b"
-                          r"|\bsecurity\s+[A-Z]\d+\b|\bA\d\d/A\d\d\b"
-                          r"|(?i:\binc(?:rement)?[-\s]?\d+[a-z]?\b)"
-                          r"|\btake-\d+\b|\bWP-?\d+\b|\bs\d\d cut\b|\bfinding \d+\b"
-                          r"|(?<![\w/.])v\d{2,3}\b"
-                          r"|//[\s*-]*[A-Z]-\d{1,2}\b|\b[A-Z]-\d{1,2}:"),
-               "comment lines citing a work item by its label")),
-    # The third spelling of the same citation: a ROW of a table that lives in a document outside
-    # the tree. `islive-zeroav row :79`, `census row kerfur_command:138`, `census rows
-    # engine_mainplayer:192/:196` -- each names a line of a survey a maintainer has no way to
-    # open, and ten of the eighteen files carrying one were reported swept, because neither
-    # `review` nor `label` reads this shape. The row number must follow the word directly, with
-    # at most a slug between, so `the row is a MIRROR -> a 1:1` and other prose stay clear.
-    # The second half of the same shape is a line of a FILE VERSION that no longer exists, which
-    # a reader can resolve even less than a row of an absent document: `net_pump's old :436-783`,
-    # `the pre-cut :869 gate`, `the pre-extraction :404 correlation`. A version marker has to open
-    # it, because the bare ` :NNN` notation is also how a port is written -- `a deliberate :7777`,
-    # `never the default :80/:443` are correct prose and a sweep obeying a detector that flagged
-    # them would delete the reason a migration exists. A MARKED port -- "the old :80 default" --
-    # would still be flagged, since a marker plus a bare number is one shape whether the number is
-    # a line or a port; there is none in this tree, and the answer if one appears is to write the
-    # port without the marker. The `<file>.ext:NNN` form needs no such heuristic, because it is
-    # judged by whether it RESOLVES.
-    ("doc_row", (re.compile(r"\brows?\s+[\w./-]*:\d+"
-                            r"|\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"
-                            r"\s+(?:[\w'-]+\s+)?:\d{2,5}"),
-                 "comment lines citing a row, or a line, a reader cannot open")),
-])
-
-
-def git(args, cwd):
-    return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", check=True).stdout
-
-
-def tracked(repo):
-    """-> (files, submodule paths). A link into a submodule is live: its content is public too.
-    NUL-separated so a non-ASCII path arrives unquoted."""
-    out = git(["ls-files", "-s", "-z"], repo)
-    files, subs = [], []
-    for line in out.split("\0"):
-        if not line:
-            continue
-        mode, rest = line.split(" ", 1)
-        path = rest.split("\t", 1)[1]
-        (subs if mode == "160000" else files).append(path)
-    return files, subs
-
-
-def read(repo, path):
-    try:
-        with io.open(os.path.join(repo, path), encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError:
-        return None
-
-
-def code_only(text):
-    """-> the text with comments removed, for counting how often an identifier is really USED.
-    Counting raw occurrences called a dead function alive whenever some comment happened to name
-    it: `DumpAnimNodeRegions` has a declaration, a definition and one mention in an sdk_profile.h
-    comment, and that third occurrence hid it. Strings are left in place; a name in a log message
-    is at least evidence of a caller nearby, while a name in prose is evidence of nothing."""
-    out, in_block = [], False
-    for line in text.split("\n"):
-        if in_block:
-            k = line.find("*/")
-            if k < 0:
-                continue
-            line, in_block = line[k + 2:], False
-        while True:
-            b = line.find("/*")
-            s = line.find("//")
-            if s >= 0 and (b < 0 or s < b):
-                line = line[:s]
-                break
-            if b < 0:
-                break
-            e = line.find("*/", b + 2)
-            if e < 0:
-                line, in_block = line[:b], True
-                break
-            line = line[:b] + " " + line[e + 2:]
-        out.append(line)
-    return "\n".join(out)
-
-
-def measured_md(path):
-    return path.endswith(".md") and os.path.basename(path) not in MD_EXEMPT
-
-
-def measured_src(path):
-    return path.startswith(SRC_ROOTS) and path.endswith(SRC_EXT)
-
-
-def doc_name_fault(path, is_tracked):
-    """-> a reason string when a document under docs/ is named for the wrong half, else None.
-
-    A tracked doc is public and reads lowercase; an untracked one is ours and reads UPPER_CASE.
-    Only the STEM is judged, and only for the exception class's non-members. Note what this can
-    see: in a fresh clone there are no untracked docs at all, so the second half of the rule fires
-    only where the working trees coexist, which is the maintainer's disk."""
-    if not path.startswith(DOC_ROOT) or not path.endswith(".md"):
-        return None
-    stem = os.path.basename(path)[: -len(".md")]
-    if stem in DOC_NAME_EXEMPT:
-        return None
-    if is_tracked:
-        return None if stem == stem.lower() else "a tracked doc is public: name it lowercase"
-    return None if stem == stem.upper() else "an untracked doc is local: name it UPPER_CASE"
-
-
-def measured_other(path):
-    return (not path.endswith(".md") and path.endswith(OTHER_EXT)
-            and not path.startswith(SRC_ROOTS) and not path.startswith(OTHER_SKIP)
-            and not path.startswith(OTHER_MARKER_OWNERS)
-            and not any(x in os.path.basename(path) for x in OTHER_EXEMPT))
-
-
-def measured(path):
-    """One definition of what this gate reads, used by `measure` AND by the unstaged guard.
-
-    They were two definitions once: the guard diffed `SRC_ROOTS` and `*.md` only, so every file
-    R-P8 brought in -- the build files, the workflows, the ignore rules, the scripts -- could be
-    modified-but-unstaged while a baseline was written from their contents. That is the incident
-    R-P12 exists to prevent, and it was open for a whole counter family."""
-    return measured_md(path) or measured_src(path) or measured_other(path)
-
-
-class DocIndex:
-    """What a citation resolves against: tracked paths, tracked basenames, and how long each
-    source is, since a line citation past a file's end resolves no better than an absent file."""
-
-    def __init__(self, repo, tracked, subs=()):
-        self.names = set(tracked) | {t.rsplit("/", 1)[-1] for t in tracked}
-        self.repo, self.subs, self._vendored = repo, list(subs), None
-        self._subs_readable = 0
-        self.lengths = {}
-        for t in tracked:
-            if not t.endswith(SRC_EXT):
-                continue
-            text = read(repo, t)
-            if text is not None:
-                base = t.rsplit("/", 1)[-1]
-                self.lengths[base] = max(self.lengths.get(base, 0), text.count("\n") + 1)
-
-    def resolves(self, ref):
-        return ref in self.names or ref.rsplit("/", 1)[-1] in self.names
-
-    def vendored(self):
-        """Every basename in the checked-out submodules, read once and only if asked.
-
-        A submodule is ONE gitlink entry in `git ls-files`, so its contents are invisible to the
-        tracked set even though they sit on disk beside us. A citation into one resolves for a
-        reader, and it cannot rot the way ours does, because the submodule is pinned by SHA."""
-        if self._vendored is None:
-            self._vendored = set()
-            for sub_path in self.subs:
-                here = os.path.join(self.repo, sub_path)
-                # A checked-out submodule has a `.git` of its own. Without that test an EMPTY
-                # placeholder directory answers `ls-files` with the PARENT repository's list, exit
-                # 0, and this loop believes it read a submodule it never opened.
-                if not os.path.exists(os.path.join(here, ".git")):
-                    continue                      # not checked out; see vendored_known()
-                try:
-                    out = git(["ls-files"], here)
-                except Exception:
-                    continue
-                self._subs_readable += 1
-                self._vendored |= {p.rsplit("/", 1)[-1] for p in out.split("\n") if p.strip()}
-        return self._vendored
-
-    def vendored_known(self):
-        """False when a declared submodule is not on disk, which is every plain CI checkout.
-
-        The carve-out below then has no input, and an empty set is not the same answer as "this
-        name is not vendored" -- reading it as one turned every GNS, imgui and MTA citation into
-        debt, 0 locally and 13 in CI. A counter that cannot tell must not accuse."""
-        self.vendored()
-        return self._subs_readable == len(self.subs)
-
-    def line_resolves(self, name, first):
-        """A `<file>:NNN` citation resolves when the tree carries that file AND it is that long.
-        Both halves matter: some of the tree's citations name a file that is gone, and others name
-        a line a shortened file no longer has. A vendored file resolves on its name alone."""
-        if name not in self.lengths:
-            return name in self.vendored() or not self.vendored_known()
-        return first <= self.lengths[name]
-
-
-# How prose opens in each of the other.* file kinds. A citation is prose, so it is read from a
-# comment; a `.md` path in code is a file the script opens.
-OTHER_COMMENT_LEAD = {".py": "#", ".ps1": "#", ".yml": "#", ".yaml": "#", ".toml": "#",
-                      ".cmake": "#", ".txt": "#", "CMakeLists.txt": "#", ".gitignore": "#",
-                      ".gitattributes": "#", ".rs": "//", ".cs": "//"}
-
-
-def other_prose(path, line):
-    """-> the comment part of one line of a non-md, non-source file, or None when it has none.
-
-    An ignore file is not read at all here: its comments exist to say why a path is NOT tracked,
-    so counting them for naming an absent document measures the file's whole purpose.
-
-    THE GAP this leaves, stated rather than closed: a citation inside a STRING a script PRINTS is
-    a pointer a contributor follows, and it is not a comment. Two of those shipped here -- an
-    `abi_gate` failure message naming a document that is not in the tree -- and they were found by
-    reading, not by counting. Telling a printed message from a path a script opens needs more than
-    a pattern, so this counter does not try."""
-    if path.endswith(OTHER_COMMENTS_ONLY):
-        return None
-    lead = next((v for k, v in OTHER_COMMENT_LEAD.items() if path.endswith(k)), None)
-    if lead is None:
-        return None
-    i = line.find(lead)
-    return line[i:] if i >= 0 else None
-
-
-def doc_faults(line, docs):
-    """True when one line cites a document a reader cannot open, in any of its four spellings.
-
-    One implementation, so the same habit is counted the same wherever it sits -- our C++
-    comments, a build file's comment, a workflow's. It was the source counter's alone once, and
-    33 lines in ten tracked scripts and workflows named an absent document with nothing reading
-    them, two of those in a `print()` a contributor sees at runtime."""
-    cited = (DOC_PATH.findall(line) + DOC_BARE.findall(line)
-             + [m + ".md" for m in DOC_SECTIONED.findall(line)])
-    return any(not docs.resolves(m) for m in cited) or bool(DOC_UNNAMED.search(line))
-
-
-def src_comment_faults(line, docs, read_offsets, owns_offsets):
-    """-> the counter key for every rule one line of source COMMENT breaks.
-
-    One implementation, called by the counting pass and by the line explainer, for the same reason
-    `md_link_faults` is: the two disagreeing is the failure `--lines` exists to make impossible.
-    A key the caller does not count is still returned here -- `measure` filters, so retiring a
-    counter cannot leave the explainer naming lines for a number nobody prints.
-
-    `docs` is the DocIndex: the doc rules resolve by basename, and a line citation by length."""
-    faults = ["src.comment_" + k for k, (rx, _) in
-              list(LINE_MARKERS.items()) + list(SRC_EXTRA.items()) if rx.search(line)]
-    if doc_faults(line, docs):
-        faults.append("src.comment_dead_docpath")
-    if any(not docs.line_resolves(n, int(k)) for n, k in SRC_LINE_CITE.findall(line)):
-        faults.append("src.comment_doc_row")
-    if not owns_offsets and {int(h, 16) for h in RAW_OFFSET.findall(line)} - read_offsets:
-        faults.append("src.comment_pinned_offset")
-    return faults
-
-
-def md_link_faults(line, base, tracked_set, subs):
-    """-> the counter key for every dead link and dead backticked path on one line of a doc.
-
-    One implementation, called by the counting pass and by the line explainer, so `--lines` cannot
-    disagree with the number it is explaining. A link into a submodule is live: its content is
-    public too."""
-    faults = []
-    for m in LINK.finditer(line):
-        target = unquote(m.group(1))
-        if re.match(r"^[a-z]+:", target, re.I) or target.startswith("/"):
-            continue
-        if "\\" in target:                       # a backslash path is dead on Linux
-            faults.append("md.dead_links")
-            continue
-        rel = os.path.normpath(os.path.join(base, target)).replace("\\", "/")
-        if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set) \
-                or any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in subs):
-            continue
-        faults.append("md.dead_links")
-    for m in BACKTICK_PATH.finditer(line):
-        rel = m.group(1)
-        if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set):
-            continue
-        faults.append("md.dead_paths")
-    return faults
-
-
-def comment_lines(text):
-    """-> ([(1-based line number, text)], code_line_count, long_blocks). A line counts as COMMENT
-    when it holds nothing but comment (and whitespace); quotes are respected so a `//` inside a
-    string is code. `long_blocks` LISTS the first line of each run of more than LONG_COMMENT_BLOCK
-    consecutive comment lines (blank lines do not break a run; a code line does), so its length is
-    the count the gate wants and its contents are the essays `--lines` points a human at. The line
-    number rides along with each comment for the same reason.
-
-    `tails` is the fourth value: the comment TRAILING a code line, which is a comment the marker
-    rules apply to and the volume rules do not. A citation is a citation wherever it sits, so the
-    markers read these; the ratio counters measure comment MASS as whole lines, because the rule
-    they serve is about essays and a trailing `// why` is part of its own code line's statement."""
-    lines = text.split("\n")
-    comments, code, long_blocks, tails, run = [], 0, [], [], 0
-    in_block = False
-
-    def comment(line):
-        nonlocal run
-        comments.append((no, line))
-        run += 1
-        if run == LONG_COMMENT_BLOCK + 1:
-            long_blocks.append(comments[-run][0])
-
-    for no, line in enumerate(lines, 1):
-        s = line.strip()
-        if not s:
-            continue
-        if in_block:
-            comment(line)
-            if "*/" in s:
-                in_block = False
-            continue
-        if s.startswith("//"):
-            comment(line)
-            continue
-        if s.startswith("/*"):
-            comment(line)
-            if "*/" not in s[2:]:
-                in_block = True
-            continue
-        run = 0
-        # code line; a trailing block opener leaves the state in a block
-        i, n, q = 0, len(s), None
-        while i < n:
-            c = s[i]
-            if q:
-                if c == "\\":
-                    i += 2
-                    continue
-                if c == q:
-                    q = None
-            elif c == "'" and i > 0 and s[i - 1].isdigit() and i + 1 < n and s[i + 1].isdigit():
-                pass                                    # a digit separator, not a quote
-            elif c in "\"'":
-                q = c
-            elif s.startswith("//", i):
-                tails.append((no, s[i:]))
-                break
-            elif s.startswith("/*", i):
-                # A block comment that CLOSES on this line contributes only its own span; taking
-                # the rest of the line with it charges the code after `*/` to a comment counter,
-                # and `--lines` would then point a sweep at a string literal it cannot edit away.
-                e = s.find("*/", i + 2)
-                if e < 0:
-                    tails.append((no, s[i:]))
-                    in_block = True
-                    break
-                tails.append((no, s[i:e + 2]))
-                i = e + 2
-                continue
-            i += 1
-        code += 1
-    return comments, code, long_blocks, tails
+from public_prose_faults import (
+    DocIndex, comment_lines, doc_faults, md_link_faults, other_prose, src_comment_faults,
+    string_marker_lines)
+from public_prose_markers import (
+    DECL, DECL_SKIP, HEX_LITERAL, INCLUDE, LINE_MARKERS, LONG_COMMENT_BLOCK, OFFSET_OWNERS,
+    SRC_EXTRA)
+from public_prose_scope import (
+    BASELINE, DOC_ROOT, HALF_COMMENT_MIN_LINES, INFORMATIONAL, MD_HARD_CAP, OTHER_COMMENTS_ONLY,
+    OTHER_HARD_CAP, OTHER_MARKER_OWNERS, REPO, SRC_EXT, SRC_ROOTS, code_only, doc_name_fault, git,
+    measured, measured_md, measured_other, measured_src, names_path, other_file, read, tracked)
 
 
 def measure(repo):
@@ -603,6 +105,19 @@ def measure(repo):
     # the ignore file alone carried 31 dated lines, a user quote and a paragraph that counted the
     # open rows in an unpublished security register. Whole lines are measured, not just comments:
     # in a config file the distinction does not hold, and a marker anywhere in one is the problem.
+    # Length is measured over every other file, the marker owners included: a gate
+    # that must name a refused word has no excuse for being 1,300 lines, and this
+    # one was, unnoticed, for exactly as long as nothing counted it.
+    c["other.over_%d" % OTHER_HARD_CAP] = 0
+    for p in [q for q in files if other_file(q)]:
+        text = read(repo, p)
+        if text is None:
+            continue
+        n = len(text.splitlines())
+        if n > OTHER_HARD_CAP:
+            c["other.over_%d" % OTHER_HARD_CAP] += 1
+            who["other.over_%d" % OTHER_HARD_CAP][p] = n
+
     other = [p for p in files if measured_other(p)]
     c["other.files"] = len(other)
     for k in LINE_MARKERS:
@@ -634,6 +149,9 @@ def measure(repo):
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
     c["src.comment_dead_docpath"] = 0
     c["src.comment_pinned_offset"] = 0
+    c["src.string_marker"] = 0
+    for k in ("dead_path", "dead_log_marker", "dead_env", "dead_ini_key", "dead_member"):
+        c["src.comment_" + k] = 0
     bare_by_file = {}                      # path -> its code with comments and strings gone
     declared = collections.defaultdict(list)   # name -> every header that declares it
     for p in src:
@@ -661,9 +179,13 @@ def measure(repo):
         if code + len(comments) > HALF_COMMENT_MIN_LINES and len(comments) > code:
             c["src.files_half_comment"] += 1
             who["src.files_half_comment"][p] = len(comments)
+        smark = string_marker_lines(text)
+        if smark:
+            c["src.string_marker"] += len(smark)
+            who["src.string_marker"][p] = len(smark)
         owns_offsets = any(o in os.path.basename(p) for o in OFFSET_OWNERS)
         for _no, line in comments + tails:
-            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets, p):
                 if k in c:
                     c[k] += 1
                     who[k][p] += 1
@@ -740,12 +262,19 @@ FIXED_DESCRIPTIONS = {
     "md.files": "tracked markdown files",
     "md.lines": "markdown lines",
     "md.over_%d" % MD_HARD_CAP: "docs over the %d-line hard cap" % MD_HARD_CAP,
+    "other.over_%d" % OTHER_HARD_CAP:
+        "scripts and CI files over the %d-line cap (the gates included)" % OTHER_HARD_CAP,
     "md.dead_links": "markdown links to a path not in the repository",
     "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
     "md.name_case": "docs named for the wrong half (public lowercase, local UPPER_CASE)",
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
     "src.comment_dead_docpath": "comment lines naming a document that is not in the repository",
+    "src.comment_dead_path": "comment lines naming a repository path that resolves to nothing",
+    "src.comment_dead_log_marker": "comment lines quoting a log line no format in the tree sends",
+    "src.comment_dead_env": "comment lines naming an environment variable no code reads",
+    "src.comment_dead_ini_key": "comment lines naming an ini row the registry does not carry",
+    "src.comment_dead_member": "comment lines naming a member our own type does not have",
     "other.dead_docpath": "lines naming a document that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
@@ -753,6 +282,7 @@ FIXED_DESCRIPTIONS = {
     "src.files_not_swept": "sources still carrying at least one counter above",
     "src.comment_pinned_offset": "comment lines pinning an offset this file's own code never reads",
     "src.dead_declarations": "declared functions nothing in the tree calls",
+    "src.string_marker": "string literals carrying a marker a comment may not carry",
 }
 
 
@@ -779,8 +309,10 @@ def explain(repo, path, tracked_set, subs=()):
             out.append((start, "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK,
                         "-- block starts here --"))
         for no, line in comments + tails:
-            for k in src_comment_faults(line, docs, read_offsets, owns_offsets):
+            for k in src_comment_faults(line, docs, read_offsets, owns_offsets, path):
                 out.append((no, k, line))
+        for no, body in string_marker_lines(text):
+            out.append((no, "src.string_marker", '"' + body + '"'))
         return sorted(out)
     prefix, fenced = ("md." if path.endswith(".md") else "other."), False
     comments_only = path.endswith(OTHER_COMMENTS_ONLY)
@@ -861,18 +393,50 @@ def main():
         pass
     counters, who, detail = measure(a.repo)
     if a.file:
-        tracked_files, tracked_subs = tracked(a.repo) if a.lines else ((), ())
+        tracked_files, tracked_subs = tracked(a.repo)
         tracked_set = set(tracked_files)
         for want in a.file:
-            want = want.replace("\\", "/").lstrip("./")
-            hits = sorted({p for k in who for p in who[k] if p.endswith(want)})
+            # lstrip takes a CHARACTER SET, so lstrip("./") ate the leading dot of every .github
+            # path and echoed it back that way. It cost no lookup -- endswith matched regardless
+            # -- but the name printed back was not the name it was handed.
+            want = want.replace("\\", "/")
+            while want.startswith(("./", "../")):
+                want = want.split("/", 1)[1]
+            hits = sorted({p for k in who for p in who[k] if names_path(p, want)})
             if not hits:
-                print("{}: no tracked file matches".format(want))
+                # THREE states shared one sentence here, and two of them were false. A file this
+                # gate is not allowed to READ is not a file that is finished: OTHER_MARKER_OWNERS
+                # holds the gates whose job is to name these markers, and calling one of them
+                # swept tells a sweep it is done with a file nobody looked at.
+                known = sorted(p for p in tracked_set if names_path(p, want))
+                if not known:
+                    print("{}: no tracked file matches".format(want))
+                for p in known:
+                    if not measured(p):
+                        print("{}  NOT MEASURED -- this gate does not read this file".format(p))
+                    elif p.startswith(OTHER_MARKER_OWNERS):
+                        # A FOURTH state. Calling this file swept would say its markers had been
+                        # looked at, and they never are; calling it unread would hide that its
+                        # length is counted like everyone else's.
+                        text = read(a.repo, p)
+                        n = len(text.splitlines()) if text is not None else 0
+                        print("{}  SIZE ONLY ({} lines, cap {}) -- naming these markers is this "
+                              "file's job, so they are not counted; its length is"
+                              .format(p, n, OTHER_HARD_CAP))
+                    else:
+                        print("{}  SWEPT -- read by this gate, contributes to no counter".format(p))
                 continue
             for p in hits:
                 owed = [(k, who[k][p]) for k in counters
                         if k not in INFORMATIONAL and k != "src.files_not_swept" and p in who[k]]
-                print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                # src.comment_lines is filled for the mod's own C++ only, and `who` is a
+                # defaultdict -- so printing it unconditionally told every workflow and every
+                # document it had 0 comment lines (build.yml has 20), and inserted the file into
+                # the counter on the way past. Say it only where it was measured.
+                if p in who["src.comment_lines"]:
+                    print("{}  ({} comment lines)".format(p, who["src.comment_lines"][p]))
+                else:
+                    print(p)
                 # Each counter's lines print UNDER its own heading -- a flat list of every
                 # offending line in the file would not say which rule each one answers to, and
                 # one line often answers to two. Anything owed that the explainer did not account

@@ -313,12 +313,12 @@ void OnSaveObjectReady(void* saveSlotObject) {
     }
     if (ue_wrap::inventory::ApplyToSaveObject(saveSlotObject, g_pendingApply)) {
         UE_LOGI("player_inventory[client]: applied per-player inventory to save object %p "
-                "(inventory=%zu equip=%zu hold=%zu) -- RETIRES the v56 host-save inheritance",
+                "(inventory=%zu equip=%zu hold=%zu) -- RETIRES the host-save inheritance",
                 saveSlotObject, g_pendingApply.inventory.size(),
                 g_pendingApply.equipment.size(), g_pendingApply.hold.size());
     } else {
         UE_LOGE("player_inventory[client]: ApplyToSaveObject FAILED on %p -- the client will "
-                "fall back to the v56-loaded inventory (no wipe)", saveSlotObject);
+                "fall back to the inventory its own save loaded (no wipe)", saveSlotObject);
     }
 }
 
@@ -553,7 +553,7 @@ void EnsurePlayerFile(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;  // the host owns the per-player files
     const std::string& guid = coop::player_handshake::GuidForSlot(peerSlot);
     if (guid.empty()) {
-        UE_LOGI("player_inventory: slot %d has no GUID yet (Join not landed / pre-v73 peer) -- "
+        UE_LOGI("player_inventory: slot %d has no proved GUID yet -- "
                 "no file this edge", peerSlot);
         return;
     }

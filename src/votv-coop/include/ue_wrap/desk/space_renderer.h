@@ -1,4 +1,4 @@
-// ue_wrap/space_renderer.h -- standalone engine access for AspaceRenderer_C:
+// ue_wrap/desk/space_renderer.h -- standalone engine access for AspaceRenderer_C:
 // the sky-signal set (the coords-minigame targets), the dish-aim vector, and
 // the client roller suppression. Principle-7 engine-wrapper layer -- NO
 // network logic; coop::console_state_sync drives the mirror through here.

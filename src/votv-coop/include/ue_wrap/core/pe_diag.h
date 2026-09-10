@@ -1,15 +1,13 @@
 // ue_wrap/core/pe_diag.h -- the PE double-detour DIAGNOSTIC (probe; RULE 2 exempt).
 //
-// WP-2 2026-08-22: proves/refutes the followJmp-divert hypothesis for the boot
-// crash WITHOUT needing the ~20% crash (docs/UE4SS_ARC.md). The divert is
-// STRUCTURAL: if UE4SS's PolyHook detours ProcessEvent AFTER our MinHook, its
-// followJmp resolves our E9 and re-points its patch onto OUR DETOUR body -- so
-// the snapshot pair (install / ~10 s post-init) makes the fix's presence or the
-// baseline corruption visible on any NORMAL boot. Inert unless VOTVCOOP_PE_DIAG=1.
+// Proves or refutes the followJmp-divert hypothesis for the boot crash WITHOUT needing the
+// ~20% crash. The divert is STRUCTURAL: if UE4SS's PolyHook detours ProcessEvent AFTER our
+// MinHook, its followJmp resolves our E9 and re-points its patch onto OUR DETOUR body -- so
+// the snapshot pair (install / ~10 s post-init) makes the fix's presence or the baseline
+// corruption visible on any NORMAL boot. Inert unless VOTVCOOP_PE_DIAG=1.
 //
-// Extracted 2026-08-28 from pe_detour.cpp (803 LOC, over the 800 soft cap; the
-// teardown audit named this block as the cut: banner-commented, off the hot
-// path, consumed only at Install()).
+// Extracted from pe_detour.cpp when that file went over the 800-line soft cap: this block was
+// banner-commented, off the hot path, and consumed only at Install().
 
 #pragma once
 

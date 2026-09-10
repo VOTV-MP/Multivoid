@@ -1,7 +1,7 @@
 // coop/props/prop_wire_parity.cpp -- see coop/props/prop_wire_parity.h.
 //
-// Bodies moved VERBATIM from remote_prop_spawn.cpp's anon namespace 2026-07-12 (extraction); the
-// log prefixes keep the original "remote_prop::OnSpawn" wording so existing log greps stay valid.
+// The log prefixes read "remote_prop::OnSpawn" because that is where these bodies sat before;
+// the wording is kept so older log captures stay searchable.
 
 #include "coop/props/prop_wire_parity.h"
 
@@ -16,17 +16,16 @@ namespace coop::prop_wire_parity {
 
 namespace R = ue_wrap::reflection;
 
-// ==== RULE 1 RETIREMENT PLAN (audit fix 2026-05-25, issue #4) ====
+// ==== RULE 1 RETIREMENT PLAN ====
 // The collision restore is an INTERIM fix at the SYMPTOM (collision write at OnSpawn-time). The
 // architecturally correct ROOT-CAUSE fix is to suppress AmushroomSpawner_C::Spawn on the client
-// entirely, so the local actor never goes through spawnedNaturally() in the first place (Option B
-// from the RE doc). Gating criteria for retirement:
-//   (1) Phase 5N1 Stream B-Spawners ships -- single BeginDeferredActorSpawnFromClass observer with
-//       a class allowlist that includes AmushroomSpawner_C (covers all natural spawners at once).
+// entirely, so the local actor never goes through spawnedNaturally() in the first place. Gating
+// criteria for retirement:
+//   (1) A single BeginDeferredActorSpawnFromClass observer ships, with a class allowlist that
+//       includes AmushroomSpawner_C (covers all natural spawners at once).
 //   (2) Hands-on test confirms mushrooms sync correctly with this restore call commented out.
 //   (3) Then remove IsCollisionRestoreClass + RestoreCollisionIfNeeded + the
 //       PropFoodMushroomClass constant. Per RULE 2 no parallel paths.
-// Tracked in [[project-coop-mushroom-state-re]] under "Stream B-Spawners" follow-up scope.
 bool IsCollisionRestoreClass(const std::wstring& cls) {
     return cls == ue_wrap::profile::name::PropFoodMushroomClass;
 }

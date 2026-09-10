@@ -1,4 +1,4 @@
-// ue_wrap/gvas_meta.cpp -- see ue_wrap/gvas_meta.h.
+// ue_wrap/engine/gvas_meta.cpp -- see ue_wrap/engine/gvas_meta.h.
 
 #include "ue_wrap/engine/gvas_meta.h"
 

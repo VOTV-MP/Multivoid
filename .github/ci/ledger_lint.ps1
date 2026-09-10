@@ -81,45 +81,86 @@ foreach ($docRel in @('docs/install.md', 'README.md')) {
     }
 }
 
-# README_COUNTS: the README states how many wire lanes exist. Those two numbers
-# are a CLAIM about protocol.h, and nothing checked them -- so they rotted in
+# README_COUNTS: the README states how many wire lanes exist. Those numbers are
+# a CLAIM about protocol.h, and nothing checked them -- so they rotted in
 # silence: an external source review of the public tree (2026-08-30) found the
 # README saying 113 reliable kinds against an enum that had grown to 121, and
 # the pose/state count was one out too. Correcting the numbers without adding
 # this gate would just restart the same clock. Same reasoning for the version
 # EXAMPLE: it read `b125` while the tree shipped b146.
+#
+# The stream count is a claim about a SUBSET of MsgType: the enum also carries
+# the reliable channel's own envelope and the voice stream, which the header
+# itself calls a stream and not a state. Counting the whole enum as streams is
+# how the README came to overstate them. So the check balances the entire
+# decomposition instead -- the streams the README claims, plus the members named
+# below, must account for every enumerator. A new MsgType then cannot land
+# without a human classifying it in the README, and renaming either member fails
+# loudly rather than quietly counting one lane fewer.
 $protoHeaderPath = Join-Path $repoRoot $script:ProtocolHeaderPath
 if (-not (Test-Path -LiteralPath $protoHeaderPath)) {
     Fail "README_COUNTS: $($script:ProtocolHeaderPath) missing -- cannot check the README's wire-lane counts"
 } else {
     $protoSrc = Get-Content -LiteralPath $protoHeaderPath -Raw
-    # Count enumerators of one `enum class <name>` body: lines of the form
-    # `  Something = <n>`. Explicit values are the house style in this header.
-    function Get-EnumeratorCount {
+    # Enumerator NAMES of one `enum class <name>` body. The value is OPTIONAL: C++
+    # increments implicitly, so a row written `NewLane,` is a lane like any other,
+    # and a parser demanding `= <n>` drops it in silence -- which fails OPEN for
+    # exactly the drift this row exists to catch. reliablekind_gate.py parses the
+    # same enum and carries the same fix, after its first regex did the same
+    # thing. Every non-blank, non-comment row must be recognised: one that is not
+    # is REPORTED, because dropping a row quietly is indistinguishable from the
+    # enumerator not existing.
+    function Get-EnumeratorNames {
         param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$EnumName)
         $start = $Source.IndexOf("enum class $EnumName")
         if ($start -lt 0) { return $null }
         $end = $Source.IndexOf("`n};", $start)
         if ($end -lt 0) { return $null }
-        ([regex]::Matches($Source.Substring($start, $end - $start),
-                          '(?m)^\s{2,}[A-Za-z_][A-Za-z0-9_]*\s*=\s*\d+')).Count
+        $names = @(); $bad = @()
+        # Skip 1: the `enum class X : uint8_t {` line that opens the body.
+        foreach ($line in (($Source.Substring($start, $end - $start) -split "`n") | Select-Object -Skip 1)) {
+            $t = $line.Trim()
+            if (-not $t -or $t.StartsWith("//")) { continue }
+            $m = [regex]::Match($t,
+                '^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(?:0[xX][0-9a-fA-F]+|\d+))?\s*,?$')
+            if ($m.Success) { $names += $m.Groups[1].Value }
+            else { $bad += $t.Substring(0, [Math]::Min(80, $t.Length)) }
+        }
+        [pscustomobject]@{ Names = $names; Bad = $bad }
     }
-    $reliableCount = Get-EnumeratorCount -Source $protoSrc -EnumName 'ReliableKind'
-    $streamCount   = Get-EnumeratorCount -Source $protoSrc -EnumName 'MsgType'
+    # The MsgType members that are not pose/state streams.
+    $nonStreamMsgTypes = @('Reliable', 'VoiceFrame')
+    $reliableEnum = Get-EnumeratorNames -Source $protoSrc -EnumName 'ReliableKind'
+    $msgTypeEnum   = Get-EnumeratorNames -Source $protoSrc -EnumName 'MsgType'
     $readmePath    = Join-Path $repoRoot 'README.md'
     $readmeSrc     = Get-Content -LiteralPath $readmePath -Raw
-    if ($null -eq $reliableCount -or $null -eq $streamCount) {
-        Fail 'README_COUNTS: could not count ReliableKind/MsgType enumerators (header shape changed?)'
+    if ($null -eq $reliableEnum -or $null -eq $msgTypeEnum) {
+        Fail 'README_COUNTS: could not read ReliableKind/MsgType enumerators (header shape changed?)'
+    } elseif ((@($reliableEnum.Bad) + @($msgTypeEnum.Bad)).Count -gt 0) {
+        $bad = @($reliableEnum.Bad) + @($msgTypeEnum.Bad)
+        Fail "README_COUNTS: $($bad.Count) enum row(s) this gate cannot read, so any count it took would be wrong -- teach the parser this shape: $($bad -join ' | ')"
     } else {
-        $claim = [regex]::Match($readmeSrc, '\((\d+)\s+reliable message kinds \+ (\d+) pose/state streams')
-        if (-not $claim.Success) {
-            Fail 'README_COUNTS: README no longer states the wire-lane counts in the expected phrasing (update this gate with it)'
+        $reliableNames = @($reliableEnum.Names)
+        $msgTypeNames  = @($msgTypeEnum.Names)
+        $reliableCount = $reliableNames.Count
+        $missing = @($nonStreamMsgTypes | Where-Object { $msgTypeNames -notcontains $_ })
+        if ($missing.Count -gt 0) {
+            Fail "README_COUNTS: MsgType no longer carries $($missing -join ', ') -- reclassify the enum's non-stream members in this gate and in the README"
         } else {
-            if ([int]$claim.Groups[1].Value -ne $reliableCount) {
-                Fail "README_COUNTS: README says $($claim.Groups[1].Value) reliable message kinds; ReliableKind has $reliableCount"
-            }
-            if ([int]$claim.Groups[2].Value -ne $streamCount) {
-                Fail "README_COUNTS: README says $($claim.Groups[2].Value) pose/state streams; MsgType has $streamCount"
+            $streamCount  = $msgTypeNames.Count - $nonStreamMsgTypes.Count
+            # Exactly one statement of each count: stated twice is two claims
+            # that can drift apart, and this gate would only ever read the first.
+            $kindClaims   = [regex]::Matches($readmeSrc, '(\d+)\s+message kinds')
+            $streamClaims = [regex]::Matches($readmeSrc, '(\d+)\s+unreliable pose and state streams')
+            if ($kindClaims.Count -ne 1 -or $streamClaims.Count -ne 1) {
+                Fail "README_COUNTS: README states the wire-lane counts $($streamClaims.Count) and $($kindClaims.Count) times, expected once each in the expected phrasing (update this gate with it)"
+            } else {
+                if ([int]$kindClaims[0].Groups[1].Value -ne $reliableCount) {
+                    Fail "README_COUNTS: README says $($kindClaims[0].Groups[1].Value) message kinds; ReliableKind has $reliableCount"
+                }
+                if ([int]$streamClaims[0].Groups[1].Value -ne $streamCount) {
+                    Fail "README_COUNTS: README says $($streamClaims[0].Groups[1].Value) pose/state streams; MsgType has $($msgTypeNames.Count) enumerators, $($nonStreamMsgTypes.Count) of them not streams, so $streamCount"
+                }
             }
         }
     }

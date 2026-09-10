@@ -1,4 +1,4 @@
-// coop/shutdown.cpp -- see shutdown.h.
+// coop/session/shutdown.cpp -- see shutdown.h.
 
 #include "ue_wrap/core/gc_pin.h"
 #include "coop/session/shutdown.h"

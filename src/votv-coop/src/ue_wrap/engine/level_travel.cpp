@@ -31,14 +31,14 @@ std::atomic<uint64_t> g_vetoCount{0};
 std::atomic<uint64_t> g_seenCount{0};
 
 // The by-value `FString Options` parameter, as MSVC passes it: a pointer to a
-// {TCHAR* Data; int32 ArrayNum; int32 ArrayMax} the CALLER built and the CALLEE destroys.
-// `[V]` the decompile frees `*a4` on every return path, and the exec thunk frees its OWN
-// stepped buffer (a different allocation) after the call returns. So the ownership rule is
-// exact and asymmetric:
+// {TCHAR* Data; int32 ArrayNum; int32 ArrayMax} the CALLER built and the CALLEE destroys. The
+// decompile frees `*a4` on every return path, and the exec thunk frees its OWN stepped buffer,
+// a different allocation, after the call returns. So the ownership rule is exact and
+// asymmetric:
 //   * call the trampoline -> the engine frees it. We must NOT.
 //   * refuse the travel    -> nobody frees it. We must, or it leaks.
-// On the death path Options is the empty literal, so Data is null and this does nothing;
-// the code exists for every OTHER caller a future veto might refuse.
+// On the death path Options is the empty literal, so Data is null and this does nothing; the
+// code exists for every OTHER caller a future veto might refuse.
 void FreeByValueFString(void* options) {
     if (!options) return;
     auto** data = reinterpret_cast<void**>(options);
@@ -54,9 +54,8 @@ void FreeByValueFString(void* options) {
 // SEH-only frame (no C++ objects needing unwind) so the __try is legal. This is the crash
 // firewall around a callback we do not own: a faulting veto must not take the game's level
 // travel down with it. FAIL OPEN on a fault -- let the travel proceed. That direction is
-// deliberate and matches DEATH_ARC section 3.1: a player who reaches the main menu is
-// recoverable, a player stranded in a world we refused to leave for a reason we could not
-// evaluate is not.
+// deliberate: a player who reaches the main menu is recoverable, a player stranded in a world
+// we refused to leave for a reason we could not evaluate is not.
 bool AskVeto(VetoFn fn, void* worldContextObject, uint64_t levelName, bool bAbsolute) {
     __try {
         return fn(worldContextObject, levelName, bAbsolute);

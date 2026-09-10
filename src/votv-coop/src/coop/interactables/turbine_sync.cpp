@@ -1,4 +1,4 @@
-// coop/turbine_sync.cpp -- see coop/turbine_sync.h.
+// coop/interactables/turbine_sync.cpp -- see coop/interactables/turbine_sync.h.
 
 #include "coop/interactables/turbine_sync.h"
 
@@ -9,8 +9,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
-#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 #include "ue_wrap/devices/windturbine.h"
 
 #include <atomic>
@@ -111,10 +111,10 @@ bool PayloadFinite(const coop::net::TurbineStatePayload& p) {
     return true;
 }
 
-// ---- R-2 shared-scan hub consumer (~13 static actors; the set virtually never changes).
-// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks
-// (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md). Behavior preserved verbatim from
-// the old RebuildIndex, including its filter set (no Default__ skip -- turbine never had one).
+// Shared-scan hub consumer (about 13 static actors; the set virtually never changes). There
+// is no per-module walk: the hub's shared sliced pass drives these callbacks, with the same filter
+// set the module's own rebuild used -- including no Default__ skip, which the turbine class never
+// needed.
 uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
 bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
 std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
@@ -261,8 +261,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!WT::EnsureResolved()) return;
-    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
-    // (turbines are static level actors; the staleness window is empty in practice).
+    // No forced rebuild here: the hub keeps the index no more than one pass (about 2 s) old, and
+    // turbines are static level actors, so the staleness window is empty in practice.
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_mutex);

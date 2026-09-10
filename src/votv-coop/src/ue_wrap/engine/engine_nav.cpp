@@ -2,9 +2,9 @@
 //
 // Engine-wrapper layer (principle 7): thin reflected access to UE4.27's navigation
 // system + APawn movement input, holding NO gameplay/network logic. The foundation the
-// bot-director (coop/dev/director) drives the possessed player with. Proven at runtime by
-// the Phase-0 HALT probe (harness/autotest_navprobe, 2026-07-23): FindPath returns a
-// traversable path over the baked NavMesh; AddMovementInput moves the possessed body.
+// bot-director (coop/dev/director) drives the possessed player with. Measured against the
+// running game by harness/autotest/autotest_navprobe: FindPath returns a traversable path
+// over the baked NavMesh, and AddMovementInput moves the possessed body.
 //
 // NavMesh calls are STATIC UFunctions on UNavigationSystemV1 -> dispatched on its CDO.
 // AddMovementInput is declared on APawn (NOT the leaf mainPlayer_C) -> resolved on the
@@ -70,7 +70,8 @@ bool FindNavPath(void* worldContext, const FVector& start, const FVector& end,
     if (!data || num <= 0 || num > 4096) return false;
     constexpr float kBound = 1.0e7f;
     for (int32_t i = 0; i < num; ++i) {
-        // TArray<FVector> stride = sizeof(FVector)=12 (FVector is align-4, not a 16-aligned BP struct).
+        // TArray<FVector> stride = sizeof(FVector)=12 (FVector is align-4, not a 16-aligned BP
+        // struct).
         const FVector p = *reinterpret_cast<FVector*>(reinterpret_cast<uint8_t*>(data) + i * 12);
         if (std::fabs(p.X) > kBound || std::fabs(p.Y) > kBound) { outPts.clear(); return false; }
         outPts.push_back(p);

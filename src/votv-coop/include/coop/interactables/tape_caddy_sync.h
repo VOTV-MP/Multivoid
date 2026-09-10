@@ -3,12 +3,10 @@
 // (presser-authored sentinel edges, relayed) + MsgType::ReelPose=40 (HOST 1 Hz
 // corrector, unreliable newest-wins). The `active` toggle rides the existing
 // ApplianceState lane (NOT here); the reel PROP's cross-peer birth rides
-// PropSpawn.savedScalar + ReelEjectIntent (prop_drop_intent). The client accrual is
+// PropSaveData, the prop's own save record (coop/props/prop_save_data). The client accrual is
 // NOT parked -- the WRITTEN park-doctrine deviation (upd() re-enables the tick at
 // every native verb + wire apply, so a park is un-holdable; the accrual is RNG-free/
 // deterministic/clamped and the corrector owns convergence; sawtooth <= 1 increment).
-//
-// Design of record: research/findings/computers-devices/votv-tape-caddy-L7-impl-DESIGN-2026-07-17.md.
 
 #pragma once
 

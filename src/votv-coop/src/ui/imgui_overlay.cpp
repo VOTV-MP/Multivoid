@@ -658,8 +658,8 @@ bool Init() {
     // creation).
     ui::overlay_backend::InstallCreationProbe();
     g_installed.store(true, std::memory_order_release);
-    // Test-only env arming (tools/mp.py's entry into the UI surfaces), ui/overlay_test_arm.cpp;
-    // inert unless a VOTVCOOP_* test variable is set.
+    // Test-only env arming (the test launcher's entry into the UI surfaces),
+    // ui/overlay_test_arm.cpp; inert unless a VOTVCOOP_* test variable is set.
     ui::overlay_test_arm::ArmFromEnv();
     UE_LOGI("imgui_overlay: draw seam installed on the ENGINE present path (%d of 4 "
             "engine seams armed) -- ImGui brings up on the first frame; press F1 "

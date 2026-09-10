@@ -34,7 +34,7 @@ std::mutex g_mu;               // guards g_ring + g_count
 
 std::atomic<bool> g_userOpen{false};   // user toggle (auto-show during a join is separate)
 // Set by OnLog (any logging thread) + consumed by Render (render thread) -> atomic, not a
-// plain bool (audit HIGH-1: a non-atomic cross-thread bool is a data race / UB).
+// plain bool: a bool written on one thread and read on another is a data race.
 std::atomic<bool> g_scrollToBottom{true};
 char g_input[256] = "";
 
@@ -82,7 +82,7 @@ void RunCommand(const char* cmd) {
 
 void Init() { ue_wrap::log::SetSink(&OnLog); }
 // Focus the command field on the first frame after the console opens (the
-// chat-input deferred-focus lesson 2026-07-04). Render thread reads it.
+// same deferred focus the chat input takes). Render thread reads it.
 std::atomic<bool> g_focusPending{false};
 
 bool IsOpen() { return g_userOpen.load(std::memory_order_relaxed) || jp::Active(); }
@@ -141,8 +141,8 @@ void Render() {
         }
         ImGui::EndChild();
 
-        // Command input (chat-input lessons 2026-07-04: deferred focus-on-open +
-        // Up/Down history recall).
+        // Command input, shaped like the chat input: deferred focus-on-open +
+        // Up/Down history recall.
         ImGui::SetNextItemWidth(-1.0f);
         if (g_focusPending.exchange(false, std::memory_order_relaxed))
             ImGui::SetKeyboardFocusHere();

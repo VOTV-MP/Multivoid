@@ -1,6 +1,6 @@
-// ue_wrap/power_control.cpp -- see ue_wrap/power_control.h. Engine access for the base POWER
-// PANEL (ApowerControl_C). Offsets and verbs are resolved from the live class by reflection
-// (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
+// ue_wrap/devices/power_control.cpp -- see ue_wrap/devices/power_control.h. Engine access for the
+// base POWER PANEL (ApowerControl_C). Offsets and verbs are resolved from the live class by
+// reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
 //
 // The apply mirrors the panel's OWN visual -- the lever positions and the LED particles -- and
 // nothing downstream. The native buttonsVisibility() the blueprint calls on a real press also

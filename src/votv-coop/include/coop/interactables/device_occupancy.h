@@ -1,5 +1,5 @@
-// coop/device_occupancy.h -- OCCUPANCY for the enterable devices, the base computers and
-// terminals.
+// coop/interactables/device_occupancy.h -- OCCUPANCY for the enterable devices, the base computers
+// and terminals.
 //
 // A device you "enter" -- press E and the camera zooms to its RT screen -- is limited to ONE peer
 // at a time by a busy state; a second peer pressing E is DENIED and hears the game's own

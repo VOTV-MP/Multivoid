@@ -1,7 +1,7 @@
-// ue_wrap/hot_path_guard.h -- assert the game-thread-only invariant on side-tables that are GT-only
-// BY CONVENTION rather than by a lock (g_drives, g_puppets, players::Registry's playerBySlot_ and
-// their kind), so the implicit rule is explicit and the first future violator is caught.
-// Engine-substrate layer (principle 7): all it knows is which thread is the game thread.
+// ue_wrap/core/hot_path_guard.h -- assert the game-thread-only invariant on side-tables that are
+// GT-only BY CONVENTION rather than by a lock (g_drives, g_puppets, players::Registry's
+// playerBySlot_ and their kind), so the implicit rule is explicit and the first future violator is
+// caught. Engine-substrate layer (principle 7): all it knows is which thread is the game thread.
 //
 // A TRIPWIRE, NOT A LOCK: a mutex over single-thread state would mask the real bug -- an access
 // that should never have left the game thread -- instead of surfacing it, so the guard neither

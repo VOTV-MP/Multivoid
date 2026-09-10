@@ -232,7 +232,7 @@ void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeer
         // Nothing sends a chat message to a client; reaching here means a peer speaks a retired
         // protocol.
         UE_LOGW("chat: a ChatMessage arrived on a CLIENT from slot %u -- chat is "
-                "host-authored since v133; dropping",
+                "host-authored; dropping",
                 static_cast<unsigned>(senderPeerSlot));
         return;
     }

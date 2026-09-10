@@ -1,4 +1,4 @@
-// coop/physmods_sync.cpp -- see coop/interactables/physmods_sync.h.
+// coop/interactables/physmods_sync.cpp -- see coop/interactables/physmods_sync.h.
 
 #include "coop/interactables/physmods_sync.h"
 
@@ -40,7 +40,8 @@ bool    g_havePrev = false;
 uint8_t g_pendingCanon[PM::kSlots] = {};
 bool    g_havePendingCanon = false;
 
-// HOST: recent unplug-denies for the kind-104 birth reap (r8/r9).
+// HOST: recent unplug-denies, read by the ReelEjectIntent birth author to reap
+// the ghost of a module that was dropped before its deny landed.
 struct DenyRec {
     uint8_t slot = 0xFF;
     uint8_t byte = 0;
@@ -52,8 +53,8 @@ DenyRec g_denies[kDenyRecs];
 
 void SendOp(coop::net::Session* s, uint8_t op, uint8_t byte) {
     // CLIENT-only: the host's organic changes never ride ops -- its live array
-    // IS the canonical (audit CRITICAL-1: self-applying an already-applied op
-    // hit the dup/absent branches -> phantom refund + no canonical broadcast).
+    // IS the canonical. A host that self-applied an already-applied op hit the
+    // dup and absent branches, refunding a phantom and broadcasting nothing.
     coop::net::PhysModsStatePayload p{};
     p.op = op;
     p.byte = byte;
@@ -98,8 +99,8 @@ void DrainLocalDiff(coop::net::Session* s, const uint8_t live[PM::kSlots]) {
             if (isHost) hostChanged = true; else SendOp(s, 0, b);
         }
     }
-    // The host's live array IS the canonical -- one broadcast carries any
-    // number of organic changes (audit CRITICAL-1 fix).
+    // The host's live array IS the canonical, so ONE broadcast carries any
+    // number of organic changes.
     if (isHost && hostChanged && s->connected()) HostBroadcastCanonical(s);
 }
 
@@ -122,7 +123,7 @@ void RecordDeny(uint8_t slot, uint8_t byte) {
 }
 
 // CLIENT deny handling: destroy the local hand ghost, else sweep untracked
-// module actors of the byte's class (the drop-before-deny case, r8).
+// module actors of the byte's class (the drop-before-deny case).
 void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
     if (origOp == 0) {
         // plug-dup: the HOST refunded (spawned the module back at the desk);
@@ -289,7 +290,7 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
     }
     {
         coop::desk_snd_fx::ScopedWireApply guard;
-        if (!PM::WriteArray(arr)) {  // audit MINOR-1: never baseline/broadcast an unwritten array
+        if (!PM::WriteArray(arr)) {  // never baseline or broadcast an array the write refused
             UE_LOGW("physmods: host WriteArray failed -- op=%u byte=%u not applied", p.op, p.byte);
             return;
         }
@@ -318,7 +319,7 @@ bool HostShouldReapModuleBirth(uint8_t senderSlot, void* moduleClass) {
     for (auto& d : g_denies) {
         if (d.slot == senderSlot && d.byte == byte && now < d.until) {
             d = DenyRec{};  // one reap per deny
-            UE_LOGW("physmods: reaped a denied module birth (slot=%u byte=%u -- the r8 ghost)",
+            UE_LOGW("physmods: reaped a denied module birth (slot=%u byte=%u -- the raced ghost)",
                     senderSlot, byte);
             return true;
         }

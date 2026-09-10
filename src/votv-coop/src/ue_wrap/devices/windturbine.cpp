@@ -1,4 +1,4 @@
-// ue_wrap/windturbine.cpp -- see ue_wrap/windturbine.h.
+// ue_wrap/devices/windturbine.cpp -- see ue_wrap/devices/windturbine.h.
 
 #include "ue_wrap/devices/windturbine.h"
 
@@ -22,8 +22,7 @@ int32_t g_offAlphaBlades   = -1;    // float alpha_blades
 int32_t g_offBladesMomentum= -1;    // float bladesMomentum
 int32_t g_offMult          = -1;    // float mult
 
-// Alpha 0.9.0-n fallbacks (CXXHeaderDump/windturbine.hpp via the RE doc
-// votv-wind-turbines-RE-2026-06-11.md section 1).
+// Alpha 0.9.0-n fallbacks (CXXHeaderDump/windturbine.hpp).
 constexpr int32_t kHeadRotationFallback   = 0x0300;
 constexpr int32_t kTargetRotFallback      = 0x030C;
 constexpr int32_t kRotFallback            = 0x0340;

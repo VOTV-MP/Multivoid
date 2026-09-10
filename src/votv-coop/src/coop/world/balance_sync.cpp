@@ -1,4 +1,4 @@
-// coop/balance_sync.cpp -- see coop/balance_sync.h.
+// coop/world/balance_sync.cpp -- see coop/world/balance_sync.h.
 
 #include "coop/world/balance_sync.h"
 
@@ -62,9 +62,9 @@ void Tick() {
         if (!g_havePending.load(std::memory_order_acquire)) return;
         const int32_t total = g_pendingTotal.load(std::memory_order_acquire);
         if (E::WritePoints(total)) {
-            // WritePoints is side-effect-free, so the on-screen HUD credit number stays frozen
-            // (text_points is push-updated only by the BP addPoints->SetText). Re-run that
-            // repaint with a zero add so the mirrored value actually shows. (2026-06-08 fix.)
+            // WritePoints is side-effect-free, so the on-screen credit number would stay frozen:
+            // text_points is push-updated only by the blueprint's addPoints -> SetText. Re-run that
+            // repaint with a zero add so the mirrored value actually shows.
             E::RefreshPointsHud();
             g_havePending.store(false, std::memory_order_release);
             UE_LOGI("balance_sync: mirrored host balance -> Points=%d (HUD repainted)", total);
@@ -106,14 +106,15 @@ void CreditLocal(int32_t amount) {
                 host ? "host -> will broadcast" : "solo");
         return;
     }
-    // SECURITY A5 (docs/security/TRACKER.md): a connected CLIENT has no way to credit
-    // the shared balance, and that is deliberate. This used to send a BalanceDelta the
-    // host applied via AddPoints with no value bound; the lane was retired whole in v135
-    // rather than clamped (RULE 2) because balance is host-authoritative everywhere and
-    // there is no legitimate client->host economy write. Refusing here is defence in
-    // depth -- coop::dev_gate already refuses the only caller on a client.
-    UE_LOGW("balance_sync: local credit %+d REFUSED -- balance is host-authoritative "
-            "(the client->host delta lane was retired in v135, security A5)", amount);
+    // A connected CLIENT cannot AUTHOR the shared balance, and that half is deliberate: the lane
+    // that let it -- a delta the host applied through AddPoints with no value bound -- was retired
+    // whole rather than clamped, because the balance is host-authoritative everywhere. Client-side
+    // earning still reaches it, but only where an intent lane forwards the action and the host
+    // re-runs the game's own verb on the authoritative instance, as coingun_collect does for a coin
+    // pickup. A direct credit from here is not that, so it is refused: defence in depth, since
+    // coop::dev_gate already refuses the only caller on a client.
+    UE_LOGW("balance_sync: local credit %+d REFUSED -- a client cannot author the shared "
+            "balance; earning reaches it through an intent lane the host re-runs", amount);
 }
 
 void OnDisconnect() {

@@ -27,13 +27,13 @@ namespace coop::dev::object_overlay {
 // The same split as coop::nameplate and ui::hud: THIS module is the GAME-THREAD half. Update(),
 // called from the harness pumps beside nameplate::Update, rebuilds a cached candidate set every ~2
 // s -- the element registry's Prop and Npc entries plus a GUObjectArray walk for untracked
-// prop-lineage actors -- then re-projects the capped, distance-sorted set every other tick and publishes a
-// plain-data snapshot. ui::hud copies the snapshot and draws it on the render thread.
+// prop-lineage actors -- then re-projects the capped, distance-sorted set every other tick and
+// publishes a plain-data snapshot. ui::hud copies the snapshot and draws it on the render thread.
 //
 // A dev tool: it defaults OFF, and while off the per-tick cost is one atomic load. The refresh walk
-// and its per-candidate location reads have the ue_wrap/prop.h FindNearest cost profile, which is
-// acceptable at a 2 s cadence behind an explicit toggle and never on by default. Nothing here
-// crosses the wire.
+// and its per-candidate location reads have the ue_wrap/actors/prop.h FindNearest cost profile,
+// which is acceptable at a 2 s cadence behind an explicit toggle and never on by default. Nothing
+// here crosses the wire.
 
 inline constexpr int kMaxLabels = 64;
 

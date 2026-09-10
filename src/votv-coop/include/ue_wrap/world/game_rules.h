@@ -1,4 +1,4 @@
-// ue_wrap/game_rules.h -- read the LOCAL peer's world rules (engine substrate).
+// ue_wrap/world/game_rules.h -- read the LOCAL peer's world rules (engine substrate).
 //
 // The per-world settings live in one struct, Fstruct_gameRules -- about 41 members: fall damage,
 // difficulty, seasons, food spoilage, the minigame and decay toggles. What the game consults at

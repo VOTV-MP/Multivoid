@@ -27,25 +27,16 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// Reflected property reads on arbitrary objects. Offsets are resolved per declaring class
-// and property once and cached. All reads are raw memory reads of the live object: a
-// template holds the effective value of every field, inherited defaults included, so no
-// was-it-serialised logic is needed.
-
-// Class and property-offset caches. FindClass is a full object-array walk; without the class
-// cache a rig build (dozens of nodes, several property reads each) would re-walk the array
-// hundreds of times. Engine classes never unload, so the class cache needs no liveness churn;
-// offsets are engine-lifetime constants.
-std::unordered_map<std::wstring, void*> g_clsCache;
+// Reflected property reads on arbitrary objects. All reads are raw memory reads of the live
+// object: a template holds the effective value of every field, inherited defaults included, so
+// no was-it-serialised logic is needed.
+//
+// Offsets are engine-lifetime constants and a rig build (dozens of nodes, several property
+// reads each) asks for the same handful over and over, so they are resolved per declaring class
+// and property once and kept here. The classes themselves are NOT kept: FindClass has its own
+// cache, and that one revalidates the array slot and re-compares the name before answering --
+// which a bare pointer parked in a local map cannot do.
 std::unordered_map<std::wstring, int32_t> g_propOff;
-
-void* ClassByName(const wchar_t* className) {
-    auto it = g_clsCache.find(className);
-    if (it != g_clsCache.end()) return it->second;
-    void* cls = R::FindClass(className);
-    if (cls) g_clsCache.emplace(className, cls);  // negative results retry (load order)
-    return cls;
-}
 
 // Offset of `prop` on `declaringClassName` (the class that declares it; the offset lookup does
 // not climb the super chain). -1 if unresolved.
@@ -55,7 +46,7 @@ int32_t PropOff(const wchar_t* declaringClassName, const wchar_t* prop) {
     key += prop;
     auto it = g_propOff.find(key);
     if (it != g_propOff.end()) return it->second;
-    void* cls = ClassByName(declaringClassName);
+    void* cls = R::FindClass(declaringClassName);
     if (!cls) return -1;  // not cached: retried once the class exists
     const int32_t off = R::FindPropertyOffset(cls, prop);
     g_propOff.emplace(std::move(key), off);
@@ -89,7 +80,7 @@ const BoolProp& BoolPropOf(const wchar_t* declClass, const wchar_t* prop) {
     key += prop;
     auto it = g_boolProps.find(key);
     if (it != g_boolProps.end()) return it->second;
-    void* cls = ClassByName(declClass);
+    void* cls = R::FindClass(declClass);
     if (!cls) {
         static const BoolProp kUnresolved{};
         return kUnresolved;  // class not loaded yet: not cached, retried
@@ -116,7 +107,7 @@ BoolProp g_startTick{-2, 0};
 bool TemplateStartsTickEnabled(void* templateObj) {
     if (g_startTick.off == -2) {
         g_startTick.off = -1;
-        void* cls = ClassByName(L"ActorComponent");
+        void* cls = R::FindClass(L"ActorComponent");
         const int32_t tickOff = PropOff(L"ActorComponent", L"PrimaryComponentTick");
         void* tickStruct =
             (cls && tickOff >= 0) ? R::PropertyInnerStruct(cls, L"PrimaryComponentTick") : nullptr;

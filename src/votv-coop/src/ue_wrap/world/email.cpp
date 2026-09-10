@@ -1,4 +1,4 @@
-// ue_wrap/email.cpp -- see ue_wrap/email.h.
+// ue_wrap/world/email.cpp -- see ue_wrap/world/email.h.
 
 #include "ue_wrap/world/email.h"
 
@@ -33,8 +33,8 @@ void* g_gamemodeCls = nullptr;
 void* g_gamemode = nullptr;
 int32_t g_gamemodeIdx = -1;
 int32_t g_offSaveSlot = -1;   // mainGamemode_C::saveSlot
-int32_t g_offEmails = -1;     // saveSlot_C::emails (@0x0118)
-int32_t g_offLaptop = -1;     // mainGamemode_C::laptop (@0x0448, Uui_laptop_C*)
+int32_t g_offEmails = -1;     // saveSlot_C::emails
+int32_t g_offLaptop = -1;     // mainGamemode_C::laptop (Uui_laptop_C*)
 void* g_saveSlotCls = nullptr;
 void* g_laptopCls = nullptr;
 void* g_addEmailFn = nullptr; // mainGamemode_C::addEmail(Fstruct_email item)

@@ -1,5 +1,5 @@
-// coop/wisp_tear_mirror.h -- Killer Wisp coop, receiver side. The host's detect and route live
-// in coop/wisp_attack_sync; this module owns the two receiver paths.
+// coop/creatures/wisp_tear_mirror.h -- Killer Wisp coop, receiver side. The host's detect and route
+// live in coop/wisp_attack_sync; this module owns the two receiver paths.
 //
 // OnWispGrab reaches the VICTIM alone: the host's killerwisp grabbed this client's puppet and
 // neutralised its own false grab, so this client now dies for real. The kill is per-peer

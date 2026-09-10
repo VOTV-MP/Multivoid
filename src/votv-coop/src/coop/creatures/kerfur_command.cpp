@@ -1,4 +1,5 @@
-// coop/kerfur_command.cpp -- see coop/kerfur_command.h for the design + RE ground truth.
+// coop/creatures/kerfur_command.cpp -- see coop/creatures/kerfur_command.h for the design + RE
+// ground truth.
 
 #include "coop/creatures/kerfur_command.h"
 

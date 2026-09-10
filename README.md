@@ -52,10 +52,11 @@ VOTV runs on Unreal Engine 4.27. The mod is one DLL in a standard UE4SS mod fold
 with its own signatures, drives the game's own classes and functions through reflection, and hooks
 where reflection cannot see. No asset edits, no repacked paks.
 
-Transport is GameNetworkingSockets carrying an unreliable pose stream and a reliable ordered
-channel for events and state. Each machine's engine re-derives animation, physics and rendering
-from the streamed state. The host is authoritative for world state, randomness and NPC simulation;
-a client acts by naming an intent that the host performs.
+Transport is GameNetworkingSockets: 12 unreliable pose and state streams, a voice stream beside
+them, and one reliable ordered channel whose payloads are 125 message kinds. Each machine's engine
+re-derives animation, physics and rendering from the streamed state. The host is authoritative for
+world state, randomness and NPC simulation; a client acts by naming an intent that the host
+performs.
 
 The code splits along one principle: `src/votv-coop/src/ue_wrap/` wraps the engine and holds no
 gameplay; `src/votv-coop/src/coop/` holds gameplay and network and reaches the engine only through

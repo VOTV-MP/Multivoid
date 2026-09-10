@@ -111,7 +111,7 @@ uint64_t g_nextDigest = 0;
 // A fresh save has NO rack (shop item) -- the HOST spawns one once, ~5 s
 // after connect, at the desk play slot (exists in every save). The
 // host-authored spawn is fanned to the client by host_spawn_watcher; the
-// client's ResolveRack then finds the mirror. (Run-1 measurement 2026-07-18:
+// client's ResolveRack then finds the mirror. (Measured on the first run:
 // "connect seed ... 0 racks" -- the instrument armed against nothing.)
 bool g_spawnTried = false;
 uint64_t g_spawnAt = 0;

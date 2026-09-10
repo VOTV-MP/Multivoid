@@ -1,6 +1,6 @@
-// coop/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that expresses
-// a keyed prop's birth on the wire, the late-load catch for the trash and food classes, the
-// install of the destroy seam, and the class predicates. The destroy seam body lives in
+// coop/props/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that
+// expresses a keyed prop's birth on the wire, the late-load catch for the trash and food classes,
+// the install of the destroy seam, and the class predicates. The destroy seam body lives in
 // prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
 
 #include "coop/props/prop_lifecycle.h"
@@ -241,13 +241,6 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
         }
-        // The save scalar (a reel's Progress) at birth, the same reader the snapshot and extract
-        // fills use.
-        float sc = 0.f;
-        if (ue_wrap::prop::ReadSavedScalarForClass(self, sc)) {
-            p.savedScalar = sc;
-            p.physFlags |= coop::net::propspawn_flags::kHasSavedScalar;
-        }
     }
     p.initLinVelX = p.initLinVelY = p.initLinVelZ = 0.f;
     p.initAngVelX = p.initAngVelY = p.initAngVelZ = 0.f;
@@ -271,6 +264,12 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 (p.physFlags & coop::net::propspawn_flags::kIsHeavy)  ? 1 : 0,
                 (p.physFlags & coop::net::propspawn_flags::kFrozen)   ? 1 : 0);
         s->SendPropSpawn(p);
+        // NO save record here. This seam is the prop's own init(), which runs BEFORE the leaf
+        // class's loadData has filled anything on a save load, and on a fresh spawn there is
+        // nothing to carry yet -- the record would be the class default, and broadcasting a
+        // default over an author's real copy is how a client's ejected disc came back blank. The
+        // record's publishers are the seams where the state exists: the container extract POST,
+        // the snapshot drain, the runtime-adoption express and the client's own drop intent.
     }
     // Self-claim: this peer just expressed the spawn, so an open snapshot bracket's sweep must not
     // destroy it as unclaimed.

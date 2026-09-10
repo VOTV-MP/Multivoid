@@ -50,7 +50,6 @@ constexpr float kWindowW  = 980.f;
 // one with slack): sized for the locked state, the tallest cell, with ~57 px of margin over the
 // measured need; ReportFit logs an error the moment a cell overflows.
 constexpr float kWindowH  = 690.f;
-constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
 constexpr float kFieldW   = 420.f;
@@ -266,9 +265,9 @@ void SetStatus(const std::wstring& t, const FLinearColor& col) {
     SetText(g_status, t, col);
 }
 
-// The selectable rows live in ui/host_session_choices, one body for the two questions here and the
-// connection-mode one in the hosting window; a bare UImage is the hit target, since a UButton would
-// add a press visual to suppress.
+// The selectable rows live in ui/host_session_choices, one body for the two questions here; the
+// hosting window builds its connection rows from its own kit. A bare UImage is the hit target,
+// since a UButton would add a press visual to suppress.
 
 // A titled framed section, server_browser_panels::SectionBody's shape; local because this is the
 // second caller, and the kit takes no shared framework before three.

@@ -1,4 +1,4 @@
-// coop/prop_echo_suppress.cpp -- see header for design.
+// coop/props/prop_echo_suppress.cpp -- see header for design.
 
 #include "coop/props/prop_echo_suppress.h"
 
@@ -44,7 +44,7 @@ bool PeekIncomingSpawn(void* actor)     { return actor && g_incomingSpawns.count
 void MarkIncomingDestroy(void* actor)   { if (actor) InsertCapped(g_incomingDestroys, actor); }
 bool ConsumeIncomingDestroy(void* actor){ return actor ? TakeOne(g_incomingDestroys, actor) : false; }
 
-// ---- the ARBITER-CONSUMED key set (2026-08-25) --------------------------------------------------
+// ---- the ARBITER-CONSUMED key set ---------------------------------------------------------------
 // Keyed by save KEY, not by pointer, because the whole point is that the actor is already gone: the
 // pointer set above cannot express "a destroy naming THIS KEY is an echo of one I performed myself".
 std::unordered_set<std::wstring> g_arbiterConsumedKeys;

@@ -81,6 +81,7 @@ post it. `[V]`
 | any Blueprint destroy (a pickup, a morph) | `EX_CallMath` or a final call into the native | not to the detour; yes to the native seam | the prop destroy seam `[V]` |
 | a finish-spawning from a graph (a container extract, a drop, a place) | `EX_CallMath` | not to the detour; yes to the native seam | the host spawn watcher with a one-tick drain `[V]` |
 | a script function called locally (a container take) | inline in the VM | no, to both | the bytecode seam at the call site; the effect polled or reconciled `[V]` |
+| a disc-holding device's insert and eject | `EX_LocalVirtualFunction` | no | the slot is mirrored as state, and the device's LOOK is driven by us: the laptop's widget has a notify-free refresh, the signal server has none at all -- its mesh swap is inline in the two verbs, so a receiver sets the mesh itself from `lib_C::floppyFromType` `[V]` |
 | every credit and debit of points | `EX_LocalVirtualFunction` at all nineteen sites | no, to both | the economy is host-authored: the balance is polled, intents name artifacts `[V]` |
 | a deferred-spawned actor's own initialisation | `EX_LocalVirtualFunction` from its construction script | no; its post observer never fires | the finish-spawning post (keyed) or the deferred-spawn post (keyless) `[V]` |
 | a deferred spawn from a native or spawner caller | reaches the detour | yes | the creature and world-actor interceptors; the actor is not positioned yet, so read the transform parameter `[V]` |

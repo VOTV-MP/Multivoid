@@ -1,4 +1,4 @@
-// coop/kerfur_convert_host.cpp -- the HOST executor half of the kerfur
+// coop/creatures/kerfur_convert_host.cpp -- the HOST executor half of the kerfur
 // conversion feature: KerfurConvertRequest execution (verb dispatch + the
 // request-verb bracket) and the post-verb converge (new-form search/register,
 // BindFormActor -> KerfurConvert, floppy express). The feature narrative and the

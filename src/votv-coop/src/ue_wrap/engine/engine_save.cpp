@@ -1,5 +1,5 @@
-// ue_wrap/engine_save.cpp -- the save load, the game-mode derivation, the campaign-scoped save
-// cache, the fresh New Game boot and the return to the main menu. Declared in
+// ue_wrap/engine/engine_save.cpp -- the save load, the game-mode derivation, the campaign-scoped
+// save cache, the fresh New Game boot and the return to the main menu. Declared in
 // ue_wrap/engine/engine_save.h, which the engine.h umbrella includes; everything here is
 // game-thread only. The load path is a boot poll: LoadStorySave and
 // StartFreshGame are retried until the save class and the world are live.
@@ -105,7 +105,7 @@ void ApplyGameModeFromSlot(void* gi, const wchar_t* slot, int forceGameMode = -1
         uint8_t* gm = reinterpret_cast<uint8_t*>(gi) + profile::off::mainGameInstance_GameMode;
         const uint8_t old = *gm;
         *gm = static_cast<uint8_t>(forceGameMode);
-        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %u; v56 coop slot)",
+        UE_LOGI("engine: ApplyGameModeFromSlot -- slot '%ls' FORCED GameMode=%d (was %u; coop slot)",
                 slot, forceGameMode, static_cast<unsigned>(old));
         return;
     }

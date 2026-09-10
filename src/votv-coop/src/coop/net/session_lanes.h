@@ -38,6 +38,14 @@ inline Lane LaneForKind(ReliableKind k) {
     // destroy overtaking its spawn under backpressure leaves a phantom actor.
     case ReliableKind::PropSpawn:      return Lane::Bulk;
     case ReliableKind::PropDestroy:    return Lane::Bulk;
+    // A prop's save record shares PropSpawn's lane on purpose: same FIFO, so a record can never
+    // overtake the birth it belongs to. The intent rides it too, so a client's authored record
+    // cannot pass the destroy or spawn that produced it.
+    case ReliableKind::PropSaveData:       return Lane::Bulk;
+    case ReliableKind::PropSaveDataIntent: return Lane::Bulk;
+    // A device slot rides the same lane for the same reason: a peer's insert destroys the disc and
+    // then reports the slot, and on another lane the report could pass the destroy.
+    case ReliableKind::FloppySlotState:    return Lane::Bulk;
     // PropConvert destroys the ball and spawns the pile, so it shares the spawn lane; on another
     // lane a convert could overtake the ball's spawn and leave a never-destroyed ball.
     case ReliableKind::PropConvert:    return Lane::Bulk;

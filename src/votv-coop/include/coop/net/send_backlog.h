@@ -35,10 +35,12 @@ public:
     //  - no-progress: backlog non-empty and NOTHING departed for this long. A
     //    slow-but-DRAINING link never trips it; a truly dead link usually dies
     //    at GNS's own connected-timeout first.
-    //  - byte cap: ~20x the measured worst realistic peak (the join burst is
-    //    ~742 KB total; steady-state authoring is event-driven). A link this
-    //    far behind is minutes stale -- kicking is honest, dropping is the bug
-    //    this class exists to kill.
+    //  - byte cap: ~20x the measured worst realistic peak (the join burst was
+    //    ~742 KB total when that was measured, and the device-slot seed rides
+    //    it too -- one canonical per disc-holding device, so a base whose boxes
+    //    all hold a disc adds its own content on top; steady-state authoring is
+    //    event-driven). A link this far behind is minutes stale -- kicking is
+    //    honest, dropping is the bug this class exists to kill.
     static constexpr auto kNoProgress = std::chrono::seconds(30);
     static constexpr size_t kMaxBytesPerSlot = 16u * 1024u * 1024u;
 

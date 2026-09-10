@@ -1472,7 +1472,7 @@ Twemoji Mozilla -- the colour emoji donor merged into the overlay atlas.
 
 File in this directory: TwemojiMozilla-Subset.ttf
 Upstream:              https://github.com/mozilla/twemoji-colr  (Twemoji.Mozilla.ttf)
-Produced by:           tools/text/build_repertoire.py
+Produced by:           the repertoire mint, from the fonts in this directory
 
 WHAT THE SUBSET DID. The upstream face is kept in full at the cmap level -- all
 1,418 single-codepoint emoji survive, including the ones a hand-written "common

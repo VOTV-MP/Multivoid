@@ -98,7 +98,9 @@ On the ready announce the host runs the replay for that slot, in this order
    those instead of inferring them.
 2. **The snapshot bracket.** A begin marker, one spawn per live keyed prop, an end marker. On the
    client an existing actor is adopted by key, a missing one is created, and a transform that
-   differs converges to the host's.
+   differs converges to the host's. A prop whose class keeps save state of its own has its record
+   sent behind its own spawn, in the same drain, so the joiner takes the host's copy of state its
+   transferred save may predate; the drain's own pacing is what keeps that off the wire in a burst.
 3. **Position corrections** for the save-authoritative objects the host moved during the window.
 4. **Every state lane's current state**, each in its own kind: held items, weather, doors, lights
    and containers, keypads, the clock, the sky, power, the ATV, the drone, the turbine, device

@@ -5,8 +5,8 @@
 // spawn anchors, or sanity-checking the freecam / pose sync.
 //
 // Driven by the ImGui dev menu (Player > HUD > "Position / camera readout").
-// The legacy F2 hotkey was RETIRED 2026-06-02 (RULE [[feedback-dev-features-in-
-// imgui-menu]]). The overlay is a separate in-world UMG widget so it stays on
+// There is no hotkey for it: dev features live in the F1 menu. The overlay is a
+// separate in-world UMG widget, so it stays on
 // screen while you move with the menu closed.
 //
 // The overlay is HitTestInvisible (never steals input) and refreshes ~10 Hz

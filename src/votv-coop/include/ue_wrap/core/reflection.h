@@ -1,5 +1,5 @@
-// ue_wrap/reflection.h -- standalone UE4.27 reflection access. The engine globals and functions
-// are resolved by AOB signature (no UE4SS import), then exposed as typed accessors over
+// ue_wrap/core/reflection.h -- standalone UE4.27 reflection access. The engine globals and
+// functions are resolved by AOB signature (no UE4SS import), then exposed as typed accessors over
 // GUObjectArray and FName. No gameplay or network logic. Signatures and offsets are for the
 // targeted game build and are re-derived when the mod is brought up against a new one.
 
@@ -95,7 +95,7 @@ int32_t InternalFlagsOf(void* obj);
 // The root-set primitives. A subsystem holds a `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h) rather
 // than calling these as a pair: the pin releases from its destructor, where a hand-written
 // release conditioned on a liveness test once skipped exactly the teardown that needed it and
-// leaked 871 rooted actors and a whole UWorld. `tools/gc/gc_pin_gate.ps1` polices direct
+// leaked 871 rooted actors and a whole UWorld. `.github/ci/gc_pin_gate.ps1` polices direct
 // callers.
 // Mark a UObject as part of the root set so the GC never collects it. A C++ static void* is
 // not a reachable reference for the GC scan, so an unrooted runtime-constructed object is

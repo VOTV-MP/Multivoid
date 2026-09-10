@@ -1,4 +1,4 @@
-// ue_wrap/order_economy.cpp -- see ue_wrap/order_economy.h.
+// ue_wrap/world/order_economy.cpp -- see ue_wrap/world/order_economy.h.
 //
 // Reads the local laptop order queue (saveSlot.orders) for the client forward, and re-commits an
 // order on the host via the native Uui_laptop_C::makeAnOrder (the proven commit+deliver+drain path).
@@ -43,7 +43,7 @@ constexpr int32_t kReadItemCap = 256;
 // kMaxOrderItems independently; this is the engine layer's own bound (principle 7: no net dependency).
 constexpr size_t  kCommitItemCap = 64;
 
-// ---- cached resolution (mirrors ue_wrap/economy.cpp) ----------------------------------------
+// ---- cached resolution (mirrors ue_wrap/world/economy.cpp) --------------------------------------
 ue_wrap::CachedObjRef g_gm;
 void* ResolveGamemode() {
     if (g_gm.Alive()) return g_gm.Raw();

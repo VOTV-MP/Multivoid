@@ -1,17 +1,16 @@
 // coop/dev/freecam.h -- developer free-flying camera (dev-only).
 //
-// A debugging tool to fly around the coop scene. Toggle from EITHER the ImGui dev
-// menu (Player > Movement > "Freecam") OR the HOME key -- the HOME toggle is kept
-// by explicit user request (the one hotkey exception to the F1-menu rule
-// [[feedback-dev-features-in-imgui-menu]]). Controls while flying:
+// A debugging tool to fly around the coop scene. Toggle from EITHER the ImGui dev menu
+// (Player > Movement > "Freecam") OR the HOME key -- an exception to the rule that dev
+// features are reached from the F1 menu. Controls while flying:
 //   HOME  -- toggle freecam on/off (also the menu checkbox).
 //   WASD  -- move; Space / Ctrl -- up / down; Shift -- move faster.
 //   mouse -- look (uses the game's own look, so it's as smooth as the game).
 //   wheel -- adjust fly speed; MMB -- bring the real player to the freecam.
 //
-// Smoothness: look comes from the game's control rotation (no raw-mouse jitter)
-// and movement is frame-synced + dt-scaled (driven off the player's per-frame
-// tick), so it doesn't stutter regardless of frame rate.
+// Smoothness: look comes from the game's control rotation (no raw-mouse jitter) and movement
+// is frame-synced + dt-scaled (driven off the player's per-frame tick), so it doesn't stutter
+// regardless of frame rate.
 
 #pragma once
 

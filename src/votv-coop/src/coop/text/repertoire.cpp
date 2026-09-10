@@ -7,10 +7,10 @@
 namespace coop::text {
 namespace {
 
-// Both tables are GENERATED (tools/text/build_repertoire.py) from the fonts in
-// assets/fonts. Regenerate -- never hand-edit -- when a family or the donor
-// changes; the script re-derives the base-coverage gap and FAILS if it moved,
-// because that set decides which names render and therefore which names fold.
+// Both tables are GENERATED from the fonts in assets/fonts. Regenerate -- never
+// hand-edit -- when a family or the donor changes; the generator re-derives the
+// base-coverage gap and FAILS if it moved, because that set decides which names
+// render and therefore which names fold.
 constexpr CodepointRange kRepertoire[] = {
 #include "coop/text/repertoire_ranges.inc"
 };
@@ -88,8 +88,8 @@ bool RunRepertoireSelftest() {
     wellFormed(kIgnorable, kIgnorableCount, "ignorable table is sorted and disjoint");
     wellFormed(kExclude, kExcludeCount, "exclude table is sorted and disjoint");
 
-    // The four membership facts the fold rests on. Two IN (the scripts the user
-    // asked for, and the emoji the donor exists for), two OUT (the script whose
+    // The four membership facts the fold rests on. Two IN (Latin and Cyrillic,
+    // and the emoji the donor exists for), two OUT (the script whose
     // absence is the whole reason the fold changed, and an invisible character).
     ok(InRepertoire(U'A') && InRepertoire(0x043F), "Latin and Cyrillic are in");
     // Latin Extended-A/B and Greek cost nothing: the embedded faces already carried them and the

@@ -8,6 +8,7 @@ count as dead; a link to an untracked one must.
 
     python .github/ci/public_prose_gate_drill.py
 """
+import glob
 import io
 import json
 import os
@@ -18,362 +19,9 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GATE = os.path.join(HERE, "public_prose_gate.py")
-
-DOC = """# A doc
-
-USER said, verbatim: «делай». A /qf round and two audit agents agreed on 2026-09-05.
-See memory/feedback_x.md, research/runs/x, CLAUDE.md, .claude/skills and docs/security/TRACKER.md.
-A wiki link [[lesson-some-slug]] is the same pointer in the notation memory uses.
-A [tracked link](../README.md), an [external](https://example.com), and a [dead one](../nowhere.md).
-A backticked `docs/nowhere.md` names no file; a backticked `docs/a.md` does.
-An [uppercase scheme](HTTPS://example.com/x), an [encoded name](My%20File.md), a [backslash](sub\\c.md).
-
-```
-a [link in a code block](nothing.md) is not a link
-```
-"""
-SRC = """#include "d.h"
-// 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
-// see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
-// a wiki link like [[feedback-some-rule]] points at memory the same as memory/x.md does
-// PRECISION: a[[i]], [[ab]] and the C++ attribute [[no_unique_address]] are not slugs
-// the files are NAMED with underscores: [[feedback_probe_dont_guess_rule]] is the same pointer
-// docs/nowhere.md names no tracked doc; docs/a.md does
-// the field sits at 0x04F8, a number pinned in prose that this file's code never reads
-// PRECISION: opcode 0x45, sentinel 0xFF and colour 0x40 are hex, not offsets, and must NOT count
-// OWNERSHIP: the translation at +0x10 is read three lines down, so the number IS the fact here
-// RECALL: naming hiddenByAComment() here must NOT rescue it from the dead list
-// the retry came from a review nobody outside can read
-// two audits agreed; a third audited it; a fourth is auditing it now
-// AUDIT F-3 in capitals is the same citation
-// `[V]` an evidence tag from our working docs, which source has no legend for
-// a bare [?] on its own line
-// and a [RD] on its own
-int calledOnce() { return 0; }
-// one label family per line, so dropping any one of them turns this drill red
-// CRIT-1 names a review finding
-// security A34 names a row of a register that is not published
-// Inc-2 names a build increment
-// Inc3 names the same increment with the dash left out
-// Increment 2b spells the word out, which is the same citation again
-// increment-1 in lower case is that citation once more
-// take-9 names an attempt
-// WP-2 names a work package
-// the s28 cut named a session
-// finding 3 named itself
-// K-5: a bare label counts when it opens the comment
-// v133 names the build a change landed in, which a reader cannot look up
-// PRECISION: IPv4, a path like tools/v12/x, a decimal 1.v20 and a bare v9 are not build tags
-// a colon does too, as in R-2: the shared-scan consumer
-// PRECISION: an auditorium, a bracketed [Value], an [ok] flag, leaving N-1 rows and
-// a balance of X -> X-93 are none of them
-// `[A]` is an evidence tag of the same family as the three above
-int neverCalledAnywhere() { return calledOnce(); }
-int hiddenByAComment() { return 0; }
-int sameNameAsALiveOne() { return 0; }
-int useTheLiveTwin() { return sameNameAsALiveOne(); }
-int f() { return 0; } // trailing comments are code lines for the VOLUME counters
-// POSITION: a citation is a citation wherever it sits, so the MARKER counters read the tail of a
-// code line too. One marker per line, so dropping the tails cannot stay green on a survivor.
-int t1() { return 0; } // WP-4 names a work package from a trailing comment
-int t2() { return 0; } // this one was settled by an audit nobody outside can read
-int t3() { return 0; } // added 2026-09-06, which is a diary entry wherever it sits
-int t4() { return 0; } /* a trailing BLOCK comment carries a citation too: take-9 */
-// one user attribution per line, so dropping any one of them turns this drill red. The capitals
-// form needs a line of its OWN: every earlier one read "USER asked" or "USER said", which the
-// lower-case noun group matches too, so the alternative the counter began as was unobserved.
-// flagged as USER in the ledger
-// per the user, this row stays
-// user: "the words themselves, quoted"
-// user: the same attribution paraphrased, which opens no quote
-// the user-requested shape of the panel
-// user 2026-07-04 named the default
-// the user asked for this one
-// a user report settled which of the two it was
-// a user req shrank the radius
-// a user retest confirmed it
-// the user said so at the time
-// the user's choice of the two
-// a user decision, recorded
-// the user rule that governs it
-int t5() { return 0; }
-// PRECISION: the user types into a user widget as user 0, and the user unchecked "Custom colour"
-// PRECISION: a per-user setting, a multi-user session and the user-visible form are all prose
-// PRECISION: two files, both the mechanism rather than a user:
-// the colon above ends its line, so it introduces this one instead of attributing anything
-const char* d = /* closes here */ "docs/nowhere.md";  // the string is CODE, not comment
-float translation(const char* base) { return *(const float*)(base + 0x10); }
-const char* s = "// not a comment";
-/* a block
-   comment */
-// line 0 of a long block
-// line 1 of a long block
-// line 2 of a long block
-// line 3 of a long block
-// line 4 of a long block
-// line 5 of a long block
-// line 6 of a long block
-// line 7 of a long block
-// line 8 of a long block
-// line 9 of a long block
-// line 10 of a long block
-// line 11 of a long block
-// line 12 of a long block
-// line 13 of a long block
-// line 14 of a long block
-// line 15 of a long block
-int g() { return 1; }
-// a survey row cited with no slug at all, as `row :79` is
-int r1() { return 0; } // and the same citation carrying its slug, as census row a_file:138 does
-int r2() { return 0; } // plural too, as census rows a_file:192/:196
-// PRECISION: a row that is a MIRROR -> a 1:1, rows 1 and 2, and a ratio of 3:4 are all prose
-// a line of a file version that no longer exists, as x.cpp's old :436-783 block is
-// PRECISION: a deliberate :7777 and the default :80/:443 are ports, not a line of anything
-// a citation of a line a file no longer has, as x.cpp:9000 is in a file this short
-// a citation of a file the tree does not carry at all, as gone.cpp:12 is
-// PRECISION: x.cpp:1 resolves -- the file is here and it is that long, so it is not debt
-// PRECISION: vendored.cpp:9000 resolves too -- a submodule is pinned and cannot be shortened
-// one document spelling per line, so dropping any one of them turns this drill red
-// COOP_EVENT_JOIN.md names a document with no directory in front of it and none in the tree
-// DEATH_ARC section 3.1 is the same name with the extension dropped and a locator in its place
-// the design doc settled it, which is a document with no name a reader can look up at all
-// PRECISION: docs/TRACKED.md named bare, as TRACKED.md, resolves by BASENAME and is not debt
-// PRECISION: MY_PORT (10001) is configuration, and the tail of votv-x-design-SOMEWHERE.md
-// belongs to the pointer that names the finding, not to a document of its own
-"""
-
-# The other.* class: a script a contributor runs, an ignore file, and a manifest. Whole lines
-# are measured here, except in an ignore file where only the # comments are. One marker per line.
-OTHER_PY = """# a script
-# see NOWHERE.md, a document this tree does not carry
-notes = open("GONE2.md")  # PRECISION: a .md a script OPENS is data; only the comment is prose
-# the design doc says so, which names one that cannot even be looked up
-# PRECISION: docs/a.md and a bare TRACKED.md both resolve and are not debt
-# dated 2026-09-05
-# the USER asked for it
-# said verbatim
-# a /qf round
-# an agent ran it
-# see research/runs/x
-# see memory/feedback_y.md
-# see CLAUDE.md
-# see docs/security/TRACKER.md
-# a wiki link [[lesson-some-other-slug]]
-print("делай")
-"""
-# PRECISION for the comments-only carve-out: the RULES name research/ and .claude/ and must NOT
-# count, because a rule cannot ignore a path without naming it. Only the comment counts.
-OTHER_IGNORE = """# PRECISION: GONE.md is named here to say WHY it is ignored, which is this file's job
-# the notes are not published, decided 2026-09-05
-research/
-.claude/
-"""
-# PRECISION for the wikilink slug shape: a TOML array-of-tables header is not a pointer.
-OTHER_TOML = """# a manifest
-[[bin]]
-[[test]]
-name = "x"
-"""
-
-# a source that carries comment but no counter at all: it must count as SWEPT
-SRC_CLEAN = """// What this does, in one line of present-tense fact.
-// A second line, well under the block cap.
-int h() { return 2; }
-"""
-# a header declaring one function the tree calls and one nothing calls
-HDR = """#pragma once
-int calledOnce();
-int neverCalledAnywhere();
-int hiddenByAComment();
-int sameNameAsALiveOne();
-"""
-# The precision canary for attribution: this header declares a name that ALSO exists, live, in
-# d.h. Counting the bare name tree-wide called both alive and hid a real dead capability.
-HDR_TWIN = """#pragma once
-int sameNameAsALiveOne();
-"""
-# the offsets belong here, so a pinned number in THIS file is not counted
-HDR_OWNER = """#pragma once
-// the profile owns offsets: 0x1234 here is the point of the file
-inline constexpr int kThing = 0x1234;
-"""
-
-
-# Every counter above is proved by a COUNT, and a count only proves the detector is not silent.
-# These prove it is not deaf either: each row breaks one detector on a COPY of the gate, and the
-# drill must go RED. A row that stays green names a regression that would ship -- which is how
-# `[A]` and the whole named-label family were found to have no canary at all.
-MUTANTS = [
-    ("review: no inflections", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit\\b", re.I'),
-    ("review: case-sensitive", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit(?:s|ed|ing)?\\b"'),
-    ("review: matches nothing", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\bZZZZ\\b", re.I'),
-    ("review: no trailing boundary", 'r"\\baudit(?:s|ed|ing)?\\b", re.I', 'r"\\baudit", re.I'),
-    ("evidence: drops [RD]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|A)\\]"'),
-    ("evidence: drops [?]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|RD|A)\\]"'),
-    ("evidence: drops [V]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:\\?|RD|A)\\]"'),
-    ("evidence: drops [A]", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[(?:V|\\?|RD)\\]"'),
-    ("evidence: any bracket token", 'r"\\[(?:V|\\?|RD|A)\\]"', 'r"\\[[A-Za-z?]{1,3}\\]"'),
-    ("user: drops the capitals form", 'r"\\bUSER\\b"', 'r"\\bZZZZ\\b"'),
-    ("user: drops the per-the-user form", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r""'),
-    ("user: drops the colon form", 'r"|(?i:\\buser\'?s?\\s*:\\s*\\S)"', 'r""'),
-    ("user: colon form needs a quote", "\\s*:\\s*\\S)", '\\s*:\\s*[\\"\\u00ab])'),
-    ("user: drops the requested form", 'r"|(?i:\\buser-request(?:ed)?\\b)"', 'r""'),
-    # One mutant per noun family, each a BALANCED substring: cutting the group
-    # mid-parenthesis made the gate fail to import, and an arm that only asks for a
-    # non-zero exit passes on the crash instead of on the detector going blind.
-    ("user: drops the ask family", "ask(?:s|ed)?", "zzzk(?:s|ed)?"),
-    ("user: drops the report family", "report(?:s|ed)?", "zzzort(?:s|ed)?"),
-    ("user: drops the request family", "req(?:s|uest(?:s|ed)?)?", "zzz(?:s|uest(?:s|ed)?)?"),
-    ("user: drops the retest family", "retest(?:s|ed)?", "zzzest(?:s|ed)?"),
-    ("user: drops the say family", "say(?:s)?|said", "zzy(?:s)?|zzid"),
-    ("user: drops the noun family", "|choice|decision|rule)", "|zzzice|zzzision|zzle)"),
-    ("user: drops the dated attribution", 'r"|(?i:\\buser \\d{4}-\\d{2}-\\d{2})"', 'r""'),
-    ("user: any mention of the word", 'r"|(?i:\\bper (?:the )?user\\b)"', 'r"|(?i:\\buser\\b)"'),
-    ("label: drops the named families",
-     'r"\\b(?:CRIT|MAJOR|MINOR|HIGH|MED|LOW|IMP)-\\d+\\b"', 'r"\\bZZZZ\\b"'),
-    ("label: increment needs its dash",
-     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|\\bInc-\\d+[a-z]?\\b"'),
-    ("label: increment is capitals-only",
-     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|\\bInc(?:rement)?[-\\s]?\\d+[a-z]?\\b"'),
-    ("label: increment spelt out unread",
-     'r"|(?i:\\binc(?:rement)?[-\\s]?\\d+[a-z]?\\b)"', 'r"|(?i:\\binc[-\\s]?\\d+[a-z]?\\b)"'),
-    ("label: drops the one-letter form",
-     'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r""'),
-    ("label: one-letter form unanchored",
-     'r"|//[\\s*-]*[A-Z]-\\d{1,2}\\b|\\b[A-Z]-\\d{1,2}:"', 'r"|\\b[A-Z]-\\d{1,2}\\b"'),
-    # A DEAF explainer: it still prints each counter and its number, and names no line under it.
-    # That is the failure the agreement arms exist for, so breaking either half must turn them red.
-    ("--lines: names no source line",
-     "        for no, line in comments + tails:\n", "        for no, line in []:\n"),
-    ("--lines: names no doc link", "            for k in md_link_faults(line, base, tracked_set, subs):\n"
-                                   "                out.append((no, k, line))\n",
-     "            pass\n"),
-    # The whole other.* class: 102 tracked files whose only proof was that nothing read them.
-    ("other: reads no file at all", "    for p in other:\n", "    for p in []:\n"),
-    # An ignore file's RULES are data. Dropping the carve-out makes --lines name `research/` and
-    # `.claude/` as debt, and a sweep obeying it would un-ignore the private trees.
-    ("other: ignore rules count as prose",
-     '        if p.endswith(OTHER_COMMENTS_ONLY):\n', '        if False:\n'),
-    # explain()'s third branch: blind it and --lines goes quiet for every non-md non-src file.
-    ("--lines: names nothing outside md and src",
-     '    prefix, fenced = ("md." if path.endswith(".md") else "other."), False\n',
-     '    if not path.endswith(".md"):\n        return out\n'
-     '    prefix, fenced = ("md." if path.endswith(".md") else "other."), False\n'),
-    # A trailing /* ... */ is a comment too, and the tail must stop at its close.
-    ("markers: blind to a trailing block comment",
-     "                tails.append((no, s[i:e + 2]))\n", "                pass\n"),
-    # The build tag. Reading only the named families is what the gate did while 452 lines across
-    # 187 files cited a build; matching one digit as well would flag `v9` and a decimal.
-    # The row citation. Dropping it is what the gate did while 18 lines named a survey nobody can
-    # open; letting the number drift away from the word instead flags a ratio and an enumeration,
-    # and a sweep obeying that would rewrite correct prose.
-    ("doc_row: matches nothing", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\bZZZZ\b"'),
-    # The naming rule needs one mutant per DIRECTION, because its two halves read different
-    # inputs: the tracked half reads git, the untracked half reads the directory. A rule with one
-    # arm would ship half-blind and the burn-down would call the tree named.
-    ("name_case: tracked half blind",
-     'return None if stem == stem.lower() else "a tracked doc is public: name it lowercase"',
-     'return None'),
-    ("name_case: untracked half blind",
-     'return None if stem == stem.upper() else "an untracked doc is local: name it UPPER_CASE"',
-     'return None'),
-    ("name_case: exceptions swallow every name", "    if stem in DOC_NAME_EXEMPT:\n",
-     "    if True:\n"),
-    ("name_case: never sees an untracked doc",
-     '            if name.endswith(".md") and rel not in tracked_set:\n',
-     '            if False:\n'),
-    ("doc_row: singular only", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brow\s+[\w./-]*:\d+"'),
-    ("doc_row: number may drift from the word", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\b.*:\d+"'),
-    ("doc_row: slug not optional", r'r"\brows?\s+[\w./-]*:\d+"', r'r"\brows?\s+[\w./-]+:\d+"'),
-    # The version-marker half of the row citation, and its precision. Reading only the `row`
-    # spelling is what the gate did while `net_pump's old :436-783` named a file version that has
-    # not existed for months; requiring no marker at all instead flags a port, and a sweep obeying
-    # that would delete the reason a migration exists.
-    ("doc_row: version marker unread",
-     'r"|\\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"', 'r"|\\bZZZZ"'),
-    ("doc_row: marker not required",
-     'r"|\\b(?:old|former|previous|pre-cut|pre-extraction|pre-split)"\n'
-     '                            r"\\s+(?:[\\w\'-]+\\s+)?:\\d{2,5}"',
-     'r"|:\\d{2,5}"'),
-    # The three spellings of a document citation, and the two carve-outs that keep them off correct
-    # prose. Each alternative is the only thing its fixture line trips, so a mutant that blinds one
-    # lowers the count; each precision mutant raises it, which fails the same arm from the other
-    # side.
-    ("dead_docpath: bare filename unread",
-     'r"(?<![\\w/.-])([A-Z][A-Z0-9]*(?:[_-][A-Z0-9]+)*\\.md)\\b"', 'r"ZZZZNOMATCH"'),
-    ("dead_docpath: reads a research finding's tail as a document",
-     'r"(?<![\\w/.-])([A-Z]', 'r"(?<![\\w/.])([A-Z]'),
-    ("dead_docpath: sectioned name unread",
-     'r"\\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"', 'r"\\bZZZZNOMATCH([A-Z0-9]*)"'),
-    ("dead_docpath: locator not required",
-     'r"\\s+(?:section\\b|par\\.|paragraph\\b|Tier-|S\\d)"', 'r"\\b"'),
-    ("dead_docpath: unnamed document unread", 'r"\\bdesign doc\\b", re.I', 'r"\\bZZZZ\\b", re.I'),
-    # A citation resolves by BASENAME: `COOP_EVENT_JOIN.md` and `docs/COOP_EVENT_JOIN.md` name the
-    # same file. Resolving by path alone flags every doc a comment names without its directory.
-    ("dead_docpath: resolves by path only",
-     "        self.names = set(tracked) | {t.rsplit(\"/\", 1)[-1] for t in tracked}",
-     "        self.names = set(tracked)"),
-    # The rotted line citation. It is judged by RESOLUTION, not by shape, so both halves of the
-    # judgement need an arm: a file the tree does not carry, and a line past the end of one it
-    # does. Accepting either would call a pointer live that leads nowhere.
-    # A citation into a submodule is not a rotted one: the tree is pinned by SHA and checked out
-    # beside us, so it cannot be shortened under the citation the way one of ours can.
-    # A submodule that is not checked out is not a submodule full of absent files. Without the
-    # `.git` presence test, `git -C <empty dir> ls-files` answers with the PARENT repository's
-    # list and exit 0, so the loop believes it read a tree it never opened -- which is what made
-    # this counter read 0 locally and 13 in CI.
-    ("doc_row: an unopened submodule reads as read",
-     '                if not os.path.exists(os.path.join(here, ".git")):\n                    continue',
-     '                if False:\n                    continue'),
-    ("doc_row: a vendored file does not resolve",
-     "            return name in self.vendored()", "            return False"),
-    ("doc_row: an absent file resolves",
-     "        if name not in self.lengths:\n            return name in self.vendored()",
-     "        if name not in self.lengths:\n            return True"),
-    ("doc_row: any line number resolves",
-     "        return first <= self.lengths[name]", "        return True"),
-    ("doc_row: line citations unread",
-     'SRC_LINE_CITE = re.compile(r"\\b([A-Za-z0-9_]+\\.(?:cpp|h|inc))\\s*:(\\d{1,5})")',
-     'SRC_LINE_CITE = re.compile(r"ZZZZNOMATCH()()")'),
-    # The dead-document predicate in the other.* family: it ran only over our C++ once, while 33
-    # lines in ten tracked scripts and workflows named an absent doc with nothing reading them.
-    # The two carve-outs the doc predicate needs outside our C++, each able to damage the tree
-     # from the other side: reading a whole line makes a path a script OPENS a citation, and
-     # reading an ignore file's comments counts the reason every rule in it exists.
-    ("other: a path in code reads as a citation",
-     "    return line[i:] if i >= 0 else None", "    return line"),
-    ("other: an ignore file's comments count as citations",
-     "    if path.endswith(OTHER_COMMENTS_ONLY):\n        return None",
-     "    if False:\n        return None"),
-    ("other: dead documents unread",
-     "            prose = other_prose(p, line)",
-     "            prose = None"),
-    # The unstaged guard. It had no arm at all, and diffed two of the three measured families, so
-    # a baseline could be written from an unstaged build file -- the very incident R-P12 names.
-    ("guard: reads only part of what is measured",
-     '    return [p for p in out.split("\\n") if p.strip() and measured(p)]',
-     '    return [p for p in out.split("\\n") if p.strip() and measured_src(p)]'),
-    ("label: drops the build tag", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r""'),
-    ("label: build tag from one digit", 'r"|(?<![\\w/.])v\\d{2,3}\\b"', 'r"|v\\d+"'),
-    # Both notations of the memory pointer. Reading only the path form is what the gate did while
-    # 80 wiki links sat in source and the counter read 0; matching any bracket pair instead flags
-    # an array index and a short tag, which would push a sweep to damage correct prose.
-    # Recall: the bracket notation is half the habit, and dropping it took the counter to 0 while
-    # 84 links sat in the tree.
-    ("ptr_memory: path form only", 'r"|\[\[(?!(?:no_unique_address', 'r"|ZZZZNOMATCH(?!(?:no_unique_address'),
-    # Precision, both ways. A slug is three or more words joined by - or _; matching any bracket
-    # content instead flags a TOML array-of-tables header, and dropping the one attribute that has
-    # that shape flags C++ code. A sweep obeying either would delete something real.
-    ("ptr_memory: any bracket content",
-     r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+){2,}(?:[|#][^\]]*)?\]\]", r"[^\]|#]+\]\]"),
-    ("ptr_memory: no attribute guard", "no_unique_address|carries_dependency",
-     "ZZZZNOMATCH|carries_dependency"),
-    # The markers must read the comment TRAILING a code line. Blinding them to it is what the
-    # gate did until the tails were threaded through, and it hid 54 citations plus 98 pinned
-    # offsets while calling their files swept.
-    ("markers: blind to trailing comments",
-     "        for _no, line in comments + tails:\n", "        for _no, line in comments:\n"),
-]
+from prose_drill_fixtures import (
+    DOC, HDR, HDR_OWNER, HDR_TWIN, OTHER_IGNORE, OTHER_PY, OTHER_TOML, SRC, SRC_CLEAN)
+from prose_drill_mutants import MUTANTS
 
 
 def git(args, cwd, env):
@@ -421,6 +69,12 @@ def main():
         f.write(OTHER_IGNORE)
     with open(os.path.join(repo, "Cargo.toml"), "w", encoding="utf-8") as f:
         f.write(OTHER_TOML)
+    # A marker OWNER: exempt from every marker counter because naming those markers
+    # is its job, and read all the same for its LENGTH.
+    os.makedirs(os.path.join(repo, ".github", "ci"))
+    with open(os.path.join(repo, ".github", "ci", "public_prose_small.py"), "w",
+              encoding="utf-8") as f:
+        f.write("# a short marker owner\n" * 3)
     os.makedirs(os.path.join(repo, "src", "votv-coop", "include"))
     with open(os.path.join(repo, "src", "votv-coop", "include", "d.h"), "w", encoding="utf-8") as f:
         f.write(HDR)
@@ -428,6 +82,15 @@ def main():
         f.write(HDR_OWNER)
     with open(os.path.join(repo, "src", "votv-coop", "include", "twin.h"), "w", encoding="utf-8") as f:
         f.write(HDR_TWIN)
+    # A `.in` template, so the path axis has a name that only resolves when it is read in full.
+    with open(os.path.join(repo, "src", "votv-coop", "include", "v.h.in"), "w", encoding="utf-8") as f:
+        f.write('#define V "@VER@"\n')
+    # The engine-mirror header: types named for the engine's own, which the member axis must not
+    # adjudicate. Its path is what the guard matches, so it lives where the real one does.
+    os.makedirs(os.path.join(repo, "src", "votv-coop", "include", "ue_wrap", "core"))
+    with open(os.path.join(repo, "src", "votv-coop", "include", "ue_wrap", "core", "types.h"),
+              "w", encoding="utf-8") as f:
+        f.write("#pragma once\nstruct FMirror { float X; };\n")
     # A real nested repository, so `tracked` sees a gitlink and `vendored` has something to read.
     vend = os.path.join(repo, "third_party", "vend")
     os.makedirs(vend)
@@ -464,16 +127,20 @@ def main():
               "other.files": 3, "other.cyrillic": 1, "other.user": 1, "other.verbatim": 1,
               "other.qf": 1, "other.agent": 1, "other.dated": 2, "other.ptr_memory": 2,
               "other.ptr_research": 1, "other.ptr_claude": 1, "other.ptr_security": 1,
-              "other.dead_docpath": 4,
+              "other.dead_docpath": 4, "other.over_800": 0,
               "src.comment_pinned_offset": 1, "src.dead_declarations": 3,
-              "src.comment_lines": 93, "src.files": 5, "src.files_not_swept": 3,
+              "src.comment_lines": 128, "src.files": 6, "src.files_not_swept": 3,
               "src.comment_doc_row": 6,
-              "src.comment_blocks_over_15": 4, "src.comment_dated": 3, "src.comment_user": 16, "src.comment_verbatim": 1,
+              "src.comment_blocks_over_15": 4, "src.comment_dated": 4, "src.comment_user": 16, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_memory": 2, "src.comment_ptr_research": 1,
               "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
               "src.comment_sha": 1, "src.files_half_comment": 0, "src.comment_dead_docpath": 5,
               "src.comment_review": 3, "src.comment_evidence": 4,
-              "src.comment_label": 15}
+              "src.comment_label": 16,
+              "src.string_marker": 11,
+              "src.comment_dead_path": 1, "src.comment_dead_log_marker": 1,
+              "src.comment_dead_env": 1, "src.comment_dead_ini_key": 2,
+              "src.comment_dead_member": 2}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     # --lines must name every hit it reports a count for. A counter added to `measure` and not to
@@ -512,9 +179,9 @@ def main():
     # A count says the explainer is not silent; only the NUMBER says it points at the right line.
     # Turning the block-start list into a block-END list keeps every count and every arm above.
     pinned = {
-        ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:2", "src/votv-coop/src/x.cpp:19",
-                                                                     "src/votv-coop/src/x.cpp:48",
-                                                                     "src/votv-coop/src/x.cpp:73"],
+        ("src/votv-coop/src/x.cpp", "src.comment_blocks_over_15"): ["src/votv-coop/src/x.cpp:3", "src/votv-coop/src/x.cpp:20",
+                                                                     "src/votv-coop/src/x.cpp:52",
+                                                                     "src/votv-coop/src/x.cpp:77"],
         (".gitignore", "other.dated"): [".gitignore:2"],
     }
     for k, want in pinned.items():
@@ -587,7 +254,8 @@ def main():
     # modified-but-unstaged under a baseline written from its contents.
     for rel, family in (("src/votv-coop/src/x.cpp", "src"),
                         ("docs/a.md", "md"),
-                        ("tools/x.py", "other")):
+                        ("tools/x.py", "other"),
+                        (".github/ci/public_prose_small.py", "marker-owner")):
         with open(os.path.join(repo, *rel.split("/")), "a", encoding="utf-8") as f:
             f.write("\n" if family == "md" else "\n// probe\n" if family == "src" else "\n# probe\n")
         r = run(["--repo", repo, "--baseline", baseline, "--update"])
@@ -614,6 +282,59 @@ def main():
     git(["commit", "-q", "-am", "[drill] 601"], repo, env)
     r = run(["--repo", repo, "--baseline", baseline])
     arm("a 601-line doc crosses the 600-line cap", r.returncode == 1 and "md.over_600 0->1" in r.stdout)
+    # LENGTH is counted where markers are not. The file is a marker OWNER by path,
+    # so every marker counter ignores it -- and that exemption used to hide its
+    # size too, which is how the gate itself reached 1,317 lines unnoticed. Two
+    # arms, because "counted" and "still exempt from markers" are two claims: the
+    # fixture carries a USER attribution that must NOT be counted.
+    os.makedirs(os.path.join(repo, ".github", "ci"), exist_ok=True)
+    owner = os.path.join(repo, ".github", "ci", "public_prose_owner.py")
+    with open(owner, "w", encoding="utf-8") as f:
+        f.write("# USER said so, verbatim\n" + "# a line\n" * 800)
+    git(["add", "."], repo, env)
+    git(["commit", "-q", "-m", "[drill] an 801-line marker owner"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline])
+    arm("an 801-line marker owner is counted for SIZE",
+        "other.over_800 0->1" in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1])
+    arm("...and its markers are still not counted",
+        "other.user 1->" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[-1])
+    # SIZE ONLY is the answer for a marker owner that trips NOTHING: the 801-line
+    # one above trips the size counter, so --file rightly lists that counter
+    # instead. The small one is the case the fourth state exists for -- it used to
+    # be called SWEPT, telling a sweep its markers had been read when they never
+    # are, and calling it unread would now hide that its length is counted.
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "public_prose_small.py"])
+    arm("--file calls a clean marker owner SIZE ONLY, neither swept nor unread",
+        "SIZE ONLY" in r.stdout and "3 lines" in r.stdout and "SWEPT" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "public_prose_owner.py"])
+    arm("--file names the counter when a marker owner trips one",
+        "other.over_800" in r.stdout and "SIZE ONLY" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
+    # --file is the sweep's own instrument, and it used to answer three different states with one
+    # sentence: a path the tree does not have, a file this gate is FORBIDDEN to read, and a file it
+    # read and found nothing in. Calling the second one swept tells a sweep it is finished with a
+    # file nobody looked at, so each state gets an arm of its own.
+    with open(os.path.join(repo, "LICENSE"), "w", encoding="utf-8") as f:
+        f.write("a licence text, reproduced as-is\n")
+    git(["add", "-A"], repo, env)
+    git(["commit", "-q", "-m", "add an unmeasured tracked file"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "LICENSE"])
+    arm("--file: a tracked file the gate does not read says NOT MEASURED",
+        r.returncode == 0 and "NOT MEASURED" in r.stdout and "SWEPT" not in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "notes.md"])
+    arm("--file: a basename is anchored on a path segment, not a suffix",
+        r.returncode == 0 and "no tracked file matches" in r.stdout
+        and "local_notes.md" not in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", ".nosuch/x.md"])
+    arm("--file: an absent path is echoed with its leading dot intact",
+        r.returncode == 0 and ".nosuch/x.md: no tracked file matches" in r.stdout, r.stdout.strip())
+    r = run(["--repo", repo, "--baseline", baseline, "--file", "docs/a.md", "--lines"])
+    arm("--file: a measured file still reports the counters it owes",
+        r.returncode == 0 and "md.user" in r.stdout and "comment lines" not in r.stdout,
+        (r.stdout.strip().splitlines() or [""])[0])
     # The mutation arms run the drill again against a broken copy of the gate, so the nested run
     # must not mutate in turn: one level is the proof, two is a fork bomb.
     if os.environ.get("PPG_DRILL_NESTED"):
@@ -622,20 +343,41 @@ def main():
         return 1 if bad else 0
     mut = os.path.join(tmp, "mutant")
     os.makedirs(mut, exist_ok=True)
-    for f in ("public_prose_gate.py", "public_prose_gate_drill.py"):
-        shutil.copy(os.path.join(HERE, f), os.path.join(mut, f))
-    gate_src = io.open(os.path.join(mut, "public_prose_gate.py"), encoding="utf-8").read()
+    # Two sets, and they are not the same one. COPIED is everything the nested run
+    # needs: the gate family and this drill's own modules. SEARCHED is the gate
+    # family alone -- prose_drill_mutants quotes every anchor, so searching it
+    # would find a second copy of each one that carries no backslash to escape,
+    # and this file is not part of the gate either.
+    #
+    # An anchor must be unique across the family's UNION, which is stricter than
+    # uniqueness inside any one file and need not be told which sibling holds it.
+    self_name = os.path.basename(__file__)
+    sources = {}
+    for pattern, searched in (("public_prose_*.py", True), ("prose_drill_*.py", False)):
+        for path in sorted(glob.glob(os.path.join(HERE, pattern))):
+            base = os.path.basename(path)
+            shutil.copy(path, os.path.join(mut, base))
+            if searched and base != self_name:
+                sources[base] = io.open(path, encoding="utf-8").read()
     for name, a, b in MUTANTS:
-        if gate_src.count(a) != 1:
-            arm("mutant anchor is unique: " + name, False, "found {}".format(gate_src.count(a)))
+        found = sum(text.count(a) for text in sources.values())
+        if found != 1:
+            arm("mutant anchor is unique: " + name, False,
+                "found {} across {} files".format(found, len(sources)))
             continue
-        with io.open(os.path.join(mut, "public_prose_gate.py"), "w", encoding="utf-8",
-                     newline="") as f:
-            f.write(gate_src.replace(a, b))
+        holder = [f for f, text in sources.items() if a in text][0]
+        # Each round rewrites every sibling from its pristine text, so one mutant
+        # never stacks on the one before it.
+        for base, text in sources.items():
+            with io.open(os.path.join(mut, base), "w", encoding="utf-8", newline="") as f:
+                f.write(text.replace(a, b) if base == holder else text)
         chk = subprocess.run(
             [sys.executable, "-c",
-             "import importlib.util,sys\n"
-             "s=importlib.util.spec_from_file_location('g',sys.argv[1])\n"
+             # The mutant's own directory leads sys.path, so importing a sibling
+             # reaches the mutated copy and never the pristine one beside it.
+             "import importlib.util,os,sys\n"
+             "p=sys.argv[1]; sys.path.insert(0, os.path.dirname(p))\n"
+             "s=importlib.util.spec_from_file_location('g',p)\n"
              "m=importlib.util.module_from_spec(s); s.loader.exec_module(m)",
              os.path.join(mut, "public_prose_gate.py")],
             capture_output=True, text=True, encoding="utf-8", errors="replace")

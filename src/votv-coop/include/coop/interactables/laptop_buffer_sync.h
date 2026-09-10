@@ -1,21 +1,18 @@
-// coop/interactables/laptop_buffer_sync.h -- v121 (OPEN-10): the laptop
-// file-buffer QUAD sync lane {floppyData, floppyBuffer, floppyBufferUIDs,
-// floppyReadwrites}.
+// coop/interactables/laptop_buffer_sync.h -- the laptop file-buffer QUAD sync lane
+// {floppyData, floppyBuffer, floppyBufferUIDs, floppyReadwrites}.
 //
-// Design of record: votv-laptop-v2-OPEN10-impl-DESIGN-2026-07-18.md SS2
-// (11-round /qf "that holds"). Shape: change-edge client EDIT-SCRIPT batches
-// (the measured no-move grammar: removeAt + append-at-END only) -> host
-// content-anchored apply -> UNCONDITIONAL post-batch canonical (the canonical
-// IS the ack); host organic -> canonical on-change (no host derivation
-// exists). Receivers adopt canonicals (senderSlot==0 only) with
-// drain-before-adopt + skip-rebuild-on-equal + the EAGER widget rebuild
-// (measured: updFloppy regenerates floppyBuffer FROM bufferSlots -- a stale
-// widget stomps wire values at every native/our updFloppy site).
+// Shape: a client sends change-edge EDIT-SCRIPT batches in the grammar the native verbs actually
+// use (removeAt, and append at the END -- nothing moves in place); the host applies them
+// content-anchored and answers with an UNCONDITIONAL canonical, which IS the acknowledgement. A
+// host's own edits go straight to a canonical on change, since no host-side derivation exists.
 //
-// Wire: ReliableKind::LaptopQuad (BlobChunkPayload; blob head op 0=batch
-// client->host, 1=canonical host->clients). Never refanned.
+// Receivers adopt canonicals from slot 0 only, draining pending edits first, skipping the
+// rebuild when the content already matches, and rebuilding the widget EAGERLY -- updFloppy
+// regenerates floppyBuffer FROM bufferSlots, so a stale widget stomps wire values at every site.
 //
-// Game thread throughout.
+// Wire: ReliableKind::LaptopQuad over BlobChunkPayload, with the blob's head byte naming the
+// direction: 0 is a client-to-host batch, 1 a host-to-clients canonical. Never refanned. Game
+// thread throughout.
 
 #pragma once
 
@@ -38,8 +35,8 @@ void Tick();
 // adopt host-authored canonicals.
 void OnQuadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// The PrimeBaselines piggyback (design invariant: every wire-driven laptop
-// write path ends in laptop_sync::PrimeBaselines, which calls this).
+// The PrimeBaselines piggyback: every wire-driven laptop write path ends in
+// laptop_sync::PrimeBaselines, which calls this.
 void PrimeQuadBaseline();
 
 // HOST: ship the joiner the canonical quad (after the op=3 + slot content).

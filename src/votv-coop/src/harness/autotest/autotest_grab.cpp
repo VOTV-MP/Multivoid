@@ -1,4 +1,4 @@
-// harness/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. The
+// harness/autotest/autotest_grab.cpp -- autonomous grab test; no E-press from a human required. The
 // public interface is in harness/autotest.h.
 //
 // Expected on the host: grab_hook[PHC.Grab] at the GrabComponentAtLocation call,

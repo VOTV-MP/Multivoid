@@ -1,4 +1,4 @@
-// ue_wrap/ftext_utils.h -- a VALID empty engine FText for safe hand-built struct construction.
+// ue_wrap/core/ftext_utils.h -- a VALID empty engine FText for safe hand-built struct construction.
 // Engine-wrapper layer (principle 7), sibling of ue_wrap/fname_utils. No gameplay or network logic.
 //
 // WHY THIS EXISTS. When we hand-build a UE struct in C++ that carries an FText member and pass it
@@ -9,10 +9,10 @@
 // to hold a real, valid, empty FText.
 //
 // We mint ONE through UKismetTextLibrary::Conv_StringToText("") and PIN it: ParamFrame raw-frees
-// its frame WITHOUT UE-destructing OUT params (ue_wrap/call.h), so the returned FText's +1 ref is
-// never released and the underlying empty FTextData stays live for the process. Byte-copying those
-// bytes into struct slots is safe: the copy adds no refcount, addOrderCart's Array_Add deep copy
-// adds the per-element refs, and the native drain at delivery releases them.
+// its frame WITHOUT UE-destructing OUT params (ue_wrap/core/call.h), so the returned FText's +1 ref
+// is never released and the underlying empty FTextData stays live for the process. Byte-copying
+// those bytes into struct slots is safe: the copy adds no refcount, addOrderCart's Array_Add deep
+// copy adds the per-element refs, and the native drain at delivery releases them.
 
 #pragma once
 

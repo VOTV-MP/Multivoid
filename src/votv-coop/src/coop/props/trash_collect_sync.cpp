@@ -1,9 +1,10 @@
-// coop/trash_collect_sync.cpp -- the held-item express and the pile seams. EnsureHeldItemBroadcast
-// runs on the pump's new-held edge: a freshly spawned, auto-grabbed prop with no Key gets a
-// stable Key and a PropSpawn, and the pose stream then mirrors it into the collector's hands. The
-// BeginDeferred Func patch is the deterministic grab and re-pile seam for chip piles. See
-// coop/trash_collect_sync.h.
+// coop/props/trash_collect_sync.cpp -- the held-item express and the pile seams.
+// EnsureHeldItemBroadcast runs on the pump's new-held edge: a freshly spawned, auto-grabbed prop
+// with no Key gets a stable Key and a PropSpawn, and the pose stream then mirrors it into the
+// collector's hands. The BeginDeferred Func patch is the deterministic grab and re-pile seam for
+// chip piles. See coop/props/trash_collect_sync.h.
 
+#include "coop/props/prop_save_data.h"
 #include "coop/props/trash_collect_sync.h"
 
 #include "coop/dev/spawn_order_probe.h"  // the client load-spawn coverage probe
@@ -302,6 +303,9 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
             "-- held-pose stream now mirrors it into the collector's hands",
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ);
     s->SendPropSpawn(p);
+    // The item's own save record behind its spawn row: a part-used one (a food's uses, a disc's
+    // files) would otherwise mirror at the class default.
+    coop::prop_save_data::PublishWithSpawn(s, heldActor, p.key);
     // The self-claim: this peer just expressed the held item, and an open bracket's sweep must not
     // destroy it as unclaimed.
     coop::join_membership_sweep::RecordClaimIfTracking(heldActor);

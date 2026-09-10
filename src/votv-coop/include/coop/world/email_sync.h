@@ -1,4 +1,4 @@
-// coop/email_sync.h -- the meadow-PC EMAIL mirror: the laptop's messages (the hash-collection
+// coop/world/email_sync.h -- the meadow-PC EMAIL mirror: the laptop's messages (the hash-collection
 // task mails, the scientist and alien responses, the event mails from caught signals) appear on
 // every peer, and a row deleted on one disappears on all. Reader-facing summary: docs/devices.md.
 // Every producer funnels through `gamemode.addEmail`, which is Blueprint-internal, into

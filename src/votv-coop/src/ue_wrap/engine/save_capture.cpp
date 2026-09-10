@@ -39,26 +39,32 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
 
     // 1. The host gamemode owns the live world and the save container.
     //
-    // IT MUST BE THIS WORLD'S GAMEMODE. FindObjectByClass skips only nulls and the CDO -- no
-    // liveness test, no world filter -- and returns the FIRST match in GUObjectArray index order.
-    // A dying world's actors are not kill-flagged until the GC purge, which world_identity.h
-    // exists to measure and can be tens of seconds, and after a menu-to-game cycle the OLD
-    // mainGamemode sits at a LOWER index than the new one. Unfiltered, the capture serialises a
-    // gamemode whose world no longer exists.
+    // IT MUST BE THIS WORLD'S GAMEMODE. FindObjectsByClass skips only nulls and the CDO -- no
+    // liveness test, no world filter -- and answers in GUObjectArray index order. A dying world's
+    // actors are not kill-flagged until the GC purge, which can run tens of seconds behind, and
+    // after a menu-to-game cycle the OLD mainGamemode sits at a LOWER index than the new one. So
+    // the scan reads candidates until one names this world, rather than judging the first and
+    // stopping: judging only the first turns the very case this guard exists for into a refusal to
+    // capture, since the stale gamemode fails the world test and the live one is never reached.
     //
-    // What that produces is not a torn write but a structurally complete save describing nothing:
-    // a faithful serialisation of a saveSlot whose object arrays are empty, terminator intact, a
-    // kilobyte or so long. A joiner given it keeps its own world instead, and the two disagree on
-    // every door and vehicle. The prop tracker sees the live world at the same instant, because it
-    // walks GUObjectArray; saveObjects was looking at the old one.
+    // Serializing the stale one produces no torn write but a structurally complete save that
+    // describes nothing -- a saveSlot whose object arrays are empty, terminator intact, a kilobyte
+    // or so long. A joiner handed that keeps its own world, and the two then disagree on every door
+    // and vehicle.
     void* gm = nullptr;
     void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
-    for (void* cand = R::FindObjectByClass(P::name::GamemodeClass); cand;) {
-        void* const candWorld = ::ue_wrap::world_identity::WorldOf(cand);
-        // A null stamp means "not world-scoped" and is not a rejection (the same rule
-        // CachedObjRef applies); a stamp that names a DIFFERENT world is.
-        if (!nowWorld || !candWorld || candWorld == nowWorld) gm = cand;
-        break;
+    for (void* cand : R::FindObjectsByClass(P::name::GamemodeClass)) {
+        // With no current world there is nothing to judge against -- boot, mid-travel, or a
+        // recook that broke the world lookup, in which case WorldOf answers null for everything
+        // too -- so take the first candidate, which is what an unfiltered scan would return.
+        if (!nowWorld) { gm = cand; break; }
+        // Otherwise the stamp must name THIS world. A null stamp is a rejection here, not a
+        // shrug: elsewhere null means "not world-scoped", but that answer belongs to classes,
+        // CDOs and assets, whose outer chain reaches a package. A gamemode INSTANCE is outered
+        // to its level in one hop, so the only way it stamps null is that the level's owning
+        // world has already been nulled -- which names a torn-down world, the very thing being
+        // excluded.
+        if (::ue_wrap::world_identity::WorldOf(cand) == nowWorld) { gm = cand; break; }
     }
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     if (!gm || !gmCls) {
@@ -67,16 +73,15 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         return false;
     }
 
-    // 2. The world save container the populate writes into. Read it BEFORE the
-    //    populate so we can probe objectsData's count delta. That delta is also the
-    //    one safety check this design needs: saveObjects MUST rebuild objectsData
-    //    (not append) for a standalone call to be correct. Evidence it rebuilds:
-    //    saveObjects builds a local 'copy1' struct_save array then assigns it to the
-    //    member -- the build-local-then-replace pattern (UE4SS_ObjectDump_GAMEPLAY_
-    //    SAVE.txt:275639) -- and SP save/reload never duplicates the world. The probe
-    //    below confirms it live; a >1.5x growth would mean it appends (then we'd need
-    //    to clear first). The failure mode is host-safe either way (a doubled scratch
-    //    blob only over-populates the JOINER; the host's slot is never written).
+    // 2. The world save container the populate writes into. Read it BEFORE the populate so we
+    //    can probe objectsData's count delta. That delta is also the one safety check this design
+    //    needs: saveObjects MUST rebuild objectsData rather than append for a standalone call to
+    //    be correct. It does rebuild -- it fills a local struct_save array and then assigns that
+    //    to the member, the build-local-then-replace shape -- and a single-player save/reload
+    //    never duplicates the world, which it would if the array only ever grew. The probe below
+    //    confirms it live; a >1.5x growth would mean it appends, and then we would have to clear
+    //    first. The failure mode is host-safe either way, since a doubled scratch blob
+    //    over-populates only the JOINER and the host's slot is never written.
     void* saveSlot = *reinterpret_cast<void* const*>(
         reinterpret_cast<const uint8_t*>(gm) + P::off::AmainGamemode_saveSlot);
     if (!saveSlot) {
@@ -90,15 +95,14 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     };
     const int32_t objCountBefore = objectsDataNum();
 
-    // 3. Repopulate the in-memory world save from LIVE actors. saveObjects is the
-    //    critical step: it walks every int_save_C world actor (props + NPCs, incl.
-    //    a turned-on kerfur, which serializes as its live NPC state -- exactly what
-    //    an SP save/reload restores). saveTriggers refreshes door/light/keypad
-    //    states. We deliberately SKIP the player-state populates (playerTransform/
-    //    inventory/heldObj): the joiner overrides those with its own per-player
-    //    state and each has a live coop sync channel. These are pure read-into-array
-    //    populates -- no actor mutation, no disk write, no save event -- so nothing
-    //    "real" happens to the host's session here.
+    // 3. Repopulate the in-memory world save from LIVE actors. saveObjects is the critical
+    //    step: it walks every int_save_C world actor (props + NPCs, including a turned-on kerfur,
+    //    which serializes as its live NPC state -- exactly what a single-player save/reload
+    //    restores). saveTriggers refreshes door/light/keypad states. We deliberately SKIP the
+    //    player-state populates (playerTransform/inventory/heldObj): the joiner overrides those
+    //    with its own per-player state and each has a live coop sync channel. These are pure
+    //    read-into-array populates -- no actor mutation, no disk write, no save event -- so
+    //    nothing "real" happens to the host's session here.
     {
         void* fn = R::FindFunction(gmCls, P::name::MainGamemodeSaveObjectsFn);
         if (!fn) {

@@ -1,13 +1,10 @@
 // ue_wrap/core/field_io.h -- raw UObject field readers/writers for FString /
 // TArray<FString> / TArray<int32> slots, with the swap-and-EngineFree doctrine.
 //
-// Extracted from ue_wrap/devices/laptop.cpp at v121 (OPEN-10) when floppybox
-// needed the same helpers (RULE 2: one implementation). Doctrine (perf audit
-// v116 finding 1): the fstring_utils PIN rule ("leak it, the engine's later
-// reassign frees it") holds only for FRESH buffers; device fields are
-// overwritten REPEATEDLY on live instances with no native reassign between our
-// writes on a non-presser peer -- so WE free what WE replaced (EngineFree is
-// GMalloc-matched).
+// The doctrine: the fstring_utils PIN rule ("leak it, the engine's later reassign frees it")
+// holds only for FRESH buffers. Device fields are overwritten REPEATEDLY on live instances,
+// with no native reassign between our writes on a non-presser peer -- so WE free what WE
+// replaced (EngineFree is GMalloc-matched).
 //
 // Game thread only. No network logic, no coop state (principle 7).
 

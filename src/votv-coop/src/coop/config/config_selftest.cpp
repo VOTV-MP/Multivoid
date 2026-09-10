@@ -1,7 +1,7 @@
 // coop/config/config_selftest.cpp -- the dev selftest seams of the config
 // corpus instrument (probes are RULE-2-exempt). Path-parameterized twins of
 // the two readers + the raw line list + the injected-failure scan + the typed
-// resolver twins, so the env-gated autotest (harness/autotest_config.cpp) can
+// resolver twins, so the env-gated autotest (harness/autotest/autotest_config.cpp) can
 // run the REAL lexer over corpus ini files and prove the tri-state branches
 // and the arc-3 default/sentinel semantics. Not for product use: product code
 // reads only the module-dir ini via the public config.h API.

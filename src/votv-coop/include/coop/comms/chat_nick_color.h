@@ -1,19 +1,18 @@
 // coop/comms/chat_nick_color.h -- what colour a chat line's nick prefix is drawn in.
 //
-// The colour AXIS has one owner (coop::nick_color) and every surface falls back to
-// its OWN default when a peer has no custom pick. This is the CHAT surface's half of
-// that contract: the per-slot palette, plus the resolve that picks between it and the
-// peer's custom colour.
+// The colour AXIS has one owner (coop::nick_color) and every surface falls back to its OWN default
+// when a peer has no custom pick. This is the CHAT surface's half of that contract: the per-slot
+// palette, plus the resolve that picks between it and the peer's custom colour.
 //
-// It lives in the gameplay layer, beside the two modules that COMPOSE chat lines
-// (chat_sync, peer_action_feed), because as of 2026-07-29 the colour is resolved once
-// when the line is composed and then FROZEN into it -- user: "old chat history is
-// essentially a frozen history". Resolving late, at draw time, would repaint a
-// two-hour-old message when the peer whose slot has since been recycled picks a new
-// colour. That also means the render half needs no palette at all.
+// It lives in the gameplay layer, beside the two modules that COMPOSE chat lines (chat_sync and
+// peer_action_feed), because the colour is resolved once when the line is composed and then FROZEN
+// into it -- an old chat line keeps the colour it was drawn with. Resolving late, at draw
+// time, would repaint a
+// two-hour-old message when the peer whose slot has since been recycled picks a new colour. That
+// also means the render half needs no palette at all.
 //
-// Returns ARGB (0xFFRRGGBB), the same packing coop::nick_color uses -- NOT ImGui's
-// ImU32, which is ABGR. The render half converts.
+// Returns ARGB (0xFFRRGGBB), the same packing coop::nick_color uses -- NOT ImGui's ImU32, which is
+// ABGR. The render half converts.
 
 #pragma once
 

@@ -1,5 +1,4 @@
-// ue_wrap/kerfur.cpp -- see ue_wrap/kerfur.h for the contract + the RE ground truth
-// (research/findings/kerfur/votv-kerfurOmega-coop-double-and-camera-RE-2026-06-14.md).
+// ue_wrap/actors/kerfur.cpp -- see ue_wrap/actors/kerfur.h for the contract.
 
 #include "ue_wrap/actors/kerfur.h"
 
@@ -28,10 +27,10 @@ void* ResolveKerfurClass() {
 // skin subclass, so resolving on the base is correct + stable). Sentinel -2 = "not attempted";
 // FindPropertyOffset returns -1 when absent (>= 0 is a valid offset). The hot reads
 // (ReadKerfurState per tick) never re-walk once these settle.
-int32_t g_offState     = -2;  // TEnumAsByte<enum_kerfurCommand> "State"      @0x05C8
-int32_t g_offSpooky    = -2;  // bool "isSpooky"                              @0x09E1
-int32_t g_offFace      = -2;  // int32 "faceMaterialIndex"                    @0x09EC
-int32_t g_offKill      = -2;  // bool "kill" (murderfur-mode guard)          @0x05E0
+int32_t g_offState     = -2;  // TEnumAsByte<enum_kerfurCommand> "State"
+int32_t g_offSpooky    = -2;  // bool "isSpooky"
+int32_t g_offFace      = -2;  // int32 "faceMaterialIndex"
+int32_t g_offKill      = -2;  // bool "kill" (murderfur-mode guard)
 
 void ResolveKerfurOffsets() {
     void* kc = ResolveKerfurClass();

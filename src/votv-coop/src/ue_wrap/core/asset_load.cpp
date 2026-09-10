@@ -15,11 +15,10 @@ namespace R = ue_wrap::reflection;
 void* LoadObjectByPath(const wchar_t* fullObjectPath) {
     if (!fullObjectPath || !*fullObjectPath) return nullptr;
 
-    // URyRuntimeObjectHelpers::LoadObject(FString fullObjectPath) -> UObject*.
-    // A static BlueprintFunctionLibrary UFunction: resolve the class's CDO (a
-    // valid object of the class to ProcessEvent on), find the fn on that class,
-    // then dispatch a {FString in, UObject* ReturnValue} frame. Pattern from the
-    // pak-mount feasibility POC (research/findings/votv-mp-pak-mount-feasibility).
+    // URyRuntimeObjectHelpers::LoadObject(FString fullObjectPath) -> UObject*. A static
+    // BlueprintFunctionLibrary UFunction: resolve the class's CDO (a valid object of the class to
+    // ProcessEvent on), find the fn on that class, then dispatch a {FString in, UObject*
+    // ReturnValue} frame. Pattern from the pak-mount feasibility POC.
     void* cdo = R::FindClassDefaultObject(L"RyRuntimeObjectHelpers");
     if (!cdo) {
         UE_LOGW("asset_load: RyRuntimeObjectHelpers CDO not found -- RyRuntime plugin absent; "
@@ -32,11 +31,10 @@ void* LoadObjectByPath(const wchar_t* fullObjectPath) {
         return nullptr;
     }
 
-    // The param-frame FString aliases OUR buffer for the call's duration.
-    // LoadObject only READS it (path -> object resolve) and never retains it, so a
-    // local buffer is safe -- the same convention engine::ExecuteConsoleCommand
-    // uses for its command FString. FString::Num counts the trailing NUL, which
-    // std::wstring::data() guarantees is present.
+    // The param-frame FString aliases OUR buffer for the call's duration. LoadObject only READS it
+    // (path -> object resolve) and never retains it, so a local buffer is safe -- the same
+    // convention engine::ExecuteConsoleCommand uses for its command FString. FString::Num counts
+    // the trailing NUL, which std::wstring::data() guarantees is present.
     std::wstring path(fullObjectPath);
     R::FString fs{ path.data(),
                    static_cast<int32_t>(path.size()) + 1,
@@ -51,11 +49,10 @@ void* LoadObjectByPath(const wchar_t* fullObjectPath) {
 
     void* obj = f.Get<void*>(L"ReturnValue");
     if (obj) {
-        // Log the loaded object's identity + package chain so a NAME COLLISION is
-        // visible: our pak export is named `kerfurOmega_KelSkin` (same as the game's
-        // own mesh). If the outer/package is `/Game/Mods/VOTVCoop/hl_einstein_v1sc` we got
-        // OURS; if it's the game's kerfurAnthro package, StaticLoadObject resolved to
-        // the resident game object instead (docs/COOP_CLIENT_MODEL.md 6a/8 rename).
+        // Log the loaded object's identity + package chain so a NAME COLLISION is visible: our pak
+        // export is named `kerfurOmega_KelSkin` (same as the game's own mesh). If the outer/package
+        // is `/Game/Mods/VOTVCoop/hl_einstein_v1sc` we got OURS; if it's the game's kerfurAnthro
+        // package, StaticLoadObject resolved to the resident game object instead.
         void* outer  = R::OuterOf(obj);
         void* outer2 = outer ? R::OuterOf(outer) : nullptr;
         UE_LOGI("asset_load: LoadObject('%ls') -> %p [obj='%ls' class='%ls' outer='%ls' pkg='%ls']",

@@ -480,8 +480,8 @@ void DrainReseedQueue() {
     }
     if (adoptedThisTick > 0) {
         g_reseedDrainedNew += adoptedThisTick;
-        // The "net_pump:" prefix and this wording are load-bearing: tools/mp.py's joinchurn gate
-        // greps "broadcasting one PropSpawn each (incremental", and the A/B digests sum this line's
+        // The "net_pump:" prefix and this wording are load-bearing: the joinchurn gate greps
+        // "broadcasting one PropSpawn each (incremental", and the A/B digests sum this line's
         // counts. The broadcast half is host-only, so a client prints the second form: its
         // adoptions are tracked locally, and it authors no PropSpawn.
         if (coop::prop_snapshot::ExpressWouldBroadcast())

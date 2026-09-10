@@ -8,10 +8,10 @@
 // legibility knob rather than a correctness input.
 //
 // The table is a BUILD CONSTANT, not the live atlas, or one player's font install would be
-// the authority over everyone else's name. tools/text/build_repertoire.py generates it from
-// the fonts on disk and emits the ranges ui::fonts::Load bakes in the same run. The two
-// fallback font paths bake no embedded family and their atlas is short of this table, which
-// the boot font selftest logs; the FOLD does not move there, so peers still agree.
+// the authority over everyone else's name. It is generated from the fonts on disk, and the
+// ranges ui::fonts::Load bakes are emitted in the same run. The two fallback font paths bake
+// no embedded family and their atlas is short of this table, which the boot font selftest
+// logs; the FOLD does not move there, so peers still agree.
 #pragma once
 
 #include <cstddef>
@@ -27,11 +27,11 @@ struct CodepointRange {
 };
 
 // Can this build draw `cp`? The predicate FoldKey folds against and the atlas
-// bakes. Binary search over ~441 ranges.
+// bakes. Binary search over 453 ranges.
 bool InRepertoire(uint32_t cp);
 
-// The COMPLEMENT, within the render set -- every codepoint some embedded face or the donor
-// carries that we refuse to bake.
+// The codepoints we REFUSE to bake: a coarse cover holding everything the render set carries
+// that InRepertoire omits, merged across unassigned space to stay under ImGui's list cap.
 //
 // It exists because the atlas is lazy. ImGui bakes a codepoint the first time something draws
 // it and ignores ImFontConfig::GlyphRanges, so the only surviving lever is subtractive:

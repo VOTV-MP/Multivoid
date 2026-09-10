@@ -1,4 +1,4 @@
-// ue_wrap/ufunction_hook.h -- patch a native UFunction's Func pointer to catch a call our
+// ue_wrap/core/ufunction_hook.h -- patch a native UFunction's Func pointer to catch a call our
 // ProcessEvent detour can NEVER see.
 //
 // Engine-wrapper layer (principle 7): no gameplay or network logic. Our only MinHook seam is

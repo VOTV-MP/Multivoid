@@ -1,4 +1,4 @@
-// ue_wrap/device_screen.h -- standalone engine access for the ENTERABLE screen devices (base
+// ue_wrap/desk/device_screen.h -- standalone engine access for the ENTERABLE screen devices (base
 // computers and terminals) and the mainPlayer interface fields that gate them. Principle-7
 // engine-wrapper layer: class resolves, the activeInterface discriminator, the aim-field
 // clear/restore primitive, and the reflected force-exit. NO network logic -- coop::device_occupancy

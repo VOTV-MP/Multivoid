@@ -1,5 +1,5 @@
-// coop/sleep_sync.h -- the Minecraft-style SLEEP GATE: the night passes only once every peer is in
-// bed. Game thread throughout.
+// coop/player/sleep_sync.h -- the Minecraft-style SLEEP GATE: the night passes only once every peer
+// is in bed. Game thread throughout.
 //
 // Single-player sleep is one engine call (SetGlobalTimeDilation(20)), one per-process world flag
 // (mainGamemode.isSleep) and a pawn and camera swap that also drops whatever was held; the need

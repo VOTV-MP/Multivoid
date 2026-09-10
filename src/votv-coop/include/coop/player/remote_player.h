@@ -1,5 +1,5 @@
-// coop/remote_player.h -- the network-driven remote player. RemotePlayer owns the network state
-// (the streamed pose, the interpolation, the vitals) and a pointer to the engine actor it
+// coop/player/remote_player.h -- the network-driven remote player. RemotePlayer owns the network
+// state (the streamed pose, the interpolation, the vitals) and a pointer to the engine actor it
 // renders through: a mainPlayer_C orphan spawned inert, its per-screen systems stripped, its
 // GameMode pointer nulled and its actor and movement ticks disabled. The puppet's AnimBP reads
 // its own movement component's Velocity and MovementMode for locomotion and leg IK, and

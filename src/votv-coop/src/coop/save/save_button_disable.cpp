@@ -1,4 +1,4 @@
-// coop/save_button_disable.cpp -- see coop/save_button_disable.h.
+// coop/save/save_button_disable.cpp -- see coop/save/save_button_disable.h.
 
 #include "coop/save/save_button_disable.h"
 

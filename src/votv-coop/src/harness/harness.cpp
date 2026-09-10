@@ -187,8 +187,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(25000);  // the level load and BeginPlay
         Post([] { Report("post-load"); });
     }
-    // No in-game HighResShot: its toast distracts a hands-on tester; autonomous captures use
-    // tools/capture_window.ps1.
+    // No in-game HighResShot: its toast distracts a hands-on tester; autonomous captures use the
+    // external window capture.
 
     if (scenario == "orphan") {
         // The orphan derisk: spawn a second mainPlayer_C through our own call path, confirm the

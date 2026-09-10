@@ -1,4 +1,4 @@
-// save_indicator_suppress -- see header. PHASE 1: detect-log (read-only), host-side.
+// coop/save/save_indicator_suppress.cpp -- see the header. Detect-only, host-side.
 #include "coop/save/save_indicator_suppress.h"
 
 #include <chrono>
@@ -42,16 +42,17 @@ const char* WindowPhase(long long& outDeferredMs) {
     return nullptr;
 }
 
-// Post-hooks fire AFTER the original saveAnim/addHint runs (so SAVED still shows -- this
-// phase is read-only). They log a fire only IN the join-save window or within 3 s after
-// it (deferred catch); a normal-gameplay save/hint outside that is a bool check + return.
+// Post-hooks fire AFTER the original saveAnim/addHint runs, and forward to it, so the
+// indicator still shows -- this module only reports. They log a fire only IN the join-save
+// window or within 3 s after it (the deferred catch); a normal-gameplay save or hint outside
+// that is a bool check and a return.
 void OnSaveAnim(void* /*context*/, void* /*src*/, void* /*res*/) {
     long long deferred = 0;
     const char* phase = WindowPhase(deferred);
     if (!phase) return;
     ++g_saveAnimHits;
     UE_LOGW("[SAVED-DETECT] mainGamemode.saveAnim FIRED [%s] (hit #%d) -- the UMG save-animation "
-            "trigger; if SAVED shows on this join, saveAnim paints it (-> no-op THIS next build)",
+            "trigger, one of the two candidate painters of the SAVED indicator",
             phase, g_saveAnimHits);
     if (deferred) UE_LOGW("[SAVED-DETECT]   ^ saveAnim was DEFERRED ~%lldms after the capture window closed", deferred);
 }
@@ -82,7 +83,7 @@ void EnsureInstalled() {
     g_installed = any;  // latch only if at least one resolved (else retry next Begin)
     if (any)
         UE_LOGI("[SAVED-DETECT] detect hooks installed (saveAnim=%p addHint=%p) -- read-only; "
-                "logging which paints the SAVED indicator during the join-save window",
+                "both forward to the original, so the indicator still shows",
                 saveAnimFn, addHintFn);
 }
 
@@ -99,9 +100,9 @@ void End() {
     UE_ASSERT_GAME_THREAD("save_indicator_suppress::End");
     g_joinSaveActive = false;
     g_postWindowUntilMs = NowMs() + kPostWindowMs;  // keep catching deferred fires ~3 s
-    UE_LOGW("[SAVED-DETECT] join-save window CLOSED -- in-window saveAnim=%d addHint=%d. "
-            "Watching ~3s for a DEFERRED SAVED anim. If BOTH stay 0 even on a join where you SEE "
-            "'SAVED...', the indicator is painted by a different path (report it -- I widen the hunt).",
+    UE_LOGW("[SAVED-DETECT] join-save window CLOSED -- in-window saveAnim=%d addHint=%d; "
+            "watching ~3s for a deferred fire. Both staying 0 while the indicator showed "
+            "means a painter neither hook covers.",
             g_saveAnimHits, g_addHintHits);
 }
 

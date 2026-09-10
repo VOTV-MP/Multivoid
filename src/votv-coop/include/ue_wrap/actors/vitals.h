@@ -1,4 +1,4 @@
-// ue_wrap/vitals.h -- local-player vitals scalar accessor (engine substrate).
+// ue_wrap/actors/vitals.h -- local-player vitals scalar accessor (engine substrate).
 //
 // Resolves the canonical live vitals store -- UmainGameInstance_C::save_gameInst, a UsaveSlot_C*
 // and exactly ONE per machine -- and reads and writes the player's vital scalars by reflected

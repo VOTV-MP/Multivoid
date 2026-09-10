@@ -1,5 +1,5 @@
 // coop/creatures/npc_sync_internal.h -- IMPLEMENTATION-PRIVATE shared seam between
-// npc_sync.cpp and npc_sync_install.cpp ONLY (s28 cut 2026-07-19).
+// npc_sync.cpp and npc_sync_install.cpp ONLY.
 //
 // NOT a public header (lives under src/, not include/): it declares the symbols the install
 // TU (npc_sync_install.cpp -- the staged reflection resolve + observer/interceptor

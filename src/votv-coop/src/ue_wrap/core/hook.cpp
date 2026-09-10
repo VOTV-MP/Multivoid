@@ -127,7 +127,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
     if (s != MH_OK) {
         UE_LOGE("hook: MH_EnableHook(%p) failed (%s)", target, StatusName(s));
         // The one legitimate hook removal in this process, and the gate
-        // (tools/hooks/minhook_free_gate.ps1) allowlists exactly this line. Removing frees the
+        // (.github/ci/minhook_free_gate.ps1) allowlists exactly this line. Removing frees the
         // trampoline, a use-after-free anywhere the hook is live, but the enable just failed, so
         // the target was never patched and no thread can be inside the trampoline or holding a
         // pointer into it. Leaving a created-but-disabled hook behind would leak the slot instead.

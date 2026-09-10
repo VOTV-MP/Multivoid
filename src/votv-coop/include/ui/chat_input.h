@@ -4,7 +4,7 @@
 // (imgui_overlay's WndProc edge); typing goes to ImGui only (CaptureActive
 // swallows game input while open). Enter sends via coop::chat_sync::QueueSend
 // and closes; ESC closes WITHOUT sending and falls through to the game (the
-// pause menu opens normally -- the user-requested "ESC = chat gone" behavior).
+// pause menu opens normally; the key is not swallowed).
 
 #pragma once
 

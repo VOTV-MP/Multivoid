@@ -1,4 +1,5 @@
-// ue_wrap/grime.cpp -- see ue_wrap/grime.h. Engine access for VOTV surface grime (Agrime_C).
+// ue_wrap/devices/grime.cpp -- see ue_wrap/devices/grime.h. Engine access for VOTV surface grime
+// (Agrime_C).
 //
 // Offsets are resolved from the live class via reflection (FindPropertyOffset) with the
 // documented Alpha 0.9.0-n CXX-dump values as a logged fallback (version-tagging rule).

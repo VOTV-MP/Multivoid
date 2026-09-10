@@ -1,4 +1,4 @@
-// ue_wrap/types.h -- minimal UE value types we marshal into parameter frames.
+// ue_wrap/core/types.h -- minimal UE value types we marshal into parameter frames.
 //
 // Engine-wrapper layer (principle 7). Plain PODs matching UE4.27's binary
 // layout, so they can be memcpy'd straight into a UFunction parameter frame.

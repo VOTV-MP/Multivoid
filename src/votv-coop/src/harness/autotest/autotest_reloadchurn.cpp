@@ -1,15 +1,15 @@
-// harness/autotest_reloadchurn.cpp -- the re-load churn probe (VOTVCOOP_RUN_RELOAD_CHURN=1;
-// "python tools/mp.py reloadchurn"). A client that joined, left to the menu and joined again
-// died two seconds into the second world load: UEngine::LoadMap's CreateGameModeForURL reads
-// AWorldSettings::DefaultGameMode off the world's PersistentLevel->WorldSettings, and that
-// pointer was null (a shipping build compiles the check out and dereferences one frame up). Our
-// DLL is on no frame of that stack and the tree never names either field, so the first arm is a
-// negative control (solo, sessionless), since a coop rejoin and a plain second in-process map
-// load produce the same report. Per cycle: settle in gameplay, census, travel to the menu with
-// the layer live, census at the menu (the decisive frame: a gameplay world still resident there
-// with a null WorldSettings is the crash, one load early), then re-load and census again. Every
-// live UWorld is reported with its PersistentLevel, WorldSettings and DefaultGameMode chain, so
-// the failing link is named. Diagnostic, not a shipping path.
+// harness/autotest/autotest_reloadchurn.cpp -- the re-load churn probe
+// (VOTVCOOP_RUN_RELOAD_CHURN=1; "the reload-churn scenario"). A client that joined, left to
+// the menu and joined again died two seconds into the second world load: UEngine::LoadMap's
+// CreateGameModeForURL reads AWorldSettings::DefaultGameMode off the world's
+// PersistentLevel->WorldSettings, and that pointer was null (a shipping build compiles the check
+// out and dereferences one frame up). Our DLL is on no frame of that stack and the tree never names
+// either field, so the first arm is a negative control (solo, sessionless), since a coop rejoin and
+// a plain second in-process map load produce the same report. Per cycle: settle in gameplay,
+// census, travel to the menu with the layer live, census at the menu (the decisive frame: a
+// gameplay world still resident there with a null WorldSettings is the crash, one load early), then
+// re-load and census again. Every live UWorld is reported with its PersistentLevel, WorldSettings
+// and DefaultGameMode chain, so the failing link is named. Diagnostic, not a shipping path.
 
 #include "harness/autotest.h"
 

@@ -3,7 +3,7 @@
 // and audio, the saved-signal and comp stores, the tape caddy and daily task, the
 // stationary PC. Same family contract as the sibling routers: returns true iff
 // msg.kind is in this family (processed or validation-dropped), so the switch IS
-// the single membership declaration (see coop/event_dispatch.h).
+// the single membership declaration (see coop/dispatch/event_dispatch.h).
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
@@ -15,6 +15,7 @@
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
 #include "coop/interactables/laptop_buffer_sync.h"  // LaptopQuad
+#include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
@@ -269,6 +270,23 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::floppybox_sync::OnBoxChunk(fb, fbslot);
+        break;
+    }
+    case net::ReliableKind::FloppySlotState: {
+        // A peer's slot claim (client->host) and the host's canonical set (host->clients;
+        // receivers enforce senderSlot==0).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: FloppySlotState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload fs{};
+        std::memcpy(&fs, msg.payload, sizeof(fs));
+        const uint8_t fsslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::floppy_slot_sync::OnChunk(fs, fsslot);
         break;
     }
     case net::ReliableKind::DishArm: {

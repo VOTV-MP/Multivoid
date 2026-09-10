@@ -1,8 +1,8 @@
-// coop/event_dispatch_entity.cpp -- the entity-lifecycle and held-item reliable kinds:
+// coop/dispatch/event_dispatch_entity.cpp -- the entity-lifecycle and held-item reliable kinds:
 // PropStickState, PropRelease, PropSpawn, PropDestroy, PropConvert, PropSnapPos, the
 // owner-entity lane, EntitySpawn and EntityDestroy, the world-actor pair, PyramidGather and
 // ItemActivate. Each case validates at the trust boundary and hands off to its module. See
-// coop/event_dispatch.h.
+// coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
@@ -18,6 +18,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/world/world_actor_sync.h"  // the world-actor mirror receivers
 #include "coop/creatures/piramid_sync.h"      // the PyramidGather receiver
+#include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
@@ -630,6 +631,25 @@ bool HandleEntityEvent(net::Session& session,
             void* puppetNow = (rp && rp->valid()) ? rp->GetActor() : nullptr;
             ::coop::item_activate::ApplyToPuppetOrDefer(peerSlotCopy, puppetNow, pCopy);
         });
+        break;
+    }
+    case net::ReliableKind::PropSaveData:
+    case net::ReliableKind::PropSaveDataIntent: {
+        // A prop's own save record, chunked. The body carries the Key, so nothing here needs to
+        // resolve an actor; the module lands it or parks it by identity.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: PropSaveData payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload sd{};
+        std::memcpy(&sd, msg.payload, sizeof(sd));
+        const uint8_t sdslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::prop_save_data::OnChunk(
+            session, sd, sdslot, msg.kind == net::ReliableKind::PropSaveDataIntent);
         break;
     }
     case net::ReliableKind::HookSync: {

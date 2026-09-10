@@ -1,9 +1,9 @@
-// coop/kerfur_convert_host.h -- the HOST executor half of the kerfur conversion feature: the
-// KerfurConvertRequest execution (verb dispatch plus the request-verb bracket) and the post-verb
-// CONVERGE (new-form search and registration, BindFormActor into a KerfurConvert broadcast, floppy
-// express). The DETECTION -- the death-watch poll and the first-refusal seams -- stays in
-// kerfur_convert.{h,cpp}, and the CLIENT half lives in kerfur_convert_client.h. Feature narrative:
-// kerfur_convert.h.
+// coop/creatures/kerfur_convert_host.h -- the HOST executor half of the kerfur conversion feature:
+// the KerfurConvertRequest execution (verb dispatch plus the request-verb bracket) and the
+// post-verb CONVERGE (new-form search and registration, BindFormActor into a KerfurConvert
+// broadcast, floppy express). The DETECTION -- the death-watch poll and the first-refusal seams --
+// stays in kerfur_convert.{h,cpp}, and the CLIENT half lives in kerfur_convert_client.h. Feature
+// narrative: kerfur_convert.h.
 //
 // Principle 7: gameplay/network module; engine access through ue_wrap only.
 
