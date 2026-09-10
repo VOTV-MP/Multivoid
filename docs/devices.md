@@ -197,8 +197,18 @@ the only birth that can land in a slot is that eject, so guarding the one box is
 the disc is also born on the other machine, in a box whose hitbox nobody turned off and where
 nobody ejected anything. So the rule sits on the disc rather than the box: a disc is in transit for
 a moment after it materialises, and no device swallows one in transit, on any peer. The window is
-anchored at the disc's own appearance on each machine, ends before the ejecting box re-enables its
-own hitbox, and when it lapses the native rule simply resumes.
+anchored at the disc's own appearance on each machine, so both peers run one rule against one local
+event and neither waits on a message; when it lapses, the native rule simply resumes.
+
+The window is one number for every device, because the mark is on the disc and a disc does not know
+which slot it came out of. It has to clear the frame or two the hitbox entry needs to fire, and it
+has to end before the device that ejected re-enables its own hitbox -- re-enabling a collider
+re-reports every body already inside it, which is how the game deliberately re-takes a disc still
+sitting in the slot. The two devices disagree on that pause: a signal server waits a second, a
+laptop half of one. The window is set under the server's and over the laptop's, so a laptop's own
+re-take is delayed by a quarter second. Nothing else changes -- it still happens, the slot carries
+it, and the peers still agree, which is also true of the server, since the peer that did not eject
+re-takes in neither case.
 
 ## Who owns what
 

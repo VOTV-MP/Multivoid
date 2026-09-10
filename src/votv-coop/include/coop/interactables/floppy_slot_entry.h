@@ -1,21 +1,15 @@
 // coop/interactables/floppy_slot_entry.h -- which overlap into a device's slot becomes an insert.
 //
-// A disc-holding device takes a disc by two entries. `playerUsedOn` is a player pressing E with
-// the disc in hand. The other is the hitbox's BeginOverlap, which fires for whatever touches the
-// slot -- including a disc our own code has just materialised inside it.
+// A device takes a disc by two entries: a player pressing E, and the hitbox reporting whatever
+// touches the slot. The second one fires for a disc our own code has just materialised inside the
+// device -- which is every disc another peer ejected -- and swallowing that raises a destroy we
+// relay, so the disc dies on every peer.
 //
-// The eject spawns the disc INSIDE the box it came out of, and the Blueprint guards that by
-// turning off the hitbox of THAT box for a second. In single player the only birth that can land
-// in a slot is that eject, so guarding the one box is enough. Coop adds a second birth -- our
-// spawn of a disc another peer ejected -- and it lands in a box whose hitbox nobody turned off, on
-// a machine where nobody ejected anything. That box swallows the disc and the destroy it raises is
-// relayed, so the disc dies on every peer.
-//
-// So the rule moves from the box to the DISC: a disc is in transit for a moment after it
-// materialises, and no device swallows a disc in transit, on any peer. The window is anchored at
-// the disc's own appearance on THIS machine, so every peer runs one rule against one local event
-// and nothing waits on a message. Nothing is owed and nothing can starve: the mark is a property
-// of an actor and dies with it. Details in docs/devices.md.
+// The rule therefore sits on the DISC, not on the box: a disc is in transit for a moment after it
+// materialises, and no device swallows one in transit. Anchored at the disc's own appearance on
+// each machine, so every peer runs one rule against one local event and nothing waits on a
+// message. Nothing is owed and nothing can starve. Why that window, and what the game does that
+// makes it necessary: docs/devices.md, "The floppy slot".
 //
 // Game thread. No wire kind and no message: the whole lane is local.
 
