@@ -39,6 +39,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
 | **gediao** | report | The b125 host-log pack, with huoyan1231 | b134 |
+| **doctaaaaa** | report | A ten-item field pack on the released build, of which four landed on open work: a floppy disc lost when it is retrieved from a signal server, a recorded signal lost when the disc changes hands, the power chain, and the trash-pile cost. The disc pair is now root-caused — the box on the other machine takes the disc back the moment it appears | b150 · root-caused, unreleased |
 | **SirWilliam** | report | Rejoining a session requires a full relaunch | fixed, unreleased |
 
 ---
