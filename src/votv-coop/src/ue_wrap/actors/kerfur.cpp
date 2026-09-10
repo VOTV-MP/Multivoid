@@ -102,6 +102,9 @@ void DriveKerfurState(void* actor, uint8_t state, bool spooky) {
 }
 
 void NeutralizeAiTimers(void* actor) {
+    // Legit no-op, NOT an error: callers (npc_mirror) deliberately invoke this on ANY parked
+    // NPC and expect a quiet skip for non-kerfurs. Kept silent to match the sibling
+    // (DriveKerfurState/ReadKill) and to avoid spamming on the expected path.
     if (!IsKerfurActor(actor)) return;
     static void* sKslCdo  = nullptr;
     static void* sClearFn = nullptr;
@@ -114,22 +117,51 @@ void NeutralizeAiTimers(void* actor) {
         static bool sWarned = false;
         if (!sWarned) { sWarned = true;
             UE_LOGW("kerfur: K2_ClearTimer unresolved -- mirror AI timers NOT neutralized "
-                    "(timer_face/timer_kerf/checkDoor may run local AI on the parked mirror)"); }
+                    "(KslCdo=%p, ClearFn=%p); timer_face/timer_kerf/checkDoor may run local AI "
+                    "on the parked mirror", sKslCdo, sClearFn); }
         return;
     }
     // K2_ClearTimer(Object, FunctionName) -- the exact inverse of the BP's K2_SetTimerDelegate
     // ({self, name}) arm (kerfur BeginPlay @8184/@8714/@24444). FunctionName is an FString
     // {data, num=len+1, max} (num/max include the null terminator -- the space_renderer pattern).
+    //
+    // Every failure path below is LOGGED. The original `if (!f.SetRaw(...)) continue;` plus the
+    // unchecked Set() meant a signature mismatch (e.g. K2_ClearTimer taking a K2_TimerHandle
+    // instead of Object+FunctionName) or a wrong event name produced a SILENT no-op -- the
+    // whole reason the kerfur AI-timer leak was untraceable. Now the exact failing step, and
+    // which of the three timers cleared, is visible in multivoid.log on a single run.
     static const wchar_t* kTimers[3] = {L"timer_face", L"timer_kerf", L"checkDoor"};
+    int cleared = 0;
     for (const wchar_t* fn : kTimers) {
         ue_wrap::ParamFrame f(sClearFn);
-        if (!f.valid()) continue;
-        f.Set<void*>(L"Object", actor);
+        if (!f.valid()) {
+            UE_LOGW("kerfur: NeutralizeAiTimers: ParamFrame(%ls) invalid -- skipping", fn);
+            continue;
+        }
+        // Object MUST bind. An unchecked Set() on an absent param would target a null actor and
+        // silently no-op. One miss means the SIGNATURE is wrong for all three timers, so break
+        // rather than loop over doomed calls.
+        if (!f.Set<void*>(L"Object", actor)) {
+            UE_LOGW("kerfur: NeutralizeAiTimers: K2_ClearTimer has no 'Object' param "
+                    "(signature mismatch) -- cannot clear '%ls'", fn);
+            break;
+        }
         const int32_t num = static_cast<int32_t>(std::wcslen(fn)) + 1;
         struct { const wchar_t* data; int32_t n; int32_t m; } fs{fn, num, num};
-        if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) continue;
-        ue_wrap::Call(sKslCdo, f);
+        if (!f.SetRaw(L"FunctionName", &fs, sizeof(fs))) {
+            UE_LOGW("kerfur: NeutralizeAiTimers: K2_ClearTimer has no 'FunctionName' param "
+                    "(signature mismatch) -- cannot clear '%ls'", fn);
+            break;
+        }
+        if (ue_wrap::Call(sKslCdo, f)) {
+            UE_LOGI("kerfur: NeutralizeAiTimers: cleared timer '%ls' on %p", fn, actor);
+            ++cleared;
+        } else {
+            UE_LOGW("kerfur: NeutralizeAiTimers: K2_ClearTimer('%ls') returned false -- "
+                    "timer not armed / event name may be wrong", fn);
+        }
     }
+    UE_LOGI("kerfur: NeutralizeAiTimers: %d/3 timers cleared on %p", cleared, actor);
 }
 
 bool ReadKill(void* actor) {
