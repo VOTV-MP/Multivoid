@@ -168,6 +168,21 @@ sell function and destroys the sold prop itself; the coins are host-owned world 
 event-actor mirror carries, and whoever's body trips one on the host credits the host, a client's
 puppet included (`coop/items/coingun_sync`). The client is told the result.
 
+### The floppy slot
+
+A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
+writes, its data rows and the JSON of its whole save struct into four fields of the device and
+destroys the actor, and ejecting one spawns the disc back from those fields. The four are one
+concept with one owner, and they are state, not an event: the host holds every device's slot, each
+peer polls its own devices once a second behind a digest that reads the raw field bytes, and a peer
+whose own game changed a slot sends the host the outcome. The host applies it and answers with the
+canonical, which is also the acknowledgement.
+
+Emptying a slot writes only what the device's own eject writes -- the type and the rows. The eject
+runs in two phases: it clears those two, and about a second later, when the carrier's timeline
+finishes, the deferred spawn reads the remaining writes and the save JSON to rebuild the disc.
+Anything that zeroes those in between hands the player back a blank disc under a new identity.
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -181,6 +196,7 @@ puppet included (`coop/items/coingun_sync`). The client is told the result.
 | the balance | the host | one-way, absolute, on change |
 | an order | the client names the row; the host performs and prices | an intent |
 | a coin gun sale | the client names the prop; the host prices, mints and destroys | an intent ahead of the destroy |
+| a device's floppy slot | the host | a 1 Hz digest-gated poll; a peer claims the outcome of its own insert or eject, and the host's canonical is the answer |
 
 ## Wire messages
 
@@ -193,6 +209,7 @@ puppet included (`coop/items/coingun_sync`). The client is told the result.
 | `BalanceSync` | the host to all | the absolute balance |
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
 | `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |
+| `FloppySlotState` | a peer to the host with a claim; the host to all with the canonical | one device's slot, or a set of them: the type, the writes, the rows and the save JSON |
 
 ## Late join
 
@@ -201,6 +218,10 @@ open and closed alike, because the joiner loaded its own save and a switch the h
 must be pushed too; the keypads, the power masks, the turbine, the windows, the grime and the
 drone's pose are sent the same way, and the balance is sent at connect. A pending order is
 primed by a watermark so the joiner's next order is the first it forwards.
+
+Every device's floppy slot goes to a joiner at the same edge, an empty one as much as a full one:
+the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows
+nothing the host has done since.
 
 The inbox rides the joiner's save transfer, so it arrives whole. A mail written during the 30 to
 60 seconds the joiner spends loading is in neither that save nor any later diff, so the host
@@ -218,6 +239,7 @@ an error line.
 | The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
+| A disc ejected from a signal server is born where that box turned its own collision off, and the box on the other machine, which never ejected, takes it through the same overlap an insert uses. The disc dies about a second later on both machines, and the slot lane replicates the swallow faithfully | `[V]` a two-peer run: the box that could not reach the disc gave it back intact, the two that could hold a content-less one |
 
 ## Code map
 
@@ -227,7 +249,8 @@ an error line.
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `ue_wrap/devices/drone` |
+| the floppy slot | `coop/interactables/floppy_slot_sync`, `ue_wrap/devices/floppy_slot`, `ue_wrap/devices/serverbox`, `ue_wrap/devices/laptop` |
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/coingun_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog` |
 | identity | `coop/element/portable_identity` |
-| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_probe`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/light_group_census` |
+| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_probe`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/light_group_census`, `coop/dev/floppy_selftest` |

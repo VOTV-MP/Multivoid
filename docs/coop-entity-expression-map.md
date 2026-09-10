@@ -74,12 +74,15 @@ are peer-gated. `[V]`
 - **Destroy.** The engine's destroy call is caught before it runs on either role, on every
   route, at the native seam; a Blueprint-internal vanish (the truck, culling, a lifespan) is
   caught by the host's reaper death-watch and destroyed by id. `[V]` A floppy disc inserted into
-  the laptop dies into laptop scalars through that seam, and an ejected one is born through the
-  birth channels with its content on the save-record lane above. **A signal server is the opposite case and
-  the one that loses discs:** its slot is on no wire, so an insert crosses as a plain death and the
-  disc leaves the shared world, and an ejected disc is taken by the other peer's box, whose own
-  eject never ran and whose collision was therefore never disabled — the disc dies about a second
-  after it appears, on both machines. `[V]` A desk module plugged in is destroyed in the
+  a laptop or a signal server dies into that device's slot through that seam, and an ejected one is
+  born through the birth channels with its content on the save-record lane above. The slot itself
+  is state on the wire, so the destroy is no longer the only thing that crosses: the host owns
+  every device's slot, a peer reports the outcome of one its own game changed, and the host's
+  re-publish is the answer ([devices.md](devices.md)). `[V]` **What still loses a disc is the
+  other peer's box:** an ejected disc is born where the box that ejected it disabled its own
+  collision, and the box on the other machine, whose eject never ran, takes it through the same
+  overlap the insert uses — the disc dies about a second after it appears, on both machines, and
+  the swallow is now replicated as the agreed slot state. `[V]` A desk module plugged in is destroyed in the
   hand by the native path and rides the same seam; an unplugged one is born into the hand. `[V]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor
