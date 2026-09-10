@@ -21,6 +21,19 @@ $files = @(
     'src/votv-coop/include/coop/net/protocol.h'
 )
 
+# The two counts the README states move whenever a wire lane is added, and a mutant that pins
+# them as literals goes stale on that legitimate bump -- it then throws on its own missing
+# anchor and reads as a broken drill rather than a moved number. Read them from the README the
+# drill is about to mutate, with the gate's own two patterns, so a bump carries the drill with it.
+function Get-ReadmeCount([string]$pattern) {
+    $src = [IO.File]::ReadAllText((Join-Path $repo 'README.md'))
+    $m = [regex]::Matches($src, $pattern)
+    if ($m.Count -ne 1) { throw "README states '$pattern' $($m.Count) time(s), expected once -- the drill reads what the gate reads" }
+    return [int]$m[0].Groups[1].Value
+}
+$kindCount   = Get-ReadmeCount '(\d+)\s+message kinds'
+$streamCount = Get-ReadmeCount '(\d+)\s+unreliable pose and state streams'
+
 function Reset-Sandbox {
     if (Test-Path $sandbox) { Remove-Item -Recurse -Force $sandbox }
     foreach ($f in $files) {
@@ -66,12 +79,12 @@ Check 'negative control (unrelated edit)' $false (Invoke-Gate)
 
 # The reliable-kind claim drifts from the enum.
 Reset-Sandbox
-Edit-File 'README.md' '122 message kinds' '121 message kinds'
+Edit-File 'README.md' "$kindCount message kinds" "$($kindCount - 1) message kinds"
 Check 'M1 kinds claim off by one' $true (Invoke-Gate)
 
 # The stream claim drifts from the enum.
 Reset-Sandbox
-Edit-File 'README.md' '12 unreliable pose and state streams' '13 unreliable pose and state streams'
+Edit-File 'README.md' "$streamCount unreliable pose and state streams" "$($streamCount + 1) unreliable pose and state streams"
 Check 'M2 stream claim off by one' $true (Invoke-Gate)
 
 # A new MsgType lands and the README says nothing: the decomposition stops
@@ -94,14 +107,14 @@ Check 'M5 new ReliableKind, README silent' $true (Invoke-Gate)
 
 # The sentence is reworded away -- the fault that opened this debt.
 Reset-Sandbox
-Edit-File 'README.md' 'Transport is GameNetworkingSockets: 12 unreliable pose and state streams, a voice stream beside' `
+Edit-File 'README.md' "Transport is GameNetworkingSockets: $streamCount unreliable pose and state streams, a voice stream beside" `
     'Transport is GameNetworkingSockets, carrying pose streams and a reliable channel beside'
 Check 'M6 sentence reworded away' $true (Invoke-Gate)
 
 # The count stated twice: two claims that can drift apart, of which the row
 # would only ever read the first.
 Reset-Sandbox
-Edit-File 'README.md' 'performs.' 'performs. The wire carries 122 message kinds.'
+Edit-File 'README.md' 'performs.' "performs. The wire carries $kindCount message kinds."
 Check 'M7 kinds claim stated twice' $true (Invoke-Gate)
 
 # An enumerator written WITHOUT a value is still an enumerator: C++ increments it
