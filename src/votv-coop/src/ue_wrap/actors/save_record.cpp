@@ -323,6 +323,12 @@ bool ApplyRecord(void* actor, const SaveRecord& r) {
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
     if (!v || !v->loadData) return false;
 
+    // The splice is safe because the base writes element 0 of bools, floats and names and a leaf
+    // never does: it takes a higher slot, or a group the base does not touch, or rebuilds a group
+    // with element 0 read back out first. That is the game's own convention -- its slot setter
+    // takes an explicit index per group -- checked against every covered class's own bytecode. A
+    // leaf that ever wrote element 0 would lose that field here, which is the safe way to fail.
+
     // THE BASE HALF IS NEVER THE SENDER'S. Aprop_C::loadData restores the save Key, the transform
     // scale, the four saved bools, the lifespan and the two names from whatever record it is
     // handed -- so a record taken at face value is a primitive for rewriting any prop's identity
