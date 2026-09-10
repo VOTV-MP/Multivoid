@@ -10,6 +10,13 @@ The mod is written by one maintainer (pelmentor) with Claude as the day-to-day e
 pair. That is stated openly here, in the README and in every commit's trailer. Outside
 contributions are adopted with their original authorship preserved (`git log --author=<you>`).
 
+**Author your commits as yourself.** Set `user.name` and `user.email` to your own before you
+commit, and check with `git log -1 --format='%an <%ae>'` that the branch you are about to push
+carries your name. The maintainer's name and email are visible in every commit of this
+repository's history; they are not a convention to copy, and a pull request authored under them
+cannot be adopted with the authorship promised above. If you use an AI coding tool, check this
+before your first commit: it has already happened once, and the contributor lost the credit.
+
 ## Ground rules
 
 Three rules govern every change:
