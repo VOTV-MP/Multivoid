@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::dev::floppy_selftest {
@@ -57,6 +58,18 @@ constexpr int kTargets = 3;  // boxes, and discs: one of each per insert episode
 // be told from one that only mirrors the actor.
 constexpr const wchar_t* kMarker = L"MULTIVOID-FLOPPY-SELFTEST";
 constexpr int32_t kMarkerReadWrites = 900;  // + the disc index; the class default is a round 32
+
+// A disc's slot type IS its class: the library keeps one class per colour and answers with the
+// index of the disc's class in that list, so the base class -- which is in no list -- is typed -1,
+// and a box that swallows one of those can never hand it back. Seed the coloured classes instead,
+// one per episode, so the type in the slot also says which disc is in there. The white one is the
+// zip drive, which a server refuses outright, so it is not among them.
+struct DiscClass { const wchar_t* name; int32_t type; };
+const DiscClass kDiscClasses[] = {
+    { L"prop_floppyDisc_R_C", 0 },
+    { L"prop_floppyDisc_G_C", 1 },
+    { L"prop_floppyDisc_Y_C", 2 },
+};
 
 enum class Verb { Insert, Eject };
 
@@ -115,19 +128,39 @@ std::wstring          g_discKey[kTargets];
 struct DiscRow {
     void*        actor = nullptr;
     std::wstring key;
+    std::wstring cls;              // the class is the disc's slot type, so it belongs in the census
+    bool         typed = false;    // ... and a class the library types is the only insertable one
     int32_t      readWrites = -1;
     int32_t      rows = 0;
 };
 
-// Every live disc actor, by class, sorted by key so both peers index the same disc with the same
-// number. One object-array walk per call with a pointer compare per object, on the census period.
+bool IsTypedDiscClass(const std::wstring& cls) {
+    for (const DiscClass& dc : kDiscClasses)
+        if (cls == dc.name) return true;
+    return false;
+}
+
+// Every live disc actor of any disc class, sorted by key so both peers index the same disc with
+// the same number. One object-array walk per call on the census period, with the class verdict
+// cached so the descendant test runs once per distinct class instead of once per object.
 std::vector<DiscRow> DiscCensus() {
+    static std::unordered_map<void*, bool> verdict;
     std::vector<DiscRow> out;
-    for (void* obj : R::FindObjectsByClass(L"prop_floppyDisc_C")) {
-        if (!obj || !R::IsLive(obj)) continue;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* obj = R::ObjectAt(i);
+        if (!obj) continue;
+        void* cls = R::ClassOf(obj);
+        auto it = verdict.find(cls);
+        if (it == verdict.end()) it = verdict.emplace(cls, LP::IsDiscClass(cls)).first;
+        if (!it->second) continue;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // the class defaults
+        if (!R::IsLive(obj)) continue;
         DiscRow row;
         row.actor = obj;
         row.key = PR::GetKeyString(obj);
+        row.cls = R::ToString(R::NameOf(cls));
+        row.typed = IsTypedDiscClass(row.cls);
         LP::DiscContent c;
         if (LP::ReadDiscContent(obj, c)) {
             row.readWrites = c.readWrites;
@@ -144,7 +177,9 @@ std::wstring DescribeDiscs(const std::vector<DiscRow>& discs) {
     std::wstring s;
     for (size_t i = 0; i < discs.size() && i < 8; ++i) {
         if (!s.empty()) s += L"; ";
-        s += L"key='" + discs[i].key + L"' rw=" + std::to_wstring(discs[i].readWrites) +
+        s += L"key='" + discs[i].key + L"' cls='" + discs[i].cls + L"'" +
+             (discs[i].typed ? L"" : L" UNTYPED") +
+             L" rw=" + std::to_wstring(discs[i].readWrites) +
              L" rows=" + std::to_wstring(discs[i].rows);
     }
     if (discs.size() > 8) s += L"; ...";
@@ -213,38 +248,37 @@ bool ResolveBoxes() {
 // inference. A spawned disc is keyed through the game's own getKey, which is what mints one.
 void SeedAndStamp() {
     std::vector<DiscRow> discs = DiscCensus();
-    const int missing = kTargets - static_cast<int>(discs.size());
-    if (missing > 0) {
-        void* cls = R::FindClass(L"prop_floppyDisc_C");
-        void* keyFn = cls ? R::FindFunction(cls, L"getKey") : nullptr;
-        if (!cls) {
-            UE_LOGW("floppy_selftest: prop_floppyDisc_C did not resolve -- cannot seed %d discs",
-                    missing);
-            return;
+    int typed = 0;
+    for (const DiscRow& d : discs) if (d.typed) ++typed;
+    for (int i = typed; i < kTargets; ++i) {
+        const DiscClass& dc = kDiscClasses[i % (sizeof(kDiscClasses) / sizeof(kDiscClasses[0]))];
+        void* cls = R::FindClass(dc.name);
+        void* anchor = g_box[i % kTargets].Get();
+        if (!cls || !anchor) {
+            UE_LOGW("floppy_selftest: disc seed %d NOT spawned (class '%ls'=%p anchor=%p)", i,
+                    dc.name, cls, anchor);
+            continue;
         }
-        for (int i = 0; i < missing; ++i) {
-            void* anchor = g_box[i % kTargets].Get();
-            if (!anchor) continue;
-            const auto base = E::GetActorLocation(anchor);
-            void* disc = E::SpawnActor(
-                cls, { base.X, base.Y + static_cast<float>(30 * i), base.Z + 80.f });
-            if (!disc) { UE_LOGW("floppy_selftest: disc seed %d SPAWN FAILED", i); continue; }
-            if (keyFn) {
-                ue_wrap::ParamFrame f(keyFn);
-                if (f.valid()) ue_wrap::Call(disc, f);
-            }
-            UE_LOGI("floppy_selftest: seeded disc %d key='%ls' (getKey fn=%p)", i,
-                    PR::GetKeyString(disc).c_str(), keyFn);
-        }
-        discs = DiscCensus();
+        const auto base = E::GetActorLocation(anchor);
+        void* disc = E::SpawnActor(cls, { base.X, base.Y + static_cast<float>(30 * i),
+                                          base.Z + 80.f });
+        if (!disc) { UE_LOGW("floppy_selftest: disc seed %d SPAWN FAILED", i); continue; }
+        // No key verb here: reading the key through the wrapper leaves the disc keyed, which the
+        // line below both uses and shows.
+        UE_LOGI("floppy_selftest: seeded disc %d class='%ls' (slot type %d) key='%ls'", i, dc.name,
+                dc.type, PR::GetKeyString(disc).c_str());
     }
-    for (size_t i = 0; i < discs.size() && i < static_cast<size_t>(kTargets); ++i) {
+    discs = DiscCensus();
+    int stamped = 0;
+    for (const DiscRow& d : discs) {
+        if (!d.typed || stamped >= kTargets) continue;
         LP::DiscContent c;
-        c.readWrites = kMarkerReadWrites + static_cast<int32_t>(i);
-        c.data.push_back(std::wstring(kMarker) + L"-" + std::to_wstring(i));
-        const bool ok = LP::WriteDiscContent(discs[i].actor, c);
-        UE_LOGI("floppy_selftest: stamped disc %zu key='%ls' rw=%d rows=1 write=%d", i,
-                discs[i].key.c_str(), c.readWrites, ok ? 1 : 0);
+        c.readWrites = kMarkerReadWrites + stamped;
+        c.data.push_back(std::wstring(kMarker) + L"-" + std::to_wstring(stamped));
+        const bool ok = LP::WriteDiscContent(d.actor, c);
+        UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw=%d rows=1 write=%d",
+                stamped, d.key.c_str(), d.cls.c_str(), c.readWrites, ok ? 1 : 0);
+        ++stamped;
     }
 }
 
@@ -254,12 +288,23 @@ void SeedAndStamp() {
 void PickDiscs(bool isHost) {
     const std::vector<DiscRow> discs = DiscCensus();
     std::wstring picked;
-    for (int t = 0; t < kTargets; ++t) {
-        g_discKey[t] = (static_cast<size_t>(t) < discs.size()) ? discs[t].key : std::wstring();
-        picked += (t ? L", " : L"") + std::to_wstring(t) + L"='" + g_discKey[t] + L"'";
+    int taken = 0, marked = 0;
+    for (const DiscRow& d : discs) {
+        if (!d.typed || taken >= kTargets) continue;   // an untyped disc is refused by the server
+        g_discKey[taken] = d.key;
+        if (d.readWrites >= kMarkerReadWrites) ++marked;
+        picked += (taken ? L", " : L"") + std::to_wstring(taken) + L"='" + d.key + L"' cls='" +
+                  d.cls + L"'";
+        ++taken;
     }
-    UE_LOGI("floppy_selftest: DISCS role=%s of %zu in world: %ls", isHost ? "HOST" : "CLIENT",
-            discs.size(), picked.c_str());
+    UE_LOGI("floppy_selftest: DISCS role=%s of %zu in world, %d typed and named, %d of them "
+            "marked: %ls", isHost ? "HOST" : "CLIENT", discs.size(), taken, marked, picked.c_str());
+    if (taken < kTargets)
+        UE_LOGW("floppy_selftest: only %d of %d episodes have a disc the server can type -- the "
+                "rest cannot fire, and their rows below say so", taken, kTargets);
+    else if (marked < kTargets)
+        UE_LOGW("floppy_selftest: %d of %d named discs carry no marker -- the episodes are about "
+                "to use a disc this instrument did not prepare", kTargets - marked, kTargets);
 }
 
 // ---- the episodes ------------------------------------------------------------------------------
@@ -304,13 +349,21 @@ void Fire(size_t i) {
                 after.floppyType, before.readWrites, after.readWrites, before.dataNum,
                 after.dataNum, before.objectDataLen, after.objectDataLen, discGone ? 1 : 0,
                 s.under_test);
-        if (after.floppyType < 0) {
-            o.note = "the slot stayed empty";
+        const bool tookContent = after.objectDataLen > before.objectDataLen ||
+                                 after.dataNum > before.dataNum ||
+                                 after.readWrites != before.readWrites;
+        if (after.floppyType >= 0) {
+            o.note = "slot filled";
+        } else if (tookContent) {
+            o.note = "the slot took the content but no type";
+            UE_LOGW("floppy_selftest: %s left the slot TYPELESS -- the box holds the disc's data "
+                    "and its type is still %d, and every eject gates on a type, so this disc "
+                    "cannot come back out on any peer", s.id, after.floppyType);
+        } else {
+            o.note = "the slot did not change";
             UE_LOGW("floppy_selftest: %s changed NOTHING in the slot -- the TRIGGER is inert (a "
                     "busy slot or a zip disc refuses the insert), so nothing downstream of it can "
                     "be read from this run", s.id);
-        } else {
-            o.note = "slot filled";
         }
         return;
     }
