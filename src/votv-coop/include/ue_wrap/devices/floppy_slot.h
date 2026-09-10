@@ -59,7 +59,8 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out);
 // engine-side mint, then the kind's own refresh.
 bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& content);
 
-// The empty slot: floppyType and readWrites back to -1, strings and rows emptied, refresh run.
+// The empty slot: floppyType to -1 and the rows cleared -- what the device's own eject writes,
+// and no more. Its deferred spawn reads floppyReadwrites and floppyObjectData a second later.
 bool ClearSlot(DeviceKind kind, void* device);
 
 // Level change: the classes, offsets and functions are world-scoped.

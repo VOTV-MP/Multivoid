@@ -209,6 +209,10 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out) {
     const auto* p = reinterpret_cast<const uint8_t*>(device);
     uint64_t h = kFnvOffset;
     Mix(h, p + d->offType, sizeof(int32_t));
+    // An empty slot is a type, and its other fields are residue an eject left for its own deferred
+    // spawn. Hashing them would raise an edge for a change nobody carries or applies: the game's
+    // own eject drops that residue a second later, and a poll reading it would publish twice.
+    if (*reinterpret_cast<const int32_t*>(p + d->offType) < 0) { out = h; return true; }
     Mix(h, p + d->offReadWrites, sizeof(int32_t));
     if (d->offZip >= 0) Mix(h, p + d->offZip, 1);
     MixFString(h, device, d->offNametype);
@@ -236,9 +240,20 @@ bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& 
     return true;
 }
 
+// Emptying a slot writes what the device's OWN eject writes at the moment it empties it, and
+// nothing else. The eject is two-phase: it clears floppyType and floppyData, and about a second
+// later, when the carrier's timeline finishes, the deferred spawn reads floppyReadwrites and
+// floppyObjectData to rebuild the disc from. Zeroing those here as well destroys the second
+// phase's inputs, and the disc comes back with no content under a freshly minted key. They are
+// residue the next insert overwrites; the type is what every busy and eject gate reads.
 bool ClearSlot(DeviceKind kind, void* device) {
-    Scalars empty{};
-    return WriteSlot(kind, device, empty, Content{});
+    const Desc* d = DescOf(kind);
+    if (!device || !d || !d->resolved) return false;
+    auto* p = reinterpret_cast<uint8_t*>(device);
+    *reinterpret_cast<int32_t*>(p + d->offType) = -1;
+    WriteFStringArrayField(device, d->offData, {});
+    Refresh(*d, device, -1);
+    return true;
 }
 
 void ResetCache() {

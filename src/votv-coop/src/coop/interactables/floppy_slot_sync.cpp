@@ -104,8 +104,12 @@ struct Slot {
     FS::Content c;
 };
 
+// An empty slot is a type and nothing else. What the device still holds in its other fields is
+// residue its own eject left behind, so carrying it would put a stale disc's JSON on the wire for
+// every empty box in the connect set.
 void PackSlot(std::vector<uint8_t>& b, const Slot& s) {
     PutU32(b, static_cast<uint32_t>(s.st.floppyType));
+    if (s.st.floppyType < 0) return;
     PutU32(b, static_cast<uint32_t>(s.st.readWrites));
     b.push_back(s.st.zip ? 1 : 0);
     PutStr32(b, s.c.objectData);
@@ -118,6 +122,8 @@ void PackSlot(std::vector<uint8_t>& b, const Slot& s) {
 
 bool ParseSlot(Reader& r, Slot& out) {
     out.st.floppyType = static_cast<int32_t>(r.U32());
+    if (!r.ok) return false;
+    if (out.st.floppyType < 0) return true;  // empty: the type is the whole body
     out.st.readWrites = static_cast<int32_t>(r.U32());
     out.st.zip        = r.U8() != 0;
     out.c.objectData  = r.Str32();
@@ -214,6 +220,11 @@ std::vector<std::vector<uint8_t>> PackCanonicalSet(
 }
 
 bool SlotEquals(const Slot& a, const Slot& b) {
+    // Two empty slots are the same slot. What each still holds in floppyReadwrites and
+    // floppyObjectData is residue its own eject left for a deferred spawn to read, not state, and
+    // comparing it would make every peer rewrite an empty box it already agrees about.
+    if (a.st.floppyType < 0 || b.st.floppyType < 0)
+        return a.st.floppyType < 0 && b.st.floppyType < 0;
     return a.st.floppyType == b.st.floppyType && a.st.readWrites == b.st.readWrites &&
            a.st.zip == b.st.zip && a.c.objectData == b.c.objectData && a.c.data == b.c.data;
 }
