@@ -2,13 +2,16 @@
 
 #include "ue_wrap/actors/save_record.h"
 
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/fstring_utils.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 
 #include <cstring>
+#include <unordered_map>
 
 namespace ue_wrap::save_record {
 namespace {
@@ -214,6 +217,89 @@ void WriteSaveRecord(uint8_t* base, const SaveRecord& r) {
         ue_wrap::signal_dynamic::WriteStructLive(
             reinterpret_cast<uint8_t*>(sb) + i * kSignalStride, r.signals[i]);
     WriteArrHeader(base, kSave_signals, sb, static_cast<int32_t>(r.signals.size()));
+}
+
+
+// ---- The GAME's own codec, on a LIVE actor --------------------------------------------------
+
+namespace {
+
+void* g_propCls    = nullptr;  // Aprop_C -- the root the override test measures against
+bool  g_propTried  = false;
+
+// Class -> "declares a getData of its own below Aprop_C". A UClass is immortal once loaded, so
+// this is keyed by the pointer and only ResetCodecCache drops it.
+std::unordered_map<void*, bool> g_overrides;
+
+bool EnsurePropClass() {
+    if (g_propCls) return true;
+    if (g_propTried) return false;   // one walk per world; ResetCodecCache re-arms it
+    g_propTried = true;
+    g_propCls = R::FindClass(L"prop_C");
+    if (!g_propCls)
+        UE_LOGW("save_record: prop_C unresolved -- no prop carries its own save record");
+    return g_propCls != nullptr;
+}
+
+// The most-derived declaration of `name` on `cls`'s chain. FindFunction is exact-owner, so the
+// first hit walking UP from the leaf is the override the engine would dispatch.
+void* MostDerived(void* cls, const wchar_t* name) {
+    for (void* c = cls; c; c = R::SuperStructOf(c))
+        if (void* fn = R::FindFunction(c, name)) return fn;
+    return nullptr;
+}
+
+}  // namespace
+
+bool OverridesGetData(void* cls) {
+    if (!cls || !EnsurePropClass()) return false;
+    const auto it = g_overrides.find(cls);
+    if (it != g_overrides.end()) return it->second;
+    bool owns = false;
+    // The prop lane's membership test, so a class off that chain is not walked to no purpose.
+    if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
+        // Stop AT Aprop_C: its own getData is the base record, and every field of it already
+        // rides the prop spawn row (class, key, name, the saved bools, the transform).
+        for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c)) {
+            if (R::FindFunction(c, L"getData")) { owns = true; break; }
+        }
+    }
+    g_overrides[cls] = owns;
+    return owns;
+}
+
+bool CaptureRecord(void* actor, SaveRecord& out) {
+    if (!actor) return false;
+    void* fn = MostDerived(R::ClassOf(actor), L"getData");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    const int32_t off = f.ParamOffset(L"data");
+    if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
+    if (!Call(actor, f)) return false;
+    // The record the call left in the frame owns engine-allocated nested arrays; ReadSaveRecord
+    // copies every one out, and the frame's own buffers are the deliberate leak this layer's
+    // out-param doctrine already carries (fstring_utils.h). Bounded here by the membership test:
+    // only a class that declares its own getData is ever captured, at birth rates.
+    ReadSaveRecord(static_cast<const uint8_t*>(f.data()) + off, out);
+    return true;
+}
+
+bool ApplyRecord(void* actor, const SaveRecord& r) {
+    if (!actor) return false;
+    void* fn = MostDerived(R::ClassOf(actor), L"loadData");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    const int32_t off = f.ParamOffset(L"data");
+    if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
+    // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r);
+    return Call(actor, f);
+}
+
+void ResetCodecCache() {
+    g_propCls = nullptr;
+    g_propTried = false;
+    g_overrides.clear();
 }
 
 }  // namespace ue_wrap::save_record
