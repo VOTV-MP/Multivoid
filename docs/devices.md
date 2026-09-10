@@ -183,6 +183,12 @@ runs in two phases: it clears those two, and about a second later, when the carr
 finishes, the deferred spawn reads the remaining writes and the save JSON to rebuild the disc.
 Anything that zeroes those in between hands the player back a blank disc under a new identity.
 
+A disc a peer ejects reaches the others through the ordinary birth channel: a client's own fresh
+prop spawn is not broadcast, so its device's eject is reported to the host, which authors the disc
+and broadcasts it like any other world prop. Three other lineages travel that way, and all three
+are born into a hand and spawn inert on the host until the holder's pose stream drives them; a
+disc is not held by anyone, so it falls on the host instead.
+
 A device takes a disc by two entries, and only one of them is a player. Pressing E with a disc in
 hand is deliberate, happens on one machine, and the slot carries its outcome. The other is the
 hitbox reporting whatever touches the slot -- and an eject spawns the disc INSIDE the box it came
@@ -250,7 +256,6 @@ an error line.
 | The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
-| A disc a CLIENT ejects reaches only that client: a client's own fresh prop spawn is not broadcast, and the disc is not one of the three classes the host will author from a client's birth report. It survives on the client and is gone after a rejoin, which loads the host's world | `[V]` `coop/props/prop_drop_intent` whitelists the reel, the desk module and the drive |
 | A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried | `[V]` the lane polls at 1 Hz; a faster poll would narrow the window rather than close it |
 
 ## Code map

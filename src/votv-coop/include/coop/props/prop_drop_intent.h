@@ -49,13 +49,15 @@ void NoteClientKeyedDestroy(const std::wstring& key);
 void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                       uint8_t senderSlot);
 
-// HOST handler for ReliableKind::ReelEjectIntent -- a CLIENT's device eject birthed a prop in its
-// hands, and a client Aprop_C spawn never broadcasts, so the host authors it through the SAME
-// HostSpawnPlacedProp path. CLASS-WHITELISTED to THREE lineages, not a general client-spawn door:
-// the reel (caddy and reelbox), the desk module, and the drive. The kind's name predates the other
-// two and now understates it; the receiver gate and the client's own fresh-birth gate name the same
-// three. The kSleep flag makes the host copy spawn inert until the client's held-prop pose stream
-// drives it, and the prop's own state follows on PropSaveDataIntent in the same FIFO.
+// HOST handler for ReliableKind::ReelEjectIntent -- a CLIENT's device eject birthed a prop that a
+// client Aprop_C spawn never broadcasts, so the host authors it through the SAME HostSpawnPlacedProp
+// path. CLASS-WHITELISTED to FOUR lineages, not a general client-spawn door: the reel (caddy and
+// reelbox), the desk module, the drive and the floppy disc. The kind's name predates the other
+// three and now understates it; the receiver gate and the client's own fresh-birth gate name the
+// same four. The kSleep flag makes the host copy spawn inert until the client's held-prop pose
+// stream drives it, and it is set for the three born INTO A HAND -- a disc is dropped at its
+// device's mouth with nobody holding it, so it falls on the host instead. The prop's own state
+// follows on PropSaveDataIntent in the same FIFO.
 void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                        uint8_t senderSlot);
 

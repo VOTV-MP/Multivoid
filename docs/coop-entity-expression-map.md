@@ -82,7 +82,9 @@ are peer-gated. `[V]`
   longer does: an ejected disc is born where the box that ejected it turned its own collision off,
   and the box on the other machine, whose eject never ran, took it through the same overlap the
   insert uses, so the disc died about a second after it appeared, on both machines. A disc is now
-  marked IN TRANSIT at its own spawn, and no device swallows one on any peer until the mark lapses. `[V]` A desk module plugged in is destroyed in the
+  marked IN TRANSIT at its own spawn, and no device swallows one on any peer until the mark lapses. The
+  ejected disc itself travels as an ordinary prop birth, on the whitelist a client's fresh spawn needs
+  to reach the host at all. `[V]` A desk module plugged in is destroyed in the
   hand by the native path and rides the same seam; an unplugged one is born into the hand. `[V]`
 - **The connect reconcile.** Explicit deletes, the claim-tracked snapshot bracket, position
   corrections, and the quiescence-gated divergence sweep bounded by a per-class completeness floor

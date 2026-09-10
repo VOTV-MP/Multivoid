@@ -18,6 +18,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"         // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop.h"                   // the prop lineage, key, name and parity-identity accessors
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
@@ -322,11 +323,19 @@ void Tick(coop::net::Session* session) {
         // tracked actors by the eid check, and the actor already carries the key the init minted
         // inside the finish spawn). Author it host-side via the eject intent, the same spawn
         // author, class-whitelisted at the host. The whitelist widens to desk modules (the unplug
-        // births a module into the hand, the same local-only-ghost class) and to drives (a rack
+        // births a module into the hand, the same local-only-ghost class), to drives (a rack
         // take on a client births a payload-bearing drive into the hand; the payload rides the
-        // drive payload broadcast at adoption, so no birth scalar is needed).
+        // drive payload broadcast at adoption, so no birth scalar is needed) and to floppy discs.
+        //
+        // The disc is the one that is NOT born into a hand: a device's eject drops it in the world
+        // at the slot's mouth. Before it was admitted, a disc a client ejected from a device it had
+        // not itself filled reached no other peer at all -- it lived on one machine until a rejoin
+        // loaded the host's world without it. The park covers only a disc that same client put in.
+        const bool isDiscBirth = ue_wrap::floppy_disc::EnsureResolved() &&
+                                 ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(e.actor));
         const bool freshBirth = !parked &&
-            ((ue_wrap::tape_caddy::EnsureResolved() &&
+            (isDiscBirth ||
+             (ue_wrap::tape_caddy::EnsureResolved() &&
               ue_wrap::tape_caddy::IsReelClass(R::ClassOf(e.actor))) ||
              (ue_wrap::phys_mods::EnsureResolved() &&
               ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
@@ -356,8 +365,12 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
         }
         if (freshBirth) {
-            // Born asleep on the host (no free fall; the held-prop pose stream takes over).
-            p.physFlags |= pf::kSleep;
+            // Born asleep on the host (no free fall; the held-prop pose stream takes over) -- for
+            // the three lineages that are born INTO A HAND. A disc is not: its device drops it at
+            // the slot's mouth with nobody holding it, and a sleeping host copy would park in mid
+            // air while the client's own copy fell, and then drag the client's back up the moment
+            // the pose stream took over. It falls on the host, which is the peer that owns it.
+            if (!isDiscBirth) p.physFlags |= pf::kSleep;
             // A locally born drive carries its payload in its data slot: note the authorship, so
             // the drive sync broadcasts it at adoption (the first eid sight); un-noted first sights
             // stay prime-only.
@@ -435,8 +448,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnReelEjectIntent");
     if (session.role() != coop::net::Role::Host) return;
     // The client fresh-birth author, class-whitelisted: reels (the caddy eject), desk modules
-    // (the socket unplug) and drives. Not a general client-spawn door; any other class here is a
-    // protocol violation, dropped.
+    // (the socket unplug), drives and floppy discs. Not a general client-spawn door; any other
+    // class here is a protocol violation, dropped.
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
     void* clsObj = R::FindClass(cls.c_str());
     const bool isReel = clsObj && ue_wrap::tape_caddy::EnsureResolved() &&
@@ -445,7 +458,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                           ue_wrap::phys_mods::IsModuleClass(clsObj);
     const bool isDrive = clsObj && ue_wrap::drive_chain::EnsureResolved() &&
                          ue_wrap::drive_chain::IsDriveClass(clsObj);
-    if (!isReel && !isModule && !isDrive) {
+    const bool isDisc = clsObj && ue_wrap::floppy_disc::EnsureResolved() &&
+                        ue_wrap::floppy_disc::IsDiscClass(clsObj);
+    if (!isReel && !isModule && !isDrive && !isDisc) {
         UE_LOGW("[PROP-DROP] HOST birth intent from slot=%u rejected: class '%ls' not whitelisted",
                 senderSlot, cls.c_str());
         return;
