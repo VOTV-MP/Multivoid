@@ -26,17 +26,26 @@ namespace FD = ue_wrap::floppy_disc;
 namespace FS = ue_wrap::floppy_slot;
 namespace P  = ue_wrap::profile;
 
-// The window sits between two of the Blueprint's own numbers. Its FLOOR is the overlap a disc's
-// own materialisation raises: the hitbox reports it on the spawn frame and the box defers the
-// insert by one tick, so a frame or two. Its CEILING is the second for which the box that ejected
-// keeps its hitbox off -- re-enabling a collider re-reports every body already inside it, so at
-// that second the game deliberately re-takes a disc still sitting in the slot, and ending first
-// leaves the peer that DID eject behaving exactly as single player does.
+// One window for every device, because the mark is on the DISC and a disc does not know which
+// slot it came out of.
+//
+// Its FLOOR is the overlap a disc's own materialisation raises: the hitbox reports it on the spawn
+// frame and the device defers the insert by one tick, so a frame or two. Its CEILING is the pause
+// for which the device that ejected keeps its own hitbox off -- re-enabling a collider re-reports
+// every body already inside it, so at the end of that pause the game deliberately re-takes a disc
+// still sitting in the slot. The two devices do not agree on the pause: the signal server waits a
+// second, the laptop half of one.
+//
+// 750 ms sits under the server's and OVER the laptop's, and the difference is deliberate rather
+// than overlooked. Under the server's, the peer that ejected keeps single-player behaviour exactly.
+// Over the laptop's, that peer's re-take is delayed by a quarter second and nothing else changes:
+// it still happens, the slot lane still carries it, and the peers still converge -- which is the
+// same outcome the server's case has, since the peer that did NOT eject re-takes in neither.
+// Splitting the constant per device would buy that quarter second at the price of a disc having to
+// remember its origin.
 //
 // Lapsing costs nothing: the disc becomes an ordinary disc and the native rule resumes, with no
-// retry, no resend and nobody waiting. Too short and one box swallows a disc the peers still agree
-// on; too long and a disc cannot be pushed into a slot by touch for a moment. E inserts it either
-// way.
+// retry, no resend and nobody waiting.
 constexpr uint64_t kTransitMs = 750;
 
 // A disc materialising is a spawn, and a spawn burst is a join. Sized so a join's worth of discs
