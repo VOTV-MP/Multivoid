@@ -165,7 +165,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
 // mark an incoming spawn, so the host's own finish-spawn watcher catches it and broadcasts
 // the authoritative spawn to every peer. Returns the spawned actor, or null.
 void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::wstring& cls,
-                          const std::wstring& key) {
+                          const std::wstring& key, uint8_t authorSlot) {
     void* clsObj = R::FindClass(cls.c_str());
     if (!clsObj) {
         UE_LOGW("[PROP-DROP] HOST FindClass('%ls') failed -- cannot spawn placed prop key='%ls'",
@@ -236,7 +236,7 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
     // publishing that as canonical would overwrite the author's real state on the author's own
     // machine.
     if (!coop::prop_save_data::ApplyParked(actor, key))
-        coop::prop_save_data::ExpectRecordFor(key);
+        coop::prop_save_data::ExpectRecordFor(key, authorSlot);
     return actor;
 }
 
@@ -422,7 +422,7 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
         UE_LOGW("[PROP-DROP] HOST already has key='%ls' live -- skip drop-intent re-spawn (no dup)", key.c_str());
         return;
     }
-    void* actor = HostSpawnPlacedProp(p, cls, key);
+    void* actor = HostSpawnPlacedProp(p, cls, key, senderSlot);
     if (actor) {
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
                 "-- FinishSpawn watcher broadcasts it this tick",

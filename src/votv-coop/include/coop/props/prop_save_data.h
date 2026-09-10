@@ -40,9 +40,10 @@ void DeclareClassOwnedElsewhere(const wchar_t* className);
 bool Covers(void* actor);
 
 // Publish `actor`'s record. On the host that is PropSaveData to every peer; on a client it is
-// PropSaveDataIntent to the host, whose re-publish is also the acknowledgement. False when the
-// class is not covered, the capture fails, or the send did not take every chunk -- a caller must
-// not ignore that: a dropped record on this lane is a permanent divergence.
+// PropSaveDataIntent to the host, whose re-publish is also the acknowledgement. False when the class
+// is not covered, no peer could receive it, the capture fails, or the send did not take every chunk.
+// A caller may ignore it: a refused send is registered and re-sent from the live actor on a widening
+// backoff, and only a give-up past that ceiling is logged as a divergence.
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key);
 
 // The same record to ONE peer (the join seed). Host side.
@@ -56,9 +57,11 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
 // The host spawned this prop FROM a client's intent, so the client's record for it is still in
 // flight behind that intent. Until it lands, the host must not publish a record for this key: what
 // it would publish is the class default it just spawned, and every peer -- the author included --
-// would take that over the state the author actually has. Cleared when the record arrives, when
-// the prop dies, or at teardown.
-void ExpectRecordFor(const std::wstring& key);
+// would take that over the state the author actually has. `senderSlot` is who is owed. Cleared when
+// the record arrives, when that peer goes, at teardown, or on a timeout -- an intent can be lost to
+// a refused rate window or a malformed body, and a key nobody clears would silence this lane's
+// publisher for that prop for the whole session, the join seed included.
+void ExpectRecordFor(const std::wstring& key, uint8_t senderSlot);
 
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one

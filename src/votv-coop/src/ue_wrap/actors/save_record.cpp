@@ -233,7 +233,8 @@ uint64_t g_nextPropTryMs = 0;
 // immortal once loaded, so these are keyed by the pointer and only ResetCodecCache drops them.
 // The verbs are cached because FindFunction walks the WHOLE object array: uncached, every capture
 // and every apply paid that walk, at join-drain rates.
-struct ClassVerbs { void* getData = nullptr; void* loadData = nullptr; bool overrides = false; };
+struct ClassVerbs { void* getData = nullptr; void* loadData = nullptr; bool overrides = false;
+                    bool conventionChecked = false; };
 std::unordered_map<void*, ClassVerbs> g_verbs;
 
 uint64_t NowMs() {
@@ -249,7 +250,15 @@ bool EnsurePropClass() {
     if (now < g_nextPropTryMs) return false;
     g_nextPropTryMs = now + 1000;
     g_propCls = R::FindClass(L"prop_C");
-    if (!g_propCls) return false;
+    if (!g_propCls) {
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("save_record: prop_C not loaded -- no prop carries its own save record yet; "
+                    "retrying at 1 Hz (this line prints once)");
+        }
+        return false;
+    }
     g_baseGetData = R::FindFunction(g_propCls, L"getData");
     if (!g_baseGetData)
         UE_LOGW("save_record: prop_C has no getData -- the base half of a record cannot be read, "
@@ -271,9 +280,12 @@ const ClassVerbs* VerbsFor(void* cls) {
     const auto it = g_verbs.find(cls);
     if (it != g_verbs.end()) return &it->second;
     ClassVerbs v;
-    v.getData  = MostDerived(cls, L"getData");
-    v.loadData = MostDerived(cls, L"loadData");
+    // The lineage FIRST: a class off the Aprop_C chain resolves nothing. MostDerived walks the
+    // whole object array once per level of the chain, and the key index this lane is driven from
+    // also holds trash piles, clumps and chip piles, none of which descend from Aprop_C.
     if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
+        v.getData  = MostDerived(cls, L"getData");
+        v.loadData = MostDerived(cls, L"loadData");
         // Stop AT Aprop_C: its own getData is the base record, and every field of it already
         // rides the prop spawn row (class, key, name, the saved bools, the transform).
         for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c))
@@ -296,6 +308,42 @@ bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
     return true;
 }
 
+// Element 0 of a group is the base class's by convention, and the splice below depends on it. A
+// rule that names a gate should have one: the first apply for a class captures the LEAF record too
+// and says so if the leaf wrote where the base writes. Once per class, then never again.
+// The splice keeps element 0 of a group for the base class. That is the game's own convention --
+// its slot setter takes an explicit index per group -- but it is NOT universal, and a class that
+// breaks it would not LOSE its field, it would read the base's unrelated value into it: a lifespan
+// arriving as a timer. So the convention is MEASURED per class, once, against the game rather than
+// asserted from a reading, and a class that fails it leaves the lane. Its save state then travels
+// no worse than before this codec existed; the warning names it for a carrier of its own.
+//
+// Both dispatches are paid once per class and cached with the verbs.
+bool EnsureConventionChecked(void* actor, void* cls) {
+    auto it = g_verbs.find(cls);
+    if (it == g_verbs.end()) return false;
+    if (it->second.conventionChecked) return it->second.overrides;
+    it->second.conventionChecked = true;
+    if (!it->second.overrides) return false;
+    SaveRecord base, leaf;
+    if (!CallForRecord(actor, g_baseGetData, base)) return true;    // unresolvable: re-checked never; the apply's own guard catches it
+    if (!CallForRecord(actor, it->second.getData, leaf)) return true;
+    const wchar_t* which = nullptr;
+    auto clash = [](const auto& a, const auto& b) {
+        return !a.empty() && !b.empty() && a[0] != b[0];
+    };
+    if (clash(leaf.bools,  base.bools))  which = L"bools";
+    else if (clash(leaf.floats, base.floats)) which = L"floats";
+    else if (clash(leaf.names,  base.names))  which = L"names";
+    if (!which) return true;
+    it->second.overrides = false;   // and so Covers() is false for this class from here on
+    UE_LOGW("save_record: '%ls' writes element 0 of `%ls`, where Aprop_C writes too -- the base "
+            "splice would hand it the base's value instead of its own, so this class LEAVES the "
+            "save-record lane. Its state needs a carrier of its own.",
+            R::ToString(R::NameOf(cls)).c_str(), which);
+    return false;
+}
+
 // Overwrite `dst[i]` with `src[i]` wherever src holds a group -- the receiver's own value for a
 // group the BASE class wrote, the sender's for one only the leaf class knows about.
 template <class V>
@@ -314,20 +362,26 @@ bool OverridesGetData(void* cls) {
 
 bool CaptureRecord(void* actor, SaveRecord& out) {
     if (!actor) return false;
-    const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
-    return v && CallForRecord(actor, v->getData, out);
+    void* cls = R::ClassOf(actor);
+    const ClassVerbs* v = VerbsFor(cls);
+    if (!v || !v->getData) return false;
+    // Measured before the first record of this class ever leaves: a class that fails the splice
+    // convention must not be published, or every receiver would drop what it sent.
+    if (!EnsureConventionChecked(actor, cls)) return false;
+    return CallForRecord(actor, v->getData, out);
 }
 
 bool ApplyRecord(void* actor, const SaveRecord& r) {
     if (!actor || !EnsurePropClass() || !g_baseGetData) return false;
     const ClassVerbs* v = VerbsFor(R::ClassOf(actor));
-    if (!v || !v->loadData) return false;
-
-    // The splice is safe because the base writes element 0 of bools, floats and names and a leaf
-    // never does: it takes a higher slot, or a group the base does not touch, or rebuilds a group
-    // with element 0 read back out first. That is the game's own convention -- its slot setter
-    // takes an explicit index per group -- checked against every covered class's own bytecode. A
-    // leaf that ever wrote element 0 would lose that field here, which is the safe way to fail.
+    // `overrides` and not merely "a loadData exists somewhere": this function dispatches
+    // Aprop_C::getData on `actor` below, and Aprop_C::getData reads key, name, nametag and four
+    // bools at Aprop_C's own property offsets. On an actor off that chain those offsets address
+    // unrelated memory, and the caller's actor comes from a KEY the wire chose -- the key index
+    // also holds trash piles, clumps and chip piles, none of which descend from Aprop_C. So the
+    // lineage is a precondition of the codec, checked here rather than trusted from a call site.
+    if (!v || !v->overrides || !v->loadData) return false;
+    if (!EnsureConventionChecked(actor, R::ClassOf(actor))) return false;
 
     // THE BASE HALF IS NEVER THE SENDER'S. Aprop_C::loadData restores the save Key, the transform
     // scale, the four saved bools, the lifespan and the two names from whatever record it is
