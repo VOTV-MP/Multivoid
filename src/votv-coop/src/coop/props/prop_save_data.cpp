@@ -23,6 +23,11 @@ namespace SR = ue_wrap::save_record;
 namespace SW = coop::save_record_wire;
 namespace PT = coop::prop_element_tracker;
 
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 // The body grammar, version-tagged so a future field is a parse branch and not a guess.
 constexpr uint8_t kBodyVersion = 1;
 
@@ -35,10 +40,23 @@ constexpr size_t kMaxKeyChars = 31;
 // the whole prop can re-publish.
 size_t MaxRecordBytes() { return coop::blob_chunks::MaxBlobBytes() - 64; }
 
-// The park: records whose prop has not arrived. Keyed by Key and NEVER expired (the header says
-// why). Capped by count so a peer streaming garbage cannot grow it without bound; an eviction
-// drops the OLDEST and is loud.
-constexpr size_t kMaxParked = 256;
+// The park: records whose prop has not arrived, or whose apply has not had a budget slot yet.
+// Keyed by Key and NEVER expired (the header says why). Capped by count so a peer streaming
+// garbage cannot grow it without bound; an eviction drops the OLDEST and is loud. Sized for a
+// legitimate join: one record per covered prop, measured at 766 in the test world, and a record is
+// a few hundred bytes, so the ceiling costs a megabyte or two at worst.
+constexpr size_t kMaxParked = 4096;
+
+// An apply is a ProcessEvent into the prop's own loadData, which on the Aprop_C lineage re-runs
+// init(), physicsImpact->init() and setNametag() -- the same work a save load does. Measured at
+// ~0.7 ms: applying a whole join's worth in the drain frame that closes the snapshot put 519 ms on
+// a frame already 1.5 s long. So applies are BUDGETED per frame and the surplus waits in the park,
+// which is the queue this lane already has. 16 a frame is ~11 ms, and a 766-record join converges
+// in under a second with every prop already correct in everything but its save payload.
+constexpr int    kAppliesPerFrame = 16;
+// How far into the park one frame looks. The park is ordered by Key, so the cursor rotates through
+// it and nothing starves; bounded so a large park is never a per-frame walk of thousands.
+constexpr size_t kParkScanPerFrame = 64;
 
 struct Parked {
     SR::SaveRecord rec;
@@ -47,6 +65,12 @@ struct Parked {
 };
 std::map<std::wstring, Parked> g_parked;
 uint64_t g_parkSeq = 1;
+std::wstring g_parkCursor;      // where the next frame's park scan resumes
+int g_applyBudget = kAppliesPerFrame;
+uint64_t g_nextSweepMs = 0;
+// Applied since connect, both paths. Per-record lines are not logged -- a join lands hundreds --
+// so this is the number a run is read for, printed when the park empties.
+uint64_t g_appliedTotal = 0;
 
 coop::blob_chunks::Assembler g_asmCanonical;
 coop::blob_chunks::Assembler g_asmIntent;
@@ -93,16 +117,16 @@ void Park(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot) {
 
 // Apply to the live actor if there is one, park by Key if there is not.
 void LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlot) {
-    void* actor = PT::ResolveLiveActorByKey(key);
+    // The index only, never ResolveLiveActorByKey: that one falls back to a cold GUObjectArray
+    // scan on a miss, and a join hands this lane hundreds of arrivals at once. A prop the index
+    // does not know yet is parked and retried at O(1) on the next frame instead.
+    void* actor = (g_applyBudget > 0) ? PT::FindLiveActorByKey(key) : nullptr;
     if (actor && SR::ApplyRecord(actor, rec)) {
-        UE_LOGI("prop_save_data: record applied to live prop (key '%ls', from slot %u)",
-                key.c_str(), static_cast<unsigned>(senderSlot));
+        --g_applyBudget;
+        ++g_appliedTotal;
         return;
     }
     Park(key, std::move(rec), senderSlot);
-    UE_LOGI("prop_save_data: record parked by key (key '%ls', from slot %u, %zu parked) -- "
-            "applies when that prop appears", key.c_str(), static_cast<unsigned>(senderSlot),
-            g_parked.size());
 }
 
 // Would a reliable of this kind reach anyone right now? Session::SendReliable skips a slot that is
@@ -232,6 +256,7 @@ bool ApplyParked(void* actor, const std::wstring& key) {
     if (it == g_parked.end()) return false;
     const bool ok = SR::ApplyRecord(actor, it->second.rec);
     if (ok) {
+        ++g_appliedTotal;
         UE_LOGI("prop_save_data: parked record applied at birth (key '%ls')", key.c_str());
         g_parked.erase(it);
     } else {
@@ -242,12 +267,50 @@ bool ApplyParked(void* actor, const std::wstring& key) {
 }
 
 void Drive() {
+    // A fresh apply budget per frame, then spend what is left of it on the park. The scan resumes
+    // at the cursor and wraps, so a record whose prop appears late is reached in bounded time
+    // however large the park is.
+    g_applyBudget = kAppliesPerFrame;
+    size_t looked = 0;
+    int    applied = 0;
+    auto it = g_parked.lower_bound(g_parkCursor);
+    while (looked < kParkScanPerFrame && g_applyBudget > 0 && !g_parked.empty()) {
+        if (it == g_parked.end()) { it = g_parked.begin(); g_parkCursor.clear(); }
+        ++looked;
+        void* actor = PT::FindLiveActorByKey(it->first);
+        if (actor && SR::ApplyRecord(actor, it->second.rec)) {
+            --g_applyBudget;
+            ++g_appliedTotal;
+            ++applied;
+            it = g_parked.erase(it);
+            continue;
+        }
+        g_parkCursor = it->first;
+        ++it;
+    }
+    if (applied && !g_parked.empty()) {
+        UE_LOGI("prop_save_data: applied %d parked record(s) this frame (%zu still parked)",
+                applied, g_parked.size());
+    } else if (applied) {
+        UE_LOGI("prop_save_data: park drained -- %llu record(s) applied since connect",
+                static_cast<unsigned long long>(g_appliedTotal));
+    }
+
+    // The assembler TTL sweep is 1 Hz, not per frame: a half-assembly is minutes old before it is
+    // stale, and this runs from the gameplay tick.
+    const uint64_t nowMs = NowMs();
+    if (nowMs < g_nextSweepMs) return;
+    g_nextSweepMs = nowMs + 1000;
     const auto now = std::chrono::steady_clock::now();
     g_asmCanonical.Sweep(now, std::chrono::seconds(30));
     g_asmIntent.Sweep(now, std::chrono::seconds(30));
 }
 
 void OnDisconnect() {
+    g_parkCursor.clear();
+    g_applyBudget = kAppliesPerFrame;
+    g_nextSweepMs = 0;
+    g_appliedTotal = 0;
     // The codec's cached prop_C and per-class override answers are world-scoped: a Blueprint class
     // can be unloaded and reloaded across a level change, and a stale UClass pointer would answer
     // the membership test for a class that no longer exists.

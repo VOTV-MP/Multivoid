@@ -53,13 +53,17 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
              bool intent);
 
 // Apply a parked record to `actor`, whose Key is now readable; called at every mirror-birth seam.
+// Unbudgeted, unlike the park drain: a newborn mirror must be right at birth, and the birth rate is
+// already paced by whatever seam produced it.
 // A record for a prop this peer has not created yet is parked BY KEY, with no expiry and no retry
 // count: an element id names an actor, and the point of the lane is that the actor is destroyed
 // and remade, while a Key survives that. The park is capped by count and an eviction is loud,
 // because a bound on memory is not a deadline on an identity.
 bool ApplyParked(void* actor, const std::wstring& key);
 
-// ~1 Hz: sweeps the chunk assemblers. The parked records are NOT swept (see above).
+// Per frame: spends a bounded apply budget on the park (an apply is a ProcessEvent into the prop's
+// own loadData, so a join's worth of them in one frame is a stall), and sweeps the chunk
+// assemblers at 1 Hz. The parked records are never swept -- only applied (see above).
 void Drive();
 
 void OnDisconnect();
