@@ -35,13 +35,6 @@ constexpr size_t kMaxKeyChars = 31;
 // the whole prop can re-publish.
 size_t MaxRecordBytes() { return coop::blob_chunks::MaxBlobBytes() - 64; }
 
-// The join seed's budget. The measured field defect this whole arc sits next to is joiners
-// abandoning after 2-3 s, so the seed gets a stated ceiling rather than "however many there are":
-// 256 KB and 512 records, whichever binds first, on the Bulk lane behind the snapshot. Both are
-// logged when they bind, because a silently short seed is a data-loss defect wearing a budget.
-constexpr size_t kSeedByteBudget  = 256 * 1024;
-constexpr int    kSeedRecordCap   = 512;
-
 // The park: records whose prop has not arrived. Keyed by Key and NEVER expired (the header says
 // why). Capped by count so a peer streaming garbage cannot grow it without bound; an eviction
 // drops the OLDEST and is loud.
@@ -54,8 +47,6 @@ struct Parked {
 };
 std::map<std::wstring, Parked> g_parked;
 uint64_t g_parkSeq = 1;
-
-coop::net::Session* g_session = nullptr;
 
 coop::blob_chunks::Assembler g_asmCanonical;
 coop::blob_chunks::Assembler g_asmIntent;
@@ -114,6 +105,16 @@ void LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
             g_parked.size());
 }
 
+// Would a reliable of this kind reach anyone right now? Session::SendReliable skips a slot that is
+// not world-ready for a kind that is not pre-world sendable, and this lane is not one, so during a
+// joiner's load window every send is refused. That is not a divergence and must not be reported as
+// one: the joiner takes each record behind its own spawn row when the prop snapshot drains.
+bool AnyPeerWouldTake(const coop::net::Session* s) {
+    for (int i = 0; i < static_cast<int>(coop::net::kMaxPeers); ++i)
+        if (s->IsSlotWorldReady(i)) return true;
+    return false;
+}
+
 bool SendBody(coop::net::Session* s, int peerSlot, const std::wstring& key,
               const SR::SaveRecord& rec) {
     const std::vector<uint8_t> body = BuildBody(key, rec);
@@ -144,6 +145,10 @@ bool Covers(void* actor) {
 
 bool Publish(coop::net::Session* s, void* actor, const std::wstring& key) {
     if (!s || !actor || key.empty() || key.size() > kMaxKeyChars) return false;
+    // Nobody to publish to: return before the capture, not at the send. A host loading its own
+    // world births every keyed prop it owns, and paying getData plus a serialize per prop for a
+    // send that cannot land is the whole cost of the lane spent on nothing.
+    if (!s->connected() || !AnyPeerWouldTake(s)) return false;
     if (!Covers(actor)) return false;
     SR::SaveRecord rec;
     if (!SR::CaptureRecord(actor, rec)) {
@@ -156,6 +161,7 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key) {
 
 bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::wstring& key) {
     if (!s || !actor || peerSlot < 0 || key.empty() || key.size() > kMaxKeyChars) return false;
+    if (!s->IsSlotWorldReady(peerSlot)) return false;
     if (!Covers(actor)) return false;
     SR::SaveRecord rec;
     if (!SR::CaptureRecord(actor, rec)) return false;
@@ -169,43 +175,6 @@ bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireK
     w.reserve(key.len);
     for (uint8_t i = 0; i < key.len; ++i) w.push_back(static_cast<wchar_t>(key.data[i]));
     return peerSlot < 0 ? Publish(s, actor, w) : PublishToSlot(s, peerSlot, actor, w);
-}
-
-void SetSession(coop::net::Session* s) { g_session = s; }
-
-int QueueConnectBroadcastForSlot(int peerSlot) {
-    coop::net::Session* s = g_session;
-    if (!s || peerSlot < 0) return 0;
-    std::vector<PT::KeyIndexEntry> entries;
-    PT::CollectKeyIndexEntries(entries);
-    int    shipped = 0, skippedBudget = 0;
-    size_t bytes = 0;
-    for (const PT::KeyIndexEntry& e : entries) {
-        if (!e.actor || e.key.empty()) continue;
-        if (!R::IsLiveByIndex(e.actor, e.internalIdx)) continue;
-        if (!Covers(e.actor)) continue;
-        SR::SaveRecord rec;
-        if (!SR::CaptureRecord(e.actor, rec)) continue;
-        const std::vector<uint8_t> body = BuildBody(e.key, rec);
-        if (shipped >= kSeedRecordCap || bytes + body.size() > kSeedByteBudget) {
-            ++skippedBudget;
-            continue;
-        }
-        if (body.size() > MaxRecordBytes()) continue;  // SendBody would refuse it; counted below
-        if (coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::PropSaveData,
-                                              g_blobSeq++, body)) {
-            bytes += body.size();
-            ++shipped;
-        }
-    }
-    if (skippedBudget) {
-        UE_LOGW("prop_save_data: join seed hit its budget (%d record(s), %zu B) -- %d covered "
-                "prop(s) NOT seeded to slot %d; they keep whatever that peer's save holds",
-                shipped, bytes, skippedBudget, peerSlot);
-    }
-    UE_LOGI("prop_save_data: join seed -> slot %d (%d record(s), %zu B, %zu keyed prop(s) "
-            "considered)", peerSlot, shipped, bytes, entries.size());
-    return shipped;
 }
 
 void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_t senderSlot,
@@ -279,7 +248,6 @@ void Drive() {
 }
 
 void OnDisconnect() {
-    g_session = nullptr;
     // The codec's cached prop_C and per-class override answers are world-scoped: a Blueprint class
     // can be unloaded and reloaded across a level change, and a stale UClass pointer would answer
     // the membership test for a class that no longer exists.

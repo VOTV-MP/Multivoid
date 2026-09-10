@@ -175,7 +175,6 @@ void Install(coop::net::Session& session) {
     coop::device_occupancy::Install(&session);  // enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);  // the signal-catch consume replay (dish slew + downloader arm on every peer)
-    coop::prop_save_data::SetSession(&session);  // the per-prop save-record lane's join seed
     coop::laptop_sync::Install(&session);  // the stationary PC power + floppy lane
     coop::laptop_buffer_sync::Install(&session);  // the PC buffer quad
     coop::floppybox_sync::Install(&session);  // the disc crate stack
@@ -256,9 +255,6 @@ void ConnectReplayForSlot(int slot) {
     // position in the snapshot). After the snapshot, so it rides the bulk lane behind it; the
     // client snaps the bound native at quiescence.
     coop::save_transfer::FlushDivergedSavePositionsForSlot(slot);
-    // Each covered prop's own save record, behind the snapshot on the same lane: a prop whose state
-    // changed after this joiner's transferred save was written is not in that save. Budgeted.
-    coop::prop_save_data::QueueConnectBroadcastForSlot(slot);
     coop::item_activate::QueueConnectBroadcastForSlot(slot);
     coop::weather_sync::QueueConnectBroadcastForSlot(slot);
     coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states

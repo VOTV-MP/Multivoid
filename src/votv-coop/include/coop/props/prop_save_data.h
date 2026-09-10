@@ -24,6 +24,10 @@ namespace coop::net { class Session; }
 
 namespace coop::prop_save_data {
 
+// Mid-join needs no seed of its own: the prop snapshot's drain already walks every prop to the
+// joiner, paced over ticks, and each record ships behind its own spawn row there. A seed beside
+// it was a second walk of the same set, and its burst was what refused chunks on the wire.
+
 // True when this actor's class carries save state of its own, i.e. the lane covers it. Cheap
 // after the first call per class; safe to ask on a birth path.
 bool Covers(void* actor);
@@ -41,15 +45,6 @@ bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::
 // an intent adds one line rather than a conversion. peerSlot < 0 is every peer.
 bool PublishWithSpawn(coop::net::Session* s, void* actor, const coop::net::WireKey& key,
                       int peerSlot = -1);
-
-// The session this lane publishes the join seed on (the birth sites pass their own).
-void SetSession(coop::net::Session* s);
-
-// The join seed: every covered prop the host holds, to one joining peer, after the prop snapshot
-// bracket. Bounded by a stated budget -- 256 KB and 512 records, whichever binds first -- because
-// the field failure beside this one is joiners abandoning after two or three seconds. Returns the
-// number of records shipped.
-int QueueConnectBroadcastForSlot(int peerSlot);
 
 // A chunk of either kind off the wire. `intent` distinguishes PropSaveDataIntent (a client's
 // claim, which only the host acts on) from PropSaveData (the canonical). The session is the one
