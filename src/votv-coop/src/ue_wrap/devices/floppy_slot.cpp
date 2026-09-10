@@ -72,11 +72,18 @@ Desc* DescOf(DeviceKind kind) {
 // lib_C::floppyFromType(type, getMesh, getType, __WorldContext, out class, out staticMeshes,
 // out typeName) indexes a seven-entry mesh list, so a type is a valid index or it is not a type.
 
-void* g_libCdo = nullptr;
-void* g_fnFloppyFromType = nullptr;
+void*    g_libCdo = nullptr;
+void*    g_fnFloppyFromType = nullptr;
+uint64_t g_nextLibTryMs = 0;
 
+// The same backoff every other resolve in this file has, for the same reason: FindClassDefaultObject
+// walks the object array rendering a name per entry, and an unresolvable lib_C would pay that on
+// every written box -- a whole join's worth inside one frame.
 bool EnsureLib() {
     if (g_libCdo && g_fnFloppyFromType) return true;
+    const uint64_t now = NowMs();
+    if (now < g_nextLibTryMs) return false;
+    g_nextLibTryMs = now + 1000;
     if (!g_libCdo) g_libCdo = R::FindClassDefaultObject(L"lib_C");
     if (!g_fnFloppyFromType) {
         if (void* cls = R::FindClass(L"lib_C"))
@@ -85,26 +92,30 @@ bool EnsureLib() {
     return g_libCdo && g_fnFloppyFromType;
 }
 
-// The static mesh the game would show for this slot type, or null for an empty slot.
-void* MeshForType(void* worldContext, int32_t type) {
+// The mesh the game would show for this slot type. False when we could not ASK -- which is not the
+// same answer as "no mesh", and telling them apart is the difference between a box that renders
+// empty because it is and one that renders empty because a resolve failed while it holds a disc.
+bool MeshForType(void* worldContext, int32_t type, void*& out) {
     // An empty slot shows no mesh. floppyFromType would answer the same, by indexing its list out
     // of range -- which is the game's own array-bounds warning, once per box, on every join.
-    if (type < 0) return nullptr;
-    if (!EnsureLib()) return nullptr;
+    if (type < 0) { out = nullptr; return true; }
+    if (!EnsureLib()) return false;
     ParamFrame f(g_fnFloppyFromType);
-    if (!f.valid()) return nullptr;
+    if (!f.valid()) return false;
     const bool getMesh = true, getType = false;
     if (!f.Set(L"type", type) || !f.Set(L"getMesh", getMesh) || !f.Set(L"getType", getType) ||
         !f.Set(L"__WorldContext", worldContext))
-        return nullptr;
-    if (!Call(g_libCdo, f)) return nullptr;
-    return f.Get<void*>(L"staticMeshes");
+        return false;
+    if (!Call(g_libCdo, f)) return false;
+    out = f.Get<void*>(L"staticMeshes");
+    return true;
 }
 
 // Refresh whatever the device shows for its slot. The laptop's widget redraws itself; the box
 // has no refresh verb of its own, so the mesh is swapped here exactly as insertFloppy and
 // ejectFloppy do it.
-void Refresh(const Desc& d, void* device, int32_t type) {
+bool Refresh(const Desc& d, void* device, int32_t type) {
+    bool done = true;
     if (d.refreshWidget && d.fnUpdFloppy && d.offWidget >= 0) {
         void* widget = *reinterpret_cast<void* const*>(
             reinterpret_cast<const uint8_t*>(device) + d.offWidget);
@@ -114,10 +125,14 @@ void Refresh(const Desc& d, void* device, int32_t type) {
         }
     }
     if (d.refreshMesh && d.offMesh >= 0) {
-        void* mesh = *reinterpret_cast<void* const*>(
+        void* comp = *reinterpret_cast<void* const*>(
             reinterpret_cast<const uint8_t*>(device) + d.offMesh);
-        if (mesh) engine::SetStaticMesh(mesh, MeshForType(device, type));
+        void* mesh = nullptr;
+        if (!comp) done = false;
+        else if (MeshForType(device, type, mesh)) engine::SetStaticMesh(comp, mesh);
+        else done = false;
     }
+    return done;
 }
 
 // ---- the digest ------------------------------------------------------------------------------
@@ -200,7 +215,13 @@ bool ReadContent(DeviceKind kind, void* device, Content& out) {
     out.nametype   = d->offNametype >= 0 ? ReadFStringAt(device, d->offNametype) : std::wstring();
     out.objectData = ReadFStringAt(device, d->offObjectData);
     out.data       = ReadFStringArrayField(device, d->offData);
-    return true;
+    // The row reader answers an empty vector both for an empty array and for one past the bound it
+    // will read, and those two must never look alike here: the second published as the first would
+    // tell every receiver to delete rows it has. Say we could not read it instead.
+    const auto* arr = reinterpret_cast<const TArrayView*>(
+        reinterpret_cast<const uint8_t*>(device) + d->offData);
+    const int32_t rawRows = (arr->data && arr->num > 0 && arr->num <= kMaxCount) ? arr->num : 0;
+    return !(rawRows > 0 && out.data.empty());
 }
 
 bool ReadDigest(DeviceKind kind, void* device, uint64_t& out) {
@@ -210,8 +231,9 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out) {
     uint64_t h = kFnvOffset;
     Mix(h, p + d->offType, sizeof(int32_t));
     // An empty slot is a type, and its other fields are residue an eject left for its own deferred
-    // spawn. Hashing them would raise an edge for a change nobody carries or applies: the game's
-    // own eject drops that residue a second later, and a poll reading it would publish twice.
+    // spawn. Hashing them would raise an edge for a change nobody carries or applies: the eject's
+    // own second phase clears floppyObjectData once it has read it -- floppyReadwrites it never
+    // clears at all -- and a poll reading either would publish twice.
     if (*reinterpret_cast<const int32_t*>(p + d->offType) < 0) { out = h; return true; }
     Mix(h, p + d->offReadWrites, sizeof(int32_t));
     if (d->offZip >= 0) Mix(h, p + d->offZip, 1);
@@ -236,8 +258,9 @@ bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& 
     if (d->offNametype >= 0) WriteFStringField(device, d->offNametype, content.nametype);
     WriteFStringField(device, d->offObjectData, content.objectData);
     WriteFStringArrayField(device, d->offData, content.data);
-    Refresh(*d, device, st.floppyType);
-    return true;
+    // The fields are written either way; false says the LOOK of the device is still wrong, so a
+    // caller that can come back should.
+    return Refresh(*d, device, st.floppyType);
 }
 
 // Emptying a slot writes what the device's OWN eject writes at the moment it empties it, and
@@ -252,8 +275,7 @@ bool ClearSlot(DeviceKind kind, void* device) {
     auto* p = reinterpret_cast<uint8_t*>(device);
     *reinterpret_cast<int32_t*>(p + d->offType) = -1;
     WriteFStringArrayField(device, d->offData, {});
-    Refresh(*d, device, -1);
-    return true;
+    return Refresh(*d, device, -1);
 }
 
 void ResetCache() {

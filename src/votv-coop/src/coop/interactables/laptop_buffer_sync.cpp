@@ -500,7 +500,8 @@ void Tick() {
     // transports floppyData via LaptopBlob kind=0; eject clears it) -- on any
     // type change prime-and-skip this tick, ordering-independent.
     ue_wrap::floppy_slot::Scalars st;
-    if (!ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
+    if (!ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) ||
+        !ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
                                            L::Instance(), st))
         return;
     if (st.floppyType != g_prevType) {
@@ -571,7 +572,8 @@ void PrimeQuadBaseline() {
     if (L::ReadQuad(q)) {
         PrimeFrom(q);
         ue_wrap::floppy_slot::Scalars st;
-        if (ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
+        if (ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) &&
+            ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
                                               L::Instance(), st))
             g_prevType = st.floppyType;
     }

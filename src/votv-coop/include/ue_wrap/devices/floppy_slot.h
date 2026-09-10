@@ -30,6 +30,12 @@ enum class DeviceKind : uint8_t {
 };
 inline constexpr uint8_t kDeviceKindCount = 2;
 
+// lib_C::floppyFromType indexes a list of exactly this many disc classes, and indexes it
+// unconditionally: a type outside it makes the box's own eject spawn from a null class. Any
+// negative value means "empty" everywhere the game reads the field.
+inline constexpr int32_t kSlotTypeCount = 7;
+inline constexpr bool IsSlotType(int32_t t) { return t < 0 || t < kSlotTypeCount; }
+
 struct Scalars {
     int32_t floppyType = -1;   // negative = empty
     int32_t readWrites = -1;   // the inserted disc's remaining writes

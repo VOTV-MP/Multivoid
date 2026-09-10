@@ -31,7 +31,8 @@ namespace coop::floppy_slot_sync {
 void Install(coop::net::Session* session);
 
 // 1 Hz, game thread: a poll of every device's slot behind floppy_slot::ReadDigest, which reads
-// the raw field bytes and mints nothing, so an empty box costs about twenty bytes of hashing. HOST: broadcast the canonical for
+// the raw field bytes and mints nothing; an empty slot hashes its type and stops, so the cost is
+// set by the boxes that actually hold a disc. HOST: broadcast the canonical for
 // a slot that moved, and re-send one whose send was refused. CLIENT: claim a slot that moved, and
 // nothing else -- the host's canonical is what the client settles on.
 void Tick();

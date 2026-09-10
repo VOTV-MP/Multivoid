@@ -453,8 +453,12 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
             st.zip = p.zip != 0;
             st.readWrites = p.readWrites;
             if (st.floppyType < 0) {
-                // An empty slot: nothing follows, so apply the scalars now.
-                ClearSlot();
+                // An empty slot: nothing follows, so it applies now -- but only if there is
+                // something to empty: on this device the rows a clear
+                // drops are the file buffer's, and adopting an already-empty slot must not
+                // touch them.
+                FS::Scalars local{};
+                if (!ReadSlot(local) || local.floppyType >= 0) ClearSlot();
             } else {
                 // Occupied: park until the content stream right behind lands; the scalars and
                 // strings apply atomically there.
