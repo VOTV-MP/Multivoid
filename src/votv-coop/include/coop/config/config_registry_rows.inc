@@ -228,6 +228,11 @@ CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
     "Autonomous selftest: desk sound mirror.")
 CFG_FLAG(container_selftest, "container_selftest", "dev", false, nullptr,
     "Autonomous selftest: container contents sync.")
+CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
+    "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
+    "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "
+    "(it inserts, ejects, and seeds discs when the world has none), so arm it from the environment "
+    "for one run rather than leaving it here. Set it on BOTH peers; each drives its own role.")
 CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
     "Autonomous selftest: player inventory sync.")
 CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,
