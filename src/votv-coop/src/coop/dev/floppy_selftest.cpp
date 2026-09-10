@@ -10,7 +10,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/devices/laptop.h"
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -29,7 +29,7 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace PR = ue_wrap::prop;
 namespace SB = ue_wrap::serverbox;
-namespace LP = ue_wrap::laptop;  // the disc prop's own content fields live in the laptop wrapper
+namespace FD = ue_wrap::floppy_disc;  // the disc prop's own content fields
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -162,7 +162,7 @@ std::vector<DiscRow> DiscCensus() {
         if (!obj) continue;
         void* cls = R::ClassOf(obj);
         auto it = verdict.find(cls);
-        if (it == verdict.end()) it = verdict.emplace(cls, LP::IsDiscClass(cls)).first;
+        if (it == verdict.end()) it = verdict.emplace(cls, FD::IsDiscClass(cls)).first;
         if (!it->second) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // the class defaults
         if (!R::IsLive(obj)) continue;
@@ -171,8 +171,8 @@ std::vector<DiscRow> DiscCensus() {
         row.key = PR::GetKeyString(obj);
         row.cls = R::ToString(R::NameOf(cls));
         if (const DiscClass* dc = DiscClassOf(row.cls)) { row.type = dc->type; row.zip = dc->zip; }
-        LP::DiscContent c;
-        if (LP::ReadDiscContent(obj, c)) {
+        FD::DiscContent c;
+        if (FD::ReadDiscContent(obj, c)) {
             row.readWrites = c.readWrites;
             row.rows = static_cast<int32_t>(c.data.size());
         }
@@ -299,10 +299,10 @@ void SeedAndStamp() {
     int stamped = 0;
     for (const DiscRow& d : discs) {
         if (!d.insertable() || stamped >= kTargets) continue;
-        LP::DiscContent c;
+        FD::DiscContent c;
         c.readWrites = kMarkerReadWrites + stamped;
         c.data.push_back(std::wstring(kMarker) + L"-" + std::to_wstring(stamped));
-        const bool ok = LP::WriteDiscContent(d.actor, c);
+        const bool ok = FD::WriteDiscContent(d.actor, c);
         UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw %d -> %d rows %d -> 1 "
                 "write=%d (a disc the world already held keeps none of its own content)",
                 stamped, d.key.c_str(), d.cls.c_str(), d.readWrites, c.readWrites, d.rows,
@@ -366,8 +366,8 @@ void Fire(size_t i) {
                     g_discKey[s.disc].c_str());
             return;
         }
-        LP::DiscContent dc;
-        LP::ReadDiscContent(disc, dc);
+        FD::DiscContent dc;
+        FD::ReadDiscContent(disc, dc);
         const bool called = SB::CallProcessFloppy(box, disc);
         SB::SlotState after{};
         SB::ReadSlot(box, after);
@@ -467,7 +467,7 @@ void Tick() {
                 static_cast<unsigned long long>(kSteps[0].atMs / 1000));
     }
     const uint64_t since = now - g_connectedAtMs;
-    if (!LP::EnsureResolved()) return;  // the disc fields come from there
+    if (!FD::EnsureResolved()) return;  // the disc fields come from there
     if (!ResolveBoxes()) return;
 
     if (!g_seeded && since >= kSeedMs) {

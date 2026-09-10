@@ -10,6 +10,7 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
 #include "ue_wrap/core/log.h"
@@ -28,7 +29,8 @@
 namespace coop::laptop_sync {
 namespace {
 
-namespace L = ue_wrap::laptop;
+namespace L  = ue_wrap::laptop;
+namespace FD = ue_wrap::floppy_disc;
 namespace PPC = ue_wrap::portable_pc;
 namespace R = ue_wrap::reflection;
 
@@ -102,7 +104,7 @@ uint64_t g_nextLidSweep = 0;
 
 // Deferred disc-content applies (the mirror not materialised yet).
 struct PendingDisc {
-    L::DiscContent content;
+    FD::DiscContent content;
     uint64_t deadline = 0;
 };
 std::map<uint32_t, PendingDisc> g_pendingDisc;
@@ -154,14 +156,14 @@ L::SlotContent UnpackSlotContent(const std::string& bytes) {
     return c;
 }
 
-std::string PackDiscContent(const L::DiscContent& c) {
+std::string PackDiscContent(const FD::DiscContent& c) {
     std::string out = std::to_string(c.readWrites);
     for (const auto& d : c.data) { out += kSep; out += coop::chat_feed::ToUtf8(d); }
     return out;
 }
 
-L::DiscContent UnpackDiscContent(const std::string& bytes) {
-    L::DiscContent c;
+FD::DiscContent UnpackDiscContent(const std::string& bytes) {
+    FD::DiscContent c;
     std::vector<std::string> parts;
     size_t start = 0;
     for (size_t i = 0; i <= bytes.size(); ++i) {
@@ -256,11 +258,11 @@ void DriveEjectContentWatch(coop::net::Session* s, uint64_t now) {
         void* actor = row->GetActor();
         if (!actor) continue;
         void* cls = R::ClassOf(actor);
-        if (!L::IsDiscClass(cls)) continue;
+        if (!FD::IsDiscClass(cls)) continue;
         const uint32_t eid = static_cast<uint32_t>(row->GetId());
         if (!eid || g_publishedContentEids.count(eid)) continue;
-        L::DiscContent dc;
-        if (!L::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
+        FD::DiscContent dc;
+        if (!FD::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
         g_publishedContentEids.insert(eid);
         g_ejectWatchUntil = 0;
         SendContentBlob(s, /*kind*/1, eid, PackDiscContent(dc));
@@ -276,7 +278,7 @@ void DrivePendingDiscApplies(uint64_t now) {
             coop::element::MirrorManager<coop::element::Prop>::Instance().Get(it->first);
         void* actor = row ? row->GetActor() : nullptr;
         if (actor) {
-            if (L::WriteDiscContent(actor, it->second.content))
+            if (FD::WriteDiscContent(actor, it->second.content))
                 UE_LOGI("laptop_sync: deferred disc content applied (eid=%u)", it->first);
             it = g_pendingDisc.erase(it);
             continue;
@@ -314,11 +316,11 @@ void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
     // Kind 1, disc content by eid: write the target (the host's authoritative actor, the
     // client's mirror) or defer. The host re-fan is per chunk in the chunk receiver,
     // attribution-stable; no post-apply re-fan.
-    const L::DiscContent dc = UnpackDiscContent(bytes);
+    const FD::DiscContent dc = UnpackDiscContent(bytes);
     coop::element::Prop* row =
         coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
     void* actor = row ? row->GetActor() : nullptr;
-    if (actor && L::WriteDiscContent(actor, dc)) {
+    if (actor && FD::WriteDiscContent(actor, dc)) {
         UE_LOGI("laptop_sync: disc content applied (eid=%u, from slot %u)",
                 eid, static_cast<unsigned>(senderSlot));
     } else {
@@ -647,9 +649,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (!row) continue;
         void* actor = row->GetActor();
         if (!actor) continue;
-        if (!L::IsDiscClass(R::ClassOf(actor))) continue;
-        L::DiscContent dc;
-        if (!L::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
+        if (!FD::IsDiscClass(R::ClassOf(actor))) continue;
+        FD::DiscContent dc;
+        if (!FD::ReadDiscContent(actor, dc) || dc.data.empty()) continue;
         const uint32_t eid = static_cast<uint32_t>(row->GetId());
         if (!eid) continue;
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,

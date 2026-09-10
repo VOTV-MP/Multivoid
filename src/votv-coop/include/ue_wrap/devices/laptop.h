@@ -62,15 +62,6 @@ bool WriteSlot(const SlotState& st, const SlotContent& content);
 bool WriteSlotScalars(const SlotState& st);  // scalars only; strings untouched
 bool ClearSlot();  // floppyType=-1 + arrays/strings emptied + widget refresh
 
-// ---- disc prop accessors (Aprop_floppyDisc_C) ----
-bool  IsDiscClass(void* cls);      // any prop_floppyDisc variant
-struct DiscContent {
-    int32_t readWrites = -1;
-    std::vector<std::wstring> data;  // the disc's own .data array
-};
-bool ReadDiscContent(void* discActor, DiscContent& out);
-bool WriteDiscContent(void* discActor, const DiscContent& in);
-
 // ---- the file-buffer quad ----
 struct BufferQuad {
     std::vector<std::wstring> data;      // floppyData (also slot-owned; quad reads it whole)

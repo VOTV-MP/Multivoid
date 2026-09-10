@@ -34,12 +34,10 @@ uint64_t NowMs() {
 
 // ---- resolved state ----
 void*   g_cls          = nullptr;  // laptop_C
-void*   g_discBaseCls  = nullptr;  // prop_floppyDisc_C
 int32_t g_offPowered = -1, g_offIsOpened = -1, g_offAnim = -1;
 int32_t g_offFloppyType = -1, g_offZip = -1, g_offReadWrites = -1;
 int32_t g_offNametype = -1, g_offObjectData = -1, g_offFloppyData = -1;
 int32_t g_offWidget = -1;
-int32_t g_offDiscData = -1, g_offDiscReadWrites = -1;
 void*   g_fnAction = nullptr;      // actionOptionIndex
 void*   g_fnUpdButton = nullptr;   // updButton
 void*   g_fnWidgetUpdFloppy = nullptr;  // ui_laptop.updFloppy
@@ -75,8 +73,7 @@ bool EnsureResolved() {
     g_nextResolveTryMs = now + 1000;
 
     void* cls = R::FindClass(L"laptop_C");
-    void* discCls = R::FindClass(L"prop_floppyDisc_C");
-    if (!cls || !discCls) return false;
+    if (!cls) return false;
 
     struct Row { const wchar_t* name; int32_t* slot; int32_t fallback; };
     const Row rows[] = {
@@ -98,11 +95,6 @@ bool EnsureResolved() {
             *r.slot = r.fallback;
         }
     }
-    g_offDiscData       = R::FindPropertyOffset(discCls, L"Data");
-    g_offDiscReadWrites = R::FindPropertyOffset(discCls, L"readWrites");
-    if (g_offDiscData < 0)       { UE_LOGW("laptop: disc Data offset -- fallback 0x368"); g_offDiscData = 0x368; }
-    if (g_offDiscReadWrites < 0) { UE_LOGW("laptop: disc readWrites offset -- fallback 0x37C"); g_offDiscReadWrites = 0x37C; }
-
     g_fnAction    = R::FindFunction(cls, L"actionOptionIndex");
     g_fnUpdButton = R::FindFunction(cls, L"updButton");
     void* widgetCls = R::FindClass(L"ui_laptop_C");
@@ -133,7 +125,7 @@ bool EnsureResolved() {
                 g_offWidgetBufferSlots, g_fnWidgetGenFloppyBuffer, g_offBufRowData,
                 g_fnWidgetRemoveFromParent);
 
-    g_cls = cls; g_discBaseCls = discCls;
+    g_cls = cls;
     g_resolved = true;
     UE_LOGI("laptop: resolved (isOpened=0x%X floppyType=0x%X objectData=0x%X action=%p)",
             g_offIsOpened, g_offFloppyType, g_offObjectData, g_fnAction);
@@ -237,28 +229,6 @@ bool ClearSlot() {
     WriteFStringArrayField(l, g_offFloppyData, {});
     CallWidgetUpdFloppy(l);
     return true;
-}
-
-bool IsDiscClass(void* cls) {
-    if (!cls || !g_discBaseCls) return false;
-    if (cls == g_discBaseCls) return true;
-    void* base[1] = { g_discBaseCls };
-    return R::IsDescendantOfAny(cls, base, 1);
-}
-
-bool ReadDiscContent(void* discActor, DiscContent& out) {
-    if (!discActor || !g_resolved) return false;
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(discActor);
-    out.readWrites = *reinterpret_cast<const int32_t*>(p + g_offDiscReadWrites);
-    out.data       = ReadFStringArrayField(discActor, g_offDiscData);
-    return true;
-}
-
-bool WriteDiscContent(void* discActor, const DiscContent& in) {
-    if (!discActor || !g_resolved) return false;
-    uint8_t* p = reinterpret_cast<uint8_t*>(discActor);
-    *reinterpret_cast<int32_t*>(p + g_offDiscReadWrites) = in.readWrites;
-    return WriteFStringArrayField(discActor, g_offDiscData, in.data);
 }
 
 // ---- the file-buffer quad --------------------------------------------------
