@@ -21,8 +21,8 @@ the fraction. Nobody wrote them as a contribution, and `commit_msg_check` alread
 subjects for that reason. Note which way this cuts: counting them would enlarge the denominator
 and shrink the share, so leaving them out is the stricter reading.
 
-The session-close commit is outside it for the same reason, added 2026-09-11 with the measurement
-that moved the rule. `[docs] close: ...` is the subject `status_census.py close` writes, and
+The session-close commit is outside it for the same reason, and for a measurement that moved the
+rule. `[docs] close: ...` is the subject `status_census.py close` writes, and
 `commit_msg_check` REFUSES it from a hand -- so the repository already holds that a person did not
 write it. Counting it made the ritual the project mandates spend the budget meant for discretionary
 documentation: the close that exposed this landed in a window that also held three doc commits each
