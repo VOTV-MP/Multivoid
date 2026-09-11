@@ -164,7 +164,7 @@ consumer. The verb name is the identity. A consumer reading the bracket handed t
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 
-## Two traps
+## Three traps
 
 A call that returns true has not necessarily done anything visible: a static-mobility component
 silently ignores a mesh swap and a move while the call still returns true, which is how the trash
@@ -175,6 +175,15 @@ Driving an entity through a non-representative slot gives a false result: grabbi
 calling the grab function puts the clump in the physics-handle slot, where the native re-pile gate
 aborts, while a real press carries it in the hand slot, where the gate never fires and the held
 clump re-piles on contact. Drive the entity through the seam the player uses. `[V]`
+
+A tick park is a claim about ONE dispatch, never about the actor. The hook lane parks a mirror's
+brain with a PRE interceptor that cancels the Blueprint body of `hook_C::ReceiveTick`, per actor
+(`coop/items/hook_sync.h:32-38`), and that is correct for what it covers. It does not cover the
+ubergraph: a mirror adopting an anchored hook runs `loadData` then `processKeys`, which tails into
+`frameDelay` -> `makeAttachments()` and builds a real PhysX constraint against that peer's own copy
+of whatever the hook was tied to -- no tick involved, and no `attach_a` either. So a parked mirror
+can still mutate the receiving peer's world through an event the park never saw. Ask which dispatch
+the park intercepts, then ask what else can reach the same write. `[V]`
 
 ## Needs a probe
 
