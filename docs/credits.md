@@ -31,7 +31,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,367 commits |
 | **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 5 commits |
 | **hediiiqq** | code · report | Dish mirror interpolation; a CI gate failing every build on the unfetched MTA submodule ([#10](https://github.com/VOTV-MP/Multivoid/issues/10)) | 1 commit · #10 |
-| **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
+| **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
 | **Moddy** | review | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth) | b122 · b143 · 2026-09-02 |
@@ -41,6 +41,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **gediao** | report | The b125 host-log pack, with huoyan1231 | b134 |
 | **doctaaaaa** | report | A ten-item field pack on the released build, of which four landed on open work: a floppy disc lost when it is retrieved from a signal server, a recorded signal lost when the disc changes hands, the power chain, and the trash-pile cost. The disc pair is now root-caused — the box on the other machine takes the disc back the moment it appears | b150 · root-caused, unreleased |
 | **SirWilliam** | report | Rejoining a session requires a full relaunch | fixed, unreleased |
+| **thewittyrobin** | report | Doors that never open for the other peer, twice ([#17](https://github.com/VOTV-MP/Multivoid/pull/17), [#18](https://github.com/VOTV-MP/Multivoid/pull/18)). Both proposed mechanisms measured out differently, and both reports are of one real defect: on the public build a door is addressed by a key the game re-mints per process | root-caused, unreleased |
 
 ---
 
@@ -77,6 +78,16 @@ Community commits are adopted with their **original authorship preserved**
   locally with submodules populated. Fixed exactly as suggested.
 
 ### arigalit
+- **The grappling-hook lane** ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)): the first
+  implementation of hook and rope visibility across peers. It could not be merged — a mirror is a
+  live `hook_C`, `hook_C` is an `actor_save_C`, and the game's save walk collects by that interface,
+  so every mirror standing on a peer would have been written into that player's save. The divergence
+  was ours to own: the design it had to match is not in this repository at all, so no outside
+  contributor could have read it. Four of its decisions are in the lane
+  that shipped, and are credited on the commits: payload validation before anything is applied, a
+  connect replay so a joiner is not left without the hooks already standing, the perf-bucket walk
+  timer, and a mirror given neither collision nor tick. The `ue_wrap/actors/hook` split beside the
+  lane is theirs too — the design names no wrapper at all.
 - **ATV seat contention** ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)): a
   peer walking up to an ATV somebody else is already driving is denied at the
   input seam, instead of both engines running vehicle physics and fighting over
