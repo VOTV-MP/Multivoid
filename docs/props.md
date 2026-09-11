@@ -136,17 +136,40 @@ is built; concrete and food are designed and not built.
 
 Tools that leave a persistent actor behind (the grappling hook and rope, the nail gun, the wall
 builder), timed explosives, the fishing rod and the physgun are reverse-engineered with a design
-each and are not synced. Their shared shape, when built: the owner keeps its previews, montages
-and ammo local; a commit becomes an intent to the host, either the spawn of a persistent actor
-the host replays through the native entry point or an action on an existing host-owned prop;
-the host mirrors the actor down; a late joiner gets it from the save; a player-attached phase
-(climbing a hook, a cast) is an extension of the player's own stream.
+each. The hook and the rope are built; the rest are not. Their shared shape: the owner keeps its
+previews, montages and ammo local; a commit becomes an intent to the host, either the spawn of a
+persistent actor the host replays through the native entry point or an action on an existing
+host-owned prop; the host mirrors the actor down; a late joiner gets it from the save; a
+player-attached phase (climbing a hook, a cast) is an extension of the player's own stream.
+
+Four rules govern a mirror of a deployable, and they are the four a first attempt at the hook
+lane did not have in front of it:
+
+- **A deployed actor descends from the save-participating base, so a mirror of one is written
+  into the save unless it says otherwise.** The game's save walk asks every object implementing
+  the save interface whether to ignore it, and that answer is a plain field on the base class.
+  Set it on every mirror, in the deferred window before the spawn finishes. This bites hardest on
+  the HOST, which holds mirrors of hooks its clients fired and owns the only save in the session.
+- **Transitions are polled, not caught at a spawn hook.** The player's fire path is
+  Blueprint-internal and invisible to the dispatch layer, and the player already holds a pointer
+  to their own deployed hook. One field read is the whole discovery channel, and it is more
+  precise than a class scan: a variant of the hook class is placed by the level and attaches
+  itself on every peer, so a scan that adopts by class doubles it.
+- **A mirror's Blueprint tick is cancelled, not merely disabled.** The deployed hook's tick reads
+  the LOCAL player, so one frame of it on the wrong machine drags the viewer toward somebody
+  else's hook. The class registers its tick while it spawns, so a disable can only land after;
+  the interceptor on the dispatched body needs no window at all.
+- **The actor's own save record is the handover payload.** It already carries both attach keys,
+  both component names and the cable length, and the game's own load path resolves them in
+  whatever world it lands in. Nothing about an anchor needs a format of ours.
 
 ## Who owns what
 
 | State | Owner | Shape |
 |---|---|---|
 | a prop at rest: existence, transform, physics | the host | the birth broadcast; a client's births are intents |
+| a deployed hook, while its thrower still holds it | that peer | keyed by (slot, sequence); the others render a parked mirror |
+| a deployed hook once both ends are anchored | the host | the thrower hands over the hook's own save record; it is a save actor from then on |
 | a held prop | the holder | a per-frame stream; the release carries the velocity |
 | a thrown prop after release | each peer's physics, from the same velocity | no stream in flight |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |

@@ -48,6 +48,7 @@ host validates and commits contested writes), `local` (never shared).
 | Alarm | the base klaxon | presser | snapshot | built |
 | Balance | the shared points total | host | replay at connect | built |
 | Email, daily task | host-appended emails, peer-symmetric delete; the host's task state | host | save transfer plus a prime | built |
+| Deployed hook and rope | existence, flight, the head pose and the reel while the thrower holds it; the handover to the host when both ends anchor, and the anchor itself | peer while held, arbiter at the anchor, host after | keepalive while held; the save plus a ready-edge replay once anchored | built |
 | Lamp posts | not synced: lockstep from the shared day and night cycle | local | none, by design | built |
 
 ## Devices and the workstation

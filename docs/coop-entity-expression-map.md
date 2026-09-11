@@ -41,6 +41,7 @@ are peer-gated. `[V]`
 | the wisp swarm | `EX_CallMath` spawns from the swarm trigger's graph | the native seam, gated by the calling class | a host id |
 | event actors | a deferred spawn, or a graph spawn | a second interceptor with a disjoint allowlist; the native seam | a host id |
 | the kerfur | conversion verbs inside the Blueprint | a death-watch poll; the bytecode seam's capture | one host kerfur id across both forms |
+| a deployed hook or rope | the fire input, inside the Blueprint | the thrower polls its own `activeHook` field | `(owner slot, sequence)` while the thrower holds it, a host-minted save key once anchored |
 
 ## Keyed props
 
@@ -171,6 +172,45 @@ to it. A conversion reaches none of them. The release went unwired for a long ti
 was, a dead kerfur kept its record and its element id kept answering "kerfur" once the registry
 recycled that id. `[V]`
 
+## Deployables: the hook and the rope
+
+- **Birth.** Nothing catches it. The firing player already holds a pointer to its own deployed
+  hook, so the owner polls that one field and the other peers learn of it from the owner. The
+  pointer is precise in a way a class scan is not: a variant of the hook class is placed by the
+  level and attaches itself in its own begin-play on every peer, so a scan that adopted by class
+  would express a hook the world already has once. The field is also left dangling when the game
+  destroys a hook without clearing it, so every read is liveness-checked first. `[V]`
+- **Identity, and it changes hands once.** While the field names the hook it is
+  `(owner slot, sequence)`, outside the element registry, the shape the owner-entity lane already
+  uses for a peer-owned thing every peer must see. The game clears that field the instant the
+  second end anchors, while the actor lives on -- that edge is the handover, and the pair survives
+  it: the anchor moves who may write the hook, it does not rename it. `[V]`
+- **The handover carries the actor's own save record**, which already names both attach keys, both
+  component names and the cable length. The host builds the record it applies rather than taking
+  the sender's -- class, save key and base transform are its own, the cable length is clamped, and
+  every attach key that resolves is reach-checked -- then hands it to the actor's own load verbs.
+  The record does not carry the two attached flags, which the game writes only inside its attach
+  verbs; the host restores them, because without them the game destroys the hook on release
+  instead of returning the player's item. A mirror deliberately keeps them clear, which is what
+  stops every peer minting that item. `[V]`
+- **An anchored hook needs no pose on the wire.** The load path re-resolves both attach keys in
+  the receiver's own world and re-attaches, so every copy is parented to that peer's own copy of
+  whatever the hook is tied to and derives its pose from it. A hook tied to the ATV rides that
+  peer's ATV. `[V]`
+- **Destroy.** While the thrower holds it, the owner's death-watch announces it. After the
+  handover the host death-watches its own copy and announces on the same pair. Either anchor
+  actor dying is not announced at all: the game binds both anchors' destroy on every peer, so
+  each copy retires itself on the same event. `[V]`
+- **Late join.** The owner's keepalive re-announce covers a hook still in its thrower's hands. An
+  anchored hook is in the host's save and a joiner boots it as a real actor; the host also replays
+  every hook it has adopted at the joiner's ready edge, for the window between that joiner's save
+  capture and its world-ready, and the joiner skips the ones whose key the game already resolves.
+  The load path is what registers a key, so a resolvable key is exactly the set the save gave it.
+  `[V]`
+- **Not synced: what a client's hook does to a host-owned prop.** Attaching unfreezes the prop on
+  that client alone and the constraint drags that client's copy. The answer is sync ownership of
+  the prop moving to the client for the duration; it is not built. `[?]`
+
 ## The dupe matrix
 
 Every place two seams can express one actor, and what deduplicates it:
@@ -187,6 +227,8 @@ Every place two seams can express one actor, and what deduplicates it:
 | a nested deferred spawn stealing a pending id in the post observer | correlation on the parameter pointer `[V]` |
 | a client's conversion ghost grabbed | the ghost is claimed and parked at once `[V]` |
 | the kerfur's eye camera and the whole prop identity universe | child actors are excluded at six surfaces `[V]` |
+| a joiner's save-loaded anchored hook and the host's replay of the same hook | the host mints the save key, and the joiner skips a key the game already resolves `[V]` |
+| a level-placed hook variant, which attaches itself on every peer | it is not in the lane's class table, and the owner's own field can never name it `[V]` |
 | a conversion's fresh prop and the generic spawn seams | the captured form is tracked and its broadcast suppressed `[V]` |
 
 ## Needs a probe
