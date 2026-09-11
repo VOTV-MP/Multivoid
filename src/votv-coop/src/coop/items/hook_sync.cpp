@@ -59,18 +59,11 @@ void NoteMirrorActor(void* actor, bool add) {
     if (add) g_mirrorActors.push_back(actor);
 }
 
-void AttachTailToSlotBody(void* mirror, uint8_t slot) {
-    auto& reg = coop::players::Registry::Get();
-    void* body = nullptr;
-    if (slot == reg.LocalPeerId()) {
-        body = reg.Local();
-    } else if (coop::RemotePlayer* rp = reg.Puppet(slot)) {
-        body = rp->GetActor();
-    }
-    // A null body is not a failure: the puppet may not have spawned yet. The tail simply stays on
-    // the mirror's own root until the next state message re-tries, which costs one frame of a cable
-    // anchored at the wrong end and never a wrong write.
-    if (body) H::AttachTailTo(mirror, body);
+bool AttachTailToSlotBody(void* mirror, uint8_t slot) {
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    void* body = rp ? rp->GetActor() : nullptr;
+    if (!body) return false;
+    return H::AttachTailTo(mirror, body);
 }
 
 }  // namespace detail
@@ -92,9 +85,14 @@ constexpr uint64_t kPollRestMs   = 250;
 // owner_entity_sync uses 10 s for an entity that lives for minutes; a hook's flight is about a
 // second, so a hook could be born and die inside one of those gaps.
 constexpr uint64_t kKeepaliveMs  = 2000;
-// A player has one activeHook, but a committed hook stays in the table until the host answers, and
-// they can fire again immediately. The cap is a bound on a wire-driven vector, not a design limit.
+// A player has one activeHook, but a committed hook stays in the table until the host answers and
+// they can fire again immediately, so the local table needs a bound too.
 constexpr size_t   kMaxOwned     = 8;
+// THE WIRE-DRIVEN BOUND, and the one that matters. Mirrors() takes a new (slot, seq) from any peer
+// and spawns a real actor for it, so without a per-sender cap one peer walking `seq` freezes every
+// other peer -- and HookState is relayed, so it reaches them all. The owner-entity lane closed
+// exactly this hole on its own receive path; this lane copied its send-side cap and needed both.
+constexpr size_t   kMaxMirrorsPerSlot = 16;
 
 constexpr float kMoveEpsUU  = 2.0f;
 constexpr float kAngEpsDeg  = 1.0f;
@@ -104,6 +102,9 @@ uint16_t g_nextSeq = 0;
 bool     g_parkInstalled = false;
 bool     g_parkRefused   = false;   // the interceptor table refused: NO mirrors, for the session
 uint64_t g_lastDriverMs  = 0;
+bool     g_saidOwnedFull = false;   // one line, not one per driver tick
+uint8_t  g_saidSlotFull  = 0;       // one line per slot, bit-per-slot
+std::atomic<uint32_t> g_tickOffThread{0};  // tripwire: see OnHookReceiveTickPre
 
 bool Finite3(float a, float b, float c) {
     return std::isfinite(a) && std::isfinite(b) && std::isfinite(c);
@@ -113,21 +114,29 @@ bool InWorld(float a, float b, float c) {
            std::fabs(c) <= coop::net::kMaxCoord;
 }
 
-uint8_t FlagsOf(const H::State& s) {
-    uint8_t f = 0;
-    if (s.thrown)       f |= coop::net::HookFlag_Thrown;
-    if (s.attachedA)    f |= coop::net::HookFlag_AttachedA;
-    if (s.playerHooked) f |= coop::net::HookFlag_PlayerHooked;
-    return f;
-}
-
 // ---- the brain-park -----------------------------------------------------------------------------
 //
 // Cancels the Blueprint tick body for OUR mirrors only. Every peer holds its own real hooks and
 // other peers' mirrors in the same class at the same time, so the gate is per-ACTOR, never
 // per-role. What one frame of that body does to a viewer is write their own movement velocity
 // toward someone else's hook and kick them into a fall.
+//
+// THE THREAD ARGUMENT, stated rather than assumed. An interceptor fires on the dispatching thread,
+// which is usually the game thread and sometimes a task-graph worker. ReceiveTick is an ACTOR tick,
+// which the engine drives from the game thread's tick groups, so the scan below is single-threaded
+// against the game-thread-only writers in NoteMirrorActor. That is an argument, not a proof, so an
+// off-thread dispatch is COUNTED and reported rather than assumed away -- and the callback answers
+// "do not cancel" there, because the table it would have to read is not safe to read.
 bool OnHookReceiveTickPre(void* self, void* /*params*/) {
+    if (!GT::IsGameThread()) {
+        const uint32_t n = g_tickOffThread.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n == 1 || (n % 1000) == 0) {
+            UE_LOGW("hook_sync: hook_C::ReceiveTick dispatched OFF the game thread (#%u) -- the "
+                    "mirror table cannot be read safely there, so the body was NOT cancelled. If "
+                    "this line exists at all, the park's thread argument is wrong.", n);
+        }
+        return false;
+    }
     for (void* a : MirrorActors())
         if (a == self) return true;   // cancel
     return false;
@@ -139,7 +148,6 @@ void SendState(const Owned& o, const H::State& st) {
     coop::net::HookStatePayload p{};
     p.seq     = o.seq;
     p.classId = static_cast<uint8_t>(o.kind);
-    p.flags   = FlagsOf(st);
     p.ax = st.aLoc.X; p.ay = st.aLoc.Y; p.az = st.aLoc.Z;
     p.aPitch = st.aRot.Pitch; p.aYaw = st.aRot.Yaw; p.aRoll = st.aRot.Roll;
     p.dist = st.dist;
@@ -154,8 +162,15 @@ void SendDestroy(uint16_t seq) {
     s->SendReliable(coop::net::ReliableKind::HookDestroy, &d, sizeof(d));
 }
 
+// The phase never leaves this machine: it decides WHEN the owner sends, and a display mirror
+// renders the same whatever phase it is in.
+uint8_t PhaseOf(const H::State& s) {
+    return static_cast<uint8_t>((s.thrown ? 1 : 0) | (s.attachedA ? 2 : 0) |
+                                (s.playerHooked ? 4 : 0));
+}
+
 bool Changed(const H::State& a, const H::State& b) {
-    if (FlagsOf(a) != FlagsOf(b)) return true;
+    if (PhaseOf(a) != PhaseOf(b)) return true;
     if (std::fabs(a.dist - b.dist) > kDistEps) return true;
     if (std::fabs(a.aLoc.X - b.aLoc.X) > kMoveEpsUU) return true;
     if (std::fabs(a.aLoc.Y - b.aLoc.Y) > kMoveEpsUU) return true;
@@ -166,34 +181,46 @@ bool Changed(const H::State& a, const H::State& b) {
     return false;
 }
 
+bool AlreadyOwned(void* actor) {
+    for (const auto& o : OwnedHooks())
+        if (o.ref.Raw() == actor) return true;
+    return false;
+}
+
 void TickOwner(uint64_t now) {
-    auto& reg = coop::players::Registry::Get();
-    void* local = reg.Local();
+    void* local = coop::players::Registry::Get().Local();
     if (!local) return;
 
     // The field is left DANGLING by two real paths: prop_hook_C returns without clearing it when
     // the hook is already invalid, and attach_a/attach_b destroy the hook on their reject set
-    // without telling the player. Liveness first, always.
+    // without telling the player.
+    //
+    // The liveness question is asked in the order that keeps it both cheap and safe. A pointer we
+    // already track is answered by its own reference, which never dereferences. Only a pointer we
+    // have never seen reaches the bare liveness probe, and that probe DOES dereference -- which is
+    // why it must not run on every driver tick against a field that stays dangling until the
+    // player next fires.
     void* ah = H::ActiveHookOf(local);
-    if (ah && !R::IsLive(ah)) ah = nullptr;
+    const bool known = ah && AlreadyOwned(ah);
+    if (ah && !known && !R::IsLive(ah)) ah = nullptr;
 
-    if (ah && H::KindOf(ah) != H::Kind::Count) {
-        bool known = false;
-        for (const auto& o : OwnedHooks())
-            if (o.ref.Raw() == ah) { known = true; break; }
-        if (!known) {
-            if (OwnedHooks().size() >= kMaxOwned) {
-                UE_LOGW("hook_sync: %zu owned hooks already tracked -- not taking another",
+    if (ah && !known && H::KindOf(ah) != H::Kind::Count) {
+        if (OwnedHooks().size() >= kMaxOwned) {
+            if (!g_saidOwnedFull) {
+                g_saidOwnedFull = true;
+                UE_LOGW("hook_sync: %zu owned hooks already tracked -- not taking another. Said "
+                        "once; the condition persists while the player holds an untracked hook.",
                         OwnedHooks().size());
-            } else {
-                Owned o;
-                o.ref.Set(ah);
-                o.seq  = ++g_nextSeq ? g_nextSeq : ++g_nextSeq;  // seq 0 is the destroy wildcard
-                o.kind = H::KindOf(ah);
-                OwnedHooks().push_back(o);
-                UE_LOGI("hook_sync: OWN seq=%u kind=%u actor=%p -- tracking",
-                        o.seq, (unsigned)o.kind, ah);
             }
+        } else {
+            Owned o;
+            o.ref.Set(ah);
+            o.seq  = ++g_nextSeq ? g_nextSeq : ++g_nextSeq;  // seq 0 is not a legal identity
+            o.kind = H::KindOf(ah);
+            OwnedHooks().push_back(o);
+            g_saidOwnedFull = false;
+            UE_LOGI("hook_sync: OWN seq=%u kind=%u actor=%p -- tracking",
+                    o.seq, (unsigned)o.kind, ah);
         }
     }
 
@@ -204,6 +231,7 @@ void TickOwner(uint64_t now) {
             SendDestroy(o.seq);
             UE_LOGI("hook_sync: OWN seq=%u died -- destroy announced", o.seq);
             OwnedHooks().erase(OwnedHooks().begin() + static_cast<ptrdiff_t>(i));
+            g_saidOwnedFull = false;
             continue;
         }
         if (o.committed) { ++i; continue; }  // handed to the host; it answers with HookAnchored
@@ -218,7 +246,17 @@ void TickOwner(uint64_t now) {
         // The game let go of it. Anchored (both ends bitten) is the handoff; anything else is a
         // hook that is about to die and the liveness check above will catch it.
         if (a != ah && st.attachedA && st.attachedB) {
-            if (coop::hook_anchor::SendCommit(o.seq, o.kind, a, st)) {
+            const coop::hook_anchor::CommitResult r =
+                coop::hook_anchor::SendCommit(o.seq, o.kind, a);
+            if (r == coop::hook_anchor::CommitResult::AdoptedLocally) {
+                // The host IS the arbiter, so there is no round trip: the row moves to the adopted
+                // table in the same breath instead of waiting for an answer a host never sends
+                // itself. Without this a host-fired hook never hands over at all.
+                OwnedHooks().erase(OwnedHooks().begin() + static_cast<ptrdiff_t>(i));
+                g_saidOwnedFull = false;
+                continue;
+            }
+            if (r == coop::hook_anchor::CommitResult::Sent) {
                 o.committed = true;
                 UE_LOGI("hook_sync: OWN seq=%u anchored -- commit sent, waiting for the host", o.seq);
             }
@@ -241,6 +279,13 @@ void PruneMirrors() {
         NoteMirrorActor(it->second.ref.Raw(), false);
         it = Mirrors().erase(it);
     }
+}
+
+size_t MirrorsForSlot(uint8_t slot) {
+    size_t n = 0;
+    for (const auto& kv : Mirrors())
+        if (SlotOf(kv.first) == slot) ++n;
+    return n;
 }
 
 }  // namespace
@@ -274,6 +319,17 @@ void DropMirror(Key key) {
     NoteMirrorActor(it->second.ref.Raw(), false);
     Mirrors().erase(it);
     if (a) E::DestroyActor(a);
+}
+
+bool DropOwnedBySeq(uint16_t seq) {
+    for (size_t i = 0; i < OwnedHooks().size(); ++i) {
+        if (OwnedHooks()[i].seq != seq) continue;
+        if (void* a = OwnedHooks()[i].ref.Get()) E::DestroyActor(a);
+        OwnedHooks().erase(OwnedHooks().begin() + static_cast<ptrdiff_t>(i));
+        g_saidOwnedFull = false;
+        return true;
+    }
+    return false;
 }
 
 }  // namespace detail
@@ -316,8 +372,12 @@ void Tick() {
 
 void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
+    // A posted receiver can drain AFTER the teardown has run, and an actor spawned then lingers
+    // into single-player -- the one thing the teardown exists to prevent.
+    auto* s = detail::Session();
+    if (!s || !s->connected()) return;
     if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
-    if (p.seq == 0) return;                                   // reserved: the destroy wildcard
+    if (p.seq == 0) return;                                   // not a legal identity
     if (p.classId >= static_cast<uint8_t>(H::Kind::Count)) return;
     if (!Finite3(p.ax, p.ay, p.az) || !InWorld(p.ax, p.ay, p.az)) return;
     if (!Finite3(p.aPitch, p.aYaw, p.aRoll)) return;
@@ -325,39 +385,66 @@ void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
     if (senderPeerSlot == coop::players::Registry::Get().LocalPeerId()) return;  // never our own
     if (!H::EnsureResolved()) return;
 
-    const Key key = MakeKey(static_cast<uint8_t>(senderPeerSlot), p.seq);
+    const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
+    // The owner-phase space only. An anchored hook is the host's, and a former owner's stale or
+    // forged state must not drive or replace it.
+    const Key key = MakeKey(slot, p.seq, /*anchored=*/false);
     const ue_wrap::FVector  loc{p.ax, p.ay, p.az};
     const ue_wrap::FRotator rot{p.aPitch, p.aYaw, p.aRoll};
 
     auto it = Mirrors().find(key);
     if (it == Mirrors().end() || !it->second.ref.Alive()) {
+        if (MirrorsForSlot(slot) >= kMaxMirrorsPerSlot) {
+            if (!(g_saidSlotFull & (1u << (slot & 7u)))) {
+                g_saidSlotFull |= static_cast<uint8_t>(1u << (slot & 7u));
+                UE_LOGW("hook_sync: slot %u is at the %zu-mirror ceiling -- refusing to spawn "
+                        "another. One peer must not be able to walk its sequence and make every "
+                        "other peer spawn actors.", (unsigned)slot, kMaxMirrorsPerSlot);
+            }
+            return;
+        }
         void* m = InstallMirror(key, static_cast<H::Kind>(p.classId), loc, rot, /*anchored=*/false);
         if (!m) return;
-        AttachTailToSlotBody(m, static_cast<uint8_t>(senderPeerSlot));
         H::DriveMirror(m, loc, rot, p.dist);
+        auto row = Mirrors().find(key);
+        if (row != Mirrors().end()) row->second.tailAttached = AttachTailToSlotBody(m, slot);
         return;
     }
-    if (void* m = it->second.ref.Get()) H::DriveMirror(m, loc, rot, p.dist);
+    void* m = it->second.ref.Get();
+    if (!m) return;
+    H::DriveMirror(m, loc, rot, p.dist);
+    // The retry an earlier draft only claimed: a puppet that had not spawned when the mirror was
+    // built leaves the cable's far end on the mirror's own root, and the update branch drove the
+    // head and never looked again.
+    if (!it->second.tailAttached) it->second.tailAttached = AttachTailToSlotBody(m, slot);
 }
 
 void OnDestroyMsg(const coop::net::HookDestroyPayload& p, int senderPeerSlot) {
     if (!GT::IsGameThread()) return;
-    // originSlot non-zero only when the HOST speaks for a leaver; otherwise the transport sender.
-    const uint8_t slot = p.originSlot ? p.originSlot : static_cast<uint8_t>(senderPeerSlot);
+    if (senderPeerSlot < 0 || senderPeerSlot >= coop::players::kMaxPeers) return;
+    if (p.seq == 0) return;
+
+    // Only the HOST (transport slot 0) may speak for another slot. Without the second half of this
+    // term any peer could name any other and delete its hooks on every machine -- the sibling
+    // owner-entity lane carries the same guard for the same reason, and this lane lost half of it
+    // on the way across.
+    uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
+    if (p.originSlot != 0 && senderPeerSlot == 0) slot = p.originSlot;
     if (slot >= coop::players::kMaxPeers) return;
 
-    if (p.seq != 0) {
-        DropMirror(MakeKey(slot, p.seq));
-        return;
-    }
-    // Wildcard: every hook of that slot, ANCHORED ONES INCLUDED, because this form is only ever
-    // sent for a slot that is going away entirely.
-    for (auto it = Mirrors().begin(); it != Mirrors().end();) {
-        if (SlotOf(it->first) != slot) { ++it; continue; }
-        void* a = it->second.ref.Get();
-        NoteMirrorActor(it->second.ref.Raw(), false);
-        it = Mirrors().erase(it);
-        if (a) E::DestroyActor(a);
+    const bool anchored = p.anchored != 0;
+    if (anchored && senderPeerSlot != 0) return;  // an anchored hook is the host's to retire
+
+    DropMirror(MakeKey(slot, p.seq, anchored));
+
+    // And if the hook it names is OURS, the local actor goes with it. This is what makes the
+    // host's refusal of a commit mean something: without it the owner keeps a real hook that every
+    // other peer has dropped, which is precisely the ghost the refusal is meant to prevent.
+    if (slot == coop::players::Registry::Get().LocalPeerId() && !anchored) {
+        if (DropOwnedBySeq(p.seq)) {
+            UE_LOGW("hook_sync: the host retired our own hook seq=%u -- the local actor went with "
+                    "it, so nobody is left holding a hook the others cannot see", (unsigned)p.seq);
+        }
     }
 }
 
@@ -366,32 +453,52 @@ void OnPeerLeftSlot(int slot) {
     size_t dropped = 0;
     for (auto it = Mirrors().begin(); it != Mirrors().end();) {
         // Anchored rows belong to the HOST now. A peer leaving has nothing to do with them, and
-        // dropping them here would delete a hook that is in the host's save.
-        if (SlotOf(it->first) != static_cast<uint8_t>(slot) || it->second.anchored) { ++it; continue; }
+        // dropping them here would delete a hook that is in the host's save. They live in their own
+        // key space, so the slot this peer frees cannot collide with them either.
+        if (SlotOf(it->first) != static_cast<uint8_t>(slot) || IsAnchored(it->first)) { ++it; continue; }
         void* a = it->second.ref.Get();
         NoteMirrorActor(it->second.ref.Raw(), false);
         it = Mirrors().erase(it);
         if (a) E::DestroyActor(a);
         ++dropped;
     }
+    g_saidSlotFull = static_cast<uint8_t>(g_saidSlotFull & ~(1u << (slot & 7u)));
+    coop::hook_anchor::OnPeerLeftSlot(slot);
     if (dropped) UE_LOGI("hook_sync: slot %d left -- %zu owner-phase mirrors dropped", slot, dropped);
 }
 
 void OnDisconnect() {
-    if (!GT::IsGameThread()) {
-        detail::SetSession(nullptr);
-        return;
-    }
-    for (auto& kv : Mirrors()) {
-        if (void* a = kv.second.ref.Get()) E::DestroyActor(a);
+    // The containers are cleared whatever thread this is. Leaving them loaded carries a dead
+    // session's rows into the next one, and a half-cleared state is worse than either end of it.
+    const bool gt = GT::IsGameThread();
+    if (gt) {
+        for (auto& kv : Mirrors())
+            if (void* a = kv.second.ref.Get()) E::DestroyActor(a);
+    } else {
+        UE_LOGW("hook_sync: OnDisconnect off the game thread -- the rows are cleared, but the "
+                "mirror actors cannot be destroyed from here and will linger");
     }
     Mirrors().clear();
     MirrorActors().clear();
     OwnedHooks().clear();
+    g_saidOwnedFull = false;
+    g_saidSlotFull  = 0;
+
+    // THE PARK AND THE WRAPPER GO BACK TOO. A Blueprint class dies on world unload and its address
+    // can be recycled, so a registration left against one would have the table judging whatever
+    // takes that address next -- and worse, the installed flag would still be true, so Install
+    // could not re-register for the next world while InstallMirror's refusal guard went on passing.
+    // The sibling device lanes return their interceptors for exactly this reason.
+    if (gt && g_parkInstalled) {
+        if (void* tickFn = H::ReceiveTickFunction())
+            GT::UnregisterInterceptor(tickFn, &OnHookReceiveTickPre);
+    }
+    g_parkInstalled = false;
+    g_parkRefused   = false;
+
     coop::hook_anchor::OnDisconnect();
+    H::ResetCache();
     detail::SetSession(nullptr);
-    // g_parkInstalled stays true: the interceptor is process-lifetime and self-restoring, because
-    // an empty mirror table makes it answer false for every actor.
 }
 
 }  // namespace coop::hook_sync

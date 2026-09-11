@@ -16,10 +16,16 @@
 
 namespace ue_wrap::keyed_objects {
 
-// The live actor the game would resolve `key` to, or null. A `"None"` or unknown key is null, which
-// is also what the game does with it -- an unresolvable attach key leaves the hook tied to nothing
-// rather than to a substitute.
+// The live actor the game would resolve `key` to, or null. A `"None"` or unknown key is null,
+// which is also what the game does with it -- an unresolvable attach key leaves the hook tied to
+// nothing rather than to a substitute.
 void* Resolve(const wchar_t* key);
+
+// Whether the map can be consulted at all: the gamemode is live and its verb resolved. A caller
+// that uses a null answer to mean "not present" needs this, because otherwise "the registry says
+// no" and "I could not ask" are the same value -- and for a dedup those two have opposite right
+// answers.
+bool Available();
 
 // Drop the cached CDO and UFunction (level change / disconnect).
 void ResetCache();

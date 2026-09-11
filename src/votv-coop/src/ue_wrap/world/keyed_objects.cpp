@@ -26,12 +26,14 @@ void* Gamemode() {
 
 }  // namespace
 
-void* Resolve(const wchar_t* key) {
-    if (!key || !*key) return nullptr;
-    void* gm = Gamemode();
-    if (!gm) return nullptr;
+namespace {
+
+// Resolve the gamemode and its verb; null when the map cannot be consulted at all.
+void* ResolveVerb(void*& outGm) {
+    outGm = Gamemode();
+    if (!outGm) return nullptr;
     if (!g_fn) {
-        g_fn = R::FindFunction(R::ClassOf(gm), L"getObjectFromKey");
+        g_fn = R::FindFunction(R::ClassOf(outGm), L"getObjectFromKey");
         if (!g_fn) {
             static bool sSaid = false;
             if (!sSaid) {
@@ -43,6 +45,20 @@ void* Resolve(const wchar_t* key) {
             return nullptr;
         }
     }
+    return g_fn;
+}
+
+}  // namespace
+
+bool Available() {
+    void* gm = nullptr;
+    return ResolveVerb(gm) != nullptr;
+}
+
+void* Resolve(const wchar_t* key) {
+    if (!key || !*key) return nullptr;
+    void* gm = nullptr;
+    if (!ResolveVerb(gm)) return nullptr;
     ParamFrame f(g_fn);
     if (!f.valid()) return nullptr;
     R::FName n = ue_wrap::fname_utils::StringToFName(key);

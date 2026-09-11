@@ -14,7 +14,7 @@
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
-#include "coop/items/hook_sync.h"  // the owner-entity lane
+#include "coop/items/hook_sync.h"  // the hook lane
 #include "coop/element/quiescence_drain.h"  // the pending position corrections
 #include "coop/props/save_identity_bind.h"  // UpdateChipHostPos
 #include "coop/player/players_registry.h"

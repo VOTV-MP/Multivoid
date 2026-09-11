@@ -134,7 +134,7 @@
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
-#include "coop/items/hook_sync.h"  // OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
+#include "coop/items/hook_sync.h"  // the hook lane: owner-phase stream, mirrors, the tick park
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/weather_sync.h"
 

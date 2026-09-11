@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 156;
+inline constexpr uint16_t kProtocolVersion = 157;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1418,10 +1418,13 @@ static_assert(sizeof(OwnerEntityDestroyPayload) == 4, "OwnerEntityDestroyPayload
 // One kind carries create AND update. A mirror that has never heard of `seq` makes one; a mirror
 // that has applies. The alternative, a spawn kind and a pose kind, buys nothing here (a hook is one
 // small record either way) and costs the ordering hazard of a pose arriving before its spawn.
+// The phase deliberately does NOT ride this message. The owner's own phase drives WHEN it sends,
+// and a display mirror renders the same whatever phase it is in, so a phase byte would be written
+// by the sender and read by nobody.
 struct HookStatePayload {
     uint16_t seq;          // 2 -- owner-local monotonic hook id, never 0
     uint8_t  classId;      // 1 -- index into the lane's class table (0 = hook_C)
-    uint8_t  flags;        // 1 -- HookFlag bits below
+    uint8_t  _pad;         // 1 -- zeroed
     float    ax, ay, az;   // 12 -- the A end (the head) in world space; the B end rides the
                            //       owner's own puppet and is never sent
     float    aPitch, aYaw, aRoll;  // 12 -- the A end's world rotation
@@ -1429,20 +1432,19 @@ struct HookStatePayload {
 };
 static_assert(sizeof(HookStatePayload) == 32, "HookStatePayload must be 32 bytes");
 
-// HookStatePayload::flags. The phase is derivable from these and is not sent as its own field:
-// a hook is in flight while Thrown, planted once AttachedA clears Thrown, and carrying its owner
-// while PlayerHooked. Anchored is not here -- an anchored hook has left this lane.
-enum HookFlag : uint8_t {
-    HookFlag_Thrown      = 1u << 0,  // isThrown: the head is in the air
-    HookFlag_AttachedA   = 1u << 1,  // attached_a: the head has bitten something
-    HookFlag_PlayerHooked = 1u << 2, // playerHooked: the cable is reeling its owner
-    HookFlag_Single      = 1u << 3,  // the single-ended variant, which never anchors a second end
-};
-
+// `seq` is never 0: there is no wildcard form, because nothing needs one. A departing peer's rows
+// are dropped locally by every peer's own disconnect fan-out, and a wildcard that only hostile
+// input could send is an attack surface with no caller.
+//
+// `originSlot` is honoured ONLY from the host (transport slot 0), which is the one party allowed
+// to speak for another slot. A client naming someone else's slot is refused -- without that term
+// any peer could delete any other peer's hooks, anchored ones included.
 struct HookDestroyPayload {
-    uint16_t seq;         // 2 -- 0 = WILDCARD: every hook of originSlot (the host's teardown)
-    uint8_t  originSlot;  // 1 -- 0 = the transport sender; non-zero only on the host's teardown
-    uint8_t  _pad;        // 1 -- zeroed
+    uint16_t seq;         // 2 -- never 0
+    uint8_t  originSlot;  // 1 -- 0 = the transport sender; non-zero honoured only from the host
+    uint8_t  anchored;    // 1 -- 1 = the anchored row, 0 = the owner-phase row. The two live in
+                          //      separate key spaces so a recycled slot cannot clobber an anchored
+                          //      hook the host still owns.
 };
 static_assert(sizeof(HookDestroyPayload) == 4, "HookDestroyPayload must be 4 bytes");
 

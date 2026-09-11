@@ -15,14 +15,21 @@ namespace coop::net { class Session; }
 
 namespace coop::hook_sync::detail {
 
-// (slot, seq) packed. Stable across the anchor handoff on purpose: the anchor moves who may write
-// the hook, it does not rename it.
+// (space, slot, seq) packed. The pair still names the hook across the handoff -- the anchor moves
+// who may write it, not what it is called -- but the ANCHORED form lives in its own space.
+//
+// It has to. A departing peer's anchored rows are deliberately kept, because the host owns those
+// now; a replacement peer takes the same slot and starts at seq 1; and a single key space would
+// then have that peer's first hook DESTROY the anchored mirror of a hook the host still owns and
+// still has in its save. Two spaces, and the two can never collide.
 using Key = uint32_t;
-inline Key MakeKey(uint8_t slot, uint16_t seq) {
-    return (static_cast<uint32_t>(slot) << 16) | seq;
+inline constexpr uint32_t kAnchoredSpace = 1u << 31;
+inline Key MakeKey(uint8_t slot, uint16_t seq, bool anchored = false) {
+    return (anchored ? kAnchoredSpace : 0u) | (static_cast<uint32_t>(slot) << 16) | seq;
 }
-inline uint8_t  SlotOf(Key k) { return static_cast<uint8_t>(k >> 16); }
-inline uint16_t SeqOf(Key k)  { return static_cast<uint16_t>(k & 0xFFFFu); }
+inline uint8_t  SlotOf(Key k)      { return static_cast<uint8_t>((k >> 16) & 0xFFu); }
+inline uint16_t SeqOf(Key k)       { return static_cast<uint16_t>(k & 0xFFFFu); }
+inline bool     IsAnchored(Key k)  { return (k & kAnchoredSpace) != 0; }
 
 // A hook this peer owns and streams. One row survives past `activeHook` going null, because that
 // is the moment the anchor has to be noticed.
@@ -44,6 +51,10 @@ struct Mirror {
     ue_wrap::CachedObjRef ref;
     ue_wrap::hook::Kind   kind     = ue_wrap::hook::Kind::Hook;
     bool                  anchored = false;  // the host owns it; a peer leaving does not drop it
+    // The tail attach is retried until it lands: a peer's puppet may not exist yet when its first
+    // hook state arrives, and an attach that silently never happened leaves the cable pinned to
+    // the mirror's own root for the hook's whole life.
+    bool                  tailAttached = false;
 };
 
 coop::net::Session*                  Session();
@@ -65,9 +76,15 @@ void* InstallMirror(Key key, ue_wrap::hook::Kind kind, const ue_wrap::FVector& a
 // Destroy the mirror under `key`, if any.
 void DropMirror(Key key);
 
-// Attach a mirror's tail to the puppet of `slot` (or to the local player, for a mirror of a hook
-// this peer's own body is carrying -- which happens only on the host, for a client's hook).
-void AttachTailToSlotBody(void* mirror, uint8_t slot);
+// Destroy a hook this peer OWNS, by seq, and drop its row. The answer to a host refusal: without
+// it a refused commit leaves the owner holding a real hook that every other peer has dropped.
+// True if a row was found.
+bool DropOwnedBySeq(uint16_t seq);
+
+// Attach a mirror's tail to the puppet of `slot`. FALSE when that peer has no live puppet yet,
+// which is not a failure and is why the caller records the answer and retries: an attach that
+// silently never happened leaves the cable pinned to the mirror's own root for the hook's life.
+bool AttachTailToSlotBody(void* mirror, uint8_t slot);
 
 uint64_t NowMs();
 

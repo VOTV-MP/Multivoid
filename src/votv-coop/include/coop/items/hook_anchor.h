@@ -39,11 +39,17 @@ namespace coop::hook_anchor {
 
 void Install(coop::net::Session* session);
 
+// What happened to a commit. The third case is not a detail: a HOST has no round trip, because
+// SendReliable fans out to the peers and never loops back and the commit receiver is host-gated,
+// so a host that shipped its own commit would be talking to nobody. It adopts on the spot instead,
+// and the caller retires its owner-phase row in the same breath rather than waiting for an answer
+// that is never coming.
+enum class CommitResult { Failed, Sent, AdoptedLocally };
+
 // OWNER: this hook has both ends anchored and the game has let go of it. Capture its record and
-// send the commit. False if the capture or the send failed, in which case the caller keeps
-// streaming and tries again on the next poll.
-bool SendCommit(uint16_t seq, ue_wrap::hook::Kind kind, void* hookActor,
-                const ue_wrap::hook::State& st);
+// either send the commit or, on the host, adopt it here. `Failed` means the caller keeps streaming
+// and tries again on the next poll.
+CommitResult SendCommit(uint16_t seq, ue_wrap::hook::Kind kind, void* hookActor);
 
 // HOST: a commit arrived.
 //
@@ -65,6 +71,11 @@ void OnAnchoredChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 // preserved. Without this the anchored half has no destroy channel and every peer keeps a copy of a
 // hook the host retired.
 void TickHost(uint64_t nowMs);
+
+// A peer left: drop its half-finished blobs. Slots recycle lowest-free, so a rejoining peer's
+// chunks must never merge into the previous occupant's partial. The ADOPTED rows stay -- the host
+// owns those hooks and they are in its save.
+void OnPeerLeftSlot(int slot);
 
 // HOST: replay every adopted hook to a joiner at its world-ready edge.
 //
