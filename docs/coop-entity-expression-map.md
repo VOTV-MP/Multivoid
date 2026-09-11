@@ -208,15 +208,14 @@ recycled that id. `[V]`
   The load path is what registers a key, so a resolvable key is exactly the set the save gave it.
   `[V]`
 - **Not synced: a prop a hook is attached to, in EITHER direction, and the two phases fail
-  differently.** Measured 2026-09-11 from a user hands-on. OWNER phase: the constraint exists only
+  differently.** OWNER phase: the constraint exists only
   on the peer that ran `attach_a`, so that peer drags its own copy and every other copy stands
   still -- there is no transport for a prop nobody is holding, the held-prop stream being sourced
   from the player's grab slot alone. ANCHORED phase: `processKeys` -> `makeAttachments` rebuilds
   the constraint on EVERY peer against that peer's own copy, so the copies diverge under three
   independent simulations rather than one standing still; the mirror tick park does not cover it,
   being an interceptor on `ReceiveTick` against an ubergraph event. The prop rows above say "prop
-  motion via the prop lane"; that lane has no such channel. `docs/PROP_MOTION_ARC.md` owns the
-  fix. `[V]`
+  motion via the prop lane"; that lane has no such channel, and giving it one is the fix. `[V]`
 
 ## The dupe matrix
 
