@@ -8,7 +8,10 @@
 //
 // The probe prints the whole candidate set with slot, distance, local key and mirror binding, and
 // then watches each adopted actor: a destroy landing on it shortly after the bind is the ordering
-// defect where a pose stream is left addressing an actor that is already gone.
+// defect where a pose stream is left addressing an actor that is already gone. The watch sits on
+// the destroy SEAM, so it sees the death whoever caused it -- the first adoption measured this way
+// was killed by the hand-item lane, not by the wire, and a watch on the wire receiver alone read
+// zero through the run that contained it.
 //
 // Observation only -- the scan returns the same actor with the probe on. Ini-gated [dev]
 // spawn_match_probe=1. Game thread only.
@@ -34,7 +37,9 @@ void NoteFuzzyScan(uint32_t wireEid, const std::wstring& wireKey, const std::wst
 // range, which is a different prop; -1 when the scan did not run.
 void NoteFuzzyBound(void* actor, uint32_t wireEid, const std::wstring& wireKey, float takenDistCm);
 
-// A wire destroy resolved `actor`. Reports the age of an adoption this destroy lands on.
+// `actor` is being destroyed, from the seam every destroy passes through. Reports the age of an
+// adoption this destroy lands on; `destroyEid` is the element id the tracker still holds for it,
+// 0 for an actor that carried none.
 void NoteDestroy(void* actor, uint32_t destroyEid);
 
 // Print the tallies. Cumulative, so each print is the whole run so far.

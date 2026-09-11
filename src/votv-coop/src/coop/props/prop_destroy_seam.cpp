@@ -7,6 +7,7 @@
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
 #include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the destroy-edge first refusal
+#include "coop/dev/spawn_match_probe.h"      // NoteDestroy (the fuzzy-adoption watch)
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -43,6 +44,11 @@ void DestroySeamBody(void* self) {
     // not-connected gates stay first. The Element id is captured before the keyed-prop unmark
     // drains the shadow, or every destroy broadcast would carry an invalid id.
     const coop::element::ElementId destroyEid = PT::GetPropElementIdForActor(self);
+    // The adoption watch, before every gate below it: an adopted actor's death is worth reporting
+    // whoever caused it, and the deaths that orphan a wire identity are exactly the ones this
+    // function goes on to classify as somebody else's -- an echo it will not rebroadcast, an actor
+    // that is not keyed. A no-op unless the probe is armed.
+    coop::dev::spawn_match_probe::NoteDestroy(self, static_cast<uint32_t>(destroyEid));
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
     if (!s->connected()) return;

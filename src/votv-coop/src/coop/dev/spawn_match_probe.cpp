@@ -33,6 +33,7 @@ std::unordered_map<void*, Adoption> g_watch;
 int g_scans          = 0;
 int g_scansNoMatch   = 0;   // the scan accepted nothing
 int g_scansMulti     = 0;   // more than one candidate was inside the radius
+int g_scansExcluded  = 0;   // a scan where the radius held a hand-axis actor, refused by the caller's set
 int g_notNearest     = 0;   // ... and the one taken was not the closest of them
 int g_keyDivergedNear = 0;  // adopted over its own key AT the wire spot -- the dedupe working
 int g_keyDivergedFar  = 0;  // ... metres away, which is a different prop being taken
@@ -63,11 +64,13 @@ void NoteFuzzyScan(uint32_t wireEid, const std::wstring& wireKey, const std::wst
     if (n == 0) ++g_scansNoMatch;
     if (n > 1) ++g_scansMulti;
 
+    if (trace.excludedRejects > 0) ++g_scansExcluded;
     UE_LOGW("spawn_match_probe: SCAN eid=%u key='%ls' cls='%ls' row='%ls' at=(%.1f,%.1f,%.1f) -- "
             "%zu candidate(s) in radius, %d class match(es) scanned, %d rejected on row name, "
-            "nearest outside=%.1fcm",
+            "%d refused as hand-axis, nearest outside=%.1fcm",
             wireEid, wireKey.c_str(), cls.c_str(), propName.c_str(), anchor.X, anchor.Y, anchor.Z,
-            n, trace.classMatches, trace.rowNameRejects, trace.nearestOutsideCm);
+            n, trace.classMatches, trace.rowNameRejects, trace.excludedRejects,
+            trace.nearestOutsideCm);
 
     // The candidate table. The scan takes candidates[0]; anything nearer below it is a choice the
     // shipped log cannot show, and a local key differing from the wire key means the adoption is
@@ -140,7 +143,8 @@ void NoteDestroy(void* actor, uint32_t destroyEid) {
     if (age <= kFreshBind) {
         ++g_destroyedFresh;
         UE_LOGW("spawn_match_probe: DESTROY-BEHIND-BIND actor=%p adopted for eid=%u key='%ls' %lld ms ago, "
-                "destroyed now by eid=%u -- the adoption is spent and this eid's pose stream has no actor",
+                "destroyed now (element id at the seam=%u) -- the adoption is spent and this eid's "
+                "pose stream has no actor",
                 actor, it->second.eid, it->second.key.c_str(), static_cast<long long>(ms), destroyEid);
     } else {
         ++g_destroyedLater;
@@ -161,11 +165,14 @@ void EmitVerdict() {
     g_lastVerdict = std::chrono::steady_clock::now();
     g_dirty = false;
     UE_LOGW("spawn_match_probe: VERDICT scans=%d no-match=%d multi-candidate=%d not-nearest=%d "
-            "bound=%d rekeyed-in-place=%d rekeyed-at-range=%d destroyed-behind-bind=%d destroyed-later=%d",
-            g_scans, g_scansNoMatch, g_scansMulti, g_notNearest, g_bound,
+            "hand-axis-refused=%d bound=%d rekeyed-in-place=%d rekeyed-at-range=%d "
+            "destroyed-behind-bind=%d destroyed-later=%d",
+            g_scans, g_scansNoMatch, g_scansMulti, g_notNearest, g_scansExcluded, g_bound,
             g_keyDivergedNear, g_keyDivergedFar, g_destroyedFresh, g_destroyedLater);
     const char* reading =
-        (g_bound == 0)           ? "NO ADOPTION -- the fuzzy path never took a candidate this run; nothing here bears on the ordering defect"
+        (g_destroyedFresh > 0 && g_scansExcluded > 0)
+                                 ? "ADOPTIONS STILL DIE BEHIND THE BIND WITH THE HAND AXIS ALREADY REFUSED -- a second producer of spent adoptions, not the hand mirror"
+        : (g_bound == 0)         ? "NO ADOPTION -- the fuzzy path never took a candidate this run; nothing here bears on the ordering defect"
         : (g_destroyedFresh > 0) ? "ADOPTIONS DIE BEHIND THE BIND -- a destroy lands on the adopted actor within seconds, which is the pose-stream orphan"
         : (g_keyDivergedFar > 0) ? "ADOPTIONS TAKE A PROP AT RANGE -- a rekey metres from the wire spot is a different prop, not the same one under two keys"
         : (g_notNearest > 0)     ? "ORDER BEATS DISTANCE -- a nearer candidate was passed over for an earlier array slot"
