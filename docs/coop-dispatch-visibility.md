@@ -89,6 +89,7 @@ post it. `[V]`
 | a deferred spawn from a Blueprint graph (the pile morph, the wisp swarm, the pyramid's spawner) | `EX_CallMath` | not to the detour | the native seam, gated by the calling object's class `[V]` |
 | an event actor's self-destroy at its end | a self-call | no | the host's pose walk retires the dead actor `[V]` |
 | a finish-spawning from a native caller | reaches the detour | yes | the keyed sandbox-spawn seam `[V]` |
+| a hook's constraint build (`SetConstrainedComponents`, from `attach_a` or `makeAttachments`) | a final call into a native, from the graph | not to the detour; yes to the native seam, on every route | a client breaks every hook tie there; the host keeps its own and builds a client's on its mirror `[V]` |
 | begin-play of a save-loaded actor | no dispatch the session sees | caught by the object scan at world start `[V]` |
 | begin-play of a runtime-spawned actor | maybe | unverified | probe before relying on it `[?]` |
 | a cosmetic emitter spawn | `EX_CallMath` | no | poll the result; the cue lane diffs the particle components `[V]` |
@@ -183,7 +184,10 @@ ubergraph: a mirror adopting an anchored hook runs `loadData` then `processKeys`
 `frameDelay` -> `makeAttachments()` and builds a real PhysX constraint against that peer's own copy
 of whatever the hook was tied to -- no tick involved, and no `attach_a` either. So a parked mirror
 can still mutate the receiving peer's world through an event the park never saw. Ask which dispatch
-the park intercepts, then ask what else can reach the same write. `[V]`
+the park intercepts, then ask what else can reach the same write. `[V]` The write itself has a
+seam: every route into a hook's constraint ends in the native `SetConstrainedComponents`, and the
+native function seam on it fires for the mirror's `makeAttachments` as it does for the owner's
+`attach_a`; the hook lane breaks a client's tie there (`coop/items/hook_constraint`). `[V]`
 
 ## Needs a probe
 

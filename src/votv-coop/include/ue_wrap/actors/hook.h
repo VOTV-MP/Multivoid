@@ -89,9 +89,56 @@ bool WriteActiveHook(void* mainPlayer, void* hookActor);
 // attach_a with its replace parameters, the game's own programmatic attach: the head binds to
 // `component` of `actor` at `location` with `normal`, the tail to `actorAttach`'s root, and the
 // constraint is built between them. No hit result is needed, since the verb reads the replace set
-// whenever `actor` is valid; `unfreezeFrozen` stays false, the item's own plant. Game thread.
+// whenever `actor` is valid. `unfreezeFrozen` is the one thing the item's plant and the flight
+// landing pass differently: false for a plant, true for a landing, which wakes a frozen prop.
+// Game thread.
 bool AttachHead(void* hookActor, void* actor, void* component, const FVector& location,
-                const FVector& normal, void* actorAttach, bool checkLen);
+                const FVector& normal, void* actorAttach, bool checkLen, bool unfreezeFrozen);
+
+// The bite: what a hook's head is tied to, read off a hook whose attach_a has run. `component`
+// is what the head hit, the prop's mesh most often; `localHead` is the head's position in that
+// component's frame, scale-free, the constraint reference the game itself keeps in attachLoc_A;
+// `thrown` says the hook flew before it bit, which is the one input attach_a's unfreeze branch
+// reads -- the flight sphere the throw adds is destroyed on landing but never cleared from its
+// field, so a non-null field is a throw and a null one a plant. Raw field reads; false when
+// unresolved. `actor` and `component` are null on a hook that has bitten nothing.
+struct Bite {
+    void*   actor     = nullptr;
+    void*   component = nullptr;
+    FVector localHead{};
+    bool    thrown    = false;
+};
+bool ReadBite(void* hookActor, Bite& out);
+
+// hook_C or any class beneath it -- hook_flesh_C, rope_C, and the level-placed hook_Child_C that
+// KindOf deliberately excludes. A caller that must see every actor building a hook's constraint
+// asks this; a caller minting identity asks KindOf.
+bool IsHookFamily(void* actor);
+
+// The A-to-B tie, hook_C's `PhysicsConstraint` component -- not `throwConstraint`, the flight
+// tether between the thrower and the flying sphere, a second component of the same class on the
+// same actor. Null when unresolved.
+void* PhysicsConstraintOf(void* hookActor);
+
+// UPhysicsConstraintComponent::BreakConstraint on that component: the joint is terminated, the
+// component stays, and every later limit write is a no-op until SetConstrainedComponents builds
+// a joint again. The game's own attach_b begins the same way. Game thread.
+bool BreakConstraint(void* hookActor);
+
+// UPhysicsConstraintComponent::SetConstrainedComponents, the native every route into a hook's tie
+// funnels through -- attach_a, makeAttachments and the throw's tether alike. Resolved on the
+// engine class, so it answers before any hook class has loaded. Null while unresolved.
+void* SetConstrainedComponentsFunction();
+
+// The cable length alone: `dist` and the game's setLength, without the head pose. A mirror whose
+// head rides what it bit derives its pose there, and the reel still has to reach it.
+bool SetMirrorLength(void* mirror, float dist);
+
+// A component of `actor` by the name the game's own save record carries for it (GetObjectName of
+// the component, as an FName). The prop's mesh answers in O(1) first; anything else goes through
+// the game's own bpCodeLib::getComponentObjectByName, the lookup processKeys uses for the same
+// question. Null when `actor` owns nothing of that name. Game thread.
+void* ComponentByName(void* actor, const wchar_t* name);
 
 // Aactor_save_C's `skipSave`, which its ignoreSave returns and the game's save walk asks of every
 // object implementing int_save_C before serializing it. hook_C overrides neither, so a hook is

@@ -98,9 +98,12 @@ is relayed the same way (`coop/items/inventory_pickup_sync`).
 A prop nobody is holding can still be in motion: a hook's constraint pulls it along behind the
 player, an anchored hook ties it to something that moves, and after the hook lets go it slides
 until it rests. The held-prop stream never sees it, since that stream is sourced from the
-player's grab slot alone, so the host keeps a set of the props its own hooks are tied to -- fed by
-the hook lane, never by a scan -- and streams each one's pose while it moves
-(`coop/props/prop_drive_host`). A receiver parks the prop on the first pose and follows the stream
+player's grab slot alone, so the host keeps a set of the props the hooks on its machine are tied
+to -- its own, the anchored ones it adopted, its mirrors of the clients' hooks, and the save's and
+the level's own -- fed by the hook lane rather than by a per-frame walk, and streams each one's
+pose while it moves (`coop/props/prop_drive_host`). Every hook's constraint exists on the host and
+nowhere else (the fifth rule under Deployables), so this one set is every prop any hook can move.
+A receiver parks the prop on the first pose and follows the stream
 the way a carried trash clump is followed -- the fixed-delay interpolation, frozen at the last pose
 across a gap -- where a held prop snaps to each pose; a reliable end edge carries the final pose,
 the host's physics flags and the velocity once the prop has rested or a hand has taken it, and
@@ -177,6 +180,15 @@ lane did not have in front of it:
 - **The actor's own save record is the handover payload.** It already carries both attach keys,
   both component names and the cable length, and the game's own load path resolves them in
   whatever world it lands in. Nothing about an anchor needs a format of ours.
+- **The physics constraint exists on the host and nowhere else.** The deployed hook's tie is a
+  PhysX constraint the game builds on whichever machine runs its attach verbs, and a constraint
+  pulling a host-owned prop on a client is that client moving shared state the host never sees.
+  So a client breaks every tie a hook builds on it, at the native seam the build funnels through,
+  and the host builds a client's hook its real tie on the mirror it holds of that hook, against
+  that client's puppet, from the bite the owner's state names. The client's own hook keeps its
+  pull on the client's own player, which is a velocity write in the tick and not the constraint;
+  its head still rides what it bit. Two players hooking one prop is then two host constraints on
+  one host body, which is what single-player physics would do (`coop/items/hook_constraint`).
 
 ## Who owns what
 
@@ -230,7 +242,8 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract) never reaches the host, and nothing logs it | `[V]` `coop/props/prop_drop_intent` drops it at the drain |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
 | The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
-| A client's hook drags only that client's copy of a host prop: the constraint exists on the client's machine alone, so the host has no motion to stream, and the copies diverge until that client's next join. The host's own hooks and every anchored hook stream through the driven-prop channel | `[V]` `coop/items/hook_prop_claim` reads the host's own and adopted hooks only |
+| A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it |
+| A client's hook into the ATV ties the host's ATV against the client's puppet; whether the ATV lane's corrector carries that pull back to the client's copy is not measured | `[?]` `coop/items/hook_constraint` ties any keyed actor the bite resolves; `coop/interactables/atv_sync` corrects rather than parks |
 | A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks with `DriveSimulate(mesh, false)`; `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |
 | A pose can arrive milliseconds before the spawn that names its prop; that is a race, not a defect, and a ledger tells the two apart instead of warning per packet | `[V]` `coop/props/unresolved_pose_ledger` |
 
@@ -242,7 +255,7 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
 | a client's intents | `coop/props/prop_drop_intent` |
 | the stick | `coop/props/prop_stick_sync` |
-| a prop under a hook's drive | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it) |
+| a prop under a hook's drive | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |

@@ -142,7 +142,8 @@ bool Plant(void* player, void* target) {
     void* hook = H::SpawnMirror(H::Kind::Hook, loc, ue_wrap::FRotator{});
     if (!hook) { g_plantNote = "hook-did-not-spawn"; return false; }
     if (!H::AttachHead(hook, target, mesh, ue_wrap::FVector{loc.X, loc.Y, loc.Z + 20.f},
-                       ue_wrap::FVector{0.f, 0.f, 1.f}, player, /*checkLen=*/true)) {
+                       ue_wrap::FVector{0.f, 0.f, 1.f}, player, /*checkLen=*/true,
+                       /*unfreezeFrozen=*/false)) {
         E::DestroyActor(hook);
         g_plantNote = "attach_a-did-not-dispatch";
         return false;

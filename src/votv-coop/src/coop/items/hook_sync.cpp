@@ -4,12 +4,17 @@
 #include "coop/items/hook_sync.h"
 
 #include "coop/items/hook_anchor.h"
+#include "coop/items/hook_constraint.h"       // the tie lives on the host: bites, breaks
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/net/wire_key_util.h"           // WireKeyFromString: the bite descriptor
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/props/prop_element_tracker.h"  // GetPropElementIdForActor: the host's own eid
+#include "coop/props/remote_prop.h"           // ResolveMirrorEidByActor: the eid a client's copy carries
 
 #include "ue_wrap/actors/hook.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -21,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 namespace coop::hook_sync {
 
@@ -28,6 +34,7 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace H  = ue_wrap::hook;
+namespace PR = ue_wrap::prop;
 
 namespace detail {
 namespace {
@@ -93,6 +100,12 @@ constexpr size_t   kMaxOwned     = 8;
 // other peer -- and HookState is relayed, so it reaches them all. The owner-entity lane closed
 // exactly this hole on its own receive path; this lane copied its send-side cap and needed both.
 constexpr size_t   kMaxMirrorsPerSlot = 16;
+// HOST: a bite the host could not yet reproduce -- the prop or the owner's puppet not here -- is
+// asked again on the owner's later states, throttled, and given up on with one line. Twenty tries
+// at the keepalive's 2 s is the window a joining owner's world needs; a bite unresolved past it
+// names a prop this host does not have.
+constexpr uint64_t kBiteRetryMs  = 500;
+constexpr uint8_t  kMaxBiteTries = 20;
 
 constexpr float kMoveEpsUU  = 2.0f;
 constexpr float kAngEpsDeg  = 1.0f;
@@ -142,7 +155,46 @@ bool OnHookReceiveTickPre(void* self, void* /*params*/) {
     return false;
 }
 
-void SendState(const Owned& o, const H::State& st) {
+// The bite descriptor: what the head is tied to, so the HOST can build this hook's constraint on
+// its own copy of it (coop/items/hook_constraint). Only a keyed actor can be named across peers;
+// a wall or the landscape has no key and needs no host constraint, since a tie to one pulls
+// nothing but this player. Built once per bitten actor: the key, the component name and the
+// element id hold for as long as the head does, so a later send is a pointer compare and a
+// liveness read. The actor is answered by its own reference once seen; a pointer seen for the
+// first time is probed bare, once, the owner poll's rule for a field the game can leave dangling.
+void RefreshBite(Owned& o, void* hookActor, const H::State& st, coop::net::Session& s) {
+    H::Bite b{};
+    if (!st.attachedA || !H::ReadBite(hookActor, b) || !b.actor || !b.component) {
+        o.biteActor = nullptr;
+        o.biteRef.Reset();
+        o.biteValid = false;
+        return;
+    }
+    if (b.actor == o.biteActor) {
+        if (!o.biteRef.Alive()) o.biteValid = false;   // the prop died under the head
+        return;
+    }
+    o.biteActor = b.actor;
+    o.biteValid = false;
+    if (!R::IsLive(b.actor)) { o.biteRef.Reset(); return; }
+    o.biteRef.Set(b.actor);
+    std::wstring key = PR::GetInteractableKeyString(b.actor);
+    if (key.empty() || key == L"None") key = PR::GetActorSaveKeyString(b.actor);
+    if (key.empty() || key == L"None") return;   // keyless: world geometry
+    coop::net::WireKeyFromString(key, o.biteKey);
+    coop::net::WireKeyFromString(R::ToString(R::NameOf(b.component)), o.biteComponent);
+    const coop::element::ElementId eid =
+        s.role() == coop::net::Role::Host
+            ? coop::prop_element_tracker::GetPropElementIdForActor(b.actor)
+            : coop::remote_prop::ResolveMirrorEidByActor(b.actor);
+    o.biteEid   = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
+    o.biteValid = true;
+    UE_LOGI("hook_sync: OWN seq=%u bit '%ls' (%ls, eid %u, %s) -- named on the wire so the host "
+            "ties it", (unsigned)o.seq, key.c_str(), R::ToString(R::NameOf(b.component)).c_str(),
+            o.biteEid, b.thrown ? "thrown" : "planted");
+}
+
+void SendState(Owned& o, const H::State& st, void* hookActor) {
     auto* s = Session();
     if (!s) return;
     coop::net::HookStatePayload p{};
@@ -151,6 +203,21 @@ void SendState(const Owned& o, const H::State& st) {
     p.ax = st.aLoc.X; p.ay = st.aLoc.Y; p.az = st.aLoc.Z;
     p.aPitch = st.aRot.Pitch; p.aYaw = st.aRot.Yaw; p.aRoll = st.aRot.Roll;
     p.dist = st.dist;
+    RefreshBite(o, hookActor, st, *s);
+    if (o.biteValid) {
+        H::Bite b{};
+        H::ReadBite(hookActor, b);
+        p.biteKey       = o.biteKey;
+        p.biteComponent = o.biteComponent;
+        p.biteEid       = o.biteEid;
+        p.blx = b.localHead.X; p.bly = b.localHead.Y; p.blz = b.localHead.Z;
+        // attach_a faces the hook down the surface normal, and the head then rides what it bit,
+        // so the actor's forward is the negated normal for as long as the bite holds.
+        const ue_wrap::FVector fwd = E::GetActorForwardVector(hookActor);
+        p.bnx = -fwd.X; p.bny = -fwd.Y; p.bnz = -fwd.Z;
+        p.flags = static_cast<uint8_t>(coop::net::kHookStateBitten |
+                                       (b.thrown ? coop::net::kHookStateThrown : 0));
+    }
     s->SendReliable(coop::net::ReliableKind::HookState, &p, sizeof(p));
 }
 
@@ -265,7 +332,7 @@ void TickOwner(uint64_t now) {
         }
 
         if (Changed(st, o.last) || now - o.lastSendMs >= kKeepaliveMs) {
-            SendState(o, st);
+            SendState(o, st, a);
             o.last       = st;
             o.lastSendMs = now;
         }
@@ -338,6 +405,8 @@ void Install(coop::net::Session* session) {
     if (!GT::IsGameThread()) return;
     detail::SetSession(session);
     coop::hook_anchor::Install(session);
+    coop::hook_constraint::Install(session);
+    detail::RegisterWorldHooksScan();
     if (g_parkInstalled || g_parkRefused) return;
     if (!H::EnsureResolved()) return;  // retried from Tick while the class loads
     void* tickFn = H::ReceiveTickFunction();
@@ -363,6 +432,11 @@ void Tick() {
     g_lastDriverMs = now;
 
     if (!g_parkInstalled && !g_parkRefused) Install(s);
+    // Before this lane's own resolve gate: the queue holds every constraint build the seam saw,
+    // most of them not a hook's (the ATV's rig, the heavy grab), and it judges and drops those
+    // with or without the hook classes in hand. Behind the gate it would sit full on a world
+    // that never loads a hook.
+    coop::hook_constraint::Tick();
     if (!H::EnsureResolved()) return;
 
     TickOwner(now);
@@ -383,6 +457,8 @@ void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
     if (!Finite3(p.ax, p.ay, p.az) || !InWorld(p.ax, p.ay, p.az)) return;
     if (!Finite3(p.aPitch, p.aYaw, p.aRoll)) return;
     if (!std::isfinite(p.dist) || p.dist < 0.f || p.dist > coop::net::kMaxCoord) return;
+    if ((p.flags & coop::net::kHookStateBitten) &&
+        (!Finite3(p.blx, p.bly, p.blz) || !Finite3(p.bnx, p.bny, p.bnz))) return;
     if (senderPeerSlot == coop::players::Registry::Get().LocalPeerId()) return;  // never our own
     if (!H::EnsureResolved()) return;
 
@@ -407,17 +483,55 @@ void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
         void* m = InstallMirror(key, static_cast<H::Kind>(p.classId), loc, rot, /*anchored=*/false);
         if (!m) return;
         H::DriveMirror(m, loc, rot, p.dist);
-        auto row = Mirrors().find(key);
-        if (row != Mirrors().end()) row->second.tailAttached = AttachTailToSlotBody(m, slot);
+        it = Mirrors().find(key);
+        if (it == Mirrors().end()) return;
+        it->second.tailAttached = AttachTailToSlotBody(m, slot);
+    }
+    Mirror& row = it->second;
+    void* m = row.ref.Get();
+    if (!m) return;
+
+    // HOST: the owner named what its head bit, so this mirror gets the game's own constraint
+    // against the host's copy of it -- and from then on derives its head pose from that actor.
+    if (s->role() == coop::net::Role::Host && !row.bitten &&
+        (p.flags & coop::net::kHookStateBitten) && row.biteTries < kMaxBiteTries) {
+        const uint64_t now = detail::NowMs();
+        if (now >= row.nextBiteMs) {
+            row.nextBiteMs = now + kBiteRetryMs;
+            const coop::hook_constraint::BiteResult r =
+                coop::hook_constraint::BiteMirror(m, slot, p);
+            if (r == coop::hook_constraint::BiteResult::Tied) {
+                row.bitten = true;
+            } else if (r == coop::hook_constraint::BiteResult::Refused) {
+                row.biteTries = kMaxBiteTries;
+                UE_LOGW("hook_sync: slot %u seq %u -- the bite could not be reproduced here; the "
+                        "mirror stays wire-driven and the prop it bit is not streamed for it",
+                        (unsigned)slot, (unsigned)p.seq);
+            } else if (++row.biteTries == kMaxBiteTries) {
+                UE_LOGW("hook_sync: slot %u seq %u -- the bitten actor never resolved on this host "
+                        "in %u tries; the mirror stays wire-driven", (unsigned)slot,
+                        (unsigned)p.seq, (unsigned)kMaxBiteTries);
+            }
+            // attach_a destroys the hook it runs on for its reject set, as it would the owner's
+            // own; the row goes with it and the owner's next state builds a fresh mirror.
+            if (!row.ref.Alive()) {
+                NoteMirrorActor(row.ref.Raw(), false);
+                Mirrors().erase(it);
+                return;
+            }
+        }
+    }
+    if (row.bitten) {
+        // The head rides what it bit and the tail is on the owner's puppet: attach_a did both.
+        // Only the reel still crosses.
+        H::SetMirrorLength(m, p.dist);
         return;
     }
-    void* m = it->second.ref.Get();
-    if (!m) return;
     H::DriveMirror(m, loc, rot, p.dist);
     // The retry an earlier draft only claimed: a puppet that had not spawned when the mirror was
     // built leaves the cable's far end on the mirror's own root, and the update branch drove the
     // head and never looked again.
-    if (!it->second.tailAttached) it->second.tailAttached = AttachTailToSlotBody(m, slot);
+    if (!row.tailAttached) row.tailAttached = AttachTailToSlotBody(m, slot);
 }
 
 void OnDestroyMsg(const coop::net::HookDestroyPayload& p, int senderPeerSlot) {
@@ -499,6 +613,7 @@ void OnDisconnect() {
     g_parkRefused   = false;
 
     coop::hook_anchor::OnDisconnect();
+    coop::hook_constraint::OnDisconnect();
     H::ResetCache();
     detail::SetSession(nullptr);
 }

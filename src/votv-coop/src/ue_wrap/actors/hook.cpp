@@ -2,19 +2,26 @@
 
 #include "ue_wrap/actors/hook.h"
 
+#include "ue_wrap/actors/prop.h"        // GetStaticMesh: the O(1) answer to a component name
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"    // StringToFName: the game's component lookup takes a name
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace ue_wrap::hook {
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
+namespace P = ue_wrap::profile;
 namespace SR = ue_wrap::save_record;
 
 // The allowlist, indexed by Kind. `hook_Child_C` is absent on purpose -- the header says why.
@@ -42,6 +49,10 @@ int32_t   g_offActiveHk = -1;  // Ahook_C* mainPlayer_C::activeHook
 int32_t   g_offMaxDist  = -1;  // float  hook_C::maxDist -- the arbiter's clamp on a wire dist
 int32_t   g_offActorA   = -1;  // AActor* hook_C::actor_a -- what the head bit
 int32_t   g_offActorB   = -1;  // AActor* hook_C::actor_b -- the tail's anchor
+int32_t   g_offCompAField = -1;  // UPrimitiveComponent* hook_C::component_A -- the bitten component
+int32_t   g_offAttachLocA = -1;  // FVector hook_C::attachLoc_A -- the head in component_A's frame
+int32_t   g_offPhys       = -1;  // USphereComponent* hook_C::phys -- the flight sphere; set by throw only
+int32_t   g_offConstraint = -1;  // UPhysicsConstraintComponent* hook_C::PhysicsConstraint -- the A-B tie
 
 void* g_fnReceiveTick = nullptr;
 void* g_fnGetData     = nullptr;
@@ -53,6 +64,18 @@ void* g_fnSetCompWorldLocRot = nullptr;  // USceneComponent::K2_SetWorldLocation
 void* g_fnAttachComp         = nullptr;  // USceneComponent::K2_AttachToComponent
 void* g_fnDetachComp         = nullptr;  // USceneComponent::K2_DetachFromComponent
 void* g_fnGetRootComp        = nullptr;  // AActor::K2_GetRootComponent
+void* g_fnBreakConstraint    = nullptr;  // UPhysicsConstraintComponent::BreakConstraint
+void* g_fnSetConstrained     = nullptr;  // UPhysicsConstraintComponent::SetConstrainedComponents
+
+// The game's own component-by-name lookup, a static on its C++ library class. Optional: without it
+// ComponentByName still answers for a prop's mesh, which is what a hook bites in practice, and
+// says once what it could not resolve.
+void*        g_cdoCodeLib      = nullptr;
+void*        g_fnCompByName    = nullptr;
+std::wstring g_compByNameActor;   // the first parameter's name, read off the live UFunction
+std::wstring g_compByNameName;    // the second's
+bool         g_codeLibMissing  = false;   // the class is not in this build: never walk for it again
+bool         g_saidNoCodeLib   = false;
 
 bool     g_resolved   = false;
 bool     g_latchedOff = false;
@@ -93,7 +116,35 @@ bool AllResolved() {
            g_offDist >= 0 && g_offCompA >= 0 && g_offCompB >= 0 && g_offActiveHk >= 0 &&
            g_fnReceiveTick && g_fnGetData && g_fnLoadData && g_fnProcessKeys && g_fnSetLength &&
            g_offMaxDist >= 0 && g_offActorA >= 0 && g_offActorB >= 0 && g_fnAttachA &&
-           g_fnSetCompWorldLocRot && g_fnAttachComp && g_fnDetachComp && g_fnGetRootComp;
+           g_fnSetCompWorldLocRot && g_fnAttachComp && g_fnDetachComp && g_fnGetRootComp &&
+           g_offCompAField >= 0 && g_offAttachLocA >= 0 && g_offPhys >= 0 &&
+           g_offConstraint >= 0 && g_fnBreakConstraint;
+}
+
+// The library lookup, resolved beside the class members but never gating them. The two parameter
+// names are read off the live UFunction rather than guessed: a native static's parameter names are
+// the one thing no dump in the tree records.
+void ResolveCodeLib() {
+    if ((g_cdoCodeLib && g_fnCompByName) || g_codeLibMissing) return;
+    // A class of the game's own C++ module is loaded with the module, before any world, so a miss
+    // is a build without it, not a load-order wait -- and a FindClass miss walks the whole object
+    // array, so it is asked exactly once.
+    void* cls = R::FindClass(L"bpCodeLib");
+    if (!cls) { g_codeLibMissing = true; return; }
+    if (!g_cdoCodeLib)   g_cdoCodeLib   = R::FindClassDefaultObject(L"bpCodeLib");
+    if (!g_fnCompByName) g_fnCompByName = R::FindFunction(cls, L"getComponentObjectByName");
+    if (!g_cdoCodeLib || !g_fnCompByName) return;
+    std::vector<std::wstring> in;
+    for (const R::ParamInfo& pi : R::FunctionParams(g_fnCompByName))
+        if (!(pi.flags & P::cpf::ReturnParm)) in.push_back(pi.name);
+    if (in.size() != 2) {
+        // Not the two-argument lookup this was written against: a build difference, asked once.
+        g_fnCompByName   = nullptr;
+        g_codeLibMissing = true;
+        return;
+    }
+    g_compByNameActor = in[0];
+    g_compByNameName  = in[1];
 }
 
 }  // namespace
@@ -125,6 +176,10 @@ bool EnsureResolved() {
     if (g_offMaxDist < 0) g_offMaxDist = R::FindPropertyOffset(cls, L"maxDist");
     if (g_offActorA < 0) g_offActorA = R::FindPropertyOffset(cls, L"actor_a");
     if (g_offActorB < 0) g_offActorB = R::FindPropertyOffset(cls, L"actor_b");
+    if (g_offCompAField < 0) g_offCompAField = R::FindPropertyOffset(cls, L"component_A");
+    if (g_offAttachLocA < 0) g_offAttachLocA = R::FindPropertyOffset(cls, L"attachLoc_A");
+    if (g_offPhys       < 0) g_offPhys       = R::FindPropertyOffset(cls, L"phys");
+    if (g_offConstraint < 0) g_offConstraint = R::FindPropertyOffset(cls, L"PhysicsConstraint");
 
     if (!g_fnReceiveTick) g_fnReceiveTick = R::FindFunction(cls, L"ReceiveTick");
     if (!g_fnGetData)     g_fnGetData     = R::FindFunction(cls, L"getData");
@@ -145,6 +200,10 @@ bool EnsureResolved() {
     if (void* ac = R::FindClass(L"Actor")) {
         if (!g_fnGetRootComp) g_fnGetRootComp = R::FindFunction(ac, L"K2_GetRootComponent");
     }
+    if (void* pc = R::FindClass(P::name::PhysicsConstraintComponentClass)) {
+        if (!g_fnBreakConstraint) g_fnBreakConstraint = R::FindFunction(pc, P::name::BreakConstraintFn);
+    }
+    ResolveCodeLib();
 
     if (AllResolved()) {
         g_resolved = true;
@@ -162,14 +221,18 @@ bool EnsureResolved() {
                 "(attached_a=%d attached_b=%d isThrown=%d playerHooked=%d skipSave=%d dist=%d "
                 "A=%d B=%d activeHook=%d tick=%d getData=%d loadData=%d processKeys=%d "
                 "setLength=%d setWorldLocRot=%d attach=%d detach=%d root=%d actor_a=%d actor_b=%d "
-                "attach_a=%d) -- the hook lane stays OFF and writes nothing; game version mismatch?",
+                "attach_a=%d component_A=%d attachLoc_A=%d phys=%d PhysicsConstraint=%d "
+                "BreakConstraint=%d) -- the hook lane stays OFF and writes nothing; game version "
+                "mismatch?",
                 g_attempts, g_attachedA.resolved(), g_attachedB.resolved(), g_isThrown.resolved(),
                 g_playerHooked.resolved(), g_skipSave.resolved(), g_offDist >= 0, g_offCompA >= 0,
                 g_offCompB >= 0, g_offActiveHk >= 0, g_fnReceiveTick != nullptr,
                 g_fnGetData != nullptr, g_fnLoadData != nullptr, g_fnProcessKeys != nullptr,
                 g_fnSetLength != nullptr, g_fnSetCompWorldLocRot != nullptr,
                 g_fnAttachComp != nullptr, g_fnDetachComp != nullptr, g_fnGetRootComp != nullptr,
-                g_offActorA >= 0, g_offActorB >= 0, g_fnAttachA != nullptr);
+                g_offActorA >= 0, g_offActorB >= 0, g_fnAttachA != nullptr, g_offCompAField >= 0,
+                g_offAttachLocA >= 0, g_offPhys >= 0, g_offConstraint >= 0,
+                g_fnBreakConstraint != nullptr);
     }
     return false;
 }
@@ -286,14 +349,18 @@ bool DriveMirror(void* mirror, const FVector& aLoc, const FRotator& aRot, float 
     f.Set<bool>(L"bSweep", false);
     f.Set<bool>(L"bTeleport", true);
     if (!Call(compA, f)) return false;
+    return SetMirrorLength(mirror, dist);
+}
 
+bool SetMirrorLength(void* mirror, float dist) {
+    if (!mirror || !g_resolved) return false;
     // The cable length is the game's own verb, not a field write: setLength clamps `dist`, writes
     // the three constraint limits AND `Cable.CableLength = dist / 1.5` in one call, which is the
     // ratio a hand-written mirror gets wrong.
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(mirror) + g_offDist) = dist;
     ParamFrame sl(g_fnSetLength);
-    if (sl.valid()) Call(mirror, sl);
-    return true;
+    if (!sl.valid()) return false;
+    return Call(mirror, sl);
 }
 
 bool AttachTailTo(void* mirror, void* ownerRootActor) {
@@ -365,7 +432,7 @@ bool WriteActiveHook(void* mainPlayer, void* hookActor) {
 }
 
 bool AttachHead(void* hookActor, void* actor, void* component, const FVector& location,
-                const FVector& normal, void* actorAttach, bool checkLen) {
+                const FVector& normal, void* actorAttach, bool checkLen, bool unfreezeFrozen) {
     if (!hookActor || !g_resolved || !actor || !component) return false;
     ParamFrame f(g_fnAttachA);
     if (!f.valid()) return false;
@@ -376,8 +443,74 @@ bool AttachHead(void* hookActor, void* actor, void* component, const FVector& lo
     f.Set<void*>(L"componentReplace", component);
     f.Set<FVector>(L"locationReplace", location);
     f.Set<FVector>(L"normalReplace", normal);
-    f.Set<bool>(L"unfreezeFrozen", false);
+    f.Set<bool>(L"unfreezeFrozen", unfreezeFrozen);
     return Call(hookActor, f);
+}
+
+bool ReadBite(void* hookActor, Bite& out) {
+    out = Bite{};
+    if (!hookActor || !g_resolved) return false;
+    out.actor     = ReadObj(hookActor, g_offActorA);
+    out.component = ReadObj(hookActor, g_offCompAField);
+    out.localHead = *reinterpret_cast<const FVector*>(
+        reinterpret_cast<const uint8_t*>(hookActor) + g_offAttachLocA);
+    out.thrown    = ReadObj(hookActor, g_offPhys) != nullptr;
+    return true;
+}
+
+bool IsHookFamily(void* actor) {
+    if (!actor || !g_resolved) return false;
+    void* base = g_classes[static_cast<size_t>(Kind::Hook)];
+    return R::IsDescendantOfAny(R::ClassOf(actor), &base, 1);
+}
+
+void* PhysicsConstraintOf(void* hookActor) {
+    if (!hookActor || !g_resolved) return nullptr;
+    return ReadObj(hookActor, g_offConstraint);
+}
+
+bool BreakConstraint(void* hookActor) {
+    void* comp = PhysicsConstraintOf(hookActor);
+    if (!comp || !g_fnBreakConstraint) return false;
+    ParamFrame f(g_fnBreakConstraint);
+    if (!f.valid()) return false;
+    return Call(comp, f);
+}
+
+void* SetConstrainedComponentsFunction() {
+    // Independent of the hook classes on purpose: a seam on this native has to be in place
+    // before the first hook of a loading world builds its tie, and the engine class is always
+    // loaded. A UFunction outlives every world, so the lookup is a one-time resolve.
+    if (!g_fnSetConstrained) {
+        if (void* pc = R::FindClass(P::name::PhysicsConstraintComponentClass))
+            g_fnSetConstrained = R::FindFunction(pc, P::name::SetConstrainedComponentsFn);
+    }
+    return g_fnSetConstrained;
+}
+
+void* ComponentByName(void* actor, const wchar_t* name) {
+    if (!actor || !name || !*name) return nullptr;
+    // The prop's mesh is what a hook bites in practice, and its name is one compare away.
+    if (void* mesh = ue_wrap::prop::GetStaticMesh(actor)) {
+        if (R::NameEquals(R::NameOf(mesh), name)) return mesh;
+    }
+    ResolveCodeLib();
+    if (!g_cdoCodeLib || !g_fnCompByName) {
+        if (!g_saidNoCodeLib) {
+            g_saidNoCodeLib = true;
+            UE_LOGW("hook: bpCodeLib::getComponentObjectByName did not resolve -- a component that "
+                    "is not the prop's mesh cannot be found by name (said once)");
+        }
+        return nullptr;
+    }
+    const R::FName n = ue_wrap::fname_utils::StringToFName(name);
+    if (n.ComparisonIndex == 0 && n.Number == 0) return nullptr;
+    ParamFrame f(g_fnCompByName);
+    if (!f.valid()) return nullptr;
+    f.Set<void*>(g_compByNameActor.c_str(), actor);
+    f.SetRaw(g_compByNameName.c_str(), &n, sizeof(n));
+    if (!Call(g_cdoCodeLib, f)) return nullptr;
+    return f.Get<void*>(L"ReturnValue");
 }
 
 float MaxDistOf(void* hookActor) {
@@ -391,9 +524,15 @@ void ResetCache() {
     g_attachedA = g_attachedB = g_isThrown = g_playerHooked = g_skipSave = BoolField{};
     g_offDist = g_offCompA = g_offCompB = g_offActiveHk = g_offMaxDist = -1;
     g_offActorA = g_offActorB = -1;
+    g_offCompAField = g_offAttachLocA = g_offPhys = g_offConstraint = -1;
     g_fnReceiveTick = g_fnGetData = g_fnLoadData = g_fnProcessKeys = g_fnSetLength = nullptr;
     g_fnAttachA = nullptr;
     g_fnSetCompWorldLocRot = g_fnAttachComp = g_fnDetachComp = g_fnGetRootComp = nullptr;
+    g_fnBreakConstraint = nullptr;   // g_fnSetConstrained is an engine-class UFunction and stays
+    g_cdoCodeLib = g_fnCompByName = nullptr;
+    g_compByNameActor.clear();
+    g_compByNameName.clear();
+    g_codeLibMissing = false;
     g_resolved = false;
     g_latchedOff = false;
     g_attempts = 0;

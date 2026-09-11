@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 159;
+inline constexpr uint16_t kProtocolVersion = 160;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1458,19 +1458,34 @@ static_assert(sizeof(OwnerEntityDestroyPayload) == 4, "OwnerEntityDestroyPayload
 // One kind carries create AND update. A mirror that has never heard of `seq` makes one; a mirror
 // that has applies. The alternative, a spawn kind and a pose kind, buys nothing here (a hook is one
 // small record either way) and costs the ordering hazard of a pose arriving before its spawn.
-// The phase deliberately does NOT ride this message. The owner's own phase drives WHEN it sends,
-// and a display mirror renders the same whatever phase it is in, so a phase byte would be written
-// by the sender and read by nobody.
+// The phase itself does not ride this message: the owner's own phase drives WHEN it sends, and a
+// display mirror renders the same whatever phase it is in. What does ride it is the BITE -- what
+// the head is tied to -- because the host builds the hook's physics constraint on its own copy of
+// that actor (coop/items/hook_constraint) and a display mirror everywhere else ignores it. The
+// bite is carried on every state rather than once at the edge, so a mirror rebuilt after its
+// actor died is told again what it bit.
+inline constexpr uint8_t kHookStateBitten = 1u << 0;  // the bite fields name a keyed actor
+inline constexpr uint8_t kHookStateThrown = 1u << 1;  // the hook flew before it bit: attach_a's
+                                                      // unfreeze input, which wakes a frozen prop
 struct HookStatePayload {
     uint16_t seq;          // 2 -- owner-local monotonic hook id, never 0
     uint8_t  classId;      // 1 -- index into the lane's class table (0 = hook_C)
-    uint8_t  _pad;         // 1 -- zeroed
+    uint8_t  flags;        // 1 -- kHookState*
     float    ax, ay, az;   // 12 -- the A end (the head) in world space; the B end rides the
                            //       owner's own puppet and is never sent
     float    aPitch, aYaw, aRoll;  // 12 -- the A end's world rotation
     float    dist;         // 4 -- the cable length the reel sets; the mirror's cable is dist/1.5
+    WireKey  biteKey;      // 32 -- the bitten actor's save key; len 0 when nothing keyed was bitten
+    WireKey  biteComponent;// 32 -- the bitten component's object name, the game's own save form
+    uint32_t biteEid;      // 4 -- the bitten prop's element id, 0 when it is not a tracked prop
+    float    blx, bly, blz;// 12 -- the head in the bitten component's frame, scale-free
+                           //       (hook_C::attachLoc_A, the constraint reference the game keeps)
+    float    bnx, bny, bnz;// 12 -- the surface normal at the bite, world space
+    uint32_t _pad;         // 4 -- zeroed
 };
-static_assert(sizeof(HookStatePayload) == 32, "HookStatePayload must be 32 bytes");
+static_assert(sizeof(HookStatePayload) == 128, "HookStatePayload must be 128 bytes");
+static_assert(sizeof(HookStatePayload) <= 256 - 20 - 8,
+              "HookStatePayload must fit in one reliable datagram");
 
 // `seq` is never 0: there is no wildcard form, because nothing needs one. A departing peer's rows
 // are dropped locally by every peer's own disconnect fan-out, and a wildcard that only hostile

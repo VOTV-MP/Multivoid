@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "coop/net/protocol.h"          // WireKey: the cached bite descriptor
 #include "ue_wrap/actors/hook.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 
@@ -44,6 +45,15 @@ struct Owned {
     ue_wrap::hook::State  last{};
     uint64_t              lastPollMs = 0;
     uint64_t              lastSendMs = 0;
+    // The bite descriptor, built once per bitten actor and carried on every state after: the key,
+    // the component name and the element id do not change while the head holds, so the per-send
+    // cost is a pointer compare and a liveness read, not two strings and a lookup.
+    void*                 biteActor = nullptr;
+    ue_wrap::CachedObjRef biteRef;
+    coop::net::WireKey    biteKey{};
+    coop::net::WireKey    biteComponent{};
+    uint32_t              biteEid   = 0;
+    bool                  biteValid = false;   // the descriptor names a keyed actor
 };
 
 // A hook some other peer owns (or, once anchored, the host does) that we render.
@@ -55,6 +65,13 @@ struct Mirror {
     // hook state arrives, and an attach that silently never happened leaves the cable pinned to
     // the mirror's own root for the hook's whole life.
     bool                  tailAttached = false;
+    // HOST: the mirror has the game's own constraint against what the owner's hook bit
+    // (coop/items/hook_constraint). Its head rides that actor from then on, so the wire's head
+    // pose is no longer written over it; only the cable length still crosses. The bite is retried
+    // on the owner's states until it lands, on a throttle and to a bound.
+    bool                  bitten     = false;
+    uint8_t               biteTries  = 0;
+    uint64_t              nextBiteMs = 0;
 };
 
 // A hook the HOST adopted at its anchor: the canonical actor, under the identity the handoff kept.
@@ -70,11 +87,15 @@ std::vector<Owned>&                  OwnedHooks();
 std::unordered_map<Key, Mirror>&     Mirrors();
 std::vector<Adopted>&                AdoptedHooks();   // hook_anchor.cpp owns the storage
 
-// HOST: the props the host's real hooks are tied to -- its own hooks in their owner phase and the
-// adopted anchored ones, the two sets whose constraint exists on this machine -- are claimed for
-// the driven-prop channel while the tie holds and released when it ends. hook_prop_claim.cpp.
+// HOST: every prop a hook on THIS machine is tied to is claimed for the driven-prop channel
+// while the tie holds and released when it ends: the host's own hooks, the anchored ones it
+// adopted, the mirrors of clients' hooks it has tied (`Mirror::bitten`), and the hooks the world
+// itself holds -- the save's and the level's -- which the shared scan pass finds. Every one of
+// those has its constraint here and nowhere else. hook_prop_claim.cpp.
 void TickPropClaims();
 void ResetPropClaims();
+// Register the world-hooks consumer with the shared scan pass, once per process. Game thread.
+void RegisterWorldHooksScan();
 
 // The interceptor's index: the mirror actors, flat. Read once per `hook_C::ReceiveTick` dispatch,
 // so it is a short linear scan over pointers rather than a hash -- a session holds a handful of

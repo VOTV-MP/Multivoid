@@ -207,19 +207,23 @@ recycled that id. `[V]`
   capture and its world-ready, and the joiner skips the ones whose key the game already resolves.
   The load path is what registers a key, so a resolvable key is exactly the set the save gave it.
   `[V]`
-- **A prop a hook is tied to, by phase and by whose constraint it is.** The constraint exists on
-  the machine that ran `attach_a`, and the host's own hooks feed the driven-prop channel: the prop
-  is claimed, its pose streams while it moves, every other copy is parked and follows, and the end
-  edge closes the stream once it rests (`coop/items/hook_prop_claim`,
-  `coop/props/prop_drive_host`) `[V]` (the driver's run 5: both copies 699 cm from the start,
-  0.14 cm apart). The velocity hand-back and the hand-take end are `[?]`: the driver rests the
-  prop before the unhook, so every measured end edge fired at |v| = 0. A CLIENT's owner-phase
-  hook has its constraint on that client alone, so that peer drags its own copy and every other
-  copy stands still -- there is no host motion to stream. `[V]` ANCHORED phase: `processKeys` -> `makeAttachments` rebuilds the
-  constraint on EVERY peer against that peer's own copy, and the mirror tick park does not cover
-  it, being an interceptor on `ReceiveTick` against an ubergraph event; the host's copy is claimed
-  through the adopted table, so the other copies are parked under its stream and their own
-  constraint has nothing to pull. `[?]`
+- **A prop a hook is tied to.** The constraint exists on the HOST and nowhere else, whichever
+  peer fired the hook (`coop/items/hook_constraint`): a client's game breaks every tie a hook of
+  the lane's classes builds on it, at the native seam the build funnels through, and the host ties
+  a client's hook on its own mirror of it, against that client's puppet, from the bite the owner's
+  state names -- the actor's key and element id, the component, the head in the component's frame,
+  and whether the hook flew before it bit, which is what wakes a frozen prop. Every prop under a
+  hook constraint on the host is claimed into the driven-prop channel (`coop/items/hook_prop_claim`
+  reads the host's own hooks, the adopted ones, the tied mirrors, and the save's and the level's
+  own hooks through the shared scan), streams while it moves, and every other copy is parked and
+  follows; the end edge closes the stream once it rests (`coop/props/prop_drive_host`). `[V]` (the
+  driver: a client's hook dragged a prop 308 cm on both peers, 0.1 cm apart at the end; two peers'
+  hooks on one prop, 2.8 cm median apart, 0.0 cm at the end). Two hooks on one prop are two host
+  constraints on one host body. The velocity hand-back and the hand-take end are `[?]`: every
+  measured end edge fired at |v| = 0. ANCHORED phase: `processKeys` -> `makeAttachments` rebuilds
+  the constraint on every peer against that peer's own copy, and the same seam breaks it on every
+  client, so the host's is the one constraint and the other copies are parented display -- `[V]`
+  for the seam on an owner-phase build, `[?]` for an anchored build, which no run has staged.
 
 ## The dupe matrix
 

@@ -66,15 +66,13 @@ void OnPeerLeftSlot(int slot);
 // Session end: destroy every mirror. They are actors WE spawned and must not linger into
 // single-player.
 //
-// WHAT THIS LANE DOES NOT DO: a CLIENT's own hook dragging a host-authoritative PROP still
-// diverges that prop, because attach_a unfreezes it locally and the constraint drags the client's
-// own copy while the host's stands. The HOST's side is answered: every prop a real hook of the
-// host's machine is tied to -- its own hook, and every anchored hook it adopted -- is claimed into
-// the driven-prop channel by hook_prop_claim.cpp and streamed while it moves. The client's side
-// needs that client to become the prop's syncer for the duration -- MTA collapses ownership onto
-// one player when two entities are linked -- which is a change to the PROP lane's assignment rules
-// and a lane of its own. It is named here rather than papered over: this lane adds no filter and
-// no suppression standing in for it.
+// WHERE THE FORCE IS. A hook's constraint exists on the host and nowhere else
+// (coop/items/hook_constraint): a client's hook names what its head bit on its HookState and the
+// host ties its mirror of that hook to its own copy of the actor, against the owner's puppet,
+// while every constraint a client's game builds -- its own hook's, an anchored mirror's, a
+// save-loaded hook's -- is broken at the seam that builds it. Every prop a hook on the host is
+// tied to, whichever peer fired the hook, is then streamed by the driven-prop channel
+// (hook_prop_claim.cpp). Two peers hooking one prop is two host constraints on one host body.
 void OnDisconnect();
 
 }  // namespace coop::hook_sync

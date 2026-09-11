@@ -40,6 +40,7 @@ set(VOTVCOOP_SOURCES
     src/coop/items/hook_sync.cpp
     src/coop/items/hook_anchor.cpp
     src/coop/items/hook_prop_claim.cpp
+    src/coop/items/hook_constraint.cpp
     src/ue_wrap/engine/save_capture.cpp
     src/ue_wrap/engine/engine_audio.cpp
     src/ue_wrap/engine/engine_bones.cpp
