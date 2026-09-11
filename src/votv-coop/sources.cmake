@@ -275,6 +275,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/lobby_password.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
+    src/coop/net/session_receive.cpp
     src/coop/net/session_streams.cpp
     src/coop/net/net_stats.cpp
     src/coop/net/session_npc.cpp

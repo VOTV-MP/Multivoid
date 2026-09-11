@@ -64,7 +64,7 @@ SRC = ROOT / "src" / "votv-coop"
 
 PROTO = "include/coop/net/protocol.h"
 LANES = "src/coop/net/session_lanes.h"
-SESSION = "src/coop/net/session.cpp"
+SESSION = "src/coop/net/session_receive.cpp"   # the receive switch and the admission handler
 
 # The five family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
