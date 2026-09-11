@@ -23,7 +23,8 @@ struct ServerStatePayload;
 
 namespace coop::serverbox_sync {
 
-// Cache the session. Class + offset + check() resolution is lazy in Tick.
+// Cache the session. The engine side -- classes, offsets and check() -- resolves lazily inside
+// ue_wrap/devices/serverbox, on its first use in Tick.
 void Install(coop::net::Session* session);
 
 // Per net-pump tick, game thread, throttled internally to about 1 Hz. HOST: poll the server
@@ -40,9 +41,8 @@ void QueueConnectBroadcastForSlot(int slot);
 // host-authoritative and one-directional.
 void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot);
 
-// Teardown: drop the cached gamemode and poll baseline, re-enable the neutralized
-// ticker_serverBreaker, and clear the session. The resolved class, offsets and check() pointer
-// are kept -- they outlive a session.
+// Teardown: drop the poll baseline, re-enable the neutralized ticker_serverBreaker, and clear the
+// session. The wrapper's resolution and its gamemode cache are untouched -- they outlive a session.
 void OnDisconnect();
 
 }  // namespace coop::serverbox_sync
