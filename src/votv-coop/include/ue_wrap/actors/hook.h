@@ -76,6 +76,23 @@ struct State {
 };
 bool ReadState(void* hookActor, State& out);
 
+// The two actors a hook's ends are tied to: `actor_a` is what the head bit, `actor_b` the tail's
+// anchor -- the thrower while the hook is in hand (attach_a writes the player there), the second
+// anchor once attach_b has run. Raw field reads; either can be null, and a caller that keeps one
+// past this call checks its liveness first. False when unresolved.
+bool AttachedActors(void* hookActor, void*& outA, void*& outB);
+
+// mainPlayer_C::activeHook, written: the field the game writes when the item fires a hook, so a
+// driver that plants one by hand hands it to the owner lane the same way. Null clears it.
+bool WriteActiveHook(void* mainPlayer, void* hookActor);
+
+// attach_a with its replace parameters, the game's own programmatic attach: the head binds to
+// `component` of `actor` at `location` with `normal`, the tail to `actorAttach`'s root, and the
+// constraint is built between them. No hit result is needed, since the verb reads the replace set
+// whenever `actor` is valid; `unfreezeFrozen` stays false, the item's own plant. Game thread.
+bool AttachHead(void* hookActor, void* actor, void* component, const FVector& location,
+                const FVector& normal, void* actorAttach, bool checkLen);
+
 // Aactor_save_C's `skipSave`, which its ignoreSave returns and the game's save walk asks of every
 // object implementing int_save_C before serializing it. hook_C overrides neither, so a hook is
 // saved by default -- and a mirror of someone else's hook standing on the HOST would be written

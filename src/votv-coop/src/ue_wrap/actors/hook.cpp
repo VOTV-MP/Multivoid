@@ -40,12 +40,15 @@ int32_t   g_offCompA    = -1;  // UArrowComponent* hook_C::A -- the HEAD
 int32_t   g_offCompB    = -1;  // UArrowComponent* hook_C::B -- the tail, which rides the thrower
 int32_t   g_offActiveHk = -1;  // Ahook_C* mainPlayer_C::activeHook
 int32_t   g_offMaxDist  = -1;  // float  hook_C::maxDist -- the arbiter's clamp on a wire dist
+int32_t   g_offActorA   = -1;  // AActor* hook_C::actor_a -- what the head bit
+int32_t   g_offActorB   = -1;  // AActor* hook_C::actor_b -- the tail's anchor
 
 void* g_fnReceiveTick = nullptr;
 void* g_fnGetData     = nullptr;
 void* g_fnLoadData    = nullptr;
 void* g_fnProcessKeys = nullptr;
 void* g_fnSetLength   = nullptr;
+void* g_fnAttachA     = nullptr;  // hook_C::attach_a, the programmatic attach
 void* g_fnSetCompWorldLocRot = nullptr;  // USceneComponent::K2_SetWorldLocationAndRotation
 void* g_fnAttachComp         = nullptr;  // USceneComponent::K2_AttachToComponent
 void* g_fnDetachComp         = nullptr;  // USceneComponent::K2_DetachFromComponent
@@ -89,7 +92,7 @@ bool AllResolved() {
            g_isThrown.resolved() && g_playerHooked.resolved() && g_skipSave.resolved() &&
            g_offDist >= 0 && g_offCompA >= 0 && g_offCompB >= 0 && g_offActiveHk >= 0 &&
            g_fnReceiveTick && g_fnGetData && g_fnLoadData && g_fnProcessKeys && g_fnSetLength &&
-           g_offMaxDist >= 0 &&
+           g_offMaxDist >= 0 && g_offActorA >= 0 && g_offActorB >= 0 && g_fnAttachA &&
            g_fnSetCompWorldLocRot && g_fnAttachComp && g_fnDetachComp && g_fnGetRootComp;
 }
 
@@ -120,12 +123,15 @@ bool EnsureResolved() {
     if (g_offCompA < 0) g_offCompA = R::FindPropertyOffset(cls, L"A");
     if (g_offCompB < 0) g_offCompB = R::FindPropertyOffset(cls, L"B");
     if (g_offMaxDist < 0) g_offMaxDist = R::FindPropertyOffset(cls, L"maxDist");
+    if (g_offActorA < 0) g_offActorA = R::FindPropertyOffset(cls, L"actor_a");
+    if (g_offActorB < 0) g_offActorB = R::FindPropertyOffset(cls, L"actor_b");
 
     if (!g_fnReceiveTick) g_fnReceiveTick = R::FindFunction(cls, L"ReceiveTick");
     if (!g_fnGetData)     g_fnGetData     = R::FindFunction(cls, L"getData");
     if (!g_fnLoadData)    g_fnLoadData    = R::FindFunction(cls, L"loadData");
     if (!g_fnProcessKeys) g_fnProcessKeys = R::FindFunction(cls, L"processKeys");
     if (!g_fnSetLength)   g_fnSetLength   = R::FindFunction(cls, L"setLength");
+    if (!g_fnAttachA)     g_fnAttachA     = R::FindFunction(cls, L"attach_a");
 
     if (void* mp = R::FindClass(L"mainPlayer_C")) {
         if (g_offActiveHk < 0) g_offActiveHk = R::FindPropertyOffset(mp, L"activeHook");
@@ -155,14 +161,15 @@ bool EnsureResolved() {
         UE_LOGW("hook: resolution INCOMPLETE after %d passes with hook_C in hand "
                 "(attached_a=%d attached_b=%d isThrown=%d playerHooked=%d skipSave=%d dist=%d "
                 "A=%d B=%d activeHook=%d tick=%d getData=%d loadData=%d processKeys=%d "
-                "setLength=%d setWorldLocRot=%d attach=%d detach=%d root=%d) -- the hook lane stays "
-                "OFF and writes nothing; game version mismatch?",
+                "setLength=%d setWorldLocRot=%d attach=%d detach=%d root=%d actor_a=%d actor_b=%d "
+                "attach_a=%d) -- the hook lane stays OFF and writes nothing; game version mismatch?",
                 g_attempts, g_attachedA.resolved(), g_attachedB.resolved(), g_isThrown.resolved(),
                 g_playerHooked.resolved(), g_skipSave.resolved(), g_offDist >= 0, g_offCompA >= 0,
                 g_offCompB >= 0, g_offActiveHk >= 0, g_fnReceiveTick != nullptr,
                 g_fnGetData != nullptr, g_fnLoadData != nullptr, g_fnProcessKeys != nullptr,
                 g_fnSetLength != nullptr, g_fnSetCompWorldLocRot != nullptr,
-                g_fnAttachComp != nullptr, g_fnDetachComp != nullptr, g_fnGetRootComp != nullptr);
+                g_fnAttachComp != nullptr, g_fnDetachComp != nullptr, g_fnGetRootComp != nullptr,
+                g_offActorA >= 0, g_offActorB >= 0, g_fnAttachA != nullptr);
     }
     return false;
 }
@@ -343,6 +350,36 @@ bool WriteAttachedFlags(void* hookActor, bool attachedA, bool attachedB) {
            WriteBool(hookActor, g_attachedB, attachedB);
 }
 
+bool AttachedActors(void* hookActor, void*& outA, void*& outB) {
+    outA = outB = nullptr;
+    if (!hookActor || !g_resolved) return false;
+    outA = ReadObj(hookActor, g_offActorA);
+    outB = ReadObj(hookActor, g_offActorB);
+    return true;
+}
+
+bool WriteActiveHook(void* mainPlayer, void* hookActor) {
+    if (!mainPlayer || !g_resolved || g_offActiveHk < 0) return false;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + g_offActiveHk) = hookActor;
+    return true;
+}
+
+bool AttachHead(void* hookActor, void* actor, void* component, const FVector& location,
+                const FVector& normal, void* actorAttach, bool checkLen) {
+    if (!hookActor || !g_resolved || !actor || !component) return false;
+    ParamFrame f(g_fnAttachA);
+    if (!f.valid()) return false;
+    // `hit` stays zeroed: the verb takes the replace set when actorReplace is valid.
+    f.Set<void*>(L"ActorAttach", actorAttach);
+    f.Set<bool>(L"checkLen", checkLen);
+    f.Set<void*>(L"actorReplace", actor);
+    f.Set<void*>(L"componentReplace", component);
+    f.Set<FVector>(L"locationReplace", location);
+    f.Set<FVector>(L"normalReplace", normal);
+    f.Set<bool>(L"unfreezeFrozen", false);
+    return Call(hookActor, f);
+}
+
 float MaxDistOf(void* hookActor) {
     if (!hookActor || !g_resolved || g_offMaxDist < 0) return 0.f;
     return *reinterpret_cast<const float*>(
@@ -353,7 +390,9 @@ void ResetCache() {
     for (auto& c : g_classes) c = nullptr;
     g_attachedA = g_attachedB = g_isThrown = g_playerHooked = g_skipSave = BoolField{};
     g_offDist = g_offCompA = g_offCompB = g_offActiveHk = g_offMaxDist = -1;
+    g_offActorA = g_offActorB = -1;
     g_fnReceiveTick = g_fnGetData = g_fnLoadData = g_fnProcessKeys = g_fnSetLength = nullptr;
+    g_fnAttachA = nullptr;
     g_fnSetCompWorldLocRot = g_fnAttachComp = g_fnDetachComp = g_fnGetRootComp = nullptr;
     g_resolved = false;
     g_latchedOff = false;

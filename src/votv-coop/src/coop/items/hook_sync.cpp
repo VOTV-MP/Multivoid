@@ -368,6 +368,7 @@ void Tick() {
     TickOwner(now);
     PruneMirrors();
     coop::hook_anchor::TickHost(now);
+    if (s->role() == coop::net::Role::Host) detail::TickPropClaims();
 }
 
 void OnStateMsg(const coop::net::HookStatePayload& p, int senderPeerSlot) {
@@ -481,6 +482,7 @@ void OnDisconnect() {
     Mirrors().clear();
     MirrorActors().clear();
     OwnedHooks().clear();
+    detail::ResetPropClaims();
     g_saidOwnedFull = false;
     g_saidSlotFull  = 0;
 

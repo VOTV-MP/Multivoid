@@ -64,12 +64,9 @@ uint32_t                         g_blobSeq   = 0;
 uint64_t                         g_lastSweep = 0;
 uint32_t                         g_keyNonce  = 0;
 
-// What the HOST has adopted: the canonical hook, under the identity the handoff preserved.
-struct Adopted {
-    ue_wrap::CachedObjRef ref;
-    uint8_t               ownerSlot = 0;
-    uint16_t              seq       = 0;
-};
+// What the HOST has adopted: the canonical hook, under the identity the handoff preserved. The row
+// type is the lane's, in its detail header, because the prop-claim feeder reads these rows too.
+using Adopted = D::Adopted;
 std::vector<Adopted> g_adopted;
 
 coop::net::Session* Session() { return g_session.load(std::memory_order_acquire); }
@@ -471,3 +468,7 @@ void OnDisconnect() {
 }
 
 }  // namespace coop::hook_anchor
+
+namespace coop::hook_sync::detail {
+std::vector<Adopted>& AdoptedHooks() { return coop::hook_anchor::g_adopted; }
+}  // namespace coop::hook_sync::detail

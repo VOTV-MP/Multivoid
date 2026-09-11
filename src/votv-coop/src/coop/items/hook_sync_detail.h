@@ -57,10 +57,24 @@ struct Mirror {
     bool                  tailAttached = false;
 };
 
+// A hook the HOST adopted at its anchor: the canonical actor, under the identity the handoff kept.
+struct Adopted {
+    ue_wrap::CachedObjRef ref;
+    uint8_t               ownerSlot = 0;
+    uint16_t              seq       = 0;
+};
+
 coop::net::Session*                  Session();
 void                                 SetSession(coop::net::Session* s);
 std::vector<Owned>&                  OwnedHooks();
 std::unordered_map<Key, Mirror>&     Mirrors();
+std::vector<Adopted>&                AdoptedHooks();   // hook_anchor.cpp owns the storage
+
+// HOST: the props the host's real hooks are tied to -- its own hooks in their owner phase and the
+// adopted anchored ones, the two sets whose constraint exists on this machine -- are claimed for
+// the driven-prop channel while the tie holds and released when it ends. hook_prop_claim.cpp.
+void TickPropClaims();
+void ResetPropClaims();
 
 // The interceptor's index: the mirror actors, flat. Read once per `hook_C::ReceiveTick` dispatch,
 // so it is a short linear scan over pointers rather than a hash -- a session holds a handful of
