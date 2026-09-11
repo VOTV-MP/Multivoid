@@ -582,6 +582,7 @@ void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm,
                           const std::wstring& expectedPropName,
+                          const NearbyExclusion& excluded,
                           NearbyTrace* outTrace) {
     if (className.empty() || radiusCm <= 0.f) return nullptr;
     void* base = PropBaseClass();
@@ -626,6 +627,13 @@ void* FindNearbySameClass(const std::wstring& className,
                 if (outTrace->nearestOutsideCm < 0.f || d < outTrace->nearestOutsideCm)
                     outTrace->nearestOutsideCm = d;
             }
+            continue;
+        }
+        // Last, because it is the caller's knowledge rather than the scan's: an actor inside the
+        // radius that the caller has named is not a candidate at all. Tested here, on the handful
+        // that reach it, rather than at the top of a walk over every object.
+        if (excluded.Holds(obj)) {
+            if (outTrace) ++outTrace->excludedRejects;
             continue;
         }
         if (!first) first = obj;

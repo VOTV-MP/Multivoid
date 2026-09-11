@@ -15,6 +15,8 @@
 #include "coop/element/mirror_defer.h"  // hide a fresh host mirror until the reveal
 #include "coop/net/protocol.h"
 #include "coop/creatures/npc_sync.h"  // IsAllowlistedClass, the NPC half of the quiescence probe
+#include "coop/player/hand_item.h"    // CollectHandAxisActors: the hand axis is not adoptable
+#include "coop/player/players_registry.h"  // kMaxPeers (the hand-axis buffer)
 #include "coop/props/pile_spawn_bind.h"  // the pile's spawn-time twin destroy and adopt
 #include "coop/props/join_membership_sweep.h"  // the claim set and the divergence sweep
 #include "coop/dev/spawn_order_probe.h"  // the keyless load-spawn coverage probe
@@ -413,11 +415,23 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
     const ue_wrap::FVector fuzzyAnchor{payload.locX, payload.locY, payload.locZ};
     const bool traceFuzzy = coop::dev::spawn_match_probe::IsEnabled();
     ue_wrap::prop::NearbyTrace fuzzyTrace;
+    // The hand axis is player expression, never a world entity, and this scan is where it can do
+    // the most damage. A peer's display mirror is a real actor of the held item's class riding
+    // that peer's hands, and the release broadcast a drop sends goes out BEFORE the HandItem that
+    // empties the hand -- so when this scan runs the mirror is alive, the right class and inches
+    // from the anchor, while the local world copy died at the pickup and cannot answer by key.
+    // Adopting it rekeys the mirror to the wire key and binds the wire eid to an actor the hand
+    // lane destroys one message later: the dropped prop never appears here, and its pose stream
+    // addresses an actor that is gone. The same set prop_census hoists out of its own walk.
+    void* handAxis[1 + coop::players::kMaxPeers];
+    const ue_wrap::prop::NearbyExclusion notAdoptable{
+        handAxis, coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers)};
     void* fuzzy = eidOnly ? nullptr : ue_wrap::prop::FindNearbySameClass(
             classW,
             fuzzyAnchor,
             kFuzzyRadiusCm,
             propNameW == L"None" ? std::wstring() : propNameW,
+            notAdoptable,
             traceFuzzy ? &fuzzyTrace : nullptr);
     if (traceFuzzy && !eidOnly) {
         coop::dev::spawn_match_probe::NoteFuzzyScan(payload.elementId, keyW, classW, propNameW,

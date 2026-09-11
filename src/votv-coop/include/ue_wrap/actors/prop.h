@@ -207,7 +207,24 @@ struct NearbyTrace {
     std::vector<NearbyCandidate> candidates;        // accepted, in scan order
     int32_t classMatches       = 0;                 // live, non-CDO actors of the class, any distance
     int32_t rowNameRejects     = 0;                 // ... rejected because the list_props row differed
+    int32_t excludedRejects    = 0;                 // ... otherwise acceptable, but named by the caller
     float   nearestOutsideCm   = -1.f;              // nearest row-matching actor outside the radius, -1 if none
+};
+
+// Actors the caller knows carry no independent identity, and so must never be the answer even
+// when they are the right class in the right place. The scan makes its own structural exclusions
+// -- a class default object, a child-actor component's child -- but a display actor another
+// system owns and destroys on its own schedule is not visible from here: only the system that
+// spawned it knows. Empty means the caller has nothing to exclude, never that it forgot to ask.
+struct NearbyExclusion {
+    void* const* actors = nullptr;
+    size_t       count  = 0;
+
+    bool Holds(void* a) const {
+        for (size_t i = 0; i < count; ++i)
+            if (actors[i] == a) return true;
+        return false;
+    }
 };
 
 // The fuzzy dedupe for divergent-key spawns: the per-peer natural spawners (mushrooms,
@@ -222,6 +239,7 @@ void* FindNearbySameClass(const std::wstring& className,
                           const FVector& anchor,
                           float radiusCm,
                           const std::wstring& expectedPropName,
+                          const NearbyExclusion& excluded,
                           NearbyTrace* outTrace = nullptr);
 
 // The nearest chipPile-family actor within `radiusCm`, or null; these are not Aprop_C, so the
