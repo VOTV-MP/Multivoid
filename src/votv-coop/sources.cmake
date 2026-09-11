@@ -348,7 +348,8 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/desk_diag.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
-    src/coop/dev/floppy_selftest.cpp
+    src/coop/dev/hand_drop_selftest.cpp
+  src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp

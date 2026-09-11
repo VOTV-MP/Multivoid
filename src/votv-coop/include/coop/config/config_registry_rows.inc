@@ -228,6 +228,12 @@ CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
     "Autonomous selftest: desk sound mirror.")
 CFG_FLAG(container_selftest, "container_selftest", "dev", false, nullptr,
     "Autonomous selftest: container contents sync.")
+CFG_FLAG(hand_drop_selftest, "hand_drop_selftest", "dev", false, "VOTVCOOP_HAND_DROP_SELFTEST",
+    "Autonomous selftest: a prop through a player's hotbar HAND and back out -- pick it up with "
+    "the game's own verb, drop it, first with the host holding and then with the client, twice "
+    "each. The verdict is the watching peer's census of the keyed props around the holder before "
+    "and after: a prop that does not come back is the release the other peer never received. It "
+    "MUTATES the world, so it is armed per run from the environment.")
 CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
     "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
     "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "
