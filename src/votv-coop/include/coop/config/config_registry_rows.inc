@@ -239,6 +239,11 @@ CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELF
     "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "
     "(it inserts, ejects, and seeds discs when the world has none), so arm it from the environment "
     "for one run rather than leaving it here. Set it on BOTH peers; each drives its own role.")
+CFG_FLAG(hookdrag_selftest, "hookdrag_selftest", "dev", false, "VOTVCOOP_HOOKDRAG_SELFTEST",
+    "Autonomous selftest: a prop dragged by a hook. The host plants a hook into the nearest keyed "
+    "physics prop, walks out and back so the constraint drags it, then drops the hook; both peers "
+    "log the prop's position on one clock. It MUTATES the world, so arm it from the environment "
+    "for one run, on BOTH peers.")
 CFG_FLAG(inventory_selftest, "inventory_selftest", "dev", false, nullptr,
     "Autonomous selftest: player inventory sync.")
 CFG_FLAG(starterkit_test, "starterkit_test", "dev", false, nullptr,

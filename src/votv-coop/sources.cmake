@@ -359,6 +359,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/hand_drop_selftest.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
+    src/coop/dev/hookdrag_selftest.cpp
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/puppet_head_probe.cpp

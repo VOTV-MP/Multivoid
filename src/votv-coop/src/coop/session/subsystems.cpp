@@ -61,6 +61,7 @@
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
+#include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
@@ -218,6 +219,7 @@ void Install(coop::net::Session& session) {
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
     coop::dev::hand_drop_selftest::Install(&session);  // [dev] hand pickup+drop episodes (no-op unless hand_drop_selftest=1)
     coop::dev::floppy_selftest::Install(&session);  // [dev] disc/server insert+eject episodes (no-op unless floppy_selftest=1)
+    coop::dev::hookdrag_selftest::Install(&session);  // [dev] a hook-dragged prop, both peers logging its position (no-op unless hookdrag_selftest=1)
     coop::dev::roster_token_selftest::Install(&session);  // [dev] successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
     coop::host_spawn_watcher::Install(&session);  // HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
     coop::prop_drop_intent::Install(&session);  // CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
@@ -407,6 +409,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::prop_birth_key_probe::EmitVerdict();
     coop::dev::spawn_match_probe::EmitVerdict();
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
+    coop::dev::hookdrag_selftest::EmitVerdict();  // [dev] how far the dragged prop moved here
     coop::dev::hand_drop_selftest::EmitVerdict();  // [dev] which hand episodes fired, and what each peer counted
     coop::prop_drop_intent::Reset();  // clear the client park set + pending places
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
@@ -453,6 +456,7 @@ DisconnectStats DisconnectAll() {
     coop::props::container_contents_sync::OnDisconnect();  // dirty set + retry + parked + assembler
     coop::dev::container_selftest::OnDisconnect();  // [dev] re-arm the circle on reconnect
     coop::dev::floppy_selftest::OnDisconnect();  // [dev] re-arm the disc episodes on reconnect
+    coop::dev::hookdrag_selftest::OnDisconnect();  // [dev] re-arm the drag on reconnect
     coop::dev::hand_drop_selftest::OnDisconnect();  // [dev] re-arm the hand episodes on reconnect
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
@@ -542,6 +546,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::floppy_selftest::Tick();  // [dev] disc/server episodes (single bool read when off; 6 s census period)
+    coop::dev::hookdrag_selftest::Tick();  // [dev] the hook drag and its 4 Hz position log (single bool read when off)
     coop::dev::hand_drop_selftest::Tick();  // [dev] hand pickup+drop episodes (single bool read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();  // the client spawner park driver (a client-session gate; cheap when idle)
