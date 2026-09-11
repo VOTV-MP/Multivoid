@@ -29,7 +29,7 @@ host validates and commits contested writes), `local` (never shared).
 
 | System | Synced | Owner | Late join | State |
 |---|---|---|---|---|
-| Physics props | spawn, pose, grab, carry, throw, drop, destroy; identity across saves and rejoins; each prop's own save record, for the classes that keep one; client-born props | presser while held, host at rest | snapshot | works |
+| Physics props | spawn, pose, grab, carry, throw, drop, destroy, a hook's drag (built); identity across saves and rejoins; each prop's own save record, for the classes that keep one; client-born props | presser while held, host at rest and under a hook | snapshot | works |
 | Chip piles and clumps | the grab, carry, throw and re-pile cycle | host with client intents | snapshot plus a spawn-time bind | works |
 | Trash-bits piles | the counter pair | presser and host | snapshot | built |
 | Containers | open and close, contents (a slice of the host's object stack) | presser; host for contents | snapshot | works, two known breaks |

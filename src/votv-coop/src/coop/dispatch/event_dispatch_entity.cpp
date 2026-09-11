@@ -22,6 +22,7 @@
 #include "coop/creatures/piramid_sync.h"      // the PyramidGather receiver
 #include "coop/props/prop_save_data.h"    // the per-prop save record lane
 #include "coop/props/prop_stick_sync.h"
+#include "coop/props/prop_drive_stream.h"  // the driven-prop end edge
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
@@ -422,6 +423,40 @@ bool HandleEntityEvent(net::Session& session,
         ue_wrap::game_thread::Post([p, slot] {
             ::coop::hook_sync::OnDestroyMsg(p, slot);
         });
+        break;
+    }
+    case net::ReliableKind::PropDriveEnd: {
+        // Host to all: a driven prop's stream closed. Host-only, never relayed; validated here and
+        // applied by the stream's receiver on the game thread.
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: PropDriveEnd from non-host senderPeerSlot=%d -- dropping (host-only)",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PropDriveEndPayload)) {
+            UE_LOGW("event_feed: PropDriveEnd payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PropDriveEndPayload));
+            break;
+        }
+        net::PropDriveEndPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const float vals[12] = { p.x, p.y, p.z, p.pitch, p.yaw, p.roll,
+                                 p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ };
+        bool finite = true;
+        for (float v : vals) { if (!std::isfinite(v)) { finite = false; break; } }
+        if (!finite) { UE_LOGW("event_feed: PropDriveEnd floats non-finite -- dropping"); break; }
+        if (std::fabs(p.x) > net::kMaxCoord || std::fabs(p.y) > net::kMaxCoord ||
+            std::fabs(p.z) > net::kMaxCoord) {
+            UE_LOGW("event_feed: PropDriveEnd location out of bounds (%.1f,%.1f,%.1f) -- dropping",
+                    p.x, p.y, p.z);
+            break;
+        }
+        if (p.eid == 0u || p.eid == coop::element::kInvalidId ||
+            !coop::element::Registry::IsAllowedHostAllocatedEid(p.eid)) {
+            UE_LOGW("event_feed: PropDriveEnd eid=0x%08x not a valid host-allocated id -- dropping", p.eid);
+            break;
+        }
+        ::coop::prop_drive_stream::OnEnd(p);   // the router is on the game thread; PropRelease's shape
         break;
     }
     case net::ReliableKind::HookAnchorCommit: {

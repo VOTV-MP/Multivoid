@@ -93,6 +93,21 @@ implicit release. Grab and throw sounds that the game plays only for the local p
 synthesised on the receiver at the prop's position (`coop/props/prop_sound`); the pocket blip
 is relayed the same way (`coop/items/inventory_pickup_sync`).
 
+### Dragged by a hook
+
+A prop nobody is holding can still be in motion: a hook's constraint pulls it along behind the
+player, an anchored hook ties it to something that moves, and after the hook lets go it slides
+until it rests. The held-prop stream never sees it, since that stream is sourced from the
+player's grab slot alone, so the host keeps a set of the props its own hooks are tied to -- fed by
+the hook lane, never by a scan -- and streams each one's pose while it moves
+(`coop/props/prop_drive_host`). A receiver parks the prop on the first pose and follows the stream
+the way a carried trash clump is followed -- the fixed-delay interpolation, frozen at the last pose
+across a gap -- where a held prop snaps to each pose; a reliable end edge carries the final pose,
+the host's physics flags and the velocity once the prop has rested or a hand has taken it, and
+closes the stream's generation so a pose still in flight cannot park the prop again
+(`coop/props/prop_drive_stream`). A hand always wins: a claimed prop somebody grabs leaves the set
+and rides the held-prop stream.
+
 A mirror's physics and collision are set to what the game's own initialisation would have
 produced on this peer (`coop/props/prop_wire_parity`); a fresh mirror starts kinematic while it
 is remote-owned. A spawn or destroy the receiver applied is marked so the symmetric observer
@@ -172,6 +187,7 @@ lane did not have in front of it:
 | a deployed hook once both ends are anchored | the host | the thrower hands over the hook's own save record; it is a save actor from then on |
 | a held prop | the holder | a per-frame stream; the release carries the velocity |
 | a thrown prop after release | each peer's physics, from the same velocity | no stream in flight |
+| a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
 | a prop's key | the game, once; the host's copy wins on a mirror | never rewritten on the owner |
 | container contents | the host | slices of its object array; an extraction is an intent |
 | a stuck prop | the sticking peer commits; every peer runs the native stick | one reliable message |
@@ -185,6 +201,8 @@ lane did not have in front of it:
 | `PropPose` (stream) | the holder to all | the held prop's world transform, per frame |
 | `PropSpawn`, `PropDestroy` | the host to all; a destroy from either role | class, key, id, transform, physics flags, the birth scalar; the key and id |
 | `PropRelease` | the holder to all | the inherited linear and angular velocity |
+| `PropDrivePose` (stream) | the host to all | the poses of the props under a hook's drive that moved since their last one, with the claim generation |
+| `PropDriveEnd` | the host to all | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
 | `PropStickState` | the sticking peer to all | frozen or static, and the commit pose |
 | `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window |
@@ -199,7 +217,10 @@ host's world no longer has, then the snapshot bracket with one spawn per live ke
 the host moved during the window, then the membership sweep that removes the locals the host
 never claimed. Container slices are sent per live container at the ready edge. A stuck prop
 reaches a joiner through the save, which carries the frozen state. A prop held by someone at
-the moment of the join is resolved on its first streamed frame.
+the moment of the join is resolved on its first streamed frame, and a prop under a hook's drive
+parks on its first one the same way. At the joiner's ready edge the host re-sends every driven
+prop's pose, the resting ones included, which the delta gate would otherwise never send it; an end
+edge that reaches a joiner before the prop it names is kept until the prop resolves.
 
 ## Known limits
 
@@ -208,7 +229,9 @@ the moment of the join is resolved on its first streamed frame.
 | Two peers grabbing the same prop both stream it; nothing assigns the prop to one holder, so receivers follow whichever stream is newest | `[V]` `coop/props/remote_prop` has no claim |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract) never reaches the host, and nothing logs it | `[V]` `coop/props/prop_drop_intent` drops it at the drain |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
-| The deployables (hook, rope, nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
+| The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
+| A client's hook drags only that client's copy of a host prop: the constraint exists on the client's machine alone, so the host has no motion to stream, and the copies diverge until that client's next join. The host's own hooks and every anchored hook stream through the driven-prop channel | `[V]` `coop/items/hook_prop_claim` reads the host's own and adopted hooks only |
+| A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks with `DriveSimulate(mesh, false)`; `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |
 | A pose can arrive milliseconds before the spawn that names its prop; that is a race, not a defect, and a ledger tells the two apart instead of warning per packet | `[V]` `coop/props/unresolved_pose_ledger` |
 
 ## Code map
@@ -219,6 +242,7 @@ the moment of the join is resolved on its first streamed frame.
 | the receivers | `coop/props/remote_prop` (held), `coop/props/remote_prop_spawn` (birth: adopt, converge, create), `coop/props/prop_fresh_spawn` (the materialiser), `coop/props/prop_wire_parity`, `coop/props/active_drive`, `coop/props/prop_sound` |
 | a client's intents | `coop/props/prop_drop_intent` |
 | the stick | `coop/props/prop_stick_sync` |
+| a prop under a hook's drive | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 157;
+inline constexpr uint16_t kProtocolVersion = 159;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -104,6 +104,12 @@ enum class MsgType : uint8_t {
 
     // Host to all: the wall unit's reel accruals at 1 Hz while a slot is occupied. ReelPosePacket.
     ReelPose = 40,
+
+    // Host to all: props in motion under something other than a hand -- a hook's constraint, a
+    // body still sliding after the hook let go -- keyed by key and eid, ctx carrying the claim
+    // generation; an entry only for a prop that moved since its last one. EntityPoseBatchHeader
+    // plus N PropPoseSnapshot; PropDriveEnd closes each eid's stream.
+    PropDrivePose = 41,
 
     // One 20 ms Opus frame: a stream, not a state. The receiver queues every arrival per sender
     // and the payload's own seq orders the jitter buffer, so the newest-wins drop of the pose kinds
@@ -686,6 +692,11 @@ enum class ReliableKind : uint8_t {
     // hook tied to the ATV rides that peer's ATV by itself. Chunked blob, on HookAnchorCommit's
     // lane so the answer cannot overtake the commit.
     HookAnchored = 136,
+
+    // Host to all: the driven prop at eid has come to rest, or a hand took it -- its final pose and
+    // velocity, and the claim generation its stream carried. A receiver hands the prop its physics
+    // back and drops every later-arriving pose of that generation. PropDriveEndPayload.
+    PropDriveEnd = 137,
 };
 
 #pragma pack(push, 1)
@@ -831,7 +842,8 @@ struct PropPoseSnapshot {
     uint32_t elementId;
     // The trash entity's generation (trash_channel ctx): a pose whose ctx is older than the eid's
     // known generation is dropped, so a carry pose in flight when the entity re-piles cannot re-drive
-    // the settled pile. 0 = no enforcement (a keyed prop).
+    // the settled pile. 0 = no enforcement (a keyed prop). In a PropDrivePose batch the same byte is
+    // the claim generation, which PropDriveEnd closes.
     uint8_t  ctx;
     uint8_t  _pad[3];
 };
@@ -930,6 +942,15 @@ inline constexpr int kMaxTrashCarryBatchEntries = 8;
 inline constexpr int kTrashCarryPoseDatagramMax =
     static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
     kMaxTrashCarryBatchEntries * static_cast<int>(sizeof(TrashClumpPoseSnapshot));
+
+// Max props per PropDrivePose datagram: 20 + 4 + 16*64 = 1048 B, under the 1400 MTU budget. The
+// host's pending batch is a queue merged by eid and drained from the front, so more moving props
+// than fit go out over the following sends rather than being dropped. Reuses EntityPoseBatchHeader
+// and PropPoseSnapshot (RULE 2).
+inline constexpr int kMaxPropDriveBatchEntries = 16;
+inline constexpr int kPropDrivePoseDatagramMax =
+    static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader)) +
+    kMaxPropDriveBatchEntries * static_cast<int>(sizeof(PropPoseSnapshot));
 
 // A ragdolling player's pelvis: world location and rotation, linear and angular velocity, read off
 // the sender's own ragdoll actor and sent unreliably while ragdolled. The receiver writes the
@@ -1082,6 +1103,25 @@ static_assert(sizeof(PropReleasePayload) <= 256 - 20 - 8,
 // Velocity magnitude (cm/s) above which a release counts as a throw on the receiver and fires the
 // prop's thrown event. 2 m/s is well above a walking drop's residual and well below a flick.
 inline constexpr float kThrownLinVelThreshold = 200.f;
+
+// The end of a host-driven prop's stream (PropDriveEnd): the eid, the claim generation the stream
+// carried in PropPoseSnapshot.ctx, the host's physics flags at that instant (propspawn_flags, the
+// receiver restores the same parity the join's converge does), the final pose, and the body's
+// linear and angular velocity -- zero when it ended at rest, the coasting velocity when a hand
+// took it. Once per claim.
+struct PropDriveEndPayload {
+    uint32_t eid;                        // 4
+    uint8_t  gen;                        // 1 -- the claim generation
+    uint8_t  physFlags;                  // 1 -- propspawn_flags read off the host's copy
+    uint8_t  _pad[2];                    // 2
+    float    x, y, z;                    // 12 -- world cm
+    float    pitch, yaw, roll;           // 12 -- deg
+    float    linVelX, linVelY, linVelZ;  // 12 -- cm/s
+    float    angVelX, angVelY, angVelZ;  // 12 -- deg/s
+};
+static_assert(sizeof(PropDriveEndPayload) == 56, "PropDriveEndPayload must be 56 bytes");
+static_assert(sizeof(PropDriveEndPayload) <= 256 - 20 - 8,
+              "PropDriveEndPayload must fit in one reliable datagram");
 
 // A prop birth (PropSpawn): the class, the persistent key, the list_props row name that init()
 // resolves the mesh, mass and collision from, the transform and scale, the physics flags, an

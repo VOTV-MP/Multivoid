@@ -82,4 +82,5 @@ can show before the game's UI exists.
 3. Route it in the family router that owns its kind in `coop/dispatch/`.
 4. Own it in one file, in the folder of its concept. The late-join answer (what a peer who joins
    mid-way receives) lives in the same file.
-5. Add its row to the subsystem's doc and a scenario under `harness/autotest/`.
+5. Add its row to the subsystem's doc, and a driver under `coop/dev/` behind a registered
+   config flag when the lane can be exercised without hands (`*_selftest` is the shape).

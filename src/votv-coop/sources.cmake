@@ -241,6 +241,8 @@ set(VOTVCOOP_SOURCES
     src/coop/props/native_pile_mirror.cpp
     src/coop/player/puppet_carry_drive.cpp
     src/coop/props/trash_clump_pose_stream.cpp
+    src/coop/props/prop_drive_host.cpp
+    src/coop/props/prop_drive_stream.cpp
     src/coop/world/weather_sync.cpp
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp
@@ -277,6 +279,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/session_npc.cpp
     src/coop/net/session_worldactor.cpp
     src/coop/net/session_trashcarry.cpp
+    src/coop/net/session_propdrive.cpp
     src/coop/net/session_start.cpp
     src/coop/net/session_status.cpp
     src/coop/net/session_relay.cpp

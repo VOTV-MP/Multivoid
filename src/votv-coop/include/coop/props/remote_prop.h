@@ -80,6 +80,12 @@ coop::element::ElementId ResolveMirrorEidByActor(void* actor, bool wireMirrorOnl
 // destroy) and the spawn receiver.
 std::wstring KeyToWString(const coop::net::WireKey& k);
 
+// A Prop element id to its live actor, or null: the registry's O(1) row, liveness by the cached
+// object-array index. The clump is identified this way, its key never sticks; the driven-prop
+// receiver resolves by it first, since a joiner's keyed copy adopts the host's eid at the bind.
+// Game thread.
+void* ResolveLiveActorByEid(uint32_t eid);
+
 // The drive's UFunction wrappers (simulate physics, linear and angular velocity on a
 // primitive component), used by the drive tick and by the spawn receiver's initial physics;
 // public so the spawn receiver does not duplicate the cached resolution state. Game thread

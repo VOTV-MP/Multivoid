@@ -151,6 +151,10 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::HookDestroy:       return Lane::Normal;
     case ReliableKind::HookAnchorCommit:  return Lane::Normal;
     case ReliableKind::HookAnchored:      return Lane::Normal;
+    // PropDriveEnd is host-to-all and ordered against nothing: its stream is unreliable on its own
+    // datagram kind, and a receiver that never parked the prop treats the end as a closed
+    // generation and no more. The default, by decision.
+    case ReliableKind::PropDriveEnd:      return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -197,6 +201,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::HookState:         // a hook belongs to the player who fired it
     case ReliableKind::HookDestroy:
+    // PropDriveEnd is not relayable: the host originates it, and a client's copy would be a forged
+    // end for a stream only the host runs.
     // HookAnchorCommit is deliberately NOT relayable: it is an intent addressed to the host alone,
     // and the host's own HookAnchored is what the other peers get. Relaying it would hand every
     // peer a record the arbiter has not validated yet, and two of them would build the hook.
@@ -252,6 +258,8 @@ inline bool IsPreWorldSendableKind(ReliableKind k) {
     // swallowed; the client's dedupe makes the overlap with the snapshot idempotent.
     case ReliableKind::EventFire:
     case ReliableKind::ClientWorldReady:
+    // PropDriveEnd stays gated: it names a prop by eid, which a joiner has only after its world is up,
+    // and the world-ready replay re-sends every driven prop's pose in any case.
         return true;
     default:
         return false;

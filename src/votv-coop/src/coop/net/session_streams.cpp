@@ -505,8 +505,14 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
         // SerializeLocalTrashCarryBatch returns 0 on a client / when no clump is carried).
         uint8_t tcBuf[kTrashCarryPoseDatagramMax];
         const int tcMsgLen = SerializeLocalTrashCarryBatch(tcBuf);
+        // The driven-prop batch, serialized ONCE and drained from the host's pending queue
+        // (host-only producer -- SerializeLocalPropDriveBatch returns 0 on a client / when no
+        // driven prop moved).
+        uint8_t pdBuf[kPropDrivePoseDatagramMax];
+        const int pdMsgLen = SerializeLocalPropDriveBatch(pdBuf);
         if (have || haveProp || haveRagdoll || haveHand || haveDeskCursor || clockDue || deskSimDue ||
-            dishPoseDue || reelPoseDue || npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0) {
+            dishPoseDue || reelPoseDue || npcMsgLen > 0 || waMsgLen > 0 || tcMsgLen > 0 ||
+            pdMsgLen > 0) {
             for (int i = 0; i < kMaxPeers; ++i) {
                 const uint32_t hConn = peerConns_[i].load();
                 if (hConn == 0) continue;
@@ -592,6 +598,15 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         hConn, tcBuf, static_cast<uint32_t>(tcMsgLen),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(tcMsgLen)); else ++sendFails;
+                }
+                if (pdMsgLen > 0) {  // driven-prop batch -- body built once above; stamp per-peer
+                    PacketHeader pdHdr{};
+                    WriteHeader(pdHdr, MsgType::PropDrivePose, sendSeq_.fetch_add(1), ownEpoch_);
+                    std::memcpy(pdBuf, &pdHdr, sizeof(pdHdr));
+                    const EResult rc = sockets->SendMessageToConnection(
+                        hConn, pdBuf, static_cast<uint32_t>(pdMsgLen),
+                        k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
+                    if (rc == k_EResultOK) net_stats::AddSent(static_cast<uint32_t>(pdMsgLen)); else ++sendFails;
                 }
                 if (clockDue) {  // HOST world-clock snapshot -- same body to every peer
                     ClockPosePacket pkt{};

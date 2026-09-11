@@ -207,15 +207,19 @@ recycled that id. `[V]`
   capture and its world-ready, and the joiner skips the ones whose key the game already resolves.
   The load path is what registers a key, so a resolvable key is exactly the set the save gave it.
   `[V]`
-- **Not synced: a prop a hook is attached to, in EITHER direction, and the two phases fail
-  differently.** OWNER phase: the constraint exists only
-  on the peer that ran `attach_a`, so that peer drags its own copy and every other copy stands
-  still -- there is no transport for a prop nobody is holding, the held-prop stream being sourced
-  from the player's grab slot alone. ANCHORED phase: `processKeys` -> `makeAttachments` rebuilds
-  the constraint on EVERY peer against that peer's own copy, so the copies diverge under three
-  independent simulations rather than one standing still; the mirror tick park does not cover it,
-  being an interceptor on `ReceiveTick` against an ubergraph event. The prop rows above say "prop
-  motion via the prop lane"; that lane has no such channel, and giving it one is the fix. `[V]`
+- **A prop a hook is tied to, by phase and by whose constraint it is.** The constraint exists on
+  the machine that ran `attach_a`, and the host's own hooks feed the driven-prop channel: the prop
+  is claimed, its pose streams while it moves, every other copy is parked and follows, and the end
+  edge closes the stream once it rests (`coop/items/hook_prop_claim`,
+  `coop/props/prop_drive_host`) `[V]` (the driver's run 5: both copies 699 cm from the start,
+  0.14 cm apart). The velocity hand-back and the hand-take end are `[?]`: the driver rests the
+  prop before the unhook, so every measured end edge fired at |v| = 0. A CLIENT's owner-phase
+  hook has its constraint on that client alone, so that peer drags its own copy and every other
+  copy stands still -- there is no host motion to stream. `[V]` ANCHORED phase: `processKeys` -> `makeAttachments` rebuilds the
+  constraint on EVERY peer against that peer's own copy, and the mirror tick park does not cover
+  it, being an interceptor on `ReceiveTick` against an ubergraph event; the host's copy is claimed
+  through the adopted table, so the other copies are parked under its stream and their own
+  constraint has nothing to pull. `[?]`
 
 ## The dupe matrix
 

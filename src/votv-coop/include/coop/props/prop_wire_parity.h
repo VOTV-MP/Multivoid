@@ -32,6 +32,12 @@ void RestoreCollisionIfNeeded(const wchar_t* pathLabel, const std::wstring& clas
 // physics frees then dereferences. A no-op when the host prop IS simulating.
 void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 
+// The propspawn_flags of a live Aprop_C on THIS peer, read off the actor: the static, frozen,
+// sleep, heavy and removeWOrespawn bits, and kSimulatePhysics only while none of the first three
+// holds and the root body is awake, so a settled prop is expressed at rest. The one builder for
+// every wire that carries the flags (the join snapshot, the driven-prop end edge).
+uint8_t PhysFlagsOf(void* actor);
+
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes
 // SetSimulatePhysics(NOT(static || frozen || sleep)), so a settled prop is simulate-ENABLED but
 // asleep, which is what the game's PhysicsHandle grab requires -- force-kinematic mirrors were

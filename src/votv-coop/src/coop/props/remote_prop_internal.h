@@ -2,7 +2,7 @@
 // remote_prop TU family (remote_prop.cpp / remote_prop_destroy.cpp / remote_prop_convert.cpp /
 // remote_prop_physics.cpp).
 //
-// NOT a public header (it lives under src/, not include/): it declares the three symbols those
+// NOT a public header (it lives under src/, not include/): it declares the two symbols those
 // TUs share across the cuts that split them, and that are NOT part of the public remote_prop.h
 // surface. Each is defined in the TU owning the cached state it needs, and called from
 // another.
@@ -14,12 +14,6 @@
 #include <cstdint>
 
 namespace coop::remote_prop {
-
-// A Prop Element id -> its live mirror actor (UAF-safe IsLiveByIndex). Defined in
-// remote_prop.cpp, which uses it on the drive and release paths; declared here so the convert
-// TU and the destroy TU (OnDestroyImpl_) can resolve the non-keyable trash clump by eid. null
-// on a miss or a dead actor.
-void* ResolveLiveActorByEid(uint32_t eid);
 
 // Echo-suppressed local destroy of `actor`: ClearAnyDriveFor, then (if K2_DestroyActor
 // resolved) MarkIncomingDestroy and K2_DestroyActor. Defined in remote_prop_destroy.cpp, which

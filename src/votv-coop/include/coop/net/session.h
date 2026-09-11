@@ -138,6 +138,17 @@ public:
     // flight); an empty batch clears it. Game thread.
     void SetLocalTrashCarryBatch(const std::vector<TrashClumpPoseSnapshot>& batch);
 
+    // Host: one driven prop's pose for the next PropDrivePose send. Merged by eid into a pending
+    // queue the send drains: the newest pose of every prop goes out on the next send, and a pose
+    // superseded by a newer one of the same prop is the only kind that never does, which keeps
+    // the publisher's delta baseline consistent. A snapshot would drop other props' poses too.
+    // Game thread.
+    void PublishPropDrivePose(const PropPoseSnapshot& pose);
+    // Session stop: every pose-batch tracker and buffer (the NPC, world-actor, trash-carry and
+    // driven-prop kinds) back to empty, so a client rejoining a fresh host does not judge the new
+    // host's sequence against the old one's. Any thread with the session stopped.
+    void ResetPoseBatches();
+
     // Per-peer reads; false if peerSlot is out of range, the slot has no pose yet, or the session
     // is not Connected. outIsNew tells a fresh arrival from a re-read of the last one.
     bool TryGetRemotePose(int peerSlot, PoseSnapshot& out, bool* outIsNew = nullptr);
@@ -184,6 +195,11 @@ public:
 
     // Client: move out the latest trash-clump carry batch, consumed once.
     bool TakeRemoteTrashCarryBatch(std::vector<TrashClumpPoseSnapshot>& out);
+
+    // Client: swap out every driven-prop pose received since the last take (merged by eid, the
+    // newest per prop), consumed once. `out` comes in empty and keeps its capacity, so a drag's
+    // steady state allocates nothing on either thread.
+    bool TakeRemotePropDriveBatch(std::vector<PropPoseSnapshot>& out);
 
     // Game thread: queue a reliable message to every connected client (host) or to the host
     // (client). False on an oversize payload or no peer.
@@ -395,6 +411,10 @@ private:
     // Trash-clump carry batch (session_trashcarry.cpp), the same contract.
     int  SerializeLocalTrashCarryBatch(uint8_t* buf);
     void StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq);
+    // Driven-prop batch (session_propdrive.cpp): Serialize DRAINS up to a datagram's worth of the
+    // pending queue; Store merges by eid.
+    int  SerializeLocalPropDriveBatch(uint8_t* buf);
+    void StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq);
     // Voice receive store (session_voice.cpp): validate one VoiceFrame, queue it, host-relay it.
     // Net thread.
     void StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int len);
@@ -594,6 +614,8 @@ private:
     // Host carried-trash-clump batch (SetLocalTrashCarryBatch); empty = none.
     std::vector<TrashClumpPoseSnapshot> localTrashCarryBatch_;
     bool hasLocalTrashCarryBatch_ = false;
+    // Host driven-prop poses pending send (PublishPropDrivePose), one per eid; empty = none.
+    std::vector<PropPoseSnapshot> localPropDriveQueue_;
     // Host world clock (SetHostClock), fanned out on its own ~500 ms throttle.
     TimeSyncPayload localHostClock_{};
     bool hasLocalHostClock_ = false;
@@ -675,6 +697,10 @@ private:
     std::vector<TrashClumpPoseSnapshot> remoteTrashCarryBatch_;
     bool     hasRemoteTrashCarryBatch_ = false;
     uint32_t lastRemoteTrashCarrySeq_  = 0;
+    // The driven-prop poses received since the last take, one per eid; drained by
+    // TakeRemotePropDriveBatch.
+    std::vector<PropPoseSnapshot> remotePropDriveBatch_;
+    uint32_t lastRemotePropDriveSeq_ = 0;
     // Per-slot expected senderEpoch, latched from the slot's first packet (0 = not yet); a
     // mismatching packet is dropped at HandleMessage entry. Cleared in ResetPeerRemoteState so the
     // next occupant re-latches. Under remoteMutex_.

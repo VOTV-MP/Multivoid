@@ -378,6 +378,10 @@ void Session::Stop() {
     // cleared above the join, this write raced a pass still in flight during the few milliseconds
     // until the thread exited.
     peer_admission::ClientReset();
+    // The pose batches die with the session too: their sequence trackers are per host process, and
+    // a client rejoining a fresh host would otherwise drop every batch as stale until the new
+    // host's sequence climbed past the old one's.
+    ResetPoseBatches();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

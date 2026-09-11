@@ -103,6 +103,8 @@
 #include "coop/player/local_streams.h"  // LastHeldActor
 #include "coop/player/puppet_carry_drive.h"
 #include "coop/props/trash_clump_pose_stream.h"
+#include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
+#include "coop/props/prop_drive_stream.h"  // CLIENT: park and drive those props
 #include "coop/props/trash_collect_sync.h"
 #include "coop/props/trash_proxy.h"
 #include "coop/props/trash_pile_sync.h"
@@ -259,6 +261,7 @@ void ConnectReplayForSlot(int slot) {
     // with no blob baseline, which the sweep still owns.
     coop::save_transfer::SendBlobDivergenceDeletes(slot);
     coop::prop_snapshot::TriggerForSlot(slot);
+    coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
     // Deliver the current position of any save-authoritative chipPile the host moved in this
     // joiner's connect window (the move's convert was dropped pre-world, and chipPiles carry no
     // position in the snapshot). After the snapshot, so it rides the bulk lane behind it; the
@@ -479,6 +482,8 @@ DisconnectStats DisconnectAll() {
     coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
     coop::puppet_carry_drive::OnDisconnect();  // drop all puppet-held clump drives
     coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
+    coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set
+    coop::prop_drive_stream::OnDisconnect();  // every driven prop here gets its physics back
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
     // Last, after every element drain: the client's transfer state, its received identity map and
     // the ephemeral zcoop_<pid> slot the join wrote. The map's binds resolve against Elements, so
@@ -529,6 +534,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
+    if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Tick(session); }  // HOST: publish the driven props that moved, close the streams that rested (after the hook poll that feeds it; an empty set costs one size check)
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
@@ -580,6 +586,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:worldactor_client"}; coop::world_actor_sync::TickClientWorldActors(); }  // CLIENT: apply batch + drive WorldActor mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:piramid"}; coop::piramid_sync::Tick(); }  // pre-arm probe (250 ms gate) / host gather-edge sweep (1 s) / client mirror restore + pending gather replay
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:trash_clump_pose"}; coop::trash_clump_pose_stream::TickApplyAndDrive(session); }  // CLIENT: apply host-auth carry/flight pose batch + per-eid interp (client-only, no-op on host)
+    if (!isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_stream"}; coop::prop_drive_stream::TickApplyAndDrive(session); }  // CLIENT: park + drive the host's driven props (the host originates them and never receives any)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // CLIENT: author a PropDropIntent for a detected place whose Key is parked (cheap no-op when empty / on host)

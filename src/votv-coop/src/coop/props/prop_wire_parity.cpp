@@ -11,6 +11,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine_attach.h"  // IsActorRootBodyAtRest
 
 namespace coop::prop_wire_parity {
 
@@ -52,6 +53,22 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags) {
     void* mesh = ue_wrap::prop::GetStaticMesh(actor);  // Aprop_C only; null for non-Aprop_C
     if (!mesh) return;
     coop::remote_prop::DriveSimulate(mesh, /*simulate=*/false);
+}
+
+uint8_t PhysFlagsOf(void* actor) {
+    namespace pf = coop::net::propspawn_flags;
+    uint8_t flags = 0;
+    const bool isStatic = ue_wrap::prop::IsStatic(actor);
+    const bool frozen   = ue_wrap::prop::IsFrozen(actor);
+    const bool sleep    = ue_wrap::prop::IsSleeping(actor);
+    if (!(isStatic || frozen || sleep) && !ue_wrap::engine::IsActorRootBodyAtRest(actor))
+        flags |= pf::kSimulatePhysics;
+    if (ue_wrap::prop::IsHeavy(actor)) flags |= pf::kIsHeavy;
+    if (frozen)   flags |= pf::kFrozen;
+    if (isStatic) flags |= pf::kStatic;
+    if (sleep)    flags |= pf::kSleep;
+    if (ue_wrap::prop::ReadRemoveWOrespawn(actor)) flags |= pf::kRemoveWOrespawn;
+    return flags;
 }
 
 bool SpParitySimulate(uint8_t physFlags) {

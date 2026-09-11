@@ -430,6 +430,9 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
     case MsgType::TrashCarryPose:
         StoreRemoteTrashCarryBatch(data, len, seq);  // session_trashcarry.cpp (parse + newest-wins store)
         break;
+    case MsgType::PropDrivePose:
+        StoreRemotePropDriveBatch(data, len, seq);  // session_propdrive.cpp (parse + merge by eid)
+        break;
     case MsgType::VoiceFrame:
         // Voice is a stream: every arrival is queued (no header-seq stale drop; the per-payload
         // voice seq orders at the jitter buffer). Store and relay in session_voice.cpp.

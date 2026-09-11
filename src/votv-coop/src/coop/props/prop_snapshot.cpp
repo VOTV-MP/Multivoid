@@ -15,6 +15,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_wire_parity.h"  // PhysFlagsOf
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
 #include "coop/save/save_transfer.h"  // TryGetSaveTimePileXform, the join snapshot's pile match key
@@ -266,20 +267,7 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     p.physFlags = 0;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(obj)) {
-        const bool isStatic = ue_wrap::prop::IsStatic(obj);
-        const bool frozen   = ue_wrap::prop::IsFrozen(obj);
-        const bool sleep    = ue_wrap::prop::IsSleeping(obj);
-        if (!(isStatic || frozen || sleep) &&
-            !ue_wrap::engine::IsActorRootBodyAtRest(obj)) {
-            p.physFlags |= coop::net::propspawn_flags::kSimulatePhysics;
-        }
-        if (ue_wrap::prop::IsHeavy(obj)) p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-        if (frozen)   p.physFlags |= coop::net::propspawn_flags::kFrozen;
-        if (isStatic) p.physFlags |= coop::net::propspawn_flags::kStatic;
-        if (sleep)    p.physFlags |= coop::net::propspawn_flags::kSleep;
-        if (ue_wrap::prop::ReadRemoveWOrespawn(obj)) {
-            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
-        }
+        p.physFlags = coop::prop_wire_parity::PhysFlagsOf(obj);
         const std::wstring nm = ue_wrap::prop::GetPropNameString(obj);
         for (size_t j = 0; j < nm.size() && j < 31; ++j) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[j]);
