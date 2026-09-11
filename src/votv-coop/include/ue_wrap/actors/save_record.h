@@ -142,6 +142,28 @@ bool CaptureRecord(void* actor, SaveRecord& out);
 // base capture and the apply.
 bool ApplyRecord(void* actor, const SaveRecord& r);
 
+// ---- the same dispatch, without the prop lineage ----------------------------------------------
+//
+// The pair above is the PROP codec: it resolves its verbs only for classes on the `Aprop_C` chain,
+// and its apply splices the receiver's own base half over the sender's because for a prop the base
+// fields already ride the spawn row. A class off that chain -- `Ahook_C` is an `Aactor_save_C`, and
+// the two lineages part at `AActor` -- needs the same dispatch and neither the gate nor the splice,
+// and it needs a CALLER-supplied UFunction because the lineage is what `VerbsFor` keys on.
+//
+// These are the dispatch half alone, so there is one implementation of it rather than a copy in
+// every wrapper that serializes a non-prop. The lineage question, the splice and whatever
+// authority the record's fields need belong to the caller, which is the only party that knows.
+
+// Run `recordFn` (a `getData`-shaped UFunction with a `data` out-parameter) on `actor` and read the
+// record it leaves in the frame. False if the frame has no `data` parameter of the right size or
+// the call fails.
+bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out);
+
+// Write `r` into `loadFn`'s `data` parameter and call it. THE RECORD IS APPLIED AS GIVEN: there is
+// no splice here, so a caller handing this a record that came off the wire has already decided,
+// field by field, which parts it is willing to take from the sender.
+bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r);
+
 // Drop the cached class lookups (level change / disconnect).
 void ResetCodecCache();
 

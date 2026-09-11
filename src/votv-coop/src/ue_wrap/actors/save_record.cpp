@@ -295,6 +295,8 @@ const ClassVerbs* VerbsFor(void* cls) {
 }
 
 // Run `fn` on `actor` and read the Fstruct_save it leaves in the frame's `data` parameter.
+// Published as CaptureRecordVia at the bottom of the file: a class off the Aprop_C chain needs
+// exactly this dispatch and none of the lineage policy around it.
 bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
     if (!fn) return false;
     ParamFrame f(fn);
@@ -414,6 +416,23 @@ bool ApplyRecord(void* actor, const SaveRecord& r) {
     if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
     // The frame arrives zeroed, which is WriteSaveRecord's stated precondition.
     WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, merged);
+    return Call(actor, f);
+}
+
+bool CaptureRecordVia(void* actor, void* recordFn, SaveRecord& out) {
+    if (!actor) return false;
+    return CallForRecord(actor, recordFn, out);
+}
+
+bool ApplyRecordVia(void* actor, void* loadFn, const SaveRecord& r) {
+    if (!actor || !loadFn) return false;
+    ParamFrame f(loadFn);
+    const int32_t off = f.ParamOffset(L"data");
+    if (!f.valid() || off < 0 || off + kSaveRecordBytes > f.FrameSize()) return false;
+    // The slot must be zeroed before WriteSaveRecord: it constructs engine-owned TArrays in place
+    // and reads nothing, so a dirty slot would leave the engine dereferencing whatever was there.
+    std::memset(static_cast<uint8_t*>(f.data()) + off, 0, static_cast<size_t>(kSaveRecordBytes));
+    WriteSaveRecord(static_cast<uint8_t*>(f.data()) + off, r);
     return Call(actor, f);
 }
 
