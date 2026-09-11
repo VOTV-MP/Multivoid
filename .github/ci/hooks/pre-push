@@ -1,0 +1,40 @@
+#!/bin/sh
+# pre-push -- run the gates CI will run, before the four-minute round trip, not after.
+#
+# WHY (2026-09-11). `repo-gates.yml` holds fifteen gate invocations and nothing local ran them as a
+# set, so "I ran the gates" meant "I ran the ones I remembered". One session lost about twenty-five
+# minutes to four push/red/fix cycles, every one of which a local run would have caught in seconds:
+# a wire-kind count the README had not followed, a date and an unpublished path on a public page,
+# the [docs] share of the recent trail, and a date inside the fix for the third.
+#
+# The runner reads its list OUT OF the workflow, so this cannot drift from what CI does. It lives in
+# tools/, which is not tracked: where it is absent -- a fresh clone, a contributor's machine -- this
+# hook says so once and gets out of the way rather than blocking a push it cannot check.
+#
+# To push past a failure deliberately: `git push --no-verify`. Prefer fixing the gate's finding;
+# it is the same finding CI is about to make, four minutes later, in public.
+set -e
+
+root=$(git rev-parse --show-toplevel)
+runner="$root/tools/gates.py"
+
+if [ ! -f "$runner" ]; then
+    echo "[pre-push] tools/gates.py not present -- pushing unchecked (CI remains the gate)."
+    exit 0
+fi
+
+python=$(command -v python3 || command -v python || true)
+if [ -z "$python" ]; then
+    echo "[pre-push] no python on PATH -- pushing unchecked (CI remains the gate)."
+    exit 0
+fi
+
+echo "[pre-push] running the gates CI runs (about 30s; --no-verify skips)..."
+if "$python" "$runner" --fast; then
+    exit 0
+fi
+
+echo ""
+echo "[pre-push] REFUSING: a gate above fails, and CI will fail on it too."
+echo "[pre-push] Fix it, or push with --no-verify if you mean to."
+exit 1
