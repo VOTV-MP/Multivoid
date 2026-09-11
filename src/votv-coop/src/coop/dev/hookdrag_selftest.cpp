@@ -42,6 +42,19 @@ bool Enabled() {
     return s;
 }
 
+// Who plants: the host (the driven-prop channel alone), the client (the host ties the client's
+// hook on its mirror and the channel carries the result back), or both into the same prop (two
+// host constraints on one body). Read once; the same value is set on both peers.
+const std::string& Role() {
+    static const std::string s = coop::config::ResolveEnum(::coop::config_registry::rows::hookdrag_role);
+    return s;
+}
+bool PlantsHere(bool isHost) {
+    const std::string& r = Role();
+    if (r == "both") return true;
+    return (r == "client") ? !isHost : isHost;
+}
+
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -174,9 +187,15 @@ void Sample(uint64_t since, bool isHost) {
     const float dx = loc.X - g_targetStart.X, dy = loc.Y - g_targetStart.Y, dz = loc.Z - g_targetStart.Z;
     const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (moved > g_maxMovedCm) g_maxMovedCm = moved;
-    UE_LOGI("hookdrag_selftest: POS t=%.2f wall=%llu key='%ls' (%.1f,%.1f,%.1f) moved=%.1f role=%s",
+    // The walker's own position beside the prop's, so a drag that stops short can be read as the
+    // player stopping (a wall, or the hook's own pull on the player winning over the walk) rather
+    // than guessed. The local player on both peers: on the non-planting peer it is a bystander.
+    ue_wrap::FVector me{};
+    if (void* p = LocalPlayer()) me = E::GetActorLocation(p);
+    UE_LOGI("hookdrag_selftest: POS t=%.2f wall=%llu key='%ls' (%.1f,%.1f,%.1f) moved=%.1f role=%s "
+            "me=(%.1f,%.1f,%.1f)",
             since / 1000.0, static_cast<unsigned long long>(WallMs()), g_targetKey.c_str(),
-            loc.X, loc.Y, loc.Z, moved, isHost ? "HOST" : "CLIENT");
+            loc.X, loc.Y, loc.Z, moved, isHost ? "HOST" : "CLIENT", me.X, me.Y, me.Z);
 }
 
 // One tick of the host's walk: movement INPUT, re-issued every tick, which the character movement
@@ -198,8 +217,9 @@ void Install(coop::net::Session* session) {
     static bool sSaid = false;
     if (sSaid) return;
     sSaid = true;
-    UE_LOGI("hookdrag_selftest: ENABLED -- the host plants a hook into the nearest keyed physics "
-            "prop and drags it; both peers log the prop's position");
+    UE_LOGI("hookdrag_selftest: ENABLED (role=%s) -- the planting peer hooks the nearest keyed "
+            "physics prop to the host and drags it; both peers log the prop's position",
+            Role().c_str());
 }
 
 void Tick() {
@@ -213,8 +233,9 @@ void Tick() {
         // going world-ready.
         if (isHost ? !s->IsSlotWorldReady(1) : !coop::net_pump::HasAnnouncedWorldReady()) return;
         g_originMs = now;
-        UE_LOGI("hookdrag_selftest: ARMED role=%s (pick +%llus, plant +%llus, walk +%llus..+%llus, "
-                "unhook +%llus, verdict +%llus)", isHost ? "HOST" : "CLIENT",
+        UE_LOGI("hookdrag_selftest: ARMED role=%s plants=%d (pick +%llus, plant +%llus, walk "
+                "+%llus..+%llus, unhook +%llus, verdict +%llus)", isHost ? "HOST" : "CLIENT",
+                PlantsHere(isHost) ? 1 : 0,
                 static_cast<unsigned long long>(kPickMs / 1000),
                 static_cast<unsigned long long>(kPlantMs / 1000),
                 static_cast<unsigned long long>(kWalkOutMs / 1000),
@@ -256,7 +277,7 @@ void Tick() {
         g_nextSampleMs = now + kSampleMs;
         Sample(since, isHost);
     }
-    if (isHost) {
+    if (PlantsHere(isHost)) {
         if (!g_planted && since >= kPlantMs) {
             g_planted = true;
             void* p = LocalPlayer();
@@ -278,6 +299,11 @@ void Tick() {
                 float dx = g_walkBase.X - tl.X, dy = g_walkBase.Y - tl.Y;
                 const float n = std::sqrt(dx * dx + dy * dy);
                 if (n > 1.f) { dx /= n; dy /= n; } else { dx = 1.f; dy = 0.f; }
+                // With both peers pulling, the client walks at a right angle to the host: two
+                // players standing together would otherwise drag along one line, and a tug in
+                // opposite directions leaves the prop where it was, which a drag verdict cannot
+                // tell from a channel that carried nothing.
+                if (!isHost && Role() == "both") { const float t2 = dx; dx = -dy; dy = t2; }
                 g_walkDir = ue_wrap::FVector{dx, dy, 0.f};
                 UE_LOGI("hookdrag_selftest: WALK OUT %llu ms along (%.2f,%.2f) from (%.1f,%.1f,%.1f)",
                         static_cast<unsigned long long>(kWalkLegMs), dx, dy, g_walkBase.X,
@@ -319,8 +345,8 @@ void EmitVerdict() {
     auto* s = g_session.load(std::memory_order_acquire);
     const bool isHost = s && s->role() == coop::net::Role::Host;
     UE_LOGI("hookdrag_selftest: VERDICT role=%s key='%ls' plant=%s maxMoved=%.1f cm goneAt=%.2f",
-            isHost ? "HOST" : "CLIENT", g_targetKey.c_str(), isHost ? g_plantNote : "n/a",
-            g_maxMovedCm, g_goneAtS);
+            isHost ? "HOST" : "CLIENT", g_targetKey.c_str(),
+            PlantsHere(isHost) ? g_plantNote : "n/a", g_maxMovedCm, g_goneAtS);
 }
 
 void OnDisconnect() {
