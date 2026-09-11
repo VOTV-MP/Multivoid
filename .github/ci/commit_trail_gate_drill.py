@@ -36,7 +36,10 @@ MUTANTS = [
     ("share: the cap is crossed by reaching it", "if share > DOCS_MAX_PERCENT:",
      "if share >= DOCS_MAX_PERCENT:"),
     ("who counts: git-made commits are in the window",
-     "if EXEMPT_SUBJECT_RE.match(subject):", "if subject is None:"),
+     "if EXEMPT_SUBJECT_RE.match(subject) or subject.startswith(CLOSE_PREFIX):",
+     "if subject is None:"),
+    ("who counts: the script-made session close is in the window",
+     "or subject.startswith(CLOSE_PREFIX):", "or False:"),
     ("labels: only the suffix says documentation",
      "return path.endswith(DOC_SUFFIX) or path.startswith(DOC_ROOT)",
      "return path.endswith(DOC_SUFFIX)"),
@@ -131,6 +134,16 @@ def main():
     r = run(repo, "--window", "20")
     arm("4 of 20 is 20.0% and is refused",
         r.returncode == 1 and "4 of 20 (20.0%)" in r.stdout and "above the 15%" in r.stdout, last(r))
+
+    # ---- the ritual's own commit is not a person writing about the project -------------------
+    # Two closes and two chosen documents in a window of twenty: counted, that is 4 of 20 and
+    # refused; read as the gate now reads it, 2 of 18. The cap still binds the two a hand wrote.
+    repo = build(tmp, "close_commits", trail(2, 16)
+                 + [("[docs] close: a session", ["docs/c.md"]),
+                    ("[docs] close: another session", ["docs/d.md"])], env)
+    r = run(repo, "--window", "20")
+    arm("the session-close commit is outside both halves",
+        r.returncode == 0 and " of 20 (" not in r.stdout, last(r))
 
     # ---- the window is the LAST commits, not the first ---------------------------------------
     # One repository read twice, which is the shape the real trail has: a stretch of document

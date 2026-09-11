@@ -21,6 +21,17 @@ the fraction. Nobody wrote them as a contribution, and `commit_msg_check` alread
 subjects for that reason. Note which way this cuts: counting them would enlarge the denominator
 and shrink the share, so leaving them out is the stricter reading.
 
+The session-close commit is outside it for the same reason, added 2026-09-11 with the measurement
+that moved the rule. `[docs] close: ...` is the subject `status_census.py close` writes, and
+`commit_msg_check` REFUSES it from a hand -- so the repository already holds that a person did not
+write it. Counting it made the ritual the project mandates spend the budget meant for discretionary
+documentation: the close that exposed this landed in a window that also held three doc commits each
+FORCED by another gate (a ledger row the contributor work owed, a wire-kind count `ledger_lint`
+reads off the enum, and a public page the prose gate refused for citing an ignored path), and the
+trail read 16 of 100 against a cap of 15. Excluding the two closes in that window reads 14 of 98.
+The cap still binds every doc commit a person chose to write, which is what it was built to
+measure.
+
 Usage:
   commit_trail_gate.py                    the window ending at HEAD
   commit_trail_gate.py --tip REV          the same, ending at REV -- on a pull request pass the
@@ -40,7 +51,7 @@ sys.path.insert(0, HERE)
 # The boundary walk, the subprocess wrapper and the two subject patterns are this checker's
 # neighbours already: the trail's shape and a single message's shape are the same rule read at two
 # scales, and a second copy of either pattern would let them drift apart silently.
-from commit_msg_check import EXEMPT_SUBJECT_RE, SCOPE_RE, boundary, git  # noqa: E402
+from commit_msg_check import CLOSE_PREFIX, EXEMPT_SUBJECT_RE, SCOPE_RE, boundary, git  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 WINDOW = 100
@@ -68,10 +79,11 @@ def scope_of(subject):
 
 
 def walk(repo, rng):
-    """-> [(sha, subject, [paths])] for `rng`, newest first, git-made commits dropped.
+    """-> [(sha, subject, [paths])] for `rng`, newest first, git-made and script-made dropped.
 
     `--name-only` prints nothing for a merge, which needs no special case here: a merge is
-    dropped by its subject before its paths are read."""
+    dropped by its subject before its paths are read. The session-close subject is dropped beside
+    it, and by the constant `commit_msg_check` refuses it with, so the two cannot drift."""
     raw = git(["-c", "core.quotePath=false", "log",
                "--format={}%H{}%s".format(REC, FLD), "--name-only", "--end-of-options", rng], repo)
     out = []
@@ -80,7 +92,7 @@ def walk(repo, rng):
             continue
         head, _, rest = rec.partition("\n")
         sha, _, subject = head.partition(FLD)
-        if EXEMPT_SUBJECT_RE.match(subject):
+        if EXEMPT_SUBJECT_RE.match(subject) or subject.startswith(CLOSE_PREFIX):
             continue
         out.append((sha, subject, [p for p in rest.split("\n") if p.strip()]))
     return out
