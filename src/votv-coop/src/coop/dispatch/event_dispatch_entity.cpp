@@ -12,7 +12,9 @@
 #include "coop/player/item_activate.h"
 #include "coop/session/join_progress.h"
 #include "coop/creatures/npc_mirror.h"
-#include "coop/creatures/owner_entity_sync.h"  // the owner-entity lane
+#include "coop/creatures/owner_entity_sync.h"
+#include "coop/items/hook_anchor.h"
+#include "coop/items/hook_sync.h"  // the owner-entity lane
 #include "coop/element/quiescence_drain.h"  // the pending position corrections
 #include "coop/props/save_identity_bind.h"  // UpdateChipHostPos
 #include "coop/player/players_registry.h"
@@ -392,6 +394,64 @@ bool HandleEntityEvent(net::Session& session,
         const int slot = msg.senderPeerSlot;
         ue_wrap::game_thread::Post([p, slot] {
             ::coop::owner_entity_sync::OnDestroyMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::HookState: {
+        // The hook lane's owner half, peer-owned and relayed: any peer may announce a hook it
+        // fired. Identity is (sender slot, seq); every field is validated in hook_sync, which is
+        // where the class table and the world bounds live.
+        if (msg.payloadLen < sizeof(net::HookStatePayload)) {
+            UE_LOGW("event_feed: HookState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::HookStatePayload));
+            break;
+        }
+        net::HookStatePayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::hook_sync::OnStateMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::HookDestroy: {
+        if (msg.payloadLen < sizeof(net::HookDestroyPayload)) break;
+        net::HookDestroyPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        const int slot = msg.senderPeerSlot;
+        ue_wrap::game_thread::Post([p, slot] {
+            ::coop::hook_sync::OnDestroyMsg(p, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::HookAnchorCommit: {
+        // Client to host only: a hook that anchored both ends and is being handed over. The
+        // arbiter in hook_anchor decides what of the sender's record it is willing to apply.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: HookAnchorCommit payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload c{};
+        std::memcpy(&c, msg.payload, sizeof(c));
+        const uint8_t slot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                                 ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                 : static_cast<uint8_t>(0xFF);
+        ue_wrap::game_thread::Post([c, slot] {
+            ::coop::hook_anchor::OnCommitChunk(c, slot);
+        });
+        break;
+    }
+    case net::ReliableKind::HookAnchored: {
+        // Host to all: the host has taken one. One atomic statement on every receiver.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) break;
+        net::BlobChunkPayload c{};
+        std::memcpy(&c, msg.payload, sizeof(c));
+        const uint8_t slot = (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                                 ? static_cast<uint8_t>(msg.senderPeerSlot)
+                                 : static_cast<uint8_t>(0xFF);
+        ue_wrap::game_thread::Post([c, slot] {
+            ::coop::hook_anchor::OnAnchoredChunk(c, slot);
         });
         break;
     }

@@ -35,6 +35,10 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_save.cpp
     src/ue_wrap/actors/begin_equipment.cpp
     src/ue_wrap/actors/floppy_disc.cpp
+    src/ue_wrap/actors/hook.cpp
+    src/ue_wrap/world/keyed_objects.cpp
+    src/coop/items/hook_sync.cpp
+    src/coop/items/hook_anchor.cpp
     src/ue_wrap/engine/save_capture.cpp
     src/ue_wrap/engine/engine_audio.cpp
     src/ue_wrap/engine/engine_bones.cpp

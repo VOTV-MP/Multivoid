@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 155;
+inline constexpr uint16_t kProtocolVersion = 156;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -659,6 +659,33 @@ enum class ReliableKind : uint8_t {
     // changed, which the host validates and answers with that canonical. Chunked blob; on
     // PropSpawn's lane, so a claim cannot overtake the destroy of the disc it absorbed.
     FloppySlotState = 132,
+
+    // A deployed grappling hook that still belongs to the player who fired it, keyed by (sender
+    // slot, seq): create-or-update in one kind, so a mirror can never receive a pose for a hook it
+    // was never told about. From the owner, relayed; re-sent on a slow keepalive, which is also how
+    // a late joiner gets one. The pull the hook applies is written to the LOCAL player, so it
+    // cannot be run anywhere but on its owner's machine and no peer ever sends this for someone
+    // else's hook.
+    HookState = 133,
+
+    // That hook is gone: released, cancelled, or its owner left (seq 0 = every hook of originSlot).
+    // From the owner, relayed, or from the host on a leaver's behalf.
+    HookDestroy = 134,
+
+    // Client to host: the hook I fired has anchored both ends, so it stops being mine. The payload
+    // is the record the hook's own getData produced -- both attach keys, both component names, both
+    // component-space offsets and the cable length -- which is the game's own cross-peer name for
+    // whatever it is tied to. The host validates the sender could reach it, spawns the hook and
+    // hands the record to its loadData, and from then on the hook is an ordinary save actor of the
+    // host's. Chunked blob; never relayed, and the host's own HookAnchored is the answer.
+    HookAnchorCommit = 135,
+
+    // Host to all: an anchored hook exists, as the same getData record. A receiver spawns it and
+    // lets the game's own loadData re-resolve both attach keys in its own world, so the mirror is
+    // parented to its copy of what the original was tied to and needs no pose stream at all -- a
+    // hook tied to the ATV rides that peer's ATV by itself. Chunked blob, on HookAnchorCommit's
+    // lane so the answer cannot overtake the commit.
+    HookAnchored = 136,
 };
 
 #pragma pack(push, 1)
@@ -1381,6 +1408,43 @@ struct OwnerEntityDestroyPayload {
     uint8_t  _pad;        // 1 -- zeroed
 };
 static_assert(sizeof(OwnerEntityDestroyPayload) == 4, "OwnerEntityDestroyPayload must be 4 bytes");
+
+// The hook lane, owner half (HookState/HookDestroy): identity is (sender slot, seq), the
+// owner-entity lane's shape, and for the same reason -- a hook that still belongs to its thrower is
+// that player's own expression, not a row in the host's element registry. It leaves this lane for
+// good the moment both ends are anchored, because then it is the host's save actor and the save
+// key the game itself minted is its name.
+//
+// One kind carries create AND update. A mirror that has never heard of `seq` makes one; a mirror
+// that has applies. The alternative, a spawn kind and a pose kind, buys nothing here (a hook is one
+// small record either way) and costs the ordering hazard of a pose arriving before its spawn.
+struct HookStatePayload {
+    uint16_t seq;          // 2 -- owner-local monotonic hook id, never 0
+    uint8_t  classId;      // 1 -- index into the lane's class table (0 = hook_C)
+    uint8_t  flags;        // 1 -- HookFlag bits below
+    float    ax, ay, az;   // 12 -- the A end (the head) in world space; the B end rides the
+                           //       owner's own puppet and is never sent
+    float    aPitch, aYaw, aRoll;  // 12 -- the A end's world rotation
+    float    dist;         // 4 -- the cable length the reel sets; the mirror's cable is dist/1.5
+};
+static_assert(sizeof(HookStatePayload) == 32, "HookStatePayload must be 32 bytes");
+
+// HookStatePayload::flags. The phase is derivable from these and is not sent as its own field:
+// a hook is in flight while Thrown, planted once AttachedA clears Thrown, and carrying its owner
+// while PlayerHooked. Anchored is not here -- an anchored hook has left this lane.
+enum HookFlag : uint8_t {
+    HookFlag_Thrown      = 1u << 0,  // isThrown: the head is in the air
+    HookFlag_AttachedA   = 1u << 1,  // attached_a: the head has bitten something
+    HookFlag_PlayerHooked = 1u << 2, // playerHooked: the cable is reeling its owner
+    HookFlag_Single      = 1u << 3,  // the single-ended variant, which never anchors a second end
+};
+
+struct HookDestroyPayload {
+    uint16_t seq;         // 2 -- 0 = WILDCARD: every hook of originSlot (the host's teardown)
+    uint8_t  originSlot;  // 1 -- 0 = the transport sender; non-zero only on the host's teardown
+    uint8_t  _pad;        // 1 -- zeroed
+};
+static_assert(sizeof(HookDestroyPayload) == 4, "HookDestroyPayload must be 4 bytes");
 
 // One chunk of a serialized blob, shared by every chunked kind; the assembly key is (sender slot,
 // kind, blobSeq); chunks arrive in order; coop/blob_chunks owns send and reassembly. The email

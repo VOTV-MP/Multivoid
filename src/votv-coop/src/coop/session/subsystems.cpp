@@ -132,7 +132,9 @@
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
-#include "coop/creatures/owner_entity_sync.h"  // OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
+#include "coop/creatures/owner_entity_sync.h"
+#include "coop/items/hook_anchor.h"
+#include "coop/items/hook_sync.h"  // OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
 #include "coop/world/event_active_sync.h"  // the native activeEvents registry probe
 #include "coop/world/weather_sync.h"
 
@@ -170,6 +172,7 @@ void Install(coop::net::Session& session) {
     coop::floppy_slot_entry::Install(&session);  // the slot's overlap entry: no device swallows a disc still in transit out of one
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session);  // owner-entity lane: eyer per-peer owned + cross-peer display mirrors
+    coop::hook_sync::Install(&session);  // hook lane: owner-phase stream + mirrors, and the ReceiveTick park they depend on
     coop::inventory_pickup_sync::Install(&session);  // inventory-collect blip (PlaySound2D observer)
     coop::chat_sync::Install(&session);  // T-chat (the ui/chat_input send path)
     coop::local_body::Install(&session);  // skins: local first-person body + SkinChange announce
@@ -316,6 +319,7 @@ void ConnectReplayForSlot(int slot) {
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
     coop::serverbox_sync::QueueConnectBroadcastForSlot(slot);  // current server state to the joiner
     coop::floppy_slot_sync::QueueConnectBroadcastForSlot(slot);  // every device slot: the joiner's world came from a save frozen before the first insert
+    coop::hook_anchor::QueueConnectBroadcastForSlot(slot);  // anchored hooks the joiner's save capture missed; it dedups by key
     coop::roach_sync::QueueConnectBroadcastForSlot(slot);  // current roach population to the joiner
     // The piramid lane's late-join answer: re-send an in-flight gather commit to the slot, after
     // the world-actor and NPC snapshots above, since the replay's eid lookups need the joiner's
@@ -371,6 +375,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::sleep_sync::OnDisconnectForSlot(slot);  // drop the leaver from the sleep tally (re-gate)
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
+    coop::hook_sync::OnPeerLeftSlot(slot);  // the leaver's OWNER-PHASE hook mirrors; anchored ones are the host's and stay
     coop::player_inventory_sync::OnDisconnectForSlot(slot);  // flush the leaver's inventory to <guid>.json
 }
 
@@ -429,6 +434,7 @@ DisconnectStats DisconnectAll() {
     coop::floppy_slot_entry::OnDisconnect();  // counters, then the transit marks and the interceptors: the line above drops the UFunctions they name
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
+    coop::hook_sync::OnDisconnect();  // same, for every hook mirror, anchored included
     coop::spawn_authority::OnDisconnect();  // restore parked spawner ticks (loan repayment belt)
     coop::skin_preview::OnDisconnect();  // despawn the F1-skins mannequin
     coop::inventory_pickup_sync::OnDisconnect();
@@ -522,6 +528,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)

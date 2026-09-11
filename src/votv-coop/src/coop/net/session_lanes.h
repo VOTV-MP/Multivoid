@@ -143,6 +143,14 @@ inline Lane LaneForKind(ReliableKind k) {
     // The container-contents slice stays behind the entity lifecycle it references: a blob for an
     // eid whose spawn has not landed parks and retries, and one FIFO makes the park rare.
     case ReliableKind::ContainerContents: return Lane::Normal;
+    // The hook family shares ONE lane, pinned to the default it rides, because the handover at the
+    // anchor is an ordered transaction: the owner's last HookState, the host's HookAnchored that
+    // retires that mirror and builds the anchored hook in its place, and a HookDestroy are three
+    // statements about one hook, and on separate lanes the answer could overtake the question.
+    case ReliableKind::HookState:         return Lane::Normal;
+    case ReliableKind::HookDestroy:       return Lane::Normal;
+    case ReliableKind::HookAnchorCommit:  return Lane::Normal;
+    case ReliableKind::HookAnchored:      return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -187,6 +195,11 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::OwnerEntitySpawn:  // each peer owns its stalker; every peer must see it
     case ReliableKind::OwnerEntityPose:
     case ReliableKind::OwnerEntityDestroy:
+    case ReliableKind::HookState:         // a hook belongs to the player who fired it
+    case ReliableKind::HookDestroy:
+    // HookAnchorCommit is deliberately NOT relayable: it is an intent addressed to the host alone,
+    // and the host's own HookAnchored is what the other peers get. Relaying it would hand every
+    // peer a record the arbiter has not validated yet, and two of them would build the hook.
     case ReliableKind::InventoryPickup:   // peer-symmetric
     // ChatMessage is not relayable: chat is host-authored. A client's line reaches the host as an
     // intent; the host commits it with a sequence number and broadcasts an authored line to
