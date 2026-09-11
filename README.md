@@ -53,7 +53,7 @@ with its own signatures, drives the game's own classes and functions through ref
 where reflection cannot see. No asset edits, no repacked paks.
 
 Transport is GameNetworkingSockets: 12 unreliable pose and state streams, a voice stream beside
-them, and one reliable ordered channel whose payloads are 125 message kinds. Each machine's engine
+them, and one reliable ordered channel whose payloads are 129 message kinds. Each machine's engine
 re-derives animation, physics and rendering from the streamed state. The host is authoritative for
 world state, randomness and NPC simulation; a client acts by naming an intent that the host
 performs.
