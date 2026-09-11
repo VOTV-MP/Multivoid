@@ -170,6 +170,19 @@ puppet included (`coop/items/coingun_sync`). The client is told the result.
 
 ### The floppy slot
 
+### The signal servers
+
+A base runs dozens of signal boxes, and the game breaks them on its own timer. Nothing about that
+is replicated, so each peer's breaker would fire on its own dice and author a false "server down"
+on one screen only. The break and fix verbs are Blueprint-internal and cannot be intercepted, so
+the state is mirrored instead: the host polls the per-box broken flag and the three totals the
+gamemode keeps for the farm, broadcasts on a change, and a client writes the flag and calls the
+box's own re-skin, which is notify-free and so repaints without firing the notice a real break
+fires. A client also disables its own breaker's tick, and gets it back when the session ends.
+The box list, the two disc verbs, the label and the break state all resolve in one engine wrapper
+(`ue_wrap/devices/serverbox`); the lane beside it owns only the wire half -- the mask, its width,
+the poll and who may author it (`coop/interactables/serverbox_sync`).
+
 A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
 writes, its data rows and the JSON of its whole save struct into four fields of the device and
 destroys the actor, and ejecting one spawns the disc back from those fields. The four are one

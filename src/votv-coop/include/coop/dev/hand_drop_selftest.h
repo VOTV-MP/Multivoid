@@ -4,15 +4,10 @@
 // An idle two-peer run never puts a prop in a hotbar hand, so the seam where a held item is
 // released back into the world -- the one path that broadcasts a spawn while the other peer still
 // shows a display mirror of that same item at that same place -- is invisible to it. This drives
-// the game's own two verbs on a per-role timer: `Hold Object` with the target passed directly,
-// then `throwHoldingProp`, first with the host holding and then with the client holding, so both
-// directions are measured rather than one.
+// the game's own verbs on a per-role timer, host holding then client holding, twice each.
 //
-// The verdict is the WATCHER's, and it needs no key: each episode censuses the live actors of the
-// target's class near the holder, excluding the hand axis, on both peers and at three moments --
-// before the pickup, while it is held, and after the drop. A prop that comes back is one row
-// restored; a prop the receiving peer lost is a census that stays short, which is the symptom a
-// field log recorded as a pose stream addressing an actor that no longer exists.
+// The verdict is the WATCHER's and it needs no message: it names the episode's prop by watching
+// one key leave its own world at the pickup, then says whether that key is back after the drop.
 //
 // It MUTATES the world: it picks up and drops a prop that was standing there. Armed per run from
 // the environment, never left standing in an ini.

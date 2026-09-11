@@ -40,6 +40,26 @@ save-backed class the game adds is carried without a change here. A record that 
 this peer has not created yet waits under its key until that prop appears, because a key survives
 the destroy-and-recreate that made the record need to travel in the first place.
 
+### How a birth finds its local actor
+
+A birth names a key, so the receiver looks that key up first and, finding it, converges the actor
+it already has rather than making a second one. When the key resolves to nothing there is still a
+case to answer: the per-peer natural spawners -- mushrooms, underground garbage -- place the same
+logical thing on each peer with a different key and at slightly different spots, and a birth taken
+at face value would stand a duplicate beside the copy this peer already grew. So a birth with no
+key match falls back to a scan for a prop of the same class, carrying the same `list_props` row,
+within 30 cm of where the birth says it is; the first such prop is adopted, re-keyed to the wire
+key and bound. With no candidate at all, a fresh mirror is made
+(`coop/props/remote_prop_spawn`, `coop/props/prop_fresh_spawn`).
+
+What that scan must never take is an actor that only looks like a world prop. A player's hand
+item is one: it is a real actor of the right class, it stands at that player's hands, and it
+belongs to the hand lane, which destroys it the moment the hand changes ([players.md](players.md)).
+Adopting one binds a wire identity to an actor that is about to disappear for reasons of its own,
+and the prop it was meant to name never appears on that peer at all. The hand axis -- this peer's
+own hotbar actor and every peer's display mirror -- is excluded from the scan, the same set the
+prop census leaves out of its own walk.
+
 ### Who authors a prop
 
 At rest, the host. A client never authors the existence of a shared-world prop: its own fresh

@@ -1,17 +1,11 @@
-// coop/dev/spawn_match_probe.h -- the OnSpawn fuzzy-match internals. Read-only, dev-only.
+// coop/dev/spawn_match_probe.h -- the OnSpawn same-class match internals. Read-only, dev-only.
 //
-// A wire spawn whose key resolves to nothing falls back to a 30 cm same-class scan, adopts the
-// FIRST candidate in object-array order and rekeys it to the wire key. Where several same-class
-// props share that radius -- a drive rack, a shelf of discs -- which one wins is invisible: the
-// shipped line names the winner alone, so a spawn that adopted the wrong neighbour and a spawn
-// that adopted the right one print the same.
-//
-// The probe prints the whole candidate set with slot, distance, local key and mirror binding, and
-// then watches each adopted actor: a destroy landing on it shortly after the bind is the ordering
-// defect where a pose stream is left addressing an actor that is already gone. The watch sits on
-// the destroy SEAM, so it sees the death whoever caused it -- the first adoption measured this way
-// was killed by the hand-item lane, not by the wire, and a watch on the wire receiver alone read
-// zero through the run that contained it.
+// The match and what it may not take are docs/props.md. The shipped line names the winner alone,
+// so a spawn that adopted the wrong neighbour prints exactly like one that adopted the right one.
+// This prints the whole candidate set -- slot, distance, local key, mirror binding -- and then
+// watches each adopted actor for a destroy landing behind the bind, which is the ordering defect
+// where a pose stream is left addressing an actor that is already gone. The watch sits on the
+// destroy SEAM, so it sees the death whoever caused it.
 //
 // Observation only -- the scan returns the same actor with the probe on. Ini-gated [dev]
 // spawn_match_probe=1. Game thread only.

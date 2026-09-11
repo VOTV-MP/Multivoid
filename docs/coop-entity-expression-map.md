@@ -54,6 +54,14 @@ are peer-gated. `[V]`
   the mod; a receiver writes the host's key into a mirror before its spawn finishes. A host id
   rides alongside. `[V]` Keyed devices the save does not persist are named by the portable
   identity on [architecture.md](architecture.md).
+- **Adoption by position, and what it may not take.** A birth whose key resolves to nothing falls
+  back to a same-class, same-row scan within 30 cm and re-keys what it finds, which is what keeps
+  the per-peer natural spawners from doubling ([props.md](props.md)). `[V]` **A player's hand item
+  is not a candidate**: the hotbar actor and every peer's display mirror are real props of the
+  right class standing at a peer's hands, owned by the hand lane and destroyed when the hand
+  changes, so an adoption binds a wire identity to an actor that is about to vanish on somebody
+  else's schedule and the prop the birth named never appears there. The hand axis has one owner
+  and both walks that must respect it -- the census outward, this scan inward -- ask it. `[V]`
 - **Key uniqueness.** The game's own saves ship duplicate keys, a clone family of dozens of
   trash-bit piles on one key among them, and every identity layer assumes uniqueness. The host
   is the key authority: at enrolment, a keyed actor whose key another live actor already carries

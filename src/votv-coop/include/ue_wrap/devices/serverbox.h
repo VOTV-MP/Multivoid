@@ -1,16 +1,9 @@
 // ue_wrap/devices/serverbox.h -- the signal server (AserverBox_C) engine wrapper: the box list the
-// gamemode owns, the two verbs that move a disc in and out of it, and the break state the farm
-// runs on.
+// gamemode owns, the two verbs that move a disc in and out of one, and the break state the farm
+// runs on. What the lane above it does with all three is docs/devices.md.
 //
-// What the wrapper reaches:
-//   - mainGamemode_C.servers, whose INDEX is the identity every server lane addresses a box by:
-//     the level places the boxes, so both peers build the same ordering
-//   - the box's own label, the FString the sign above it renders
-//   - the two verbs a player's interaction dispatches: pocessFloppy, which casts the held object
-//     and refuses a zip disc before inserting it, and ejectFloppy, which empties the slot and
-//     respawns the disc when the out-timeline finishes
-//   - the break state: the box's own IsBroken, the notify-free check() it re-skins from, and the
-//     three totals the gamemode keeps for the whole farm
+// The box list is mainGamemode_C.servers, and its INDEX is the identity every server lane
+// addresses a box by: the level places the boxes, so both peers build the same ordering.
 //
 // Resolution comes in three independent groups -- the verbs, the box list, and the break state --
 // each on its own backoff and its own latch. A member one group cannot find must not cost the
