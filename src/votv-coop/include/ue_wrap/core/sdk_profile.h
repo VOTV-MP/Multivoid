@@ -134,7 +134,13 @@ inline constexpr int32_t ElemsPerChunk = 64 * 1024;
 inline constexpr size_t FUObjectItem_Stride = 0x18;       // {Object*, flags, cluster, serial}
 inline constexpr size_t FUObjectItem_Flags = 0x08;        // int32 EInternalObjectFlags (PendingKill/Unreachable -> dying)
 inline constexpr size_t FUObjectItem_SerialNumber = 0x10; // int32, 0 until a weak reference allocates one (AllocateSlotSerial)
+inline constexpr size_t FUObjectArray_CreateListeners = 0x68;         // TArray<FUObjectCreateListener*>; no lock, read on the constructing thread
+inline constexpr size_t FUObjectArray_DeleteListeners = 0x78;         // TArray<FUObjectDeleteListener*>; guarded by the critical section below
+inline constexpr size_t FUObjectArray_DeleteListenersCritical = 0x88; // CRITICAL_SECTION over the delete list and its dispatch
 inline constexpr size_t FUObjectArray_MasterSerialNumber = 0xB0;      // int32 counter the slot serials are drawn from
+inline constexpr size_t TArray_Data = 0x00;  // TArray<T*> = {T** Data; int32 Num; int32 Max}
+inline constexpr size_t TArray_Num = 0x08;
+inline constexpr size_t TArray_Max = 0x0C;
 inline constexpr size_t mainGameInstance_loadObjects = 0x0229;  // bool: apply the save on BeginPlay (vs fresh)
 inline constexpr size_t mainGameInstance_GameMode = 0x01E1;  // TEnumAsByte<enum_gamemode::Type> (story/sandbox/...; the menu sets it on load from the slot-name prefix, our LoadStorySave must too) -- mainGameInstance.hpp:11
 // The mod's own UMG widget tree (built through SpawnObject):

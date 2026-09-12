@@ -43,6 +43,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "coop/player/death_revive.h"
@@ -258,6 +259,10 @@ void Tick(coop::net::Session& session) {
         explicit TickSessionScope(coop::net::Session& s) { g_tickSession = &s; }
         ~TickSessionScope() { g_tickSession = nullptr; }
     } _tickSessionScope{session};
+
+    // The engine's births and deaths since the last tick go into the object index before anything
+    // below reads it (the scan hub runs inside TickGameplay).
+    ue_wrap::object_index::Drain();
 
     // ---- Hitch and source probe (diagnostic, always on, near free) ----
     // [HITCH] times the gap between consecutive game-thread Ticks (the whole frame); [HITCH-SRC],

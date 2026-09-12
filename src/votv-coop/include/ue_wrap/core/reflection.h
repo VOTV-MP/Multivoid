@@ -50,6 +50,10 @@ void SetCoopCallCensus(bool on);
 // Slot i's target UFunction and its cumulative count; false past the last populated slot.
 bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount);
 
+// The FUObjectArray global's address, the base every slot and listener offset in the profile is
+// applied to; 0 before Resolve.
+uintptr_t ObjectArrayAddress();
+
 // GUObjectArray.ObjObjects.NumElements, the count of allocated UObject slots.
 int32_t NumObjects();
 
@@ -81,6 +85,25 @@ int32_t SlotSerial(int32_t internalIdx);
 // slot. 0 for an out-of-range index. Any thread.
 int32_t AllocateSlotSerial(int32_t internalIdx);
 
+// The EInternalObjectFlags bits of a slot's flags word (UE4.27). The kill pair is what
+// IsLiveByIndex tests; the three loading-phase bits say the object is not yet the game thread's
+// to read: built off the game thread and not handed over, still being loaded, or allocated
+// with its class constructor not yet run.
+namespace slot_flags {
+inline constexpr int32_t Async               = 1 << 26;
+inline constexpr int32_t AsyncLoading        = 1 << 27;
+inline constexpr int32_t Unreachable         = 1 << 28;
+inline constexpr int32_t PendingKill         = 1 << 29;
+inline constexpr int32_t RootSet             = 1 << 30;
+inline constexpr int32_t PendingConstruction = static_cast<int32_t>(0x80000000u);
+inline constexpr int32_t Dying               = Unreachable | PendingKill;
+inline constexpr int32_t NotYetReadable      = Async | AsyncLoading | PendingConstruction;
+}  // namespace slot_flags
+
+// The raw flags word at a slot: an array read only, safe on any thread; 0 for an out-of-range
+// index.
+int32_t SlotFlags(int32_t internalIdx);
+
 // A UObject's InternalIndex, its stable slot in GUObjectArray. Dereferences `obj`, so only for
 // an object known live; -1 for null. Cache it for a later IsLiveByIndex.
 int32_t InternalIndexOf(void* obj);
@@ -92,10 +115,9 @@ void* ResolveWeakObject(int32_t internalIdx, int32_t serial);
 
 // The raw EInternalObjectFlags word at a UObject's slot, the field IsLiveByIndex tests, exposed
 // whole so a diagnosis can tell PendingKill (marked, GC not yet there) from Unreachable
-// (mid-purge). Bits (UE4.27): ReachableInCluster 1<<23, ClusterRoot 1<<24, Native 1<<25, Async
-// 1<<26, AsyncLoading 1<<27, Unreachable 1<<28, PendingKill 1<<29, RootSet 1<<30. Reads obj's
-// InternalIndex, so `obj` must be mapped. 0 for null or out of range, indistinguishable from
-// "no flags": a diagnostic accessor, not a gate.
+// (mid-purge); the bit names are in slot_flags. Reads obj's InternalIndex, so `obj` must be
+// mapped. 0 for null or out of range, indistinguishable from "no flags": a diagnostic
+// accessor, not a gate.
 int32_t InternalFlagsOf(void* obj);
 
 // The root-set primitives. A subsystem holds a `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h) rather

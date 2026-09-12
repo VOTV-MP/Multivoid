@@ -13,6 +13,7 @@
 #include "harness/harness.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/paths.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -184,6 +185,12 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
             L"in multivoid.log (look for 'HEALTH: FAIL').");
         return 0;
     }
+
+    // The engine's create and delete notifications, registered as early as the profile is proven
+    // so nothing born after this point escapes the object index; the index itself seeds on the
+    // first game-thread drain.
+    if (!ue_wrap::object_index::Install())
+        UE_LOGW("boot: the object index could not register with the engine -- discovery falls back to nothing (see uobject_listeners lines above)");
 
     // Establish a game-thread execution context: hook ProcessEvent so we have a
     // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent

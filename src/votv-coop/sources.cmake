@@ -20,6 +20,8 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/sig_scan.cpp
     src/ue_wrap/core/gc_pin.cpp
     src/ue_wrap/core/reflection.cpp
+    src/ue_wrap/core/uobject_listeners.cpp
+    src/ue_wrap/core/object_index.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp
     src/ue_wrap/core/engine_heap.cpp

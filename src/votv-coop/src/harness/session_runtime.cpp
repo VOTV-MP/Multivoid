@@ -50,6 +50,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/save_browser.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -638,10 +639,15 @@ void RunPlayLoop(bool idleInGameplay) {
         if (running) wasHostSession = (g_session.role() == coop::net::Role::Host);
         PostPumpComposite([running, idleInGameplay] {
             if (running) {
-                coop::net_pump::Tick(g_session);
-            } else if (idleInGameplay) {
-                // Solo gameplay, no session yet: keep the local observers live.
-                coop::subsystems::Install(g_session);
+                coop::net_pump::Tick(g_session);   // drains the object index first
+            } else {
+                // No session: the object index still follows the engine, so a later session starts
+                // from a current one rather than a backlog.
+                ue_wrap::object_index::Drain();
+                if (idleInGameplay) {
+                    // Solo gameplay, no session yet: keep the local observers live.
+                    coop::subsystems::Install(g_session);
+                }
             }
             // The roster needs a live world and player; skipped at the menu.
             if (running || idleInGameplay) {

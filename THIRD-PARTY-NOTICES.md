@@ -989,7 +989,7 @@ SOFTWARE.
 
 ## RE-UE4SS (ported algorithms)
 
-No UE4SS binary or header is linked (the mod imports zero symbols from UE4SS); however, algorithms for resolving Unreal Engine primitives by AOB signature were PORTED from RE-UE4SS into this codebase with per-site attribution comments, and those portions carry the upstream MIT notice. Upstream: https://github.com/UE4SS-RE/RE-UE4SS. Source of this text: `reference/RE-UE4SS/LICENSE`.
+No UE4SS binary or header is linked (the mod imports zero symbols from UE4SS); however, algorithms for resolving Unreal Engine primitives by AOB signature, and the FUObjectArray listener member layout, were PORTED from RE-UE4SS into this codebase with per-site attribution comments, and those portions carry the upstream MIT notice. Upstream: https://github.com/UE4SS-RE/RE-UE4SS. Source of this text: `reference/RE-UE4SS/LICENSE`.
 
 ```text
 MIT License

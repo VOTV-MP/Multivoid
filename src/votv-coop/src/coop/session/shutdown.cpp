@@ -8,6 +8,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/uobject_listeners.h"
 
 #include <windows.h>
 
@@ -206,6 +207,7 @@ void DoShutdown() {
     if (g_session) g_session->Stop();
     ::Sleep(100);  // let detached pollers observe g_shuttingDown
     ue_wrap::game_thread::Uninstall();
+    ue_wrap::uobject_listeners::Uninstall();
     ue_wrap::hook::Shutdown();
     // From here on a GC pin releases WITHOUT touching the engine. Pins can live inside
     // statics (the proxy map, the permanent audio pins), so their destructors run at DLL

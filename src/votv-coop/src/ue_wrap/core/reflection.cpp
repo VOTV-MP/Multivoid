@@ -132,6 +132,8 @@ bool CallFunction(void* object, void* function, void* params) {
     return true;
 }
 
+uintptr_t ObjectArrayAddress() { return g_objArray; }
+
 int32_t NumObjects() {
     if (!g_objArray) return 0;
     return *reinterpret_cast<int32_t*>(g_objArray + O::FUObjectArray_ObjObjects + O::Chunk_NumElements);
@@ -184,7 +186,7 @@ bool AddToRoot(void* obj) {
     uint8_t* item = RootFlagSlotFor(obj);
     if (!item) return false;
     int32_t& flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
-    flags |= 0x40000000;  // EInternalObjectFlags::RootSet (UE4.27)
+    flags |= slot_flags::RootSet;
     return true;
 }
 
@@ -192,7 +194,7 @@ bool RemoveFromRoot(void* obj) {
     uint8_t* item = RootFlagSlotFor(obj);
     if (!item) return false;
     int32_t& flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
-    flags &= ~0x40000000;  // clear EInternalObjectFlags::RootSet (UE4.27)
+    flags &= ~slot_flags::RootSet;
     return true;
 }
 
@@ -223,8 +225,7 @@ bool IsLiveByIndex(void* obj, int32_t internalIdx) {
     // calling a UFunction on it is a use-after-free. Those flags read as not live (the UE4.27
     // internal flag values, the same guard UE4SS uses).
     const int32_t flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
-    constexpr int32_t kKillFlags = 0x10000000 /*Unreachable*/ | 0x20000000 /*PendingKill*/;
-    return (flags & kKillFlags) == 0;
+    return (flags & slot_flags::Dying) == 0;
 }
 
 void* ResolveWeakObject(int32_t internalIdx, int32_t serial) {
@@ -234,8 +235,7 @@ void* ResolveWeakObject(int32_t internalIdx, int32_t serial) {
     if (*reinterpret_cast<int32_t*>(item + O::FUObjectItem_SerialNumber) != serial)
         return nullptr;                       // slot recycled -- a different object lives here
     const int32_t flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
-    constexpr int32_t kKillFlags = 0x10000000 /*Unreachable*/ | 0x20000000 /*PendingKill*/;
-    if ((flags & kKillFlags) != 0) return nullptr;
+    if ((flags & slot_flags::Dying) != 0) return nullptr;
     return *reinterpret_cast<void**>(item);
 }
 
@@ -259,6 +259,12 @@ int32_t AllocateSlotSerial(int32_t internalIdx) {
         reinterpret_cast<volatile long*>(g_objArray + O::FUObjectArray_MasterSerialNumber));
     const long was = ::InterlockedCompareExchange(slot, fresh, 0);
     return was != 0 ? was : fresh;
+}
+
+int32_t SlotFlags(int32_t internalIdx) {
+    if (internalIdx < 0) return 0;
+    uint8_t* item = ItemAt(internalIdx);
+    return item ? *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags) : 0;
 }
 
 namespace {
