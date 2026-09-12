@@ -40,7 +40,7 @@ constexpr Row kRows[] = {
     // H -- the host decided
     {EndReason::WrongPassword,           {"MV-H01", "Wrong password."}},
     {EndReason::PasswordRequired,        {"MV-H02", "This server needs a password."}},
-    {EndReason::TooManyPasswordAttempts, {"MV-H03", "Too many password attempts. Try again in a minute."}},
+    {EndReason::TooManyPasswordAttempts, {"MV-H03", "Too many password attempts. Try again in ten minutes."}},
     {EndReason::HostCannotCheckPassword, {"MV-H04", "The host could not check the password."}},
     {EndReason::IdentityNotProved,       {"MV-H05", "Your identity proof did not verify."}},
     {EndReason::NoKeyIdentity,           {"MV-H06", "Your connection presented no key identity."}},
@@ -66,6 +66,7 @@ constexpr Row kRows[] = {
     {EndReason::HostBacklogFatal,        {"MV-H26", "The host closed the connection: it fell too far behind."}},
     {EndReason::AcceptFailed,            {"MV-H27", "The host could not accept the connection."}},
     {EndReason::HostClosed,              {"MV-H28", "The host closed the connection."}},
+    {EndReason::ConnectFlood,            {"MV-H29", "Too many connections from you in a short time. Try again shortly."}},
     // T -- the transport decided
     {EndReason::Timeout,            {"MV-T01", "No answer from the host."}},
     {EndReason::NoRoute,            {"MV-T02", "No route to the host through its firewall or router."}},

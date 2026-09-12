@@ -7,6 +7,8 @@
 
 #include "coop/net/session.h"
 
+#include "coop/net/net_clock.h"  // NowMs, the net layer's one steady clock
+
 #include "coop/dev/wire_census.h"
 #include "coop/element/element.h"
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
@@ -28,12 +30,6 @@
 namespace coop::net {
 
 namespace {
-
-uint64_t NowMs() {
-    using namespace std::chrono;
-    return static_cast<uint64_t>(
-        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-}
 
 constexpr int kSendStaging = kMaxPacketBytes;
 

@@ -163,7 +163,9 @@ address, the nickname and the reason in a file next to the mod, is applied at th
 accept filter before a seat is spent, and survives host restarts; the host also keeps a
 seen-players file for the administration panel. Bans are keyed by address, not by identity.
 The kicked or banned player lands at the menu with a modal saying which, under a stable code
-([join.md](join.md) lists them).
+([join.md](join.md) lists them). Beside the ban list, the same accept edge caps how many
+connections one address may open in a window (four per thirty seconds by default, a host
+setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 
 ## Who owns what
 
@@ -212,6 +214,7 @@ dead peer through the ragdoll bit of its next pose.
 | Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |
 | A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` `coop/player/skin_registry` |
 | Bans are by address, so a banned player with a new address is a new player | `[V]` `coop/moderation/ban_list` |
+| The connection cap is by address too, so players behind one router share it; over a relayed internet route it counts by the identity a peer proves, so a peer that rotates its identity there gets a fresh count each time | `[V]` `coop/net/connect_history` on the direct lane; `[RD]` on the internet lane, from the transport's source |
 
 ## Code map
 

@@ -32,6 +32,16 @@ The version gate runs twice here. The build number is part of every packet heade
 another build never parses a message at all. The game target rides the Join payload and is
 compared byte for byte; on a mismatch the host kicks with a reason and the client shows why.
 
+Before any of that, at the accept edge, the host applies two policies that cost no handshake and
+no seat: the ban list, and a per-address connection cap in the shape of MTA's join-flood
+protection, four connections per thirty seconds by default and then thirty seconds of refusal
+(`MV-H29`; the numbers are the `net.connect_cap` and `net.connect_window_s` settings, and 0
+turns the cap off). On the internet lane no address is known when a connection arrives, because
+no route exists yet, so such an arrival is counted at its identity proof instead: by the address
+its route reports, or by the identity it proves when the route is relayed. A second instance of
+the same per-source history bounds password guesses at the proof, ten failures in ten minutes
+(`coop/net/connect_history`).
+
 Until a client's world is up, the host sends it only a short list of engine-free kinds: the
 roster family (slot, roster rows, skin, nameplate and colour preferences), the save transfer,
 the per-player inventory, story-event fires (queued on the receiver until its world exists), and
@@ -190,7 +200,7 @@ end reason, so both ends log one code; `T` the transport.
 | `MV-J18` | This peer stopped its own session; the host logs it, the leaver never sees it |
 | `MV-H01` | Wrong password |
 | `MV-H02` | This server needs a password |
-| `MV-H03` | Too many password attempts; try again in a minute |
+| `MV-H03` | Too many password attempts; try again in ten minutes |
 | `MV-H04` | The host could not check the password |
 | `MV-H05` | The identity proof did not verify |
 | `MV-H06` | The connection presented no key identity |
@@ -216,6 +226,7 @@ end reason, so both ends log one code; `T` the transport.
 | `MV-H26` | The host closed the connection: its send backlog fell too far behind |
 | `MV-H27` | The host could not accept the connection |
 | `MV-H28` | The host closed the connection with no code of its own; its words are shown |
+| `MV-H29` | Too many connections in a short time from one address, or from one proved identity over a relayed internet route; the cap is a host setting |
 | `MV-T01` | No answer from the host, at the dial or later |
 | `MV-T02` | No route to the host through its firewall or router |
 | `MV-T03` | The signaling server could not reach the host |

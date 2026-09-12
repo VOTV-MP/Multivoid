@@ -20,6 +20,7 @@
 #include "coop/net/session.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/portable_identity.h"
+#include "coop/net/connect_history.h"
 #include "coop/net/lobby_password.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
@@ -385,6 +386,9 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // And the end-reason table every close names a code from: ids unique and in their family,
     // and a code surviving the trip through the transport's end reason.
     coop::net::end_reason::RunSelftest();
+    // And the per-source history behind the connection cap and the password-guess bound: a count
+    // that refuses, a refusal that lifts, a window that slides, a full table that refuses nobody.
+    coop::net::connect_history::RunSelftest();
     // And the lobby password inside it: if the salt were ignored, every locked lobby would open to
     // one table, and the only visible difference is that joins keep succeeding. The negatives are
     // the test: one password under two host keys must not collide, an empty password must refuse to

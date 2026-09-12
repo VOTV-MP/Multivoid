@@ -9,7 +9,9 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/connect_history.h"
 #include "coop/net/lobby_password.h"
+#include "coop/net/net_clock.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
 
@@ -18,8 +20,6 @@
 #include <steam/steamnetworkingtypes.h>
 #include <steam/isteamnetworkingsockets.h>
 #pragma warning(pop)
-
-#include <windows.h>   // GetTickCount64, the guess window's clock
 
 #include <cstring>
 
@@ -61,22 +61,6 @@ bool RemoteKeyOf(uint32_t hConn, PubKey& out) {
     return true;
 }
 
-// The remote's address in the 16-byte form GNS stores (IPv4 arrives mapped), without the port (a
-// retrying attacker gets a fresh source port per connection). False when there is no usable
-// address, the common case on the P2P lane, where GNS reports all zeros for anything but a direct
-// UDP connection.
-bool RemoteAddrOf(uint32_t hConn, uint8_t out[16]) {
-    auto* sockets = SteamNetworkingSockets();
-    if (!sockets) return false;
-    SteamNetConnectionInfo_t info{};
-    if (!sockets->GetConnectionInfo(static_cast<HSteamNetConnection>(hConn), &info))
-        return false;
-    static const uint8_t kZero[16] = {};
-    if (std::memcmp(info.m_addrRemote.m_ipv6, kZero, 16) == 0) return false;
-    std::memcpy(out, info.m_addrRemote.m_ipv6, 16);
-    return true;
-}
-
 // The host password state. The key is derived once and cached, which is what makes the guess
 // bound a policy rather than an accident of CPU cost: the derivation costs about 100 ms, and paid
 // per attempt it would let an attacker stall the net thread for every other peer by connecting.
@@ -89,56 +73,33 @@ struct HostPasswordCache {
 };
 HostPasswordCache g_hostPw;
 
-// The guess bound: every lane is counted, and no two attackers share a bucket. Keyed on the
-// remote address it refused when it could not bucket, and on the P2P lane the address is all
-// zeros, so every joiner shared one bucket and ten junk attempts locked the lobby for everybody;
-// not bucketing there left the main lane with no counter at all (the master's join rate limit
-// bounds discovery, not attempts, since the signaling token it returns is static and the
-// signaling server has no limiter). So the key is whatever identifies the attempter: the real
-// address where there is one, else the public key the peer has just proved it holds. A rotated
-// keypair costs a fresh connection and a full exchange and can never take an honest player's
-// bucket. A full table stops counting, not checking: failing closed is right only when failing
-// open would admit, and here it could only deny. The collateral: peers behind one carrier NAT
-// share an address bucket, and ten wrong guesses between them lock it for a minute, far above
-// what typing costs and far below a search of the 30-bit generated password.
-enum class GuessKeyKind : uint8_t { Addr = 1, Ident = 2 };
-struct GuessBucket {
-    uint8_t      key[16]{};
-    GuessKeyKind kind = GuessKeyKind::Addr;
-    bool         used = false;
-    int          fails = 0;
-    uint64_t     windowStartMs = 0;
-};
-constexpr int      kGuessBuckets  = 32;
+// The guess bound, on the same per-source primitive as the connection cap (MTA: one
+// CConnectHistory class behind its login brute-force and join-flood limits alike). Keyed by
+// the real address where the transport knows one, else by the public key the peer has just
+// PROVED it holds: a rotated keypair costs a fresh connection and a full exchange and can
+// never take an honest player's row, where a merely claimed key could. Only failures are
+// recorded, so a correct password never counts. Ten failures in ten minutes refuse the source
+// for ten minutes: the window is long because the connection cap in front of it admits at
+// most eight connections per minute per address, so a minute-long window could never fill,
+// and the slow guesser is the one this bound is for (MTA's login limit is 6 / 30 s / 60 s,
+// CAccountManager.cpp:24, with no cap in front of it). A full table stops counting, not
+// checking: failing closed is right only when failing open would admit, and here it could
+// only deny. The collateral: peers behind one carrier NAT share an address row, and ten wrong
+// guesses between them lock it for ten minutes, far above what typing costs and far below a
+// search of the 30-bit generated password.
 constexpr int      kMaxGuesses    = 10;
-constexpr uint64_t kGuessWindowMs = 60'000;
-GuessBucket g_guess[kGuessBuckets];
+constexpr uint64_t kGuessWindowMs = 600'000;
+connect_history::History g_guesses{connect_history::Policy{kMaxGuesses, kGuessWindowMs,
+                                                           kGuessWindowMs},
+                                   "password guesses"};
 
-// This key's bucket, found or claimed; null when the table is full of live windows.
-GuessBucket* BucketFor(const uint8_t key[16], GuessKeyKind kind, uint64_t nowMs) {
-    GuessBucket* freeRow = nullptr;
-    for (auto& b : g_guess) {
-        // The kind is part of the key, so an address cannot collide with the first 16 bytes of a
-        // public key.
-        if (b.used && b.kind == kind && std::memcmp(b.key, key, 16) == 0) {
-            if (nowMs - b.windowStartMs >= kGuessWindowMs) {
-                b.windowStartMs = nowMs;
-                b.fails = 0;
-            }
-            return &b;
-        }
-        // An expired row is reusable and a free one better; both are collected in one pass, so a
-        // table of stale windows never reads as full.
-        if (!freeRow && (!b.used || nowMs - b.windowStartMs >= kGuessWindowMs))
-            freeRow = &b;
-    }
-    if (!freeRow) return nullptr;
-    *freeRow = GuessBucket{};
-    std::memcpy(freeRow->key, key, 16);
-    freeRow->kind = kind;
-    freeRow->used = true;
-    freeRow->windowStartMs = nowMs;
-    return freeRow;
+// The source a proved peer is counted by: its address where the transport knows one, else the
+// key it has just proved.
+connect_history::Key SourceOfProved(uint32_t hConn, const PubKey& provedPub, bool* byAddress) {
+    connect_history::Key key;
+    *byAddress = connect_history::KeyFromAddress(hConn, key);
+    if (!*byAddress) key = connect_history::KeyFromIdentity(provedPub);
+    return key;
 }
 
 // The host state: one row per pending band entry, indexed by the pending index the band
@@ -152,6 +113,9 @@ struct HostRow {
     // we challenged with, never against anything that comes back.
     uint8_t  flags = 0;
     PubKey   remotePub{};
+    // Whether the accept edge counted this arrival against the connection cap; false where
+    // it could not (no address known there), and then the proof counts it.
+    bool     countedAtEdge = false;
 };
 // Derived from the band, not asserted against it: raising kMaxPending widens this array by
 // construction.
@@ -185,6 +149,11 @@ bool HostHasOpenExchange(int pendIdx) {
 void HostForgetPending(int pendIdx) {
     if (pendIdx < 0 || pendIdx >= kMaxHostRows) return;
     g_host[pendIdx] = HostRow{};
+}
+
+void HostMarkCountedAtEdge(int pendIdx, bool counted) {
+    if (pendIdx < 0 || pendIdx >= kMaxHostRows) return;
+    g_host[pendIdx].countedAtEdge = counted;
 }
 
 HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
@@ -290,6 +259,35 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             return r;
         }
 
+        // The connection cap, for an arrival the accept edge could not count. The edge counts
+        // where the transport knows an address, and on the internet lane it knows none at that
+        // edge: no route exists yet. By the proof a route is up, and the transport reports its
+        // address for a direct or hole-punched route and none for a relayed one, so the source
+        // is that address where there is one, else the identity just proved -- never one merely
+        // claimed. The edge's own verdict rides the band entry, so nothing is counted twice.
+        bool byAddress = false;
+        const connect_history::Key source =
+            SourceOfProved(hConn, row.remotePub, &byAddress);
+        const uint64_t nowMs = NowMs();
+        if (!row.countedAtEdge) {
+            const connect_history::Verdict v = connect_history::Connects().Note(source, nowMs);
+            UE_LOGI("peer_admission: the connection cap counted this arrival at the proof, by "
+                    "its %s (the accept edge knew no address)",
+                    byAddress ? "route's address" : "proved identity");
+            if (v.refused) {
+                UE_LOGW("peer_admission: connect cap -- this %s made %d connections in the "
+                        "last %llu s; refusing for %llu s [%s]",
+                        byAddress ? "address" : "identity", v.count,
+                        static_cast<unsigned long long>(
+                            connect_history::Connects().GetPolicy().windowMs / 1000),
+                        static_cast<unsigned long long>((v.retryMs + 999) / 1000),
+                        Describe(EndReason::ConnectFlood).id);
+                r.code = EndReason::ConnectFlood;
+                r.reason = "too many connections from you in a short time";
+                return r;
+            }
+        }
+
         // The lobby password, after the identity and never before: the tag is bound to the peer's
         // public key, and checked against an unproved key it would be checked against a claim.
         const std::string& want = session.LobbyPassword();
@@ -301,24 +299,17 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                 r.reason = "this server needs a password";
                 return r;
             }
-            // The bound, checked before the HMAC so a flood costs the comparison and not the
-            // crypto; a missing bucket (no usable address, a full table) is not a refusal. The key
-            // is the real address where there is one, otherwise the key this peer just proved.
-            uint8_t key[16]{};
-            GuessKeyKind kind = GuessKeyKind::Addr;
-            if (!RemoteAddrOf(hConn, key)) {
-                std::memcpy(key, row.remotePub.data(), sizeof(key));
-                kind = GuessKeyKind::Ident;
-            }
-            const uint64_t nowMs = ::GetTickCount64();
-            GuessBucket* bucket = BucketFor(key, kind, nowMs);
-            if (bucket && bucket->fails >= kMaxGuesses) {
-                UE_LOGW("peer_admission: password attempts from this address are rate "
-                        "limited (%d in the last %llu s) -- refusing without checking",
-                        bucket->fails,
+            // The bound, asked before the HMAC so a flood costs the comparison and not the
+            // crypto; a source with no row (a full table) is not a refusal. The source is the
+            // one the cap used above.
+            const connect_history::Verdict guess = g_guesses.Blocked(source, nowMs);
+            if (guess.refused) {
+                UE_LOGW("peer_admission: password attempts from this %s are rate limited "
+                        "(%d in the last %llu s) -- refusing without checking",
+                        byAddress ? "address" : "identity", guess.count,
                         static_cast<unsigned long long>(kGuessWindowMs / 1000));
                 r.code = EndReason::TooManyPasswordAttempts;
-                r.reason = "too many password attempts -- try again in a minute";
+                r.reason = "too many password attempts -- try again in ten minutes";
                 return r;
             }
 
@@ -347,14 +338,14 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             lobby_password::Tag got{};
             std::memcpy(got.data(), proof.pwTag, got.size());
             if (!lobby_password::TagsEqual(expect, got)) {
-                if (bucket) ++bucket->fails;
+                // Only a failure is recorded, and only for a source that has a row.
+                if (guess.count >= 0) g_guesses.Record(source, nowMs);
                 UE_LOGW("peer_admission: WRONG PASSWORD from a peer that proved its "
-                        "identity (attempt %d of %d from this address%s)",
-                        bucket ? bucket->fails : 0, kMaxGuesses,
-                        bucket ? (kind == GuessKeyKind::Addr ? "" : "; keyed on the proved "
-                                                                   "identity, not an address")
-                               : "; the bucket table is FULL -- this attempt was checked "
-                                 "but not counted");
+                        "identity (attempt %d of %d from this %s%s)",
+                        guess.count >= 0 ? guess.count + 1 : 0, kMaxGuesses,
+                        byAddress ? "address" : "identity",
+                        guess.count >= 0 ? "" : "; the table is FULL -- this attempt was "
+                                                "checked but not counted");
                 r.code = EndReason::WrongPassword;
                 r.reason = "wrong password";
                 return r;
@@ -517,7 +508,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         // further to bind against. The cost is the typo case: a mistyped address answered by an
         // unrelated host, which learns a six-character password to a lobby it cannot find. Nothing
         // else relaxes: the tag is bound to the key that answered, so it cannot be replayed to the
-        // real host; the host verifies identity before the password; and its guess bucket still
+        // real host; the host verifies identity before the password; and its guess history still
         // bounds online guessing.
         if (!g_client.bound && !session.DestinationIsSelfAddressed()) {
             *outCode = EndReason::PasswordUnbound;

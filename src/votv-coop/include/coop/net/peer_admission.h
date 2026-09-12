@@ -68,6 +68,11 @@ bool HostHasOpenExchange(int pendIdx);
 // index can never inherit a previous peer's nonce.
 void HostForgetPending(int pendIdx);
 
+// Host: the accept edge says whether it counted this pending entry against the connection cap,
+// which it can only where the transport knew an address there; the proof counts an entry the
+// edge could not. Called right after the entry is parked, net thread.
+void HostMarkCountedAtEdge(int pendIdx, bool counted);
+
 // Client: our link to the host reached connected. Opens the exchange. False when we cannot
 // even start (no identity, or the host presented something that is not a 32-byte key
 // identity); the caller closes the connection.

@@ -4,10 +4,12 @@
 
 #include "coop/net/session.h"
 
-#include <chrono>
+#include <cstdio>
 
 #include "coop/config/config.h"           // ResolveInt, the wire knobs
 #include "coop/config/config_registry.h"  // rows::net_sendbuf_kb / rows::net_sendrate_kbs
+#include "coop/net/connect_history.h"     // the per-address connection cap at the accept edge
+#include "coop/net/net_clock.h"           // NowMs, the net layer's one steady clock
 #include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/log.h"
@@ -68,25 +70,61 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     }
 }
 
-// The ban filter, shared by both host accept paths (the Connecting edge, and the Connected branch
-// when GNS skips Connecting); true accepts. Fail-closed: with a filter installed and no resolvable
-// remote IP the connection is rejected. Direct UDP populates m_addrRemote by the Connecting edge,
-// so only a genuinely unresolvable peer is refused.
-bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
-                   Session::AcceptFilterFn filter, char* whyOut, int whyLen) {
+// The host's accept policy, shared by both accept sites (the Connecting edge, and the Connected
+// branch when GNS skips Connecting): the ban list, then the per-address connection cap. None
+// accepts; otherwise the code the refused peer is told, with whyOut as the close text. Both run
+// before AcceptConnection, so a refusal costs no handshake and no band entry. The ban filter is
+// fail-closed: with a filter installed and no resolvable remote IP the connection is refused as
+// AcceptFailed; direct UDP populates m_addrRemote by the Connecting edge, so only a genuinely
+// unresolvable peer is refused. MTA checks its join flood at the join packet, inside the
+// password check (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:1916-1919),
+// so a wrong-password join is not counted there; ours counts every accepted connection,
+// because what the cap protects is the accept and the save capture behind the seat, not the
+// join alone. The cap counts here only where the transport already knows an address; on the
+// internet lane no route exists yet at this edge, so `countedOut` stays false and the proof
+// counts the arrival (peer_admission), by the address its route reports by then or by the
+// identity it proves over a relay, never by one merely claimed.
+EndReason AcceptPolicy(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
+                       Session::AcceptFilterFn filter, char* whyOut, int whyLen,
+                       bool* countedOut) {
     if (whyOut && whyLen > 0) whyOut[0] = '\0';
-    if (!filter) return true;  // no banlist installed -> accept all
+    *countedOut = false;
     char ip[SteamNetworkingIPAddr::k_cchMaxString] = {};
     SteamNetConnectionInfo_t cinfo{};
     if (sockets->GetConnectionInfo(hConn, &cinfo)) {
         cinfo.m_addrRemote.ToString(ip, sizeof(ip), /*bWithPort*/false);
     }
-    if (!ip[0]) {
-        UE_LOGW("net: incoming connection has no resolvable remote IP -- "
-                "rejecting (fail-closed ban check)");
-        return false;
+    if (filter) {
+        if (!ip[0]) {
+            UE_LOGW("net: incoming connection has no resolvable remote IP -- "
+                    "rejecting (fail-closed ban check)");
+            if (whyOut && whyLen > 0)
+                std::snprintf(whyOut, static_cast<size_t>(whyLen), "no resolvable remote address");
+            return EndReason::AcceptFailed;
+        }
+        if (!filter(ip, whyOut, whyLen)) return EndReason::Banned;
     }
-    return filter(ip, whyOut, whyLen);
+    connect_history::Key key;
+    if (connect_history::KeyFromAddressBytes(cinfo.m_addrRemote.m_ipv6, key)) {
+        *countedOut = true;
+        const connect_history::Verdict v = connect_history::Connects().Note(key, NowMs());
+        if (v.refused) {
+            const auto& policy = connect_history::Connects().GetPolicy();
+            if (whyOut && whyLen > 0)
+                std::snprintf(whyOut, static_cast<size_t>(whyLen),
+                              "%d connections from your address in the last %llu s; try "
+                              "again in %llu s", v.count,
+                              static_cast<unsigned long long>(policy.windowMs / 1000),
+                              static_cast<unsigned long long>((v.retryMs + 999) / 1000));
+            UE_LOGW("net: connect cap -- %s made %d connections in the last %llu s; refusing "
+                    "for %llu s [%s]", ip, v.count,
+                    static_cast<unsigned long long>(policy.windowMs / 1000),
+                    static_cast<unsigned long long>((v.retryMs + 999) / 1000),
+                    Describe(EndReason::ConnectFlood).id);
+            return EndReason::ConnectFlood;
+        }
+    }
+    return EndReason::None;
 }
 
 }  // namespace
@@ -94,16 +132,6 @@ bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
 // --- the pending (unadmitted) band ---
 // session.h says why it is a band and not a per-slot flag: three seats, and an unadmitted socket
 // holding one would let three silent sockets lock the lobby.
-
-namespace {
-// steady_clock, not GetTickCount64: no <windows.h> here, and a monotonic stamp is right for an
-// age (a wall-clock jump must neither free nor hold a seat).
-uint64_t NowMs() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-}
-}  // namespace
 
 int Session::ParkPending(uint32_t hConn) {
     for (int i = 0; i < kMaxPending; ++i) {
@@ -117,8 +145,9 @@ int Session::ParkPending(uint32_t hConn) {
     // arriving one, and the band's occupancy is attacker-timed (open eight sockets, say nothing),
     // so a refusal turns every real friend away until the sweep. Progress first, age second: an
     // entry with an open exchange is never evicted for one that has said nothing, so a flood must
-    // complete a real exchange per socket. A per-address cap fails the P2P edge (no remote address)
-    // and one household NAT.
+    // complete a real exchange per socket. The band itself does not count by address: the P2P
+    // edge has no remote address, and one household NAT would share a row. The per-address
+    // connection cap lives one step earlier, in AcceptPolicy, where an address exists.
     int oldest = -1;
     uint64_t oldestMs = 0;
     for (int pass = 0; pass < 2 && oldest < 0; ++pass) {
@@ -356,14 +385,17 @@ void Session::HandleConnStatusChanged(void* info) {
     if (cfg_.role == Role::Host &&
         oldState == k_ESteamNetworkingConnectionState_None &&
         newState == k_ESteamNetworkingConnectionState_Connecting) {
-        // The ban filter, before the accept (MTA checks at join time; the Connecting edge is
-        // earlier and cheaper: no slot, no handshake). Fail-closed.
-        char why[96] = {};
-        if (!AcceptAllowed(sockets, hConn, acceptFilter_, why, sizeof(why))) {
-            UE_LOGW("net: rejecting incoming connection (banned remote IP) [%s] '%s'",
-                    Describe(EndReason::Banned).id, why);
-            sockets->CloseConnection(hConn, ToTransportEnd(EndReason::Banned),
-                                     why[0] ? why : "banned", /*bEnableLinger*/false);
+        // The accept policy before the accept: the ban list and the connection cap, at the edge
+        // that costs no slot and no handshake.
+        char why[128] = {};
+        bool counted = false;
+        const EndReason refusal =
+            AcceptPolicy(sockets, hConn, acceptFilter_, why, sizeof(why), &counted);
+        if (refusal != EndReason::None) {
+            const char* text = why[0] ? why : Describe(refusal).text;
+            UE_LOGW("net: rejecting incoming connection [%s] '%s'", Describe(refusal).id, text);
+            sockets->CloseConnection(hConn, ToTransportEnd(refusal), text,
+                                     /*bEnableLinger*/false);
             return;
         }
         const EResult rc = sockets->AcceptConnection(hConn);
@@ -379,6 +411,8 @@ void Session::HandleConnStatusChanged(void* info) {
         // a puppet in every world and the whole person fan-out, since the roster births a row on
         // IsSlotReady alone). Never fails: a full band evicts its oldest unproved entry.
         const int pend = ParkPending(hConn);
+        // The edge's own verdict rides the band entry: the proof counts what the edge could not.
+        peer_admission::HostMarkCountedAtEdge(pend, counted);
         // Tagged with the pending id, outside [1, kMaxPeers), so the one drain site routes this
         // connection's traffic to the admission handler and nowhere else.
         sockets->SetConnectionUserData(hConn, kPendingTag | pend);
@@ -412,15 +446,20 @@ void Session::HandleConnStatusChanged(void* info) {
             // or one where GNS skipped Connecting, which never met the accept-edge ban filter, so
             // the filter runs here.
             if (!IsPendingConn(hConn)) {
-                char why[96] = {};
-                if (!AcceptAllowed(sockets, hConn, acceptFilter_, why, sizeof(why))) {
-                    UE_LOGW("net: rejecting late-register connection (banned remote IP) [%s] "
-                            "'%s'", Describe(EndReason::Banned).id, why);
-                    sockets->CloseConnection(hConn, ToTransportEnd(EndReason::Banned),
-                                             why[0] ? why : "banned", /*bEnableLinger*/false);
+                char why[128] = {};
+                bool counted = false;
+                const EndReason refusal =
+                    AcceptPolicy(sockets, hConn, acceptFilter_, why, sizeof(why), &counted);
+                if (refusal != EndReason::None) {
+                    const char* text = why[0] ? why : Describe(refusal).text;
+                    UE_LOGW("net: rejecting late-register connection [%s] '%s'",
+                            Describe(refusal).id, text);
+                    sockets->CloseConnection(hConn, ToTransportEnd(refusal), text,
+                                             /*bEnableLinger*/false);
                     return;
                 }
                 const int pend = ParkPending(hConn);
+                peer_admission::HostMarkCountedAtEdge(pend, counted);
                 sockets->SetConnectionUserData(hConn, kPendingTag | pend);
                 const uint32_t hPoll = hPollGroup_.load();
                 if (hPoll != 0) {

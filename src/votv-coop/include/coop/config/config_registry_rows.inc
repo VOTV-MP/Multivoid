@@ -114,6 +114,18 @@ CFG_INT(net_novelty_budget, "net.novelty_budget", "net", 512, 0, 100000, nullptr
     "A text field that would exceed it is refused whole.")
 CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 3600000, nullptr,
     "Length of the novelty budget window, in milliseconds.")
+// The host's connection cap at the accept edge (coop/net/connect_history): MTA's join-flood
+// numbers, four per thirty seconds per address and then thirty seconds of refusal. Filed under
+// [net] because it is a host policy on inbound connections; the refusal carries MV-H29.
+CFG_INT(net_connect_cap, "net.connect_cap", "net", 4, 0,
+    ::coop::net::connect_history::History::kMaxStamps, "VOTVCOOP_NET_CONNECT_CAP",
+    "Host: connections one address may open per window before it is refused for one window "
+    "(0 = no cap). On the internet lane no address is known when a connection arrives, so it "
+    "is counted at its identity proof, by the address its route reports or by the identity it "
+    "proves over a relay. A refused joiner sees code MV-H29.")
+CFG_INT(net_connect_window_s, "net.connect_window_s", "net", 30, 1, 3600,
+    "VOTVCOOP_NET_CONNECT_WINDOW_S",
+    "Host: length of the connection-cap window, in seconds; the refusal lasts as long.")
 
 // The [player] section.
 CFG_IDENTITY(player_skin, "player_skin", "player",

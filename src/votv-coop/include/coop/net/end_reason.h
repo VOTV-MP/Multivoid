@@ -66,6 +66,7 @@ enum class EndReason : uint8_t {
     HostBacklogFatal,
     AcceptFailed,
     HostClosed,             // a close with no code of ours behind it; the text says what it said
+    ConnectFlood,           // over the per-source connection cap; refused before any handshake
 
     // T -- the transport decided. Values 90..127.
     Timeout = 90,           // no answer from the host, at the dial or later
@@ -79,7 +80,7 @@ enum class EndReason : uint8_t {
     kJoinerFirst = MasterUnreachable,
     kJoinerLast = LeftSession,
     kHostFirst = WrongPassword,
-    kHostLast = HostClosed,
+    kHostLast = ConnectFlood,
     kTransportFirst = Timeout,
     kTransportLast = LinkLost,
 };

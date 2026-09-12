@@ -276,6 +276,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/peer_admission.cpp
     src/coop/net/peer_admission_selftest.cpp
     src/coop/net/end_reason.cpp
+    src/coop/net/connect_history.cpp
     src/coop/net/lobby_password.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp

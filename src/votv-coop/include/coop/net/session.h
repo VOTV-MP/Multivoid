@@ -510,8 +510,8 @@ private:
     static int  PendingIndexOf(int64_t ud) { return static_cast<int>(ud & ~kPendingTag); }
 
 public:
-    // Park a freshly accepted connection; the pending index, or -1 when the band is full (the
-    // caller closes). Net thread.
+    // Park a freshly accepted connection; the pending index. Never fails: a full band evicts its
+    // oldest unproved entry (the .cpp says why an arrival outranks it). Net thread.
     int  ParkPending(uint32_t hConn);
     // Promote a pending connection to a seat: the lowest free slot, the user data re-pointed, the
     // generation minted, the lanes configured. -1 if the lobby is full (the caller closes). Net

@@ -7,7 +7,8 @@
 #include "coop/net/session.h"
 
 #include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
-#include "coop/config/config_registry.h"  // rows::net_fakelink_kbs
+#include "coop/config/config_registry.h"  // rows::net_fakelink_kbs, the connect-cap rows
+#include "coop/net/connect_history.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/nickname_arbiter.h"
@@ -168,6 +169,15 @@ bool Session::Start(const Config& cfg) {
     // construction for every budget above 32.
     static const bool kNoveltyOk = coop::text::RunNoveltyLedgerSelftest();
     (void)kNoveltyOk;
+
+    // The host's connection cap, MTA's join-flood shape at the accept edge: its two ini rows
+    // resolved once here and never per connection, since a resolve line-scans the ini under a
+    // mutex and the accept edge is attacker-timed. Applying the policy also empties the table.
+    if (cfg_.role == Role::Host) {
+        connect_history::ConfigureConnects(
+            coop::config::ResolveInt(coop::config_registry::rows::net_connect_cap),
+            coop::config::ResolveInt(coop::config_registry::rows::net_connect_window_s));
+    }
 
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
