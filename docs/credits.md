@@ -34,7 +34,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); Relay's published design note that the engine reports every object's creation and deletion to a listener, which became the object index; Relay's readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes | b122 · b143 · 2026-09-02 · b160 |
+| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); Relay's published design note that the engine reports every object's creation and deletion to a listener, which became the object index; Relay's readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; Relay's list of cheap edge protections, of which two were missing here: a per-source limit on connections (a rate cap in MTA's shape, where Relay's is a pending cap) and a private access list on the identity key file | b122 · b143 · 2026-09-02 · b160 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
@@ -274,6 +274,17 @@ player stable diagnostic codes to quote. Multivoid's join screen now names the s
 waiting in and the seconds spent there, and every join failure or disconnect carries a code
 (`coop/net/end_reason`, listed in `docs/join.md`) the host and the joiner both log. The shape
 of the code set follows MTA's per-site literals; the rule to publish one at all is his.
+
+**The edge protections (b160).** Relay's README lists the cheap things a host's listen edge
+should do before any expensive work: check a stateless source cookie, put a deadline on the
+handshake, cap what one source may have pending, and write the identity seed file under a
+restrictive Windows access list. Read against this project, two were already the transport's or
+ours (GameNetworkingSockets' connect challenge; the pending band's deadline) and two were not.
+A per-source limit on connections now runs at the accept edge, as a rate cap in MTA's
+join-flood shape rather than Relay's pending cap (`coop/net/connect_history`, `MV-H29`), and the
+identity key file beside the game now carries a private access list, with an account that
+cannot own it keeping its own under its profile (`coop/net/peer_identity`). The list is his;
+the shapes are MTA's and the project's own.
 
 **The honest part.** The central claim was answered with a measurement — the
 replaceable surface was 7,174 of 146,347 lines, about 5% — and **refused**, on the

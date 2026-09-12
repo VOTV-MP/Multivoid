@@ -147,8 +147,11 @@ host sleeping it out, grants everyone a full night. Nightmares roll on the host 
 
 Per player and private: the contents never cross the wire as gameplay. The host stores each
 peer's inventory per save under the identity the peer proved at admission and hands it back at
-the next join, before the world exists (`coop/items/player_inventory_sync`). The world-side
-effect of a pickup or a drop is on the props lane.
+the next join, before the world exists (`coop/items/player_inventory_sync`). That identity is
+a key file beside the game executable, under a private access list that admits only the
+account that made it (`coop/net/peer_identity`; [install.md](install.md) says where and
+what a second account on the same PC gets). The world-side effect of a pickup or a drop is
+on the props lane.
 
 ### Roster and moderation
 

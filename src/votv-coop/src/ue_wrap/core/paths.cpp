@@ -3,6 +3,7 @@
 #include "ue_wrap/core/paths.h"
 
 #include <windows.h>
+#include <shlobj.h>   // SHGetKnownFolderPath
 
 namespace ue_wrap::paths {
 
@@ -13,6 +14,21 @@ std::wstring ExeDir() {
     std::wstring p(path);
     const size_t sep = p.find_last_of(L"\\/");
     return sep == std::wstring::npos ? std::wstring{} : p.substr(0, sep);
+}
+
+std::wstring ProfileDir() {
+    PWSTR base = nullptr;
+    const HRESULT hr = ::SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &base);
+    if (FAILED(hr) || !base) {
+        if (base) ::CoTaskMemFree(base);
+        return {};
+    }
+    std::wstring dir(base);
+    ::CoTaskMemFree(base);
+    dir += L"\\Multivoid";
+    if (!::CreateDirectoryW(dir.c_str(), nullptr) && ::GetLastError() != ERROR_ALREADY_EXISTS)
+        return {};
+    return dir;
 }
 
 }  // namespace ue_wrap::paths

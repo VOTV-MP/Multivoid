@@ -1,18 +1,18 @@
-// coop/net/peer_identity.h -- the durable per-install player identity: one Ed25519 keypair
-// per install, whose public key is the peer's network identity. The transport's generic
-// identity holds exactly 32 bytes, so the raw key fits it with nothing left over, and the
-// 32-char guid every store uses is derived from the key, never asserted by the peer that
-// wants to be called by it. It replaced a master-run certificate authority whose enforcement
-// was a convar only the UDP connection class consults, while the P2P connection, our primary
-// transport, allows an unsigned cert unconditionally in the open-source build; making the
-// identity be the key needs no authority, no minting and no master round trip, so it covers
-// the direct and LAN lanes too. What this module does not do: the transport binds a cert's
-// identity string and its key to nothing, so a peer can present a victim's public key as its
-// identity while signing with its own cert key and pass every check the library makes; the
-// admission challenge in coop/net/peer_admission.h, where a peer must sign with the key its
-// identity names, is what makes the identity mean anything. Sign and Verify are pure and
-// re-entrant, touching only the immutable key loaded at boot. The key file sits beside the
-// ini but not in it: anyone holding it can be you, and inis get pasted into bug reports.
+// coop/net/peer_identity.h -- the durable player identity: one Ed25519 keypair per install,
+// whose public key is the peer's network identity. The transport's generic identity
+// holds exactly 32 bytes, so the raw key fits it with nothing left over, and the 32-char guid
+// every store uses is derived from the key, never asserted by the peer that wants to be called
+// by it; it needs no authority, no minting and no master round trip, so it covers the direct
+// and LAN lanes too. What this module does not do: the transport binds a cert's identity string
+// and its key to nothing, so a peer can present a victim's public key as its identity while
+// signing with its own cert key and pass every check the library makes; the admission challenge
+// in coop/net/peer_admission.h, where a peer must sign with the key its identity names, is what
+// makes the identity mean anything. Sign and Verify are pure and re-entrant, touching only the
+// immutable key loaded at boot. The key file is the install's, beside the ini but never in it
+// (inis get pasted into bug reports), under a private access list of its own (this account and
+// the system, nothing inherited) re-applied at every load, since anyone holding it can be you;
+// an account that cannot own the install's file keeps its own key for that install under its
+// profile. A Steam library move carries it, and a tester's two installs are two players.
 
 #pragma once
 
@@ -31,7 +31,8 @@ inline constexpr int kSigBytes     = 64;  // Ed25519 signature
 using PubKey = std::array<uint8_t, kPubKeyBytes>;
 using Sig    = std::array<uint8_t, kSigBytes>;
 
-// Load the durable keypair, generating and persisting one on first launch. False only when no
+// Load the durable keypair, generating and persisting one on first launch; an account that
+// cannot read or write the install's file gets its own under its profile. False only when no
 // key could be established at all, in which case the session must not start, since an
 // identity-less peer cannot be admitted anywhere; a key that could not be persisted still
 // works for this session and says so in the log.

@@ -304,7 +304,10 @@ if (MSVC)
     # literally compiles to a different string on a Russian machine than on an
     # English one -- caught by the arc-D codec selftest, which counted 3 codepoints
     # in a 2-character literal. Silent, machine-dependent, and now impossible.
-    target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8)
+    # /we4129: an unrecognised escape in a literal is an error, not a warning. A single
+    # backslash in a path literal compiled to a folder beside AppData\Local instead of under
+    # it, and the build stayed green.
+    target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8 /we4129)
     # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grepping the linker map -- no IDA needed. The .map lands in

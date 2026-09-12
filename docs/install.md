@@ -145,7 +145,14 @@ executable (all optional — they only store mod settings and logs):
 `multivoid.ini`, `multivoid.ini.example`, `multivoid.log`, `multivoid.prev.log`,
 `multivoid-loaded.txt`, `multivoid-compat-report.txt`, `multivoid-players.txt`,
 `multivoid-banlist.txt`, and the skin-pak folder
-`VotV\Content\Paks\LogicMods\multivoid` if you created one.
+`VotV\Content\Paks\LogicMods\multivoid` if you created one. Your identity is a separate
+file beside the executable, `multivoid_identity.key`, which only your Windows account can
+read (another account on the same PC that cannot read it keeps its own key for this
+install under `%LOCALAPPDATA%\Multivoid\installs\`). If another program is holding that
+file when the game starts, that launch runs on a temporary identity and the log says so;
+nothing is written over the file and your inventory is back the next launch. Leave it unless
+you want a new identity: deleting it orphans the inventory hosts stored for you, and copying
+it to another PC takes your identity with you.
 
 ## Troubleshooting
 

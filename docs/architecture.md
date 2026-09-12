@@ -127,7 +127,8 @@ refuses, and the packet header is the backstop.
 
 ## Identity
 
-**Peers.** Every install holds an Ed25519 keypair (`coop/net/peer_identity`); the public key *is*
+**Peers.** Every install holds an Ed25519 keypair in a key file beside the game executable,
+under a private access list (`coop/net/peer_identity`); the public key *is*
 the peer's network identity, and the id the master server and the per-player inventory store
 use is derived from it. A name proves nothing by itself, so before a host spends
 a seat the two ends sign each other's nonces with the key their identity names
