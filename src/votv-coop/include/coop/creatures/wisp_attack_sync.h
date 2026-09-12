@@ -6,7 +6,8 @@
 // `Target`, closes the wisp on a puppet victim itself (the blueprint would never grab one), and
 // on contact relays the grab to the victim's slot and the tear to everyone, then despawns the
 // wisp so it cannot re-grab. When the pick is a puppet and the blueprint grabs the host anyway, the host is
-// held harmless for that window: the limb damage is cancelled, the health re-pinned, the ragdoll gate held, and
+// held harmless for that window: that wisp's damage is refused at the script-body gate by the
+// verb's own source argument, the health re-pinned, the ragdoll gate held, and
 // the native grab aborted with the wisp's own releasePlayer verb. A wisp that kills a kerfur or
 // a hound instead is watched for that NPC's blueprint-internal self-destroy, which no observer
 // sees, so the mirrors despawn with it.
@@ -19,9 +20,9 @@ namespace coop::net { class Session; }
 
 namespace coop::wisp_attack_sync {
 
-// Cache the session and install the AddPlayerDamage PRE-cancel interceptor. Idempotent, and the
-// interceptor resolves only once mainPlayer_C has loaded, so call this every net-pump tick like
-// the other Install()s.
+// Cache the session and watch the player's damage verb at the script-body gate. Idempotent; the
+// watch registers by name and the gate resolves it, so it needs no wait for mainPlayer_C. Call
+// this every net-pump tick like the other Install()s.
 void Install(coop::net::Session* session);
 
 // Host per-tick detect, neutralise and relay. A no-op off the host. On the host it walks the

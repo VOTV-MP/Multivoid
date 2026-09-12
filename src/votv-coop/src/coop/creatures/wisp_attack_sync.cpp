@@ -19,6 +19,7 @@
 
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
@@ -38,6 +39,7 @@ namespace coop::wisp_attack_sync {
 namespace {
 
 namespace R = ue_wrap::reflection;
+namespace sg = ue_wrap::script_gate;
 namespace E = ue_wrap::engine;
 
 // The tear length: the victim ragdolls and the host wisp despawns this long after the grab,
@@ -46,18 +48,16 @@ constexpr uint32_t kKillDelayMs = 3500;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Drives the damage pre-cancel: on while any tracked wisp grabs or tries to grab a client
-// puppet, so the wisp's per-limb damage to the host is zeroed (beating the grab-to-damage
-// race). The interceptor reads it atomically; it can fire off the game thread on a
-// parallel-animation worker, like the NPC suppressor. Its scope: the interceptor cannot
-// identify the caller (its self is the host's player, not the wisp), so while the latch is on
-// it cancels all host damage, and the host is fully invulnerable for the grab window, until
-// the wisp despawns and the latch clears. Acceptable, since the host is being false-grabbed
-// during that window and the health pin below already implies invulnerability; a
-// caller-scoped cancel would need the wisp pointer in the damage params, which the blueprint
-// does not pass.
-std::atomic<bool> g_cancelHostDamage{false};
-std::atomic<bool> g_interceptorInstalled{false};
+// The wisps whose blueprint has the host in a false grab right now. The damage refusal is
+// scoped to these: the verb carries its attacker, so only that wisp's damage is refused and
+// everything else still hurts the host, where a window-wide latch made it invulnerable.
+// Written by Tick and read by the gate's pre callback, both game thread.
+std::unordered_set<void*> g_falseGrabWisps;
+std::atomic<bool> g_damageWatchInstalled{false};
+
+// The player's damage verb, watched by name so an overriding subclass is covered too.
+constexpr const wchar_t* kDamageVerbName = L"Add Player Damage";
+constexpr int kDamageVerbTag = 1;
 
 // The health pin: the host's pre-grab health is pinned across the false-grab window. The
 // damage cancel arms one tick after the rising edge (the latch is the previous tick's store),
@@ -135,10 +135,37 @@ uint64_t NowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-// The pre-interceptor on the player's damage: cancel while a wisp is false-grabbing a client.
-// Side-effect-free and cheap, one atomic load; re-entrancy-safe.
-bool AddPlayerDamage_PreCancel(void* /*self*/, void* /*params*/) {
-    return g_cancelHostDamage.load(std::memory_order_acquire);
+// Refuse the player's damage verb for a false-grabbing wisp, per call, by its own attacker
+// argument. The verb is Blueprint-internal on every route -- the killer wisp reaches it as
+// `getMainPlayer()->Add Player Damage(24, .., source=this)` through a context switch, and the
+// player's own ubergraph self-calls it -- so no ProcessEvent seam can see it; the script-body
+// gate sees the body with its parameters. MTA decides the same question the same way, per event
+// with the inflictor in hand (reference/mtasa-blue/Client/sdk/multiplayer/CMultiplayer.h:86 and
+// its handler, which reads GetInflictingEntity before deciding).
+// Cheap: a set that is empty except during a grab window, then one offset read.
+sg::Verdict OnAddPlayerDamagePre(const sg::Call& call) {
+    if (g_falseGrabWisps.empty() || !call.locals || !call.function) return sg::Verdict::Run;
+    // The HOST'S OWN pawn only. The wisp reaches the verb through lib_C::getMainPlayer, which
+    // returns the local player, so in practice the body never runs on a puppet -- but the lane's
+    // promise is about the host, and a refusal on a mirrored body would be a different claim.
+    if (call.object != coop::players::Registry::Get().Local()) return sg::Verdict::Run;
+    // Only mainPlayer_C declares this verb, so one cached offset serves the process; keyed on
+    // the function anyway, since a name watch is free to match a second class after a recook.
+    static void* sFn = nullptr;
+    static int32_t sSourceOff = -1;
+    if (call.function != sFn) {
+        sFn = call.function;
+        sSourceOff = R::FindParamOffset(call.function, L"source");
+    }
+    if (sSourceOff < 0) return sg::Verdict::Run;
+    void* source = *reinterpret_cast<void**>(
+        static_cast<uint8_t*>(call.locals) + sSourceOff);
+    if (!source || g_falseGrabWisps.count(source) == 0) return sg::Verdict::Run;
+    // The set holds raw pointers rebuilt once a tick, so a freed wisp's address could be reused
+    // by an unrelated actor before the next rebuild. One class compare closes that window; the
+    // NPC death watch in this file carries the same guard for the same reason.
+    if (!ue_wrap::wisp::IsKillerWisp(source)) return sg::Verdict::Run;
+    return sg::Verdict::Cancel;
 }
 
 using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_managers.h)
@@ -269,25 +296,21 @@ void DischargeNpcKillWatch() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_interceptorInstalled.load(std::memory_order_acquire)) return;
-    // The throttle: the damage function lookup walks the object array with a string allocation
-    // per entry, and the player class loads with gameplay, so this pre-install path runs from the
-    // menu to the world. Bounded to about once a second of the pump.
-    static uint32_t sResolveN = 0;
-    if ((sResolveN++ % 125) != 0) return;
-    void* fn = E::AddPlayerDamageFunctionPtr();  // null until mainPlayer_C loads
-    if (!fn) return;
-    if (ue_wrap::game_thread::RegisterInterceptor(fn, &AddPlayerDamage_PreCancel)) {
-        g_interceptorInstalled.store(true, std::memory_order_release);
-        UE_LOGI("wisp_attack: installed AddPlayerDamage PRE-cancel interceptor @ %p", fn);
+    if (g_damageWatchInstalled.load(std::memory_order_acquire)) return;
+    // No throttle and no wait for the player class: a name watch registers immediately and the
+    // gate resolves the name itself on the game thread, so the old once-a-second retry (there to
+    // bound an object-array lookup that no longer happens) would only delay the guard.
+    if (sg::WatchName(kDamageVerbName, kDamageVerbTag, &OnAddPlayerDamagePre, nullptr)) {
+        g_damageWatchInstalled.store(true, std::memory_order_release);
+        UE_LOGI("wisp_attack: watching %ls at the script-body gate (attacker-scoped refusal)",
+                kDamageVerbName);
     }
 }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) {
-        if (g_cancelHostDamage.load(std::memory_order_relaxed))
-            g_cancelHostDamage.store(false, std::memory_order_release);
+        if (!g_falseGrabWisps.empty()) g_falseGrabWisps.clear();
         return;
     }
     // Walk the host's tracked NPC Elements, a small set, not the object array, and find the
@@ -295,6 +318,7 @@ void Tick() {
     std::vector<coop::element::Npc*> npcs;
     NpcMirrors().Snapshot(npcs);
     bool anyHostFalseGrab = false;  // a wisp's BP grabbed the HOST while its real Target is a puppet
+    std::unordered_set<void*> falseGrabbers;  // and the wisps doing it, for the damage refusal
     std::unordered_set<uint32_t> liveWispEids;
 
     for (coop::element::Npc* npc : npcs) {
@@ -404,6 +428,7 @@ void Tick() {
             // window while the kill is redirected to the puppet.
             if (st.grab || st.tryGrab) {
                 anyHostFalseGrab = true;
+                falseGrabbers.insert(actor);
                 // Abort the native false grab on its own rising edge, decoupled from the closing
                 // machinery below: an edge- or contact-gated abort could run after the grab
                 // montage's damage notify set playerDamaged inline, turning the release's own
@@ -458,7 +483,7 @@ void Tick() {
         g_lastNativeGrab[eid] = st.grab;  // rising-edge memory for the false-grab abort
     }
 
-    g_cancelHostDamage.store(anyHostFalseGrab, std::memory_order_release);
+    g_falseGrabWisps.swap(falseGrabbers);
 
     // The host health pin: snapshot on the rising edge (before the wisp's limb damage), then
     // re-write each tick while a wisp false-grabs the host (its real target being a puppet), so
@@ -509,7 +534,7 @@ void Tick() {
 }
 
 void OnDisconnect() {
-    g_cancelHostDamage.store(false, std::memory_order_release);
+    g_falseGrabWisps.clear();
     g_haveHostHp = false;
     if (g_canRagdollForced) {
         // Never strand the local player un-ragdollable past the session: a mid-window teardown

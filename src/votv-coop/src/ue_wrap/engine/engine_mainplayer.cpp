@@ -523,13 +523,5 @@ bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood) {
     return Call(mainPlayer, f);
 }
 
-void* AddPlayerDamageFunctionPtr() {
-    // Resolve, idempotently, and return the player's add-player-damage UFunction so a coop
-    // module can install a pre-interceptor on it (the killer-wisp host neutralise: zero the
-    // wisp's limb-tear damage to the host while it false-grabs a client). Null until the player
-    // class is loaded. Game thread.
-    ResolveAddPlayerDamageFn();
-    return g_addPlayerDamageFn;
-}
 
 }  // namespace ue_wrap::engine

@@ -145,9 +145,6 @@ bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed);
 // produces a death the game never produces. Game thread.
 bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood = false);
 
-// The "Add Player Damage" UFunction pointer, for the Killer Wisp PRE-interceptor that zeroes the
-// wisp's damage to the host during a false grab; null until mainPlayer_C loads.
-void* AddPlayerDamageFunctionPtr();
 
 // ---- The puppet's faint display ----
 // A puppet never runs ragdollMode: its playerRagdoll_C's lifecycle assumes a possessed, ticking
