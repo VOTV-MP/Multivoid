@@ -27,15 +27,15 @@ class CachedObjRef {
 public:
     CachedObjRef() = default;
 
-    // Capture `p` (fresh in this game-thread task), its slot index, the slot's current serial and
-    // the world it belongs to. Set(nullptr) is Reset(). The serial rule follows the engine's weak
-    // pointer: a captured serial of zero contributes nothing (serials are assigned lazily), so
-    // the slot-reuse impostor residual is not closed by this type.
+    // Capture `p` (fresh in this game-thread task), its slot index, the slot's serial and the
+    // world it belongs to. Set(nullptr) is Reset(). The serial is allocated if the slot has none,
+    // as the engine's weak pointer does, so a successor in the same slot at the same address
+    // (the engine resets the serial when the object finishes destroying) reads as dead.
     void Set(void* p) {
         if (!p) { Reset(); return; }
         ptr_ = p;
         idx_ = reflection::InternalIndexOf(p);
-        serial_ = reflection::SlotSerial(idx_);
+        serial_ = reflection::AllocateSlotSerial(idx_);
         // Stamped here, while `p` is healthy by the Set contract, and never read from the object
         // again, so a teardown that scribbles the dead object's outer chain cannot defeat it.
         world_ = world_identity::WorldOf(p);
@@ -49,11 +49,11 @@ public:
     }
 
     // Slot-validated liveness and world currency: the slot still points at the pointer, no kill
-    // flags, the serial rule holds, and, for a world-scoped object, its world is still the one
-    // the game is running. Never touches the object's memory.
+    // flags, the serial captured at Set is still the slot's, and, for a world-scoped object, its
+    // world is still the one the game is running. Never touches the object's memory.
     bool Alive() const {
         if (!reflection::IsLiveByIndex(ptr_, idx_)) return false;
-        if (serial_ != 0 && reflection::SlotSerial(idx_) != serial_) return false;
+        if (reflection::SlotSerial(idx_) != serial_) return false;
         // Two nulls are two different skips, both deliberate: a null stamp means the object is not
         // world-scoped and outliving a world is correct for it; a null current world means we
         // cannot tell right now (boot, mid-travel, or the degraded state after a recook renamed a

@@ -246,6 +246,21 @@ int32_t SlotSerial(int32_t internalIdx) {
     return *reinterpret_cast<int32_t*>(item + O::FUObjectItem_SerialNumber);
 }
 
+int32_t AllocateSlotSerial(int32_t internalIdx) {
+    if (internalIdx < 0) return 0;
+    uint8_t* item = ItemAt(internalIdx);
+    if (!item) return 0;
+    // The engine's FUObjectArray::AllocateSerialNumber, step for step: keep an existing serial, else
+    // draw the next from the master counter and install it unless another thread got there first.
+    auto* slot = reinterpret_cast<volatile long*>(item + O::FUObjectItem_SerialNumber);
+    const long have = *slot;
+    if (have != 0) return have;
+    const long fresh = ::InterlockedIncrement(
+        reinterpret_cast<volatile long*>(g_objArray + O::FUObjectArray_MasterSerialNumber));
+    const long was = ::InterlockedCompareExchange(slot, fresh, 0);
+    return was != 0 ? was : fresh;
+}
+
 namespace {
 // The cold path: log one IsLive fault with the caller attributed module-relative, so a fault
 // names its call site rather than IsLive itself (a co-resident crash reporter surfaces the

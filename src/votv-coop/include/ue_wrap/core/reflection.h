@@ -70,10 +70,16 @@ bool IsLive(void* obj);
 bool IsLiveByIndex(void* obj, int32_t internalIdx);
 
 // The FUObjectItem.SerialNumber at a slot: an array read only, safe on any thread and after a
-// purge. UE assigns serials lazily (0 until the first weak ref), so 0 means "never serialised",
-// not "dead"; 0 for an out-of-range index. Consumed by CachedObjRef's opportunistic serial rule
-// (ue_wrap/core/cached_obj_ref.h).
+// purge. The engine assigns serials on demand (0 until a weak reference asks for one) and resets
+// the slot's serial to 0 when the object finishes destroying, so a captured nonzero serial that
+// no longer matches means the slot was recycled; 0 for an out-of-range index.
 int32_t SlotSerial(int32_t internalIdx);
+
+// The slot's serial, allocated if it has none: the engine's own weak-pointer rule, a fresh number
+// from the array's master counter compare-and-swapped into the slot. Nonzero for any mapped slot,
+// so a reference that captures it can never be fooled by a same-address successor in the same
+// slot. 0 for an out-of-range index. Any thread.
+int32_t AllocateSlotSerial(int32_t internalIdx);
 
 // A UObject's InternalIndex, its stable slot in GUObjectArray. Dereferences `obj`, so only for
 // an object known live; -1 for null. Cache it for a later IsLiveByIndex.
