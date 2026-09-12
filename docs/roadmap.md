@@ -30,8 +30,10 @@ death.
 runs and not yet by people playing), the tail of game systems still unsynced
 ([scope.md](scope.md) says which), and the subsystems shipped in a shape the project
 does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
-actor instead of driving it, and both are queued for a proper rebuild. The per-system status is
-[status.md](status.md).
+actor instead of driving it, and both are queued for a proper rebuild. For piles that means the
+clump stand-in, a mod-owned static-mesh actor that is not native at all, goes away in favour of
+the engine's own clump actor with its brain parked, the way the pile form already works
+([piles.md](piles.md), "What replaces it"). The per-system status is [status.md](status.md).
 
 **Right now.** The repository itself: the public tree is being rewritten for people, one document
 per subsystem, with the rules in [../CONTRIBUTING.md](../CONTRIBUTING.md) enforced by a commit hook

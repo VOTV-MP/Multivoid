@@ -50,6 +50,14 @@ lifespan; rooted; re-skinned in place; kinematic; no collision. It is a stand-in
 engine's actor rather than the actor with its brain parked, and it is the crutch queued for a
 rebuild (the limits below).
 
+**What replaces it.** The stand-in is not native and will not stay. The rebuild gives the clump
+form the same treatment the pile form already has: the engine's own clump actor, spawned with its
+tick and physics off and its brain parked, bound to the one logical identity that re-skins across
+pile, clump and pile again. The game's collision, look-at trace and re-pile then serve both forms,
+one mirror implementation remains, and the aim cone that exists only because a proxy cannot be
+looked at retires with the proxy. The order of that work against the other queued lanes is on
+[roadmap.md](roadmap.md); until it lands, the limits below hold.
+
 ### Grab, carry, throw, land
 
 The host grabs natively. Its held-edge detector streams the clump's pose like any held prop, and
@@ -144,7 +152,7 @@ during the window arrives as a position correction after the snapshot.
 
 | Limit | Evidence |
 |---|---|
-| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` `coop/props/trash_proxy`, `coop/props/native_pile_mirror`; the rebuild is next after the ATV on [roadmap.md](roadmap.md) |
+| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` `coop/props/trash_proxy`, `coop/props/native_pile_mirror`; the rebuild is described under "What replaces it" above and queued on [roadmap.md](roadmap.md) |
 | The proxy has no collision: a player walks through a carried or flying clump, and the aim cone ignores walls | `[V]` `coop/props/trash_proxy` |
 | A client's grab resolves the aimed pile by testing every pile proxy against a camera cone, on each press | `[V]` `coop/props/trash_use_intercept` |
 | Trash dropped into a garbage container updates the container only for the peer who dropped it; the container's contents are not synced, and the client skips the Blueprint that would walk a stale list | `[V]` `coop/interactables/garbage_sync` |
