@@ -50,7 +50,6 @@ bool g_fired = false;
 uint32_t g_eidHostTarget   = 0;
 uint32_t g_eidClientTarget = 0;
 
-void* g_extractFn = nullptr;
 
 // Pick only containers that actually HOLD something. An empty container cannot be extracted
 // from: firing on one changes nothing, and an absent "callback ENTERED" line would then read
@@ -97,21 +96,20 @@ void FireExtract(uint32_t eid, const char* who) {
         UE_LOGW("container_selftest: %s target eid=%u no longer resolves -- not fired", who, eid);
         return;
     }
-    if (!g_extractFn) {
-        // Resolve from the DECLARING class. FindFunction matches Outer == class EXACTLY and does
-        // not walk the SuperStruct chain, so ClassOf(actor) -- always a subclass here -- would
-        // silently yield nullptr.
-        void* cls = R::FindClass(L"prop_container_C");
-        g_extractFn = cls ? R::FindFunction(cls, L"extract") : nullptr;
-        if (!g_extractFn) {
-            UE_LOGW("container_selftest: prop_container_C::extract did not resolve -- INERT");
-            return;
-        }
+    // The DISPATCH function for THIS actor's own class, resolved per fire and not cached in one
+    // slot: FindFunction is exact-owner, so ClassOf(actor) -- always a subclass here -- yields
+    // null through it, while resolving the base instead would run the base body on a player
+    // inventory container, which overrides extract. The targets differ between fires, so one
+    // cached pointer would carry the first target's body to every later one.
+    void* extractFn = R::FindDispatchFunction(R::ClassOf(actor), L"extract", nullptr);
+    if (!extractFn) {
+        UE_LOGW("container_selftest: extract did not resolve for this container -- not fired");
+        return;
     }
     int32_t before = -1; float volBefore = 0.f;
     CC::ContentsDigest(eid, before, volBefore);
     struct { int32_t Index; } params{0};   // always the first record
-    R::CallFunction(actor, g_extractFn, &params);
+    R::CallFunction(actor, extractFn, &params);
     int32_t after = -1; float volAfter = 0.f;
     CC::ContentsDigest(eid, after, volAfter);
     UE_LOGI("container_selftest: %s FIRED extract(0) on eid=%u -- records %d -> %d, "

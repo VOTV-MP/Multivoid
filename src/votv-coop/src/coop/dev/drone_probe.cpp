@@ -58,10 +58,20 @@ void OnDroneVerb(void* self, void* function, void* /*params*/) {
 void RegisterOn(const wchar_t* className, const wchar_t* fnName, const char* label, bool isTick) {
     void* cls = R::FindClass(className);
     if (!cls) return;  // class not loaded yet (caller retries) / not present
-    void* fn = R::FindFunction(cls, fnName);
+    // The DISPATCH function, not the declaration: a probe row naming a leaf class that inherits
+    // the verb (the order and gift boxes inherit Init from prop_C) resolved null and watched
+    // nothing, which reads in the log exactly like a verb that never fired -- the probe would
+    // have reported the wrong answer. The declarer is logged, since the watch then also sees
+    // that verb on sibling classes and the reader must know which instance fired.
+    void* declarer = nullptr;
+    void* fn = R::FindDispatchFunction(cls, fnName, &declarer);
     if (!fn) {
-        UE_LOGW("[drone_probe] UFunction '%ls::%ls' not found (BP may name it differently)", className, fnName);
+        UE_LOGW("[drone_probe] UFunction '%ls::%ls' not found on the class or its supers", className, fnName);
         return;
+    }
+    if (declarer != cls) {
+        UE_LOGI("[drone_probe] %ls::%ls is declared on %ls -- the watch covers that family",
+                className, fnName, R::ToString(R::NameOf(declarer)).c_str());
     }
     for (size_t i = 0; i < g_watchedCount; ++i) if (g_watched[i].fn == fn) return;  // dedup
     if (!GT::RegisterPostObserver(fn, &OnDroneVerb)) {
