@@ -50,7 +50,7 @@ inline LinkKind LinkKindFromWire(uint8_t v) {
 // NEGATIVES (public addresses that must NOT read as Lan), so a classifier that
 // answered one value for everything would fail it. Declared here -- with no GNS
 // types in the signature -- so the header stays free of the Steam headers;
-// implemented beside the classifier in session_status.cpp.
+// implemented beside the classifier in link_kind.cpp.
 bool RunLinkClassifySelftest();
 
 }  // namespace coop::net
