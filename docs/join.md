@@ -60,9 +60,8 @@ keys. The slot lives for the session (the game re-reads it for sub-level saves),
 disconnect, and a boot sweep removes stale ones older than an hour. The global progression file
 is never transferred.
 
-The loading screen (`coop/session/join_progress`, drawn by `ui/loading_screen`) shows four
-stages: connecting, downloading with a byte count, loading the world, and receiving the snapshot
-with a bar. Cancel stops the session and reopens the browser.
+The loading screen (`coop/session/join_progress`, `ui/loading_screen`) shows four phases, the first
+naming its step: connecting, downloading in bytes, loading the world, receiving the snapshot.
 
 ### 3. Pre-world state
 
@@ -161,6 +160,68 @@ native detour at the engine's one write chokepoint cancels the world-save contai
 (`coop/save/save_button_disable`), and the host's save directory is backed up before a session
 because the game's in-place writes leave no other recovery (`coop/save/save_guard`).
 
+### When a join ends early
+
+A join that cannot be established, and a session that ends after it, both close with a modal:
+COULD NOT CONNECT or DISCONNECTED, one sentence, the site's own words, and a stable code to paste
+into a report; a cancel is silent (`coop/net/end_reason`, `ui/end_reason_dialog`). The letter says
+who decided: `J` the joiner; `H` the host, whose refusal travels as the transport's application
+end reason, so both ends log one code; `T` the transport.
+
+| Code | Meaning |
+|---|---|
+| `MV-J01` | Could not reach the server list |
+| `MV-J02` | The server list gave a bad address for this host |
+| `MV-J03` | The join failed before it started; the log has the error |
+| `MV-J04` | Could not start the connection |
+| `MV-J05` | The join did not finish in time (the cover's failsafe) |
+| `MV-J06` | The game is shutting down (never shown) |
+| `MV-J07` | The host plays a different version of the game |
+| `MV-J08` | The host runs a newer build of the mod; update to join |
+| `MV-J09` | The host runs an older build of the mod; they need to update |
+| `MV-J10` | Could not start the identity exchange with this host |
+| `MV-J11` | The host sent an identity challenge this build cannot read |
+| `MV-J12` | The host could not prove its identity, or tried to seat the joiner unproved |
+| `MV-J13` | A password is wanted and nothing told this machine which host it was dialling |
+| `MV-J14` | A password is wanted and none was given |
+| `MV-J15` | The password proof could not be computed on this machine |
+| `MV-J16` | The identity proof could not be sent |
+| `MV-J17` | The joiner's own send backlog fell too far behind |
+| `MV-J18` | This peer stopped its own session; the host logs it, the leaver never sees it |
+| `MV-H01` | Wrong password |
+| `MV-H02` | This server needs a password |
+| `MV-H03` | Too many password attempts; try again in a minute |
+| `MV-H04` | The host could not check the password |
+| `MV-H05` | The identity proof did not verify |
+| `MV-H06` | The connection presented no key identity |
+| `MV-H07` | The identity changed during the exchange |
+| `MV-H08` | The host could not read the hello |
+| `MV-H09` | A second hello arrived on one connection |
+| `MV-H10` | A proof arrived before a hello |
+| `MV-H11` | The host could not read the proof |
+| `MV-H12` | Something was sent before the identity was proved |
+| `MV-H13` | The host received a malformed packet |
+| `MV-H14` | The host has no randomness to challenge with |
+| `MV-H15` | The host could not send its challenge |
+| `MV-H16` | The identity proof did not arrive in time |
+| `MV-H17` | The host was busy, and this connection was the slowest to prove itself |
+| `MV-H18` | Banned from this server (the ban list, at the accept filter) |
+| `MV-H19` | Banned by the host |
+| `MV-H20` | Kicked by the host |
+| `MV-H21` | The server is full |
+| `MV-H22` | The host plays a different version of the game (the Join gate) |
+| `MV-H23` | The mod build differs from the host's (the packet header gate) |
+| `MV-H24` | A newer connection with the same identity replaced this one |
+| `MV-H25` | The host ended the session |
+| `MV-H26` | The host closed the connection: its send backlog fell too far behind |
+| `MV-H27` | The host could not accept the connection |
+| `MV-H28` | The host closed the connection with no code of its own; its words are shown |
+| `MV-T01` | No answer from the host, at the dial or later |
+| `MV-T02` | No route to the host through its firewall or router |
+| `MV-T03` | The signaling server could not reach the host |
+| `MV-T04` | The transport's own handshake with the host failed |
+| `MV-T05` | The connection was lost |
+
 ## Who owns what
 
 | State | Owner | Shape |
@@ -226,7 +287,8 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 | the browser to a session config | `coop/session/session_manager`, `coop/session/host_mode` |
 | admission and identity | `coop/net/peer_identity`, `coop/net/peer_admission`, `coop/net/lobby_password` |
 | the handshake | `coop/session/player_handshake` with its version, nickname, preferences and roster halves |
-| the client join state machine and its screen | `coop/session/join_progress`, `ui/loading_screen`, `ui/join_curtain` |
+| the client join state machine and its screen | `coop/session/join_progress`, `ui/loading_screen`, `ui/join_curtain`, `ui/end_reason_dialog` |
+| why a join or a session ended, as a code | `coop/net/end_reason` |
 | the save transfer | `coop/save/save_transfer`, `ue_wrap/engine/save_capture`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | the host owns the save | `coop/save/save_guard`, `coop/save/save_block`, `coop/save/save_button_disable`, `coop/save/save_indicator_suppress` |
 | the world-load episode and the probe | `coop/session/world_load_episode` |

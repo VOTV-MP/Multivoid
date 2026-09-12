@@ -581,20 +581,26 @@ namespace {
 // refusal; the popup names the first mismatching axis and who updates. Empty or zero remote
 // fields skip their tier (the Join wire gate and the header backstop cover them). Empty =
 // compatible.
-std::string VersionMismatchVerdict(const std::string& hostGame, int hostProto) {
+struct PreflightVerdict {
+    net::EndReason code = net::EndReason::None;  // None = compatible
+    std::string    text;                         // the two builds, for the notice's detail
+};
+
+PreflightVerdict VersionMismatchVerdict(const std::string& hostGame, int hostProto) {
     // Tier 1, the game cook: reachable with an equal build (a recook adaptation need not change the
     // wire), hence its own tier.
     if (!hostGame.empty() && hostGame != coop::version::kGameTarget) {
-        return std::string("Host plays VOTV ") + hostGame + ", you have VOTV " +
-               coop::version::kGameTarget + " -- game version mismatch.";
+        return {net::EndReason::GameVersionMismatch,
+                std::string("host plays VOTV ") + hostGame + ", you have VOTV " +
+                    coop::version::kGameTarget};
     }
     // Tier 2, the build (the wire revision).
     if (hostProto > 0 && hostProto != static_cast<int>(net::kProtocolVersion)) {
         const bool hostNewer = hostProto > static_cast<int>(net::kProtocolVersion);
-        return std::string("Mod build mismatch: host runs b") + std::to_string(hostProto) +
-               ", you run b" + std::to_string(net::kProtocolVersion) + " -- " +
-               (hostNewer ? std::string("update: ") + net::kReleasesUrl
-                          : "the host needs to update.");
+        return {hostNewer ? net::EndReason::HostNewer : net::EndReason::HostOlder,
+                std::string("host runs b") + std::to_string(hostProto) + ", you run b" +
+                    std::to_string(net::kProtocolVersion) +
+                    (hostNewer ? std::string(" -- update: ") + net::kReleasesUrl : "")};
     }
     return {};
 }
@@ -614,12 +620,13 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
     // wire gate re-validates live and the header close is the final backstop. Rejected through the
     // connect-failed popup, not the footer.
     {
-        const std::string verdict = VersionMismatchVerdict(hostGame, hostProto);
-        if (!verdict.empty()) {
-            UE_LOGW("session_manager: JOIN rejected -- %s (host game='%s' b%d; ours %s b%u)",
-                    verdict.c_str(), hostGame.c_str(), hostProto,
-                    coop::version::kGameTarget, static_cast<unsigned>(net::kProtocolVersion));
-            coop::join_progress::RefuseJoin(verdict);
+        const PreflightVerdict verdict = VersionMismatchVerdict(hostGame, hostProto);
+        if (verdict.code != net::EndReason::None) {
+            UE_LOGW("session_manager: JOIN rejected -- [%s] %s (host game='%s' b%d; ours %s b%u)",
+                    net::Describe(verdict.code).id, verdict.text.c_str(), hostGame.c_str(),
+                    hostProto, coop::version::kGameTarget,
+                    static_cast<unsigned>(net::kProtocolVersion));
+            coop::join_progress::RefuseJoin(verdict.code, verdict.text);
             return false;
         }
     }
@@ -627,14 +634,15 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
     // Raise the browser-only loading state before the master round trip, so "Connecting to <name>"
     // shows at once; on a master failure the worker Fails it (drops the cover, reopens the
     // browser).
-    coop::join_progress::BeginConnect(displayName.empty() ? std::string("the server") : displayName);
+    coop::join_progress::BeginConnect(displayName.empty() ? std::string("the server") : displayName,
+                                      coop::join_progress::Stage::FindingHost);
     const std::string masterUrl = MasterUrl();
     std::thread([masterUrl, lobbyId] {
         try {
             // Shutdown race: BeginConnect raised the cover before this worker spawned, so every
             // exit drops it.
             if (coop::shutdown::IsShuttingDown()) {
-                coop::join_progress::Fail("shutting down");
+                coop::join_progress::Fail(net::EndReason::ShuttingDown, "");
                 g_actionBusy.store(false);
                 return;
             }
@@ -650,7 +658,7 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     if (!ParseHostPort(info.addr, host, port)) {
                         UE_LOGW("session_manager: JoinLobby '%s' -- bad direct addr '%s'",
                                 lobbyId.c_str(), info.addr.c_str());
-                        coop::join_progress::Fail("server returned a bad address");
+                        coop::join_progress::Fail(net::EndReason::BadAddress, info.addr);
                         g_actionBusy.store(false);
                         return;
                     }
@@ -681,15 +689,15 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                 }
             } else if (!info.ok) {
                 UE_LOGW("session_manager: JoinLobby '%s' failed", lobbyId.c_str());
-                coop::join_progress::Fail("could not reach the server (master unavailable?)");
+                coop::join_progress::Fail(net::EndReason::MasterUnreachable, "");
             } else {
                 // info.ok but shutdown raced true between the check and here: neither branch ran,
                 // so drop the cover explicitly.
-                coop::join_progress::Fail("shutting down");
+                coop::join_progress::Fail(net::EndReason::ShuttingDown, "");
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: JoinLobby worker exception: %s", e.what());
-            coop::join_progress::Fail("join error -- see the log");
+            coop::join_progress::Fail(net::EndReason::JoinError, e.what());
         }
         g_actionBusy.store(false);
     }).detach();
@@ -719,7 +727,7 @@ bool ConnectDirect(const std::string& hostPort) {
         cfg.selfAddressed = true;
         // The browser-only loading state; a dead address fails asynchronously (GNS never reaches
         // Connected) and net_pump's connect-fail detector drops the cover.
-        coop::join_progress::BeginConnect(host);
+        coop::join_progress::BeginConnect(host, coop::join_progress::Stage::Dialing);
         QueueStart(cfg);
         UE_LOGI("session_manager: DIRECT connect queued -> %s:%u (session boot = harness Tier 2)",
                 host.c_str(), static_cast<unsigned>(port));
@@ -750,7 +758,7 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
         cfg.topology = net::Topology::P2P;
         cfg.hostIdentity = hostIdentity;
         cfg.lobbyPassword = TakeJoinPassword();
-        coop::join_progress::BeginConnect(hostIdentity);
+        coop::join_progress::BeginConnect(hostIdentity, coop::join_progress::Stage::Dialing);
         QueueStart(cfg);
         UE_LOGI("session_manager: P2P connect queued -> host '%s' via signaling %s "
                 "(session boot = harness Tier 2)",

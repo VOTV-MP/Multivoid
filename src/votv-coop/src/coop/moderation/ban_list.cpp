@@ -117,10 +117,15 @@ void Load() {
     UE_LOGI("ban_list: loaded %zu banned IP(s) from %ls", g_bans.size(), path.c_str());
 }
 
-bool IsBanned(const char* ip) {
+bool IsBanned(const char* ip, char* reasonOut, int reasonLen) {
+    if (reasonOut && reasonLen > 0) reasonOut[0] = '\0';
     if (!ip || !ip[0]) return false;
     std::lock_guard<std::mutex> lk(g_mutex);
-    return g_bans.find(ip) != g_bans.end();
+    const auto it = g_bans.find(ip);
+    if (it == g_bans.end()) return false;
+    if (reasonOut && reasonLen > 0)
+        std::snprintf(reasonOut, static_cast<size_t>(reasonLen), "%s", it->second.reason.c_str());
+    return true;
 }
 
 void Add(const char* ip, const char* nick, const char* reason) {

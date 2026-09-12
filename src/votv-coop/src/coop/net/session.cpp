@@ -180,6 +180,7 @@ void Session::FinishClientLink(uint32_t hConn) {
     if (hConn == 0 || peerConns_[0].load() != hConn) return;
     if (peerLanesConfigured_[0].load(std::memory_order_acquire)) return;  // idempotent
     FinishPeerConnected(0, hConn);
+    linkStage_.store(static_cast<uint8_t>(LinkStage::Admitted), std::memory_order_release);
 }
 
 bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {

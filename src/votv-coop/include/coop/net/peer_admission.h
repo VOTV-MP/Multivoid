@@ -18,6 +18,7 @@
 
 #include <cstdint>
 
+#include "coop/net/end_reason.h"
 #include "coop/net/peer_identity.h"
 #include "coop/net/protocol.h"
 
@@ -38,6 +39,7 @@ enum class Verdict {
 struct HostResult {
     Verdict     verdict = Verdict::Refuse;
     const char* reason  = "admission failed";
+    EndReason   code    = EndReason::None;  // on Refuse: the code the peer is told
     // Valid only on Admit: the key the peer just proved it holds. The caller derives the storage
     // guid from this and from nothing on the wire.
     peer_identity::PubKey provedKey{};
@@ -73,9 +75,11 @@ bool ClientOnConnected(Session& session, uint32_t hConn);
 
 // Client: an inbound reliable arrived on the host link. True when this module consumed the
 // message (part of the exchange; it must not reach the game thread). `outClose` is set to a
-// reason when the exchange failed and the caller must close the connection.
+// reason, and `outCode` to its code, when the exchange failed and the caller must close the
+// connection.
 bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
-                      const void* payload, int len, const char** outClose);
+                      const void* payload, int len, const char** outClose,
+                      EndReason* outCode);
 
 // Client: has the host proved possession of the key its identity names? The admission signal
 // is refused unless this is true, else a host that skipped the challenge could seat us.

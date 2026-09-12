@@ -121,17 +121,20 @@ bool ValidateJoinVersionOrRefuse(coop::net::Session& session, int senderSlot,
     if (session.role() == net::Role::Host) {
         UE_LOGW("player_handshake: Join REFUSED (slot=%d nick='%ls' game='%s'): %s",
                 senderSlot, refuseNick.c_str(), peerGame.c_str(), verdict.c_str());
-        PushRefuseFeedLineDeduped(refuseNick, verdict);
+        PushRefuseFeedLineDeduped(
+            refuseNick,
+            verdict + " [" + net::Describe(net::EndReason::GameVersionRefused).id + "]");
         char reason[128];
         std::snprintf(reason, sizeof(reason), "%s", verdict.c_str());
-        session.Kick(senderSlot, reason);  // close-with-reason -> their popup
+        // The close carries the code and the sentence: their popup names both.
+        session.Kick(senderSlot, net::EndReason::GameVersionRefused, reason);
     } else {
         // We-the-client refused the HOST's Join: surface our own popup -- a browser or direct join
         // is Active, so Fail pops the dialog and aborts, while an env boot is log-only -- and let
         // the host's SYMMETRIC gate close the wire, since the mismatch is byte-symmetric.
         UE_LOGW("player_handshake: host's Join REFUSED (game='%s'): %s",
                 peerGame.c_str(), verdict.c_str());
-        coop::join_progress::Fail(verdict);
+        coop::join_progress::Fail(net::EndReason::GameVersionMismatch, verdict);
     }
     return true;
 }

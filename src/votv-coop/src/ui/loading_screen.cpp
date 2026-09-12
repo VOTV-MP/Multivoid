@@ -78,11 +78,13 @@ void Render() {
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
-        // Status line.
+        // Status line: the phase, and inside Connecting the stage, each with its own sentence, so
+        // a joiner can tell which of the six steps before the first download byte it is waiting in.
         char status[160];
         const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
         char d[4] = {0};
         for (int i = 0; i < dots; ++i) d[i] = '.';
+        const char* host = v.host.empty() ? "the host" : v.host.c_str();
         if (v.mode == jp::Mode::Host) {
             // HOST boot (the Host-Game flow): loading our OWN world before we host.
             if (!v.host.empty())
@@ -90,10 +92,26 @@ void Render() {
             else
                 std::snprintf(status, sizeof(status), "Starting your server%s", d);
         } else if (v.phase == jp::Phase::Connecting) {
-            if (!v.host.empty())
-                std::snprintf(status, sizeof(status), "Connecting to %s%s", v.host.c_str(), d);
-            else
-                std::snprintf(status, sizeof(status), "Connecting to the host%s", d);
+            switch (v.stage) {
+            case jp::Stage::FindingHost:
+                std::snprintf(status, sizeof(status), "Looking up %s%s", host, d);
+                break;
+            case jp::Stage::FindingRoute:
+                std::snprintf(status, sizeof(status), "Finding a route to %s%s", host, d);
+                break;
+            case jp::Stage::ProvingIdentity:
+                std::snprintf(status, sizeof(status), "Exchanging identities with the host%s", d);
+                break;
+            case jp::Stage::Joining:
+                std::snprintf(status, sizeof(status), "Joining %s%s", host, d);
+                break;
+            case jp::Stage::WaitingForWorld:
+                std::snprintf(status, sizeof(status), "Waiting for the host to capture its world%s", d);
+                break;
+            default:  // Dialing, or no stage reported yet
+                std::snprintf(status, sizeof(status), "Connecting to %s%s", host, d);
+                break;
+            }
         } else if (v.phase == jp::Phase::Downloading) {
             // Say what is happening AND that it is normal. On an internet link this
             // phase is ~17 s for a mature world and it used to read "Connecting...",
@@ -109,6 +127,19 @@ void Render() {
         }
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.84f, 0.90f, 1.0f));
         CenteredText(status);
+        ImGui::PopStyleColor();
+        // The seconds spent in this step, once they add up: a step that is merely slow reads as
+        // still working rather than hung, and a stuck one is visible as such. The line is always
+        // laid out, so the panel does not jump when the number appears.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.60f, 0.68f, 1.0f));
+        if (v.stageMs >= 3000) {
+            char since[48];
+            std::snprintf(since, sizeof(since), "%llu s in this step",
+                          static_cast<unsigned long long>(v.stageMs / 1000));
+            CenteredText(since);
+        } else {
+            ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+        }
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 

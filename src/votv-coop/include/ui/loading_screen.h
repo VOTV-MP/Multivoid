@@ -3,7 +3,8 @@
 // The "connecting/loading" game state: while a client join is in progress, VOTV's menu
 // widgets are hidden (coop::multiplayer_menu fades ui_menu_C to opacity 0 + HitTestInvisible)
 // so only the 3D menu background remains -- the clean menu canvas -- and this surface draws a
-// CENTERED progress bar + status text + a Cancel button over it. The menu + its music keep
+// CENTERED progress bar + status text (the phase, the stage inside the first phase, and the
+// seconds spent in the current step) + a Cancel button over it. The menu + its music keep
 // playing underneath; we just hide the interactive widgets. It is NOT a full-screen opaque
 // cover. The connect log/errors stream in parallel via ui/console.
 //

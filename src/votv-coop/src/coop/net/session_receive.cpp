@@ -47,7 +47,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
             std::snprintf(reason, sizeof(reason), "protocol mismatch: peer=v%u, ours=v%u",
                           static_cast<unsigned>(peerVer), static_cast<unsigned>(kProtocolVersion));
             UE_LOGW("net: %s -- closing PENDING %d", reason, pendIdx);
-            RetirePending(pendIdx, hConn, reason);
+            RetirePending(pendIdx, hConn, EndReason::BuildMismatch, reason);
         }
         return;
     }
@@ -61,8 +61,9 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // The declared length must match what arrived before anything reads the body: this is the one
     // parser an unauthenticated peer can reach.
     if (payloadLen < 0 || rh.payloadLen != static_cast<uint16_t>(payloadLen)) {
-        UE_LOGW("net: PENDING %d sent a length-inconsistent packet -- closing", pendIdx);
-        RetirePending(pendIdx, hConn, "malformed packet");
+        UE_LOGW("net: PENDING %d sent a length-inconsistent packet -- closing [%s]", pendIdx,
+                Describe(EndReason::MalformedPacket).id);
+        RetirePending(pendIdx, hConn, EndReason::MalformedPacket, "malformed packet");
         return;
     }
 
@@ -70,9 +71,9 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         *this, pendIdx, hConn, static_cast<ReliableKind>(rh.kind), payload, payloadLen);
     if (res.verdict == peer_admission::Verdict::Continue) return;
     if (res.verdict == peer_admission::Verdict::Refuse) {
-        UE_LOGW("net: PENDING %d REFUSED on kind=%u -- %s",
-                pendIdx, static_cast<unsigned>(rh.kind), res.reason);
-        RetirePending(pendIdx, hConn, res.reason);
+        UE_LOGW("net: PENDING %d REFUSED on kind=%u -- [%s] %s",
+                pendIdx, static_cast<unsigned>(rh.kind), Describe(res.code).id, res.reason);
+        RetirePending(pendIdx, hConn, res.code, res.reason);
         return;
     }
 
@@ -87,14 +88,15 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
         if (ProvedGuidForSlot(s) != guid) continue;
         UE_LOGW("net: slot %d already holds identity %s -- superseding it with the "
                 "new connection (the holder proved the same key)", s, guid.c_str());
-        Kick(s, "superseded by a new connection from your own identity");
+        Kick(s, EndReason::Superseded, "superseded by a new connection from your own identity");
         break;  // one seat per identity is the invariant; there cannot be a second
     }
 
     const int slot = AdmitPending(pendIdx, hConn);
     if (slot < 0) {
-        UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d", pendIdx);
-        RetirePending(pendIdx, hConn, "host full");
+        UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d [%s]", pendIdx,
+                Describe(EndReason::HostFull).id);
+        RetirePending(pendIdx, hConn, EndReason::HostFull, "host full");
         return;
     }
     // The peer's storage guid is derived from the key it proved and published here, on the net
@@ -119,20 +121,23 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         const uint16_t peerVer = PeekProtocolVersion(data, len);
         if (peerVer != 0 && peerVer != kProtocolVersion &&
             peerSlot >= 0 && peerSlot < kMaxPeers) {
-            const uint32_t hConn = peerConns_[peerSlot].load();
-            if (hConn != 0) {
-                char reason[64];
-                std::snprintf(reason, sizeof(reason),
-                              "protocol mismatch: peer=v%u, ours=v%u",
-                              static_cast<unsigned>(peerVer),
-                              static_cast<unsigned>(kProtocolVersion));
-                UE_LOGW("net: %s -- closing peer slot %d", reason, peerSlot);
-                if (auto* sockets = SteamNetworkingSockets()) {
-                    sockets->CloseConnection(hConn,
-                                             k_ESteamNetConnectionEnd_App_Generic,
-                                             reason,
-                                             /*bEnableLinger*/false);
-                }
+            char reason[64];
+            std::snprintf(reason, sizeof(reason),
+                          "protocol mismatch: peer=v%u, ours=v%u",
+                          static_cast<unsigned>(peerVer),
+                          static_cast<unsigned>(kProtocolVersion));
+            // Through the teardown funnels, never a bare close: a host frees the seat, a client
+            // records the code and drops its state so the join fails on screen instead of
+            // sitting on the cover until the failsafe.
+            if (cfg_.role == Role::Host) {
+                UE_LOGW("net: %s -- kicking peer slot %d [%s]", reason, peerSlot,
+                        Describe(EndReason::BuildMismatch).id);
+                Kick(peerSlot, EndReason::BuildMismatch, reason);
+            } else if (peerSlot == 0) {
+                const EndReason code = peerVer > kProtocolVersion ? EndReason::HostNewer
+                                                                  : EndReason::HostOlder;
+                UE_LOGW("net: %s -- leaving the host [%s]", reason, Describe(code).id);
+                LeaveHost(code, reason);
             }
         }
         return;
@@ -252,12 +257,14 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             const void* body = static_cast<const uint8_t*>(data) + sizeof(PacketHeader) +
                                sizeof(ReliableHeader);
             const char* closeWhy = nullptr;
+            EndReason closeCode = EndReason::None;
             if (peer_admission::ClientOnReliable(*this, hostConn,
                                                  static_cast<ReliableKind>(rh.kind),
-                                                 body, payloadLen, &closeWhy)) {
+                                                 body, payloadLen, &closeWhy, &closeCode)) {
                 if (closeWhy) {
-                    UE_LOGE("net: leaving this host -- %s", closeWhy);
-                    LeaveHost(closeWhy);
+                    UE_LOGE("net: leaving this host -- [%s] %s", Describe(closeCode).id,
+                            closeWhy);
+                    LeaveHost(closeCode, closeWhy);
                 }
                 return;  // consumed by the exchange; never reaches the game thread
             }
@@ -270,7 +277,7 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                     static const char* kWhy =
                         "the host tried to seat us without proving its identity";
                     UE_LOGE("net: %s -- leaving", kWhy);
-                    LeaveHost(kWhy);
+                    LeaveHost(EndReason::HostNotProved, kWhy);
                     return;
                 }
                 FinishClientLink(hostConn);

@@ -410,25 +410,81 @@ void Tick(coop::net::Session& session) {
 
     if (g_wasConnected && !isConnected) {
         // The aggregate disconnect (all peers gone): the OnDisconnect calls for session-wide state
-        // (the per-slot block handled the rest). A client that lost the host mid-join drops the
-        // loading state so the cover and the console do not hang.
-        coop::join_progress::Reset();
+        // (the per-slot block handled the rest). The link is Connected from admission on, long
+        // before a joiner's world is up, so a client here may still be inside its join: the phase
+        // is read first, since Reset clears it.
+        const coop::join_progress::Phase phase = coop::join_progress::CurrentPhase();
+        const bool joinInFlight = !isHost && phase != coop::join_progress::Phase::Idle;
+        // Still at the menu, no world of the host's yet: the join fails the way a refused dial
+        // does. Fail wins the abort, the harness's drain stops the session, drops the cover and
+        // reopens the browser, under COULD NOT CONNECT with the first notice of the attempt
+        // standing; the flee below would stop the session and travel the menu to the menu on
+        // top of that drain.
+        const bool noWorldYet = joinInFlight &&
+                                (phase == coop::join_progress::Phase::Connecting ||
+                                 phase == coop::join_progress::Phase::Downloading);
+        if (noWorldYet) {
+            const coop::net::HostClose close = session.TakeHostCloseReason();
+            const coop::net::EndReason code = close.code == coop::net::EndReason::None
+                                                  ? coop::net::EndReason::LinkLost : close.code;
+            const coop::net::EndReasonInfo& why = coop::net::Describe(code);
+            UE_LOGW("net: HOST CLOSED OUR CONNECTION mid-join [%s] %s (%s) -- the join fails",
+                    why.id, why.text,
+                    close.text.empty() ? "connection lost" : close.text.c_str());
+            coop::join_progress::Fail(code, close.text);
+        } else {
+            coop::join_progress::Reset();
+        }
         const auto stats = coop::subsystems::DisconnectAll();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 stats.snapPending, stats.initProcessedDropped);
 
         // The client eject: losing the host ends the session, so flee to the menu rather than
-        // strand the player in a hostless world. The host does not eject here (its last client
-        // leaving lands in this block too). One-shot through g_localDeathHandled, shared with the
-        // death flee; the teardown above already ran, so FleeToMainMenu does only Stop, the bypass
-        // and the travel.
-        if (!isHost && !g_localDeathHandled) {
+        // strand the player in a hostless world, one it stands in or one the engine is loading
+        // for it. The host does not eject here (its last client leaving lands in this block
+        // too). One-shot through g_localDeathHandled, shared with the death flee; the teardown
+        // above already ran, so FleeToMainMenu does only Stop, the bypass and the travel.
+        if (!isHost && !noWorldYet && !g_localDeathHandled) {
             g_localDeathHandled = true;
-            const std::string reason = session.TakeHostCloseReason();
-            UE_LOGW("net: HOST CLOSED OUR CONNECTION (reason: %s) -- fleeing to the main menu",
-                    reason.empty() ? "connection lost" : reason.c_str());
+            const coop::net::HostClose close = session.TakeHostCloseReason();
+            if (close.code == coop::net::EndReason::None) {
+                // A stop this machine initiated captures no close, so there is nothing to show.
+                UE_LOGW("net: HOST CLOSED OUR CONNECTION (no close captured) -- fleeing to the "
+                        "main menu");
+            } else {
+                const coop::net::EndReasonInfo& why = coop::net::Describe(close.code);
+                UE_LOGW("net: HOST CLOSED OUR CONNECTION [%s] %s (%s) -- fleeing to the main menu",
+                        why.id, why.text,
+                        close.text.empty() ? "connection lost" : close.text.c_str());
+                // The player is about to land at the menu with no session: say why there, with
+                // the code, as a failed join while one was still in flight and as a disconnect
+                // after it.
+                coop::join_progress::NoteDisconnect(close.code, close.text,
+                                                    /*afterJoin*/!joinInFlight);
+            }
             FleeToMainMenu(session, "host closed connection");
             return;
+        }
+    }
+    // The join screen's stage, from the session's link stage: two atomic loads per tick while
+    // the join is in its first phase, and the transfer's own state (under its mutex, so only
+    // then, never through the download) supplies the last stage before the download.
+    if (!isHost && coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Connecting) {
+        namespace jp = coop::join_progress;
+        using coop::net::LinkStage;
+        switch (session.linkStage()) {
+        case LinkStage::Dialing:      jp::NoteStage(jp::Stage::Dialing); break;
+        case LinkStage::FindingRoute: jp::NoteStage(jp::Stage::FindingRoute); break;
+        case LinkStage::SocketUp:     jp::NoteStage(jp::Stage::ProvingIdentity); break;
+        case LinkStage::Admitted:
+            // An armed transfer is the wait for the host's world until the phase moves on (the
+            // begin, the no-save answer and the finish all land in the timeline loop's next
+            // note); a transfer never armed is the in-gameplay join.
+            jp::NoteStage(coop::save_transfer::GetClientState() ==
+                                  coop::save_transfer::ClientState::Idle
+                              ? jp::Stage::Joining : jp::Stage::WaitingForWorld);
+            break;
+        case LinkStage::Idle: break;
         }
     }
     // The client connect-failure edge: a browser join that never reached Connected (a dead address,
@@ -438,8 +494,10 @@ void Tick(coop::net::Session& session) {
     // idempotent.
     if (!isHost && !g_wasConnected && coop::join_progress::Active() &&
         session.state() == coop::net::ConnState::Disconnected) {
-        const std::string why = session.TakeHostCloseReason();
-        coop::join_progress::Fail(why.empty() ? "could not connect to the host" : why);
+        const coop::net::HostClose close = session.TakeHostCloseReason();
+        coop::join_progress::Fail(close.code == coop::net::EndReason::None
+                                      ? coop::net::EndReason::LinkLost : close.code,
+                                  close.text);
     }
     g_wasConnected = isConnected;
 

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/protocol.h"
@@ -31,6 +32,18 @@ inline constexpr uint8_t kMaxPeers = coop::players::kMaxPeers;
 enum class Role : uint8_t { Host, Client };
 
 enum class ConnState : uint8_t { Disconnected, Handshaking, Connected };
+
+// Where a client's host link stands, published by the net thread at its own callback edges so the
+// join screen can name the stage a joiner is waiting in; the pump reads it each tick. Idle until
+// the dial, Admitted once the host's slot assignment finished the link.
+enum class LinkStage : uint8_t { Idle, Dialing, FindingRoute, SocketUp, Admitted };
+
+// What the host, or the transport, said when a client's link ended: the code decoded from the
+// transport's end reason, and the text that came with it. None until a close is captured.
+struct HostClose {
+    EndReason   code = EndReason::None;
+    std::string text;
+};
 
 // Transport topology; only Session::Start branches on it.
 enum class Topology : uint8_t {
@@ -108,6 +121,10 @@ public:
     bool running() const { return running_.load(); }
     // Aggregate connection state (any peer connected -> Connected).
     ConnState state() const { return state_.load(); }
+    // Client: the host link's stage (LinkStage). Any thread.
+    LinkStage linkStage() const {
+        return static_cast<LinkStage>(linkStage_.load(std::memory_order_acquire));
+    }
     bool connected() const { return state_.load() == ConnState::Connected; }
     Role role() const { return cfg_.role; }
 
@@ -346,23 +363,25 @@ public:
     // --- Moderation (host-only admin actions) ---
 
     // The host's accept predicate over an incoming connection's remote IP (dotted decimal); false
-    // closes it with a "banned" reason. Set once before Start spawns the net thread (the harness
-    // wires coop::ban_list::IsBanned). MTA: the join-time ban check in
-    // CGame::Packet_PlayerJoinData.
-    using AcceptFilterFn = bool (*)(const char* remoteIp);
+    // closes it as banned, and whatever the filter wrote into `whyOut` (the ban's stored reason)
+    // rides the close as its text, so the banned player reads why. Set once before Start spawns
+    // the net thread (the harness wires coop::ban_list::IsBanned). MTA: the join-time ban check
+    // in CGame::Packet_PlayerJoinData, whose disconnect carries the reason string.
+    using AcceptFilterFn = bool (*)(const char* remoteIp, char* whyOut, int whyLen);
     void SetAcceptFilter(AcceptFilterFn fn) { acceptFilter_ = fn; }
 
-    // Host: disconnect the client at peerSlot with no linger; `reason` reaches the peer's status
-    // callback. Runs the ClosedByPeer teardown itself (GNS gives no callback for a connection we
-    // close). False if out of range, slot 0, or not connected. Thread-safe. MTA:
-    // CGame::QuitPlayer(QUIT_KICK).
-    bool Kick(int peerSlot, const char* reason);
+    // Host: disconnect the client at peerSlot with no linger; `code` and `reason` reach the peer's
+    // status callback, the code as the transport's application end reason. Runs the ClosedByPeer
+    // teardown itself (GNS gives no callback for a connection we close). False if out of range,
+    // slot 0, or not connected. Thread-safe. MTA: CGame::QuitPlayer(QUIT_KICK).
+    bool Kick(int peerSlot, EndReason code, const char* reason);
 
     // Kick only while `peerSlot` is still held by `expectedGeneration`'s owner; otherwise false. A
     // ban modal captures its target seconds before it acts and slots recycle in between, so a bare
     // slot number could ban the successor. The handle CAS makes the claim atomic, because the
     // accept path mints the generation before it stores peerConns_. Thread-safe.
-    bool KickWithToken(int peerSlot, uint32_t expectedGeneration, const char* reason);
+    bool KickWithToken(int peerSlot, uint32_t expectedGeneration, EndReason code,
+                       const char* reason);
 
     // Resolve the remote IP only while `expectedGeneration`'s owner still holds the slot, so the
     // ban list never records a successor's address.
@@ -372,7 +391,7 @@ public:
   private:
     // Shared teardown for a slot the caller has already claimed (peerConns_ exchanged or CAS'd to
     // 0).
-    bool KickClaimed(int peerSlot, uint32_t hConn, const char* reason);
+    bool KickClaimed(int peerSlot, uint32_t hConn, EndReason code, const char* reason);
 
   public:
 
@@ -380,9 +399,9 @@ public:
     // the slot is not connected or GNS has no address yet.
     bool GetPeerAddress(int peerSlot, char* out, int outLen) const;
 
-    // Client: the reason the host passed to CloseConnection ("kicked by host", ...), taken once and
-    // cleared; net_pump logs it on the disconnect edge. Thread-safe.
-    std::string TakeHostCloseReason();
+    // Client: what the host or the transport said when the link ended (the code and its text),
+    // taken once and cleared; net_pump shows it on the disconnect edge. Thread-safe.
+    HostClose TakeHostCloseReason();
 
     // The GNS C-callback adapter; public for session.cpp's file-local trampoline.
     static void OnConnStatusChanged(void* info);
@@ -534,10 +553,10 @@ public:
     void        SetProvedGuidForSlot(int slot, const std::string& guid);
     std::string ProvedGuidForSlot(int slot) const;
 
-    // Refuse a pending connection: retire the band entry, then close with `reason`. Retiring first
-    // keeps a refusal O(1); a bare CloseConnection would re-log for every message left in the
-    // batch. Net thread.
-    void RetirePending(int pendIdx, uint32_t hConn, const char* reason);
+    // Refuse a pending connection: retire the band entry, then close with `code` and `reason`.
+    // Retiring first keeps a refusal O(1); a bare CloseConnection would re-log for every message
+    // left in the batch. Net thread.
+    void RetirePending(int pendIdx, uint32_t hConn, EndReason code, const char* reason);
 
     // Drop a pending entry (its connection closed, or it was refused).
     void ReleasePending(uint32_t hConn);
@@ -749,10 +768,10 @@ private:
     // The fatal-backlog close: Kick(slot) on the host; on a client, claim plus the KickClaimed
     // teardown of the host connection. Net thread.
     void FatalCloseSlot(int slot, const char* reason);
-    // The client's only way to end its host link: records `why`, claims slot 0 and runs the
-    // KickClaimed teardown, which drives state_ to Disconnected, the edge net_pump needs to show
-    // the player a reason. Net thread.
-    void LeaveHost(const char* why);
+    // The client's only way to end its host link: records `code` and `why`, claims slot 0 and runs
+    // the KickClaimed teardown, which drives state_ to Disconnected, the edge net_pump needs to
+    // show the player a reason. Net thread.
+    void LeaveHost(EndReason code, const char* why);
     // Per-slot RTT in ms from GNS's m_nPing, sampled ~1 Hz on the net thread; -1 without a live
     // connection. event_feed fans it to each puppet.
     std::array<std::atomic<int>, kMaxPeers> rttMsBySlot_{};
@@ -761,11 +780,13 @@ private:
     // the net thread.
     AcceptFilterFn acceptFilter_ = nullptr;
 
-    // Client: the reason GNS reported when the host closed the connection (m_szEndDebug); written
-    // on the net thread, taken on the game thread by TakeHostCloseReason. Its own small mutex: a
-    // rare path with no lock order against the hot mutexes.
-    std::mutex  hostCloseMutex_;
-    std::string hostCloseReason_;
+    // Client: what the host or the transport said when the link ended (the end reason decoded, and
+    // its text); written on the net thread, taken on the game thread by TakeHostCloseReason. Its
+    // own small mutex: a rare path with no lock order against the hot mutexes.
+    std::mutex hostCloseMutex_;
+    HostClose  hostClose_;
+    // The host link's stage for the join screen (LinkStage); written at the callback edges.
+    std::atomic<uint8_t> linkStage_{0};
 
     // This peer's per-process session epoch, minted non-zero at Start() and stamped on every
     // outbound header (senderEpoch). Read on the net thread without a lock: set before the thread

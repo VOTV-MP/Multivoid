@@ -36,10 +36,11 @@ struct Entry {
 void Load();
 
 // Net thread: is this remote IP banned? `ip` is the dotted-decimal string GNS produces from
-// SteamNetConnectionInfo_t::m_addrRemote (port excluded). Cheap -- one mutex and one hash lookup --
-// and called once per incoming connection at accept. Load, this and Add each run on a different
-// thread and serialize on that one mutex.
-bool IsBanned(const char* ip);
+// SteamNetConnectionInfo_t::m_addrRemote (port excluded). When it is, the ban's stored reason is
+// copied into `reasonOut` (may be null), so the close can carry it to the banned player. Cheap --
+// one mutex and one hash lookup -- and called once per incoming connection at accept. Load, this
+// and Add each run on a different thread and serialize on that one mutex.
+bool IsBanned(const char* ip, char* reasonOut, int reasonLen);
 
 // Game thread: ban an IP permanently (adds to the in-memory set AND rewrites the
 // file). `nick` and `reason` are stored for the admin's reference (Banned-section

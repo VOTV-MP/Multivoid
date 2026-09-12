@@ -9,7 +9,7 @@
 // instance must never install the overlay this dialog renders from.
 //
 // Threading: Arm() from the boot thread (before the overlay ever presents); IsOpen() and
-// Render() are render-thread only. Same ownership shape as connect_failed_dialog, but the
+// Render() are render-thread only. Same ownership shape as end_reason_dialog, but the
 // pending text lives HERE (there is no join_progress analogue for boot problems).
 
 #pragma once

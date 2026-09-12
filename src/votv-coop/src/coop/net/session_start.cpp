@@ -173,6 +173,14 @@ bool Session::Start(const Config& cfg) {
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
         &ConnStatusTrampoline);
 
+    // Nothing carries across from a previous attempt: the host close reason is first-writer-wins,
+    // so a reason parked by an attempt whose consumers never fired (an env or autotest client)
+    // would otherwise be shown to the player as the explanation for the next browser join that
+    // failed. Before the dial, which publishes the first link stage: a reset after it wiped
+    // that stage before the pump could read it.
+    { std::lock_guard<std::mutex> lk(hostCloseMutex_); hostClose_ = HostClose{}; }
+    linkStage_.store(static_cast<uint8_t>(LinkStage::Idle), std::memory_order_release);
+
     // The topology dispatch, the only place the transport differs; the net thread, the poll-group
     // receive, the relay, the lanes, the epoch latch and the inbox drain operate on connection
     // handles regardless of how they were established.
@@ -182,11 +190,6 @@ bool Session::Start(const Config& cfg) {
         return false;
     }
 
-    // Nothing carries across from a previous attempt: the host close reason is first-writer-wins,
-    // so a reason parked by an attempt whose consumers never fired (an env or autotest client)
-    // would otherwise be shown to the player as the explanation for the next browser join that
-    // failed.
-    { std::lock_guard<std::mutex> lk(hostCloseMutex_); hostCloseReason_.clear(); }
     state_.store(ConnState::Handshaking);
     for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
     running_.store(true);
@@ -242,6 +245,7 @@ bool Session::StartLanDirect() {
         // generation is the host's authority over slot recycling and a client's roster is
         // wire-driven, so minting here would fight the wire.
         peerConns_[0].store(hConn);
+        linkStage_.store(static_cast<uint8_t>(LinkStage::Dialing), std::memory_order_release);
         UE_LOGI("net: client dialed %s:%u (hConn=0x%08x slot=0)",
                 cfg_.peerIp.c_str(), cfg_.port, static_cast<unsigned>(hConn));
     }
@@ -357,6 +361,7 @@ bool Session::StartP2P() {
         // GEN: none -- client dial; see the LanDirect site above for the reason. Slot 0 is the
         // host, as for the direct transport.
         peerConns_[0].store(hConn);
+        linkStage_.store(static_cast<uint8_t>(LinkStage::Dialing), std::memory_order_release);
         UE_LOGI("net: P2P client dialing '%s' via signaling %s (hConn=0x%08x slot=0)",
                 cfg_.hostIdentity.c_str(), cfg_.signalingUrl.c_str(),
                 static_cast<unsigned>(hConn));
@@ -394,7 +399,13 @@ void Session::Stop() {
             backlog_.FreeSlot(i);  // queued state dies with the session
             relayEligible_[i].store(0, std::memory_order_release);
             if (hConn != 0) {
-                sockets->CloseConnection(hConn, 0, "session stop", true);
+                // The code names who stopped: a host ending the session, or a client leaving
+                // it (the leaver never sees its own code; the host logs it).
+                sockets->CloseConnection(hConn,
+                                         ToTransportEnd(cfg_.role == Role::Host
+                                                            ? EndReason::HostStopped
+                                                            : EndReason::LeftSession),
+                                         "session stop", true);
             }
         }
         for (int i = 0; i < 20; ++i) {
@@ -421,6 +432,7 @@ void Session::Stop() {
     signaling_.reset();
 
     state_.store(ConnState::Disconnected);
+    linkStage_.store(static_cast<uint8_t>(LinkStage::Idle), std::memory_order_release);
     g_session.store(nullptr, std::memory_order_release);
     // Rates to zero for the net-stats panel's offline state; the totals stay visible until the next
     // Start resets them.

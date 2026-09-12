@@ -73,7 +73,8 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
 // remote IP the connection is rejected. Direct UDP populates m_addrRemote by the Connecting edge,
 // so only a genuinely unresolvable peer is refused.
 bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
-                   Session::AcceptFilterFn filter) {
+                   Session::AcceptFilterFn filter, char* whyOut, int whyLen) {
+    if (whyOut && whyLen > 0) whyOut[0] = '\0';
     if (!filter) return true;  // no banlist installed -> accept all
     char ip[SteamNetworkingIPAddr::k_cchMaxString] = {};
     SteamNetConnectionInfo_t cinfo{};
@@ -85,7 +86,7 @@ bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
                 "rejecting (fail-closed ban check)");
         return false;
     }
-    return filter(ip);
+    return filter(ip, whyOut, whyLen);
 }
 
 }  // namespace
@@ -134,12 +135,13 @@ int Session::ParkPending(uint32_t hConn) {
     coop::net::peer_admission::HostForgetPending(oldest);
     if (victim != 0) {
         UE_LOGW("net: pending band full -- evicting the OLDEST un-proved socket "
-                "0x%08x (idx %d, %llu ms) to make room for the arrival",
+                "0x%08x (idx %d, %llu ms) to make room for the arrival [%s]",
                 static_cast<unsigned>(victim), oldest,
-                static_cast<unsigned long long>(NowMs() - oldestMs));
+                static_cast<unsigned long long>(NowMs() - oldestMs),
+                Describe(EndReason::TooSlowToProve).id);
         if (auto* sockets = SteamNetworkingSockets())
             sockets->CloseConnection(static_cast<HSteamNetConnection>(victim),
-                                     k_ESteamNetConnectionEnd_App_Generic,
+                                     ToTransportEnd(EndReason::TooSlowToProve),
                                      "too slow to prove your identity", false);
     }
     return oldest;
@@ -154,19 +156,20 @@ void Session::SweepPending() {
         const uint64_t since = pendingSinceMs_[i].load(std::memory_order_acquire);
         if (since == 0 || now - since < kPendingDeadlineMs) continue;
         UE_LOGW("net: PENDING %d (h=0x%08x) never proved its identity in %llu ms "
-                "-- closing", i, static_cast<unsigned>(hConn),
-                static_cast<unsigned long long>(now - since));
+                "-- closing [%s]", i, static_cast<unsigned>(hConn),
+                static_cast<unsigned long long>(now - since),
+                Describe(EndReason::IdentityProofTimedOut).id);
         pendingConns_[i].store(0, std::memory_order_release);
         pendingSinceMs_[i].store(0, std::memory_order_release);
         coop::net::peer_admission::HostForgetPending(i);
         if (auto* sockets = SteamNetworkingSockets())
             sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
-                                     k_ESteamNetConnectionEnd_App_Generic,
+                                     ToTransportEnd(EndReason::IdentityProofTimedOut),
                                      "identity proof timed out", false);
     }
 }
 
-void Session::RetirePending(int pendIdx, uint32_t hConn, const char* reason) {
+void Session::RetirePending(int pendIdx, uint32_t hConn, EndReason code, const char* reason) {
     if (pendIdx >= 0 && pendIdx < kMaxPending) {
         // Clear by handle, not blindly: a failed CAS means the entry is already someone else's.
         uint32_t expected = hConn;
@@ -177,8 +180,8 @@ void Session::RetirePending(int pendIdx, uint32_t hConn, const char* reason) {
     }
     if (auto* sockets = SteamNetworkingSockets())
         sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
-                                 k_ESteamNetConnectionEnd_App_Generic,
-                                 reason ? reason : "refused", /*bEnableLinger*/false);
+                                 ToTransportEnd(code),
+                                 reason ? reason : Describe(code).text, /*bEnableLinger*/false);
 }
 
 void Session::ReleasePending(uint32_t hConn) {
@@ -355,16 +358,20 @@ void Session::HandleConnStatusChanged(void* info) {
         newState == k_ESteamNetworkingConnectionState_Connecting) {
         // The ban filter, before the accept (MTA checks at join time; the Connecting edge is
         // earlier and cheaper: no slot, no handshake). Fail-closed.
-        if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
-            UE_LOGW("net: rejecting incoming connection (banned remote IP)");
-            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                     "banned", /*bEnableLinger*/false);
+        char why[96] = {};
+        if (!AcceptAllowed(sockets, hConn, acceptFilter_, why, sizeof(why))) {
+            UE_LOGW("net: rejecting incoming connection (banned remote IP) [%s] '%s'",
+                    Describe(EndReason::Banned).id, why);
+            sockets->CloseConnection(hConn, ToTransportEnd(EndReason::Banned),
+                                     why[0] ? why : "banned", /*bEnableLinger*/false);
             return;
         }
         const EResult rc = sockets->AcceptConnection(hConn);
         if (rc != k_EResultOK) {
-            UE_LOGW("net: AcceptConnection rc=%d", static_cast<int>(rc));
-            sockets->CloseConnection(hConn, 0, "accept failed", false);
+            UE_LOGW("net: AcceptConnection rc=%d [%s]", static_cast<int>(rc),
+                    Describe(EndReason::AcceptFailed).id);
+            sockets->CloseConnection(hConn, ToTransportEnd(EndReason::AcceptFailed),
+                                     "accept failed", false);
             return;
         }
         // No seat is spent here: the connection is parked, and the seat is spent in AdmitPending
@@ -387,6 +394,14 @@ void Session::HandleConnStatusChanged(void* info) {
 
     // --- both roles: transitions on an existing connection ---
 
+    // Client: ICE is negotiating a path to the host (P2P only); the join screen names it.
+    if (cfg_.role == Role::Client &&
+        newState == k_ESteamNetworkingConnectionState_FindingRoute) {
+        linkStage_.store(static_cast<uint8_t>(LinkStage::FindingRoute),
+                         std::memory_order_release);
+        return;
+    }
+
     if (newState == k_ESteamNetworkingConnectionState_Connected) {
         int slot = FindPeerSlotForConn(hConn);
         // GNS may skip the None to Connecting transition (its header says so); on a host such a
@@ -397,10 +412,12 @@ void Session::HandleConnStatusChanged(void* info) {
             // or one where GNS skipped Connecting, which never met the accept-edge ban filter, so
             // the filter runs here.
             if (!IsPendingConn(hConn)) {
-                if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
-                    UE_LOGW("net: rejecting late-register connection (banned remote IP)");
-                    sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                             "banned", /*bEnableLinger*/false);
+                char why[96] = {};
+                if (!AcceptAllowed(sockets, hConn, acceptFilter_, why, sizeof(why))) {
+                    UE_LOGW("net: rejecting late-register connection (banned remote IP) [%s] "
+                            "'%s'", Describe(EndReason::Banned).id, why);
+                    sockets->CloseConnection(hConn, ToTransportEnd(EndReason::Banned),
+                                             why[0] ? why : "banned", /*bEnableLinger*/false);
                     return;
                 }
                 const int pend = ParkPending(hConn);
@@ -426,10 +443,12 @@ void Session::HandleConnStatusChanged(void* info) {
         // link is not finished here: the client opens the admission exchange and finishes the link
         // in FinishClientLink when the host's AssignPeerSlot proves it was admitted, so "the socket
         // is up" triggers nothing IsSlotReady gates.
+        linkStage_.store(static_cast<uint8_t>(LinkStage::SocketUp), std::memory_order_release);
         if (!peer_admission::ClientOnConnected(*this, hConn)) {
             // Say why on the flee path: a silent close reads as "the host vanished", the one thing
             // it is not.
-            LeaveHost("could not start the identity exchange with this host");
+            LeaveHost(EndReason::IdentityExchange,
+                      "could not start the identity exchange with this host");
         }
         return;
     }
@@ -441,15 +460,20 @@ void Session::HandleConnStatusChanged(void* info) {
         // entry is freed here, unconditionally (releasing a handle that was never parked is a
         // no-op).
         ReleasePending(hConn);
-        UE_LOGW("net: peer slot %d closed (oldState=%d reason='%s')",
-                slot, static_cast<int>(oldState), cb->m_info.m_szEndDebug);
+        UE_LOGW("net: peer slot %d closed (oldState=%d end=%d [%s] reason='%s')",
+                slot, static_cast<int>(oldState), cb->m_info.m_eEndReason,
+                Describe(FromTransportEnd(cb->m_info.m_eEndReason)).id,
+                cb->m_info.m_szEndDebug);
         // Client, slot 0: the host closed our connection (kick, ban, quit, crash); stash GNS's
         // reason so net_pump can say why before fleeing.
         if (cfg_.role == Role::Client && slot == 0) {
             {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
                 // Do not overwrite a reason we set ourselves (a refused exchange names why); GNS's
                 // reason for a close we initiated is the generic one.
-                if (hostCloseReason_.empty()) hostCloseReason_ = cb->m_info.m_szEndDebug;
+                if (hostClose_.code == EndReason::None) {
+                    hostClose_.code = FromTransportEnd(cb->m_info.m_eEndReason);
+                    hostClose_.text = cb->m_info.m_szEndDebug;
+                }
             }
             // The exchange dies with the link: a `proved` flag surviving into the next connection
             // would seat us on an unchallenged host.
@@ -494,6 +518,7 @@ void Session::HandleConnStatusChanged(void* info) {
             // A full disconnect goes to Disconnected, not Handshaking, which the reconnect UI and
             // the harness poll for.
             state_.store(ConnState::Disconnected);
+            linkStage_.store(static_cast<uint8_t>(LinkStage::Idle), std::memory_order_release);
             { std::lock_guard<std::mutex> lk(remoteMutex_);
               for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
             { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
@@ -503,7 +528,8 @@ void Session::HandleConnStatusChanged(void* info) {
     }
 }
 
-bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const char* reason) {
+bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, EndReason code,
+                            const char* reason) {
     if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
     if (expectedGeneration == 0) return false;  // an empty-slot token can never authorize a kick
     const uint32_t hConnAtCapture = peerConns_[peerSlot].load();
@@ -526,7 +552,7 @@ bool Session::KickWithToken(int peerSlot, uint32_t expectedGeneration, const cha
         UE_LOGW("net: kick/ban on slot %d REFUSED -- the connection changed under us", peerSlot);
         return false;
     }
-    return KickClaimed(peerSlot, hConnAtCapture, reason);
+    return KickClaimed(peerSlot, hConnAtCapture, code, reason);
 }
 
 bool Session::GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
@@ -539,7 +565,7 @@ bool Session::GetPeerAddressWithToken(int peerSlot, uint32_t expectedGeneration,
     return GetPeerAddress(peerSlot, out, outLen);
 }
 
-bool Session::Kick(int peerSlot, const char* reason) {
+bool Session::Kick(int peerSlot, EndReason code, const char* reason) {
     // Slot 0 is the host itself, never kickable.
     if (peerSlot < 1 || peerSlot >= kMaxPeers) return false;
     // GEN: clear -- deferred to the end of the teardown, exactly as the ClosedByPeer path does.
@@ -549,7 +575,7 @@ bool Session::Kick(int peerSlot, const char* reason) {
     // kicked slot holding a live generation, so the ledger would never see the row empty.
     const uint32_t hConn = peerConns_[peerSlot].exchange(0);
     if (hConn == 0) return false;
-    return KickClaimed(peerSlot, hConn, reason);
+    return KickClaimed(peerSlot, hConn, code, reason);
 }
 
 // A slot's send backlog tripped a fatal bound (no progress with a non-empty queue, or the byte
@@ -557,14 +583,16 @@ bool Session::Kick(int peerSlot, const char* reason) {
 // and the backlog dies with it. Host: kick the slot; client: slot 0 is the host link, the same
 // teardown. A draining link never gets here (progress resets the timer).
 void Session::FatalCloseSlot(int slot, const char* reason) {
-    UE_LOGE("net: send backlog FATAL for slot %d -- %s; closing the connection "
-            "(delivery guarantee: never silently drop)", slot, reason ? reason : "?");
+    UE_LOGE("net: send backlog FATAL for slot %d -- %s; closing the connection [%s] "
+            "(delivery guarantee: never silently drop)", slot, reason ? reason : "?",
+            Describe(cfg_.role == Role::Host ? EndReason::HostBacklogFatal
+                                             : EndReason::ClientBacklogFatal).id);
     if (cfg_.role == Role::Host) {
-        Kick(slot, reason);
+        Kick(slot, EndReason::HostBacklogFatal, reason);
         return;
     }
     if (slot != 0) return;  // a client only owns its host link
-    LeaveHost(reason ? reason : "send backlog fatal");
+    LeaveHost(EndReason::ClientBacklogFatal, reason ? reason : "send backlog fatal");
 }
 
 // A client ending its own host link: every path where we decide to leave (an admission refusal, a
@@ -573,24 +601,27 @@ void Session::FatalCloseSlot(int slot, const char* reason) {
 // left state_ at Handshaking forever and net_pump's connect-fail edge, the only consumer of the
 // reason, never fired: right on the wire, mute on screen. KickClaimed's tail downgrades the
 // aggregate state, so a departure we author and one we suffer leave the session the same.
-void Session::LeaveHost(const char* why) {
+void Session::LeaveHost(EndReason code, const char* why) {
     if (cfg_.role != Role::Client) return;
     {   // FIRST WRITER WINS, matching the ClosedByPeer branch: a refusal names the
         // real cause, and whatever the teardown trips afterwards is a consequence.
         // Overwriting would hand the player the symptom instead of the reason.
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
-        if (hostCloseReason_.empty() && why) hostCloseReason_ = why;
+        if (hostClose_.code == EndReason::None) {
+            hostClose_.code = code;
+            hostClose_.text = why ? why : "";
+        }
     }
     // GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a peer-slot occupancy. The
     // client owns no roster generations and the flee path tears down whole.
     const uint32_t hConn = peerConns_[0].exchange(0);
     if (hConn == 0) return;  // already claimed by another path; its teardown owns it
-    KickClaimed(0, hConn, why);
+    KickClaimed(0, hConn, code, why);
 }
 
 // The teardown for a connection whose slot the caller has already claimed (exchanged or CAS'd to
 // 0), shared by the blind and the token-checked entry points.
-bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
+bool Session::KickClaimed(int peerSlot, uint32_t hConn, EndReason code, const char* reason) {
     peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
     // The delivery guarantee is scoped to the connection: the queued state dies with the peer.
     backlog_.FreeSlot(peerSlot);
@@ -600,8 +631,8 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
         // No linger: a kick drops the peer at once. The reason rides to the peer's status callback,
         // so a kicked client can say why.
         sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
-                                 k_ESteamNetConnectionEnd_App_Generic,
-                                 reason ? reason : "kicked", /*bEnableLinger*/false);
+                                 ToTransportEnd(code),
+                                 reason ? reason : Describe(code).text, /*bEnableLinger*/false);
     }
 
     // GNS delivers no status callback for a connection we close, so the ClosedByPeer teardown is
@@ -623,19 +654,21 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     // Aggregate state, as in the ClosedByPeer branch.
     if (connectedPeerCount() == 0) {
         state_.store(ConnState::Disconnected);
+        linkStage_.store(static_cast<uint8_t>(LinkStage::Idle), std::memory_order_release);
         { std::lock_guard<std::mutex> lk(remoteMutex_);
           for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
         { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
         for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
     }
-    UE_LOGI("net: kicked peer slot %d (reason='%s')", peerSlot, reason ? reason : "kicked");
+    UE_LOGI("net: kicked peer slot %d [%s] (reason='%s')", peerSlot, Describe(code).id,
+            reason ? reason : Describe(code).text);
     return true;
 }
 
-std::string Session::TakeHostCloseReason() {
+HostClose Session::TakeHostCloseReason() {
     std::lock_guard<std::mutex> lk(hostCloseMutex_);
-    std::string r = std::move(hostCloseReason_);
-    hostCloseReason_.clear();  // move may leave it valid-but-unspecified; force empty
+    HostClose r = std::move(hostClose_);
+    hostClose_ = HostClose{};  // move may leave the string valid-but-unspecified; force empty
     return r;
 }
 

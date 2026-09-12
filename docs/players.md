@@ -162,6 +162,8 @@ Kick and ban are host-only actions on the player list (`coop/moderation/`). A ba
 address, the nickname and the reason in a file next to the mod, is applied at the connection's
 accept filter before a seat is spent, and survives host restarts; the host also keeps a
 seen-players file for the administration panel. Bans are keyed by address, not by identity.
+The kicked or banned player lands at the menu with a modal saying which, under a stable code
+([join.md](join.md) lists them).
 
 ## Who owns what
 

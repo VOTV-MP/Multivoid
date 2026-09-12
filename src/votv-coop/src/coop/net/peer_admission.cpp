@@ -191,6 +191,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                                  ReliableKind kind, const void* payload, int len) {
     HostResult r;
     if (pendIdx < 0 || pendIdx >= kMaxHostRows) {
+        r.code = EndReason::AcceptFailed;
         r.reason = "pending index out of range";
         return r;
     }
@@ -202,16 +203,19 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
     switch (kind) {
     case ReliableKind::AuthHello: {
         if (len != static_cast<int>(sizeof(AuthHelloPayload))) {
+            r.code = EndReason::MalformedHello;
             r.reason = "malformed AuthHello";
             return r;
         }
         // One hello per connection: a second would let a peer re-roll the host's nonce after seeing
         // a challenge, the shape of a downgrade, and an honest client sends exactly one.
         if (row.open) {
+            r.code = EndReason::DuplicateHello;
             r.reason = "duplicate AuthHello";
             return r;
         }
         if (!RemoteKeyOf(hConn, row.remotePub)) {
+            r.code = EndReason::NoKeyIdentity;
             r.reason = "peer presented no key identity";
             return r;
         }
@@ -226,6 +230,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             // No randomness means no freshness, and a predictable nonce is worse than no exchange,
             // since it looks like one.
             UE_LOGE("peer_admission: the OS refused randomness -- cannot challenge");
+            r.code = EndReason::HostNoRandomness;
             r.reason = "host has no randomness";
             return r;
         }
@@ -241,6 +246,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
 
         if (!session.SendRawReliableToConn(hConn, ReliableKind::AuthChallenge,
                                            &out, sizeof(out))) {
+            r.code = EndReason::CouldNotSendChallenge;
             r.reason = "could not send the challenge";
             return r;
         }
@@ -253,10 +259,12 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
 
     case ReliableKind::AuthProof: {
         if (!row.open) {
+            r.code = EndReason::ProofBeforeHello;
             r.reason = "AuthProof before AuthHello";
             return r;
         }
         if (len != static_cast<int>(sizeof(AuthProofPayload))) {
+            r.code = EndReason::MalformedProof;
             r.reason = "malformed AuthProof";
             return r;
         }
@@ -264,6 +272,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         // decision rests on what GNS says now about the socket in hand.
         PubKey nowPub{};
         if (!RemoteKeyOf(hConn, nowPub) || nowPub != row.remotePub) {
+            r.code = EndReason::IdentityChanged;
             r.reason = "peer identity changed mid-exchange";
             return r;
         }
@@ -276,6 +285,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         BuildBlob(blob, kDirClient, peer_identity::LocalPublicKey(), row.remotePub,
                   row.nonce, row.flags, row.nonce);
         if (!peer_identity::VerifyBlob(row.remotePub, blob, sizeof(blob), sig)) {
+            r.code = EndReason::IdentityNotProved;
             r.reason = "identity proof did not verify";
             return r;
         }
@@ -287,6 +297,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             if (!proof.hasPw) {
                 // A distinct reason, shown to a person: "wrong password" for a client that sent
                 // none would send them looking for a typo in a box they never filled in.
+                r.code = EndReason::PasswordRequired;
                 r.reason = "this server needs a password";
                 return r;
             }
@@ -306,6 +317,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                         "limited (%d in the last %llu s) -- refusing without checking",
                         bucket->fails,
                         static_cast<unsigned long long>(kGuessWindowMs / 1000));
+                r.code = EndReason::TooManyPasswordAttempts;
                 r.reason = "too many password attempts -- try again in a minute";
                 return r;
             }
@@ -319,6 +331,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                     // stops being locked.
                     UE_LOGE("peer_admission: could not derive the lobby key -- refusing "
                             "every join rather than silently unlocking the session");
+                    r.code = EndReason::HostCannotCheckPassword;
                     r.reason = "the host could not check the password";
                     return r;
                 }
@@ -327,6 +340,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             lobby_password::Tag expect{};
             if (!lobby_password::ComputeTag(g_hostPw.key, peer_identity::LocalPublicKey(),
                                             row.remotePub, row.nonce, expect)) {
+                r.code = EndReason::HostCannotCheckPassword;
                 r.reason = "the host could not check the password";
                 return r;
             }
@@ -341,6 +355,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                                                                    "identity, not an address")
                                : "; the bucket table is FULL -- this attempt was checked "
                                  "but not counted");
+                r.code = EndReason::WrongPassword;
                 r.reason = "wrong password";
                 return r;
             }
@@ -356,6 +371,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         // Anything else before admission is a protocol violation (this build's client sends the
         // hello and then nothing until seated). Refused rather than dropped, so a peer that will
         // never be admitted learns so; a silent drop once deadlocked every honest join.
+        r.code = EndReason::SpokeBeforeProving;
         r.reason = "spoke before proving its identity";
         return r;
     }
@@ -441,18 +457,22 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
 }
 
 bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
-                      const void* payload, int len, const char** outClose) {
+                      const void* payload, int len, const char** outClose,
+                      EndReason* outCode) {
     if (kind != ReliableKind::AuthChallenge) return false;  // not ours
     if (!g_client.open || g_client.hConn != hConn) {
+        *outCode = EndReason::BadChallenge;
         *outClose = "unexpected AuthChallenge";
         return true;
     }
     if (g_client.proved) {
         // A second challenge would re-open a settled decision on a committed connection.
+        *outCode = EndReason::BadChallenge;
         *outClose = "duplicate AuthChallenge";
         return true;
     }
     if (len != static_cast<int>(sizeof(AuthChallengePayload))) {
+        *outCode = EndReason::BadChallenge;
         *outClose = "malformed AuthChallenge";
         return true;
     }
@@ -470,6 +490,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         // sent to, so a bad signature is a host that cannot back its advertised name; unbound means
         // nobody advertised anything, and all this could show is that the answerer holds the key it
         // presented.
+        *outCode = EndReason::HostNotProved;
         *outClose = g_client.bound
                         ? "the host did not prove the identity it advertised"
                         : "the host did not prove the key it presented (no identity was "
@@ -499,6 +520,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         // real host; the host verifies identity before the password; and its guess bucket still
         // bounds online guessing.
         if (!g_client.bound && !session.DestinationIsSelfAddressed()) {
+            *outCode = EndReason::PasswordUnbound;
             *outClose = "this server wants a password, but nothing told us which host we "
                         "were dialling -- refusing to send anything derived from it";
             return true;
@@ -507,6 +529,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         if (pw.empty()) {
             // Not a protocol error: a person forgot, or was never given one. The join screen shows
             // this line.
+            *outCode = EndReason::PasswordMissing;
             *outClose = "this server needs a password";
             return true;
         }
@@ -515,6 +538,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         if (!lobby_password::DeriveKey(pw, g_client.hostPub, key) ||
             !lobby_password::ComputeTag(key, g_client.hostPub,
                                         peer_identity::LocalPublicKey(), ch.nonce, tag)) {
+            *outCode = EndReason::PasswordProof;
             *outClose = "could not compute the password proof on this machine";
             return true;
         }
@@ -540,6 +564,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
 
     if (!session.SendRawReliableToConn(hConn, ReliableKind::AuthProof,
                                        &out, sizeof(out))) {
+        *outCode = EndReason::CouldNotSendProof;
         *outClose = "could not send the identity proof";
         return true;
     }

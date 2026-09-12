@@ -54,13 +54,17 @@ master has no released record.
 ### Joining, and when it fails
 
 While a client joins, the menu's widgets are hidden so only the 3D backdrop remains, and the
-loading screen draws a centred progress bar with a Cancel button over it, in four stages
-(`ui/loading_screen`); the console auto-shows beside it so the connect log is visible
-(`ui/console`). A full-screen curtain hides the world's assembly and fades out when the host's
-snapshot has landed (`ui/join_curtain`). A join that cannot be established shows a "could not
-connect" modal with the reason over the reopened browser; a cancel is silent
-(`ui/connect_failed_dialog`). A boot-time install problem (the game updated and the mod needs a
-new release) shows its own modal (`ui/boot_warning_dialog`).
+loading screen draws a centred progress bar with a Cancel button over it, in four phases, the
+first of them naming the step it is in and every step showing the seconds spent in it once
+they add up (`ui/loading_screen`); the console auto-shows beside it so the connect log is
+visible (`ui/console`). A full-screen curtain hides the world's assembly and fades out when
+the host's snapshot has landed (`ui/join_curtain`). A join that cannot be established shows a
+"could not connect" modal over the reopened browser, and a session the host or the
+transport ends after the join shows a "disconnected" one over the menu: one sentence, the
+site's own words, and a stable code to paste into a report, listed in
+[join.md](join.md); a cancel is silent (`ui/end_reason_dialog`). A boot-time install problem
+(the game updated and the mod needs a new release) shows its own modal
+(`ui/boot_warning_dialog`).
 
 ### The overlay
 
@@ -146,7 +150,7 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 |---|---|
 | the main menu and the native screens | `ui/multiplayer_menu`, `ui/server_browser_native` with `ui/server_browser_rows`, `ui/server_browser_actions`, `ui/server_browser_panels`, `ui/server_browser_surface`, `ui/host_window_native`, `ui/host_save_picker`, `ui/host_session_settings`, `ui/host_session_choices`, `ui/browser_input_screens`, `ui/native_screen`, `ui/native_text_field`, `ue_wrap/engine/umg_build` |
 | the fallback browser | `ui/server_browser` |
-| joining and failing | `ui/loading_screen`, `ui/join_curtain`, `ui/connect_failed_dialog`, `ui/boot_warning_dialog`, `ui/console` |
+| joining and failing | `ui/loading_screen`, `ui/join_curtain`, `ui/end_reason_dialog`, `ui/boot_warning_dialog`, `ui/console` |
 | the overlay host | `ui/imgui_overlay`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |
 | the F1 panels | `ui/dev_menu`, `ui/skins_panel`, `ui/voice_panel`, `ui/world_rules_panel`, `ui/net_stats_panel`, `ui/admin_panel`, `ui/config_review_panel` |
 | the HUD | `ui/hud`, `ui/chat_input`, `ui/chat_view`, `ui/scoreboard`, `ui/voice_icons`, `ui/menu_sfx`, `ui/link_format` |

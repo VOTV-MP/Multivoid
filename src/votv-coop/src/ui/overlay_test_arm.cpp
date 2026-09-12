@@ -94,7 +94,7 @@ void ArmFromEnv() {
     // (join_progress::MaybeTimeout) lifts it on its own.
     char ldEnv[8] = {};
     if (::GetEnvironmentVariableA("VOTVCOOP_TEST_LOADING", ldEnv, sizeof(ldEnv)) > 0 && ldEnv[0] == '1') {
-        coop::join_progress::BeginConnect("Test Host");
+        coop::join_progress::BeginConnect("Test Host", coop::join_progress::Stage::Dialing);
         coop::join_progress::BeginSnapshot(2313);
         for (int i = 0; i < 1400; ++i) coop::join_progress::NotePropApplied();
         UE_LOGI("imgui_overlay: VOTVCOOP_TEST_LOADING=1 -- forced the loading state (1400/2313) for a screenshot (test)");

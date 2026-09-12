@@ -51,7 +51,8 @@ void KickPlayer(const PlayerToken& token) {
     GT::Post([token] {
         auto* s = HostSession("kick");
         if (!s) return;
-        if (s->KickWithToken(token.slot, token.generation, "kicked by host"))
+        if (s->KickWithToken(token.slot, token.generation, coop::net::EndReason::KickedByHost,
+                             "kicked by host"))
             UE_LOGI("moderation: kicked #%u (slot %d)",
                     static_cast<unsigned>(token.playerNo), token.slot);
         else
@@ -95,7 +96,10 @@ void BanPlayer(const PlayerToken& token, const char* reason) {
             UE_LOGW("moderation: ban #%u (slot %d) -- no resolvable IP, kicking WITHOUT "
                     "a persistent ban", static_cast<unsigned>(token.playerNo), token.slot);
         }
-        if (!s->KickWithToken(token.slot, token.generation, "banned by host"))
+        // The typed reason rides the close as its text, so the banned player reads it under the
+        // code; the constant stands in when none was typed.
+        const char* why = reason.empty() ? "banned by host" : reason.c_str();
+        if (!s->KickWithToken(token.slot, token.generation, coop::net::EndReason::BannedByHost, why))
             UE_LOGW("moderation: ban #%u -- kick did nothing (already gone?)",
                     static_cast<unsigned>(token.playerNo));
         else

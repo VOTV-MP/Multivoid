@@ -14,10 +14,14 @@
 namespace coop::join_progress {
 namespace {
 
+using coop::net::Describe;
+using coop::net::EndReason;
+
 // The phase and the counts are atomics (written on the net-drain thread, read on the render
 // thread); the host label is a string under its own mutex (written rarely in BeginConnect,
 // read once a frame in Snapshot).
 std::atomic<int>      g_phase{static_cast<int>(Phase::Idle)};
+std::atomic<int>      g_stage{static_cast<int>(Stage::None)};
 std::atomic<int>      g_mode{static_cast<int>(Mode::Client)};
 std::atomic<uint32_t> g_applied{0};
 std::atomic<uint32_t> g_total{0};
@@ -26,20 +30,23 @@ std::atomic<uint32_t> g_total{0};
 std::atomic<uint32_t> g_dlDone{0};
 std::atomic<uint32_t> g_dlTotal{0};
 std::atomic<int64_t>  g_startMs{0};
+// When the current phase, or the current stage inside Connecting, began: the screen shows the
+// seconds spent in it once they add up, so a step that is merely slow reads as still working.
+std::atomic<int64_t>  g_stageStartMs{0};
 std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure -> harness drains (Stop + reopen browser)
 
 std::mutex  g_hostMu;
 std::string g_host;  // guarded by g_hostMu
 
-// The connect-failure reason for the connect-failed dialog (see the header). Set by the abort
-// winner (Fail stashes, Cancel clears) and read and cleared by the render thread; its own
-// mutex, independent of the abort flag (which the harness drains separately).
-std::mutex  g_failMu;
-std::string g_failReason;  // guarded by g_failMu; non-empty == a modal is pending
-// A lock-free mirror of "the reason is non-empty" so the per-frame overlay gate never takes
-// the mutex; only the render's actual string read does. Kept in sync inside the mutex's
-// critical sections.
-std::atomic<bool> g_failPending{false};
+// The notice for the end-reason modal (see the header). Set by the abort winner (Fail stashes,
+// Cancel clears), by a pre-flight refusal, or by a close after the join; read and cleared by the
+// render thread; its own mutex, independent of the abort flag (which the harness drains
+// separately).
+std::mutex g_noticeMu;
+Notice     g_notice;  // guarded by g_noticeMu; code != None == a modal is pending
+// A lock-free mirror of "a notice is pending" so the per-frame overlay gate never takes the
+// mutex; only the render's actual read does. Kept in sync inside the mutex's critical sections.
+std::atomic<bool> g_noticePending{false};
 
 // A generous failsafe: a save-transfer join legitimately spends the cover on a multi-megabyte
 // save download (tens of seconds over WAN), the full world load and the true-up bracket. The
@@ -60,26 +67,62 @@ int64_t NowMs() {
 
 Phase PhaseOf() { return static_cast<Phase>(g_phase.load(std::memory_order_relaxed)); }
 
-}  // namespace
-
-void BeginConnect(const std::string& hostLabel) {
-    {
-        std::lock_guard<std::mutex> lk(g_hostMu);
-        g_host = hostLabel;
+const char* StageName(Stage s) {
+    switch (s) {
+    case Stage::FindingHost:     return "FindingHost";
+    case Stage::Dialing:         return "Dialing";
+    case Stage::FindingRoute:    return "FindingRoute";
+    case Stage::ProvingIdentity: return "ProvingIdentity";
+    case Stage::Joining:         return "Joining";
+    case Stage::WaitingForWorld: return "WaitingForWorld";
+    default:                     return "None";
     }
-    g_mode.store(static_cast<int>(Mode::Client), std::memory_order_relaxed);
+}
+
+void ClearNoticeLocked() {
+    g_notice = Notice{};
+    g_noticePending.store(false);
+}
+
+// The one stash: the first notice of an attempt wins when `firstWins` (Fail's rule, since the
+// detector that fails a join re-fires every tick); a refusal or a disconnect replaces whatever
+// was there, since nothing else is racing to explain the same end.
+void Stash(EndReason code, const std::string& detail, bool afterJoin, bool firstWins) {
+    std::lock_guard<std::mutex> lk(g_noticeMu);
+    if (firstWins && g_notice.code != EndReason::None) return;
+    g_notice.code = code;
+    g_notice.detail = detail;
+    g_notice.afterJoin = afterJoin;
+    g_noticePending.store(true);
+}
+
+void ResetCounters() {
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
-    // A fresh attempt clears any prior failure modal so a retry starts clean (the dialog
-    // otherwise lives until the player acknowledges it).
-    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
-    g_startMs.store(NowMs(), std::memory_order_relaxed);
+}
+
+}  // namespace
+
+void BeginConnect(const std::string& hostLabel, Stage first) {
+    {
+        std::lock_guard<std::mutex> lk(g_hostMu);
+        g_host = hostLabel;
+    }
+    g_mode.store(static_cast<int>(Mode::Client), std::memory_order_relaxed);
+    ResetCounters();
+    // A fresh attempt clears any prior notice so a retry starts clean (the dialog otherwise
+    // lives until the player acknowledges it).
+    { std::lock_guard<std::mutex> lk(g_noticeMu); ClearNoticeLocked(); }
+    const int64_t now = NowMs();
+    g_startMs.store(now, std::memory_order_relaxed);
+    g_stageStartMs.store(now, std::memory_order_relaxed);
+    g_stage.store(static_cast<int>(first), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
-    UE_LOGI("join_progress: BeginConnect -- loading screen up (connecting to '%s')",
-            hostLabel.c_str());
+    UE_LOGI("join_progress: BeginConnect -- loading screen up (connecting to '%s', stage %s)",
+            hostLabel.c_str(), StageName(first));
 }
 
 void BeginHostBoot(const std::string& worldLabel) {
@@ -88,17 +131,26 @@ void BeginHostBoot(const std::string& worldLabel) {
         g_host = worldLabel;
     }
     g_mode.store(static_cast<int>(Mode::Host), std::memory_order_relaxed);
-    g_applied.store(0, std::memory_order_relaxed);
-    g_total.store(0, std::memory_order_relaxed);
-    g_dlDone.store(0, std::memory_order_relaxed);
-    g_dlTotal.store(0, std::memory_order_relaxed);
-    g_abortReq.store(false, std::memory_order_relaxed);
-    // Hosting after a failed join: drop any lingering connect-failure modal.
-    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
-    g_startMs.store(NowMs(), std::memory_order_relaxed);
+    ResetCounters();
+    // Hosting after a failed join: drop any lingering notice.
+    { std::lock_guard<std::mutex> lk(g_noticeMu); ClearNoticeLocked(); }
+    const int64_t now = NowMs();
+    g_startMs.store(now, std::memory_order_relaxed);
+    g_stageStartMs.store(now, std::memory_order_relaxed);
+    g_stage.store(static_cast<int>(Stage::None), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Connecting), std::memory_order_release);
     UE_LOGI("join_progress: BeginHostBoot -- host loading cover up (loading world '%s'); menu hidden",
             worldLabel.c_str());
+}
+
+void NoteStage(Stage stage) {
+    if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
+    if (PhaseOf() != Phase::Connecting) return;
+    const int want = static_cast<int>(stage);
+    if (g_stage.load(std::memory_order_relaxed) == want) return;
+    g_stage.store(want, std::memory_order_relaxed);
+    g_stageStartMs.store(NowMs(), std::memory_order_relaxed);
+    UE_LOGI("join_progress: stage %s", StageName(stage));
 }
 
 void BeginSnapshot(uint32_t propTotal) {
@@ -117,6 +169,7 @@ void BeginSnapshot(uint32_t propTotal) {
     g_total.store(propTotal, std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     if (g_startMs.load(std::memory_order_relaxed) == 0) g_startMs.store(NowMs(), std::memory_order_relaxed);
+    g_stageStartMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Receiving), std::memory_order_release);
     UE_LOGI("join_progress: BeginSnapshot -- receiving world (%u objects)", propTotal);
 }
@@ -135,6 +188,7 @@ void NoteDownload(uint32_t doneBytes, uint32_t totalBytes) {
     if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::Downloading),
                                         std::memory_order_acq_rel,
                                         std::memory_order_relaxed)) {
+        g_stageStartMs.store(NowMs(), std::memory_order_relaxed);
         UE_LOGI("join_progress: Downloading -- world blob %u bytes", totalBytes);
     } else if (expected != static_cast<int>(Phase::Downloading)) {
         return;  // the phase moved out from under us -- write nothing
@@ -154,6 +208,7 @@ void BeginWorldLoad() {
         if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::LoadingWorld),
                                             std::memory_order_acq_rel,
                                             std::memory_order_relaxed)) {
+            g_stageStartMs.store(NowMs(), std::memory_order_relaxed);
             UE_LOGI("join_progress: LoadingWorld -- blob in, engine loading it");
             return;
         }
@@ -177,6 +232,7 @@ void Complete() {
     // cover a stale denominator.
     g_dlDone.store(0, std::memory_order_relaxed);
     g_dlTotal.store(0, std::memory_order_relaxed);
+    g_stage.store(static_cast<int>(Stage::None), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Idle), std::memory_order_release);
     UE_LOGI("join_progress: Complete -- loading screen down (applied %u/%u)", applied, total);
 }
@@ -186,11 +242,8 @@ void Reset() {
         static_cast<int>(Phase::Idle)) {
         return;  // already hidden -- no log spam
     }
-    g_applied.store(0, std::memory_order_relaxed);
-    g_total.store(0, std::memory_order_relaxed);
-    g_dlDone.store(0, std::memory_order_relaxed);
-    g_dlTotal.store(0, std::memory_order_relaxed);
-    g_abortReq.store(false, std::memory_order_relaxed);
+    ResetCounters();
+    g_stage.store(static_cast<int>(Stage::None), std::memory_order_relaxed);
     // An abort from a non-idle phase (cancel, connect failure, failsafe) reached here: the normal
     // snapshot-complete path dismisses the curtain from the feed and calls Complete, never Reset
     // from a non-idle phase. Drop the cover so it cannot trap the menu black.
@@ -201,84 +254,97 @@ void Reset() {
 void RequestCancel() {
     if (!Active()) return;
     if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
-    // We won the abort as a player cancel: silent, no failure modal. Clear any reason a losing
+    // We won the abort as a player cancel: silent, no failure modal. Clear any notice a losing
     // Fail set in a race (the winner defines the abort's semantics).
-    { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
+    { std::lock_guard<std::mutex> lk(g_noticeMu); ClearNoticeLocked(); }
     UE_LOGI("join_progress: Cancel requested -- aborting the join");
 }
 
-void Fail(const std::string& reason) {
+void Fail(EndReason code, const std::string& detail) {
     // No-op unless a browser join is in flight (so a host or scripted-boot failure cannot pop a
     // client cover) and idempotent (the connect-fail detector re-fires every tick until the
     // harness drains the abort; log and flag exactly once).
     if (!Active()) return;
     if (g_abortReq.exchange(true, std::memory_order_acq_rel)) return;  // already aborting -- we did NOT win
-    // We won the abort as a failure: stash the reason for the connect-failed dialog, unless the
+    // We won the abort as a failure: stash the notice for the end-reason modal, unless the
     // process is tearing down (no UI to show; a shutting-down reason must not pop a modal). Set
-    // only by the winner, so a racing cancel that won first keeps it silent. And the first reason
+    // only by the winner, so a racing cancel that won first keeps it silent. And the first notice
     // of an attempt wins: the abort flag is drained by the harness the moment it acts on the
     // abort, so a detector that re-fires (the connect-fail edge re-fires every tick by design)
     // wins the exchange a second time and used to overwrite the stashed reason with the generic
     // fallback, because the specific reason had already been moved out of the session by the
     // first take of the host's close reason. Safe within an attempt and across them:
-    // BeginConnect, BeginHostBoot and Cancel each clear the reason, so this keeps the cause of
+    // BeginConnect, BeginHostBoot and Cancel each clear the notice, so this keeps the cause of
     // one failed join and never leaks it into the next.
     bool kept = false;
     if (!coop::shutdown::IsShuttingDown()) {
-        std::lock_guard<std::mutex> lk(g_failMu);
-        if (g_failReason.empty()) {
-            g_failReason = reason;
-            g_failPending.store(true);
+        std::lock_guard<std::mutex> lk(g_noticeMu);
+        if (g_notice.code == EndReason::None) {
+            g_notice.code = code;
+            g_notice.detail = detail;
+            g_notice.afterJoin = false;
+            g_noticePending.store(true);
             kept = true;
         }
     }
-    UE_LOGW("join_progress: join FAILED (%s) -- aborting + reopening the browser%s",
-            reason.c_str(), kept ? "" : " [reason NOT shown -- an earlier one stands]");
+    const coop::net::EndReasonInfo& info = Describe(code);
+    UE_LOGW("join_progress: join FAILED [%s] %s%s%s -- aborting + reopening the browser%s",
+            info.id, info.text, detail.empty() ? "" : " -- ", detail.c_str(),
+            kept ? "" : " [notice NOT shown -- an earlier one stands]");
 }
 
-void RefuseJoin(const std::string& reason) {
+void RefuseJoin(EndReason code, const std::string& detail) {
     // A pre-flight rejection (the version gate): nothing is in flight, no cover was raised and
     // there is no abort to request, so unlike Fail there is no active gate. Just stash the
-    // reason; the connect-failed dialog renders on the pending flag alone, and its OK button or
-    // the next BeginConnect clears it.
+    // notice; the end-reason dialog renders on the pending flag alone, and its OK button or the
+    // next BeginConnect clears it.
     if (coop::shutdown::IsShuttingDown()) return;
-    {
-        std::lock_guard<std::mutex> lk(g_failMu);
-        g_failReason = reason;
-        g_failPending.store(true);
-    }
-    UE_LOGW("join_progress: join REFUSED pre-flight (%s)", reason.c_str());
+    Stash(code, detail, /*afterJoin*/false, /*firstWins*/false);
+    const coop::net::EndReasonInfo& info = Describe(code);
+    UE_LOGW("join_progress: join REFUSED pre-flight [%s] %s%s%s", info.id, info.text,
+            detail.empty() ? "" : " -- ", detail.c_str());
+}
+
+void NoteDisconnect(EndReason code, const std::string& detail, bool afterJoin) {
+    if (coop::shutdown::IsShuttingDown()) return;
+    Stash(code, detail, afterJoin, /*firstWins*/!afterJoin);
+    const coop::net::EndReasonInfo& info = Describe(code);
+    UE_LOGW("join_progress: %s [%s] %s%s%s",
+            afterJoin ? "DISCONNECTED" : "join FAILED (the link ended mid-join)", info.id,
+            info.text, detail.empty() ? "" : " -- ", detail.c_str());
 }
 
 bool TakeAbortRequest() { return g_abortReq.exchange(false, std::memory_order_acq_rel); }
 
-bool PeekFailReason(std::string& out) {
-    std::lock_guard<std::mutex> lk(g_failMu);
-    if (g_failReason.empty()) return false;
-    out = g_failReason;
+bool PeekNotice(Notice& out) {
+    std::lock_guard<std::mutex> lk(g_noticeMu);
+    if (g_notice.code == EndReason::None) return false;
+    out = g_notice;
     return true;
 }
 
-void ClearFailReason() {
-    std::lock_guard<std::mutex> lk(g_failMu);
-    g_failReason.clear();
-    g_failPending.store(false);
+void ClearNotice() {
+    std::lock_guard<std::mutex> lk(g_noticeMu);
+    ClearNoticeLocked();
 }
 
-bool FailPending() { return g_failPending.load(std::memory_order_relaxed); }
+bool NoticePending() { return g_noticePending.load(std::memory_order_relaxed); }
 
 bool Active() { return PhaseOf() != Phase::Idle; }
+
+Phase CurrentPhase() { return PhaseOf(); }
 
 View Snapshot() {
     View v;
     v.phase = PhaseOf();
+    v.stage = static_cast<Stage>(g_stage.load(std::memory_order_relaxed));
     v.mode = static_cast<Mode>(g_mode.load(std::memory_order_relaxed));
     v.applied = g_applied.load(std::memory_order_relaxed);
     v.total = g_total.load(std::memory_order_relaxed);
     v.doneBytes = g_dlDone.load(std::memory_order_relaxed);
     v.totalBytes = g_dlTotal.load(std::memory_order_relaxed);
-    const int64_t start = g_startMs.load(std::memory_order_relaxed);
-    v.elapsedMs = (start == 0) ? 0 : static_cast<uint64_t>(NowMs() - start);
+    const int64_t stageStart = g_stageStartMs.load(std::memory_order_relaxed);
+    v.stageMs = (stageStart == 0) ? 0 : static_cast<uint64_t>(NowMs() - stageStart);
     {
         std::lock_guard<std::mutex> lk(g_hostMu);
         v.host = g_host;
@@ -306,7 +372,7 @@ void MaybeTimeout() {
         // session, so a stuck or zombie net session keeps the pump running the full gameplay tick
         // at the menu, the RAM balloon. Fail sets the abort the harness drains (stop and reopen the
         // browser), which actually ends the pump.
-        Fail("connection timed out (lost SnapshotComplete or a stalled drain?)");
+        Fail(EndReason::JoinTimedOut, "lost SnapshotComplete or a stalled drain");
     }
 }
 

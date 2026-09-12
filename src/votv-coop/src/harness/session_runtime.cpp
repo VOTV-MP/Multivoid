@@ -80,8 +80,8 @@ coop::net::Session g_session;
 
 // The host's accept predicate (Session::SetAcceptFilter): a plain function, so it converts to the
 // function pointer; read on the net thread, touching only ban_list's own mutexed state.
-bool BanAcceptFilter(const char* remoteIp) {
-    return !coop::ban_list::IsBanned(remoteIp);
+bool BanAcceptFilter(const char* remoteIp, char* whyOut, int whyLen) {
+    return !coop::ban_list::IsBanned(remoteIp, whyOut, whyLen);
 }
 
 
@@ -269,8 +269,10 @@ void DriveMenuModeJoinWorldBoot() {
     }
     if (aborted) {
         UE_LOGI("harness: menu-mode join aborted during the save transfer");
-        if (g_session.running() && g_session.role() == coop::net::Role::Client) g_session.Stop();
+        // The cover first: a tick posted before this drain must not find the join active over
+        // a session the stop below has already driven to Disconnected, and fail it.
         coop::join_progress::Reset();
+        if (g_session.running() && g_session.role() == coop::net::Role::Client) g_session.Stop();
         ui::server_browser_surface::Open();
         ue_wrap::log::Flush();
         return;
@@ -380,6 +382,9 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // And the admission decision built on it; its arms are the ones no LAN drill can stage: a proof
     // replayed in the wrong direction, aimed at a third party, or for a stale nonce.
     coop::net::peer_admission::RunSelftest();
+    // And the end-reason table every close names a code from: ids unique and in their family,
+    // and a code surviving the trip through the transport's end reason.
+    coop::net::end_reason::RunSelftest();
     // And the lobby password inside it: if the salt were ignored, every locked lobby would open to
     // one table, and the only visible difference is that joins keep succeeding. The negatives are
     // the test: one password under two host keys must not collide, an empty password must refuse to
@@ -569,8 +574,8 @@ void RunPlayLoop(bool idleInGameplay) {
                 g_session.running() && g_session.role() == coop::net::Role::Client;
             if (isClientSession) {
                 UE_LOGI("harness: join aborted -- stopping the client session + reopening the browser");
-                g_session.Stop();            // -> running->stopped edge -> FleeToMainMenu (-> main menu)
-                coop::join_progress::Reset();
+                coop::join_progress::Reset();  // the cover first, as in the transfer loop's drain
+                g_session.Stop();
                 ui::server_browser_surface::Open();
             } else {
                 // A host running, or nothing: a stale client abort; clear the cover only, never
@@ -612,11 +617,11 @@ void RunPlayLoop(bool idleInGameplay) {
                             // A synchronous Start failure means no connect edge will ever clear the
                             // cover: Fail drops it and reopens the browser.
                             if (!StartCoopSession(pending))
-                                coop::join_progress::Fail("could not start the connection");
+                                coop::join_progress::Fail(coop::net::EndReason::CouldNotStart, "");
                             else
                                 DriveMenuModeJoinWorldBoot();
                         } else if (!StartCoopSession(pending)) {
-                            coop::join_progress::Fail("could not start the connection");
+                            coop::join_progress::Fail(coop::net::EndReason::CouldNotStart, "");
                         }
                     }
                 }

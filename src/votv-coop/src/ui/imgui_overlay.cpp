@@ -18,7 +18,7 @@
 #include "ui/server_browser.h"
 #include "ui/boot_warning_dialog.h"
 #include "ui/config_review_panel.h"
-#include "ui/connect_failed_dialog.h"
+#include "ui/end_reason_dialog.h"
 #include "ui/host_save_picker.h"
 #include "ui/loading_screen.h"
 #include "ui/console.h"
@@ -95,7 +95,7 @@ inline bool LoadingOpen() { return ui::loading_screen::IsOpen(); }
 inline bool ConsoleOpen() { return ui::console::IsOpen(); }
 inline bool ChatOpen()    { return ui::chat_input::IsOpen(); }
 inline bool VoiceOpen()   { return ui::voice_panel::IsOpen(); }
-inline bool ConnectFailedOpen() { return ui::connect_failed_dialog::IsOpen(); }
+inline bool EndReasonOpen() { return ui::end_reason_dialog::IsOpen(); }
 inline bool BootWarningOpen()   { return ui::boot_warning_dialog::IsOpen(); }
 inline bool ConfigReviewOpen()  { return ui::config_review_panel::IsOpen(); }
 // VOTV's native pause menu is up (a render-thread-safe atomic in multiplayer_menu); the passive HUD
@@ -103,12 +103,12 @@ inline bool ConfigReviewOpen()  { return ui::config_review_panel::IsOpen(); }
 inline bool PauseMenuOpen() { return coop::multiplayer_menu::IsPauseMenuOpen(); }
 inline bool AnyOpen()     { return MenuOpen() || ScoreOpen() || BrowserOpen() || PickerOpen() ||
                                    LoadingOpen() || ConsoleOpen() || ChatOpen() || VoiceOpen() ||
-                                   ConnectFailedOpen() || BootWarningOpen() || ConfigReviewOpen(); }
+                                   EndReasonOpen() || BootWarningOpen() || ConfigReviewOpen(); }
 inline bool CaptureActive() {
     // The surfaces that take the cursor and input; the host scoreboard is one, the client
     // scoreboard is a passive peek.
     return MenuOpen() || BrowserOpen() || PickerOpen() || LoadingOpen() || ConsoleOpen() ||
-           ChatOpen() || VoiceOpen() || ConnectFailedOpen() || BootWarningOpen() ||
+           ChatOpen() || VoiceOpen() || EndReasonOpen() || BootWarningOpen() ||
            ConfigReviewOpen() || (ScoreOpen() && ui::scoreboard::LocalIsHost());
 }
 
@@ -328,9 +328,9 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         if (ScoreOpen())   ui::scoreboard::Render();
         if (VoiceOpen())   ui::voice_panel::Render();
         if (BrowserOpen()) ui::server_browser::Render();
-        // The connect-failed modal draws after the browser, which a failed join reopens, so it
-        // layers on top.
-        if (ui::connect_failed_dialog::IsOpen()) ui::connect_failed_dialog::Render();
+        // The end-reason modal draws after the browser, which a failed join reopens, so it layers
+        // on top; after a close following the join it draws over the menu the flee landed on.
+        if (ui::end_reason_dialog::IsOpen()) ui::end_reason_dialog::Render();
         // The config review (the settings check): persistent until dismissed, under the
         // boot-warning modal and over the regular surfaces.
         if (ConfigReviewOpen()) ui::config_review_panel::Render();
@@ -367,9 +367,9 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         g_scoreboard.store(false, std::memory_order_relaxed);
         ui::voice_panel::Close();  // re-fault guard, same as the picker/loading below
         ui::server_browser::Close();
-        // The connect-failed modal's pending reason is its open flag: clear it, or a faulted Render
+        // The end-reason modal's pending notice is its open flag: clear it, or a faulted Render
         // re-enters every frame.
-        coop::join_progress::ClearFailReason();
+        coop::join_progress::ClearNotice();
         // The boot-warning modal's pending text is its open flag, the same guard.
         ui::boot_warning_dialog::Clear();
         // The picker too: left open, a faulted Render re-enters every frame.
@@ -688,7 +688,7 @@ std::string CaptureOwners() {
     if (ConsoleOpen())       add("console");
     if (ChatOpen())          add("chat");
     if (VoiceOpen())         add("voice");
-    if (ConnectFailedOpen()) add("connectFailed");
+    if (EndReasonOpen())     add("endReason");
     if (BootWarningOpen())   add("bootWarning");
     if (ConfigReviewOpen())  add("configReview");
     if (ScoreOpen() && ui::scoreboard::LocalIsHost()) add("scoreboard");

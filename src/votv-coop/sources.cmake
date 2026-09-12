@@ -275,6 +275,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/component_calls.cpp
     src/coop/net/peer_admission.cpp
     src/coop/net/peer_admission_selftest.cpp
+    src/coop/net/end_reason.cpp
     src/coop/net/lobby_password.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
@@ -445,7 +446,7 @@ set(VOTVCOOP_SOURCES
     src/ui/server_browser_selftest.cpp
     src/ui/boot_warning_dialog.cpp
     src/ui/config_review_panel.cpp
-    src/ui/connect_failed_dialog.cpp
+    src/ui/end_reason_dialog.cpp
     src/ui/menu_sfx.cpp
     src/ui/host_save_picker.cpp
     src/ui/loading_screen.cpp
