@@ -25,8 +25,9 @@ namespace coop::garbage_sync {
 // the class resolved once at install, which allocates nothing on a tick path. Local pickup still
 // works for the picker; the other peer just does not see the container's internal state update.
 //
-// The spawner guard cancels event_trashPiles' overlap, arirTrasher's trash and
-// baseCleaner_trashBits' BeginPlay on a client, so the host's rolls are the only ones.
+// The spawner guard cancels event_trashPiles' overlap, arirTrasher's trash and the base
+// cleaner's BeginPlay on a client, so the host's rolls are the only ones -- named at the class
+// that DECLARES it, so every variant cancels and no leaf silently resolves to nothing.
 // tool_garbageSpawner is deliberately let through, being a per-shot player action, per principle 6.
 // The underground spawner is NOT gated: it mints only dirthole_item_C, which is outside the sync
 // universe, so suppressing it deleted the client's per-peer loot mounds with no host replacement --

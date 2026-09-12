@@ -119,10 +119,30 @@ MAKE_SPAWNER_CANCEL(OnEventTrashPilesOverlapPre,
                     "event_trashPiles.BndEvt")
 MAKE_SPAWNER_CANCEL(OnArirTrasherTrashPre,
                     "arirTrasher.trash")
-MAKE_SPAWNER_CANCEL(OnBaseCleanerTrashBitsBeginPlayPre,
-                    "baseCleaner_trashBits.BeginPlay")
-
 #undef MAKE_SPAWNER_CANCEL
+
+// The trash-bits cleaner's class, resolved at install for the filter below.
+void* g_trashBitsCleanerCls = nullptr;
+
+// The cleaner is NOT a spawner and cannot use the macro above. Its begin-play box-overlaps and
+// DESTROYS actors, so cancelling it on a client is only right where the host's destroy reaches
+// the client some other way -- which is true of the trash bits and of nothing else in the family.
+// The verb is declared on baseCleaner_C, so the one UFunction also dispatches for the clump,
+// grime and wall-crack cleaners; wall cracks have no sync lane anywhere in this tree, so a
+// family-wide cancel would leave a client holding cracks the host cleaned, with nothing to
+// reconcile them. Hence the instance filter, the same shape the container guard uses above.
+bool OnBaseCleanerTrashBitsBeginPlayPre(void* self, void* /*params*/) {
+    auto* s = LoadSession();
+    if (!s || !s->running() || s->role() != coop::net::Role::Client) return false;
+    if (!g_trashBitsCleanerCls || R::ClassOf(self) != g_trashBitsCleanerCls) return false;
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 3 || (n % 60) == 0) {
+        UE_LOGI("garbage_sync[baseCleaner_trashBits.BeginPlay PRE]: client-cancel cleaner %p "
+                "(call #%llu)", self, static_cast<unsigned long long>(n));
+    }
+    return true;
+}
 
 // State for the spawner installs, independent of the container latch so one success does
 // not pre-empt the other's retry loop.
@@ -136,14 +156,19 @@ bool InstallSpawnerSuppressors() {
         const wchar_t* fn;
         UFunctionInterceptor cb;
         const char* tag;
+        bool registered;  // per target, so a settled row is not re-resolved and re-logged
     };
     // The bound-event name for the trash-piles event is the full canonical delegate signature
     // from the header dump; long names are routine in blueprint overlap handlers, and the
-    // function lookup matches by name. The trash-bits cleaner has no methods of its own and
-    // inherits its begin-play from the base cleaner class; registering on the leaf picks up a
-    // future override, and otherwise the lookup walks up the superclass chain and returns the
-    // parent's UFunction, the same dispatch object.
-    const Target targets[] = {
+    // function lookup matches by name.
+    //
+    // Each row is asked for the DISPATCH function, not the declaration. The trash-bits cleaner
+    // declares nothing at all and inherits its begin-play from the base cleaner, so FindFunction
+    // -- exact-owner by contract -- returned null for it and the cancel was never installed at
+    // all, leaving a client to run a body that box-overlaps and destroys props the host holds.
+    // The declarer being the base means one UFunction serves all four cleaners, so the callback
+    // filters on the instance; the comment above it says why the family is the wrong scope.
+    static Target targets[] = {
         {L"event_trashPiles_C",
             L"BndEvt__event_funnyGascans_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
             &OnEventTrashPilesOverlapPre,
@@ -156,27 +181,46 @@ bool InstallSpawnerSuppressors() {
             "baseCleaner_trashBits.BeginPlay"},
     };
     int registered = 0;
-    for (const auto& t : targets) {
+    for (auto& t : targets) {
+        // A settled row is skipped entirely. Without this, one class that never loads on a map
+        // keeps the whole block retrying, and every already-registered row pays another object
+        // array walk and prints its install line again, once a second for the session.
+        if (t.registered) { ++registered; continue; }
         void* cls = R::FindClass(t.cls);
         if (!cls) continue;  // BP class not loaded yet; retry next Install()
-        void* fn = R::FindFunction(cls, t.fn);
+        void* declarer = nullptr;
+        void* fn = R::FindDispatchFunction(cls, t.fn, &declarer);
         if (!fn) {
-            UE_LOGW("garbage_sync[spawner]: UFunction '%ls' not found on %ls -- skipping",
+            UE_LOGW("garbage_sync[spawner]: UFunction '%ls' not found on %ls or its supers -- skipping",
                     t.fn, t.cls);
             continue;
+        }
+        // The class its callback filters on, captured from the row that owns it -- not a second
+        // lookup, which would be another walk of the object array.
+        if (t.cb == &OnBaseCleanerTrashBitsBeginPlayPre) g_trashBitsCleanerCls = cls;
+        if (declarer != cls) {
+            // One UFunction for the whole family under `declarer`, so this row's callback must
+            // filter on the instance -- logged, because a silent family-wide seam is how a
+            // sibling class gets cancelled by accident.
+            UE_LOGI("garbage_sync[spawner]: %ls::%ls is declared on %ls -- one object for that "
+                    "family, so the callback filters on the instance",
+                    t.cls, t.fn, R::ToString(R::NameOf(declarer)).c_str());
         }
         if (!GT::RegisterInterceptor(fn, t.cb)) {
             UE_LOGE("garbage_sync[spawner]: RegisterInterceptor failed for %ls::%ls (table full?)",
                     t.cls, t.fn);
             continue;
         }
+        t.registered = true;
         ++registered;
         UE_LOGI("garbage_sync[spawner]: PRE-interceptor installed -- %ls::%ls (%s)",
                 t.cls, t.fn, t.tag);
     }
     // Latch as installed only when all targets resolved and registered: a partial install
-    // leaves some spawners ungated and the per-peer divergence remains. Retry on the next
-    // Install call until everything is loaded.
+    // leaves some spawners ungated and the per-peer divergence remains. Install drives this
+    // half on its own until then: it used to be called only from the tail of the container
+    // install, which had already latched and returned early, so the retry promised here could
+    // never run and a class not loaded at that one instant stayed ungated for the session.
     const int total = static_cast<int>(sizeof(targets) / sizeof(targets[0]));
     if (registered == total) {
         g_spawnersInstalled.store(true, std::memory_order_release);
@@ -194,6 +238,13 @@ void SetSession(coop::net::Session* session) {
 }
 
 void Install() {
+    // The two halves retry independently: each resolves classes the other does not, and a
+    // spawner class can load long after the open container does. Throttled, because a miss
+    // costs an object-array walk per name per attempt and this runs on every pump tick.
+    if (!g_spawnersInstalled.load(std::memory_order_acquire)) {
+        static uint32_t sSpawnerTry = 0;
+        if ((sSpawnerTry++ % 125) == 0) InstallSpawnerSuppressors();
+    }
     if (g_installed.load(std::memory_order_acquire)) return;
     void* cls = R::FindClass(L"prop_openContainer_C");
     if (!cls) {
@@ -229,9 +280,6 @@ void Install() {
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("garbage_sync: installed -- prop_openContainer_C::ReceiveTick + checkPickup PRE-interceptors (client-side, garbageContainer UClass=%p)",
             g_garbageContainerCls);
-    // Try the spawner suppressors in the same call; an independent retry path if any spawner
-    // class has not loaded yet.
-    InstallSpawnerSuppressors();
 }
 
 }  // namespace coop::garbage_sync
