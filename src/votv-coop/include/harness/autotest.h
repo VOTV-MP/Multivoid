@@ -324,4 +324,11 @@ DWORD WINAPI PiramidForceTestThread(LPVOID arg);
 void RunNavHaltProbe();
 DWORD WINAPI NavHaltProbeThread(LPVOID arg);
 
+// The after-join end-reason drill (harness/autotest/autotest_kickprobe.cpp), host: waits for a
+// client to hold slot 1 and announce its world, holds ten seconds, then kicks it with the
+// moderation code; the client's log must carry the DISCONNECTED notice with that id. Env
+// VOTVCOOP_RUN_KICK_PROBE=1.
+void RunKickProbe();
+DWORD WINAPI KickProbeThread(LPVOID arg);
+
 }  // namespace harness::autotest

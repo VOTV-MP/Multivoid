@@ -187,6 +187,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The container race: two peers walk to the same container and take the same item at a
     // barrier; each counts locally afterwards, and the driver sums across peers.
     SpawnIf("VOTVCOOP_RUN_CTAKE_RACE", "container concurrent-take race (director Phase-2)", &coop::director::ContainerRaceThread, role);
+
+    // The after-join end-reason drill: the host kicks slot 1 once it is seated and in the world;
+    // the client's log must carry the DISCONNECTED notice with the moderation code.
+    SpawnIf("VOTVCOOP_RUN_KICK_PROBE", "kick probe (the after-join end-reason notice)", &KickProbeThread, role);
 }
 
 }  // namespace harness::autotest
