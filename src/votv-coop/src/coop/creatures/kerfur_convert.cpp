@@ -25,8 +25,8 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "coop/config/config.h"  // the vm_dispatch_log flag
-#include "ue_wrap/core/vm_dispatch.h"  // CurrentThreadVerb, the destroy provenance
+#include "coop/config/config.h"  // the script_gate_log flag
+#include "ue_wrap/core/script_gate.h"  // CurrentThreadCall, the destroy provenance
 
 #include <atomic>
 #include <chrono>
@@ -455,33 +455,29 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         // No captured successor: a genuine kerfur-prop destroy, relayed generically. A miss while a
         // verb bracket is live would mean the spawn-before-destroy invariant broke, so that case is
         // logged loud with its provenance, which tells the verb's own self-destroy (the active verb
-        // with self as context, or the request eid on the CallFunction route) from an unrelated
-        // teardown. The flag is latched: this sits on the destroy edge, and a per-call read
-        // re-opened the ini.
+        // with self as context; the host's request route runs the verb through our own reflected
+        // call, which the gate brackets the same way) from an unrelated teardown. The flag is
+        // latched: this sits on the destroy edge, and a per-call read re-opened the ini.
         // The provenance is computed unconditionally, because it decides and does not merely
         // narrate: a capture miss with a bracket still open is a conversion whose successor we
         // failed to pair, and the converge that follows will rebind the record to the new form.
-        const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
-        const coop::element::ElementId reqEid = coop::kerfur_convert_host::ActiveRequestVerbEid();
+        const ue_wrap::script_gate::Active av = ue_wrap::script_gate::CurrentThreadCall();
         // The active flag alone would claim in-bracket for any module's verb; the verb name is
         // what is gated on.
-        const bool inOurVerb = av.active && av.verbName &&
-                               (std::wcscmp(av.verbName, L"dropKerfurProp") == 0 ||
-                                std::wcscmp(av.verbName, L"spawnKerfuro") == 0);
-        const bool inConversion = inOurVerb || reqEid != coop::element::kInvalidId;
-        static const bool s_vmLog = coop::config::ResolveFlag(::coop::config_registry::rows::vm_dispatch_log);
-        if (s_vmLog && inConversion)
-            UE_LOGW("kerfur_convert: 2a-capture MISS in-bracket (%s) actor=%p -- no captured B at the destroy "
-                    "edge (ORDER ASSERT: spawn<destroy expected) -- treating as genuine destroy (generic "
-                    "relay). provenance{inOurVerb=%d verb=%ls ctxSelf=%d reqEid=%d}",
-                    isHost ? "HOST" : "CLIENT", actor, inOurVerb ? 1 : 0,
-                    av.verbName ? av.verbName : L"<none>",
-                    (inOurVerb && av.ctx == actor) ? 1 : 0,
-                    reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
+        const bool inOurVerb = av.active && av.name &&
+                               (std::wcscmp(av.name, L"dropKerfurProp") == 0 ||
+                                std::wcscmp(av.name, L"spawnKerfuro") == 0);
+        static const bool s_vmLog = coop::config::ResolveFlag(::coop::config_registry::rows::script_gate_log);
+        if (s_vmLog && inOurVerb)
+            UE_LOGW("kerfur_convert: capture MISS in-bracket (%s) actor=%p -- no captured B at the destroy "
+                    "edge (spawn before destroy expected) -- treating as genuine destroy (generic "
+                    "relay). provenance{verb=%ls ctxSelf=%d}",
+                    isHost ? "HOST" : "CLIENT", actor, av.name ? av.name : L"<none>",
+                    (av.object == actor) ? 1 : 0);
         // Outside any bracket this prop form is simply gone, so the kerfur's record goes with it:
         // otherwise its id is never freed and its currentEid keeps answering "kerfur" after the
         // registry recycles it. A no-op unless this eid is a tracked kerfur's current form.
-        if (!inConversion) KE::ReleaseKerfurForEid(dyingEid);
+        if (!inOurVerb) KE::ReleaseKerfurForEid(dyingEid);
         return false;  // no captured conversion successor -> genuine destroy -> generic relay
     }
 

@@ -257,6 +257,24 @@ inline constexpr size_t UFunction_Func = 0xD8;
 // whose params are stepped from the stream, not Locals.
 inline constexpr size_t FFrame_Object = 0x18;             // UObject* (the executing/source object)
 inline constexpr size_t FFrame_Code   = 0x20;             // uint8* (instruction ptr; null on the ProcessInternal path)
+// The rest of the frame a script body runs in, from the frame ProcessScriptFunction (0x1453550)
+// builds for a callee: Node@0x10, Locals@0x28 (the parameter frame, or the persistent ubergraph
+// frame), the flow stack at 0x40-0x6F, PreviousFrame@0x70 (the caller's frame; ProcessEvent
+// passes none), OutParms@0x78 (a chain of {Property, PropAddr, Next} records, the return
+// property first when the function has one). ue_wrap/core/script_gate reads them.
+inline constexpr size_t FFrame_Node          = 0x10;      // UFunction*
+inline constexpr size_t FFrame_Locals        = 0x28;      // uint8*
+inline constexpr size_t FFrame_PreviousFrame = 0x70;      // FFrame*
+inline constexpr size_t FFrame_OutParms      = 0x78;      // FOutParmRec*
+inline constexpr size_t FOutParmRec_Property = 0x00;      // FProperty*
+inline constexpr size_t FOutParmRec_PropAddr = 0x08;      // uint8*
+inline constexpr size_t FOutParmRec_Next     = 0x10;      // FOutParmRec*
+// UFunction::FunctionFlags, read by the two exec handlers (0x1414751A0, 0x141474FB0): the native
+// bit routes a call to Func. UStruct::Script's count, read by ProcessScriptFunction (0x1453550)
+// before it runs the body; the gate reads it only to warn about a watch on an empty function.
+inline constexpr size_t   UFunction_FunctionFlags = 0xB0;   // uint32 EFunctionFlags
+inline constexpr uint32_t FUNC_Native             = 0x400;
+inline constexpr size_t   UStruct_ScriptNum       = 0x68;   // int32, TArray<uint8> Script's count
 
 // The UWorld spawn-refusal window (ue_wrap/spawn_gate). UWorld::SpawnActor (0x142C12D20) returns
 // null silently on `[world+10Ch] & 2` (bIsRunningConstructionScript; the K2 deferred spawn

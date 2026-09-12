@@ -32,7 +32,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/pe_diag.cpp
     src/ue_wrap/engine/spawn_gate.cpp
     src/ue_wrap/core/ufunction_hook.cpp
-    src/ue_wrap/core/vm_dispatch.cpp
+    src/ue_wrap/core/script_gate.cpp
     src/ue_wrap/engine/engine.cpp
     src/ue_wrap/engine/engine_save.cpp
     src/ue_wrap/actors/begin_equipment.cpp
@@ -379,7 +379,6 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/inventory_probe.cpp
     src/coop/dev/live_store_readout.cpp
     src/coop/dev/drone_probe.cpp
-    src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp
     src/coop/dev/atv_eject_drill.cpp

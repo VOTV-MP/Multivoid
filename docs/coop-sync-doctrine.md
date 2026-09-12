@@ -58,22 +58,25 @@ Read the dispatch map first, then pick the cheapest seam that actually fires:
 
 1. The `ProcessEvent` interceptor, which can cancel: engine-originated calls, ticks, BeginPlay,
    input, delegates, timers, interface events. It fires only on that dispatch.
-2. The native function seam (`ue_wrap/core/ufunction_hook`, after the call): calls into native
+2. The script-body gate (`ue_wrap/core/script_gate`, before and after the body): every Blueprint
+   function body on every route, the engine event and the Blueprint-internal call alike, with
+   the instance, the parameters and the calling frame in hand; the pre callback can refuse the
+   body per call. It is the seam for a Blueprint-internal verb a client must not author; it
+   sees nothing of a native function.
+3. The native function seam (`ue_wrap/core/ufunction_hook`, after the call): calls into native
    functions on every route, because every route funnels through the function's thunk. It
    cannot cancel; when a native must be cancelled, detour the C++ function itself.
-3. The bytecode seam (`ue_wrap/core/vm_dispatch`, observe only, at the call site): every
-   Blueprint-internal virtual dispatch, including calls from inside a graph; it carries no
-   arguments and cannot cancel, so a consumer pairs it with the native seam or a per-site
-   reconcile for values.
 4. Per-site reconcile, the last resort: let the verb run, snapshot and diff the observable state,
-   and converge to the authority's answer. Also the fallback when a seam exists but the verb lives
-   in the graph.
+   and converge to the authority's answer. Still the right shape in two cases: an outcome the
+   acting peer's own Blueprint has already produced and must keep (a roll made locally, a state
+   the player already sees), and a verb whose body carries side effects the mirror needs, where
+   refusing it would take those too (the ATV's hit delegates).
 
-A tier that could observe and cancel a script function on every route does not exist; until one
-does, a Blueprint-internal verb is cancelled by per-site reconcile downstream, never by a receive
-gate. Choose by census, not by habit: read the verb's dispatch opcode at every call site and write
-the chosen seam and the reason into the design. If a hook "should fire", prove that it fires with
-a probe before building on it.
+A Blueprint-internal verb is refused at the gate, per call and only on the peer that must not
+author it; the authoritative peer's copy runs. A refusal held for a whole session to hide a state
+that is not mirrored is a crutch, not a use of the tier. Choose by census, not by habit: read the verb's dispatch opcode at every call site and
+write the chosen seam and the reason into the design. If a hook "should fire", prove that it
+fires with a probe before building on it.
 
 ## Step 4: park the receiver's brain
 

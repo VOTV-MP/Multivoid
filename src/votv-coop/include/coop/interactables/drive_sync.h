@@ -1,6 +1,6 @@
 // coop/interactables/drive_sync.h -- the drive-chain lanes: DriveSlotState, the per-slot FSM state
 // lines, and DrivePayload, the prop_drive row contents. RackState lives in drive_rack_sync; this
-// module keeps ALL the 0x45 verb registration and forwards rack marks to it.
+// module keeps ALL the verb watches and forwards rack marks to it.
 //
 // The design's slotted latch is SATISFIED BY the existing frozen/static pose gate in
 // remote_prop.cpp: a slotted drive is frozen by putDriveIn on every peer, so straggler poses are
@@ -32,7 +32,7 @@ void Tick();
 // is canonical on conflict and on the connect seed.
 //
 // DrivePayload carries prop_drive.data_0 rows: {u32 eid} plus the signal_wire codec without the
-// image, in BlobChunkPayload chunks. 0x45 dirty-marks and a 1 Hz diff-gated baseline poll drive it,
+// image, in BlobChunkPayload chunks. Verb dirty-marks and a 1 Hz diff-gated baseline poll drive it,
 // and birth authors broadcast at adoption.
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
 void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);

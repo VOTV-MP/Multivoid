@@ -352,18 +352,14 @@ CFG_INT(perf_probe_bypass, "perf_probe_bypass", "dev", 0, 0, 3600, nullptr,
     "Performance probe: after N samples, arm the transparent ProcessEvent bypass for 5 s (separates our dispatch-path cost from everything else about our presence).")
 CFG_INT(perf_probe_statunit, "perf_probe_statunit", "dev", 0, 0, 3600, nullptr,
     "Performance probe: after N samples, issue `stat unit` + r.VSync 0 + t.MaxFPS 0. OFF by default because enabling any UE4 stat turns on FThreadStats collection engine-wide -- an instrument that changes the frame it measures. The delay exists so the samples before it are the uninstrumented baseline and the step across this line IS the instrument's own cost.")
-CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr,
-    "Diagnostic probe: GNatives verb dispatch measurement.")
-CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr,
-    "Variant of gnatives_probe with interception disabled (control run).")
 CFG_FLAG(lightswitch_probe, "lightswitch_probe", "dev", false, "VOTVCOOP_LIGHTSWITCH_PROBE",
     "Diagnostic probe: light switch interactions + the light-group apply selftest. MUTATES the world (one-shot synthetic use()) -- never enable it on two peers at once. The env var exists so `mp.py lightgroup` can arm it: an ini-only dev row is unreachable to every launcher, which is how this selftest went unrun after a refactor.")
 CFG_FLAG(lightgroup_census, "lightgroup_census", "dev", false, nullptr,
     "Diagnostic census: per-key light GROUP state (isActive / active gate / buffIsActive) + switch A. Read-only; enable on BOTH peers and diff by key.")
 CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr,
     "Diagnostic probe: sleep/wake cycle.")
-CFG_FLAG(vm_dispatch_log, "vm_dispatch_log", "dev", false, nullptr,
-    "Diagnostic logging for the BP-VM verb dispatch layer.")
+CFG_FLAG(script_gate_log, "script_gate_log", "dev", false, nullptr,
+    "Diagnostic logging for the script-body gate's consumers (the kerfur form assembler's per-verb lines).")
 CFG_FLAG(door_probe, "door_probe", "dev", false, nullptr,
     "Diagnostic probe: door state and suppression.")
 CFG_FLAG(rng_roll_census, "rng_roll_census", "dev", false, nullptr,

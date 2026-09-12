@@ -4,7 +4,7 @@
 // true, OR whose offset will not resolve, is SKIPPED (personal inventory shares the same global
 // GObjStack array, and a write over another peer's slice wipes that player's inventory); and a
 // nested container ships with ints[] CLEARED, since its index names a slot in the SENDER's array.
-// The edge is ue_wrap/core/vm_dispatch on addObject and takeObj, marking the component dirty. Apply
+// The edge is ue_wrap/core/script_gate on addObject and takeObj, marking the component dirty. Apply
 // raw-writes the receiver's own GObjStack slot, then re-derives the setter-managed state through
 // updateVolumesAndMass and recalculateNames; addObject cannot be the apply verb (it takes a live
 // AActor* and serialises it itself) and checkObjectsVolume is not called (an overflow ejector, it

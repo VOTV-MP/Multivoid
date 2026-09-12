@@ -55,15 +55,6 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
 // first refusal (TryAdoptFreshKerfurProp). Game thread.
 void ExpressConversionFloppies(float x, float y, float z);
 
-// The host-range eid of the conversion request the host is CURRENTLY executing through
-// R::CallFunction inside OnConvertRequest, or kInvalidId when it is inside none. The
-// host-executes-client-request path runs the verb through CallFunction, which is ASSEMBLER-BLIND:
-// the 0x45 substrate only catches the local EX_Local menu toggle, never a CallFunction dispatch.
-// kerfur_form_assembler consults this to recognize the CallFunction bracket as a SECOND capture
-// scope, without which a CallFunction-routed form lands in formOut indistinguishable from a
-// world-load spawn. A game-thread-only marker, so no lock is needed.
-coop::element::ElementId ActiveRequestVerbEid();
-
 // One-way owner API for the residual destroy seam: record the seam's inline converge for
 // OnConvertRequest ONLY when the seam fired inside ITS verb bracket. A host-own toggle has no
 // consumer, and an unconditional write would leave a stale eid that a later recycled-eid request

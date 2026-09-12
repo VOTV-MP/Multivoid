@@ -43,7 +43,7 @@ binary loads on every version that honours the `start_mod()` contract.
 | Capability | What the mod uses |
 |---|---|
 | Reflection: `GUObjectArray`, `GNames`, `ProcessEvent` | resolved by the mod's own signature scan (`ue_wrap/core/sig_scan`, `ue_wrap/core/reflection`); the algorithms are ported from UE4SS with attribution |
-| Function hooking | a MinHook detour on `ProcessEvent` (`ue_wrap/core/pe_detour`, `ue_wrap/core/hook`) with a relay that composes with UE4SS's own detour; per-function native hooks (`ue_wrap/core/ufunction_hook`); a bytecode-level seam (`ue_wrap/core/vm_dispatch`) |
+| Function hooking | a MinHook detour on `ProcessEvent` (`ue_wrap/core/pe_detour`, `ue_wrap/core/hook`) with a relay that composes with UE4SS's own detour; a second detour on the VM's script loop, the one function every Blueprint body runs through (`ue_wrap/core/script_gate`); per-function native hooks (`ue_wrap/core/ufunction_hook`) |
 | Game-thread context | a posted-task pump (`ue_wrap/core/game_thread`); engine calls happen only there |
 | UI | the mod's own vendored Dear ImGui for the overlay; native UMG widgets built through reflection for the menus |
 | The SDK | a header dump of the game's classes per game version; the offsets the mod relies on live in `ue_wrap/core/sdk_profile` |
@@ -191,8 +191,8 @@ a call is a property of how the Blueprint VM dispatches it, not of the function:
 | Seam | Sees | Can cancel |
 |---|---|---|
 | the `ProcessEvent` interceptor | engine-originated calls: ticks, BeginPlay, input events, delegates, timers, interface events | yes |
+| the script-body gate (`ue_wrap/core/script_gate`) | every Blueprint function body, on every route (an engine event, a Blueprint's own local call, a call through a context switch, an ubergraph entry; a virtual or final call to a script function ends in the same loop), with its arguments and the frame that called it | yes, per call |
 | the native function seam (`ue_wrap/core/ufunction_hook`) | calls into native functions on every route, including from inside a Blueprint's own graph | no |
-| the bytecode seam (`ue_wrap/core/vm_dispatch`) | the Blueprint-internal virtual calls neither of the above sees; the call site only, no arguments | no |
 | per-site reconcile | anything else: let the verb run, diff the observable state, converge to the authority's answer | after the fact |
 
 [coop-dispatch-visibility.md](coop-dispatch-visibility.md) is the per-function table and the

@@ -3,7 +3,7 @@
 //
 // An idle two-peer run cannot exercise this lane: nobody opens a container, and a save load
 // fills `saveSlot.GObjStack` wholesale rather than through the watched verbs, so the lane's
-// central claim -- that the 0x45 `addObject`/`takeObj` callback ENTERS on each peer -- stays
+// central claim -- that the `addObject`/`takeObj` watch ENTERS on each peer -- stays
 // invisible to it.
 //
 // It dispatches `prop_container_C::extract(0)` and nothing else. extract's first act is

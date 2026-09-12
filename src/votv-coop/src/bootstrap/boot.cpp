@@ -16,6 +16,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/paths.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <windows.h>
 
@@ -224,6 +225,11 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
             UE_LOGI("==== GAME-THREAD CONTEXT: LIVE ====");
         });
         UE_LOGI("boot: game-thread dispatcher installed; self-test task posted");
+        // The script-body gate beside it: the second detour, on the VM's own body loop, so a
+        // Blueprint-internal call can be watched and refused per call.
+        if (!ue_wrap::script_gate::Install())
+            UE_LOGE("boot: the script-body gate did not install; Blueprint-internal calls are invisible "
+                    "and every watch will be refused");
 
         // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
         // skip the menus into gameplay, screenshot, report -- standalone.

@@ -15,7 +15,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/meadow_store.h"
 #include "ue_wrap/desk/signal_dynamic.h"
 
@@ -31,7 +31,7 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace MS = ue_wrap::meadow_store;
 namespace SD = ue_wrap::signal_dynamic;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -226,12 +226,14 @@ void LogDigest(const char* why) {
 // The virtual-verb mark, capture only; the context is class-checked, since boot-window
 // dispatches of the same name from other classes must not degenerate the pre-gate.
 
-void OnVerbEntry(const vm::Bracket& b) {
+sg::Verdict OnVerbEntry(const sg::Call& b) {
+    if (b.fromOurCode) return sg::Verdict::Run;   // our own apply calls these verbs by reflection
     void* cls = MS::LaptopWidgetClass();
-    if (!cls || !b.ctx) return;
-    if (R::ClassOf(b.ctx) != cls) return;
+    if (!cls || !b.object) return sg::Verdict::Run;
+    if (R::ClassOf(b.object) != cls) return sg::Verdict::Run;
     g_dirty.store(true, std::memory_order_relaxed);
     g_cMarks.fetch_add(1, std::memory_order_relaxed);
+    return sg::Verdict::Run;
 }
 
 // Called only after the store resolved: an unthrottled class lookup retry here was a per-frame
@@ -240,12 +242,12 @@ void EnsureVerbsRegistered() {
     if (g_verbsRegistered) return;
     if (!MS::LaptopWidgetClass()) return;
     const bool ok =
-        vm::RegisterVirtualVerb(L"addSignal",    kVerbMark, &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"removeSignal", kVerbMark, &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"sortSignal",   kVerbMark, &OnVerbEntry);
+        sg::WatchName(L"addSignal",    kVerbMark, &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"removeSignal", kVerbMark, &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"sortSignal",   kVerbMark, &OnVerbEntry, nullptr);
     if (ok) {
         g_verbsRegistered = true;
-        UE_LOGI("meadow_db: 3 verb matchers registered (0x45 poll accelerators)");
+        UE_LOGI("meadow_db: 3 verb watches live (poll accelerators at the script-body gate)");
     }
 }
 
@@ -569,7 +571,7 @@ void Tick() {
     if (!s || !s->running()) return;
     if (!MS::EnsureResolved()) return;  // 2 s throttled; gates the registration too
     EnsureVerbsRegistered();
-    vm::TickResolvePending();
+    sg::ResolvePendingNames();
 
     const auto now = Clock::now();
     if (now < g_nextPoll) return;

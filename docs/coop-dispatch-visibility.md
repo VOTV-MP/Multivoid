@@ -8,11 +8,17 @@ record, `[?]` needs a probe.
 
 ## The one rule
 
-The mod's detour sits on `UObject::ProcessEvent` and nowhere else (`ue_wrap/core/pe_detour`). A
-call is visible if and only if the engine dispatches it through `ProcessEvent`. A call the
-Blueprint VM routes through `CallFunction` and `ProcessInternal` bypasses the hook: `ProcessEvent`
-itself calls `ProcessInternal` one layer below, so anything that enters there is beneath the
-detour. `[RD]`
+The mod's `ProcessEvent` detour (`ue_wrap/core/pe_detour`) sees a call if and only if the engine
+dispatches it through `ProcessEvent`. A call the Blueprint VM routes through `CallFunction` and
+`ProcessInternal` bypasses that hook: `ProcessEvent` itself calls `ProcessInternal` one layer
+below, so anything that enters there is beneath the detour. `[RD]` The second detour sits one
+layer lower still, on the VM's script loop, the function every one of those routes ends in
+(`ue_wrap/core/script_gate`): it sees every Blueprint function body with the frame built, and
+can refuse to run it, measured on four routes: an engine dispatch through `ProcessEvent`, a
+Blueprint's local virtual call on itself, the same call through a context switch, and an
+ubergraph entry through a local final call `[V]`; a virtual or final call to a script function
+through `CallFunction` ends in the same loop by construction `[RD]`. The table below keeps the
+`ProcessEvent` reading of "visible", since it is the one the lanes were built on.
 
 Visibility is a property of the dispatch path, not of the function. The same function
 (`K2_DestroyActor`) is visible when the engine dispatches it and invisible when Blueprint code calls
@@ -49,7 +55,7 @@ the post observers (`ue_wrap/core/game_thread.h` declares them). `[V]`
 | the detour itself | the anchor of the three above | a transparent bypass darkens the whole layer | |
 | a native detour (`ue_wrap/core/hook`) | on a raw native address | non-function natives: the save write, the swap chain's present, the level open | anything a function observer would want |
 | the native function seam (`ue_wrap/core/ufunction_hook`) | after a call whose target is native, on every route | `EX_CallMath` and final calls into natives, and dispatched events; the caller's object and the result | a script function called locally |
-| the bytecode seam (`ue_wrap/core/vm_dispatch`) | at a virtual call site in the VM, observe only | every `EX_LocalVirtualFunction` dispatch, calls from inside a graph included | the arguments; it cannot cancel |
+| the script-body gate (`ue_wrap/core/script_gate`) | at the entry of a Blueprint function's body, on every route; a pre callback answers run or cancel, a post callback reads the result | the instance, the evaluated parameters, the caller's frame; a `ProcessEvent` call, an `EX_Local*` call, a call through `EX_Context` and an ubergraph entry alike | a native function; a watched body on a worker thread is counted and passed through |
 | polling | a throttled tick | the observable result of anything | the moment of the verb |
 
 **The thread rule.** An observer or interceptor can fire on a parallel animation worker. A
@@ -75,12 +81,12 @@ post it. `[V]`
 | the weather-event rolls (red sky, black fog, rolling fog) | `EX_LocalVirtualFunction` | no | a field poll on the host; a birth catch at the finish-spawning seam on clients `[V]` |
 | the impact damage entries | native impact system into a Blueprint event | yes, and interceptable | cancelled on any body that is not the local player `[V]` |
 | the lethal chain (damage, kill, ragdoll, fallen) | `EX_LocalVirtualFunction` | no | the death lane cuts at the native level open below it `[V]` |
-| the level travel (`loadLevel`, `transition`) | `EX_LocalVirtualFunction` | no, to both the detour and the native seam | the bytecode seam sees it `[V]` |
+| the level travel (`loadLevel`, `transition`) | `EX_LocalVirtualFunction` | no, to both the detour and the native seam | the script-body gate can see it; nothing watches it today `[RD]` |
 | `UGameplayStatics::OpenLevel` | a final call into a native | not to the detour; yes to a plain function detour | the death lane's veto `[V]` |
 | an engine-initiated destroy of a tracked actor | engine | yes | the creature and world-actor pre observers `[V]` |
 | any Blueprint destroy (a pickup, a morph) | `EX_CallMath` or a final call into the native | not to the detour; yes to the native seam | the prop destroy seam `[V]` |
 | a finish-spawning from a graph (a container extract, a drop, a place) | `EX_CallMath` | not to the detour; yes to the native seam | the host spawn watcher with a one-tick drain `[V]` |
-| a script function called locally (a container take) | inline in the VM | no, to both | the bytecode seam at the call site; the effect polled or reconciled `[V]` |
+| a script function called locally (a container take) | inline in the VM | no, to both | the script-body gate at the body's entry; the effect polled or reconciled `[RD]` |
 | a disc-holding device's SLOT ENTRY -- the hitbox delegate that takes a disc nobody pressed anything for (one on the signal server, two on the laptop) | delegate broadcast | yes, and interceptable | a disc is marked in transit at its own spawn and the entry is cancelled for one; the mark has to be set at the DEFERRED spawn, since a collider reports its overlaps as it registers, inside the finish `[V]` |
 | a disc-holding device's insert and eject | `EX_LocalVirtualFunction` | no | the slot is mirrored as state, and the device's LOOK is driven by us: the laptop's widget has a notify-free refresh, the signal server has none at all -- its mesh swap is inline in the two verbs, so a receiver sets the mesh itself from `lib_C::floppyFromType` `[V]` |
 | every credit and debit of points | `EX_LocalVirtualFunction` at all nineteen sites | no, to both | the economy is host-authored: the balance is polled, intents name artifacts `[V]` |
@@ -95,7 +101,7 @@ post it. `[V]`
 | a cosmetic emitter spawn | `EX_CallMath` | no | poll the result; the cue lane diffs the particle components `[V]` |
 | the save write | native C++ | not to the detour | the native detour that blocks a client's world save `[V]` |
 | the pause (menu and console paths) | `EX_CallMath`, and the console bypasses the statics entirely | no, on two paths | enforce the state every tick `[V]` |
-| the kerfur's conversion verbs | `EX_LocalVirtualFunction` self-calls, with `EX_CallMath` spawns inside | the verb no; its inner spawns yes, to the native seam | the bytecode seam brackets the verb, the native seam captures the successor `[V]` |
+| the kerfur's conversion verbs | `EX_LocalVirtualFunction` self-calls, with `EX_CallMath` spawns inside | the verb no; its inner spawns yes, to the native seam | the script-body gate brackets the verb, the native seam captures the successor `[RD]` |
 | the scheduler's event fire | a cross-object virtual call | no, to both | poll the save's passed-events list `[V]` |
 | every screen and panel verb | `EX_LocalVirtualFunction` | no | poll the state field `[V]` |
 | the desk keyboard's key router | widget input | yes, on the occupant's machine only | the desk input lane `[V]` |
@@ -103,10 +109,10 @@ post it. `[V]`
 | the laptop's interaction verbs | `EX_LocalVirtualFunction` | no | poll the power flag; the host authors the content `[V]` |
 | the base alarm's trigger | a virtual call after a key lookup | no | poll the active flag on both peers `[V]` |
 | the timer, delay and tick-interval drivers | `EX_CallMath` | not to the interceptor | park the instance's tick, or cancel the spawner's entry function `[V]` |
-| the container contents verbs | `EX_LocalVirtualFunction` | no | the host authors the contents as state; the bytecode seam marks dirty `[V]` |
+| the container contents verbs | `EX_LocalVirtualFunction` | no | the host authors the contents as state; the script-body gate marks dirty `[RD]` |
 | the desk's audio components' play and activate | virtual calls on native targets | yes, to the native seam | the effect forward `[V]` |
 | deck playback | stubs into the graph; the sound component's activate and deactivate | yes, to the native seam | the play and stop edges `[V]` |
-| the drive-chain, database and module verbs | `EX_LocalVirtualFunction` | no | the bytecode seam brackets, then a poll `[V]` |
+| the drive-chain, database and module verbs | `EX_LocalVirtualFunction` | no | the script-body gate brackets, then a poll `[RD]` |
 
 ## How to pick a seam
 
@@ -124,9 +130,10 @@ post it. `[V]`
    - an `EX_CallMath` call whose source and product you need deterministically: the native
      function seam on the callee, which reads the calling object and the result; a `ProcessEvent`
      observer can never fire on it;
-   - a script function called locally from Blueprint: neither the detour nor the native seam fires;
-     hook a visible caller upstream, a native callee downstream with a source filter, or observe
-     the function's effect (the join's pose gate observes the loader's end by quiescence);
+   - a script function called locally from Blueprint: neither the detour nor the native seam
+     fires; the script-body gate does, with the arguments, and can refuse the body on the peer
+     that must not author it; where only the effect matters, observe it (the join's pose gate
+     observes the loader's end by quiescence);
    - an input that triggers a Blueprint-internal action: hook the input function's pre observer
      and read what the Blueprint is about to act on.
 3. A native C++ function that is not a reflected function? A function observer can never fire.
@@ -157,11 +164,11 @@ a node inside a state-machine state contributes nothing when the machine has lef
 
 ## The ambient verb window
 
-The bytecode seam publishes the innermost matched verb for the calling thread, so a consumer's own
-native-seam hooks firing inside a verb body can attribute a spawn or destroy to it. It is a
+The script-body gate publishes the innermost watched body for the calling thread, so a consumer's
+own native-seam hooks firing inside a verb body can attribute a spawn or destroy to it. It is a
 project-wide namespace, and two readings of it are wrong: the "active" flag alone means any
-registered verb on this thread, and the verb id is a caller-chosen tag unique only within its own
-consumer. The verb name is the identity. A consumer reading the bracket handed to its own callback
+watched body on this thread, and the tag is a caller-chosen number unique only within its own
+consumer. The verb name is the identity. A consumer reading the call handed to its own callback
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 

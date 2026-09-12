@@ -7,9 +7,8 @@
 //
 // Owner-API contract, a strictly ONE-WAY dependency (drive_sync includes this; this never
 // includes drive_sync.h):
-//   - drive_sync keeps ALL 0x45 verb registration, because vm_dispatch is one callback per
-//     verb name and putDriveIn is a shared slot-and-rack context; its bracket forwards rack
-//     marks through MarkDirtyFromVerb().
+//   - drive_sync keeps ALL the verb watches, because putDriveIn is a shared slot-and-rack
+//     context; its callback forwards rack marks through MarkDirtyFromVerb().
 //   - drive_sync's payload apply asks TryConsumeDenyReap() for the reap VERDICT, while the
 //     reap ACTION -- destroy and skip-apply -- stays payload-side.
 // Game thread throughout.
@@ -39,7 +38,7 @@ void OnRackStateChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 // slot-lines -> payloads -> racks byte order on the one pinned lane).
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// The VM-bracket forward from drive_sync's OnVerbEntry (putDriveIn rack-ctx
+// The verb-watch forward from drive_sync's OnVerbEntry (putDriveIn rack-ctx
 // + getDrive). Relaxed atomic store only -- capture-safe mid-verb.
 void MarkDirtyFromVerb();
 

@@ -10,6 +10,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <windows.h>
 #include <psapi.h>  // PROCESS_MEMORY_COUNTERS_EX + K32GetProcessMemoryInfo (kernel32 export; no psapi.lib link)
@@ -113,6 +114,7 @@ void Init() {
     g_dispatch = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_dispatch);
     g_selfTime = g_selfTime && g_dispatch;
     GT::SetPerfCounting(g_dispatch, g_selfTime);
+    ue_wrap::script_gate::SetPerfCounting(g_dispatch);  // the script-loop call count, the gate's own tax base
     R::SetCoopCallCensus(g_dispatch);   // attribute the blueprint calls our polls author
     UE_LOGW("[perf] probe ARMED (perf_probe=1, dispatch=%d, selftime=%d, statunit=%d) -- 1 Hz "
             "frame-cost report follows. At dispatch=0/statunit=0 this is a frame counter plus "
@@ -310,6 +312,19 @@ void Sample() {
         UE_LOGW("[perf] PE=%.0f/s (GT=%.0f, OURS=%.0f = %.1f%% of GT) frames=%.0f/s => PE/frame=%.0f (GT=%.0f)",
                 pePerSec, dPEGT / elapsed, dCoop / elapsed,
                 dPEGT > 0 ? 100.0 * dCoop / dPEGT : 0.0, frPerSec, pePerFr, peGTPerFr);
+        // The script-body gate's tax base: every script body the VM ran, the game-thread share,
+        // and how many reached a watch; the per-call cost is one load and a branch while the
+        // session gate is closed, one hashed probe per key space while it is open.
+        static unsigned long long sLastGateCalls = 0, sLastGateGT = 0, sLastGateMatched = 0;
+        const auto gs = ue_wrap::script_gate::GetStats();
+        const unsigned long long dGate = gs.calls - sLastGateCalls;
+        const unsigned long long dGateGT = gs.callsGameThread - sLastGateGT;
+        const unsigned long long dGateHit = gs.matched - sLastGateMatched;
+        sLastGateCalls = gs.calls; sLastGateGT = gs.callsGameThread; sLastGateMatched = gs.matched;
+        UE_LOGW("[perf] script-loop=%.0f/s (GT=%.0f) watched=%.0f/s cancelled=%llu total, watches=%d+%d, "
+                "off-thread hits=%llu, gate %s",
+                dGate / elapsed, dGateGT / elapsed, dGateHit / elapsed, gs.cancelled, gs.watches,
+                gs.nameWatches, gs.offGameThread, gs.enabled ? "open" : "closed");
     }
 
     if (g_selfTime) {

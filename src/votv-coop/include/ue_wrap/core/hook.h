@@ -34,9 +34,9 @@ bool Init();
 // engine's own ProcessEvent -- a reader who believes that clears a real
 // use-after-free as safe. Returns false on any MinHook error (logged).
 //
-// Pass `followJmpImmune` true ONLY for a target another inline-hook engine also
-// detours (ProcessEvent): it rewrites the relay so a jmp-following engine composes
-// with us instead of clobbering it. docs/architecture.md has the encodings.
+// Pass `followJmpImmune` true ONLY for a target another inline-hook engine also detours
+// (ProcessEvent, the VM's script loop): it rewrites the relay so a jmp-following engine
+// composes with us instead of clobbering it. docs/architecture.md has the encodings.
 bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune = false);
 
 // ---- Retirement -------------------------------------------------------------

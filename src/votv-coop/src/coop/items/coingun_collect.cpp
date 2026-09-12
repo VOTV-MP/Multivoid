@@ -2,7 +2,7 @@
 // credits. Two entries reach the coin's credit block: the overlap delegate
 // (ProcessEvent-visible, hooked and cancellable) and actionOptionIndex, the E-press, which
 // mainPlayer dispatches as EX_LocalVirtualFunction (invisible to ProcessEvent and to a Func
-// hook; only the 0x45 verb substrate observes it, and it cannot cancel). So the shape is
+// hook; the script-body gate sees it, and this lane observes it there). So the shape is
 // forward-and-reconcile: the client forwards the coin's identity and the host runs the coin's
 // own verb on the authoritative instance; the E-press's local credit is a phantom the host's
 // balance broadcast corrects, and the overlap entry forwards first and then cancels. Game
@@ -24,7 +24,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/world/economy.h"
 
 #include <atomic>
@@ -38,7 +38,7 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 namespace I  = coop::coingun_sync::internal;
 
 // The one option baocoin_C::getActionOptions offers, a compile-time constant; actionOptionIndex
@@ -54,7 +54,7 @@ void* g_actionOptFn = nullptr;   // baocoin_C::actionOptionIndex -- the host's c
 
 // Per-entry counters, split by role so two numbers printed together count the same population:
 // which of the two entries do players use?
-std::atomic<unsigned long long> g_seenPressHost{0};      // the E-press / 0x45 entry, host side
+std::atomic<unsigned long long> g_seenPressHost{0};      // the E-press entry at the gate, host side
 std::atomic<unsigned long long> g_seenPressClient{0};    //   ... client side
 std::atomic<unsigned long long> g_seenOverlapHost{0};    // the BndEvt overlap entry, host side
 std::atomic<unsigned long long> g_seenOverlapClient{0};  //   ... client side
@@ -220,32 +220,36 @@ bool OnCollectPre(void* self, void* params) {
     return false;
 }
 
-// Entry 2: the E-press, through the 0x45 verb, observe-only.
-void OnCollectVerb(const vm::Bracket& b) {
-    // actionOptionIndex is the interaction entry of many classes, and vm_dispatch matches on name
+// Entry 2: the E-press, through the verb's watch at the gate, observe-only.
+sg::Verdict OnCollectVerb(const sg::Call& b) {
+    // The host performs a forwarded collect by calling this same verb through reflection, which
+    // the gate sees like a press; that echo is ours and is not counted.
+    if (b.fromOurCode) return sg::Verdict::Run;
+    // actionOptionIndex is the interaction entry of many classes, and a name watch matches on name
     // alone; the class check is the consumer's discrimination.
-    if (!I::IsCoinActor(b.ctx)) return;
+    if (!I::IsCoinActor(b.object)) return sg::Verdict::Run;
 
     auto* s = I::Session();
-    if (!s || !s->connected()) return;            // solo: the native credit is correct
+    if (!s || !s->connected()) return sg::Verdict::Run;   // solo: the native credit is correct
 
     if (s->role() == coop::net::Role::Host) {
         g_seenPressHost.fetch_add(1, std::memory_order_relaxed);
         // The host's own press: observe only, the native credit runs. The positive control for the
         // client's silence: without a line where the observer is expected to fire, a quiet client
         // log is indistinguishable from a dead hook. The host's performed collects below are
-        // dispatched by ProcessEvent, not through GNatives[0x45], so there is no echo to subtract.
+        // dispatched by our own reflected call, which the filter above already dropped.
         UE_LOGI("coingun[collect seam] entry=press HOST ctx=%p -- native credit runs here; this line "
-                "proves the 0x45 bracket is live in this session", b.ctx);
-        return;
+                "proves the verb's watch is live in this session", b.object);
+        return sg::Verdict::Run;
     }
 
     g_seenPressClient.fetch_add(1, std::memory_order_relaxed);
 
-    // Uncancellable (see the header): the local credit and the local self-destroy of our mirror
+    // Not refused here by choice (the lane forwards and reconciles): the local credit and the local self-destroy of our mirror
     // happen; the phantom credit is corrected by the balance broadcast, and the mirror's absence by
     // the host's WorldActorDestroy, or by the re-announce below.
-    ForwardCollectToHost(b.ctx, L"press");
+    ForwardCollectToHost(b.object, L"press");
+    return sg::Verdict::Run;
 }
 
 }  // namespace
@@ -423,13 +427,13 @@ void internal::InstallCollect() {
     if (!coinClass) return;
 
     if (!g_verbRegistered.load(std::memory_order_acquire)) {
-        if (vm::RegisterVirtualVerb(kVerbNameCollect, kVerbCoinCollect, &OnCollectVerb)) {
+        if (sg::WatchName(kVerbNameCollect, kVerbCoinCollect, &OnCollectVerb, nullptr)) {
             g_verbRegistered.store(true, std::memory_order_release);
-            UE_LOGI("coingun[collect]: registered the 0x45 verb '%ls' (id=%d) -- the E-press entry",
+            UE_LOGI("coingun[collect]: watching the verb '%ls' (tag=%d) at the script-body gate -- the E-press entry",
                     kVerbNameCollect, kVerbCoinCollect);
         }
     }
-    vm::TickResolvePending();
+    sg::ResolvePendingNames();
 
     if (!g_collectFn)
         g_collectFn = R::FindFunction(coinClass,
@@ -438,11 +442,11 @@ void internal::InstallCollect() {
 
     if (!GT::RegisterInterceptor(g_collectFn, &OnCollectPre)) {
         UE_LOGE("coingun[collect]: overlap interceptor install FAILED -- the overlap entry is BLIND. "
-                "The E-press entry is unaffected (it rides the 0x45 verb).");
+                "The E-press entry is unaffected (it rides the verb's watch).");
         return;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("coingun[collect]: installed -- both entries live (0x45 '%ls' + the overlap BndEvt "
+    UE_LOGI("coingun[collect]: installed -- both entries live (the '%ls' watch + the overlap BndEvt "
             "interceptor)", kVerbNameCollect);
 }
 

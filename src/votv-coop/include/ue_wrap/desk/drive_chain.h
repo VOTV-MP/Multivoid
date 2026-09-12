@@ -40,7 +40,7 @@ void* DriveClass();
 // its driveSLot_obj field). Cached + liveness-checked. Null while unresolved.
 void* SlotActor(int role);
 
-// Reverse: the role of a slot actor caught as a 0x45 verb ctx (-1 unknown --
+// Reverse: the role of a slot actor caught as a watched verb's instance (-1 unknown --
 // e.g. a rack-internal or not-yet-resolved slot). Pure cached-pointer compare
 // (safe in the VM bracket).
 int RoleOfSlotActor(void* slotActor);

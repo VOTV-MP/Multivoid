@@ -23,7 +23,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/engine.h"
 
 #include <atomic>
@@ -41,7 +41,7 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 
 }  // namespace
 
@@ -105,9 +105,9 @@ bool IsCoinActor(void* actor) {
 // Inside this verb? The sale lane's ambient read (the collect lane reads its own bracket). A
 // pointer compare first, since every caller passes a literal this module registered, then a
 // string compare.
-bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
-    if (!av.active || !av.verbName) return false;
-    return av.verbName == name || std::wcscmp(av.verbName, name) == 0;
+bool InVerb(const sg::Active& av, const wchar_t* name) {
+    if (!av.active || !av.name) return false;
+    return av.name == name || std::wcscmp(av.name, name) == 0;
 }
 
 void*   CoinClass()        { return g_coinClass; }
@@ -138,7 +138,7 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
     const bool isClient = s && s->connected() && s->role() == coop::net::Role::Client;
     if (!isClient) return;                       // the HOST's coins are the real ones -- never touch
 
-    const vm::ActiveVerb av = vm::CurrentThreadVerb();
+    const sg::Active av = sg::CurrentThreadCall();
     const bool inGunVerb = InVerb(av, kVerbNameGunUse);
 
     if (inGunVerb) {
@@ -166,16 +166,16 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
     g_anomalyBirths.fetch_add(1, std::memory_order_relaxed);
     UE_LOGE("coingun[ANOMALY]: a baocoin_C was born on this CLIENT outside BOTH the gun verb bracket "
             "and a mirror materialization (actor=%p). Either the verb name stopped resolving (check "
-            "vm_dispatch stats) or a producer we never censused exists. This coin will credit LOCALLY "
+            "the gate's stats) or a producer we never censused exists. This coin will credit LOCALLY "
             "and diverge.", spawned);
 }
 
-// The gun verb. The collect verb has its own registration and callback in coingun_collect.cpp;
-// vm_dispatch is one callback per name.
-void OnVerbEntry(const vm::Bracket& b) {
+// The gun verb, observe-only. The collect verb has its own watch and callback in
+// coingun_collect.cpp.
+sg::Verdict OnVerbEntry(const sg::Call& b) {
     // Open a shot group; the birth seam appends to it, the destroy seam marks it authored, and the
     // barrier destroys its coins only if a sale went out. The context gate is not optional:
-    // vm_dispatch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
+    // a name watch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
     // tool, so without it every knife swing would open and release an empty group. Read-only on the
     // gun class, never resolved here: FindClass is an uncached full walk with a name render per
     // object, the gun's class is not resident in the ordinary world, and resolving here once cost a
@@ -185,11 +185,12 @@ void OnVerbEntry(const vm::Bracket& b) {
     // both this gate and IsInCoinGunVerb must read rather than resolve, or they could disagree
     // inside one shot.
     auto* s = LoadSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
-    if (!b.ctx || !g_gunClass) return;
-    if (R::ClassOf(b.ctx) != g_gunClass) return;
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
+    if (!b.object || !g_gunClass) return sg::Verdict::Run;
+    if (R::ClassOf(b.object) != g_gunClass) return sg::Verdict::Run;
     std::lock_guard<std::mutex> lk(g_pendingMu);
     g_pendingShots.emplace_back();
+    return sg::Verdict::Run;
 }
 
 // Host helpers.
@@ -387,15 +388,15 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
 }
 
 bool IsInCoinGunVerb() {
-    const vm::ActiveVerb av = vm::CurrentThreadVerb();
+    const sg::Active av = sg::CurrentThreadCall();
     if (!InVerb(av, kVerbNameGunUse)) return false;
-    // The correctness gate: vm_dispatch matches on the verb name alone, and playerHandUse_LMB is
+    // The correctness gate: a name watch matches on the verb name alone, and playerHandUse_LMB is
     // declared by every hand-usable tool (the knife, the hacksaw, the flamethrower, the toolgun);
     // without this a client destroying a keyed prop with any of them would author a sale and the
     // host would mint coins for it. Read-only on the gun class, as in OnVerbEntry: the two gates
     // must agree within a single bracket, so both read the value Install publishes.
-    if (!av.ctx || !g_gunClass) return false;
-    return R::ClassOf(av.ctx) == g_gunClass;
+    if (!av.object || !g_gunClass) return false;
+    return R::ClassOf(av.object) == g_gunClass;
 }
 
 void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
@@ -576,13 +577,13 @@ void Install(coop::net::Session* session) {
     // The gun verb resolves its name on the game thread, so the pending resolves are driven every
     // Install; the collect verb has its own registration in the collect lane.
     if (!g_verbRegistered.load(std::memory_order_acquire)) {
-        if (vm::RegisterVirtualVerb(kVerbNameGunUse, kVerbCoinGunUse, &OnVerbEntry)) {
+        if (sg::WatchName(kVerbNameGunUse, kVerbCoinGunUse, &OnVerbEntry, nullptr)) {
             g_verbRegistered.store(true, std::memory_order_release);
-            UE_LOGI("coingun[sale]: registered the 0x45 verb '%ls' (id=%d)",
+            UE_LOGI("coingun[sale]: watching the verb '%ls' (tag=%d) at the script-body gate",
                     kVerbNameGunUse, kVerbCoinGunUse);
         }
     }
-    vm::TickResolvePending();
+    sg::ResolvePendingNames();
 
     // The collect lane's install runs after the class resolve above (it reads CoinClass) and
     // outside the early return below, so a sale-lane resolve that never lands cannot keep it from

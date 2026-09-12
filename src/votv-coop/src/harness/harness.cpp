@@ -20,7 +20,6 @@
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
-#include "coop/dev/gnatives_probe.h"
 #include "coop/dev/kerfur_toggle.h"
 #include "coop/session/teleport_client.h"
 #include "coop/player/players_registry.h"
@@ -467,11 +466,6 @@ void Start() {
     // the client's conversion-adopt path has autonomous coverage (the radial verb is a local
     // virtual call and needs a player at the menu).
     coop::dev::kerfur_toggle::Init();
-
-    // The GNatives probe (ini gnatives_probe=1): swaps two opcode handlers with the substrate's
-    // wrapper shape and counts the local-dispatch rate and cost; installed at boot so the boot and
-    // solo windows are covered.
-    coop::dev::gnatives_probe::Init();
 
     // Test only (VOTVCOOP_TEST_SAVE_ENUM=1): the native save browser (VOTV's loadSlots) verified at
     // the menu.

@@ -18,7 +18,7 @@
 #include "ue_wrap/core/component_calls.h"  // CallParamless
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
 #include <chrono>
@@ -35,7 +35,7 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace SR = ue_wrap::save_record;
 namespace W  = coop::save_record_wire;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 
 using coop::element::LivePropActor;
 
@@ -627,31 +627,31 @@ void SweepParked() {
 // call, so by the time it is seen the item has already moved on this machine, and an intent the
 // host could deny cannot exist here. Gated on the host it dropped every client extraction: the
 // client took one of two burgers, the host's slot stayed at two, and the world gained a burger.
-void OnVerbEntry(const vm::Bracket& br) {
+sg::Verdict OnVerbEntry(const sg::Call& br) {
     // The first statement, ahead of every filter: a resolved verb name does not prove this callback
     // runs, and a registration once returned true with the callback inert for a whole session. If
     // this line is absent from a log, the lane is dead.
     static bool sEntered = false;
     if (!sEntered) {
         sEntered = true;
-        UE_LOGI("container_contents: 0x45 verb callback ENTERED for the first time on this peer "
+        UE_LOGI("container_contents: the verb watch ENTERED for the first time on this peer "
                 "(role=%s) -- the addObject/takeObj edge is LIVE",
                 IsHost() ? "HOST" : "CLIENT");
     }
-    if (!br.ctx) return;
+    if (!br.object) return sg::Verdict::Run;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+    if (!s || !s->connected()) return sg::Verdict::Run;
     // The verb filter matches on the name alone, so the context is discriminated here: the first
     // non-propInventory context carrying an addObject would otherwise poison the offset cache for
     // the session.
-    if (!IsInventoryComponent(br.ctx)) return;
+    if (!IsInventoryComponent(br.object)) return sg::Verdict::Run;
     // A takeObj on any inventory component arms the extraction latch; addObject must not.
-    if (br.verbId == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
-    void* owner = OwnerOf(br.ctx);
-    if (!owner) return;
+    if (br.tag == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
+    void* owner = OwnerOf(br.object);
+    if (!owner) return sg::Verdict::Run;
     const uint32_t eid =
         static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(owner));
-    if (eid == static_cast<uint32_t>(coop::element::kInvalidId)) return;
+    if (eid == static_cast<uint32_t>(coop::element::kInvalidId)) return sg::Verdict::Run;
     g_dirty.insert(eid);   // resolve identity AT THE EDGE; deref nothing later
     // The local change is stamped, so the host can tell a stale client write from a clean one.
     g_localChangeMs[eid] = NowMs();
@@ -660,6 +660,7 @@ void OnVerbEntry(const vm::Bracket& br) {
     // unchanged host truth would look like a duplicate; a client whose write was refused once kept
     // its diverged contents forever that way.
     g_appliedHash.erase(eid);
+    return sg::Verdict::Run;
 }
 
 }  // namespace
@@ -697,25 +698,25 @@ void Tick() {
 
     if (!g_verbsRegistered) {
         g_verbsRegistered =
-            vm::RegisterVirtualVerb(L"addObject", kVerbDirty, &OnVerbEntry) &&
-            vm::RegisterVirtualVerb(L"takeObj",   kVerbTakeObj, &OnVerbEntry);
+            sg::WatchName(L"addObject", kVerbDirty, &OnVerbEntry, nullptr) &&
+            sg::WatchName(L"takeObj",   kVerbTakeObj, &OnVerbEntry, nullptr);
         static bool s_saidFailed = false;
         if (!g_verbsRegistered && !s_saidFailed) {
-            // Once. This block retries every tick, and the failure it reports is the substrate
-            // refusing permanently (vm_dispatch latches an install failure), so an unlatched
-            // line here is a warning per tick for the rest of the session.
+            // Once. This block retries every tick, and the failure it reports is the gate
+            // refusing permanently (a full table, or no detour), so an unlatched line here is a
+            // warning per tick for the rest of the session.
             s_saidFailed = true;
             UE_LOGW("container_contents: verb registration FAILED -- the lane is inert");
         }
     }
-    vm::TickResolvePending();
+    sg::ResolvePendingNames();
     // This lane owns its own enable: riding another consumer's SetEnabled, its retirement would
-    // leave the registration green and the callback silent.
-    vm::SetEnabled(true);
+    // leave the watch green and the callback silent.
+    sg::SetEnabled(true);
 
     if (!g_announced) {
         g_announced = true;
-        UE_LOGI("container_contents: installed (GObjStack slice lane, 0x45 addObject/takeObj edge)");
+        UE_LOGI("container_contents: installed (GObjStack slice lane, the addObject/takeObj watch)");
     }
 
     const uint64_t now = NowMs();

@@ -23,7 +23,7 @@ namespace ue_wrap::meadow_store {
 // the ui_laptop verbs (throttled lazy retry). True when the core set is up.
 bool EnsureResolved();
 
-// The resolved ui_laptop_C class (nullptr until EnsureResolved succeeds). The lane's 0x45 context
+// The resolved ui_laptop_C class (nullptr until EnsureResolved succeeds). The lane's verb-watch context
 // class-check reads this instead of running its own FindClass walk, which unthrottled per tick is
 // the pre-world 60 Hz array-walk the resolver throttle exists to prevent.
 void* LaptopWidgetClass();

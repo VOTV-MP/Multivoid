@@ -97,9 +97,9 @@ ordinary character or prop mirror at its own element id, and on a conversion the
 rebound in place and the host broadcasts the one transition signal. A conversion is detected by a
 death-watch poll, a mirror whose actor died while its wire element is still present
 (`coop/creatures/kerfur_convert`), and the successor actor is captured deterministically at its
-spawn through the bytecode seam, so the converge no longer guesses by proximity
-(`coop/creatures/kerfur_form_assembler`). A client's own turn-on or turn-off cannot be
-prevented, so the client relays the request, the host runs the real verb, and the client claims
+spawn through the script-body gate's window, so the converge no longer guesses by proximity
+(`coop/creatures/kerfur_form_assembler`). A client's own turn-on or turn-off is left to run,
+the client relays the request, the host runs the real verb, and the client claims
 and adopts its own conversion ghost, parked and frozen, instead of destroying and respawning it.
 
 The radial menu (follow, idle, patrol, fix the servers, get the reports, fix the transformers) is

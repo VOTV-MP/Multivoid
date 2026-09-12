@@ -43,9 +43,9 @@ using PostNativeCallback = void(*)(void* context, void* sourceObject, void* spaw
 // patched here and DO fire -- puppet_spawn's BlueprintUpdateAnimation, save_indicator_suppress's
 // saveAnim and addHint -- because their dispatch is ProcessEvent, whose Invoke also reads Func.
 // What does not work is a script function called via EX_Local*: the patch INSTALLS, since Func is
-// ProcessInternal and non-null and passes the guard, it LOGS "patched", and it NEVER FIRES. That is
-// the one remaining invisible class, reachable only through the 0x45 GNatives swap in
-// ue_wrap/core/vm_dispatch.h, which observes and cannot cancel.
+// ProcessInternal and non-null and passes the guard, it LOGS "patched", and it NEVER FIRES. That
+// class belongs to the script-body gate (ue_wrap/core/script_gate.h), which sees every script body
+// with its arguments and can refuse it.
 bool InstallPostHook(void* ufunction, PostNativeCallback cb);
 
 }  // namespace ue_wrap::ufunction_hook

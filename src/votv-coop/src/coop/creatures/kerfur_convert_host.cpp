@@ -280,10 +280,6 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         return;
     }
     const auto eid = static_cast<coop::element::ElementId>(payload.elementId);
-    // 2a-capture: start this request's CallFunction bracket with an EMPTY capture slot (the 0x45
-    // route self-clears at OnVerbEntry; this route is 0x45-blind, so clear here) -- the successor B
-    // spawned INSIDE the verb below is the only capture the destroy-edge / converge may consume.
-    coop::kerfur_form_assembler::ClearCapturedForm();
     if (payload.toProp) {
         auto* el = coop::element::MirrorManager<coop::element::Npc>::Instance().Get(eid);
         void* actor = el ? el->GetActor() : nullptr;
@@ -345,15 +341,6 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         }
         ConvergeAfterConversion(actor, idx, eid, /*toProp=*/0, pos0.X, pos0.Y, pos0.Z);
     }
-}
-
-coop::element::ElementId ActiveRequestVerbEid() {
-    // GT-only marker set around the OnConvertRequest CallFunction bracket (above). The 0x45
-    // assembler is blind to the CallFunction dispatch, so it consults this to recognize the
-    // host-exec-client-request bracket as a SECOND capture scope. See the header.
-    return (g_requestVerbEid == 0xFFFFFFFFu)
-               ? coop::element::kInvalidId
-               : static_cast<coop::element::ElementId>(g_requestVerbEid);
 }
 
 // Record the converge for OnConvertRequest ONLY when we are inside ITS verb bracket -- a

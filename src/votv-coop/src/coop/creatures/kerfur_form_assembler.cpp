@@ -4,7 +4,7 @@
 // kerfur-form spawn or self-destroy lands inside the verb's bracket. The counters accrue
 // whenever the session is active and both summary lines are dumped at disconnect, so a run
 // never ends having measured nothing; the per-catch verbose lines sit behind the
-// vm_dispatch_log row with a cap, and every line carries the role. Attribution is
+// script_gate_log row with a cap, and every line carries the role. Attribution is
 // deterministic: a spawn is the successor when its class is a kerfur form (the floppy is told
 // apart by class), and a destroy is the verb's own victim when the dying actor is the
 // bracket's context. On top of the counters, an in-bracket or in-request-scope successor
@@ -15,7 +15,6 @@
 #include "coop/creatures/kerfur_form_assembler.h"
 
 #include "coop/config/config.h"
-#include "coop/creatures/kerfur_convert_host.h"  // ActiveRequestVerbEid, the request-route scope
 #include "coop/element/element.h"    // ElementId, kInvalidId (gate 1 per-eid read)
 #include "coop/element/registry.h"   // Registry::EidForActor (gate 1 per-eid read)
 #include "coop/net/session.h"
@@ -25,7 +24,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/core/ufunction_hook.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
 #include <chrono>
@@ -37,17 +36,17 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 namespace P  = ue_wrap::profile;
 namespace E  = coop::element;
 
-// The verb ids echoed back in the substrate's bracket.
+// The watch tags echoed back in the gate's call.
 constexpr int kVerbTurnOff = 1;  // dropKerfurProp -- NPC -> prop (destroys the NPC self)
 constexpr int kVerbTurnOn  = 2;  // spawnKerfuro   -- prop -> NPC (destroys the prop self)
 
-// The two blueprint function names registered. The literals are the identity the ambient
-// window publishes (gate on the verb name, never on the id), so the same pointers are what
-// InKerfurVerb compares.
+// The two blueprint function names watched. The literals are the identity the ambient window
+// publishes (gate on the name, never on the tag), so the same pointers are what InKerfurVerb
+// compares.
 constexpr const wchar_t* kVerbNameTurnOff = L"dropKerfurProp";
 constexpr const wchar_t* kVerbNameTurnOn  = L"spawnKerfuro";
 
@@ -57,11 +56,11 @@ constexpr const wchar_t* kVerbNameTurnOn  = L"spawnKerfuro";
 // the drive's put-in and pulled-out), so the id would not help either. Under a foreign verb's
 // bracket an unrelated spawn would count as ours and the request-scope test would go false.
 // Reachable: the coin gun destroying a kerfur prop nests our destroy inside its bracket.
-bool InKerfurVerb(const vm::ActiveVerb& av) {
-    if (!av.active || !av.verbName) return false;
-    return av.verbName == kVerbNameTurnOff || av.verbName == kVerbNameTurnOn ||
-           std::wcscmp(av.verbName, kVerbNameTurnOff) == 0 ||
-           std::wcscmp(av.verbName, kVerbNameTurnOn) == 0;
+bool InKerfurVerb(const sg::Active& av) {
+    if (!av.active || !av.name) return false;
+    return av.name == kVerbNameTurnOff || av.name == kVerbNameTurnOn ||
+           std::wcscmp(av.name, kVerbNameTurnOff) == 0 ||
+           std::wcscmp(av.name, kVerbNameTurnOn) == 0;
 }
 
 coop::net::Session* g_session = nullptr;
@@ -87,14 +86,8 @@ std::atomic<std::uint64_t> g_spawnOtherInWindow{0};  // an in-window spawn that 
 std::atomic<std::uint64_t> g_destroySelfInWindow{0}; // dying actor == bracket Context (the verb's self-destroy)
 std::atomic<std::uint64_t> g_destroyOtherInWindow{0};// a kerfur-class actor != Context destroyed inside a bracket (anomaly)
 std::atomic<std::uint64_t> g_destroyKerfurOutWindow{0}; // a kerfur-class actor destroyed OUTSIDE any bracket
-std::atomic<std::uint64_t> g_catchTurnOff{0};        // 0x45 dropKerfurProp entries caught
-std::atomic<std::uint64_t> g_catchTurnOn{0};         // 0x45 spawnKerfuro entries caught
-// The CallFunction route (the host executing a client's convert request) is invisible to the
-// EX_Local bracket, so kerfur_convert publishes the request eid it is executing as a second
-// capture scope; these count the form spawn and the self-destroy that fire while a request
-// executes.
-std::atomic<std::uint64_t> g_spawnFormInReqScope{0};   // kerfur-form successor spawned during a CallFunction request
-std::atomic<std::uint64_t> g_destroySelfInReqScope{0}; // a kerfur-class actor destroyed during a CallFunction request
+std::atomic<std::uint64_t> g_catchTurnOff{0};        // dropKerfurProp bodies caught at the gate
+std::atomic<std::uint64_t> g_catchTurnOn{0};         // spawnKerfuro bodies caught at the gate
 
 // The observe gates, measuring what the repoint-at-birth design rests on. Gate 1: does the
 // verb's context actor carry an eid at entry? The repoint has no source otherwise. Also the
@@ -135,7 +128,7 @@ std::atomic<int> g_logged{0};
 
 // Latched: the row is read once, not on every check of a hot path.
 bool LogVerbose() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::vm_dispatch_log);
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::script_gate_log);
     return s;
 }
 bool IsHostRole() { return g_session && g_session->role() == coop::net::Role::Host; }
@@ -167,17 +160,13 @@ void StoreCapturedForm(void* b, int32_t idx, void* cls) {
     tls_capturedAt      = std::chrono::steady_clock::now();
 }
 // Is the host executing a client's convert request through CallFunction?
-bool InReqScope() {
-    return coop::kerfur_convert_host::ActiveRequestVerbEid() != E::kInvalidId;
-}
-
-// The substrate entry callback, observe-only.
-void OnVerbEntry(const vm::Bracket& b) {
-    if (b.verbId == kVerbTurnOff) g_catchTurnOff.fetch_add(1, std::memory_order_relaxed);
-    else                          g_catchTurnOn.fetch_add(1, std::memory_order_relaxed);
+// The gate's pre callback, observe-only: every verb runs.
+sg::Verdict OnVerbEntry(const sg::Call& b) {
+    if (b.tag == kVerbTurnOff) g_catchTurnOff.fetch_add(1, std::memory_order_relaxed);
+    else                       g_catchTurnOn.fetch_add(1, std::memory_order_relaxed);
 
     // Gate 1: the context's eid at entry, a registry map read, not an engine call.
-    const E::ElementId entryEid = E::Registry::Get().EidForActor(b.ctx);
+    const E::ElementId entryEid = E::Registry::Get().EidForActor(b.object);
     const bool bound = (entryEid != E::kInvalidId);
     if (bound) g_entryEidBound.fetch_add(1, std::memory_order_relaxed);
     else       g_entryEidUnbound.fetch_add(1, std::memory_order_relaxed);
@@ -186,26 +175,27 @@ void OnVerbEntry(const vm::Bracket& b) {
     // same eid is the double-capture hazard: counted, and the outer record is kept.
     if (b.depth <= 1) {
         tls_spawnFormFiredThisBracket = false;
-        tls_bracketCtx = b.ctx;
+        tls_bracketCtx = b.object;
         tls_bracketEntryEid = entryEid;
-        tls_capturedForm = nullptr;      // 2a-capture: fresh slot per 0x45 bracket
+        tls_capturedForm = nullptr;      // a fresh capture slot per outermost verb
         tls_capturedFormIdx = -1;
     } else if (bound && entryEid == tls_bracketEntryEid) {
         g_entrySameEidReentry.fetch_add(1, std::memory_order_relaxed);
     }
 
-    if (!LogVerbose()) return;
-    if (g_logged.fetch_add(1, std::memory_order_relaxed) >= kLogCap) return;
-    const wchar_t* verb = (b.verbId == kVerbTurnOff) ? kVerbNameTurnOff : kVerbNameTurnOn;
-    std::wstring cls = R::ClassNameOf(b.ctx);
-    UE_LOGI("[kerfur_asm][%s] VERB %ls id=%d Context=%p class=%ls depth=%d eid=%s%u (observe-only)",
-            RoleTag(), verb, b.verbId, b.ctx, cls.c_str(), b.depth,
+    if (!LogVerbose()) return sg::Verdict::Run;
+    if (g_logged.fetch_add(1, std::memory_order_relaxed) >= kLogCap) return sg::Verdict::Run;
+    const wchar_t* verb = (b.tag == kVerbTurnOff) ? kVerbNameTurnOff : kVerbNameTurnOn;
+    std::wstring cls = R::ClassNameOf(b.object);
+    UE_LOGI("[kerfur_asm][%s] VERB %ls tag=%d Context=%p class=%ls depth=%d eid=%s%u (observe-only)",
+            RoleTag(), verb, b.tag, b.object, cls.c_str(), b.depth,
             bound ? "" : "UNBOUND:", bound ? entryEid : 0u);
+    return sg::Verdict::Run;
 }
 
 // The spawn seam, a FinishSpawningActor post-hook; the result is the finished actor.
 void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResult) {
-    if (!vm::IsEnabled() || !spawnedResult) return;  // no cost in solo SP
+    if (!sg::IsEnabled() || !spawnedResult) return;  // no cost in solo SP
     void* cls = R::ClassOf(spawnedResult);
     if (!cls) return;
     const bool isForm   = IsKerfurFormClass(cls);
@@ -216,22 +206,23 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
         // rejected as a repoint target. Counting it proves the filter rejects a non-successor, a
         // different claim from catching every true successor. Out of window, neither is an ordinary
         // world spawn and is ignored.
-        const vm::ActiveVerb av = vm::CurrentThreadVerb();
+        const sg::Active av = sg::CurrentThreadCall();
         if (InKerfurVerb(av)) {
             g_spawnOtherInWindow.fetch_add(1, std::memory_order_relaxed);
             if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
                 std::wstring cn = R::ClassNameOf(spawnedResult);
                 UE_LOGI("[kerfur_asm][%s] SPAWN OTHER IN-WINDOW actor=%p class=%ls verb=%ls depth=%d "
                         "-- filter REJECTS (not form, not floppy; NOT a repoint target)",
-                        RoleTag(), spawnedResult, cn.c_str(), av.verbName ? av.verbName : L"<none>", av.depth);
+                        RoleTag(), spawnedResult, cn.c_str(), av.name ? av.name : L"<none>", av.depth);
             }
         }
         return;
     }
 
-    const vm::ActiveVerb av = vm::CurrentThreadVerb();
+    // The host executing a client's request runs the verb through our own reflected call, which
+    // the gate brackets like the local toggle, so one window serves both routes.
+    const sg::Active av = sg::CurrentThreadCall();
     const bool inVerb  = InKerfurVerb(av);
-    const bool reqScope = !inVerb && InReqScope();  // G1: CallFunction route (0x45-blind)
     bool bIndexLive = false;
     int32_t bIdx = -1;
     if (isForm) {
@@ -244,15 +235,8 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
             bIdx = R::InternalIndexOf(spawnedResult);
             bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
             if (bIndexLive) { g_spawnBIndexLive.fetch_add(1, std::memory_order_relaxed);
-                              StoreCapturedForm(spawnedResult, bIdx, cls); }  // 2a-capture (0x45 route)
+                              StoreCapturedForm(spawnedResult, bIdx, cls); }  // captured inside the verb
             else            g_spawnBIndexDead.fetch_add(1, std::memory_order_relaxed);
-        } else if (reqScope) {
-            // The request route: this form spawn is the conversion's successor, capturable through
-            // the request eid instead of a bracket.
-            g_spawnFormInReqScope.fetch_add(1, std::memory_order_relaxed);
-            bIdx = R::InternalIndexOf(spawnedResult);
-            bIndexLive = R::IsLiveByIndex(spawnedResult, bIdx);
-            if (bIndexLive) StoreCapturedForm(spawnedResult, bIdx, cls);      // 2a-capture (CallFunction route)
         } else {
             g_spawnFormOutWindow.fetch_add(1, std::memory_order_relaxed);
         }
@@ -261,34 +245,26 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
     }
     if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
         std::wstring cn = R::ClassNameOf(spawnedResult);
-        const char* scope = inVerb ? "IN-WINDOW" : (reqScope ? "IN-WINDOW(req-scope)" : "out-of-window");
-        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verb=%ls depth=%d bIdx=%d bLive=%d reqEid=%d",
+        const char* scope = inVerb ? "IN-WINDOW" : "out-of-window";
+        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verb=%ls depth=%d bIdx=%d bLive=%d",
                 RoleTag(), isForm ? L"FORM" : L"floppy", spawnedResult, cn.c_str(),
-                scope, av.verbName ? av.verbName : L"<none>", av.depth, bIdx, bIndexLive ? 1 : 0,
-                reqScope ? static_cast<int>(coop::kerfur_convert_host::ActiveRequestVerbEid()) : -1);
+                scope, av.name ? av.name : L"<none>", av.depth, bIdx, bIndexLive ? 1 : 0);
     }
 }
 
 // The destroy seam, a K2_DestroyActor post-hook; the context is the dying actor.
 void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
-    if (!vm::IsEnabled() || !context) return;  // no cost in solo SP
+    if (!sg::IsEnabled() || !context) return;  // no cost in solo SP
     void* cls = R::ClassOf(context);
     if (!cls || !IsKerfurFormClass(cls)) return;  // only kerfur-class destroys interest us
 
-    const vm::ActiveVerb av = vm::CurrentThreadVerb();
+    const sg::Active av = sg::CurrentThreadCall();
     const char* kind;
     bool orderGood = false;
     if (!InKerfurVerb(av)) {
-        if (InReqScope()) {
-            // The request route: a kerfur destroy while a request executes is the conversion's own
-            // self-destroy.
-            g_destroySelfInReqScope.fetch_add(1, std::memory_order_relaxed);
-            kind = "IN-WINDOW(req-scope) self";
-        } else {
-            g_destroyKerfurOutWindow.fetch_add(1, std::memory_order_relaxed);
-            kind = "out-of-window";
-        }
-    } else if (context == av.ctx) {  // IDENTITY invariant: the verb's own self-destroy
+        g_destroyKerfurOutWindow.fetch_add(1, std::memory_order_relaxed);
+        kind = "out-of-window";
+    } else if (context == av.object) {  // IDENTITY invariant: the verb's own self-destroy
         g_destroySelfInWindow.fetch_add(1, std::memory_order_relaxed);
         // Gate 3b: did the form spawn already fire in this bracket? A self-destroy with none
         // strands the eid.
@@ -308,7 +284,7 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
         std::wstring cn = R::ClassNameOf(context);
         UE_LOGI("[kerfur_asm][%s] DESTROY actor=%p class=%ls %s verb=%ls ctx=%p depth=%d",
-                RoleTag(), context, cn.c_str(), kind, av.verbName ? av.verbName : L"<none>", av.ctx, av.depth);
+                RoleTag(), context, cn.c_str(), kind, av.name ? av.name : L"<none>", av.object, av.depth);
     }
 }
 
@@ -354,21 +330,18 @@ void EnsureSeamsInstalled() {
 
 void DumpSummary(const char* when) {
     UE_LOGI("[kerfur_asm][%s] CONTAINMENT SUMMARY (%s): catch{off=%llu on=%llu} "
-            "spawn{formIn=%llu formInReqScope=%llu formOut=%llu floppyIn=%llu otherIn=%llu} "
-            "destroy{selfIn=%llu selfInReqScope=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, "
-            "OUT/anomaly = 2a-HALT; reqScope = G1 CallFunction route (host-exec-client-request, 0x45-blind: "
-            "formInReqScope>0 closes the CallFunction capture gap); "
-            "spawn.otherIn = loot/explosion the filter REJECTED (GATE 2 reject side -- must NOT be formIn)",
+            "spawn{formIn=%llu formOut=%llu floppyIn=%llu otherIn=%llu} "
+            "destroy{selfIn=%llu otherIn=%llu kerfurOut=%llu} -- IN-window good, "
+            "OUT/anomaly = a capture the window missed, which halts the lane; "
+            "spawn.otherIn = loot/explosion the filter REJECTED (the reject side -- must NOT be formIn)",
             RoleTag(), when,
             (unsigned long long)g_catchTurnOff.load(std::memory_order_relaxed),
             (unsigned long long)g_catchTurnOn.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormInWindow.load(std::memory_order_relaxed),
-            (unsigned long long)g_spawnFormInReqScope.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFormOutWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnFloppyInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroySelfInWindow.load(std::memory_order_relaxed),
-            (unsigned long long)g_destroySelfInReqScope.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyOtherInWindow.load(std::memory_order_relaxed),
             (unsigned long long)g_destroyKerfurOutWindow.load(std::memory_order_relaxed));
     // The observe gates are green only when every halt signal is zero: unbound, same-eid
@@ -384,17 +357,16 @@ void DumpSummary(const char* when) {
             (unsigned long long)g_orderDestroyNoSpawn.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnBIndexLive.load(std::memory_order_relaxed),
             (unsigned long long)g_spawnBIndexDead.load(std::memory_order_relaxed));
-    // The substrate underneath, which counts what the assembler above cannot see. offGtMatch is
-    // the one that must stay zero: a watched verb matching off the game thread means a capture ran
-    // where the engine calls are illegal. gtDispatch at zero with the hook installed says the
-    // 0x45 path never carried a dispatch, which reads the same as a quiet session and is not.
-    const vm::Stats vs = vm::GetStats();
-    UE_LOGI("[kerfur_asm][%s] VM SUBSTRATE (%s): installed=%d enabled=%d verbs{registered=%d resolved=%d} "
-            "dispatch{gt=%llu worker=%llu} nameMatch=%llu callbackFired=%llu OFF_GT_MATCH=%llu "
-            "-- GREEN iff OFF_GT_MATCH=0 and, with verbs registered, gt>0",
-            RoleTag(), when, vs.installed ? 1 : 0, vs.enabled ? 1 : 0,
-            vs.registeredVerbs, vs.resolvedVerbs,
-            vs.gtDispatch, vs.workerDispatch, vs.nameMatch, vs.callbackFired, vs.offGtMatch);
+    // The gate underneath, which counts what the assembler above cannot see. The off-thread count
+    // is the one that must stay zero: a watched body reached off the game thread was passed
+    // through, so a capture there never ran. matched counts only watched bodies, so a session
+    // in which nobody used a watched verb reads zero there by design.
+    const sg::Stats gs = sg::GetStats();
+    UE_LOGI("[kerfur_asm][%s] SCRIPT GATE (%s): installed=%d enabled=%d watches{exact=%d name=%d} "
+            "bodies{matched=%llu cancelled=%llu off_thread=%llu faults=%llu} "
+            "-- GREEN iff off_thread=0 and faults=0",
+            RoleTag(), when, gs.installed ? 1 : 0, gs.enabled ? 1 : 0, gs.watches, gs.nameWatches,
+            gs.matched, gs.cancelled, gs.offGameThread, gs.faults);
 }
 
 }  // namespace
@@ -421,11 +393,6 @@ CapturedForm ConsumeCapturedForm(bool wantNpc) {
     return out;
 }
 
-void ClearCapturedForm() {
-    tls_capturedForm = nullptr;
-    tls_capturedFormIdx = -1;
-}
-
 bool IsCapturedForm(void* actor) {
     // A non-consuming peek: is `actor` the successor in the capture slot? The keyed-express
     // suppressor in prop_lifecycle reads it to decide that this prop is the conversion's
@@ -438,19 +405,19 @@ bool IsCapturedForm(void* actor) {
 
 void Install(coop::net::Session* session) {
     g_session = session;
-    vm::RegisterVirtualVerb(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry);
-    vm::RegisterVirtualVerb(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry);
-    vm::SetEnabled(true);  // both roles: the client needs the bracket to observe its own conversion
+    sg::WatchName(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry, nullptr);
+    sg::WatchName(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry, nullptr);
+    sg::SetEnabled(true);  // both roles: the client needs the window to observe its own conversion
 }
 
 void Tick() {
-    vm::TickResolvePending();  // GT FName resolve for the two verbs (no-op once armed)
+    sg::ResolvePendingNames();  // GT FName resolve for the two names (no-op once armed)
     EnsureSeamsInstalled();    // GT class + Func-seam bind (retries until latched)
 }
 
 void OnDisconnect() {
     DumpSummary("session-end");  // ALWAYS -- the measurement is never behind the log gate
-    vm::SetEnabled(false);
+    sg::SetEnabled(false);
     g_logged.store(0, std::memory_order_relaxed);  // fresh verbose budget next session
 }
 

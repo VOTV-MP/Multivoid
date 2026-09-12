@@ -19,18 +19,17 @@
 #include <cstdint>
 
 namespace coop::net { class Session; }
-namespace ue_wrap::vm_dispatch { struct ActiveVerb; }
+namespace ue_wrap::script_gate { struct Active; }
 
 namespace coop::coingun_sync {
 
-// The two 0x45 verb registrations. The NAME is the handle, never the id: `vm_dispatch`'s
-// active-verb window is ONE global thread-local, so an id is a caller-chosen tag in a project-wide
-// namespace (container_contents_sync, meadow_db_sync and drive_sync all publish 1) and `active` is
-// true for ANY registered verb. See ue_wrap/core/vm_dispatch.h's contract box.
+// The two verb watches at the script-body gate. The NAME is the handle, never the tag: the
+// gate's ambient window is ONE global thread-local, so a tag is a caller-chosen number in a
+// project-wide namespace (container_contents_sync, meadow_db_sync and drive_sync all publish 1)
+// and `active` is true for ANY watched body. See ue_wrap/core/script_gate.h.
 //
-// The lanes register SEPARATE verbs with SEPARATE callbacks, and vm_dispatch is one callback per
-// NAME, so neither TU needs the other's entry point. A shared dispatcher would have forced the
-// collect lane's guts back into this header.
+// The lanes watch SEPARATE verbs with SEPARATE callbacks, so neither TU needs the other's entry
+// point. A shared dispatcher would have forced the collect lane's guts back into this header.
 extern const wchar_t* const kVerbNameGunUse;    // prop_coingun_C::playerHandUse_LMB -- the shot
 extern const wchar_t* const kVerbNameCollect;   // baocoin_C::actionOptionIndex     -- the E-press
 inline constexpr int kVerbCoinGunUse  = 6;
@@ -47,11 +46,11 @@ coop::net::Session* Session();
 // Is `actor` a baocoin_C? Falls back to a name compare before the class resolves.
 bool IsCoinActor(void* actor);
 
-// Is this thread inside a 0x45 dispatch of the verb called `name`? The SALE lane's ambient-window
-// read; the collect lane reads `b.ctx` off its own bracket and does not call this. Pointer-compares
-// first -- both lanes pass a literal they registered themselves, and RegisterVirtualVerb requires
-// static lifetime, so the pointers are identical -- then wcscmp.
-bool InVerb(const ue_wrap::vm_dispatch::ActiveVerb& av, const wchar_t* name);
+// Is this thread inside the body of the verb called `name`? The SALE lane's ambient-window read;
+// the collect lane reads `b.object` off its own call and does not call this. Pointer-compares
+// first -- both lanes pass a literal they registered themselves, and WatchName requires static
+// lifetime, so the pointers are identical -- then wcscmp.
+bool InVerb(const ue_wrap::script_gate::Active& av, const wchar_t* name);
 
 // Abaocoin_C's UClass once resolved, else nullptr. Resolution is the SALE lane's Install (it runs
 // first and already retries at ~1 Hz); the collect lane reads it and stays inert until it appears.

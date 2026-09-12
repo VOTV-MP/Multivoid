@@ -1,5 +1,5 @@
 // coop/dev/director/container_take_probe.cpp -- the container-take input probe and the two-peer
-// concurrent-take race. The take verbs the game runs are 0x45 interception verbs, not
+// concurrent-take race. The take verbs the game runs are Blueprint-internal verbs, not
 // reflection-callable, but the take is drivable one layer up through callable BP verbs: the
 // container's openContainer opens the UI, and a container slot's pressButton takes the hovered
 // item. Whether a called verb's body ran is never inferred from callability; the probe measures
@@ -473,7 +473,7 @@ void RunContainerTakeProbe() {
                 slot, pb->slotId, pb->pressCalled ? 1 : 0);
         d.store(1);
     });
-    ::Sleep(200);   // let the take + the container_contents 0x45 edge settle
+    ::Sleep(200);   // let the take + the container_contents watch edge settle
     RunGT([pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
     // The item counted again after the solo take, phase B: both phases at 1 mean the instrument
     // sees the item in the source and the destination store, counts each once, and the item is
@@ -518,7 +518,7 @@ void RunContainerTakeProbe() {
     UE_LOGI("director/ctake: VERDICT %s | container=%ls itemsBefore=%d "
             "| open=%d uiOpened=%d boundSlot=%d slotID=%d hover+press=%d pressDelta=%d(after=%d) "
             "| [diag] extract=%d extractAfter=%d "
-            "| (cross-check the container_contents 0x45 edge line in the log for the same eid)",
+            "| (cross-check the container_contents watch edge line in the log for the same eid)",
             verdict, pb->fname.c_str(), pb->countBefore,
             pb->openCalled ? 1 : 0, pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0, pb->slotId,
             pb->pressCalled ? 1 : 0, pressDelta, pb->countAfterPress,

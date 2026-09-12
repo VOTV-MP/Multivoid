@@ -3,11 +3,11 @@
 // Two lanes over this module (the rack lane lives in drive_rack_sync):
 //   DriveSlotState -- idempotent any-peer slot FSM lines, host canonical.
 //   DrivePayload   -- drive data_0 rows (signal_wire codec, blob chunks).
-// Detection = 0x45 verb dirty-marks (vm_dispatch; capture-only, barrier
+// Detection = verb dirty-marks at the script-body gate (capture-only, barrier
 // emission) + 1 Hz diff-gated sweeps. Apply+prime is GT-atomic per lane.
-// This module OWNS the verb registration for the whole drive chain
-// (one-callback-per-verb-name; putDriveIn is shared slot/rack ctx) and
-// forwards rack marks to drive_rack_sync::MarkDirtyFromVerb().
+// This module OWNS the verb watches for the whole drive chain (putDriveIn is
+// a shared slot/rack context) and forwards rack marks to
+// drive_rack_sync::MarkDirtyFromVerb().
 
 #include "coop/props/prop_save_data.h"
 #include "coop/interactables/drive_sync.h"
@@ -22,7 +22,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/drive_chain.h"
 
 #include <atomic>
@@ -37,12 +37,12 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace DC = ue_wrap::drive_chain;
 namespace SD = ue_wrap::signal_dynamic;
-namespace vm = ue_wrap::vm_dispatch;
+namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- vm_dispatch verb ids ----
+// ---- the watch tags ----
 constexpr int kVerbPutDriveIn = 1;   // driveSlot OR rack context (ctx discriminates)
 constexpr int kVerbPulledOut  = 2;
 constexpr int kVerbPayload    = 3;   // saveSignal / deleteSignal / comp_uploadData (mark-all)
@@ -139,25 +139,29 @@ std::vector<uint8_t> PayloadBlob(uint32_t eid, const SD::Row& row) {
 }
 
 // --------------------------------------------------------------------------
-// the 0x45 verb bracket (capture-only: relaxed marks + one stashed eid read)
+// the verb watches (capture-only: relaxed marks + one stashed eid read)
 
-void OnVerbEntry(const vm::Bracket& b) {
-    switch (b.verbId) {
+sg::Verdict OnVerbEntry(const sg::Call& b) {
+    // The lane's own apply mirrors a slot by calling these verbs through reflection; the gate
+    // sees that like the game's own call, and a mark on our own apply would stash a stale eject
+    // id and re-announce what was just applied.
+    if (b.fromOurCode) return sg::Verdict::Run;
+    switch (b.tag) {
         case kVerbPutDriveIn: {
-            const int role = DC::RoleOfSlotActor(b.ctx);
+            const int role = DC::RoleOfSlotActor(b.object);
             if (role >= 0) {
                 g_slotDirty[role].store(true, std::memory_order_relaxed);
                 g_cMarksSlot.fetch_add(1, std::memory_order_relaxed);
-            } else if (DC::IsRackClass(R::ClassOf(b.ctx))) {
+            } else if (DC::IsRackClass(R::ClassOf(b.object))) {
                 coop::drive_rack_sync::MarkDirtyFromVerb();
                 g_payloadDirty.store(true, std::memory_order_relaxed);  // harvest zeroes a drive
             }
             break;
         }
         case kVerbPulledOut: {
-            const int role = DC::RoleOfSlotActor(b.ctx);
+            const int role = DC::RoleOfSlotActor(b.object);
             if (role >= 0) {
-                void* d = DC::SlotDrive(b.ctx);  // still set at ENTRY (measured)
+                void* d = DC::SlotDrive(b.object);  // still set at ENTRY (measured)
                 const uint32_t eid = d ? static_cast<uint32_t>(
                     coop::element::Registry::Get().EidForActor(d)) : 0;
                 g_lastEjectEid[role].store(eid, std::memory_order_relaxed);
@@ -171,11 +175,12 @@ void OnVerbEntry(const vm::Bracket& b) {
             g_cMarksPayload.fetch_add(1, std::memory_order_relaxed);
             break;
         case kVerbRackTake:
-            if (DC::IsRackClass(R::ClassOf(b.ctx)))
+            if (DC::IsRackClass(R::ClassOf(b.object)))
                 coop::drive_rack_sync::MarkDirtyFromVerb();
             break;
         default: break;
     }
+    return sg::Verdict::Run;
 }
 
 // --------------------------------------------------------------------------
@@ -471,19 +476,19 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_verbsRegistered) return;
     if (!DC::EnsureResolved()) return;
-    // One cb serves all six verb names; verbIds discriminate. putDriveIn
-    // covers BOTH the slot FSM and the rack (ctx class discriminates).
+    // One cb serves all six verb names; the tags discriminate. putDriveIn
+    // covers BOTH the slot FSM and the rack (the context's class discriminates).
     const bool ok =
-        vm::RegisterVirtualVerb(L"putDriveIn",      kVerbPutDriveIn, &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"drivePulledOut",  kVerbPulledOut,  &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"getDrive",        kVerbRackTake,   &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"saveSignal",      kVerbPayload,    &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"deleteSignal",    kVerbPayload,    &OnVerbEntry) &&
-        vm::RegisterVirtualVerb(L"comp_uploadData", kVerbPayload,    &OnVerbEntry);
+        sg::WatchName(L"putDriveIn",      kVerbPutDriveIn, &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"drivePulledOut",  kVerbPulledOut,  &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"getDrive",        kVerbRackTake,   &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"saveSignal",      kVerbPayload,    &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"deleteSignal",    kVerbPayload,    &OnVerbEntry, nullptr) &&
+        sg::WatchName(L"comp_uploadData", kVerbPayload,    &OnVerbEntry, nullptr);
     if (ok) {
         g_verbsRegistered = true;
-        vm::SetEnabled(true);
-        UE_LOGI("drive_sync: 6 verb matchers registered (0x45 dirty-marks armed)");
+        sg::SetEnabled(true);
+        UE_LOGI("drive_sync: 6 verb watches live (dirty-marks armed at the script-body gate)");
     }
 }
 
@@ -492,7 +497,7 @@ void Tick() {
     if (!s) return;
     if (!DC::EnsureResolved()) return;
     if (!g_verbsRegistered) Install(s);
-    vm::TickResolvePending();
+    sg::ResolvePendingNames();
 
     // Connect seed: (re-)prime silently at the connected rising edge so the
     // state AT connect is the ground truth (no pre-connect edge storms).

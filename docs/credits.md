@@ -34,7 +34,7 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence; the grappling-hook lane ([#16](https://github.com/VOTV-MP/Multivoid/pull/16)) — four of its decisions are in the shipped lane | 2 commits · 2 co-authored |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
-| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); Relay's published design note that the engine reports every object's creation and deletion to a listener, which became the object index; Relay's readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; Relay's list of cheap edge protections, of which two were missing here: a per-source limit on connections (a rate cap in MTA's shape, where Relay's is a pending cap) and a private access list on the identity key file | b122 · b143 · 2026-09-02 · b160 |
+| **Moddy** | review · design | The architecture and documentation review that became the UE4SS move; the public UE-Modding-Tools pointer that became the blueprint-CFG rung and the migration scanner (patternsleuth); Relay's published design note that the engine reports every object's creation and deletion to a listener, which became the object index; Relay's readable join reason and stable diagnostic codes, which became the join screen's named steps and the end-reason codes; Relay's list of cheap edge protections, of which two were missing here: a per-source limit on connections (a rate cap in MTA's shape, where Relay's is a pending cap) and a private access list on the identity key file; Relay's watch surface on a Blueprint function, a pre callback that reads the parameters and can cancel the call and a post callback that reads the result, which became the script-body gate | b122 · b143 · 2026-09-02 · b160 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
@@ -285,6 +285,18 @@ join-flood shape rather than Relay's pending cap (`coop/net/connect_history`, `M
 identity key file beside the game now carries a private access list, with an account that
 cannot own it keeping its own under its profile (`coop/net/peer_identity`). The list is his;
 the shapes are MTA's and the project's own.
+
+**The script-body gate (b160).** Relay's README describes a watch on a Blueprint function
+that fires before the call with the parameters readable and rewritable, can cancel the call, can
+be scoped to one instance, and fires again after it; he offered its bytecode marker to this
+project himself, unprompted, as the part worth taking. Before this, a call one Blueprint made to
+another was observe-only here: the seam sat at the call site and saw neither the arguments nor a
+way to refuse. Multivoid now detours the one engine function every Blueprint body runs through,
+the VM's script loop, and offers that surface (`ue_wrap/core/script_gate`): a watch by function or
+by name, a pre callback with the instance, the parameters and the calling frame, a verdict, a
+post callback. Relay implements its watch by rewriting the function's bytecode and marking it
+with a no-op jump; this mod, already owning a detour on the engine, took the surface and not the
+marker. The surface is his; the seam and its derivation are this project's own.
 
 **The honest part.** The central claim was answered with a measurement — the
 replaceable surface was 7,174 of 146,347 lines, about 5% — and **refused**, on the

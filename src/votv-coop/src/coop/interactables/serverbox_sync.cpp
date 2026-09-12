@@ -1,8 +1,8 @@
 // coop/interactables/serverbox_sync.cpp -- see coop/interactables/serverbox_sync.h.
 //
-// The verbs cannot be intercepted: breakServer and fix are dispatched as EX_LocalVirtualFunction,
-// which the ProcessEvent detour and the native seam never see and the bytecode seam can only
-// observe. So we mirror STATE and drive the box's own re-skin instead, through
+// The verbs are refusable at the script-body gate (breakServer and fix are EX_LocalVirtualFunction
+// bodies it sees with their arguments); this lane still mirrors STATE and drives the box's own
+// re-skin, since a break is host-rolled and a mirror must show it, not re-run it, through
 // ue_wrap/devices/serverbox: the engine's break state -- the box's IsBroken, the notify-free
 // check() it re-skins from, and the farm's three totals -- is the wrapper's, and this lane owns
 // only the wire half, which is the mask, its width, the poll, and who may author it.

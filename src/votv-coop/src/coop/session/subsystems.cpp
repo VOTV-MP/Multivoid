@@ -72,7 +72,7 @@
 #include "coop/creatures/kerfur_command.h"  // host-authoritative kerfur menu command relay + ownership follow
 #include "coop/creatures/kerfur_menu_input.h"  // client radial-menu verb detection (InpActEvt_use PRE -> kerfur_command relay)
 #include "coop/creatures/kerfur_entity.h"  // the stable-KerfurId authority table
-#include "coop/creatures/kerfur_form_assembler.h"  // VM-dispatch substrate consumer (observe-only + containment counter)
+#include "coop/creatures/kerfur_form_assembler.h"  // script-body gate consumer (observe-only + containment counter)
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/session/teleport_client.h"  // TeleportSlotToHost: the admin bring-to-host action
 #include "coop/dev/keypad_probe.h"
@@ -195,7 +195,7 @@ void Install(coop::net::Session& session) {
     coop::desk_snd_fx::Install(&session);  // desk audio-effect mirror (Func-patch audio seam)
     coop::deck_play_sync::Install(&session);  // deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
     coop::physmods_sync::Install(&session);  // physMods value-ops + host-canonical array
-    coop::drive_sync::Install(&session);  // drive-chain lanes (0x45 dirty-marks + sweeps; owns ALL chain verb registration)
+    coop::drive_sync::Install(&session);  // drive-chain lanes (verb dirty-marks + sweeps; owns ALL chain verb watches)
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
@@ -227,7 +227,7 @@ void Install(coop::net::Session& session) {
     coop::kerfur_convert::Install(&session);  // host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
     coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu command relay + ownership-aware Follow
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
-    coop::kerfur_form_assembler::Install(&session);  // VM-dispatch substrate consumer: register the two EX_LocalVirtual conversion verbs + open the session gate; observe-only + containment counter
+    coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs + open the session gate
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);  // the Minecraft sleep gate (isSleep edge poll -> host tally -> accelerate/end phases)
     coop::wisp_attack_sync::Install(&session);  // Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay

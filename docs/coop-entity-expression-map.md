@@ -40,7 +40,7 @@ are peer-gated. `[V]`
 | characters | a deferred spawn | the spawn interceptor; the object scan; the native seam for graph spawns | a host id |
 | the wisp swarm | `EX_CallMath` spawns from the swarm trigger's graph | the native seam, gated by the calling class | a host id |
 | event actors | a deferred spawn, or a graph spawn | a second interceptor with a disjoint allowlist; the native seam | a host id |
-| the kerfur | conversion verbs inside the Blueprint | a death-watch poll; the bytecode seam's capture | one host kerfur id across both forms |
+| the kerfur | conversion verbs inside the Blueprint | a death-watch poll; the script-body gate's capture | one host kerfur id across both forms |
 | a deployed hook or rope | the fire input, inside the Blueprint | the thrower polls its own `activeHook` field | `(owner slot, sequence)` while the thrower holds it, a host-minted save key once anchored |
 
 ## Keyed props
@@ -156,7 +156,7 @@ kerfur id spans both; the rendered form is an ordinary character or prop mirror 
 element id, rebound in place on a conversion with one transition broadcast. The conversion verbs
 dispatch locally, so a conversion is detected by a death-watch poll, a mirror whose actor died
 while its wire element is present, and the successor actor is captured deterministically at its
-spawn through the bytecode seam's bracket. A client relays its own conversion as a request, the
+spawn through the script-body gate's window. A client relays its own conversion as a request, the
 host performs it, and the client claims and adopts its conversion ghost, parked, never destroyed
 and respawned. A captured conversion prop is tracked but its generic spawn broadcast is
 suppressed, so exactly one lane expresses it. The eye camera both forms carry is a child actor,
