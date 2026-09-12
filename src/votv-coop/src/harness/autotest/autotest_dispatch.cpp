@@ -191,6 +191,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The after-join end-reason drill: the host kicks slot 1 once it is seated and in the world;
     // the client's log must carry the DISCONNECTED notice with the moderation code.
     SpawnIf("VOTVCOOP_RUN_KICK_PROBE", "kick probe (the after-join end-reason notice)", &KickProbeThread, role);
+
+    // The connection-cap drill: the seated client opens six more silent connections from its
+    // own address; the host must park at most four, refuse the rest with the flood code, and
+    // park one more after the refusal lifts.
+    SpawnIf("VOTVCOOP_RUN_FLOOD_PROBE", "flood probe (the per-address connection cap)", &FloodProbeThread, role);
 }
 
 }  // namespace harness::autotest

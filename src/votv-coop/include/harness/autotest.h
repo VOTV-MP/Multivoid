@@ -331,4 +331,12 @@ DWORD WINAPI NavHaltProbeThread(LPVOID arg);
 void RunKickProbe();
 DWORD WINAPI KickProbeThread(LPVOID arg);
 
+// The connection-cap drill (harness/autotest/autotest_floodprobe.cpp), client: once seated and
+// settled, opens six more raw connections to the host from its own address and says nothing on
+// them; under the default cap of four per thirty seconds the host parks at most four and refuses
+// the rest with the flood code, then parks one more after the refusal lifts. Both logs are the
+// evidence. Env VOTVCOOP_RUN_FLOOD_PROBE=1.
+void RunFloodProbe();
+DWORD WINAPI FloodProbeThread(LPVOID arg);
+
 }  // namespace harness::autotest
