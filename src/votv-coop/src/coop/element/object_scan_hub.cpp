@@ -1,8 +1,10 @@
-// coop/element/object_scan_hub.cpp -- the one sliced pass over GUObjectArray that every consumer
-// shares, in place of a full array walk per subsystem on its own ~2 s cadence.
+// coop/element/object_scan_hub.cpp -- the one pass over the object index that every consumer
+// shares, in place of a walk over the object array.
 #include "coop/element/object_scan_hub.h"
 
+#include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/world_identity.h"
 
@@ -15,55 +17,69 @@
 namespace coop::element::scan_hub {
 namespace {
 
-namespace R = ue_wrap::reflection;
+namespace R  = ue_wrap::reflection;
+namespace OI = ue_wrap::object_index;
 using steady_clock = std::chrono::steady_clock;
 
-// Pass cadence, carried over from the retired settled-object scan. A full pass every tenth one is a
-// ~20 s full-pass cadence rather than 60 s, because the reseed consumer's recycled-slot detection
-// latency is load-bearing in the field: the periodic safety census caught real spawns that left
-// NumObjects flat -- two on a host, and 50, 17 and 12 in successive 20 s windows on a client. The
-// cost is that the duty cycle of sliced full passes triples; the per-frame cap below is unchanged
-// by construction.
+// Pass cadence. A full pass every tenth one re-reads every matched instance's identity, which a
+// tail pass cannot: a key restored by a load after the birth is a change no notification reports.
 constexpr auto    kPassCadence   = std::chrono::seconds(2);
 constexpr int     kBackstopEvery = 10;
 // Slice budget: ~1 ms of game-thread time per frame, with the clock checked every kSliceCheck
-// objects. Measured at ~17 ns per object on the development machine and ~43 ns on a field
-// reporter's.
+// items. An item costs a slot read, a flags read, a world climb and then the consumers' own
+// match work (a key rendered per hit), five to ten microseconds, so the check is frequent
+// enough that a slice overshoots the budget by a fraction, not by multiples.
 constexpr int64_t kSliceBudgetUs = 1000;
-constexpr int32_t kSliceCheck    = 4096;
+constexpr int32_t kSliceCheck    = 32;
+// A slot the game thread may not read: dying, or not yet handed over by the loading thread, or
+// allocated with its class constructor still to run.
+constexpr int32_t kUnreadable = R::slot_flags::Dying | R::slot_flags::NotYetReadable;
 
 struct Row {
     Consumer c;
-    // Settle state, carried over from the retired settled-object scan.
     size_t lastCount   = static_cast<size_t>(-1);
     int    stableScans = 0;
     bool   activeThisPass = false;   // EnsureResolved() succeeded at pass start
+    bool   wasActive      = false;   // the previous pass's verdict, for the resolve edge
     bool   skippedByMutate = false;  // VOTVCOOP_HUB_SKIP drill control
 };
 
-struct MemoEntry {
-    uint64_t bits;      // consumer match bitmask
-    int32_t  clsIdx;    // the UClass object's own GUObjectArray slot
-    int32_t  clsSerial; // its slot serial at memo time
+// A birth the index reported whose class matched at least one consumer at the time.
+struct Birth {
+    void*   obj;
+    int32_t idx;
+    void*   cls;
+};
+// One entry of a pass's work list, with the consumer bitmask taken when the list was built.
+struct Item {
+    void*    obj;
+    int32_t  idx;
+    uint64_t bits;
 };
 
-std::vector<Row>  g_rows;
+std::vector<Row>      g_rows;
 std::vector<Consumer> g_pendingRegs;   // registrations arriving mid-pass join the next pass
-bool              g_inPass = false;
+bool                  g_inPass = false;
+bool                  g_observerSet = false;
+
+// Every class the index holds, with the consumers whose predicate accepted it. Filled by the
+// index's class callbacks; `g_reclassify` names the rows whose verdict must be re-taken over
+// every class before the next pass (a new row, or a row whose classes just resolved).
+std::unordered_map<void*, uint64_t> g_classBits;
+uint64_t                            g_reclassify = 0;
+std::vector<Birth>                  g_births;   // since the last pass start
 
 // Pass state.
-bool      g_passFull   = false;
-int32_t   g_passBegin  = 0;
-int32_t   g_passCursor = 0;
-int32_t   g_passEnd    = 0;
-uint32_t  g_passGen    = 0;
+std::vector<Item> g_work;
+size_t            g_cursor    = 0;
+bool              g_passFull  = false;
+uint32_t          g_passGen   = 0;
 steady_clock::time_point g_passStart{};
-int       g_passSlices = 0;
-std::unordered_map<void*, MemoEntry> g_memo;   // pass-scoped: cleared at every pass start
+int               g_passSlices = 0;
 
 // Cross-pass state.
-int32_t                  g_tailCursor  = 0;    // objects >= this are "new" for the next tail pass
-int                      g_sinceFull   = 0;    // completed passes since the last full one
+bool                     g_everFull      = false;
+int                      g_sinceFull     = 0;    // completed passes since the last full one
 bool                     g_forceFullOnce = false;  // dev drill: ONE forced full, settle untouched
 steady_clock::time_point g_nextPassDue = steady_clock::time_point::min();
 
@@ -83,6 +99,51 @@ const char* HubSkipName() {
     return (v && v[0]) ? v : nullptr;
 }
 
+uint64_t RowBit(size_t ci) { return 1ull << ci; }
+
+uint64_t AllRowsMask() {
+    uint64_t m = 0;
+    for (size_t ci = 0; ci < g_rows.size(); ++ci) m |= RowBit(ci);
+    return m;
+}
+
+// The consumers in `rowMask` whose class-pure predicate accepts `anyObj`'s class.
+uint64_t ClassifyRows(void* anyObj, uint64_t rowMask) {
+    uint64_t bits = 0;
+    for (size_t ci = 0; ci < g_rows.size(); ++ci) {
+        if (!(rowMask & RowBit(ci))) continue;
+        if (g_rows[ci].c.IsInstance(anyObj)) bits |= RowBit(ci);
+    }
+    return bits;
+}
+
+// The index's class callbacks.
+void OnClassAppeared(void*, void* cls, void* firstObj) {
+    g_classBits[cls] = ClassifyRows(firstObj, AllRowsMask());
+}
+void OnClassGone(void*, void* cls) { g_classBits.erase(cls); }
+void OnObjectCreated(void*, void* obj, void* cls, int32_t idx) {
+    auto it = g_classBits.find(cls);
+    if (it != g_classBits.end() && it->second) g_births.push_back(Birth{obj, idx, cls});
+}
+
+void EnsureObserver() {
+    if (g_observerSet) return;
+    g_observerSet = true;
+    OI::SetObserver(OI::Observer{nullptr, &OnClassAppeared, &OnClassGone, &OnObjectCreated});
+}
+
+// Re-take the verdict of the rows in `mask` over every class the index holds.
+void Reclassify(uint64_t mask) {
+    struct Ctx { uint64_t mask; };
+    Ctx ctx{mask};
+    OI::ForEachClass([](void* c, void* cls, void* anyInstance) {
+        const uint64_t mask = static_cast<Ctx*>(c)->mask;
+        uint64_t& bits = g_classBits[cls];
+        bits = (bits & ~mask) | ClassifyRows(anyInstance, mask);
+    }, &ctx);
+}
+
 bool AnyUnsettled() {
     for (const Row& r : g_rows) {
         if (r.skippedByMutate) continue;
@@ -93,62 +154,91 @@ bool AnyUnsettled() {
 
 void AdoptPendingRegistrations() {
     for (const Consumer& c : g_pendingRegs) {
+        if (g_rows.size() >= 64) {
+            UE_LOGW("scan_hub: consumer '%s' REJECTED -- bitmask capacity (64) reached", c.name);
+            continue;
+        }
         Row r; r.c = c;
         if (const char* skip = HubSkipName(); skip && std::strcmp(skip, c.name) == 0) {
             r.skippedByMutate = true;
             UE_LOGW("scan_hub: consumer '%s' SKIPPED by VOTVCOOP_HUB_SKIP (parity mutate drill)", c.name);
         }
         g_rows.push_back(r);
+        g_reclassify |= RowBit(g_rows.size() - 1);
         UE_LOGI("scan_hub: consumer '%s' registered (settleScans=%d, %zu total)",
                 c.name, c.settleScans, g_rows.size());
     }
     g_pendingRegs.clear();
 }
 
-// Start a pass if one is due. Returns false when no pass could start (no world, no consumers).
+// Start a pass if one can. False when nothing is registered, the index is not yet seeded, no
+// world is current (mid-transition: gens flip in adjacent ticks, so waiting one tick is the
+// cheap correct move), or no consumer resolved.
 bool StartPass() {
     AdoptPendingRegistrations();
     if (g_rows.empty()) return false;
-    // No current world (mid-transition): don't start -- gens flip in adjacent ticks (measured:
-    // exactly two flips then stable), so waiting one tick is the cheap correct move.
+    if (!OI::IsSeeded()) return false;
     if (ue_wrap::world_identity::CurrentWorld() == nullptr) return false;
 
-    const int32_t n = R::NumObjects();
-    // Shrink below the tail cursor = a purge freed slots we think we scanned -> full (the
-    // NextRange rule, preserved).
-    const bool shrunk = (n < g_tailCursor);
-    g_passFull = AnyUnsettled() || shrunk || (g_sinceFull >= kBackstopEvery) || g_forceFullOnce;
+    uint64_t activeMask = 0;
+    for (size_t ci = 0; ci < g_rows.size(); ++ci) {
+        Row& r = g_rows[ci];
+        r.activeThisPass = !r.skippedByMutate && r.c.EnsureResolved();
+        // A row whose classes just resolved took its verdicts while they were null: re-take them.
+        if (r.activeThisPass && !r.wasActive) g_reclassify |= RowBit(ci);
+        r.wasActive = r.activeThisPass;
+        if (r.activeThisPass) activeMask |= RowBit(ci);
+    }
+    if (activeMask == 0) return false;
+    if (g_reclassify) {
+        Reclassify(g_reclassify);
+        g_reclassify = 0;
+    }
+
+    g_passFull = !g_everFull || AnyUnsettled() || (g_sinceFull >= kBackstopEvery) || g_forceFullOnce;
     g_forceFullOnce = false;
 
-    int activeCount = 0;
-    for (Row& r : g_rows) {
-        r.activeThisPass = !r.skippedByMutate && r.c.EnsureResolved();
-        if (r.activeThisPass) {
-            r.c.OnPassBegin(r.c.ctx, g_passFull);
-            ++activeCount;
+    g_work.clear();
+    if (g_passFull) {
+        // Every live instance of every class some active consumer accepted.
+        struct Ctx { uint64_t bits; };
+        for (const auto& kv : g_classBits) {
+            Ctx ctx{kv.second & activeMask};
+            if (!ctx.bits) continue;
+            OI::ForEachInstance(kv.first, [](void* c, void* obj, int32_t idx) {
+                g_work.push_back(Item{obj, idx, static_cast<Ctx*>(c)->bits});
+            }, &ctx);
+        }
+    } else {
+        // The births since the last pass, judged by the verdicts as they stand now.
+        for (const Birth& b : g_births) {
+            auto it = g_classBits.find(b.cls);
+            if (it == g_classBits.end()) continue;
+            const uint64_t bits = it->second & activeMask;
+            if (bits) g_work.push_back(Item{b.obj, b.idx, bits});
         }
     }
-    if (activeCount == 0) return false;
+    g_births.clear();
+
+    for (Row& r : g_rows)
+        if (r.activeThisPass) r.c.OnPassBegin(r.c.ctx, g_passFull);
 
     g_passGen    = ue_wrap::world_identity::Generation();
-    g_passBegin  = g_passFull ? 0 : g_tailCursor;
-    g_passCursor = g_passBegin;
-    g_passEnd    = n;
+    g_cursor     = 0;
     g_passStart  = steady_clock::now();
     g_passSlices = 0;
-    g_memo.clear();
     g_inPass     = true;
     return true;
 }
 
 void AbortPass(const char* why) {
-    // Scratch is cleared by the next OnPassBegin; OnPassComplete is never called for an
-    // aborted pass, so no index moves. Force the next pass FULL (whatever invalidated us also
-    // invalidated the tail cursor's meaning).
-    UE_LOGI("scan_hub: pass ABORTED (%s) after %d slice(s) at cursor %d/%d -- next pass full",
-            why, g_passSlices, g_passCursor, g_passEnd);
+    // Scratch is cleared by the next OnPassBegin; OnPassComplete is never called for an aborted
+    // pass, so no index moves. The next pass is full: whatever invalidated us invalidated the
+    // births list's meaning too.
+    UE_LOGI("scan_hub: pass ABORTED (%s) after %d slice(s) at item %zu/%zu -- next pass full",
+            why, g_passSlices, g_cursor, g_work.size());
     g_inPass = false;
-    g_tailCursor = 0;
+    g_work.clear();
     for (Row& r : g_rows) r.stableScans = 0;  // demand full passes until re-settled
     g_nextPassDue = steady_clock::now();       // retry promptly
 }
@@ -158,8 +248,7 @@ void CompletePass() {
     for (Row& r : g_rows) {
         if (!r.activeThisPass) continue;
         const size_t count = r.c.OnPassComplete(r.c.ctx, g_passFull, gen);
-        // Settle feed, on the retired settled-object scan's rule: a count of zero never settles,
-        // and any change resets the run.
+        // Settle feed: a count of zero never settles, and any change resets the run.
         if (count > 0 && count == r.lastCount) {
             if (r.stableScans < r.c.settleScans) ++r.stableScans;
         } else if (count != r.lastCount) {
@@ -167,16 +256,16 @@ void CompletePass() {
         }
         r.lastCount = count;
     }
-    g_tailCursor = g_passEnd;
-    if (g_passFull) g_sinceFull = 0; else ++g_sinceFull;
+    if (g_passFull) { g_sinceFull = 0; g_everFull = true; } else ++g_sinceFull;
     g_inPass = false;
     const auto durUs = std::chrono::duration_cast<std::chrono::microseconds>(
                            steady_clock::now() - g_passStart).count();
     if (ScanDiagOn()) {
-        UE_LOGI("[SCAN-DIAG] hub pass mode=%s range=%d slices=%d dur=%lldus",
-                g_passFull ? "full" : "tail", g_passEnd - g_passBegin,
-                g_passSlices, static_cast<long long>(durUs));
+        UE_LOGI("[SCAN-DIAG] hub pass mode=%s items=%zu slices=%d dur=%lldus classes=%zu",
+                g_passFull ? "full" : "tail", g_work.size(), g_passSlices,
+                static_cast<long long>(durUs), g_classBits.size());
     }
+    g_work.clear();
     // Cadence: the next pass is due 2 s after this one STARTED, but never before it completed --
     // max(2 s, duration), so a pass longer than the cadence runs back-to-back.
     const auto due = g_passStart + kPassCadence;
@@ -187,49 +276,24 @@ void CompletePass() {
 // One slice of the active pass. Returns true if the pass completed inside this slice.
 bool RunSlice() {
     ++g_passSlices;
-    // Validity checks between slices (the pass spans frames; the array does not stand still).
     if (ue_wrap::world_identity::Generation() != g_passGen) { AbortPass("world-gen flip"); return false; }
-    const int32_t curN = R::NumObjects();
-    if (curN < g_passCursor) { AbortPass("array shrank below cursor"); return false; }
-    const int32_t end = (g_passEnd < curN) ? g_passEnd : curN;
 
+    void* const world = ue_wrap::world_identity::CurrentWorld();
     const auto t0 = steady_clock::now();
     int32_t sinceCheck = 0;
-    while (g_passCursor < end) {
-        const int32_t i = g_passCursor++;
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        void* cls = R::ClassOf(obj);
-        if (!cls) continue;
-        uint64_t bits;
-        auto it = g_memo.find(cls);
-        if (it != g_memo.end() &&
-            R::IsLiveByIndex(cls, it->second.clsIdx) &&
-            R::SlotSerial(it->second.clsIdx) == it->second.clsSerial) {
-            bits = it->second.bits;
-        } else {
-            // Memo miss (or a recycled UClass* failed the serial re-verify): run every active
-            // consumer's class-pure predicate ONCE for this class.
-            bits = 0;
-            for (size_t ci = 0; ci < g_rows.size(); ++ci) {
-                if (!g_rows[ci].activeThisPass) continue;
-                if (g_rows[ci].c.IsInstance(obj)) bits |= (1ull << ci);
-            }
-            const int32_t clsIdx = R::InternalIndexOf(cls);
-            g_memo[cls] = MemoEntry{bits, clsIdx, R::SlotSerial(clsIdx)};
-        }
-        if (bits) {
-            // During the old and new world's coexistence after a travel -- up to 44 s -- an actor
-            // whose slot and serial say it is live can still belong to the DYING world, because
-            // IsLive is world-blind. Without this term a pass run in the new world would re-admit
-            // it under the CURRENT gen stamp. One bounded outer-climb per MATCHING object per pass,
-            // never per object. A null WorldOf() means "not world-scoped", which no actor a
-            // consumer indexes ever is, so those are excluded too.
-            if (ue_wrap::world_identity::WorldOf(obj) != ue_wrap::world_identity::CurrentWorld())
-                continue;
-            for (size_t ci = 0; ci < g_rows.size(); ++ci) {
-                if (bits & (1ull << ci)) g_rows[ci].c.OnMatch(g_rows[ci].c.ctx, obj);
-            }
+    while (g_cursor < g_work.size()) {
+        const Item& it = g_work[g_cursor++];
+        // The list was built at pass start; the slot must still hold the object, the object must
+        // be one the game thread may read, and it must belong to the world the game is running:
+        // during the old and new world's coexistence after a travel, an actor whose slot says it
+        // is live can still be the DYING world's, and the pass must not re-admit it under the
+        // current gen stamp. A null WorldOf() means "not world-scoped", which no actor a consumer
+        // indexes ever is.
+        if (R::ObjectAt(it.idx) != it.obj) continue;
+        if (R::SlotFlags(it.idx) & kUnreadable) continue;
+        if (ue_wrap::world_identity::WorldOf(it.obj) != world) continue;
+        for (size_t ci = 0; ci < g_rows.size(); ++ci) {
+            if (it.bits & RowBit(ci)) g_rows[ci].c.OnMatch(g_rows[ci].c.ctx, it.obj);
         }
         if (++sinceCheck >= kSliceCheck) {
             sinceCheck = 0;
@@ -245,13 +309,15 @@ bool RunSlice() {
 }  // namespace
 
 void Register(const Consumer& c) {
+    UE_ASSERT_GAME_THREAD("scan_hub::Register");
+    EnsureObserver();
     if (g_rows.size() + g_pendingRegs.size() >= 64) {
         UE_LOGW("scan_hub: consumer '%s' REJECTED -- bitmask capacity (64) reached", c.name);
         return;
     }
     if (g_inPass) {
-        // Mid-pass registration joins at the next pass start (the memo's bitmask indices must
-        // stay stable for the life of a pass).
+        // Mid-pass registration joins at the next pass start (the work list's bitmask indices
+        // must stay stable for the life of a pass).
         g_pendingRegs.push_back(c);
         UE_LOGI("scan_hub: consumer '%s' registration QUEUED (pass active)", c.name);
         return;
@@ -261,6 +327,7 @@ void Register(const Consumer& c) {
 }
 
 void Tick() {
+    UE_ASSERT_GAME_THREAD("scan_hub::Tick");
     if (g_inPass) {
         RunSlice();
         return;

@@ -201,7 +201,11 @@ entity family gets its identity, its expression and its destruction, and where t
 
 Hot-path rules bind every hook: no object-array scan per frame, no heavy work per `ProcessEvent`
 or per tick, engine calls on the game thread only. Discovery of the game's objects goes through
-one shared, sliced scan (`coop/element/object_scan_hub`) that every index rides.
+one shared pass (`coop/element/object_scan_hub`) over an index the engine itself keeps current:
+`ue_wrap/core/object_index` is fed by the engine's own object-created and object-deleted
+notifications (`ue_wrap/core/uobject_listeners`), so nothing walks the object array on a
+schedule, and a recycled slot's new object is folded in within a few ticks of its birth (the
+drain is budgeted, so a level load's backlog spreads over ticks) rather than on the next walk.
 
 ### Installing and retiring a detour
 

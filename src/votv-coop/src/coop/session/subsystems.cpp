@@ -5,7 +5,7 @@
 #include "coop/props/native_pile_mirror.h"
 #include "coop/session/subsystems.h"
 
-#include "coop/element/object_scan_hub.h"  // the shared sliced GUObjectArray pass
+#include "coop/element/object_scan_hub.h"  // the shared pass over the object index
 #include "coop/world/balance_sync.h"
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
@@ -512,9 +512,9 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::ItemConnect};   coop::item_activate::TickConnect(); }
     { PP::Scope _s{PP::Bucket::WeatherConnect}; coop::weather_sync::TickConnect(); }
     // The walk timer logs each sync's call over a millisecond, so a heavy one names itself; the
-    // perf-probe bucket covers the whole block. The shared sliced object-array pass serves every
-    // index consumer with one walk, and runs before the consumers' ticks so a completed pass's
-    // fresh index is visible in the same pump tick.
+    // perf-probe bucket covers the whole block. The shared pass over the object index serves every
+    // index consumer, and runs before the consumers' ticks so a completed pass's fresh index is
+    // visible in the same pump tick.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:scan_hub"}; coop::element::scan_hub::Tick(); }
     // The steady prop re-seed consumer registers itself once; the budget drain carries its own
     // walk-time label.

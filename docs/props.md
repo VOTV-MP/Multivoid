@@ -26,7 +26,7 @@ Nothing about a prop is reflected as replication, so the mod watches four seams:
 
 | A prop that | Is caught by |
 |---|---|
-| came from the save | the shared object scan at world start (`coop/element/object_scan_hub`) |
+| came from the save | the shared discovery pass at world start (`coop/element/object_scan_hub`, over the object index the engine's own notifications keep) |
 | was born by a spawner (mushrooms, pinecones, forage) | the prop's initialisation on the host; a client's shared-world spawners are parked (`coop/world/spawn_authority`) and the host mirrors what its own produce (`coop/props/host_spawn_watcher`) |
 | was spawned by the spawn menu or extracted from a container on the host | the engine's finish-spawning call, because those births run their initialisation inside the Blueprint where no hook sees it |
 | was destroyed | the engine's destroy call on either role: eaten, broken, picked up into a pocket (`coop/props/prop_lifecycle`); a prop that vanishes inside a Blueprint (the truck, culling, a lifespan) is caught by the host's death-watch and destroyed by id on every peer (`coop/props/registry_reaper`) |
