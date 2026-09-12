@@ -26,6 +26,17 @@ void*   g_closeFn    = nullptr;  // Close()
 
 constexpr int32_t kOpenedOffFallback = 0x03C5;
 
+// The verb THIS swinger runs. IsSwinger admits any descendant, and a UFunction handed to
+// ProcessEvent is the body that runs -- the engine does not re-resolve it by name -- so the base
+// pair would run the plain door's body on a fire door, which overrides both Open and Close.
+// The resolve is cached by the reflection layer, keyed on the class and revalidated.
+void* VerbFor(void* swinger, const wchar_t* name, void* baseFn) {
+    void* cls = R::ClassOf(swinger);
+    if (!cls || cls == g_swingerCls) return baseFn;
+    void* fn = R::FindDispatchFunctionCached(cls, name);
+    return fn ? fn : baseFn;
+}
+
 }  // namespace
 
 bool EnsureResolved() {
@@ -41,6 +52,7 @@ bool EnsureResolved() {
     }
     void* openFn  = R::FindFunction(cls, L"Open");
     void* closeFn = R::FindFunction(cls, L"Close");
+
     if (!openFn || !closeFn) {
         UE_LOGW("swinger: UFunction resolve incomplete (Open=%p Close=%p) -- not ready", openFn, closeFn);
         return false;
@@ -73,7 +85,7 @@ bool TryReadOpen(void* swinger, bool& on) {
 
 bool CallOpen(void* swinger, bool damage) {
     if (!swinger || !g_openFn) return false;
-    ParamFrame f(g_openFn);
+    ParamFrame f(VerbFor(swinger, L"Open", g_openFn));
     if (!f.valid()) return false;
     f.Set<bool>(L"Damage", damage);
     return Call(swinger, f);
@@ -81,7 +93,7 @@ bool CallOpen(void* swinger, bool damage) {
 
 bool CallClose(void* swinger) {
     if (!swinger || !g_closeFn) return false;
-    ParamFrame f(g_closeFn);
+    ParamFrame f(VerbFor(swinger, L"Close", g_closeFn));
     if (!f.valid()) return false;
     return Call(swinger, f);
 }

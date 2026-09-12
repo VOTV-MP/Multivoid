@@ -136,8 +136,19 @@ bool WriteProcessAndApply(void* grime, float process) {
     // No live material on this decal yet. applyMaterial is the verb that builds one -- and only
     // builds it, on the branch above -- so build, then paint. Failing to paint here would drop
     // this wipe silently: the caller records the target as applied and never retries.
-    if (!g_applyMaterialFn) return false;
-    ParamFrame f(g_applyMaterialFn);
+    // The verb THIS decal runs. IsGrime admits any descendant of grime_C, and six of them --
+    // blood, blood test, oil, UV, graffiti and the dynamic decal -- declare their own
+    // applyMaterial. A UFunction handed to ProcessEvent is the body that runs, so the base
+    // pointer built the base material on every one of those types. The resolve is cached by the
+    // reflection layer, keyed on the class and revalidated against a world unload.
+    void* applyFn = g_applyMaterialFn;
+    if (void* cls = R::ClassOf(grime)) {
+        if (cls != g_grimeCls) {
+            if (void* fn = R::FindDispatchFunctionCached(cls, L"applyMaterial")) applyFn = fn;
+        }
+    }
+    if (!applyFn) return false;
+    ParamFrame f(applyFn);
     if (!f.valid() || !Call(grime, f)) return false;
     return Repaint(grime, process);
 }
