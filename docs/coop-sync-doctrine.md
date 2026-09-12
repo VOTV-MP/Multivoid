@@ -73,7 +73,10 @@ Read the dispatch map first, then pick the cheapest seam that actually fires:
    refusing it would take those too (the ATV's hit delegates).
 
 A Blueprint-internal verb is refused at the gate, per call and only on the peer that must not
-author it; the authoritative peer's copy runs. A refusal held for a whole session to hide a state
+author it; the authoritative peer's copy runs. That tier is measured per call on the signal
+server's own verbs: `fix`, the `check` it calls on itself, the gamemode's `calcServerEff` it
+reaches through a context switch, and an ubergraph entry
+(`harness/autotest/autotest_scriptgate.cpp`). A refusal held for a whole session to hide a state
 that is not mirrored is a crutch, not a use of the tier. Choose by census, not by habit: read the verb's dispatch opcode at every call site and
 write the chosen seam and the reason into the design. If a hook "should fire", prove that it
 fires with a probe before building on it.

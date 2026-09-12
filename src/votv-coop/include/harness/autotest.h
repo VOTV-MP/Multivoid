@@ -339,4 +339,10 @@ DWORD WINAPI KickProbeThread(LPVOID arg);
 void RunFloodProbe();
 DWORD WINAPI FloodProbeThread(LPVOID arg);
 
+// The script-body gate drill (harness/autotest/autotest_scriptgate.cpp), solo or host: on two
+// signal servers, verbs refused per call on every dispatch route, with state observables and a
+// negative arm. Env VOTVCOOP_RUN_SCRIPT_GATE_DRILL=1.
+void RunScriptGateDrill();
+DWORD WINAPI ScriptGateDrillThread(LPVOID arg);
+
 }  // namespace harness::autotest

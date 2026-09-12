@@ -196,6 +196,10 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // own address; the host must park at most four, refuse the rest with the flood code, and
     // park one more after the refusal lifts.
     SpawnIf("VOTVCOOP_RUN_FLOOD_PROBE", "flood probe (the per-address connection cap)", &FloodProbeThread, role);
+
+    // The script-body gate drill: Blueprint verbs refused per call on one of two signal servers,
+    // on every dispatch route, with state observables and a negative arm.
+    SpawnIf("VOTVCOOP_RUN_SCRIPT_GATE_DRILL", "script-body gate drill", &ScriptGateDrillThread, role);
 }
 
 }  // namespace harness::autotest

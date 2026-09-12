@@ -504,6 +504,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_pauseguard.cpp
     src/harness/autotest/autotest_kickprobe.cpp
     src/harness/autotest/autotest_floodprobe.cpp
+    src/harness/autotest/autotest_scriptgate.cpp
     src/harness/autotest/autotest_move_osc.cpp
     src/harness/autotest/autotest_saveui.cpp
     src/ui/input_focus.cpp
