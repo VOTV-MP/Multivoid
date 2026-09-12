@@ -266,26 +266,18 @@ bool EnsurePropClass() {
     return true;
 }
 
-// The most-derived declaration of `name` on `cls`'s chain. FindFunction is exact-owner, so the
-// first hit walking UP from the leaf is the override the engine would dispatch.
-void* MostDerived(void* cls, const wchar_t* name) {
-    for (void* c = cls; c; c = R::SuperStructOf(c))
-        if (void* fn = R::FindFunction(c, name)) return fn;
-    return nullptr;
-}
-
 // The per-class row, resolved once.
 const ClassVerbs* VerbsFor(void* cls) {
     if (!cls || !EnsurePropClass()) return nullptr;
     const auto it = g_verbs.find(cls);
     if (it != g_verbs.end()) return &it->second;
     ClassVerbs v;
-    // The lineage FIRST: a class off the Aprop_C chain resolves nothing. MostDerived walks the
-    // whole object array once per level of the chain, and the key index this lane is driven from
-    // also holds trash piles, clumps and chip piles, none of which descend from Aprop_C.
+    // The lineage FIRST: a class off the Aprop_C chain resolves nothing. FindDispatchFunction
+    // walks the whole object array once per level of the chain, and the key index this lane is
+    // driven from also holds trash piles, clumps and chip piles, none descended from Aprop_C.
     if (R::IsDescendantOfAny(cls, &g_propCls, 1)) {
-        v.getData  = MostDerived(cls, L"getData");
-        v.loadData = MostDerived(cls, L"loadData");
+        v.getData  = R::FindDispatchFunction(cls, L"getData", nullptr);
+        v.loadData = R::FindDispatchFunction(cls, L"loadData", nullptr);
         // Stop AT Aprop_C: its own getData is the base record, and every field of it already
         // rides the prop spawn row (class, key, name, the saved bools, the transform).
         for (void* c = cls; c && c != g_propCls; c = R::SuperStructOf(c))

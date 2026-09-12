@@ -80,6 +80,8 @@ post it. `[V]`
 | the pile's grab and re-pile verbs | `EX_LocalVirtualFunction` | no | the use input's pre observer reads the aimed pile while it is alive `[V]` |
 | the weather-event rolls (red sky, black fog, rolling fog) | `EX_LocalVirtualFunction` | no | a field poll on the host; a birth catch at the finish-spawning seam on clients `[V]` |
 | the impact damage entries | native impact system into a Blueprint event | yes, and interceptable | cancelled on any body that is not the local player `[V]` |
+| the player's damage verb (`Add Player Damage`) | `EX_LocalVirtualFunction` on itself, and the same opcode through a context switch from each attacker | no, on every one of its call sites | the script-body gate, refusing per call by the verb's own `source` argument -- the attacker the Blueprint passes `[V]` |
+| a base cleaner's begin-play (it box-overlaps and destroys) | engine | yes | a client cancels it; the verb is declared on the base class, so a leaf variant that declares nothing resolves only by climbing `[V]` |
 | the lethal chain (damage, kill, ragdoll, fallen) | `EX_LocalVirtualFunction` | no | the death lane cuts at the native level open below it `[V]` |
 | the level travel (`loadLevel`, `transition`) | `EX_LocalVirtualFunction` | no, to both the detour and the native seam | the script-body gate can see it; nothing watches it today `[RD]` |
 | `UGameplayStatics::OpenLevel` | a final call into a native | not to the detour; yes to a plain function detour | the death lane's veto `[V]` |
@@ -172,7 +174,7 @@ consumer. The verb name is the identity. A consumer reading the call handed to i
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 
-## Three traps
+## Four traps
 
 A call that returns true has not necessarily done anything visible: a static-mobility component
 silently ignores a mesh swap and a move while the call still returns true, which is how the trash
@@ -183,6 +185,17 @@ Driving an entity through a non-representative slot gives a false result: grabbi
 calling the grab function puts the clump in the physics-handle slot, where the native re-pile gate
 aborts, while a real press carries it in the hand slot, where the gate never fires and the held
 clump re-piles on contact. Drive the entity through the seam the player uses. `[V]`
+
+A hook resolves the function an INSTANCE would run, which is not the function a class declares.
+`reflection::FindFunction` matches the exact owner and never climbs, so naming a class that
+inherits the verb returns null and the seam never installs: it logs nothing after its one warning
+and reads exactly like a verb that never fires. The mirror of the same fact bites a reflected
+call, because `ProcessEvent` runs the UFunction it is handed and does not re-resolve by name --
+a verb resolved on a base and called on an overriding subclass runs the BASE body. Ask both
+questions with `reflection::FindDispatchFunction`, which climbs and names the declaring class: if
+the declarer is not the class you asked for, that one object serves the whole family, so either
+cover it deliberately or filter on the instance. `[V]` The measured cost of not asking: a client
+cleaner deleting props locally for a year, and the wrong material on six grime types.
 
 A tick park is a claim about ONE dispatch, never about the actor. The hook lane parks a mirror's
 brain with a PRE interceptor that cancels the Blueprint body of `hook_C::ReceiveTick`, per actor

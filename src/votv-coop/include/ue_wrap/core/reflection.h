@@ -155,8 +155,29 @@ void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
 void* FindClass(const wchar_t* className);
 
 // A UFunction named `funcName` owned (Outer) by `owningClass`. Walks the class's Outer-children
-// only; does not climb to super classes.
+// only; does not climb to super classes. This answers WHICH CLASS DECLARES IT, the right question
+// for a declaration census and for a hook that must not reach a sibling class.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
+
+// The UFunction an instance of `cls` would DISPATCH for `funcName`: the declaration on `cls` if it
+// has one, else the nearest ancestor's. This is the question a HOOK asks, and the two differ: a
+// class that declares nothing resolves to null through FindFunction, so a seam registered that way
+// never installs and reports nothing, which reads exactly like a verb that never fires.
+//
+// `outDeclaringClass` receives the class the result is declared on, and a caller must read it: when
+// it is not `cls`, that one UFunction serves every class under the declarer, so a hook on it fires
+// for the siblings too. Either cover them deliberately or filter on the instance in the callback.
+// Cost is one object-array walk per hop, so this is an install-time resolve; throttle any retry.
+// The climb stops after 16 hops, which no chain in this cook approaches; null means the name is
+// declared nowhere on the chain, which for a leaf class usually means it is native.
+void* FindDispatchFunction(void* cls, const wchar_t* funcName, void** outDeclaringClass);
+
+// The same answer, memoised per (class, name), for a path that asks more than once per class --
+// a verb driven on every interaction rather than resolved once at install. The cached pair is
+// revalidated before it is returned, so a world unload cannot serve a freed UFunction. It does
+// not report the declaring class: a caller that has to know already had to ask once, uncached.
+// Game thread only.
+void* FindDispatchFunctionCached(void* cls, const wchar_t* funcName);
 
 // First object whose class name is `className` in object-array order, skipping nulls and
 // the class default object (names starting with "Default__"). There is NO liveness test and
