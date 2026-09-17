@@ -120,6 +120,16 @@ cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). 
 runs on the host only, which is what makes selling into it the one economy path that credits the
 group correctly.
 
+The garage console calls and sends it. Its one action option dispatches on what the presser is
+looking at -- the keyboard runs the drone's own call-or-send verb, the other face toggles the
+drone's leave timer -- and the console holds its drone as a level reference, so every peer's
+console points at that peer's own drone. A client's press therefore reached a mirror whose flight
+tick is suppressed: nothing moved and nobody heard about it, which is why only the host could work
+the button. The client now refuses its own body at the script-body gate and sends the console's
+element id; the host re-tests reach and its own copy of the lid, then runs the same verb, so the
+flight starts on the machine that owns it and arrives on the stream that already carries it
+(`coop/interactables/drone_call_intent`). The leave-timer face has no lane and stays local.
+
 ### The balance
 
 The host owns the balance. It polls the points field every tick, which catches every writer, and
@@ -262,6 +272,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `KeypadState` | each peer, relayed | the buffer, the active flag, an accept or deny event |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
+| `DroneFlyIntent` | a client to the host | the garage console whose call button it pressed |
 | `BalanceSync` | the host to all | the absolute balance |
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
 | `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |
@@ -304,7 +315,7 @@ an error line.
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
-| the drone | `coop/interactables/drone_sync`, `ue_wrap/devices/drone` |
+| the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone` |
 | the floppy slot | `coop/interactables/floppy_slot_sync`, `ue_wrap/devices/floppy_slot`, `ue_wrap/devices/serverbox`, `ue_wrap/devices/laptop` |
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/coingun_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog` |

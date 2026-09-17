@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 167;
+inline constexpr uint16_t kProtocolVersion = 168;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -716,6 +716,20 @@ enum class ReliableKind : uint8_t {
     // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
     // one request. GrabRefusedPayload.
     GrabRefused = 140,
+
+    // Client to host: press the garage console's keyboard, the call-or-send button behind the
+    // "drone is active" line. Every peer's console holds its own drone as a level reference, so a
+    // client's press reached only its own suppressed mirror and the drone never moved; the client
+    // refuses its own body at the script-body gate and asks here instead. The console is NOT named
+    // here: it is baked into the level and no lane keys it, so it has neither a save key nor an
+    // element id, and the host resolves the console the sender stands at from its own world
+    // instead. Trust: that resolve IS the sender's own reach token, the console's lid must be open
+    // on the host, and a sender's presses run no faster than a bounded rate from a bounded queue.
+    // The host runs the button's own verb, drone.triggerFly, whose body owns every condition, and
+    // the flight reaches the peers on the pose stream that already carries it. Late join: nothing
+    // to replay, since a press the host has not run changed nothing.
+    // DroneFlyIntentPayload.
+    DroneFlyIntent = 141,
 };
 
 #pragma pack(push, 1)
@@ -2227,6 +2241,21 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 
 // A throw intent (ThrowIntent). mode kRelease: the native drop; the clump leaves the puppet's
 // physics handle with the velocity the hold gave it. mode kHardThrow: the native camera-directed throw; the client
+
+// A drone-call intent (DroneFlyIntent): the press itself, with which of the console's two faces it
+// was. Which face is the sender's reading of its own cursor, the only machine that has one, and the
+// console carries no identity to name (see the kind's comment), so the host resolves the console
+// the sender stands at and re-tests the lid there.
+struct DroneFlyIntentPayload {
+    uint8_t verb;        // 0 = the keyboard's call-or-send; the leave-timer face has no lane yet
+    uint8_t _pad[7];     // 8-byte alignment; bytes beyond the verb zero
+};
+static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
+static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,
+              "DroneFlyIntentPayload must fit one datagram");
+
+// A throw intent (ThrowIntent). mode kRelease: the native drop; the host derives the launch from
+// the puppet's smoothed hand motion. mode kHardThrow: the native camera-directed throw; the client
 // sends its camera-forward unit vector and the host applies the game's formula with the real mass
 // and the puppet's velocity. The clump re-piles itself on landing either way.
 namespace throw_mode { constexpr uint8_t kRelease = 0; constexpr uint8_t kHardThrow = 1; }

@@ -16,6 +16,7 @@
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
+#include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/interactables/interactable_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
@@ -247,6 +248,39 @@ bool HandleIntentEvent(net::Session& session,
         }
         UE_LOGI("[GRAB-INTENT] RECEIVED eid=%u slot=%d", p.eid, msg.senderPeerSlot);
         coop::trash_channel::OnGrabIntent(session, p.eid, p.reqId, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::DroneFlyIntent: {
+        // CLIENT->HOST drone call REQUEST: a client pressed the garage console's keyboard. The
+        // console is not named -- it is baked into the level and no lane keys it -- so the host
+        // resolves the one the sender stands at from its own world and re-tests the lid there,
+        // then runs the button's own verb. That resolve, the lid and the rate live in the module;
+        // the format lives here.
+        // coop::drone_call_intent::OnDroneFlyIntent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: DroneFlyIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: DroneFlyIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::DroneFlyIntentPayload)) {
+            UE_LOGW("event_feed: DroneFlyIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DroneFlyIntentPayload));
+            break;
+        }
+        net::DroneFlyIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.verb != 0) {
+            UE_LOGW("event_feed: DroneFlyIntent verb=%u has no lane -- dropping",
+                    static_cast<unsigned>(p.verb));
+            break;
+        }
+        UE_LOGI("[DRONE-CALL] RECEIVED slot=%d", msg.senderPeerSlot);
+        coop::drone_call_intent::OnDroneFlyIntent(session, p,
+                                                  static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::BroomStroke: {

@@ -92,4 +92,34 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);
 
+// --- the garage console (AdroneConsole_C), the drone's call/send button ---
+//
+// The console's one action option dispatches on what the presser is looking at: its keyboard runs
+// drone.triggerFly(console), the call-or-send verb behind the "drone is active" line, while its
+// other face toggles the drone's leaveAfter5min. The console holds its drone as a level reference,
+// so every peer's console points at that peer's own drone -- which is why a client's press reached
+// only its own suppressed mirror and the drone never moved.
+
+// Every live garage console. The console is baked into the level and no lane keys it, so a peer
+// cannot name one over the wire; the host finds the one a sender stands at by asking its own world
+// and then its own reach. Fills up to `cap`, returns the count. Scans by class, so this is for a
+// press, not a tick. Game thread.
+int32_t LiveGarageConsoles(void** out, int32_t cap);
+
+// True iff `obj` is a droneConsole_C (or a descendant). Cached class, game thread.
+bool IsGarageConsole(void* obj);
+
+// The console's lid: the keyboard is only pressable while it is open, which is the console's own
+// gate on the verb. False when the field does not resolve, so an unreadable lid refuses.
+bool IsConsoleLidOpen(void* console);
+
+// The presser's cursor is on the keyboard rather than the console's other face: the discriminator
+// the game itself uses to pick the verb, and it is LOCAL to whoever is looking.
+bool IsCursorOnConsoleKeyboard(void* console);
+
+// Run the keyboard's own verb: drone.triggerFly(console) on the drone this console references.
+// The drone's body owns every condition (a sack aboard, the radiotower, a sack on the pad), so
+// this asks nothing and answers only whether the call was dispatched. Game thread.
+bool TriggerFlyFromConsole(void* console);
+
 }  // namespace ue_wrap::drone

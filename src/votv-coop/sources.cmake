@@ -232,6 +232,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_container_extract.cpp
+    src/coop/interactables/drone_call_intent.cpp
     src/coop/props/prop_drop_intent.cpp
     src/coop/props/prop_snapshot.cpp
     src/coop/props/prop_save_data.cpp

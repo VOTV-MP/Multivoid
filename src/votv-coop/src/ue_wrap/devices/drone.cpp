@@ -326,4 +326,72 @@ void RepointContainer(void* drone) {
     }
 }
 
+namespace {
+
+// The console's class and the three fields its own verb reads, resolved on first sight.
+ue_wrap::CachedObjRef g_consoleCls;
+int32_t g_conOpenedOff   = -1;  // droneConsole_C::opened          (the lid)
+int32_t g_conKeyboardOff = -1;  // droneConsole_C::lookatKeyboard  (the presser's own cursor)
+int32_t g_conDroneOff    = -1;  // droneConsole_C::drone           (a level reference)
+void*   g_triggerFlyFn   = nullptr;  // drone_C::triggerFly(console)
+
+void* ConsoleClass() {
+    if (g_consoleCls.Alive()) return g_consoleCls.Raw();
+    g_consoleCls.Set(R::FindClass(L"droneConsole_C"));
+    return g_consoleCls.Raw();
+}
+
+// A console field by name, resolved once off the live instance's own class.
+bool ConsoleBool(void* console, int32_t& off, const wchar_t* name, bool& out) {
+    if (!IsGarageConsole(console)) return false;
+    if (off < 0) off = R::FindPropertyOffset(R::ClassOf(console), name);
+    if (off < 0) return false;
+    out = *reinterpret_cast<bool*>(reinterpret_cast<char*>(console) + off);
+    return true;
+}
+
+}  // namespace
+
+int32_t LiveGarageConsoles(void** out, int32_t cap) {
+    if (!out || cap <= 0 || !ConsoleClass()) return 0;
+    int32_t n = 0;
+    for (void* c : R::FindObjectsByClass(L"droneConsole_C")) {
+        if (n >= cap) break;
+        if (c && R::IsLive(c)) out[n++] = c;
+    }
+    return n;
+}
+
+bool IsGarageConsole(void* obj) {
+    void* cls = ConsoleClass();
+    if (!obj || !cls) return false;
+    void* objCls = R::ClassOf(obj);
+    void* bases[1] = {cls};
+    return objCls && R::IsDescendantOfAny(objCls, bases, 1);
+}
+
+bool IsConsoleLidOpen(void* console) {
+    bool open = false;
+    return ConsoleBool(console, g_conOpenedOff, L"opened", open) && open;
+}
+
+bool IsCursorOnConsoleKeyboard(void* console) {
+    bool on = false;
+    return ConsoleBool(console, g_conKeyboardOff, L"lookatKeyboard", on) && on;
+}
+
+bool TriggerFlyFromConsole(void* console) {
+    if (!IsGarageConsole(console)) return false;
+    if (g_conDroneOff < 0) g_conDroneOff = R::FindPropertyOffset(R::ClassOf(console), L"drone");
+    if (g_conDroneOff < 0) return false;
+    void* drone = *reinterpret_cast<void**>(reinterpret_cast<char*>(console) + g_conDroneOff);
+    if (!drone || !R::IsLive(drone)) return false;
+    if (!g_triggerFlyFn) g_triggerFlyFn = R::FindFunction(R::ClassOf(drone), L"triggerFly");
+    if (!g_triggerFlyFn) return false;
+    ue_wrap::ParamFrame f(g_triggerFlyFn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"console", console);
+    return ue_wrap::Call(drone, f);
+}
+
 }  // namespace ue_wrap::drone
