@@ -12,6 +12,7 @@
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
 #include <steam/steamnetworkingsockets.h>
+#include <steam/isteamnetworkingutils.h>  // SteamNetworkingIPAddr::ParseString (inline, static-link build)
 #pragma warning(pop)
 
 namespace coop::net {

@@ -9,6 +9,9 @@
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
 #include <steam/steamnetworkingtypes.h>
 #include <steam/isteamnetworkingsockets.h>
+#include <steam/isteamnetworkingutils.h>  // SteamNetworkingIdentity::ParseString is inline HERE under
+                                          // STEAMNETWORKINGSOCKETS_STATIC_LINK; without this header the
+                                          // call links against a member the static library never defines.
 #pragma warning(pop)
 
 #define WIN32_LEAN_AND_MEAN
