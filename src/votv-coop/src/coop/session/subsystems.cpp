@@ -99,6 +99,7 @@
 #include "coop/interactables/power_sync.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
+#include "coop/interactables/window_stroke_sync.h"
 #include "coop/interactables/window_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/interactables/garbage_sync.h"
@@ -213,6 +214,7 @@ void Install(coop::net::Session& session) {
     coop::comp_sync::Install(&session);  // refiner decode pane (single-simulator stream + passive mirrors)
     coop::voice_chat::Install(&session);  // proximity voice chat (opus over the session; PTT X)
     coop::window_sync::Install(&session);  // base-window dirt scalar (the "main huge window")
+    coop::window_stroke_sync::Install(&session);  // the bay window's render-target dabs
     coop::grime_sync::Install(&session);  // surface grime (walls/ceiling/floor dirt decals)
     coop::trash_pile_sync::Install(&session);  // trash pile collect counters
     coop::broom_stroke::Install(&session);  // a client's broom stroke is run by the host, with what the client's stroke read
@@ -487,6 +489,7 @@ DisconnectStats DisconnectAll() {
     coop::comp_sync::OnDisconnect();
     coop::voice_chat::OnDisconnect();
     coop::window_sync::OnDisconnect();
+    coop::window_stroke_sync::OnDisconnect();
     coop::grime_sync::OnDisconnect();
     coop::trash_pile_sync::OnDisconnect();
     coop::broom_stroke::OnDisconnect();  // with no session the game's broom sweeps as written
@@ -593,6 +596,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // later, where a dispatch is safe.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:coingun"}; coop::coingun_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window"}; coop::window_sync::Tick(); }  // base-window clean: poll for wipes + deferred-apply retry (symmetric)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window_stroke"}; coop::window_stroke_sync::Tick(); }  // bay-window dabs: send observed, replay received
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:grime"}; coop::grime_sync::Tick(); }  // surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:movement_ledger"}; coop::movement_ledger::Tick(session); }  // HOST: throttled per-slot summary + the wire-vs-actor divergence sample (an ENGINE read, hence game thread)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:npc_host"}; coop::npc_sync::TickPoseStream(); }  // HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)

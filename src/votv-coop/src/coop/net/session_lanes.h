@@ -194,6 +194,7 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DishAimState:      // claim-owner-authoritative
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // symmetric
+    case ReliableKind::WindowStroke:      // presser-authored
     case ReliableKind::GrimeState:        // symmetric
     case ReliableKind::TrashPileState:    // symmetric
     case ReliableKind::FireflySpawn:      // each peer spawns near its own camera and shares

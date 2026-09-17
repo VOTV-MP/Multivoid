@@ -21,6 +21,7 @@
 #include "coop/props/container_contents_sync.h"  // the container stack slice lane
 #include "coop/props/trash_pile_sync.h"
 #include "coop/interactables/turbine_sync.h"
+#include "coop/interactables/window_stroke_sync.h"
 #include "coop/interactables/window_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -254,6 +255,33 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::window_sync::OnReliable(wp, senderSlot);
+        break;
+    }
+    case net::ReliableKind::WindowStroke: {
+        // One sponge dab on the bay window's dirt render target, from whichever peer stroked it
+        // (the host relays a client's). The values land in a canvas draw, so each is bounded here:
+        // a NaN or an out-of-texture size is undefined GPU work rather than a visible mistake.
+        if (msg.payloadLen < sizeof(net::WindowStrokePayload)) {
+            UE_LOGW("event_feed: WindowStroke payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WindowStrokePayload));
+            break;
+        }
+        net::WindowStrokePayload sp{};
+        std::memcpy(&sp, msg.payload, sizeof(sp));
+        const bool finite = std::isfinite(sp.x) && std::isfinite(sp.y) && std::isfinite(sp.size) &&
+                            std::isfinite(sp.opac) && std::isfinite(sp.col);
+        if (!finite || sp.size <= 0.0f || sp.size > 512.0f || sp.x < -512.0f || sp.x > 2157.0f ||
+            sp.y < -512.0f || sp.y > 1024.0f || sp.opac < 0.0f || sp.opac > 4.0f ||
+            sp.col < 0.0f || sp.col > 1.0f) {
+            UE_LOGW("event_feed: WindowStroke out of range (x=%.1f y=%.1f size=%.1f opac=%.2f col=%.2f)"
+                    " -- dropping", sp.x, sp.y, sp.size, sp.opac, sp.col);
+            break;
+        }
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::window_stroke_sync::OnReliable(sp, senderSlot);
         break;
     }
     case net::ReliableKind::GrimeState: {

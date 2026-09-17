@@ -224,6 +224,8 @@ CFG_FLAG(window_log, "window_log", "dev", false, nullptr,
     "Diagnostic logging for window sync.")
 CFG_FLAG(window_synth, "window_synth", "dev", false, nullptr,
     "Test driver: synthesize window interactions.")
+CFG_FLAG(window_stroke_log, "window_stroke_log", "dev", false, nullptr,
+    "Diagnostic logging for the bay-window dab sync (every dab sent and received).")
 CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr,
     "Diagnostic logging for the weather sync observers.")
 CFG_FLAG(weather_probe, "weather_probe", "dev", false, nullptr,

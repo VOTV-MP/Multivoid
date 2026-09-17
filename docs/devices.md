@@ -111,6 +111,18 @@ minimum, and two peers wiping at once converge with no oscillation; the grime de
 their quantised world position, since both peers place them from the same save
 (`coop/interactables/window_sync`, `coop/interactables/grime_sync`).
 
+The base's bay window is not one of those: its dirt is a 1645x512 render target that a sponge
+wipes one dab at a time, so there is no scalar to compare. A stroke reaches the window's own
+`cleanPhys` through a script call no hook here carries arguments for, so the dab is observed at
+its native draw instead -- a `UCanvas::K2_DrawMaterial` whose calling frame is the window with its
+canvas session open, which the window's periodic dirt splotch cannot be, since that refuses to run
+while the session is open. The stroking peer sends the dab's pixel, its edge and the brush's
+opacity and colour; every other peer draws the same dab through the window's own `Canvas` event
+with a brush material the mod owns, and the host relays a client's dab, so the host's save carries
+every peer's wipes. Never `setDraw`, `endDraw` or `dirty` from outside: the session belongs to the
+window, and an outside `endDraw` deletes the world canvas the game's own next dab draws into
+(`coop/interactables/window_stroke_sync`, `ue_wrap/devices/window_canvas`).
+
 ### The drone
 
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not

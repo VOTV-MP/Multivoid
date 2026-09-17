@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 167;
+inline constexpr uint16_t kProtocolVersion = 168;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -716,6 +716,17 @@ enum class ReliableKind : uint8_t {
     // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
     // one request. GrabRefusedPayload.
     GrabRefused = 140,
+
+    // One sponge dab on the base's bay window (Ad_window_C), whose dirt is a render target wiped
+    // one dab at a time rather than a scalar like the small windows. Presser-authored and
+    // symmetric: the stroke runs only on the peer whose camera launched it, so that peer sends the
+    // dab's pixel, its edge and the brush's opacity and colour, every other peer draws the same dab
+    // through the window's own canvas session, and the host relays a client's dab so its world --
+    // and its save -- carries every peer's wipes. Trust: each field is range-checked at the
+    // receiver, since they land in a canvas draw. Late join: the window rides the host's
+    // transferred save, which stores the render target as an image.
+    // WindowStrokePayload.
+    WindowStroke = 141,
 };
 
 #pragma pack(push, 1)
@@ -1627,6 +1638,22 @@ struct BroomStrokePayload {
     float fwdX, fwdY, fwdZ;         // 12 -- the holder's actor forward, a unit vector
     float velX, velY, velZ;         // 12 -- the holder's velocity, cm/s
 };
+// One sponge dab on the bay window's 1645x512 dirt render target (WindowStroke). The window is a
+// singleton, so no identity travels. x/y is the dab's top-left pixel as the stroke computed it from
+// its own hit, size the dab's edge, and opac/col the brush material scalars the sponge set for that
+// dab (col 0 paints clean). A receiver draws the same dab through the window's canvas session.
+struct WindowStrokePayload {
+    float    x;          // 4 -- dab top-left, render-target pixels
+    float    y;          // 4
+    float    size;       // 4 -- dab edge, pixels
+    float    opac;       // 4 -- brush "opac"
+    float    col;        // 4 -- brush "col"
+    uint8_t  _pad[4];    // 4 -- alignment / reserved
+};
+static_assert(sizeof(WindowStrokePayload) == 24, "WindowStrokePayload must be 24 bytes");
+static_assert(sizeof(WindowStrokePayload) <= 256 - 20 - 8,
+              "WindowStrokePayload must fit in one reliable datagram");
+
 static_assert(sizeof(BroomStrokePayload) == 48, "BroomStrokePayload must be 48 bytes");
 static_assert(sizeof(BroomStrokePayload) <= 256 - 20 - 8,
               "BroomStrokePayload must fit in one reliable datagram");
