@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 167;
+inline constexpr uint16_t kProtocolVersion = 168;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -716,6 +716,17 @@ enum class ReliableKind : uint8_t {
     // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
     // one request. GrabRefusedPayload.
     GrabRefused = 140,
+
+    // Client to host: bag the trash pile or clump this element id names, with a folded bag or a bag
+    // roll. The client's own pack authors nothing the host can see -- a client's prop birth is
+    // refused at the door and a pile carries no Key a keyed destroy could name -- so the client
+    // refuses its own body at the script-body gate and asks here instead. Trust: the target is
+    // resolved through the sender's own reach token, must be of the pile or clump family, must not
+    // be under an open carry, and a sender's packs run no faster than a bounded rate from a bounded
+    // queue. The host spawns the bag and destroys the target itself, so the prop seams carry both.
+    // Late join: nothing to replay, since a pack the host has not run changed nothing.
+    // PackTrashIntentPayload.
+    PackTrashIntent = 141,
 };
 
 #pragma pack(push, 1)
@@ -2201,6 +2212,19 @@ struct GrabIntentPayload {
 };
 static_assert(sizeof(GrabIntentPayload) == 8, "GrabIntentPayload must be 8 bytes");
 static_assert(sizeof(GrabIntentPayload) <= 256 - 20 - 8, "GrabIntentPayload must fit one datagram");
+
+// A pack intent (PackTrashIntent): the element the client bagged and what it bagged it with. The
+// kinds are the sender's reading of its own target and tool, and the host re-tests both against the
+// actor its own registry resolves, so they are a cross-check rather than an authority.
+struct PackTrashIntentPayload {
+    uint32_t eid;          // the pile or clump the client used the bag on
+    uint8_t  targetKind;   // 0 = pile, 1 = clump
+    uint8_t  toolKind;     // 0 = folded bag, 1 = bag roll
+    uint8_t  _pad[2];      // 8-byte alignment; bytes beyond the kinds zero
+};
+static_assert(sizeof(PackTrashIntentPayload) == 8, "PackTrashIntentPayload must be 8 bytes");
+static_assert(sizeof(PackTrashIntentPayload) <= 256 - 20 - 8,
+              "PackTrashIntentPayload must fit one datagram");
 
 // Why the host refused a grab intent (GrabRefused). For reasons 1 to 8 the client's handling is
 // one -- the request is over -- and the reason is there for the log a player sends us. Reason 9

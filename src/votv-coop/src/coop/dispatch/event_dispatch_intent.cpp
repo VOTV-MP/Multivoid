@@ -19,6 +19,7 @@
 #include "coop/interactables/interactable_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
+#include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
 #include "coop/props/prop_drop_intent.h"  // CLIENT->HOST client-placed keyed prop
 #include "coop/items/broom_stroke.h"
 #include "coop/props/trash_channel.h"
@@ -247,6 +248,43 @@ bool HandleIntentEvent(net::Session& session,
         }
         UE_LOGI("[GRAB-INTENT] RECEIVED eid=%u slot=%d", p.eid, msg.senderPeerSlot);
         coop::trash_channel::OnGrabIntent(session, p.eid, p.reqId, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::PackTrashIntent: {
+        // CLIENT->HOST bagging REQUEST: the pile or clump a client used a folded bag or a roll on.
+        // The host re-tests the target through the sender's own reach token, then spawns the bag
+        // and destroys the target itself, so the prop seams carry both. The reach, the type and the
+        // rate live in the module; the format lives here.
+        // coop::pack_trash_intent::OnPackTrashIntent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: PackTrashIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: PackTrashIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::PackTrashIntentPayload)) {
+            UE_LOGW("event_feed: PackTrashIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PackTrashIntentPayload));
+            break;
+        }
+        net::PackTrashIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.eid == 0) {
+            UE_LOGW("event_feed: PackTrashIntent eid==0 -- dropping");
+            break;
+        }
+        if (p.targetKind > 1 || p.toolKind > 1) {
+            UE_LOGW("event_feed: PackTrashIntent kinds out of range (target=%u tool=%u) -- dropping",
+                    static_cast<unsigned>(p.targetKind), static_cast<unsigned>(p.toolKind));
+            break;
+        }
+        UE_LOGI("[PACK-TRASH] RECEIVED eid=%u slot=%d target=%u tool=%u", p.eid, msg.senderPeerSlot,
+                static_cast<unsigned>(p.targetKind), static_cast<unsigned>(p.toolKind));
+        coop::pack_trash_intent::OnPackTrashIntent(session, p,
+                                                   static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::BroomStroke: {

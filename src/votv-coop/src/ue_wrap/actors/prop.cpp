@@ -779,4 +779,61 @@ bool ForceRestoreDefaultCollision(void* prop) {
     return true;
 }
 
+// ---- the bagging family ----------------------------------------------------------------------
+// Each class is cached through a CachedObjRef, as the prop base above is: a level reload can
+// destroy and re-create a UClass at the same address, and the liveness check covers that. A class
+// that is not loaded costs a full object walk per call (FindClass memoises hits, never misses), so
+// these tests are written for once-per-press call sites, not for a per-frame poll.
+namespace {
+
+ue_wrap::CachedObjRef g_bagFoldCls;
+ue_wrap::CachedObjRef g_bagRollCls;
+ue_wrap::CachedObjRef g_bagFullCls;
+
+void* CachedBagClass(ue_wrap::CachedObjRef& slot, const wchar_t* name) {
+    if (slot.Alive()) return slot.Raw();
+    slot.Set(R::FindClass(name));
+    return slot.Raw();
+}
+
+bool IsOfBagClass(void* obj, void* cls) {
+    if (!obj || !cls) return false;
+    void* objCls = R::ClassOf(obj);
+    void* bases[1] = {cls};
+    return objCls && R::IsDescendantOfAny(objCls, bases, 1);
+}
+
+// The roll's remaining-bag count, resolved by name on the roll's own class; -1 until a roll has
+// been seen.
+int32_t g_bagsOff = -1;
+
+}  // namespace
+
+bool IsGarbBagFold(void* obj) {
+    return IsOfBagClass(obj, CachedBagClass(g_bagFoldCls, L"prop_garbBagFold_C"));
+}
+
+bool IsGarbBagRoll(void* obj) {
+    return IsOfBagClass(obj, CachedBagClass(g_bagRollCls, L"prop_garbBagRoll_C"));
+}
+
+void* GarbageBagClass() {
+    return CachedBagClass(g_bagFullCls, L"prop_garbageBag_C");
+}
+
+bool ReadBagRollCount(void* roll, int32_t& bags) {
+    if (!IsGarbBagRoll(roll)) return false;
+    if (g_bagsOff < 0) g_bagsOff = R::FindPropertyOffset(R::ClassOf(roll), L"bags");
+    if (g_bagsOff < 0) return false;
+    bags = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(roll) + g_bagsOff);
+    return true;
+}
+
+bool WriteBagRollCount(void* roll, int32_t bags) {
+    int32_t cur = 0;
+    if (!ReadBagRollCount(roll, cur)) return false;
+    *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(roll) + g_bagsOff) = bags;
+    return true;
+}
+
 }  // namespace ue_wrap::prop

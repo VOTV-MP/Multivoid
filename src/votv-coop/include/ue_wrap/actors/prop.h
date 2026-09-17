@@ -86,6 +86,17 @@ bool EnsurePropBaseResolved();
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 
+// The bagging family: the folded bag and the bag roll a player packs a pile with, and the filled
+// bag the pack produces. Each test answers for the class or a subclass; the class getters are null
+// until the class loads. `bags` is the roll's remaining count (raw int32, the number its own hint
+// prints), so a peer that consumes a bag writes it and the roll's own body reads the same field.
+// The pair returns false for anything but a roll. Game thread.
+bool IsGarbBagFold(void* obj);
+bool IsGarbBagRoll(void* obj);
+void* GarbageBagClass();
+bool ReadBagRollCount(void* roll, int32_t& bags);
+bool WriteBagRollCount(void* roll, int32_t bags);
+
 // The per-class Key reader for keyed interactables: an Aprop_C reads its own Key FName, a
 // trashBitsPile the Aactor_save_C one, and a chipPile or clump has no native
 // field and answers only through the BP GetKey UFunction, resolved and cached per class and

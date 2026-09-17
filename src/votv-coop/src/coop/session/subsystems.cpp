@@ -112,6 +112,7 @@
 #include "coop/props/prop_drive_stream.h"  // CLIENT: park and drive those props
 #include "coop/props/trash_collect_sync.h"
 #include "coop/items/broom_stroke.h"
+#include "coop/props/pack_trash_intent.h"
 #include "coop/items/broom_push.h"
 #include "coop/props/trash_pile_sync.h"
 #include "coop/save/save_block.h"
@@ -216,6 +217,7 @@ void Install(coop::net::Session& session) {
     coop::grime_sync::Install(&session);  // surface grime (walls/ceiling/floor dirt decals)
     coop::trash_pile_sync::Install(&session);  // trash pile collect counters
     coop::broom_stroke::Install(&session);  // a client's broom stroke is run by the host, with what the client's stroke read
+    coop::pack_trash_intent::Install(&session);  // a client's bagging of a pile is run by the host
     coop::broom_push::Install(&session);  // a host's broom push streams what it moves
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
     coop::garbage_sync::SetSession(&session);
@@ -377,6 +379,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::trash_mirror::OnDisconnectForSlot(slot);  // phase 1: retire the leaver's trash mirrors BEFORE the generic mirror drain (else the rooted actor leaks)
     coop::trash_channel::OnGrabHolderLeft(session, static_cast<uint8_t>(slot));  // the leaver's carried clump is let go: it falls, streams, lands
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
+    coop::pack_trash_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and so does its pack queue
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -490,6 +493,7 @@ DisconnectStats DisconnectAll() {
     coop::grime_sync::OnDisconnect();
     coop::trash_pile_sync::OnDisconnect();
     coop::broom_stroke::OnDisconnect();  // with no session the game's broom sweeps as written
+    coop::pack_trash_intent::OnDisconnect();  // with no session the game's own bagging stands
     coop::broom_push::OnDisconnect();  // forget pushes not yet handed on
     coop::trash_collect_sync::OnDisconnect();
     coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
@@ -629,6 +633,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       coop::trash_sweep::Tick(session, coop::players::Registry::Get().Local());  // open the clumps a broom stroke made or pushed + publish their roll (AFTER TickCarry so the latch is current; reads the local hand live)
       coop::puppet_carry_drive::Tick(session); }  // drive each puppet-held clump to its hand + publish the host-auth carry/flight pose batch (AFTER TickCarry so the latch is current)
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_stroke::Tick(session); }  // HOST: run the clients' queued broom strokes, one a tick a client (last: what a stroke spawns, sweeps and pushes is picked up next tick, as for the host's own)
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::pack_trash_intent::Tick(session); }  // client: spend the tools its presses sent; HOST: run one queued pack a tick a client
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);

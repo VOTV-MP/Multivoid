@@ -204,12 +204,14 @@ replacement for the position key.
 | the pile-to-clump identity | the host | one id, rebound onto each successor at its birth, guarded by the sync context |
 | a dispenser's counters | each peer, minimum wins | the host as sent at join |
 | a broom stroke | the host | a client's stroke is what it read of its holder; the host runs the stroke with those reads, reach- and rate-checked |
+| bagging a pile | the host, by intent | a client's press is refused at the script-body gate and sent as the target's id; the host spawns the bag and destroys the target, so the prop seams carry both |
 
 ## Wire messages
 
 | Kind | Direction | Carries |
 |---|---|---|
 | `GrabIntent`, `ThrowIntent` | a client to the host | the pile id; the release or a hard throw with its direction |
+| `PackTrashIntent` | a client to the host | the id of the pile or clump a client bagged, and whether the tool was a folded bag or a roll |
 | `BroomStroke` | a client to the host | the segment, heading and velocity a broom stroke read of its holder |
 | `PropConvert` | the host to all | the atomic pile-clump convert: id, form, pose, scale, chip type, context |
 | `TrashCarryPose` (stream) | the host to all | per-id poses for client-grabbed clumps and the clumps a broom sets rolling |
@@ -244,6 +246,8 @@ save position, because the host may have moved or removed the pile since.
 | Trash dropped into a garbage container updates the container on the host only: every client's container has its brain cancelled, so none of them -- not even the one whose player dropped the trash -- ever learns what is inside it, and the two pickup flags the game writes from those contents stay frozen | `[V]` `coop/interactables/garbage_sync`, and the cancelled Blueprint body read from the cook |
 | Dispenser piles born by an event carry per-process keys and never resolve across peers | `[V]` `coop/props/trash_pile_sync` |
 | A client's vacuum on a dispenser pile spawns its item on that client only: the host runs the broom's stroke, not the vacuum's suction | `[V]` the vacuum verb's bytecode; `coop/items/broom_stroke` refuses the broom's stroke alone |
+| A client's bag is spent whatever the host answers: the tool and the roll's count are per-peer state with no lane, so the client spends its own on the press and a host refusal -- out of reach, a target of another type -- costs it that bag | `[V]` code: `coop/props/pack_trash_intent` sends and spends in the same press, and the host's deny paths answer no one |
+| A bagged pile makes its bag on the host, so a client sees it a round trip late, and the game's own pack sound and hint play on the packing client alone | `[V]` code: `coop/props/pack_trash_intent` refuses the client's body and the bag rides `PropSpawn` |
 | A client's broom stroke acts a round trip late on that client: its swing animates at once, and the clumps, trash and pushes arrive with the host's messages | `[V]` code: `coop/items/broom_stroke` refuses the stroke at its notify, inside the montage the press started |
 | A clump the game makes of no pile -- an angry erie flesh, a kerfus possessor and an erie plush each spawn one from their own graphs -- has no id at its birth: its first roll is the host's alone. The adoption scan enrols it where it lies, as it does any clump at rest, and every peer then gets it as a clump under that id | `[V]` code: the three graphs' spawns; `coop/props/trash_collect_sync` names a clump at birth only by the pile it is born of; `coop/props/prop_census` enrols a keyless clump |
 | A client cannot pick up a clump that is at rest -- one the save loaded, or one thrown and left on a box. Its use press names piles only, and the game's own pickup refuses a body that is not simulating, which a bound clump is not: the press does nothing. The host's hand can | `[V]` code: `coop/props/trash_use_intercept` recognises a chip pile under the crosshair and nothing else; `[RD]` the pickup's simulating test, `mainPlayer` use handler |
@@ -258,6 +262,7 @@ save position, because the host may have moved or removed the pile since.
 | the client's grab and throw | `coop/props/trash_use_intercept`, `coop/player/puppet_carry_drive`, `coop/props/trash_clump_pose_stream`, `coop/props/active_drive` |
 | the dispenser piles | `coop/props/trash_pile_sync`, `coop/props/trash_collect_sync` |
 | the broom | `coop/items/broom_stroke` (every stroke the host's), `coop/items/broom_push` (what it pushes), `ue_wrap/actors/broom` |
+| bagging a pile | `coop/props/pack_trash_intent`, and the bag family's tests in `ue_wrap/actors/prop` |
 | garbage containers | `coop/interactables/garbage_sync` |
 | the join | `coop/props/pile_spawn_bind`, `coop/element/quiescence_drain`, `coop/props/save_time_retire_util.h`, `coop/props/save_identity_map`, `coop/props/save_identity_bind` |
 | tests | `harness/autotest/autotest_chippile.cpp`, `harness/autotest/autotest_clump.cpp`, `harness/autotest/autotest_broomstroke.cpp` |

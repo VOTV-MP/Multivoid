@@ -227,6 +227,11 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // the CDO cube.
     const auto scl = ue_wrap::engine::GetActorScale3D(self);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
+    // The trash variant, as the join snapshot's builder already sends it: without it a
+    // trash-family prop born at runtime -- a bagged pile's filled bag, a dropped clump -- mirrors
+    // at variant 0 and wears the wrong mesh. GetChipType answers 0 on a class without the
+    // property, so this is one line for the whole family rather than a case for one class.
+    p.chipType = ue_wrap::prop::GetChipType(self);
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(self)) {
