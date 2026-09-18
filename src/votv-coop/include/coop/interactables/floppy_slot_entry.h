@@ -19,6 +19,11 @@ namespace coop::net { class Session; }
 
 namespace coop::floppy_slot_entry {
 
+// The same entry fires for a disc another peer is HOLDING: its pose drives this machine's mirror,
+// and bringing the disc to a slot brings the mirror into this machine's copy of the slot. That one
+// is refused too, on every peer, for as long as the hold lasts: the holder's own insert crosses on
+// the slot lanes, and a second insert from the peer that only watched is a second author.
+//
 // Register the pre-dispatch interceptor on every device kind's overlap entries, and the spawn seam
 // that marks a materialising disc. Idempotent and retry-throttled while a Blueprint class is not
 // loaded yet; safe to call every subsystem-install tick.

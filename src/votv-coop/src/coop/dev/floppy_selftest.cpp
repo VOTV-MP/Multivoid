@@ -60,6 +60,7 @@ uint64_t NowMs() {
 // survival window below, and the deadline past which a state that never came is the failure.
 constexpr uint64_t kCensusMs = 6000;    // the periodic census line: a log, not a milestone
 constexpr uint64_t kPollMs   = 250;     // readiness reads; finding a disc walks the object array
+constexpr uint64_t kNearMs   = 5000;    // the discs around the local player (the ERROR trace)
 // The SECOND look at an ejected disc, this long after it appeared here: the re-swallow takes about
 // a second, so "the eject produced a disc" is not "the disc survived". The next episode waits for
 // this window to close on its own peer. That also keeps the one pair that shares a disc honest --
@@ -115,16 +116,16 @@ const Step kSteps[] = {
     { "R6-insert", false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
     { "R6-eject",  true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
     // The laptop, where a live run's disc came back blank under a new key (bug 19). Its slot
-    // content crosses as one blob cut at 4 KB, so L1 hands the client a cut copy and has the
-    // client eject from it; L2 is the same disc size ejected by the host that never lost a byte.
+    // content crossed as one blob cut at 4 KB, so L1 has the client eject from its copy of a slot
+    // past that size; L2 is the same disc size ejected by the host, whose copy is its own.
     { "L1-insert", true,  kLaptop, 8,  Verb::Insert,
-      "a host laptop insert of a disc whose slot content is past the 4 KB blob cut" },
+      "a host laptop insert of a disc whose slot content is past the old 4 KB blob cut" },
     { "L1-eject",  false, kLaptop, 8,  Verb::Eject,
       "the client ejecting from ITS copy of that slot, which is what crossed" },
     { "L2-insert", true,  kLaptop, 9,  Verb::Insert,
       "the same size into the laptop by the host: the control's insert" },
     { "L2-eject",  true,  kLaptop, 9,  Verb::Eject,
-      "the host ejecting its own insert: its copy of the slot was never cut" },
+      "the host ejecting its own insert: its copy of the slot is its own" },
     { "L3-insert", false, kLaptop, 10, Verb::Insert,
       "a client laptop insert of a one-row disc: the client-to-host slot path" },
     { "L3-eject",  true,  kLaptop, 10, Verb::Eject,
@@ -151,6 +152,7 @@ Outcome g_outcome[kStepCount];
 
 uint64_t g_connectedAtMs = 0;
 uint64_t g_nextCensusMs  = 0;
+uint64_t g_nextNearMs    = 0;
 
 // Where this peer is in the episode list. PRE: the acting peer waits for its state, the watching
 // peer goes straight to EFFECT. EFFECT: both wait to see the episode's outcome here. WINDOW: an
@@ -636,7 +638,7 @@ void EmitVerdict() {
 }
 
 void Tick() {
-    if (!Enabled() || g_finished) return;
+    if (!Enabled()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     const bool isHost = s->role() == coop::net::Role::Host;
@@ -653,6 +655,12 @@ void Tick() {
                 "episode not ready within %llus fails the run", isHost ? "HOST" : "CLIENT",
                 kStepCount, static_cast<unsigned long long>(kStepDeadlineMs / 1000));
     }
+    // Past the run too: a player looking at the discs after it is who this is for.
+    if (now >= g_nextNearMs) {
+        g_nextNearMs = now + kNearMs;
+        W::NearCensus(isHost, NowMs() - g_connectedAtMs);
+    }
+    if (g_finished) return;
     if (!FD::EnsureResolved()) return;  // the disc fields come from there
     if (!W::ResolveBoxes()) return;
 
@@ -696,6 +704,7 @@ void OnDisconnect() {
     g_cur = 0;
     g_phase = Phase::Pre;
     g_phaseSinceMs = 0;
+    g_nextNearMs = 0;
     g_lateAtMs = 0;
     g_nextPollMs = 0;
     g_deadStep = nullptr;
