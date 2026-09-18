@@ -13,6 +13,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/serverbox.h"
 
 #include <atomic>
@@ -65,9 +66,12 @@ constexpr uint64_t kPostMs   =  4000;   // the after-picture of one episode
 // sample, which then read it as lost. An instrument must not schedule its own reading against its
 // own next verb.
 constexpr uint64_t kLateMs   = 10000;
-constexpr uint64_t kFinalMs  = 200000;
+constexpr uint64_t kFinalMs  = 260000;
 
 enum class Verb { Insert, Eject };
+
+// The `box` an episode names when its device is the base laptop rather than a signal server.
+constexpr int kLaptop = -1;
 
 struct Step {
     const char* id;
@@ -111,6 +115,21 @@ const Step kSteps[] = {
     { "R5-eject",  164000, true,  0, 6, Verb::Eject,  "repeat 5 of the cross-peer eject" },
     { "R6-insert", 172000, false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
     { "R6-eject",  180000, true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
+    // The laptop, where a live run's disc came back blank under a new key (bug 19). Its slot
+    // content crosses as one blob cut at 4 KB, so L1 hands the client a cut copy and has the
+    // client eject from it; L2 is the same disc size ejected by the host that never lost a byte.
+    { "L1-insert", 192000, true,  kLaptop, 8,  Verb::Insert,
+      "a host laptop insert of a disc whose slot content is past the 4 KB blob cut" },
+    { "L1-eject",  200000, false, kLaptop, 8,  Verb::Eject,
+      "the client ejecting from ITS copy of that slot, which is what crossed" },
+    { "L2-insert", 212000, true,  kLaptop, 9,  Verb::Insert,
+      "the same size into the laptop by the host: the control's insert" },
+    { "L2-eject",  220000, true,  kLaptop, 9,  Verb::Eject,
+      "the host ejecting its own insert: its copy of the slot was never cut" },
+    { "L3-insert", 232000, false, kLaptop, 10, Verb::Insert,
+      "a client laptop insert of a one-row disc: the client-to-host slot path" },
+    { "L3-eject",  240000, true,  kLaptop, 10, Verb::Eject,
+      "the host ejecting a client's laptop insert" },
 };
 constexpr size_t kStepCount = sizeof(kSteps) / sizeof(kSteps[0]);
 
@@ -186,18 +205,35 @@ void PreSight(size_t i, bool isHost) {
                 s.id, isHost ? "HOST" : "CLIENT", s.box, W::DiscKey(s.disc).c_str());
 }
 
+// The device an episode acts on, its slot and its two verbs: a signal server by target index, or
+// the laptop.
+void* DeviceOf(const Step& s) { return s.box == kLaptop ? W::Laptop() : W::Box(s.box); }
+const wchar_t* DeviceName(const Step& s) {
+    return s.box == kLaptop ? L"laptop" : W::BoxName(s.box).c_str();
+}
+bool ReadDeviceSlot(const Step& s, void* dev, BoxSlot& out) {
+    return s.box == kLaptop ? W::ReadLaptopSlot(out) : ReadBoxSlot(dev, out);
+}
+bool CallInsert(const Step& s, void* dev, void* disc) {
+    return s.box == kLaptop ? ue_wrap::laptop::CallInsertDisc(disc)
+                            : SB::CallProcessFloppy(dev, disc);
+}
+bool CallEject(const Step& s, void* dev) {
+    return s.box == kLaptop ? ue_wrap::laptop::CallEjectFloppy() : SB::CallEjectFloppy(dev);
+}
+
 void Fire(size_t i) {
     const Step& s = kSteps[i];
     Outcome& o = g_outcome[i];
     o.done = true;
-    void* box = W::Box(s.box);
+    void* box = DeviceOf(s);
     if (!box) {
-        o.note = "the target box no longer resolves";
+        o.note = "the target device does not resolve";
         UE_LOGW("floppy_selftest: %s NOT FIRED -- %s", s.id, o.note.c_str());
         return;
     }
     BoxSlot before{};
-    ReadBoxSlot(box, before);
+    ReadDeviceSlot(s, box, before);
 
     if (s.verb == Verb::Insert) {
         if (W::DiscKey(s.disc).empty()) {
@@ -219,14 +255,14 @@ void Fire(size_t i) {
         // AFTER value alone says "filled". Say it here, before the verb, so the episode is on
         // record as having moved nothing.
         const bool wasBusy = before.floppyType >= 0;
-        const bool called = SB::CallProcessFloppy(box, disc);
+        const bool called = CallInsert(s, box, disc);
         BoxSlot after{};
-        ReadBoxSlot(box, after);
+        ReadDeviceSlot(s, box, after);
         const bool discGone = !R::IsLive(disc);
         o.fired = called;
         UE_LOGI("floppy_selftest: %s %s box=%d '%ls' disc key='%ls' rw=%d rows=%zu -- slot type "
                 "%d -> %d rw %d -> %d rows %d -> %d json %d -> %d, disc destroyed=%d (%s)",
-                s.id, called ? "FIRED" : "CALL REFUSED", s.box, W::BoxName(s.box).c_str(),
+                s.id, called ? "FIRED" : "CALL REFUSED", s.box, DeviceName(s),
                 W::DiscKey(s.disc).c_str(), dc.readWrites, dc.data.size(), before.floppyType,
                 after.floppyType, before.readWrites, after.readWrites, before.dataNum,
                 after.dataNum, before.objectDataLen, after.objectDataLen, discGone ? 1 : 0,
@@ -241,7 +277,7 @@ void Fire(size_t i) {
                     "before the verb, so the game answered its busy hint and this episode moved "
                     "NOTHING. Its eject below has nothing of this run's to hand back, and a box "
                     "that stays occupied after a cross-peer eject is the re-swallow itself.",
-                    s.id, s.box, W::BoxName(s.box).c_str(), before.floppyType);
+                    s.id, s.box, DeviceName(s), before.floppyType);
         } else if (after.floppyType >= 0) {
             o.note = "slot filled";
         } else if (tookContent) {
@@ -264,17 +300,17 @@ void Fire(size_t i) {
         o.fired = false;
         o.note = "the slot was EMPTY at eject time";
         UE_LOGW("floppy_selftest: %s SLOT EMPTY box=%d '%ls' -- nothing to eject, the game answers "
-                "its no-disc hint (%s)", s.id, s.box, W::BoxName(s.box).c_str(), s.under_test);
+                "its no-disc hint (%s)", s.id, s.box, DeviceName(s), s.under_test);
         return;
     }
-    const bool called = SB::CallEjectFloppy(box);
+    const bool called = CallEject(s, box);
     BoxSlot after{};
-    ReadBoxSlot(box, after);
+    ReadDeviceSlot(s, box, after);
     o.fired = called;
     o.note = "slot drained";
     UE_LOGI("floppy_selftest: %s %s box=%d '%ls' -- slot type %d -> %d rw %d -> %d rows %d -> %d "
             "json %d -> %d; the disc arrives on the out-timeline (%s)",
-            s.id, called ? "FIRED" : "CALL REFUSED", s.box, W::BoxName(s.box).c_str(),
+            s.id, called ? "FIRED" : "CALL REFUSED", s.box, DeviceName(s),
             before.floppyType, after.floppyType, before.readWrites, after.readWrites,
             before.dataNum, after.dataNum, before.objectDataLen, after.objectDataLen,
             s.under_test);
@@ -316,16 +352,18 @@ void ReportContent(size_t stepIdx, bool isHost, const char* when, bool isLate) {
     for (const std::wstring& row : c.data)
         if (row.find(kMarker) != std::wstring::npos) { marked = true; break; }
     const int32_t wantRw = kMarkerReadWrites + s.disc;
-    if (marked && c.readWrites == wantRw) {
+    // The row count too: a cut copy keeps the marker, which is row 0, and loses the tail.
+    const size_t wantRows = static_cast<size_t>(W::ExpectedRows(s.disc));
+    if (marked && c.readWrites == wantRw && c.data.size() == wantRows) {
         UE_LOGI("floppy_selftest: CONTENT[%s] %s role=%s -- disc key='%ls' came back INTACT "
                 "(rw=%d rows=%zu, marker present)", when, s.id, role, key.c_str(), c.readWrites,
                 c.data.size());
         return;
     }
     UE_LOGW("floppy_selftest: CONTENT[%s] %s role=%s -- disc key='%ls' came back EMPTIED: rw=%d "
-            "(seeded %d) rows=%zu marker=%s -- the actor crossed and its save data did not",
-            when, s.id, role, key.c_str(), c.readWrites, wantRw, c.data.size(),
-            marked ? "present" : "ABSENT");
+            "(seeded %d) rows=%zu (seeded %zu) marker=%s -- the actor crossed and its save data "
+            "did not", when, s.id, role, key.c_str(), c.readWrites, wantRw, c.data.size(),
+            wantRows, marked ? "present" : "ABSENT");
 }
 
 }  // namespace
@@ -417,7 +455,7 @@ void Tick() {
 
     if (!g_seeded && since >= kSeedMs) {
         g_seeded = true;
-        if (isHost) W::SeedAndStamp();
+        if (isHost) W::SeedAndStamp(s);
         W::Census("seeded", isHost, NowMs() - g_connectedAtMs);
     }
     if (g_seeded && !g_picked && since >= kPickMs) {

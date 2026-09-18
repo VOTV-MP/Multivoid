@@ -2,12 +2,15 @@
 
 #include "floppy_selftest_world.h"
 
+#include "coop/props/prop_save_data.h"
+
 #include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/floppy_slot.h"
+#include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -144,6 +147,23 @@ std::wstring DescribeBoxes() {
         s += L" type=" + std::to_wstring(st.floppyType) + L" rw=" + std::to_wstring(st.readWrites) +
              L" rows=" + std::to_wstring(st.dataNum) + L" json=" + std::to_wstring(st.objectDataLen);
     }
+    BoxSlot lt{};
+    if (ReadLaptopSlot(lt))
+        s += L"; laptop type=" + std::to_wstring(lt.floppyType) + L" rw=" +
+             std::to_wstring(lt.readWrites) + L" rows=" + std::to_wstring(lt.dataNum) +
+             L" json=" + std::to_wstring(lt.objectDataLen);
+    else
+        s += L"; laptop UNRESOLVED";
+    return s;
+}
+
+// A stamp row: the marker and the disc index first, so the marker test reads row 0 alone, then
+// filler to a fixed width, so a big disc's size is its row count and nothing else.
+std::wstring StampRow(int disc, int row) {
+    std::wstring s = std::wstring(kMarker) + L"-" + std::to_wstring(disc);
+    if (row == 0) return s;
+    s += L"-row" + std::to_wstring(row) + L"-";
+    s.append(96 - (s.size() < 96 ? s.size() : 96), L'x');
     return s;
 }
 
@@ -214,7 +234,7 @@ bool ResolveBoxes() {
 // HOST only, once: make sure the world holds enough discs and that each carries a payload a reader
 // can attribute, so "the content is on this peer only" is a value in two logs rather than an
 // inference. A spawned disc is keyed through the game's own getKey, which is what mints one.
-void SeedAndStamp() {
+void SeedAndStamp(coop::net::Session* session) {
     std::vector<DiscRow> discs = DiscCensus();
     int usable = 0;
     for (const DiscRow& d : discs) if (d.insertable()) ++usable;
@@ -242,12 +262,16 @@ void SeedAndStamp() {
         if (!d.insertable() || stamped >= kDiscs) continue;
         FD::DiscContent c;
         c.readWrites = kMarkerReadWrites + stamped;
-        c.data.push_back(std::wstring(kMarker) + L"-" + std::to_wstring(stamped));
+        for (int r = 0; r < ExpectedRows(stamped); ++r) c.data.push_back(StampRow(stamped, r));
         const bool ok = FD::WriteDiscContent(d.actor, c);
-        UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw %d -> %d rows %d -> 1 "
-                "write=%d (a disc the world already held keeps none of its own content)",
-                stamped, d.key.c_str(), d.cls.c_str(), d.readWrites, c.readWrites, d.rows,
-                ok ? 1 : 0);
+        // A raw field write reaches nobody else: without the record, the client's copy of every
+        // pre-existing disc stayed unstamped, and an episode whose INSERT is the client's read
+        // "EMPTIED" however well the transfer worked. The record is the disc's own getData.
+        const bool published = ok && coop::prop_save_data::Publish(session, d.actor, d.key);
+        UE_LOGI("floppy_selftest: stamped disc %d key='%ls' cls='%ls' rw %d -> %d rows %d -> %zu "
+                "write=%d published=%d (a disc the world already held keeps none of its own "
+                "content)", stamped, d.key.c_str(), d.cls.c_str(), d.readWrites, c.readWrites,
+                d.rows, c.data.size(), ok ? 1 : 0, published ? 1 : 0);
         ++stamped;
     }
 }
@@ -295,6 +319,24 @@ bool ReadBoxSlot(void* box, BoxSlot& out) {
 
 void* Box(int index) {
     return (index >= 0 && index < kTargets) ? g_box[index].Get() : nullptr;
+}
+
+void* Laptop() {
+    return ue_wrap::laptop::EnsureResolved() ? ue_wrap::laptop::Instance() : nullptr;
+}
+
+bool ReadLaptopSlot(BoxSlot& out) {
+    void* l = Laptop();
+    FS::Scalars st{};
+    FS::Content c;
+    if (!l || !FS::EnsureResolved(FS::DeviceKind::Laptop)) return false;
+    if (!FS::ReadScalars(FS::DeviceKind::Laptop, l, st)) return false;
+    FS::ReadContent(FS::DeviceKind::Laptop, l, c);
+    out.floppyType    = st.floppyType;
+    out.readWrites    = st.readWrites;
+    out.dataNum       = static_cast<int32_t>(c.data.size());
+    out.objectDataLen = static_cast<int32_t>(c.objectData.size());
+    return true;
 }
 
 const std::wstring& BoxName(int index) {

@@ -345,6 +345,20 @@ bool ClearSlot(DeviceKind kind, void* device) {
     return Refresh(*d, device, -1);
 }
 
+std::wstring ObjectDataKey(const std::wstring& json) {
+    // The member is `key`, possibly with the struct's generated suffix; its value is a string.
+    size_t at = json.find(L"\"key");
+    if (at == std::wstring::npos) at = json.find(L"\"Key");
+    if (at == std::wstring::npos) return std::wstring();
+    at = json.find(L':', at);
+    if (at == std::wstring::npos) return std::wstring();
+    at = json.find_first_not_of(L" \t\r\n", at + 1);
+    if (at == std::wstring::npos || json[at] != L'"') return std::wstring();
+    const size_t end = json.find(L'"', at + 1);
+    if (end == std::wstring::npos) return std::wstring();
+    return json.substr(at + 1, end - at - 1);
+}
+
 void ResetCache() {
     for (auto& d : g_desc) {
         d.resolved = false;

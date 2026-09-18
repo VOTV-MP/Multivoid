@@ -47,6 +47,10 @@ int32_t g_offWidgetBufferSlots = -1;  // ui_laptop.bufferSlots (TArray<UUserWidg
 int32_t g_offBufRowData = -1;       // ui_bufferDatablock_C.data (FString)
 void*   g_fnWidgetGenFloppyBuffer = nullptr;  // ui_laptop.genFloppyBuffer
 void*   g_fnWidgetRemoveFromParent = nullptr; // UWidget::RemoveFromParent (declaring class!)
+// The disc verbs. No fallbacks: a verb that does not resolve stays off.
+void*   g_fnProcessFloppy = nullptr;  // processFloppy(slot, player, manual, errorNotif)
+void*   g_fnEjectFloppy   = nullptr;  // ejectFloppy()
+int32_t g_offFloppyHitbox = -1;       // the component processFloppy compares its slot against
 bool    g_resolved = false;
 uint64_t g_nextResolveTryMs = 0;
 
@@ -119,6 +123,13 @@ bool EnsureResolved() {
                 "removeFromParent=%p) -- quad rebuild degraded",
                 g_offWidgetBufferSlots, g_fnWidgetGenFloppyBuffer, g_offBufRowData,
                 g_fnWidgetRemoveFromParent);
+
+    g_fnProcessFloppy = R::FindFunction(cls, L"processFloppy");
+    g_fnEjectFloppy   = R::FindFunction(cls, L"ejectFloppy");
+    g_offFloppyHitbox = R::FindPropertyOffset(cls, L"floppyHitbox");
+    if (!g_fnProcessFloppy || !g_fnEjectFloppy || g_offFloppyHitbox < 0)
+        UE_LOGW("laptop: disc verbs partial (processFloppy=%p ejectFloppy=%p floppyHitbox=%d) -- "
+                "the verbs stay off", g_fnProcessFloppy, g_fnEjectFloppy, g_offFloppyHitbox);
 
     g_cls = cls;
     g_resolved = true;
@@ -270,6 +281,26 @@ bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv) {
     }
     outFnv = h;
     return true;
+}
+
+bool CallInsertDisc(void* disc) {
+    void* l = Instance();
+    if (!l || !disc || !g_fnProcessFloppy || g_offFloppyHitbox < 0) return false;
+    void* hitbox = *reinterpret_cast<void* const*>(
+        reinterpret_cast<const uint8_t*>(l) + g_offFloppyHitbox);
+    if (!hitbox) return false;
+    ParamFrame f(g_fnProcessFloppy);
+    if (!f.valid()) return false;
+    if (!f.Set(L"slot", hitbox) || !f.Set(L"manual", disc)) return false;
+    return Call(l, f);
+}
+
+bool CallEjectFloppy() {
+    void* l = Instance();
+    if (!l || !g_fnEjectFloppy) return false;
+    ParamFrame f(g_fnEjectFloppy);
+    if (!f.valid()) return false;
+    return Call(l, f);
 }
 
 void ResetCache() {
