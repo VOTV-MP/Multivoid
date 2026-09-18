@@ -163,6 +163,18 @@ extraction on a client is a container-extract birth through the intent door abov
 door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 
+### A record that changes in place
+
+A prop's save record crosses on every birth path and on no other, so a prop whose record changes
+while it sits there tells no one. Two classes do that under a player's hand: the drive box and
+the tape reel case. Each has a lid and its contents in the record, taking the lid off spawns it
+in the presser's hands, and putting a drive or a reel in destroys the held one and stores it in
+the record. The lane watches each class's own `upd()`, which every mutation ends in, and
+republishes the record: the host broadcasts it, a client's goes to the host as an intent the
+host re-publishes. The far side applies it through the prop's `loadData`, whose `upd()` redraws
+the reel case; the drive box's look follows its name, which a record does not carry, so the
+receiver re-derives it from `opened` (`coop/props/prop_record_refresh`).
+
 ### Props that change on their own
 
 A joiner loads the host's save, so every keyed world prop is a real save-loaded actor with its
@@ -286,6 +298,7 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | the stick | `coop/props/prop_stick_sync` |
 | a prop under a hook's drive or a broom's push | `coop/props/prop_drive_host` (the host's set and stream), `coop/props/prop_drive_stream` (the receiver), `coop/items/hook_prop_claim` (the hook lane feeding it), `coop/items/hook_constraint` (the tie itself, host-only), `coop/items/broom_push` (the broom's push feeding it) |
 | containers | `coop/props/container_contents_sync`, `coop/items/save_record_wire`, `coop/interactables/interactable_sync` |
+| a record that changes in place | `coop/props/prop_record_refresh` (the drive box, the reel case) |
 | the pocket blip | `coop/items/inventory_pickup_sync` |
 | the join | `coop/props/prop_snapshot`, `coop/props/snapshot_census`, `coop/props/join_membership_sweep`, `coop/props/unresolved_pose_ledger` |
 | the spawners a client must not run | `coop/world/spawn_authority` |
