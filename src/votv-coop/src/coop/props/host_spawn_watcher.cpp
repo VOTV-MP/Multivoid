@@ -10,6 +10,7 @@
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (mirror-spawn exclusion)
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
+#include "coop/props/prop_save_data.h"      // PublishHostBirth (the record behind the express)
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // the join claim and sweep
 #include "ue_wrap/core/game_thread.h"
@@ -380,6 +381,13 @@ void DrainPendingSpawns(coop::net::Session* s) {
                     "Func seam -- drop/place visible to peers this tick)",
                     e.actor,
                     static_cast<unsigned>(PT::GetPropElementIdForActor(e.actor)));
+            // The record behind the row. The express above carries identity only, and a birth
+            // sets its state AFTER FinishSpawningActor, in the same Blueprint call: a device's
+            // eject loadDatas the disc from its slot JSON and writes its rows and read-writes
+            // there. That call has returned by this drain, so the record is the real one. Without
+            // it every client got the class default -- bug 19's run 1: nine of nine discs the
+            // host ejected read EMPTIED on the client and INTACT on the host.
+            coop::prop_save_data::PublishHostBirth(s, e.actor);
         }
     }
     g_pendingFinished.clear();

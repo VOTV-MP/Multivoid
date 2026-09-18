@@ -2,6 +2,7 @@
 
 #include "floppy_selftest_world.h"
 
+#include "coop/player/players_registry.h"  // Local (the near census)
 #include "coop/props/prop_save_data.h"
 
 #include "ue_wrap/actors/floppy_disc.h"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <unordered_map>
 #include <vector>
 
@@ -77,7 +79,12 @@ struct DiscRow {
     bool         zip = false;    // the one class a server refuses rather than swallows
     int32_t      readWrites = -1;
     int32_t      rows = 0;
+    // The list_props row init() resolves the mesh from, and the mesh it resolved: a disc that shows
+    // the red ERROR ran init() with a row that has no mesh.
+    std::wstring name;
+    std::wstring mesh;
     bool insertable() const { return type >= 0 && !zip; }
+    bool showsError() const { return mesh.find(L"error") != std::wstring::npos; }
 };
 
 const DiscClass* DiscClassOf(const std::wstring& cls) {
@@ -116,6 +123,8 @@ std::vector<DiscRow> DiscCensus() {
             row.readWrites = c.readWrites;
             row.rows = static_cast<int32_t>(c.data.size());
         }
+        row.name = PR::GetPropNameString(obj);
+        row.mesh = PR::GetShownMeshName(obj);
         out.push_back(std::move(row));
     }
     std::sort(out.begin(), out.end(),
@@ -130,7 +139,8 @@ std::wstring DescribeDiscs(const std::vector<DiscRow>& discs) {
         s += L"key='" + discs[i].key + L"' cls='" + discs[i].cls + L"' type=" +
              std::to_wstring(discs[i].type) + (discs[i].zip ? L" ZIP" : L"") +
              L" rw=" + std::to_wstring(discs[i].readWrites) +
-             L" rows=" + std::to_wstring(discs[i].rows);
+             L" rows=" + std::to_wstring(discs[i].rows) + L" name='" + discs[i].name + L"'" +
+             (discs[i].showsError() ? L" SHOWS-ERROR" : L"");
     }
     if (discs.size() > 8) s += L"; ...";
     return s;
@@ -163,7 +173,7 @@ std::wstring StampRow(int disc, int row) {
     std::wstring s = std::wstring(kMarker) + L"-" + std::to_wstring(disc);
     if (row == 0) return s;
     s += L"-row" + std::to_wstring(row) + L"-";
-    s.append(96 - (s.size() < 96 ? s.size() : 96), L'x');
+    s.append(static_cast<size_t>(kRowChars) - (s.size() < kRowChars ? s.size() : kRowChars), L'x');
     return s;
 }
 
@@ -175,6 +185,31 @@ void Census(const char* tag, bool isHost, uint64_t sinceMs) {
             tag, isHost ? "HOST" : "CLIENT",
             static_cast<unsigned long long>(sinceMs / 1000),
             discs.size(), DescribeDiscs(discs).c_str(), DescribeBoxes().c_str());
+}
+
+void NearCensus(bool isHost, uint64_t sinceMs) {
+    void* self = coop::players::Registry::Get().Local();
+    if (!self) return;
+    const auto at = E::GetActorLocation(self);
+    std::wstring s;
+    int near = 0;
+    for (const DiscRow& d : DiscCensus()) {
+        const auto p = E::GetActorLocation(d.actor);
+        const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > kNearCm) continue;
+        ++near;
+        s += (s.empty() ? L"" : L"; ") + std::wstring(L"key='") + d.key + L"' cls='" + d.cls +
+             L"' name='" + d.name + L"' mesh='" + d.mesh + L"' " +
+             std::to_wstring(static_cast<int>(dist)) + L"cm at (" +
+             std::to_wstring(static_cast<int>(p.X)) + L"," + std::to_wstring(static_cast<int>(p.Y)) +
+             L"," + std::to_wstring(static_cast<int>(p.Z)) + L")" +
+             (d.showsError() ? L" SHOWS-ERROR" : L"");
+    }
+    if (!near) return;
+    UE_LOGI("floppy_selftest: NEAR role=%s t=+%llus discs within %d cm=%d [%ls]",
+            isHost ? "HOST" : "CLIENT", static_cast<unsigned long long>(sinceMs / 1000),
+            static_cast<int>(kNearCm), near, s.c_str());
 }
 
 // ---- target resolution --------------------------------------------------------------------------

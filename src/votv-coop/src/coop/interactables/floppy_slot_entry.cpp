@@ -3,11 +3,11 @@
 #include "coop/interactables/floppy_slot_entry.h"
 
 #include "coop/net/session.h"
-#include "coop/player/hand_item.h"    // IsHandAxisActor (the ENTRY diagnostic)
-#include "coop/props/remote_prop.h"   // IsActorUnderAnyDrive (the ENTRY diagnostic)
+#include "coop/player/hand_item.h"    // IsHandAxisActor (the settled-disc line)
+#include "coop/props/remote_prop.h"   // IsActorUnderAnyDrive (a disc another peer holds)
 
 #include "ue_wrap/actors/floppy_disc.h"
-#include "ue_wrap/actors/prop.h"      // GetKeyString (the ENTRY diagnostic)
+#include "ue_wrap/actors/prop.h"      // GetKeyString (the settled-disc line)
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -78,7 +78,8 @@ std::atomic<unsigned long long> g_seen{0};
 std::atomic<unsigned long long> g_refused{0};
 std::atomic<unsigned long long> g_marked{0};
 std::atomic<unsigned long long> g_evicted{0};
-// Settled discs the native entry takes, and how many of them another peer's hold was driving.
+// Settled discs the native entry was allowed to take, and the ones refused because another peer's
+// hold was driving them.
 std::atomic<unsigned long long> g_settled{0};
 std::atomic<unsigned long long> g_remoteHeld{0};
 
@@ -96,7 +97,7 @@ unsigned long long g_lastReported = ~0ull;
 void ReportCounters(const char* when) {
     UE_LOGI("floppy_slot_entry: %s -- overlaps seen=%llu, inserts refused as in-transit=%llu, "
             "discs marked=%llu, marks evicted before their window closed=%llu, settled discs let "
-            "in=%llu (of them driven by another peer's hold=%llu). Seen=0 means the entry is not "
+            "in=%llu, refused as held by another peer=%llu. Seen=0 means the entry is not "
             "dispatched where this interceptor sits; refused=0 with seen>0 means no disc was in "
             "transit when one came.",
             when, g_seen.load(std::memory_order_relaxed),
@@ -111,7 +112,8 @@ void ReportPeriodic() {
     g_nextReportMs = now + 15000;
     const unsigned long long sum = g_seen.load(std::memory_order_relaxed) +
                                    g_refused.load(std::memory_order_relaxed) +
-                                   g_marked.load(std::memory_order_relaxed);
+                                   g_marked.load(std::memory_order_relaxed) +
+                                   g_remoteHeld.load(std::memory_order_relaxed);
     if (sum == g_lastReported) return;   // nothing moved; the last line still describes the lane
     g_lastReported = sum;
     ReportCounters("COUNTERS");
@@ -164,27 +166,35 @@ Transit* FindTransit(void* actor, uint64_t now) {
     return nullptr;
 }
 
-// A disc NOT in transit that the native entry is about to take, said with who is moving it. The
-// case bug 19 suspects: a disc another peer is holding, whose mirror that peer's pose drives into
-// THIS peer's slot, so this machine inserts it as well and its slot lane claims a second insert.
-// Diagnostic only -- the verdict is unchanged -- and capped, since a slot takes a disc rarely.
+// A disc NOT in transit reaching the entry. The one refused here is a disc another peer is HOLDING:
+// that peer's pose drives this machine's mirror of it, and when the holder brings it to a slot the
+// mirror enters this machine's copy of the slot too. The native entry took it -- a second insert of
+// one disc, from the peer that only watched, its slot lane claiming it and its destroy relayed, and
+// the host keeping whichever claim landed last. A live run showed it: a client's laptop swallowed the
+// host's held disc at the moment the host inserted it, and a third peer's claim of its own copy
+// replaced the host's slot (bug 19). The holder's own insert is the one that counts, so a disc
+// under another peer's drive is refused on every peer, the host included; every other settled disc
+// is let in, and each case is said, capped, since a slot takes a disc rarely.
 constexpr unsigned long long kMaxSettledLines = 64;
 
-void NoteSettledDisc(void* device, void* disc) {
-    if (!FD::IsDiscClass(R::ClassOf(disc))) return;
-    const unsigned long long n = g_settled.fetch_add(1, std::memory_order_relaxed) + 1;
-    const bool remote = coop::remote_prop::IsActorUnderAnyDrive(disc);
-    if (remote) g_remoteHeld.fetch_add(1, std::memory_order_relaxed);
-    if (n > kMaxSettledLines) return;
-    FD::DiscContent c;
-    const bool read = FD::ReadDiscContent(disc, c);
-    UE_LOGI("floppy_slot_entry: ENTRY device=%p '%ls' disc=%p key='%ls' cls='%ls' rw=%d rows=%zu "
-            "-- not in transit, the native entry takes it here; driven by another peer's hold=%d, "
-            "hand display=%d%s", device, R::ClassNameOf(device).c_str(), disc,
-            ue_wrap::prop::GetKeyString(disc).c_str(), R::ClassNameOf(disc).c_str(),
-            read ? c.readWrites : -1, read ? c.data.size() : static_cast<size_t>(0),
-            remote ? 1 : 0, coop::hand_item::IsHandAxisActor(disc) ? 1 : 0,
-            remote ? " -- ANOTHER PEER HOLDS THIS DISC: this machine is inserting its mirror" : "");
+bool RefuseSettledDisc(void* device, void* disc) {
+    if (!FD::IsDiscClass(R::ClassOf(disc))) return false;
+    const bool held = coop::remote_prop::IsActorUnderAnyDrive(disc);
+    const unsigned long long n =
+        (held ? g_remoteHeld : g_settled).fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= kMaxSettledLines) {
+        FD::DiscContent c;
+        const bool read = FD::ReadDiscContent(disc, c);
+        UE_LOGI("floppy_slot_entry: %s device=%p '%ls' disc=%p key='%ls' cls='%ls' rw=%d rows=%zu "
+                "hand display=%d -- %s", held ? "REFUSED HELD" : "ENTRY", device,
+                R::ClassNameOf(device).c_str(), disc, ue_wrap::prop::GetKeyString(disc).c_str(),
+                R::ClassNameOf(disc).c_str(), read ? c.readWrites : -1,
+                read ? c.data.size() : static_cast<size_t>(0),
+                coop::hand_item::IsHandAxisActor(disc) ? 1 : 0,
+                held ? "another peer is holding this disc; its own insert is the one that counts"
+                     : "not in transit and nobody else holds it, so the native entry takes it");
+    }
+    return held;
 }
 
 // ---- the seams ----------------------------------------------------------------------------
@@ -209,9 +219,10 @@ void OnBeginDeferredSpawn(void* /*context*/, void* /*sourceObject*/, void* spawn
 // On the thread rule: an interceptor CAN fire off the game thread, and this one reads a table the
 // spawn seams write, so it would not be safe if it did. It does not -- a component reports its
 // overlaps from UpdateOverlaps and both spawn seams are actor spawns, all three game-thread only,
-// so the table has one writer and one reader on one thread. The verdict calls no engine function
-// and touches no actor memory; the ENTRY diagnostic reads the disc the delegate has just handed
-// over, which is live for the length of the dispatch.
+// so the table has one writer and one reader on one thread. The transit verdict calls no engine
+// function and touches no actor memory; the settled-disc verdict reads the disc the delegate has
+// just handed over, which is live for the length of the dispatch, and the drive table, which is
+// game-thread only as well.
 bool OnSlotOverlapPre(void* self, void* params) {
     if (!params) return false;
     // The delegate signature is (UPrimitiveComponent* Overlapped, AActor* OtherActor, ...): the
@@ -224,10 +235,7 @@ bool OnSlotOverlapPre(void* self, void* params) {
     if (!s || !s->connected()) return false;          // solo: the native rule is the whole rule
 
     Transit* t = FindTransit(other, NowMs());
-    if (!t) {                                         // an ordinary disc, or not a disc at all
-        NoteSettledDisc(self, other);
-        return false;
-    }
+    if (!t) return RefuseSettledDisc(self, other);    // a held disc, an ordinary one, or no disc
 
     g_refused.fetch_add(1, std::memory_order_relaxed);
     if (t->logged < 3) {

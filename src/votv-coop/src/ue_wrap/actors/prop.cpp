@@ -395,6 +395,20 @@ void* GetStaticMesh(void* prop) {
     return ReadField<void*>(prop, P::off::Aprop_StaticMesh);
 }
 
+std::wstring GetShownMeshName(void* prop) {
+    void* comp = GetStaticMesh(prop);
+    if (!comp) return {};
+    // UStaticMeshComponent::StaticMesh, by reflection, once: the engine class never reloads.
+    static int32_t s_off = -2;
+    if (s_off == -2) {
+        void* cls = R::FindClass(L"StaticMeshComponent");
+        s_off = cls ? R::FindPropertyOffset(cls, L"StaticMesh") : -1;
+    }
+    if (s_off < 0) return {};
+    void* mesh = ReadField<void*>(comp, static_cast<size_t>(s_off));
+    return mesh ? R::ToString(R::NameOf(mesh)) : std::wstring(L"<none>");
+}
+
 // The chip type, resolved through reflection rather than a fixed offset: it lives at the
 // offset that is the static mesh on a prop, so a fixed-offset write would corrupt a prop's mesh
 // pointer. FindPropertyOffset returns -1 for a class without the property, so GetChipType reads

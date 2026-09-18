@@ -59,6 +59,7 @@ uint64_t NowMs() {
 constexpr uint64_t kSeedMs   =  8000;
 constexpr uint64_t kPickMs   = 16000;
 constexpr uint64_t kCensusMs =  6000;
+constexpr uint64_t kNearMs   =  5000;   // the discs around the local player (the ERROR trace)
 constexpr uint64_t kPostMs   =  4000;   // the after-picture of one episode
 // The SECOND look at the same episode's disc. Ten seconds, not twelve, because the schedule has
 // one pair that shares a disc on purpose -- a host re-inserting what the client's eject handed
@@ -116,16 +117,16 @@ const Step kSteps[] = {
     { "R6-insert", 172000, false, 0, 7, Verb::Insert, "repeat 6 of the cross-peer eject: insert" },
     { "R6-eject",  180000, true,  0, 7, Verb::Eject,  "repeat 6 of the cross-peer eject" },
     // The laptop, where a live run's disc came back blank under a new key (bug 19). Its slot
-    // content crosses as one blob cut at 4 KB, so L1 hands the client a cut copy and has the
-    // client eject from it; L2 is the same disc size ejected by the host that never lost a byte.
+    // content crossed as one blob cut at 4 KB, so L1 has the client eject from its copy of a slot
+    // past that size; L2 is the same disc size ejected by the host, whose copy is its own.
     { "L1-insert", 192000, true,  kLaptop, 8,  Verb::Insert,
-      "a host laptop insert of a disc whose slot content is past the 4 KB blob cut" },
+      "a host laptop insert of a disc whose slot content is past the old 4 KB blob cut" },
     { "L1-eject",  200000, false, kLaptop, 8,  Verb::Eject,
       "the client ejecting from ITS copy of that slot, which is what crossed" },
     { "L2-insert", 212000, true,  kLaptop, 9,  Verb::Insert,
       "the same size into the laptop by the host: the control's insert" },
     { "L2-eject",  220000, true,  kLaptop, 9,  Verb::Eject,
-      "the host ejecting its own insert: its copy of the slot was never cut" },
+      "the host ejecting its own insert: its copy of the slot is its own" },
     { "L3-insert", 232000, false, kLaptop, 10, Verb::Insert,
       "a client laptop insert of a one-row disc: the client-to-host slot path" },
     { "L3-eject",  240000, true,  kLaptop, 10, Verb::Eject,
@@ -150,6 +151,7 @@ Outcome g_outcome[kStepCount];
 
 uint64_t g_connectedAtMs = 0;
 uint64_t g_nextCensusMs  = 0;
+uint64_t g_nextNearMs    = 0;
 uint64_t g_postAtMs      = 0;
 int      g_postStep      = -1;
 uint64_t g_lateAtMs      = 0;
@@ -548,6 +550,11 @@ void Tick() {
         g_nextCensusMs = now + kCensusMs;
         W::Census("tick", isHost, NowMs() - g_connectedAtMs);
     }
+    // Past the schedule too: a player looking at the discs after the run is who this is for.
+    if (now >= g_nextNearMs) {
+        g_nextNearMs = now + kNearMs;
+        W::NearCensus(isHost, NowMs() - g_connectedAtMs);
+    }
     if (!g_finalDone && since >= kFinalMs) {
         g_finalDone = true;
         W::Census("final", isHost, NowMs() - g_connectedAtMs);
@@ -559,6 +566,7 @@ void OnDisconnect() {
     if (!Enabled()) return;
     g_connectedAtMs = 0;
     g_nextCensusMs = 0;
+    g_nextNearMs = 0;
     g_postAtMs = 0;
     g_postStep = -1;
     g_lateAtMs = 0;

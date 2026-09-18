@@ -40,6 +40,13 @@ save-backed class the game adds is carried without a change here. A record that 
 this peer has not created yet waits under its key until that prop appears, because a key survives
 the destroy-and-recreate that made the record need to travel in the first place.
 
+On the host, a prop born during play -- a device's eject, a drop, a place -- gets its record from
+the finish-spawning drain a tick after the birth, because the Blueprint that spawned it fills its
+state in after the finish call returns: a disc's eject loads it from the slot's JSON there. The
+birth's own initialisation is too early for a record, and without the drain a disc the host
+ejected reached every client blank. The drain logs its traffic once a minute
+(`HOST BIRTH RECORDS`).
+
 ### How a birth finds its local actor
 
 A birth names a key, so the receiver looks that key up first and, finding it, converges the actor

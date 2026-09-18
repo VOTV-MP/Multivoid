@@ -26,13 +26,19 @@ namespace coop::dev::floppy_selftest::world {
 constexpr int kTargets = 3;
 constexpr int kDiscs   = 11;
 
-// Discs 8 and 9 carry this many rows, which puts the laptop's slot content well past the 4 KB
-// laptop_sync cuts a slot blob at: the rows ride twice, in the save JSON and in floppyData. A live
-// run lost a disc's content through exactly that cut (bug 19); every other disc carries one row.
+// Discs 8 and 9 carry this many rows of this width, which puts the laptop's slot content past the
+// 4 KB laptop_sync used to cut a slot blob at (the rows ride twice, in the save JSON and in
+// floppyData): a live run lost a disc's content through that cut (bug 19). 31 is the laptop's own
+// ceiling -- ui_laptop.updFloppy resizes floppyData to at most 31 rows -- so a bigger disc would
+// measure the game's trim, which is what 64 rows did on the first run. Every other disc has one row.
 constexpr int kBigFirst = 8;
 constexpr int kBigLast  = 9;
-constexpr int kBigRows  = 64;
+constexpr int kBigRows  = 31;
+constexpr size_t kRowChars = 150;
 inline int ExpectedRows(int disc) { return (disc >= kBigFirst && disc <= kBigLast) ? kBigRows : 1; }
+
+// The near census's radius around the local player: what a player standing at a table can see.
+constexpr float kNearCm = 500.f;
 
 // The marker a seeded disc carries in its own data array, so a disc this instrument prepared can
 // be told from one it did not. The read-writes value is this plus the disc index; the class
@@ -79,6 +85,11 @@ void PickDiscs(bool isHost);
 // Every live disc and every target box, in one line. `sinceMs` is the age of the run, printed so
 // two logs can be read side by side.
 void Census(const char* tag, bool isHost, uint64_t sinceMs);
+
+// Every disc within kNearCm of the local player, with its key, class, list_props row and the mesh
+// it shows, so a player's "that disc shows ERROR" can be matched to one actor in the log. Silent
+// when no disc is near.
+void NearCensus(bool isHost, uint64_t sinceMs);
 
 // Session teardown: the targets, the names, the picks and the per-class verdict cache.
 void Reset();
