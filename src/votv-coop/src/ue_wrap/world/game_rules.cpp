@@ -213,4 +213,14 @@ int ApplySavedToProcess(void* gameInstance, void* save) {
     return changed;
 }
 
+int ReadLocalGameMode() {
+    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    if (!gi) return -1;
+    void* giClass = R::ClassOf(gi);
+    if (!giClass) return -1;
+    const int32_t gmOff = R::FindPropertyOffset(giClass, L"GameMode");
+    if (gmOff < 0) return -1;
+    return *(reinterpret_cast<uint8_t*>(gi) + gmOff);
+}
+
 }  // namespace ue_wrap::game_rules

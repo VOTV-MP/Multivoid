@@ -24,6 +24,7 @@
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream
 #include "ue_wrap/core/reflection.h"  // IsLive
 #include "ue_wrap/engine/save_capture.h"
+#include "ue_wrap/world/game_rules.h"  // the host's own mode, for the begin
 
 #include <windows.h>
 
@@ -201,9 +202,18 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
     hs.beginPayload.totalBytes = static_cast<uint32_t>(hs.blob.size());
     hs.beginPayload.chunkCount = hs.chunkCount;
     hs.beginPayload.crc32 = crc;
-    hs.beginPayload.gameMode = 0;  // story, the coop target
+    // The host's own mode, which the joiner's load forces: the slot's zcoop_ prefix names no mode.
+    // A hardcoded story here loaded every sandbox guest into story -- story events, and no cheats,
+    // noclip or spawn menu for the guest alone. Story is only the fallback for an unreadable mode.
+    const int mode = ue_wrap::game_rules::ReadLocalGameMode();
+    const bool known = mode >= 0 && mode < ue_wrap::game_rules::kGameModeCount;
+    hs.beginPayload.gameMode = static_cast<uint8_t>(known ? mode : 0);
     hs.beginPayload.sidecarBytes = sidecarBytes;  // the framed identity map leads the stream
-    (void)slot;
+    if (known)
+        UE_LOGI("save_transfer: slot %d -- the joiner loads in the host's mode %d", slot, mode);
+    else
+        UE_LOGW("save_transfer: slot %d -- the host's mode did not read (%d); the joiner loads "
+                "in story", slot, mode);
 }
 
 // One stable-read attempt for a slot still capturing; true once the blob is captured.
@@ -890,7 +900,11 @@ void OnBegin(const coop::net::SaveTransferBeginPayload& p) {
     g_cliTotal = p.totalBytes;
     g_cliChunkCount = p.chunkCount;
     g_cliCrc = p.crc32;
-    g_cliGameMode = p.gameMode;
+    // An ordinal past the enum is no mode: the load would write it raw into the GameInstance.
+    if (p.gameMode >= ue_wrap::game_rules::kGameModeCount)
+        UE_LOGW("save_transfer: Begin carries mode %u, not a game mode -- loading in story",
+                static_cast<unsigned>(p.gameMode));
+    g_cliGameMode = p.gameMode < ue_wrap::game_rules::kGameModeCount ? p.gameMode : 0;
     g_cliSidecarBytes = p.sidecarBytes;  // 0 = no sidecar
     if (g_cliState == ClientState::WaitingBegin) g_cliState = ClientState::Receiving;
     // No reserve here: totalBytes is an unvalidated wire u32, and reserving it let a hostile host

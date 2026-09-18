@@ -62,4 +62,11 @@ const RuleField* NthOfKind(const std::vector<RuleField>& rules, Kind kind, int n
 // either struct could not be resolved (nothing written). Game thread.
 int ApplySavedToProcess(void* gameInstance, void* save);
 
+// enum_gamemode's member count (enum_MAX): an ordinal at or above it is not a mode.
+constexpr int kGameModeCount = 8;
+
+// The local GameInstance's mode ordinal alone, without the rules walk; -1 before it boots.
+// Game-thread only.
+int ReadLocalGameMode();
+
 }  // namespace ue_wrap::game_rules
