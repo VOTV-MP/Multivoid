@@ -34,11 +34,17 @@ struct Desc {
 
 // sink_C's BP player_use calls updIsOn() THEN upd() -- updIsOn() flips the tap state, upd()
 // repaints the water particle/sound; mirroring only one would leave the FX out of sync. So
-// sink carries a 2nd verb. The others' player_use calls a single upd() (or SetActive).
+// sink carries a 2nd verb. The others' player_use calls a single verb (or SetActive).
+//
+// The verb is per class, NOT per name: prop_shower_C owns an upd(), but it is the one that
+// repaints the DIRT scalar on the cubicle's material, and the tap's own branch instead calls
+// updWater() -- the verb that raises the water emitter, the audio component and the actor tick
+// off running_cold. Mirroring upd() here wrote the bit with nothing to show for it, which is
+// how a shower toggle travelled (applied ok=1 on the far peer) yet ran dry there.
 Desc g_descs[] = {
     { L"faucet_C",         L"turnon",       0x0278, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
     { L"sink_C",           L"isOn",         0x0278, L"updIsOn",   L"upd",  false, nullptr, -1, nullptr, nullptr },
-    { L"prop_shower_C",    L"running_cold", 0x0298, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
+    { L"prop_shower_C",    L"running_cold", 0x0298, L"updWater",  nullptr, false, nullptr, -1, nullptr, nullptr },
     { L"kitchen_C",        L"Active",       0x02E1, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
     { L"serverBox_C",      L"Active",       0x03D5, L"SetActive", nullptr, true,  nullptr, -1, nullptr, nullptr },
     { L"wallunit_tapes_C", L"Active",       0x0290, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
