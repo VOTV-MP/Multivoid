@@ -204,4 +204,4 @@ stage visuals, only its outcome. The upgrade levels arrive with the save and nev
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
 | the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio) |
 | the join seeds | `coop/session/join_seed` |
-| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/desk_diag`, `harness/autotest/autotest_seeddrill.cpp` |
+| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/desk_diag`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |

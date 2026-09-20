@@ -491,6 +491,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_broomstroke_world.cpp
     src/harness/autotest/autotest_chippile.cpp
     src/harness/autotest/autotest_trashpark.cpp
+    src/harness/autotest/autotest_driveslot.cpp
     src/harness/autotest/autotest_clump.cpp
     src/harness/autotest/autotest_flashlight.cpp
     src/harness/autotest/autotest_tracker_selftest.cpp
