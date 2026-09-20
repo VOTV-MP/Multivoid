@@ -20,6 +20,7 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 
+#include "ue_wrap/actors/prop.h"  // CallAwakeUnfreeze: the grab's half of a crossed eject
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -386,6 +387,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             }
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
+            ue_wrap::prop::CallAwakeUnfreeze(cur);  // or it stays frozen in the port beside the new one
             DC::CompleteEjectLatch(slot, cur);
             ++g_cLatchCompleted;
         }
@@ -403,16 +405,22 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
             return;
         }
+        // A slot freezes the drive it takes, and in the game only a grab takes one out: the drive's
+        // playerTryToGrab ejects it, then the grab's playerGrabbed_pre unfreezes it. The line is
+        // that grab on another machine, so the unfreeze is applied with the eject; left frozen, the
+        // drive stays in the port and the prop lane drops every pose of the hand that holds it.
+        bool unfrozen = false;
         {
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
+            unfrozen = ue_wrap::prop::CallAwakeUnfreeze(cur);
             DC::CompleteEjectLatch(slot, cur);
             g_slotBase[p.role] = {true, false, 0};
         }
         ++g_cSlotApplied;
         ++g_cLatchCompleted;
-        UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u)",
-                p.role, curEid, senderSlot);
+        UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u, unfrozen=%d)",
+                p.role, curEid, senderSlot, unfrozen ? 1 : 0);
     }
 }
 

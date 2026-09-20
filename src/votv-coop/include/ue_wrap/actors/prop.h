@@ -125,6 +125,11 @@ bool IsFrozen(void* prop);
 void WriteStatic(void* prop, bool on);
 void WriteFrozen(void* prop, bool on);
 
+// The game's own unfreeze, the one a player's grab of a frozen prop runs (playerGrabbed_pre):
+// frozen and sleep cleared, the prop detached and re-init()ed; static is left as it is. False if
+// the verb did not resolve or dispatch. Game thread.
+bool CallAwakeUnfreeze(void* prop);
+
 // Aprop_C.sleep: true means physics-sleeping. Aprop_C::init sets
 // SimulatePhysics(!(static || frozen || sleep)), so a save-loaded settled prop is non-simulating,
 // and the snapshot mirrors it kinematic on the client. Aprop_C lineage only; the offset is a

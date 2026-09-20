@@ -337,6 +337,14 @@ void WriteFrozen(void* prop, bool on) {
     *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_frozen) = on;
 }
 
+bool CallAwakeUnfreeze(void* prop) {
+    if (!prop) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(prop), L"awakeUnfreeze");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(prop, f);
+}
+
 bool IsSleeping(void* prop) {
     if (!prop) return false;
     return ReadField<bool>(prop, P::off::Aprop_sleep);
