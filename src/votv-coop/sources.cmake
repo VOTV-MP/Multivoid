@@ -120,6 +120,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_rules.cpp
+    src/ue_wrap/world/upgrades.cpp
     src/ue_wrap/world/game_rules_pane.cpp
     src/ue_wrap/engine/spawn_menu.cpp
     src/coop/player/movement_ledger.cpp
@@ -156,6 +157,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dispatch/event_dispatch_world.cpp
     src/coop/comms/chat_sync.cpp
     src/coop/interactables/turbine_sync.cpp
+    src/coop/interactables/upgrade_sync.cpp
     src/coop/interactables/interactable_sync.cpp
     src/coop/creatures/kerfur_convert.cpp
     src/coop/creatures/kerfur_convert_client.cpp

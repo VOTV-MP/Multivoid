@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 167;
+inline constexpr uint16_t kProtocolVersion = 168;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -716,6 +716,31 @@ enum class ReliableKind : uint8_t {
     // somebody else's grab, as its own. Late join: nothing to replay, a refusal is an answer to
     // one request. GrabRefusedPayload.
     GrabRefused = 140,
+
+    // Host to all: the signal machine's eighteen upgrade levels, absolute. The levels are one
+    // persistent struct on the save, so they rode only the transferred save, once, and a level
+    // bought mid-session diverged silently until the next join. Polled for change on the host,
+    // which is what catches every writer -- the laptop panel, the physical server and transformer
+    // upgrades, a cheat -- rather than only the purchase this file also carries. Trust: absolute
+    // host state, written straight into the client's struct, the same shape as BalanceSync.
+    // Late join: sent at the joiner's world-ready edge, since the save it loaded was taken at the
+    // handshake and the host may have bought since.
+    // UpgradeLevelsPayload.
+    UpgradeLevels = 141,
+
+    // Client to host: buy or sell one level of the laptop panel row this index names. A client's
+    // press was entirely client-local -- it debited the CLIENT's own balance and raised the
+    // CLIENT's own level, so the group paid nothing and the host's next balance broadcast handed
+    // the money back, which made a client's upgrades free for everyone but the host. The client
+    // refuses its own body at the script-body gate and asks here instead, so it never debits
+    // itself and a refusal needs no correction. Trust: the index must be one of the fifteen LEVEL
+    // rows, and the host re-derives the price and the bounds from its own table and its own level
+    // -- nothing about the purchase is taken from the sender. A sender's presses run no faster
+    // than a bounded rate from a bounded queue. The host charges and writes, then republishes
+    // UpgradeLevels; the money moves on the balance lane that already polls it.
+    // Late join: nothing to replay, since a purchase the host has not run changed nothing.
+    // UpgradeIntentPayload.
+    UpgradeIntent = 142,
 };
 
 #pragma pack(push, 1)
@@ -2201,6 +2226,30 @@ struct GrabIntentPayload {
 };
 static_assert(sizeof(GrabIntentPayload) == 8, "GrabIntentPayload must be 8 bytes");
 static_assert(sizeof(GrabIntentPayload) <= 256 - 20 - 8, "GrabIntentPayload must fit one datagram");
+
+// The upgrade levels (UpgradeLevels), host to all: the whole struct, absolute. The ORDER is
+// ue_wrap::upgrades' table order, fixed in that file precisely so this payload does not depend on
+// the cooked declaration order of a BP struct. Sent whole rather than as a changed index: it is
+// 72 bytes on a change-polled lane, and a whole-struct write cannot leave a peer holding half of
+// one purchase.
+struct UpgradeLevelsPayload {
+    int32_t level[18];   // ue_wrap::upgrades::kLevelCount
+};
+static_assert(sizeof(UpgradeLevelsPayload) == 72, "UpgradeLevelsPayload must be 72 bytes");
+static_assert(sizeof(UpgradeLevelsPayload) <= 256 - 20 - 8,
+              "UpgradeLevelsPayload must fit one datagram");
+// An upgrade purchase (UpgradeIntent): which panel row, and which of its two buttons. The index is
+// the row's own `index` field, the only name the row has -- the widget is designer-placed in
+// ui_laptop and carries no key or element id -- and the host tests it against its own table, so an
+// index naming a module row or nothing at all is refused rather than trusted.
+struct UpgradeIntentPayload {
+    uint8_t panelIndex;  // the row's `index`; must be one of the fifteen level rows
+    uint8_t dir;         // 0 = buy one level, 1 = sell one back
+    uint8_t _pad[6];     // 8-byte alignment; bytes beyond the two zero
+};
+static_assert(sizeof(UpgradeIntentPayload) == 8, "UpgradeIntentPayload must be 8 bytes");
+static_assert(sizeof(UpgradeIntentPayload) <= 256 - 20 - 8,
+              "UpgradeIntentPayload must fit one datagram");
 
 // Why the host refused a grab intent (GrabRefused). For reasons 1 to 8 the client's handling is
 // one -- the request is over -- and the reason is there for the log a player sends us. Reason 9

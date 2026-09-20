@@ -94,6 +94,7 @@
 #include "coop/world/firefly_sync.h"
 #include "coop/items/inventory_pickup_sync.h"
 #include "coop/comms/chat_sync.h"
+#include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/interactables/power_sync.h"
@@ -189,6 +190,7 @@ void Install(coop::net::Session& session) {
     coop::nameplate::Install(&session);  // plate-pref announce path (F1 checkbox -> NameplateChange)
     coop::nick_color::Install(&session);  // nick-color announce path + local-slot mirror refresh
     coop::turbine_sync::Install(&session);  // wind-turbine facing/spin mirror (host-auth ~1 Hz)
+    coop::upgrade_sync::Install(&session);  // a client's upgrade purchase is charged and written by the host
     coop::device_occupancy::Install(&session);  // enterable-device occupancy (busy claim + E deny gate)
     coop::console_state_sync::Install(&session);  // signal-catcher state mirror (sky signals + desk + dish aim)
     coop::signal_catch_sync::Install(&session);  // the signal-catch consume replay (dish slew + downloader arm on every peer)
@@ -314,6 +316,7 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);  // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);  // existing event WorldActors -> joiner
     coop::balance_sync::SendCurrentToSlot(slot);  // host's current balance
+    coop::upgrade_sync::SendCurrentToSlot(slot);  // and the upgrade levels: the joiner's save was taken at the handshake
     // The host-to-client apply-blob push is not here: this fires at ClientWorldReady, after the
     // joiner loaded its world, so the blob would miss the pre-materialise hook; the host tick's
     // connect-edge detector drives it pre-world instead. No join teleport here either: the
@@ -383,6 +386,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::device_occupancy::OnDisconnectForSlot(slot);  // release a leaver's device claims
     coop::desk_input_sync::OnPeerLeft(slot);  // clear a leaver's dangling coordIsPing (its ping would swallow every peer's desk keys)
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
+    coop::upgrade_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its queued purchases
     coop::comp_sync::OnPeerDisconnect(static_cast<uint8_t>(slot));  // pause the mirror if the decode simulator left
     coop::kerfur_command::OnPeerDisconnect(static_cast<uint8_t>(slot));  // release any kerfur the leaver was owned-following
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
@@ -453,6 +457,7 @@ DisconnectStats DisconnectAll() {
     coop::inventory_pickup_sync::OnDisconnect();
     coop::chat_sync::OnDisconnect();
     coop::turbine_sync::OnDisconnect();
+    coop::upgrade_sync::OnDisconnect();  // and its own upgrade panel buys locally again
     coop::device_occupancy::OnDisconnect();
     coop::console_state_sync::OnDisconnect();
     coop::signal_catch_sync::OnDisconnect();
@@ -630,6 +635,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       coop::puppet_carry_drive::Tick(session); }  // drive each puppet-held clump to its hand + publish the host-auth carry/flight pose batch (AFTER TickCarry so the latch is current)
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_stroke::Tick(session); }  // HOST: run the clients' queued broom strokes, one a tick a client (last: what a stroke spawns, sweeps and pushes is picked up next tick, as for the host's own)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
+    { PP::Scope _s{PP::Bucket::Balance};       coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);
     coop::dev::store_table_probe::Tick();  // ini store_table_probe=1; ONE-SHOT: which mechanism can read a list_store row

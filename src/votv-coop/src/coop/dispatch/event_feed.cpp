@@ -7,6 +7,7 @@
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
+#include "coop/interactables/upgrade_sync.h"
 #include "coop/world/balance_sync.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
@@ -259,6 +260,24 @@ void Update(net::Session& session, void* localPlayer) {
             std::memcpy(&p, msg.payload, sizeof(p));
             const uint8_t sender = static_cast<uint8_t>(msg.senderPeerSlot);
             ue_wrap::game_thread::Post([p, sender] { coop::wisp_tear_mirror::OnWispTear(p, sender); });
+            break;
+        }
+        case net::ReliableKind::UpgradeLevels: {
+            // The host's canonical upgrade levels, mirrored whole. Host-only origin, and it sits
+            // beside the balance on purpose: the two are one purchase seen from either end.
+            if (msg.senderPeerSlot != 0) {
+                UE_LOGW("event_feed: UpgradeLevels from non-host senderPeerSlot=%d -- dropping",
+                        msg.senderPeerSlot);
+                break;
+            }
+            if (msg.payloadLen < sizeof(net::UpgradeLevelsPayload)) {
+                UE_LOGW("event_feed: UpgradeLevels payload too short (%zu < %zu)",
+                        static_cast<size_t>(msg.payloadLen), sizeof(net::UpgradeLevelsPayload));
+                break;
+            }
+            net::UpgradeLevelsPayload p{};
+            std::memcpy(&p, msg.payload, sizeof(p));
+            coop::upgrade_sync::ApplyFromHost(p);  // no-op on the host (authoritative)
             break;
         }
         case net::ReliableKind::BalanceSync: {
