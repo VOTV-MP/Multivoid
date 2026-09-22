@@ -239,6 +239,7 @@ set(VOTVCOOP_SOURCES
     src/coop/props/prop_destroy_seam.cpp
     src/coop/props/prop_lifecycle.cpp
     src/coop/props/prop_container_extract.cpp
+    src/coop/props/prop_food_state.cpp
     src/coop/props/prop_record_refresh.cpp
     src/coop/props/pack_trash_intent.cpp
     src/coop/props/prop_drop_intent.cpp
@@ -402,6 +403,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/hookdrag_selftest.cpp
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp
+    src/coop/dev/food_clock_probe.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/wire_census.cpp
     src/coop/input/input_owner.cpp

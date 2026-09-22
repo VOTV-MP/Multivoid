@@ -308,15 +308,16 @@ bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
     return true;
 }
 
-// Element 0 of a group is the base class's by convention, and the splice below depends on it. A
-// rule that names a gate should have one: the first apply for a class captures the LEAF record too
-// and says so if the leaf wrote where the base writes. Once per class, then never again.
-// The splice keeps element 0 of a group for the base class. That is the game's own convention --
-// its slot setter takes an explicit index per group -- but it is NOT universal, and a class that
-// breaks it would not LOSE its field, it would read the base's unrelated value into it: a lifespan
-// arriving as a timer. So the convention is MEASURED per class, once, against the game rather than
-// asserted from a reading, and a class that fails it leaves the lane. Its save state then travels
-// no worse than before this codec existed; the warning names it for a carrier of its own.
+// The splice below hands the receiver's own value to every ELEMENT the base class wrote, and lets
+// the leaf keep everything past that extent. A leaf free to store what it likes past the base's
+// last element is still not free to store something of its own AT one of them: there the splice
+// would give it the base's unrelated value instead -- a lifespan arriving as a timer. So the
+// convention is MEASURED per class, once, against the game rather than asserted from a reading,
+// and a class that fails it leaves the lane. Its save state then travels no worse than before this
+// codec existed; the warning names it for a carrier of its own.
+//
+// The groups are not hand-listed: the base record itself says which ones the base writes, since a
+// group it never wrote is empty in it and the comparison over that group has no elements to run.
 //
 // Both dispatches are paid once per class and cached with the verbs.
 bool EnsureConventionChecked(void* actor, void* cls) {
@@ -328,29 +329,58 @@ bool EnsureConventionChecked(void* actor, void* cls) {
     SaveRecord base, leaf;
     if (!CallForRecord(actor, g_baseGetData, base)) return true;    // unresolvable: re-checked never; the apply's own guard catches it
     if (!CallForRecord(actor, it->second.getData, leaf)) return true;
-    const wchar_t* which = nullptr;
-    auto clash = [](const auto& a, const auto& b) {
-        return !a.empty() && !b.empty() && a[0] != b[0];
+    // Both records come off the SAME actor in the same frame, and the leaf's getData calls the
+    // base's first, so every element the base wrote is in the leaf's record unchanged -- unless
+    // the leaf overwrote it, which is exactly what this asks.
+    auto clash = [](const auto& leafG, const auto& baseG) {
+        for (size_t g = 0; g < leafG.size() && g < baseG.size(); ++g)
+            for (size_t e = 0; e < leafG[g].size() && e < baseG[g].size(); ++e)
+                if (!(leafG[g][e] == baseG[g][e])) return true;
+        return false;
     };
-    if (clash(leaf.bools,  base.bools))  which = L"bools";
-    else if (clash(leaf.floats, base.floats)) which = L"floats";
-    else if (clash(leaf.names,  base.names))  which = L"names";
+    auto clashFlat = [](const auto& leafA, const auto& baseA) {
+        for (size_t i = 0; i < leafA.size() && i < baseA.size(); ++i)
+            if (!(leafA[i] == baseA[i])) return true;
+        return false;
+    };
+    const wchar_t* which = nullptr;
+    if      (clash(leaf.bools,      base.bools))      which = L"bools";
+    else if (clash(leaf.floats,     base.floats))     which = L"floats";
+    else if (clash(leaf.ints,       base.ints))       which = L"ints";
+    else if (clash(leaf.strings,    base.strings))    which = L"strings";
+    else if (clash(leaf.classes,    base.classes))    which = L"classes";
+    else if (clash(leaf.vectors,    base.vectors))    which = L"vectors";
+    else if (clash(leaf.rotators,   base.rotators))   which = L"rotators";
+    else if (clash(leaf.transforms, base.transforms)) which = L"transforms";
+    else if (clash(leaf.bytes,      base.bytes))      which = L"bytes";
+    else if (clash(leaf.names,      base.names))      which = L"names";
+    else if (clashFlat(leaf.signals, base.signals))   which = L"signals";
     if (!which) return true;
     it->second.overrides = false;   // and so Covers() is false for this class from here on
-    UE_LOGW("save_record: '%ls' writes element 0 of `%ls`, where Aprop_C writes too -- the base "
-            "splice would hand it the base's value instead of its own, so this class LEAVES the "
+    UE_LOGW("save_record: '%ls' stores its own value in `%ls` at an element Aprop_C writes too -- "
+            "the base splice would hand it the base's value instead, so this class LEAVES the "
             "save-record lane. Its state needs a carrier of its own.",
             R::ToString(R::NameOf(cls)).c_str(), which);
     return false;
 }
 
-// Overwrite `dst[i]` with `src[i]` wherever src holds a group -- the receiver's own value for a
-// group the BASE class wrote, the sender's for one only the leaf class knows about.
+// The base's elements over the base's OWN extent; past it, whatever `dst` already held stands.
+template <class T>
+void SpliceElements(std::vector<T>& dst, const std::vector<T>& src) {
+    // A base array longer than the leaf's grows the leaf's rather than truncating to it: every
+    // element the base wrote has to land, and out there the leaf has nothing of its own to lose.
+    if (dst.size() < src.size()) dst.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+}
+
+// The same rule one level up, per group: the receiver's own value for every element the BASE class
+// wrote, the sender's for the rest. A whole-group replace instead of this dropped the leaf's TAIL
+// -- Aprop_food_C turns the base's one float into four and keeps three of its own out there -- and
+// every food class had to leave the lane to avoid losing it.
 template <class V>
 void SpliceGroups(std::vector<V>& dst, const std::vector<V>& src) {
     if (dst.size() < src.size()) dst.resize(src.size());
-    for (size_t i = 0; i < src.size(); ++i)
-        if (!src[i].empty()) dst[i] = src[i];
+    for (size_t i = 0; i < src.size(); ++i) SpliceElements(dst[i], src[i]);
 }
 
 }  // namespace
@@ -388,7 +418,7 @@ bool ApplyRecord(void* actor, const SaveRecord& r) {
     // handed -- so a record taken at face value is a primitive for rewriting any prop's identity
     // and for destroying it through SetLifeSpan. Every one of those fields already rides the spawn
     // row, which is the authority for them. So the receiver's OWN base record is read here and
-    // spliced over the incoming one: what survives from the sender is exactly the groups the base
+    // spliced over the incoming one: what survives from the sender is exactly the elements the base
     // class does not write, which is the leaf's own save state and the only thing this codec
     // exists to move.
     SaveRecord base;
@@ -407,7 +437,7 @@ bool ApplyRecord(void* actor, const SaveRecord& r) {
     SpliceGroups(merged.transforms, base.transforms);
     SpliceGroups(merged.bytes,      base.bytes);
     SpliceGroups(merged.names,      base.names);
-    if (!base.signals.empty()) merged.signals = base.signals;
+    SpliceElements(merged.signals,  base.signals);   // a flat array, so the rule applies one level up
 
     ParamFrame f(v->loadData);
     const int32_t off = f.ParamOffset(L"data");

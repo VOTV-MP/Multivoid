@@ -352,6 +352,11 @@ CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullp
     "Diagnostic probe: native pile inertness on clients.")
 CFG_FLAG(spawn_order_probe, "spawn_order_probe", "dev", false, nullptr,
     "Diagnostic probe: actor spawn ordering.")
+CFG_FLAG(food_clock_probe, "food_clock_probe", "dev", false, "VOTVCOOP_FOOD_CLOCK_PROBE",
+    "Diagnostic probe (BOTH peers): what a food's save record does to its own state on arrival. "
+    "Aprop_food_C::loadData catches the food up against a timestamp the SENDER wrote with its own "
+    "world clock, so this prints the two clocks, their difference, and how far the temperature and "
+    "ripeness moved because of it.")
 CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_PROP_BIRTH_KEY_PROBE",
     "Diagnostic probe (CLIENT): the place/birth seam -- how many drain ticks the save Key takes to "
     "restore after a spawn, and which of the seven drain exits each pending spawn leaves by. Set it "

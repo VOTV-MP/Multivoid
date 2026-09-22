@@ -138,10 +138,11 @@ bool CaptureRecord(void* actor, SaveRecord& out);
 // `setNametag()`. Taken at face value that is a primitive for rewriting any prop's identity and for
 // destroying it through SetLifeSpan, and every one of those fields already rides the prop's spawn
 // row, which is their authority. So the receiver's OWN base record is read first and spliced over
-// the incoming one: what survives from `r` is exactly the groups Aprop_C::getData does not write,
-// which is the leaf class's own save state and the only thing this pair exists to move. Which
-// groups those are is read off the base class at runtime, never listed here. Two dispatches: the
-// base capture and the apply.
+// the incoming one, ELEMENT by element over the base's own extent: what survives from `r` is
+// exactly what Aprop_C::getData does not write, which is the leaf class's own save state and the
+// only thing this pair exists to move -- including the TAIL of a group the base also writes, which
+// is where a food keeps its temperature. Which elements those are is read off the base class at
+// runtime, never listed here. Two dispatches: the base capture and the apply.
 bool ApplyRecord(void* actor, const SaveRecord& r);
 
 // ---- the same dispatch, without the prop lineage ----------------------------------------------

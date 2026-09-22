@@ -321,6 +321,12 @@ void PocketTheWants(void* player) {
             // The record as the item itself serializes it, before the verb runs. The carried
             // record differs from it in the bool group by design: addObject appends the owner's
             // `fridge` flag to bools[0].
+            // Deliberately NOT gated on prop_save_data::Covers. That gate answers "does the
+            // live-prop record lane publish this class", and a food is claimed off that lane; the
+            // pocket is a different custody with a different carrier, and this line is the readout
+            // of what the pocket will take. Gating it here would blind the drill to the one lane it
+            // is driving. The capture itself only reads -- getData builds a struct and writes no
+            // field of the actor.
             SR::SaveRecord before;
             if (SR::CaptureRecord(prop, before))
                 UE_LOGI("[INV-PICKUP-DRILL] before the pickup '%ls' key='%ls': %hs", cls.c_str(),

@@ -55,6 +55,11 @@ struct Row {
     bool    isCopy = false;
     uint8_t frequency = 0, quality = 0, objectType = 0;
     bool    hasData = false;      // comp empty-state marker (size>0 on real rows)
+
+    // Member-wise, so the save-record splice can ask whether a leaf class stored its own row where
+    // the base class stores one. `image` is not a member, so two rows differing only in their photo
+    // compare equal -- the same blind spot the digest has, and for the same reason.
+    bool operator==(const Row&) const = default;
 };
 
 // Raw-read the struct at `base` into `out` (FStrings read directly; FNames

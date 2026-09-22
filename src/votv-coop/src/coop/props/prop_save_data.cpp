@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_save_data.h"
 
+#include "coop/dev/food_clock_probe.h"   // [dev] the food catch-up's two clocks, read at these seams
 #include "coop/items/save_record_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -215,10 +216,11 @@ bool AllowIntent(uint8_t senderSlot) {
 // class gate belongs with the write and not with the send: `Covers` answers both "does this class
 // carry save state of its own" and "has another lane claimed it", and a record that reaches a
 // claimed class would write the field that lane arbitrates with a compare-and-swap.
-bool TryApply(void* actor, const SR::SaveRecord& rec) {
+bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
     if (!actor || !Covers(actor)) return false;
     if (!SR::ApplyRecord(actor, rec)) return false;
     ++g_appliedTotal;
+    coop::dev::food_clock_probe::NoteApply(actor, key, rec);
     return true;
 }
 
@@ -228,7 +230,7 @@ void LandRecord(const std::wstring& key, SR::SaveRecord&& rec, uint8_t senderSlo
     // scan on a miss, and a join hands this lane hundreds of arrivals at once. A prop the index
     // does not know yet is parked and retried at O(1) on the next frame instead.
     void* actor = (g_applyBudget > 0) ? PT::FindLiveActorByKey(key) : nullptr;
-    if (actor && TryApply(actor, rec)) {
+    if (actor && TryApply(actor, key, rec)) {
         --g_applyBudget;
         return;
     }
@@ -345,6 +347,7 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key) {
                 key.c_str());
         return false;
     }
+    coop::dev::food_clock_probe::NotePublish(actor, key, rec);
     return SendBody(s, -1, key, rec);
 }
 
@@ -356,6 +359,7 @@ bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::
     if (!Covers(actor)) return false;
     SR::SaveRecord rec;
     if (!SR::CaptureRecord(actor, rec)) return false;
+    coop::dev::food_clock_probe::NotePublish(actor, key, rec);
     return SendBody(s, peerSlot, key, rec);
 }
 
@@ -427,7 +431,7 @@ void OnChunk(coop::net::Session& s, const coop::net::BlobChunkPayload& p, uint8_
                 key.c_str(), static_cast<unsigned>(senderSlot));
         return;
     }
-    if (actor && TryApply(actor, rec)) {
+    if (actor && TryApply(actor, key, rec)) {
         UE_LOGI("prop_save_data: HOST took a client record (key '%ls', slot %u) -- republishing",
                 key.c_str(), static_cast<unsigned>(senderSlot));
     } else {
@@ -445,7 +449,7 @@ bool ApplyParked(void* actor, const std::wstring& key) {
     // ApplyRecord's bool is the DISPATCH's, not the Blueprint's: Aprop_C::loadData never assigns
     // its `return` out-param at all, so there is no refusal to read. A failure here is a codec or
     // reflection failure, and the record stays parked for the next frame to retry.
-    if (!TryApply(actor, it->second.rec)) return false;
+    if (!TryApply(actor, key, it->second.rec)) return false;
     UE_LOGI("prop_save_data: parked record applied at birth (key '%ls')", key.c_str());
     Unpark(it);
     return true;
@@ -505,7 +509,7 @@ void Drive() {
             // capture has already paid for one, and counting only successes let a handful of
             // failing rows pay a dispatch each, every frame, forever.
             --g_applyBudget;
-            if (TryApply(actor, it->second.rec)) {
+            if (TryApply(actor, it->first, it->second.rec)) {
                 ++applied;
                 const auto dead = it++;
                 Unpark(dead);
