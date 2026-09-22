@@ -75,8 +75,25 @@ FieldSlot g_fields[] = {
 
 // The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the same
 // update family the game's own apply chain uses, so a mirror repaint goes through the
-// blueprint's own painters (LEDs, toggles, text panes). None was found to write state; the comp
-// repaint takes a condition and is dispatched separately.
+// blueprint's own painters (LEDs, toggles, text panes). The comp repaint takes a condition and
+// is dispatched separately.
+//
+// ONE OF THEM WRITES PLAYER STATE, and an earlier reading of this list that said none did cost
+// the interaction-UI flicker every client saw on every prop. `updToggles` ends with
+// `lib::getMainPlayer(this)->lookAtComponent = nullptr`
+// (the last statement of its decompiled body) -- the game invalidating the look-at
+// cache so the tooltip of the toggle the player just flipped is re-resolved. In single player it
+// fires on a human flipping a switch; the rebuild of the action row that follows IS the intended
+// behaviour there.
+//
+// So this chain belongs ONLY on an edge that really changed one of the scalars it paints -- a
+// received desk input, a join adopt -- which is the rate single player produces. Calling it on a
+// CLOCK turns an invalidation verb into a metronome: every pulse leaves the local player with a
+// null lookAtComponent beside a live lookAtActor, LookAtFunction's five-field compare fails on
+// exactly that pair the next tick, and the whole action row is destroyed and rebuilt. Measured
+// 2026-09-22: 284 of 284 rebuilds under a held aim disagreed on lookAtComponent and on nothing
+// else. Never add a periodic caller. The nine verbs paint the SCALAR fields only -- none of them
+// reads a sim output, which is why WriteSimOutputs does not run them at all.
 struct RefreshSlot { const wchar_t* name; void* fn; };
 RefreshSlot g_refresh[] = {
     { L"updText",            nullptr },
@@ -602,7 +619,7 @@ bool ReadSimOutputs(SimOutputs& out) {
     return true;
 }
 
-bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
+bool WriteSimOutputs(const SimOutputs& in) {
     void* d = Instance();
     if (!d || !g_coreResolved || g_offDLFrData < 0 || g_offDLPoData < 0 || g_offDLData < 0)
         return false;
@@ -616,16 +633,9 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = in.poData;
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
     *reinterpret_cast<float*>(dld + ue_wrap::signal_dynamic::kOff_decoded) = in.decoded;
-    // Repaint only on the throttled pulse, never per tick: the interpolation stream raw-writes
-    // at 60 Hz for smoothness and the widget's own tick repaints the self-painting screens; this
-    // pulse (about 3 Hz) covers the fields only the update verbs paint.
-    if (repaint) {
-        for (auto& r : g_refresh) {
-            if (!r.fn) continue;
-            ue_wrap::ParamFrame f(r.fn);
-            if (f.valid()) ue_wrap::Call(d, f);
-        }
-    }
+    // The raw write is the whole apply: the widget's own tick paints every field above, and the
+    // refresh chain paints none of them. The pulse that used to run that chain here is deleted,
+    // not conditioned -- see the chain's comment for what it was doing to the player instead.
     return true;
 }
 

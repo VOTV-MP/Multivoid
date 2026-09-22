@@ -81,7 +81,6 @@ struct SimInterp {
 };
 
 SimInterp g_interp;
-uint64_t  g_nextRepaintMs = 0;   // ~3 Hz full-screen repaint pulse (raw-write is per-tick)
 
 CD::SimOutputs ToOutputs(const float* c) {
     CD::SimOutputs o;
@@ -134,15 +133,15 @@ void Tick() {
     }
     if (!g_interp.primed) return;
     g_interp.Advance(nowMs);
-    // Raw-write every tick for smoothness; pulse the full repaint at ~3 Hz.
-    const bool repaint = nowMs >= g_nextRepaintMs;
-    if (repaint) g_nextRepaintMs = nowMs + 333;
-    CD::WriteSimOutputs(ToOutputs(g_interp.cur), repaint);
+    // The raw write every tick IS the apply: the desk widget paints these fields from its own
+    // tick. The 3 Hz repaint pulse that used to ride along here is gone -- it painted none of
+    // the fields written above, and the chain it ran nulls the local player's lookAtComponent,
+    // which rebuilt the interaction UI under every client's crosshair three times a second.
+    CD::WriteSimOutputs(ToOutputs(g_interp.cur));
 }
 
 void OnDisconnect() {
     g_interp.Reset();
-    g_nextRepaintMs = 0;
     if (auto* s = g_session.load(std::memory_order_acquire))
         s->SetHostDeskSim(false, {});
 }

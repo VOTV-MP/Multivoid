@@ -168,11 +168,12 @@ struct SimOutputs {
     // charge. It rides the DeskInput charge events and the native per-peer decay.
 };
 bool ReadSimOutputs(SimOutputs& out);
-// Raw-write the sim outputs and repaint the screens (the WriteScalars refresh chain) only when
-// `repaint`: the interpolation stream raw-writes every tick for smoothness (the widget's own
-// tick repaints the self-painting fields) and pulses the full repaint at about 3 Hz for the
-// refresh-only display fields, never a per-frame repaint storm.
-bool WriteSimOutputs(const SimOutputs& in, bool repaint);
+// Raw-write the sim outputs. A raw write is the WHOLE apply: every field above is painted by the
+// desk widget's own tick, and not one of them is read by any verb in the WriteScalars refresh
+// chain -- measured over all nine (see the chain's comment in console_desk.cpp). This function
+// used to pulse that chain at about 3 Hz "for the refresh-only display fields"; there were none,
+// and the pulse cost a visible defect, so it is gone rather than conditioned.
+bool WriteSimOutputs(const SimOutputs& in);
 
 // True while the download data's mesh is a live object, the machine armed; the joiner's
 // pending adopt applies on this edge.
