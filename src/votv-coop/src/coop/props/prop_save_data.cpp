@@ -110,7 +110,10 @@ constexpr uint64_t kAwaitTimeoutMs = 15000;   // an intent rides one FIFO behind
 struct Await { uint8_t senderSlot = 0; uint64_t deadlineMs = 0; };
 std::map<std::wstring, Await> g_awaiting;
 // Classes a dedicated lane owns, by name, and the resolved answer per UClass.
-std::set<std::wstring> g_ownedElsewhere;
+// Transparent comparator so the per-tick re-declaration below can LOOK UP a `const wchar_t*`
+// without minting a std::wstring for it -- every claimed name is past the small-string buffer, so
+// the plain set allocated one per lane per net_pump tick to answer a question it already knew.
+std::set<std::wstring, std::less<>> g_ownedElsewhere;
 std::map<void*, bool>  g_ownedCache;
 
 std::wstring g_parkCursor;      // where the next frame's park scan resumes
@@ -315,7 +318,9 @@ void DeclareClassOwnedElsewhere(const wchar_t* className) {
     // clearing unconditionally emptied this cache ~60 times a second: Covers then re-resolved every
     // claimed name with FindClass per UClass forever, and a name whose class this world never loads
     // is a miss, which walks the whole object array and is never cached.
-    if (g_ownedElsewhere.insert(className).second) g_ownedCache.clear();
+    if (g_ownedElsewhere.find(className) != g_ownedElsewhere.end()) return;
+    g_ownedElsewhere.insert(className);
+    g_ownedCache.clear();
 }
 
 bool Covers(void* actor) {
