@@ -308,16 +308,17 @@ bool CallForRecord(void* actor, void* fn, SaveRecord& out) {
     return true;
 }
 
-// The splice below hands the receiver's own value to every ELEMENT the base class wrote, and lets
-// the leaf keep everything past that extent. A leaf free to store what it likes past the base's
-// last element is still not free to store something of its own AT one of them: there the splice
-// would give it the base's unrelated value instead -- a lifespan arriving as a timer. So the
-// convention is MEASURED per class, once, against the game rather than asserted from a reading,
-// and a class that fails it leaves the lane. Its save state then travels no worse than before this
-// codec existed; the warning names it for a carrier of its own.
+// The splice below gives the receiver's own value to every ELEMENT the base class wrote and lets
+// the leaf keep everything past that extent. A leaf free to store what it likes out there is still
+// not free to store something of its own AT one of the base's elements: the splice would hand it
+// the base's value instead -- a lifespan arriving as a timer. So the convention is MEASURED per
+// class, once, against the game, and a class that fails it leaves the lane with its state
+// travelling no worse than before this codec existed.
 //
-// The groups are not hand-listed: the base record itself says which ones the base writes, since a
-// group it never wrote is empty in it and the comparison over that group has no elements to run.
+// The groups are not hand-listed: a group the base never wrote is empty in the base record, so the
+// comparison over it has no elements to run. And the comparison covers only the OVERLAP, so a leaf
+// group SHORTER than the base's is admitted where a whole-group compare rejected it on length
+// alone -- harmless, since the splice grows it back and fills the new indices from the base.
 //
 // Both dispatches are paid once per class and cached with the verbs.
 bool EnsureConventionChecked(void* actor, void* cls) {

@@ -28,7 +28,7 @@ constexpr size_t kTemperature = 1, kRipeness = 2, kStamp = 3;
 void*    g_foodCls = nullptr;
 uint64_t g_nextFoodClsTryMs = 0;
 
-int   g_published = 0, g_applied = 0;
+int   g_published = 0, g_applied = 0, g_refused = 0, g_recaptureFailed = 0;
 int   g_publishLines = 0, g_applyLines = 0;
 // Which catch-up the record asks for, over EVERY record and not only the ones that printed a line.
 // loadData branches on `ignoreRotting`, and the two halves are unrelated arithmetic on unrelated
@@ -117,15 +117,23 @@ void NoteApply(void* actor, const std::wstring& key, const SR::SaveRecord& sent)
     if (!IsEnabled() || !IsFood(actor)) return;
     // The actor's own getData, called again: the landed values and this peer's clock both come out
     // of the game's codec, with no field offset kept here.
-    SR::SaveRecord landed;
-    if (!SR::CaptureRecord(actor, landed)) {
-        UE_LOGW("food_clock_probe: APPLY '%ls' key='%ls' -- the re-capture failed, so what the "
-                "catch-up left cannot be read", R::ClassNameOf(actor).c_str(), key.c_str());
-        return;
-    }
     g_any = true;
     g_dirty = true;
     ++g_applied;
+    SR::SaveRecord landed;
+    if (!SR::CaptureRecord(actor, landed)) {
+        // Counted and capped like every other line here: this one sits on the park drain, which
+        // runs up to the lane's apply budget every frame, so an actor whose re-capture always fails
+        // would otherwise print at that rate. The apply itself still counts -- a peer that applied
+        // every record and could read none back must not report that it applied nothing.
+        ++g_recaptureFailed;
+        if (g_applyLines < kPerSeamLines) {
+            ++g_applyLines;
+            UE_LOGW("food_clock_probe: APPLY '%ls' key='%ls' -- the re-capture failed, so what the "
+                    "catch-up left cannot be read", R::ClassNameOf(actor).c_str(), key.c_str());
+        }
+        return;
+    }
     NoteBranch(IgnoreRottingOf(sent));
 
     const float sentTemp = FloatAt(sent, kTemperature), sentRipe = FloatAt(sent, kRipeness);
@@ -153,17 +161,25 @@ void NoteApply(void* actor, const std::wstring& key, const SR::SaveRecord& sent)
             branch < 0 ? "?" : branch ? "temperature" : "ripeness");
 }
 
-void Tick() {
-    if (!IsEnabled() || !g_any || !g_dirty) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (g_lastVerdict.time_since_epoch().count() != 0 && now - g_lastVerdict < kVerdictPeriod) return;
-    g_lastVerdict = now;
+void NoteRefused(void* actor) {
+    if (!IsEnabled() || !IsFood(actor)) return;
+    g_any = true;
+    g_dirty = true;
+    ++g_refused;
+}
+
+// The run totals and the reading, unconditionally. Tick() puts it on a period; the session teardown
+// calls it once more so the last one is the whole run, the way the two prop-seam probes beside it do.
+void EmitVerdict() {
+    if (!IsEnabled() || !g_any) return;
+    g_lastVerdict = std::chrono::steady_clock::now();
     g_dirty = false;
-    UE_LOGW("food_clock_probe: VERDICT published=%d applied=%d delta min=%+.2f s max=%+.2f s "
+    UE_LOGW("food_clock_probe: VERDICT published=%d applied=%d refused-by-the-class-gate=%d "
+            "re-capture failed=%d delta min=%+.2f s max=%+.2f s "
             "| branch asked for: temperature=%d ripeness=%d unreadable=%d "
             "| widest post-apply gap temperature=%.2f K ripeness=%.2f",
-            g_published, g_applied, g_deltaMin, g_deltaMax, g_branchTemp, g_branchRipe,
-            g_branchUnknown, g_moveTemp, g_moveRipe);
+            g_published, g_applied, g_refused, g_recaptureFailed, g_deltaMin, g_deltaMax,
+            g_branchTemp, g_branchRipe, g_branchUnknown, g_moveTemp, g_moveRipe);
     // The gap is what the record SENT against what the actor held once loadData returned, so it has
     // two possible authors: the catch-up moving the field, or a leaf whose loadData never restored
     // it and left this peer's own simulated value standing. Naming the class is what tells them
@@ -178,12 +194,17 @@ void Tick() {
     // that started at different moments, so their difference is not an elapsed time at all -- the
     // reading names which way it ran, and only claims the half of the catch-up that actually ran.
     const char* reading =
-        (g_applied == 0 && g_published > 0)
+        (g_published == 0 && g_applied == 0)
+            ? "THE CLAIM IS HOLDING -- every food this peer offered to the record lane was refused "
+              "by the class gate, and no food record was published or applied. The count above is "
+              "the evidence; a run with no food in it would show a refused count of zero too"
+        : (g_applied == 0)
             ? "PUBLISH SIDE ONLY -- this peer authored records and applied none, which is the "
               "host's half; the catch-up runs on the RECEIVER, so read the other peer's log"
-        : (g_applied == 0)
-            ? "NO DATA -- no food record was applied on this peer, so nothing here rules the "
-              "catch-up in or out; check that a food class is still in the record lane"
+        : (g_recaptureFailed == g_applied)
+            ? "THE READ-BACK FAILED -- records were applied, but not one of them could be captured "
+              "again afterwards, so nothing here says what the catch-up did; the deltas below are "
+              "from the sent stamps alone"
         : (g_deltaMin > -1.0f && g_deltaMax < 1.0f && g_moveTemp < 0.5f && g_moveRipe < 1.0f)
             ? "CLOCKS AGREE -- the two peers read GetTimeSeconds within a second of each other and "
               "the catch-up moved nothing worth seeing; this run does not exercise the defect"
@@ -197,6 +218,29 @@ void Tick() {
     if (g_applied > 0 && g_branchTemp == 0)
         UE_LOGW("food_clock_probe: no record asked for the TEMPERATURE half -- every food here "
                 "carried ignoreRotting=false, so that branch's arithmetic is unmeasured by this run");
+}
+
+void Tick() {
+    if (!IsEnabled() || !g_any || !g_dirty) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (g_lastVerdict.time_since_epoch().count() != 0 && now - g_lastVerdict < kVerdictPeriod) return;
+    EmitVerdict();
+}
+
+void OnDisconnect() {
+    EmitVerdict();
+    // The class pointer goes with the rest: a Blueprint class can be unloaded and reloaded across a
+    // level change, and a stale UClass would answer the lineage test for a class that no longer
+    // exists -- the hazard prop_save_data::OnDisconnect resets for, one seam over.
+    g_foodCls = nullptr;
+    g_nextFoodClsTryMs = 0;
+    g_published = g_applied = g_refused = g_recaptureFailed = 0;
+    g_publishLines = g_applyLines = 0;
+    g_branchTemp = g_branchRipe = g_branchUnknown = 0;
+    g_deltaMin = g_deltaMax = g_moveTemp = g_moveRipe = 0;
+    g_worst = Worst{};
+    g_any = g_dirty = false;
+    g_lastVerdict = {};
 }
 
 }  // namespace coop::dev::food_clock_probe

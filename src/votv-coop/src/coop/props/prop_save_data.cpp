@@ -217,7 +217,8 @@ bool AllowIntent(uint8_t senderSlot) {
 // carry save state of its own" and "has another lane claimed it", and a record that reaches a
 // claimed class would write the field that lane arbitrates with a compare-and-swap.
 bool TryApply(void* actor, const std::wstring& key, const SR::SaveRecord& rec) {
-    if (!actor || !Covers(actor)) return false;
+    if (!actor) return false;
+    if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
     if (!SR::ApplyRecord(actor, rec)) return false;
     ++g_appliedTotal;
     coop::dev::food_clock_probe::NoteApply(actor, key, rec);
@@ -309,9 +310,12 @@ bool StillAwaited(const std::wstring& key) {
 
 void DeclareClassOwnedElsewhere(const wchar_t* className) {
     if (!className || !*className) return;
-    g_ownedElsewhere.insert(className);
-    // Any answer cached before this claim was computed without it.
-    g_ownedCache.clear();
+    // Only a claim that is actually NEW invalidates the cache. Every caller declares from its
+    // lane's Install, and subsystems::Install is a retry pump re-entered every net_pump tick, so
+    // clearing unconditionally emptied this cache ~60 times a second: Covers then re-resolved every
+    // claimed name with FindClass per UClass forever, and a name whose class this world never loads
+    // is a miss, which walks the whole object array and is never cached.
+    if (g_ownedElsewhere.insert(className).second) g_ownedCache.clear();
 }
 
 bool Covers(void* actor) {
@@ -340,7 +344,7 @@ bool Publish(coop::net::Session* s, void* actor, const std::wstring& key) {
     if (!s->connected() || !s->AnyWorldReadyPeer()) return false;
     if (StillAwaited(key)) return false;       // the author's own record is still in flight
     g_session = s;
-    if (!Covers(actor)) return false;
+    if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
     SR::SaveRecord rec;
     if (!SR::CaptureRecord(actor, rec)) {
         UE_LOGW("prop_save_data: getData failed on the prop keyed '%ls' -- no record published",
@@ -356,7 +360,7 @@ bool PublishToSlot(coop::net::Session* s, int peerSlot, void* actor, const std::
     if (!s->IsSlotWorldReady(peerSlot)) return false;
     if (StillAwaited(key)) return false;       // the author's own record is still in flight
     g_session = s;
-    if (!Covers(actor)) return false;
+    if (!Covers(actor)) { coop::dev::food_clock_probe::NoteRefused(actor); return false; }
     SR::SaveRecord rec;
     if (!SR::CaptureRecord(actor, rec)) return false;
     coop::dev::food_clock_probe::NotePublish(actor, key, rec);
@@ -509,7 +513,11 @@ void Drive() {
             // capture has already paid for one, and counting only successes let a handful of
             // failing rows pay a dispatch each, every frame, forever.
             --g_applyBudget;
-            if (TryApply(actor, it->first, it->second.rec)) {
+            // The Key by VALUE: TryApply reads it after loadData has run, and loadData re-runs the
+            // prop's init(), from which a re-entrant apply for this same Key would erase the node
+            // this iterator names.
+            const std::wstring key = it->first;
+            if (TryApply(actor, key, it->second.rec)) {
                 ++applied;
                 const auto dead = it++;
                 Unpark(dead);

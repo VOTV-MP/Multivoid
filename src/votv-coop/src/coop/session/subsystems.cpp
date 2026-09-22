@@ -441,6 +441,7 @@ DisconnectStats DisconnectAll() {
     // The two prop-seam probes print their run totals before the state they describe is cleared.
     coop::dev::prop_birth_key_probe::EmitVerdict();
     coop::dev::spawn_match_probe::EmitVerdict();
+    coop::dev::food_clock_probe::OnDisconnect();  // [dev] tallies and the cached class, which a level change can unload
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
     coop::dev::hookdrag_selftest::EmitVerdict();  // [dev] how far the dragged prop moved here
     coop::dev::hand_drop_selftest::EmitVerdict();  // [dev] which hand episodes fired, and what each peer counted
