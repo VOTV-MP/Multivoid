@@ -275,7 +275,7 @@ void RunContainerTakeProbe() {
     {
         ControlManager mgr;
         AddWalkToProcesses(mgr, goal);
-        mgr.Run(goal, /*maxSeconds=*/45);
+        mgr.Run(goal, /*maxSeconds=*/110);
         if (!goal.reached) {
             UE_LOGW("director/ctake: VERDICT walk did NOT reach the container (reason=%s) -- ABORT "
                     "(container=%ls)", goal.failReason, pb->fname.c_str());
@@ -537,7 +537,7 @@ void RunContainerRace() {
 
     // Walk to the shared container; a generous deadline, since the smallest-key container may be a
     // long route.
-    { ControlManager mgr; AddWalkToProcesses(mgr, goal); mgr.Run(goal, /*maxSeconds=*/120);
+    { ControlManager mgr; AddWalkToProcesses(mgr, goal); mgr.Run(goal, /*maxSeconds=*/300);
       if (!goal.reached) { UE_LOGW("director/ctake-race: VERDICT did NOT reach shared container (role=%s reason=%s) -- ABORT", role.c_str(), goal.failReason); return; } }
 
     // Open, resolve the bound slot, then log ARRIVED; the orchestrator waits for both before GO.

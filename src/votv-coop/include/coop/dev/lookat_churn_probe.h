@@ -10,8 +10,9 @@
 // The reading is the PERIOD. A trace that loses its target for a frame, a collider that is
 // re-registered and an actor whose own state is rewritten all look the same to the player, and are
 // told apart by which field moved and how regularly. So the probe keeps one episode per aimed-at
-// actor and reports the intervals inside it, not a total. Read-only: five field reads per tick, no
-// dispatch, and a single bool read when the flag is off.
+// actor and reports the intervals inside it, not a total. Read-only, and a single bool read when the
+// flag is off; while it is on it costs five field reads and one reflected getter per tick -- the
+// camera rotation, which is what tells a change the player caused from one they did not.
 
 #pragma once
 

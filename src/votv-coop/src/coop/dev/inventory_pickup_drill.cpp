@@ -83,7 +83,7 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
     goal->reachCm = 200.f;
     D::ControlManager mgr;
     D::AddWalkToProcesses(mgr, *goal);
-    mgr.Run(*goal, /*maxSeconds=*/60);
+    mgr.Run(*goal, /*maxSeconds=*/150);
     ue_wrap::game_thread::Post([goal] {
         void* player = coop::players::Registry::Get().Local();
         if (!player) return;

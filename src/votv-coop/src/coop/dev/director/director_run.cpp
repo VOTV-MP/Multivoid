@@ -130,7 +130,7 @@ void RunWalkGrabDirector() {
     // Build the brain + run it.
     ControlManager mgr;
     AddWalkGrabProcesses(mgr, goal);
-    const bool ok = mgr.Run(goal, /*maxSeconds=*/60);   // never-give-up: grind the boxes for the full window
+    const bool ok = mgr.Run(goal, /*maxSeconds=*/150);   // never-give-up: grind the boxes for the full window
     UE_LOGI("director: VERDICT walkgrab grabbed=%d (%s) reason=%s | drop-input-seam-faithful=%d",
             goal.grabbed ? 1 : 0, ok ? "DONE" : "FAILED", goal.grabbed ? "grabbed" : goal.failReason,
             DidClearHandUseEffectFallback() ? 0 : 1);

@@ -27,13 +27,16 @@ namespace E  = ue_wrap::engine;
 namespace sg = ue_wrap::script_gate;
 
 // Game-thread only. No mutex.
-constexpr int      kMaxLines        = 40;     // per run: the first changes are the ones with a story
+// Per run, and per KIND of line: the aim-episode lines and the change lines share nothing, because
+// a drill that sweeps the camera opens and closes an episode at every heading and would otherwise
+// spend the whole budget before the held aim -- on the only lines that say WHICH field moved.
+constexpr int      kMaxLines        = 40;
 constexpr uint64_t kVerdictPeriodMs = 15000;
 // A window shorter than this is somebody turning around, not a held look: the reading names it
 // separately rather than reporting a rate over a fraction of a second.
 constexpr uint64_t kHeldMs = 2000;
 
-// The rebuild itself, watched where it happens. Aui_UI_C::buildActions destroys every action button
+// The rebuild itself, watched where it happens. ui_UI_C::buildActions destroys every action button
 // and creates them again from scratch, so one call IS one visible reset of the row, and counting
 // the calls measures the symptom directly where the field set below only measures the look-at
 // path's reason for causing one. Name watches, not exact ones: a name watch re-resolves itself
@@ -70,10 +73,11 @@ struct Episode {
     unsigned camMoves = 0;
     unsigned sChanges = 0, sBuilds = 0;      // and these, only since the camera last stopped
     unsigned nComp = 0, nBounds = 0, nVerify = 0, nState = 0, nBlind = 0;
-    // The aimed prop's own state, which is what its lookAt() answers from: Aprop_C returns
-    // `IsSimulatingPhysics || attached || frozen || sleep || returnLookAt`, and that bool decides
-    // whether LookAtFunction takes the rebuild path at all. A prop whose body sleeps and wakes
-    // under a held aim therefore flips the answer without the trace changing its mind.
+    // The aimed prop's own state, for context only. Aprop_C::lookAt answers from
+    // `IsSimulatingPhysics || attached || frozen || sleep || returnLookAt`, but that bool is NOT one
+    // of the five fields the rebuild is gated on -- it is consumed downstream of that branch and
+    // both of its outcomes reach the rebuild -- so a move here explains what the hovertext SAYS,
+    // never whether the row was rebuilt. Two of its six terms are sampled; the rest are not.
     unsigned nPropState = 0;
     bool     propFrozen = false, propStatic = false, propSleeping = false, havePropState = false;
     uint64_t lastChangeMs = 0, lastChangeTick = 0;
@@ -99,17 +103,23 @@ unsigned g_changes   = 0;   // over the whole run, episodes included or not
 unsigned g_builds    = 0;   // buildActions calls over the whole run
 unsigned g_dropped   = 0;   // lookAtLookedAway calls: the aim given up, not merely rebuilt
 uint64_t g_firstMs   = 0;   // when this run's first tick ran, so a rate can be a rate
-int      g_lines     = 0;
-int      g_buildLines = 0;
+int      g_lines      = 0;   // aim episodes
+int      g_changeLines = 0;  // the field that moved
+int      g_buildLines  = 0;  // the caller frames
 bool     g_any = false;
 bool     g_watchAsked = false;   // the name watch is registered; LIVE is a separate question
 uint64_t g_lastVerdictMs = 0;
 
 // Keep the widest steady window of the run, with the counters that belong to it.
-void ConsiderBest(Episode e, uint64_t nowMs) {
+// Compared before it is copied: this runs on every tick the camera moves, and an Episode carries
+// two std::wstring past the small-string buffer, so copying it first would allocate twice a frame
+// for the whole time a player is looking around.
+void ConsiderBest(const Episode& e, uint64_t nowMs) {
     if (!e.actor) return;
-    e.endMs = nowMs;
-    if (e.SteadyMs() > g_best.SteadyMs()) g_best = e;
+    const uint64_t span = nowMs > e.steadySinceMs ? nowMs - e.steadySinceMs : 0;
+    if (span <= g_best.SteadyMs()) return;
+    g_best = e;
+    g_best.endMs = nowMs;
 }
 
 void StartSteadyWindow(uint64_t nowMs) {
@@ -119,6 +129,7 @@ void StartSteadyWindow(uint64_t nowMs) {
     g_cur.lastChangeTick  = g_tick;
     g_cur.sChanges = g_cur.sBuilds = 0;
     g_cur.nComp = g_cur.nBounds = g_cur.nVerify = g_cur.nState = g_cur.nBlind = 0;
+    g_cur.nPropState = 0;
     g_cur.gaps = 0;
     g_cur.minGapMs = g_cur.maxGapMs = g_cur.sumGapMs = 0;
     g_cur.minGapTicks = g_cur.maxGapTicks = 0;
@@ -147,7 +158,11 @@ void OpenEpisode(void* actor, uint64_t nowMs) {
     g_cur.cls = R::IsLive(actor) ? R::ClassNameOf(actor) : L"<dead>";
     g_cur.key = R::IsLive(actor) ? ue_wrap::prop::GetInteractableKeyString(actor) : L"";
     g_cur.startMs = nowMs;
-    if (R::IsLive(actor)) {
+    // Only a prop may be read at prop offsets. Those three readers are raw field reads at fixed
+    // Aprop_C offsets, and most of what a player can aim at is not an Aprop_C -- a door, the ATV, a
+    // generator, a keyhole all answer lookAt() -- so without this gate the bytes read are somebody
+    // else's state, or past the end of a smaller object.
+    if (R::IsLive(actor) && ue_wrap::prop::IsDescendantOfProp(actor)) {
         g_cur.propFrozen   = ue_wrap::prop::IsFrozen(actor);
         g_cur.propStatic   = ue_wrap::prop::IsStatic(actor);
         g_cur.propSleeping = ue_wrap::prop::IsSleeping(actor);
@@ -178,8 +193,8 @@ void NoteGap(uint64_t nowMs) {
 }
 
 void LogChange(const E::MainPlayerLookAt& now, uint64_t gapMs, uint64_t gapTicks) {
-    if (g_lines >= kMaxLines) return;
-    ++g_lines;
+    if (g_changeLines >= kMaxLines) return;
+    ++g_changeLines;
     char what[80];
     std::snprintf(what, sizeof(what), "%hs%hs%hs%hs",
                   now.component     != g_prev.component     ? "component " : "",
@@ -269,7 +284,7 @@ void Tick() {
     if (g_firstMs == 0) g_firstMs = NowMs();
     void* player = coop::players::Registry::Get().Local();
     E::MainPlayerLookAt now{};
-    if (!player || !E::GetController(player) || !E::ReadMainPlayerLookAt(player, now)) {
+    if (!player || !E::ReadMainPlayerLookAt(player, now)) {
         // No possessed pawn, or the BP class has not loaded: the run has no reading here, and the
         // episode that was open ended when the pawn went away.
         if (g_cur.actor) CloseEpisode(NowMs());
@@ -289,7 +304,8 @@ void Tick() {
     // moves it a fraction of a degree per frame -- so a bit-exact compare would call every tick a
     // turn and leave no steady window at all (measured: 296 "moves" in 4.9 s of a held aim). A
     // deliberate turn is orders of magnitude faster than the sway.
-    if (std::fabs(cam.Yaw - g_prevCam.Yaw) + std::fabs(cam.Pitch - g_prevCam.Pitch) > 1.0f) {
+    float dYaw = std::fmod(cam.Yaw - g_prevCam.Yaw + 540.f, 360.f) - 180.f;  // the short way round
+    if (std::fabs(dYaw) + std::fabs(cam.Pitch - g_prevCam.Pitch) > 1.0f) {
         // The player is looking around. Whatever the trace answers now is a new question, not a new
         // answer to the old one, so the steady window restarts here -- after banking the one that
         // just ended, which may still be the widest of the run.
@@ -307,8 +323,8 @@ void Tick() {
         const bool sl = ue_wrap::prop::IsSleeping(g_cur.actor);
         if (fz != g_cur.propFrozen || st != g_cur.propStatic || sl != g_cur.propSleeping) {
             ++g_cur.nPropState;
-            if (g_lines < kMaxLines) {
-                ++g_lines;
+            if (g_changeLines < kMaxLines) {
+                ++g_changeLines;
                 UE_LOGW("lookat_churn_probe: the aimed prop's own state moved on '%ls' key='%ls' -- "
                         "frozen %d->%d static %d->%d sleeping %d->%d (this is what its lookAt() "
                         "answers from)", g_cur.cls.c_str(), g_cur.key.c_str(),
@@ -368,7 +384,7 @@ void EmitVerdict() {
     bool live = true;
     for (const Watched& w : kWatched)
         if (!sg::NameWatchLive(w.name, w.tag)) live = false;
-    const uint64_t runMs = NowMs() > g_firstMs ? NowMs() - g_firstMs : 0;
+    const uint64_t runMs = (g_firstMs != 0 && NowMs() > g_firstMs) ? NowMs() - g_firstMs : 0;
     UE_LOGW("lookat_churn_probe: over %llu s of this run the action row was rebuilt %u time(s) "
             "(%.2f/s) and the aim was dropped %u time(s); %u of the %u aims went straight back to "
             "the actor they had just left",
@@ -405,9 +421,10 @@ void EmitVerdict() {
             ? "NO HELD AIM -- nothing stayed under this peer's crosshair, with the camera still, "
               "for two seconds. This run says nothing about the flicker"
         : (best.sBuilds > best.sChanges + 1)
-            ? "THE UI IS REBUILT WITHOUT THE LOOK-AT SET MOVING -- more calls landed on the widget "
-              "than the trace can account for, so the rebuild comes from one of buildActionList's "
-              "other call sites. The caller frames printed above name it"
+            ? "THE UI IS REBUILT WITHOUT THE STORED SET MOVING -- the row was rebuilt more often "
+              "than this probe saw the five fields change. The store runs BEFORE the rebuild, so "
+              "these samples are the fresh values either way: something is writing one of the five "
+              "fields between one rebuild's store and the next one's compare"
         : (best.sChanges == 0)
             ? "THE AIM HELD -- the look-at set stood still for the whole window and the action row "
               "was not rebuilt under it, so this peer showed no flicker here"
@@ -437,7 +454,7 @@ void OnDisconnect() {
     g_flipBacks = g_episodes = g_changes = 0;
     g_builds = g_dropped = 0;
     g_firstMs = 0;
-    g_lines = g_buildLines = 0;
+    g_lines = g_changeLines = g_buildLines = 0;
     g_tick = 0;
     g_any = false;
     g_lastVerdictMs = 0;

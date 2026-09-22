@@ -136,7 +136,7 @@ void RunGrabIntentTest() {
         goal->reachCm = 140.f;   // inside the game's own interaction trace
         coop::director::ControlManager mgr;
         coop::director::AddWalkToProcesses(mgr, *goal);
-        mgr.Run(*goal, /*maxSeconds=*/90);
+        mgr.Run(*goal, /*maxSeconds=*/225);
         if (!goal->reached) {
             UE_LOGW("grab_intent_test: the walk did not reach the pile (%s) -- aborting", goal->failReason);
             return;

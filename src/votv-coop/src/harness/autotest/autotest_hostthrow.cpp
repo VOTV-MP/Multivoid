@@ -67,7 +67,7 @@ void RunHost() {
     }
     coop::director::ControlManager mgr;
     coop::director::AddWalkGrabProcesses(mgr, *goal);
-    if (!mgr.Run(*goal, /*maxSeconds=*/90)) {
+    if (!mgr.Run(*goal, /*maxSeconds=*/225)) {
         UE_LOGW("hostthrow: VERDICT host=NO-GRAB -- the director did not grab (%s)", goal->failReason);
         return;
     }

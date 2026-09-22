@@ -53,8 +53,19 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(maxSeconds);
     const char* lastDriver = "";
     int stall = 0;
+    // The tick closure holds `this` and a reference to `lastDriver`, and the stall path below
+    // returns while up to three of them are still queued on the game thread -- and every caller
+    // builds its manager on the stack of a worker that then unwinds. The flag is the same shape
+    // RunGT's `done` uses: the closure reads it before it touches anything of ours, and Run clears
+    // it before it returns by any route.
+    auto alive = std::make_shared<std::atomic<bool>>(true);
+    struct ClearOnExit {
+        std::shared_ptr<std::atomic<bool>> f;
+        ~ClearOnExit() { f->store(false); }
+    } clearOnExit{alive};
     for (int tick = 0; std::chrono::steady_clock::now() < deadline; ++tick) {
-        const int r = RunGT([this, &goal, &lastDriver](std::atomic<int>& d) {
+        const int r = RunGT([this, &goal, &lastDriver, alive](std::atomic<int>& d) {
+            if (!alive->load()) { d.store(1); return; }   // the run that posted this has gone
             PlayerContext ctx;
             if (!ctx.Refresh()) { d.store(2); return; }   // no possessed player this tick -- retry
             // Highest-priority ACTIVE process wins control this tick (the arbiter).
