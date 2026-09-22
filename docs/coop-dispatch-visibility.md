@@ -204,7 +204,7 @@ verb's player route from the same verb's ambient callers. `[V]` A consumer readi
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 
-## Five traps
+## Six traps
 
 A call that returns true has not necessarily done anything visible: a static-mobility component
 silently ignores a mesh swap and a move while the call still returns true, which is how the trash
@@ -250,6 +250,22 @@ the park intercepts, then ask what else can reach the same write. `[V]` The writ
 seam: every route into a hook's constraint ends in the native `SetConstrainedComponents`, and the
 native function seam on it fires for the mirror's `makeAttachments` as it does for the owner's
 `attach_a`; the hook lane breaks a client's tie there (`coop/items/hook_constraint`). `[V]`
+
+A verb you dispatch to repaint a device can write PLAYER state, and the rate you call it at is
+part of its meaning. `analogDScreenTest_C::updToggles` repaints the console's toggle LEDs and ends
+by nulling the local pawn's `lookAtComponent` -- the game invalidating its own look-at cache so the
+tooltip of the toggle a player just flipped is re-resolved. At the rate the game produces (a human
+flipping a switch) the action-row rebuild that follows IS the intended effect. A mirror lane pulsed
+that verb on a 333 ms clock, and the same side effect became a metronome: each pulse left the pawn
+with a null `lookAtComponent` beside a live `lookAtActor`, `AmainPlayer_C::LookAtFunction`'s
+five-field compare failed on that one pair the next tick, and every action button was destroyed and
+re-created -- measured at 284 of 284 rebuilds under a held aim, on every prop, client-side only.
+`[V]` Two questions before dispatching any game verb periodically: what does its whole body write
+besides the thing you want, and does the game itself ever call it on a clock? A parameterless name
+like `upd*` or `refresh*` promises nothing, and a list of such verbs assembled for one write path
+does not transfer to another -- here none of the nine painted any field the periodic caller wrote,
+so the pulse bought nothing and cost a visible defect. Full trail:
+`src/votv-coop/src/ue_wrap/desk/console_desk.cpp` (the chain, with what each verb is for).
 
 ## Needs a probe
 
