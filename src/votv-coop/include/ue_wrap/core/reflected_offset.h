@@ -40,6 +40,16 @@ int32_t MainPlayer_holding_actor();
 // interactable being used; the use observer reads it there to name the door for the
 // host-authoritative sync.
 int32_t MainPlayer_lookAtActor();
+// The rest of the look-at result the trace keeps. LookAtFunction compares all of them against the
+// frame's fresh trace and, when ANY one differs, rebuilds the action list and re-opens the
+// hovertext -- so a field that flips is a visible reset of the interaction UI. lookAtState is the
+// interface-open bit and takes 0xFF on a frame whose trace hit nothing; lookAtVerify is the byte
+// the aimed actor's own lookAt() returns; lookAtBoundsReplace is the component the hovertext binds
+// its box to, which falls back to lookAtComponent when the actor names none.
+int32_t MainPlayer_lookAtComponent();
+int32_t MainPlayer_lookAtBoundsReplace();
+int32_t MainPlayer_lookAtVerify();
+int32_t MainPlayer_lookAtState();
 // Radial-menu confirm fields (kerfur menu verb detection on the client InpActEvt_use seam).
 int32_t MainPlayer_releaseEToUse();  // the "release E to use" radial confirm flag
 int32_t MainPlayer_actionIndex();    // the highlighted radial-menu option index

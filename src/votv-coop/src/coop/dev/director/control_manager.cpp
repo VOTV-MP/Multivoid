@@ -10,6 +10,7 @@
 #include "ue_wrap/core/log.h"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <utility>
 
@@ -44,10 +45,15 @@ int RunGT(Fn&& body) {
 void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std::move(proc)); }
 
 bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
-    const int maxTicks = maxSeconds * 1000 / kTickMs;
+    // The deadline is wall time, not a tick count. A tick is a game-thread round trip -- a Post,
+    // then 5 ms polls until the closure has run -- plus the pace below, so it costs about ten
+    // milliseconds and never the four the pace alone suggests. Counting `maxSeconds * 1000 /
+    // kTickMs` ticks therefore ran a 60 s deadline for about 150 s, long enough for a caller's
+    // own run to be killed while the walk it gave up on was still grinding.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(maxSeconds);
     const char* lastDriver = "";
     int stall = 0;
-    for (int tick = 0; tick < maxTicks; ++tick) {
+    for (int tick = 0; std::chrono::steady_clock::now() < deadline; ++tick) {
         const int r = RunGT([this, &goal, &lastDriver](std::atomic<int>& d) {
             PlayerContext ctx;
             if (!ctx.Refresh()) { d.store(2); return; }   // no possessed player this tick -- retry

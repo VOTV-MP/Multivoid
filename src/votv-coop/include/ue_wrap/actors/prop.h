@@ -199,12 +199,36 @@ struct ScanStats {
     int totalHeavy = 0;       // candidates with propData.heavy=1
 };
 
+// Actors the caller knows carry no independent identity, and so must never be the answer even
+// when they are the right class in the right place. The scan makes its own structural exclusions
+// -- a class default object, a child-actor component's child -- but a display actor another
+// system owns and destroys on its own schedule is not visible from here: only the system that
+// spawned it knows. Empty means the caller has nothing to exclude, never that it forgot to ask.
+struct NearbyExclusion {
+    void* const* actors = nullptr;
+    size_t       count  = 0;
+
+    bool Holds(void* a) const {
+        for (size_t i = 0; i < count; ++i)
+            if (actors[i] == a) return true;
+        return false;
+    }
+};
+
 // The nearest Aprop_C derivative to `anchor`, or the nearest heavy one, by a GUObjectArray walk;
 // CDOs skipped, positions read through GetActorLocation. The cost is a ProcessEvent dispatch per
 // candidate (about 2,000 in a populated scene) through our own detour, so never per frame or
 // inside an observer; the autotest calls it once per grab routine.
+//
+// `lineage`, when given, keeps only the derivatives of that class -- the food family is a lineage
+// and not a name prefix, so a caller that wants a food asks for prop_food_C and gets all 154 of
+// them. A class that is not loaded answers nothing, which is the truthful answer: nothing of it
+// exists in this world. `excluded` drops candidates the caller has already tried and rejected, so
+// a second call walks past them instead of returning the same one.
 NearestResult FindNearest(const FVector& anchor, bool wantHeavy = false,
-                          ScanStats* outStats = nullptr);
+                          ScanStats* outStats = nullptr,
+                          const wchar_t* lineage = nullptr,
+                          const NearbyExclusion& excluded = {});
 
 // A prop by key string: one GUObjectArray walk, the first live Aprop_C whose key matches, or
 // null. The cold fallback behind the key index (prop_key_index), not a per-packet path.
@@ -237,22 +261,6 @@ struct NearbyTrace {
     int32_t rowNameRejects     = 0;                 // ... rejected because the list_props row differed
     int32_t excludedRejects    = 0;                 // ... otherwise acceptable, but named by the caller
     float   nearestOutsideCm   = -1.f;              // nearest row-matching actor outside the radius, -1 if none
-};
-
-// Actors the caller knows carry no independent identity, and so must never be the answer even
-// when they are the right class in the right place. The scan makes its own structural exclusions
-// -- a class default object, a child-actor component's child -- but a display actor another
-// system owns and destroys on its own schedule is not visible from here: only the system that
-// spawned it knows. Empty means the caller has nothing to exclude, never that it forgot to ask.
-struct NearbyExclusion {
-    void* const* actors = nullptr;
-    size_t       count  = 0;
-
-    bool Holds(void* a) const {
-        for (size_t i = 0; i < count; ++i)
-            if (actors[i] == a) return true;
-        return false;
-    }
 };
 
 // The fuzzy dedupe for divergent-key spawns: the per-peer natural spawners (mushrooms,

@@ -357,6 +357,15 @@ CFG_FLAG(food_clock_probe, "food_clock_probe", "dev", false, "VOTVCOOP_FOOD_CLOC
     "Aprop_food_C::loadData catches the food up against a timestamp the SENDER wrote with its own "
     "world clock, so this prints the two clocks, their difference, and how far the temperature and "
     "ripeness moved because of it.")
+CFG_FLAG(lookat_churn_probe, "lookat_churn_probe", "dev", false, "VOTVCOOP_LOOKAT_CHURN_PROBE",
+    "Diagnostic probe (BOTH peers): how often the look-at set the interaction UI is rebuilt from "
+    "changes while the aim holds still, and which of its five fields moves. A held aim should "
+    "change nothing; every change past the first is one visible reset of the hovertext and the "
+    "action list, and the interval between them names the timer behind it.")
+CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
+    "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
+    "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
+    "one readiness line once the game's own trace resolves the prop.")
 CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_PROP_BIRTH_KEY_PROBE",
     "Diagnostic probe (CLIENT): the place/birth seam -- how many drain ticks the save Key takes to "
     "restore after a spawn, and which of the seven drain exits each pending spawn leaves by. Set it "

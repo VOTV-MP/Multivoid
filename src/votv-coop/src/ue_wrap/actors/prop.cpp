@@ -473,11 +473,19 @@ void SetChipTypeAndRebuild(void* actor, uint8_t chipType) {
 }
 
 
-NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outStats) {
+NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outStats,
+                          const wchar_t* lineage, const NearbyExclusion& excluded) {
     NearestResult best;
     ScanStats stats;
     void* base = PropBaseClass();
     if (!base) {
+        if (outStats) *outStats = stats;
+        return best;
+    }
+    // Resolved once for the whole walk. A named class that is not loaded leaves the filter with
+    // nothing to accept, and the empty answer is the right one: no actor of it exists here.
+    void* wantCls = lineage ? R::FindClass(lineage) : nullptr;
+    if (lineage && !wantCls) {
         if (outStats) *outStats = stats;
         return best;
     }
@@ -495,6 +503,11 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outS
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
         ++stats.candidates;
+        if (excluded.Holds(obj)) continue;
+        if (wantCls) {
+            void* cls = R::ClassOf(obj);
+            if (!cls || !R::IsDescendantOfAny(cls, &wantCls, 1)) continue;
+        }
         const bool heavy = IsHeavy(obj);
         if (heavy) ++stats.totalHeavy;
         if (wantHeavy && !heavy) continue;

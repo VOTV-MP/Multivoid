@@ -73,6 +73,29 @@ void* ReadMainPlayerLookAtActor(void* mainPlayer);
 // test aim the next InpActEvt_use dispatch at a chosen actor. Game thread.
 bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor);
 
+// The whole look-at result AmainPlayer_C::LookAtFunction keeps between frames. The function
+// re-traces every tick and compares the fresh answer against these five fields; if any one of them
+// differs it stores the new set, rebuilds the action list and re-opens the hovertext, which the
+// player sees as the interaction UI closing and coming back. So the set is what an observer reads
+// to tell a stable aim from a churning one, and WHICH field moved names the cause: the actor and
+// the component are the trace's own answer, `verify` is the byte the aimed actor's lookAt()
+// returns, `boundsReplace` is the component the hovertext binds to, and `state` is the
+// interface-open bit -- which the function sets to 0xFF on any frame whose trace hit nothing, so a
+// single missed frame shows up here and forces the rebuild on the next one.
+//
+// Pointers are compared, never dereferenced by the reader: a component the game has since
+// destroyed still sits in these slots. False on a dead pawn or before the BP class loads. Four
+// reflected field reads, no dispatch. Game thread.
+struct MainPlayerLookAt {
+    void*   actor         = nullptr;
+    void*   component     = nullptr;
+    void*   boundsReplace = nullptr;
+    uint8_t verify        = 0;
+    uint8_t state         = 0;
+};
+
+bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out);
+
 // The radial-menu confirm state, releaseEToUse and actionIndex, the index into getActionOptions.
 // Both reflection-resolved. The kerfur radial verb is relayed from these because the actionName
 // dispatch is internal to the Blueprint and invisible to ProcessEvent. Game thread.

@@ -340,6 +340,26 @@ bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor) {
     return true;
 }
 
+bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out) {
+    out = MainPlayerLookAt{};
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    const int32_t offActor  = ue_wrap::reflected_offset::MainPlayer_lookAtActor();
+    const int32_t offComp   = ue_wrap::reflected_offset::MainPlayer_lookAtComponent();
+    const int32_t offBounds = ue_wrap::reflected_offset::MainPlayer_lookAtBoundsReplace();
+    const int32_t offVerify = ue_wrap::reflected_offset::MainPlayer_lookAtVerify();
+    const int32_t offState  = ue_wrap::reflected_offset::MainPlayer_lookAtState();
+    // All five or none: a caller comparing a partial set would read a field that never moves as
+    // agreement, which is the opposite of what it asked.
+    if (offActor < 0 || offComp < 0 || offBounds < 0 || offVerify < 0 || offState < 0) return false;
+    auto* base = reinterpret_cast<uint8_t*>(mainPlayer);
+    out.actor         = *reinterpret_cast<void**>(base + offActor);
+    out.component     = *reinterpret_cast<void**>(base + offComp);
+    out.boundsReplace = *reinterpret_cast<void**>(base + offBounds);
+    out.verify        = *reinterpret_cast<uint8_t*>(base + offVerify);
+    out.state         = *reinterpret_cast<uint8_t*>(base + offState);
+    return true;
+}
+
 bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex) {
     releaseEToUse = false;
     actionIndex   = -1;
