@@ -96,6 +96,35 @@ struct MainPlayerLookAt {
 
 bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out);
 
+// The OTHER side of that comparison: the five frame locals LookAtFunction writes from this tick's
+// trace, which the five fields above are compared against. The pairing is exact -- actor against
+// lookAtActor, component against lookAtComponent, boundObject against lookAtBoundsReplace, number
+// against lookAtVerify, stateByte against lookAtState. `boundObject` is the aimed actor's
+// boundObjectReplace when its lookAt() named one and `component` otherwise, and `stateByte` is the
+// BitsToByte(!activeInterface) result the function compares lookAtState with -- read rather than
+// re-derived, so the reading carries no assumption about which bit that call fills.
+//
+// Why a reader at all: the stored side is the operand only until the body overwrites it (it stores
+// lookAtState partway through and the other four later in the same call), and the locals are zero
+// until the body writes them. Neither side can be sampled from outside the call, so an observer
+// that wants the comparison ITSELF reads the stored five in a script_gate PRE callback and these
+// in the POST one, off Call::function and Call::locals.
+//
+// A local is resolved exactly as an instance property is: a UFunction is a UStruct, so the same
+// ChildProperties walk finds it. Offsets cached per UFunction. Pointers are compared, never
+// dereferenced. False if the names no longer resolve (a recook renaming a local), which a caller
+// must not read as agreement. Game thread.
+struct MainPlayerLookAtLocals {
+    void*   actor       = nullptr;
+    void*   component   = nullptr;
+    void*   boundObject = nullptr;
+    uint8_t number      = 0;
+    uint8_t stateByte   = 0;
+};
+
+bool ReadMainPlayerLookAtLocals(void* lookAtFunction, const uint8_t* locals,
+                                MainPlayerLookAtLocals& out);
+
 // The radial-menu confirm state, releaseEToUse and actionIndex, the index into getActionOptions.
 // Both reflection-resolved. The kerfur radial verb is relayed from these because the actionName
 // dispatch is internal to the Blueprint and invisible to ProcessEvent. Game thread.

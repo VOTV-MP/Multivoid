@@ -54,6 +54,21 @@ constexpr Watched kWatched[] = {
     { L"lookAtLookedAway", 0x4C4B4157, "the aim was dropped" },             // 'LKAW'
 };
 
+// The fourth watch, and the only one with two phases: the comparison that decides the rebuild,
+// read at the moment it is made. Its two operands are never both readable from outside the call --
+// the stored five stop being the operand as soon as the body overwrites them, and the locals are
+// zero until the body writes them -- which is why every earlier reading of this lane could only
+// say that the fresh side stood still, never what the comparison actually saw.
+//
+//   PRE  reads the five STORED fields off the instance. The compare's right-hand side, intact.
+//   POST reads the five frame LOCALS (the left-hand side) and the stored fields AGAIN, so one
+//        call answers three questions: which pair disagreed, whether the body then wrote the
+//        fresh set back, and whether a rebuild followed at all.
+//
+// A name watch, like the three above, so it survives a world load.
+constexpr const wchar_t* kCompareFn  = L"LookAtFunction";
+constexpr int            kCompareTag = 0x4C4B4C46;  // 'LKLF'
+
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -101,6 +116,7 @@ unsigned g_flipBacks = 0;   // A -> B -> A: the aim returned to the actor it had
 unsigned g_episodes  = 0;
 unsigned g_changes   = 0;   // over the whole run, episodes included or not
 unsigned g_builds    = 0;   // buildActions calls over the whole run
+unsigned g_lists     = 0;   // buildActionList calls: the verb LookAtFunction itself reaches
 unsigned g_dropped   = 0;   // lookAtLookedAway calls: the aim given up, not merely rebuilt
 uint64_t g_firstMs   = 0;   // when this run's first tick ran, so a rate can be a rate
 int      g_lines      = 0;   // aim episodes
@@ -226,6 +242,10 @@ sg::Verdict OnWatched(const sg::Call& call) {
         if (g_cur.actor) { ++g_cur.builds; ++g_cur.sBuilds; }
         return sg::Verdict::Run;   // the count is the reading; the caller is the next watch's line
     }
+    // Both counted BEFORE the line cap, because the compare watch below reads them as a delta
+    // across a call: a counter that stopped when the printing did would make every later call look
+    // like one that never rebuilt.
+    if (w->tag == kWatched[1].tag) ++g_lists;
     if (w->tag == kWatched[2].tag) ++g_dropped;
     if (g_buildLines >= kMaxLines) return sg::Verdict::Run;
     ++g_buildLines;
@@ -262,6 +282,114 @@ sg::Verdict OnWatched(const sg::Call& call) {
     return sg::Verdict::Run;
 }
 
+// ---- the compare, read at the moment it is made ---------------------------------------------
+
+// One body's snapshot, taken in PRE and consumed in POST. Paired by FRAME IDENTITY, never by a
+// counter: a pre/post counter is an assertion about the gate's control flow that the gate does not
+// owe us -- another consumer's Cancel and a fault the ProcessEvent firewall absorbs both skip the
+// post -- so the pairing is the frame pointer, and "am I nested?" is asked of the gate's own RAII
+// scope, which unwinds on every path out.
+struct CompareSlot {
+    void*               stack  = nullptr;   // the FFrame this snapshot belongs to
+    void*               object = nullptr;
+    E::MainPlayerLookAt stored{};           // the compare's stored operand, before the body ran
+    unsigned            listsAtEntry = 0;
+    unsigned            dropsAtEntry = 0;
+};
+CompareSlot g_slot;
+
+unsigned g_cmpBodies   = 0;  // LookAtFunction bodies seen whole (pre and post both ran)
+unsigned g_cmpRebuilt  = 0;  // ... of which asked for a rebuild, the aim-drop route excluded
+unsigned g_cmpAgreed   = 0;  // ... of those, all five pairs equal: the rebuild was NOT this compare
+unsigned g_cmpNoStore  = 0;  // ... of those, the body left the stored set exactly as it found it
+unsigned g_cmpDropPath = 0;  // bodies that dropped the aim: their locals are not the operands
+unsigned g_cmpNested   = 0;  // a LookAtFunction body inside another one (expected: 0)
+unsigned g_cmpOrphan   = 0;  // a snapshot whose post never fired, replaced rather than left to stick
+unsigned g_dActor = 0, g_dComp = 0, g_dBound = 0, g_dNum = 0, g_dState = 0;
+int      g_cmpLines = 0;
+bool     g_localsRead = false;   // the five locals resolved at least once
+bool     g_localsFail = false;   // ... or did not, which a zero must not be read as agreement
+
+sg::Verdict OnComparePre(const sg::Call& call) {
+    // The local pawn only. A puppet is a mainPlayer_C too and runs this same body, and its look-at
+    // set is nobody's UI.
+    if (!call.object || call.object != coop::players::Registry::Get().Local())
+        return sg::Verdict::Run;
+    // The gate's scope, not a flag of ours: at PRE the scope for THIS call is not pushed yet, so a
+    // true answer means an OUTER LookAtFunction body is running and its snapshot must survive.
+    if (sg::IsBodyActive(call.function)) { ++g_cmpNested; return sg::Verdict::Run; }
+    // Not nested, so anything still here belongs to a body that ended without its post and can
+    // never be consumed. Counted and replaced: a slot left to stick would silence the instrument
+    // for the rest of the run.
+    if (g_slot.stack) ++g_cmpOrphan;
+    g_slot = CompareSlot{};
+    E::MainPlayerLookAt stored{};
+    if (!E::ReadMainPlayerLookAt(call.object, stored)) return sg::Verdict::Run;
+    g_slot.stored       = stored;
+    g_slot.stack        = call.stack;
+    g_slot.object       = call.object;
+    g_slot.listsAtEntry = g_lists;
+    g_slot.dropsAtEntry = g_dropped;
+    g_any = true;
+    return sg::Verdict::Run;
+}
+
+void OnComparePost(const sg::Call& call) {
+    if (!g_slot.stack || g_slot.stack != call.stack || g_slot.object != call.object) return;
+    const CompareSlot s = g_slot;
+    g_slot = CompareSlot{};   // consumed: the next body takes its own snapshot
+
+    E::MainPlayerLookAtLocals fresh{};
+    if (!E::ReadMainPlayerLookAtLocals(call.function, call.locals, fresh)) {
+        g_localsFail = true;
+        return;
+    }
+    g_localsRead = true;
+    ++g_cmpBodies;
+
+    const bool rebuilt = (g_lists != s.listsAtEntry);
+    const bool dropped = (g_dropped != s.dropsAtEntry);
+    if (!rebuilt) return;            // the compare agreed, or the body returned before reaching it
+    if (dropped) { ++g_cmpDropPath; return; }  // the aim-drop route: these locals never held the operands
+    ++g_cmpRebuilt;
+
+    const bool dA = fresh.actor       != s.stored.actor;
+    const bool dC = fresh.component   != s.stored.component;
+    const bool dB = fresh.boundObject != s.stored.boundsReplace;
+    const bool dN = fresh.number      != s.stored.verify;
+    const bool dS = fresh.stateByte   != s.stored.state;
+    if (dA) ++g_dActor;
+    if (dC) ++g_dComp;
+    if (dB) ++g_dBound;
+    if (dN) ++g_dNum;
+    if (dS) ++g_dState;
+    if (!dA && !dC && !dB && !dN && !dS) ++g_cmpAgreed;
+
+    // And what the body LEFT. The stored set is written back inside this same call, so an
+    // unchanged set after a failed compare means the store did not run -- which is the difference
+    // between "a field moves every tick" and "the fresh answer never matches what is kept", and
+    // the per-tick sampling of every earlier reading could not tell those apart.
+    E::MainPlayerLookAt after{};
+    const bool haveAfter = E::ReadMainPlayerLookAt(call.object, after);
+    const bool storedMoved = haveAfter &&
+        (after.actor != s.stored.actor || after.component != s.stored.component ||
+         after.boundsReplace != s.stored.boundsReplace || after.verify != s.stored.verify ||
+         after.state != s.stored.state);
+    if (haveAfter && !storedMoved) ++g_cmpNoStore;
+
+    if (g_cmpLines >= kMaxLines) return;
+    ++g_cmpLines;
+    UE_LOGW("lookat_churn_probe: COMPARE failed on %hs%hs%hs%hs%hs%hs| fresh actor=%p component=%p "
+            "bound=%p number=%u state=%u | stored actor=%p component=%p bounds=%p verify=%u "
+            "state=%u | the body left the stored set %hs",
+            dA ? "actor " : "", dC ? "component " : "", dB ? "bound " : "", dN ? "number " : "",
+            dS ? "state " : "", (!dA && !dC && !dB && !dN && !dS) ? "NOTHING " : "",
+            fresh.actor, fresh.component, fresh.boundObject, fresh.number, fresh.stateByte,
+            s.stored.actor, s.stored.component, s.stored.boundsReplace, s.stored.verify,
+            s.stored.state,
+            !haveAfter ? "unreadable" : storedMoved ? "CHANGED" : "exactly as it found it");
+}
+
 }  // namespace
 
 bool IsEnabled() {
@@ -280,6 +408,8 @@ void Tick() {
         g_watchAsked = true;
         for (const Watched& w : kWatched)
             if (!sg::WatchName(w.name, w.tag, &OnWatched, nullptr)) g_watchAsked = false;
+        if (!sg::WatchName(kCompareFn, kCompareTag, &OnComparePre, &OnComparePost))
+            g_watchAsked = false;
     }
     if (g_firstMs == 0) g_firstMs = NowMs();
     void* player = coop::players::Registry::Get().Local();
@@ -384,6 +514,7 @@ void EmitVerdict() {
     bool live = true;
     for (const Watched& w : kWatched)
         if (!sg::NameWatchLive(w.name, w.tag)) live = false;
+    const bool cmpLive = sg::NameWatchLive(kCompareFn, kCompareTag);
     const uint64_t runMs = (g_firstMs != 0 && NowMs() > g_firstMs) ? NowMs() - g_firstMs : 0;
     UE_LOGW("lookat_churn_probe: over %llu s of this run the action row was rebuilt %u time(s) "
             "(%.2f/s) and the aim was dropped %u time(s); %u of the %u aims went straight back to "
@@ -440,6 +571,36 @@ void EmitVerdict() {
               "component, and the byte its lookAt() returns moved. For a food that byte is its "
               "`uses`, so the actor's own state is being rewritten under the aim";
     UE_LOGW("lookat_churn_probe: reading :: %hs", reading);
+
+    // The compare's own reading. Kept apart from the one above because it answers a different
+    // question: that one says whether the row was rebuilt without the stored set appearing to
+    // move, this one says WHICH of the five pairs disagreed when it was.
+    UE_LOGW("lookat_churn_probe: the compare (watch %hs, locals %hs) -- %u whole LookAtFunction "
+            "bodies, %u of them rebuilt the row; the disagreeing operand was actor=%u "
+            "component=%u bound=%u number=%u state=%u, all five agreed %u time(s), and the body "
+            "left the stored set untouched %u time(s) | aim-drop route %u, nested %u, orphaned %u",
+            cmpLive ? "LIVE" : "NOT LIVE -- these counts mean nothing",
+            g_localsFail ? "UNREADABLE -- a local did not resolve, so a zero here is not agreement"
+                         : g_localsRead ? "readable" : "never read",
+            g_cmpBodies, g_cmpRebuilt, g_dActor, g_dComp, g_dBound, g_dNum, g_dState, g_cmpAgreed,
+            g_cmpNoStore, g_cmpDropPath, g_cmpNested, g_cmpOrphan);
+    if (cmpLive && !g_localsFail && g_cmpRebuilt > 0) {
+        // Name the field, and nothing beyond it. Which lane writes that field is the next
+        // question, and it is answered by grepping for the field, not by this probe guessing.
+        unsigned top = g_dActor; const char* which = "lookAtActor vs the trace's hit actor";
+        if (g_dComp  > top) { top = g_dComp;  which = "lookAtComponent vs the trace's hit component"; }
+        if (g_dBound > top) { top = g_dBound; which = "lookAtBoundsReplace vs the bound object the aimed actor named"; }
+        if (g_dNum   > top) { top = g_dNum;   which = "lookAtVerify vs the byte the aimed actor's lookAt() returned"; }
+        if (g_dState > top) { top = g_dState; which = "lookAtState vs BitsToByte(!activeInterface)"; }
+        if (top == 0)
+            UE_LOGW("lookat_churn_probe: compare reading :: THE ROW WAS REBUILT WHILE ALL FIVE "
+                    "PAIRS AGREED -- so the rebuild did not come from this comparison at all, and "
+                    "the caller frame lines above name the route that asked for it");
+        else
+            UE_LOGW("lookat_churn_probe: compare reading :: THE PAIR THAT DISAGREED IS %hs, on %u "
+                    "of %u rebuilt bodies. That field is the one to grep for a writer",
+                    which, top, g_cmpRebuilt);
+    }
 }
 
 void OnDisconnect() {
@@ -452,7 +613,13 @@ void OnDisconnect() {
     g_best = Episode{};
     g_lastEpisodeActor = nullptr;
     g_flipBacks = g_episodes = g_changes = 0;
-    g_builds = g_dropped = 0;
+    g_builds = g_lists = g_dropped = 0;
+    g_slot = CompareSlot{};
+    g_cmpBodies = g_cmpRebuilt = g_cmpAgreed = g_cmpNoStore = 0;
+    g_cmpDropPath = g_cmpNested = g_cmpOrphan = 0;
+    g_dActor = g_dComp = g_dBound = g_dNum = g_dState = 0;
+    g_cmpLines = 0;
+    g_localsRead = g_localsFail = false;
     g_firstMs = 0;
     g_lines = g_changeLines = g_buildLines = 0;
     g_tick = 0;

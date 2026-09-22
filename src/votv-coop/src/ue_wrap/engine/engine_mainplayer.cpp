@@ -360,6 +360,40 @@ bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out) {
     return true;
 }
 
+bool ReadMainPlayerLookAtLocals(void* lookAtFunction, const uint8_t* locals,
+                                MainPlayerLookAtLocals& out) {
+    out = MainPlayerLookAtLocals{};
+    if (!lookAtFunction || !locals) return false;
+    // A UFunction is a UStruct, so the walk that resolves an instance field resolves a local the
+    // same way: the function's own ChildProperties chain carries its parameters and its locals
+    // together. Cached against the UFunction, because the walk is linear over a body with 115 of
+    // them and this runs once per tick per pawn.
+    static void*   sFn    = nullptr;
+    static int32_t sActor = -1, sComp = -1, sBound = -1, sNum = -1, sState = -1;
+    if (lookAtFunction != sFn) {
+        sFn    = lookAtFunction;
+        sActor = R::FindPropertyOffset(lookAtFunction, L"lookatActorCurrent");
+        sComp  = R::FindPropertyOffset(lookAtFunction, L"lookatComponentCurrent");
+        sBound = R::FindPropertyOffset(lookAtFunction, L"lookatBoundObject");
+        sNum   = R::FindPropertyOffset(lookAtFunction, L"lookatNUmber");
+        // The compiler's own temporary for the BitsToByte(!activeInterface) result. It is the
+        // literal left operand of the state comparison, so it is read; deriving it from
+        // activeInterface would bake in an assumption about which bit that library call fills.
+        sState = R::FindPropertyOffset(lookAtFunction, L"CallFunc_BitsToByte_Byte");
+        if (sActor < 0 || sComp < 0 || sBound < 0 || sNum < 0 || sState < 0)
+            UE_LOGW("engine::ReadMainPlayerLookAtLocals: a LookAtFunction local did not resolve "
+                    "(actor %d component %d bound %d number %d state %d) -- the compare cannot be "
+                    "read on this cook", sActor, sComp, sBound, sNum, sState);
+    }
+    if (sActor < 0 || sComp < 0 || sBound < 0 || sNum < 0 || sState < 0) return false;
+    out.actor       = *reinterpret_cast<void* const*>(locals + sActor);
+    out.component   = *reinterpret_cast<void* const*>(locals + sComp);
+    out.boundObject = *reinterpret_cast<void* const*>(locals + sBound);
+    out.number      = *(locals + sNum);
+    out.stateByte   = *(locals + sState);
+    return true;
+}
+
 bool ReadMainPlayerRadialSelect(void* mainPlayer, bool& releaseEToUse, int32_t& actionIndex) {
     releaseEToUse = false;
     actionIndex   = -1;
