@@ -50,6 +50,27 @@ bool EnsureResolved();
 // when the class or instance has not loaded.
 void* Instance();
 
+// The console's parameterless painter verbs, one bit each. A caller names the ones the field it
+// changed actually needs, because the chain is NOT side-effect free: `updToggles` ends by nulling
+// the local player's `lookAtComponent` (the game's own look-at invalidation, see the chain in
+// console_desk.cpp), so painting the whole console for one changed scalar rebuilds every action
+// button under that peer's crosshair. The map below is read off the verbs' bytecode, not their
+// names -- `kPaintText` and `kPaintCoordCoords` read no scalar at all (hover state and the coords
+// commit), which is why no field names them.
+enum Painter : uint32_t {
+    kPaintNone           = 0u,
+    kPaintText           = 1u << 0,   // updText            -- hover text; no scalar
+    kPaintToggles        = 1u << 1,   // updToggles         -- DL_activeFrFilter/PoFilter, active_download
+    kPaintPolarity       = 1u << 2,   // updPolarity        -- DL_PolarityDir
+    kPaintVolume         = 1u << 3,   // updVolume          -- play_volume
+    kPaintCoordLights    = 1u << 4,   // updCoordLights     -- active_coords
+    kPaintPlaybackLights = 1u << 5,   // updPlaybackLights  -- active_play
+    kPaintPolarityLights = 1u << 6,   // updPolarityLights  -- DL_PolarityDir, active_download, canDL, physMods
+    kPaintMaxLevelLights = 1u << 7,   // updMaxLevelLights  -- comp_maxLevel, active_comp, physMods
+    kPaintCoordCoords    = 1u << 8,   // updateCoordCoords  -- the coords commit; no scalar
+    kPaintAll            = (1u << 9) - 1u,
+};
+
 bool ReadScalars(Scalars& out);
 
 // The detected frequency and polarity data floats, the decode's view of the matched signal's
@@ -57,9 +78,13 @@ bool ReadScalars(Scalars& out);
 // read-only; not on the DeskState wire. False if unresolved.
 bool ReadFreqPolData(float& frData, float& poData);
 
-// Raw-write the scalar set, then run the desk's own parameterless refresh chain so the
-// screens and LEDs repaint from the new fields. Game thread.
-bool WriteScalars(const Scalars& in);
+// Raw-write the scalar set, then run the desk's own refresh verbs named by `painters` (the
+// Painter bits above) so the screens and LEDs repaint from the new fields. `kPaintAll` is right
+// for a whole-set apply such as a join adopt; a caller that changed ONE field names only that
+// field's painters, because the chain is not side-effect free -- see the Painter comment and the
+// chain itself in console_desk.cpp. `kPaintNone` writes the fields and paints nothing, which is
+// the correct answer for a scalar no verb reads. Game thread.
+bool WriteScalars(const Scalars& in, uint32_t painters);
 
 // The tail (the last maxChars) of the live coords-screen event log, the PING and FOUND lines
 // the catching peer generates locally. The log the screen renders is coord_coordLog2Text

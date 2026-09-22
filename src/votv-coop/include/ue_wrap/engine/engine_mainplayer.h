@@ -114,6 +114,12 @@ bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out);
 // ChildProperties walk finds it. Offsets cached per UFunction. Pointers are compared, never
 // dereferenced. False if the names no longer resolve (a recook renaming a local), which a caller
 // must not read as agreement. Game thread.
+//
+// Reading a frame's locals after the body is safe HERE because these five are three object
+// pointers and two bytes: the caller of the VM's script loop owns the locals buffer and is still
+// on the stack when our post callback runs, and the loop's destructor pass has only touched
+// non-POD locals. The same reader aimed at an FString or TArray local would be reading freed
+// storage.
 struct MainPlayerLookAtLocals {
     void*   actor       = nullptr;
     void*   component   = nullptr;

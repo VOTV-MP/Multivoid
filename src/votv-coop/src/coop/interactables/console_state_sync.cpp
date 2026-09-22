@@ -479,7 +479,9 @@ void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot) {
         coop::dev::desk_diag::NoteJoinAdopt();
 
     const CD::Scalars sc = PayloadToScalars(p);
-    if (CD::WriteScalars(sc)) {
+    // A join adopt replaces the WHOLE scalar set, so every painter is owed. This is the one caller
+    // entitled to the full chain, and it runs once per adopt.
+    if (CD::WriteScalars(sc, CD::kPaintAll)) {
         // Prime the input lane's poll baselines, so the seeded values never read as local edges.
         coop::desk_input_sync::PrimeBaselines();
     }

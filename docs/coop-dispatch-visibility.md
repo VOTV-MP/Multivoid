@@ -253,14 +253,17 @@ native function seam on it fires for the mirror's `makeAttachments` as it does f
 
 A verb you dispatch to repaint a device can write PLAYER state, and the rate you call it at is
 part of its meaning. `analogDScreenTest_C::updToggles` repaints the console's toggle LEDs and ends
-by nulling the local pawn's `lookAtComponent` -- the game invalidating its own look-at cache so the
-tooltip of the toggle a player just flipped is re-resolved. At the rate the game produces (a human
-flipping a switch) the action-row rebuild that follows IS the intended effect. A mirror lane pulsed
-that verb on a 333 ms clock, and the same side effect became a metronome: each pulse left the pawn
-with a null `lookAtComponent` beside a live `lookAtActor`, `AmainPlayer_C::LookAtFunction`'s
-five-field compare failed on that one pair the next tick, and every action button was destroyed and
-re-created -- measured at 284 of 284 rebuilds under a held aim, on every prop, client-side only.
-`[V]` Two questions before dispatching any game verb periodically: what does its whole body write
+by nulling the local pawn's `lookAtComponent`, the last statement of its decompiled body. `[V]` A
+mirror lane pulsed that verb on a 333 ms clock, and each pulse left the pawn with a null
+`lookAtComponent` beside a live `lookAtActor`, so `AmainPlayer_C::LookAtFunction`'s five-field
+compare failed on that one pair the next tick and every action button was destroyed and re-created
+-- measured at 284 of 284 rebuilds under a held aim, at 2.906/s against a 3.00 Hz clock, on every
+prop. `[RD]` The write reads as the game invalidating its own look-at cache so the tooltip of the
+toggle just flipped is re-resolved, which makes the rebuild the INTENDED effect at the rate the game
+produces it -- a human flipping a switch -- and a metronome on a clock; that is an intent read of
+the body, not an observation. `[RD]` The lane is client-side because the host returns before the
+mirror, which is a read of the code, not a measured host.
+Two questions before dispatching any game verb periodically: what does its whole body write
 besides the thing you want, and does the game itself ever call it on a clock? A parameterless name
 like `upd*` or `refresh*` promises nothing, and a list of such verbs assembled for one write path
 does not transfer to another -- here none of the nine painted any field the periodic caller wrote,

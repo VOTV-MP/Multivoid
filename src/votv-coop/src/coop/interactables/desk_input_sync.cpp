@@ -98,12 +98,37 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     return true;
 }
 
-// Apply ONE field onto the local desk: patch the scalar set + run the proven
-// WriteScalars upd* chain, then the field's native setter side effects where the
-// chain doesn't cover them (hums, lights, live volume).
+// The painters ONE changed scalar needs, read off the verbs' bytecode (the map lives on the verb
+// array in ue_wrap/desk/console_desk.cpp). Naming them per field rather than running the whole
+// chain is not an optimisation: `updToggles` nulls the local player's lookAtComponent, so a verb
+// dispatched for a field it does not paint rebuilds every action button under that peer's
+// crosshair for nothing. `kPaintNone` is a real answer -- no verb reads coord_cooldown, and the
+// input poll ships a charge delta as often as every 250 ms while a peer holds the scan.
+uint32_t PaintersFor(DeskInputField f) {
+    switch (f) {
+    case DeskInputField::FrFilterActive:
+    case DeskInputField::PoFilterActive:  return CD::kPaintToggles;
+    case DeskInputField::ActiveDownload:  return CD::kPaintToggles | CD::kPaintPolarityLights;
+    case DeskInputField::PolarityDir:     return CD::kPaintPolarity | CD::kPaintPolarityLights;
+    case DeskInputField::PlayVolume:      return CD::kPaintVolume;
+    case DeskInputField::ActiveCoords:    return CD::kPaintCoordLights;
+    case DeskInputField::ActivePlay:      return CD::kPaintPlaybackLights;
+    case DeskInputField::CompMaxLevel:
+    case DeskInputField::ActiveComp:      return CD::kPaintMaxLevelLights;
+    // Read by no painter: the filter speeds, the play index, and the cooldown charge.
+    case DeskInputField::FrFilterSpeed:
+    case DeskInputField::PoFilterSpeed:
+    case DeskInputField::PlaySelectIndex:
+    case DeskInputField::CooldownCharge:  return CD::kPaintNone;
+    default:                              return CD::kPaintNone;
+    }
+}
+
+// Apply ONE field onto the local desk: patch the scalar set + run that field's painters, then the
+// field's native setter side effects where they don't cover them (hums, lights, live volume).
 bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!PatchScalar(p, sc)) return false;
-    if (!CD::WriteScalars(sc)) return false;
+    if (!CD::WriteScalars(sc, PaintersFor(static_cast<DeskInputField>(p.field)))) return false;
     const int unit = ActiveUnitOf(static_cast<DeskInputField>(p.field));
     if (unit >= 0) CD::ApplyActiveToggleEffects(unit, p.boolVal != 0);
     if (static_cast<DeskInputField>(p.field) == DeskInputField::PlayVolume)

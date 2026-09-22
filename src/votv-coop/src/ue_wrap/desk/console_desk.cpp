@@ -86,26 +86,36 @@ FieldSlot g_fields[] = {
 // fires on a human flipping a switch; the rebuild of the action row that follows IS the intended
 // behaviour there.
 //
-// So this chain belongs ONLY on an edge that really changed one of the scalars it paints -- a
-// received desk input, a join adopt -- which is the rate single player produces. Calling it on a
-// CLOCK turns an invalidation verb into a metronome: every pulse leaves the local player with a
-// null lookAtComponent beside a live lookAtActor, LookAtFunction's five-field compare fails on
+// So a verb here belongs ONLY on an edge that really changed a scalar IT paints. Calling the chain
+// on a CLOCK turns an invalidation verb into a metronome: every pulse leaves the local player with
+// a null lookAtComponent beside a live lookAtActor, LookAtFunction's five-field compare fails on
 // exactly that pair the next tick, and the whole action row is destroyed and rebuilt. Measured
 // 2026-09-22: 284 of 284 rebuilds under a held aim disagreed on lookAtComponent and on nothing
-// else. Never add a periodic caller. The nine verbs paint the SCALAR fields only -- none of them
-// reads a sim output, which is why WriteSimOutputs does not run them at all.
+// else. Never add a periodic caller.
+//
+// That is why callers name PAINTERS rather than getting the whole chain. Running all nine for one
+// changed scalar is the same defect at a lower rate: a cooldown charge ships as often as every
+// 250 ms while a peer holds the scan, and it paints NOTHING -- no verb below reads coord_cooldown.
+// Each verb's scalar dependencies, read off its bytecode, are on its row in the array. None of the
+// nine reads a SIM output either, which is why WriteSimOutputs runs none of them.
 struct RefreshSlot { const wchar_t* name; void* fn; };
+// ORDER IS THE CONTRACT: slot i is Painter bit i (console_desk.h). A caller selects verbs by those
+// bits, so re-ordering this array silently re-points every selection.
 RefreshSlot g_refresh[] = {
-    { L"updText",            nullptr },
-    { L"updToggles",         nullptr },
-    { L"updPolarity",        nullptr },
-    { L"updVolume",          nullptr },
-    { L"updCoordLights",     nullptr },
-    { L"updPlaybackLights",  nullptr },
-    { L"updPolarityLights",  nullptr },
-    { L"updMaxLevelLights",  nullptr },
-    { L"updateCoordCoords",  nullptr },
+    { L"updText",            nullptr },   // kPaintText
+    { L"updToggles",         nullptr },   // kPaintToggles
+    { L"updPolarity",        nullptr },   // kPaintPolarity
+    { L"updVolume",          nullptr },   // kPaintVolume
+    { L"updCoordLights",     nullptr },   // kPaintCoordLights
+    { L"updPlaybackLights",  nullptr },   // kPaintPlaybackLights
+    { L"updPolarityLights",  nullptr },   // kPaintPolarityLights
+    { L"updMaxLevelLights",  nullptr },   // kPaintMaxLevelLights
+    { L"updateCoordCoords",  nullptr },   // kPaintCoordCoords
 };
+constexpr size_t kRefreshCount = sizeof(g_refresh) / sizeof(g_refresh[0]);
+static_assert(kPaintAll == (1u << kRefreshCount) - 1u,
+              "a painter verb was added or removed without its Painter bit");
+constexpr size_t kRefreshCoordCoords = 8;  // kPaintCoordCoords' slot, dispatched alone below
 void* g_writeToCoordLogFn = nullptr;  // writeToCoordLog_2 (the LIVE log writer)
 
 // The signal-catch consume surface. The signal-spawn struct's member offsets come from the
@@ -324,7 +334,7 @@ bool ReadFreqPolData(float& frData, float& poData) {
     return true;
 }
 
-bool WriteScalars(const Scalars& in) {
+bool WriteScalars(const Scalars& in, uint32_t painters) {
     void* d = Instance();
     if (!d || !g_coreResolved) return false;
     *OffPtr<float>(d, g_offDlPoFilterOffset)  = in.dlPoFilterOffset;
@@ -345,12 +355,11 @@ bool WriteScalars(const Scalars& in) {
     *OffPtr<bool>(d, g_offActiveCoords)     = in.activeCoords;
     *OffPtr<bool>(d, g_offActiveComp)       = in.activeComp;
     *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
-    // Repaint through the blueprint's own painters. Each is a cheap widget or material refresh,
-    // side-effect clean, at a human-rate call site (wire applies). The comp-pane repaint lives in
-    // ue_wrap/desk/comp_pane.
-    for (auto& r : g_refresh) {
-        if (!r.fn) continue;
-        ue_wrap::ParamFrame f(r.fn);
+    // Repaint through the blueprint's own painters -- only the ones the caller named. The comp-pane
+    // repaint lives in ue_wrap/desk/comp_pane.
+    for (size_t i = 0; i < kRefreshCount; ++i) {
+        if (!(painters & (1u << i)) || !g_refresh[i].fn) continue;
+        ue_wrap::ParamFrame f(g_refresh[i].fn);
         if (f.valid()) ue_wrap::Call(d, f);
     }
     return true;
@@ -431,8 +440,8 @@ void* AtlasUiCoordsSlot() {
 // verb.
 bool CallUpdateCoordCoords() {
     void* desk = Instance();
-    if (!desk || !g_refresh[8].fn) return false;  // [8] = updateCoordCoords
-    ue_wrap::ParamFrame f(g_refresh[8].fn);
+    if (!desk || !g_refresh[kRefreshCoordCoords].fn) return false;
+    ue_wrap::ParamFrame f(g_refresh[kRefreshCoordCoords].fn);
     if (!f.valid()) return false;
     return ue_wrap::Call(desk, f);
 }

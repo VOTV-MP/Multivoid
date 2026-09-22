@@ -300,9 +300,13 @@ CompareSlot g_slot;
 
 unsigned g_cmpBodies   = 0;  // LookAtFunction bodies seen whole (pre and post both ran)
 unsigned g_cmpRebuilt  = 0;  // ... of which asked for a rebuild, the aim-drop route excluded
-unsigned g_cmpAgreed   = 0;  // ... of those, all five pairs equal: the rebuild was NOT this compare
-unsigned g_cmpNoStore  = 0;  // ... of those, the body left the stored set exactly as it found it
-unsigned g_cmpDropPath = 0;  // bodies that dropped the aim: their locals are not the operands
+unsigned g_cmpAgreed   = 0;  // of the REBUILT ones, all five pairs equal: not this compare's doing
+unsigned g_cmpNoStore  = 0;  // of the REBUILT ones, the body left the stored set as it found it
+// Bodies that dropped the aim AND rebuilt: their locals are not the compare's operands. A drop that
+// somehow did NOT rebuild is not counted here, which costs nothing only because lookAtLookedAway
+// always calls buildActionList (mainPlayer.cpp:20273) -- true of the current cook, not by
+// construction, so read this as "dropped and rebuilt", never as "dropped".
+unsigned g_cmpDropPath = 0;
 unsigned g_cmpNested   = 0;  // a LookAtFunction body inside another one (expected: 0)
 unsigned g_cmpOrphan   = 0;  // a snapshot whose post never fired, replaced rather than left to stick
 unsigned g_dActor = 0, g_dComp = 0, g_dBound = 0, g_dNum = 0, g_dState = 0;
@@ -311,18 +315,21 @@ bool     g_localsRead = false;   // the five locals resolved at least once
 bool     g_localsFail = false;   // ... or did not, which a zero must not be read as agreement
 
 sg::Verdict OnComparePre(const sg::Call& call) {
+    // Nesting is asked FIRST, and of the gate's own scope rather than a flag of ours: at PRE the
+    // scope for THIS call is not pushed yet, so a true answer means an OUTER LookAtFunction body is
+    // running -- on any pawn -- and its snapshot must survive untouched.
+    if (sg::IsBodyActive(call.function)) { ++g_cmpNested; return sg::Verdict::Run; }
+    // Nothing of ours is open, so whatever is still in the slot belongs to a body that ended
+    // without its post (another consumer cancelled it, or the firewall absorbed a fault) and can
+    // never be consumed. It is counted and dropped HERE, before the pawn test, because an FFrame
+    // address is stack memory and recurs: left in place, a stale snapshot could be matched by a
+    // later body at the same address on the same pawn once the local pawn had changed underneath
+    // it, and the reading would be built from another body's operands.
+    if (g_slot.stack) { ++g_cmpOrphan; g_slot = CompareSlot{}; }
     // The local pawn only. A puppet is a mainPlayer_C too and runs this same body, and its look-at
     // set is nobody's UI.
     if (!call.object || call.object != coop::players::Registry::Get().Local())
         return sg::Verdict::Run;
-    // The gate's scope, not a flag of ours: at PRE the scope for THIS call is not pushed yet, so a
-    // true answer means an OUTER LookAtFunction body is running and its snapshot must survive.
-    if (sg::IsBodyActive(call.function)) { ++g_cmpNested; return sg::Verdict::Run; }
-    // Not nested, so anything still here belongs to a body that ended without its post and can
-    // never be consumed. Counted and replaced: a slot left to stick would silence the instrument
-    // for the rest of the run.
-    if (g_slot.stack) ++g_cmpOrphan;
-    g_slot = CompareSlot{};
     E::MainPlayerLookAt stored{};
     if (!E::ReadMainPlayerLookAt(call.object, stored)) return sg::Verdict::Run;
     g_slot.stored       = stored;

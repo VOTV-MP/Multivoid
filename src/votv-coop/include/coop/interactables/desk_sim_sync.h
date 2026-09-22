@@ -27,9 +27,11 @@ void Install(coop::net::Session* session);
 // vector, interpolate PER CHANNEL -- each channel keeps its own deadline, and an unchanged
 // target that ARRIVES snaps cur to target exactly, where a window shared across channels and
 // reopened by every packet kept the detector's bitwise 1.0 from ever landing, so the client's
-// own below-1.0 gated block beeped every frame -- then WriteSimOutputs, raw every tick for
-// smoothness, with the full repaint pulsing at about 3 Hz. The vector is 7 channels;
-// coord_cooldown belongs to desk_input_sync.
+// own below-1.0 gated block beeped every frame -- then WriteSimOutputs, a raw write every tick,
+// which is the WHOLE apply: the desk's refresh verbs paint none of these channels, so this lane
+// dispatches none of them. It used to pulse the full chain at about 3 Hz, and that pulse nulled the
+// local player's lookAtComponent three times a second (console_desk.cpp's chain comment); it is
+// deleted. The vector is 7 channels; coord_cooldown belongs to desk_input_sync.
 void Tick();
 
 void OnDisconnect();

@@ -379,6 +379,10 @@ bool ReadMainPlayerLookAtLocals(void* lookAtFunction, const uint8_t* locals,
         // The compiler's own temporary for the BitsToByte(!activeInterface) result. It is the
         // literal left operand of the state comparison, so it is read; deriving it from
         // activeInterface would bake in an assumption about which bit that library call fills.
+        // The ONE local here that is not write-once: the body recomputes it into the same slot on
+        // the disagree path before storing lookAtState. Both computations read !activeInterface
+        // with no write to it in between, so a POST read is the compare's operand today -- a cook
+        // that wrote activeInterface between them would silently invalidate this column alone.
         sState = R::FindPropertyOffset(lookAtFunction, L"CallFunc_BitsToByte_Byte");
         if (sActor < 0 || sComp < 0 || sBound < 0 || sNum < 0 || sState < 0)
             UE_LOGW("engine::ReadMainPlayerLookAtLocals: a LookAtFunction local did not resolve "
