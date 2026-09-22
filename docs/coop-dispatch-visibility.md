@@ -204,7 +204,7 @@ verb's player route from the same verb's ambient callers. `[V]` A consumer readi
 is already scoped. And a context gate belongs in a hot ambient callback while a context resolve
 does not: a class resolve on a miss walks the whole object array on every click. `[V]`
 
-## Four traps
+## Five traps
 
 A call that returns true has not necessarily done anything visible: a static-mobility component
 silently ignores a mesh swap and a move while the call still returns true, which is how the trash
@@ -226,6 +226,18 @@ questions with `reflection::FindDispatchFunction`, which climbs and names the de
 the declarer is not the class you asked for, that one object serves the whole family, so either
 cover it deliberately or filter on the instance. `[V]` The measured cost of not asking: a client
 cleaner deleting props locally for a year, and the wrong material on six grime types.
+
+A Blueprint path that the decompiled listing renders as an unreachable cycle is the VM's own
+execution-flow STACK, and only the control-flow graph shows where it goes. `EX_PushExecutionFlow`
+pushes a target and falls through; a later `EX_PopExecutionFlow` jumps to the most recent one, so
+a body can schedule a block, run several others, and arrive there from whichever of them finishes
+first. A linearising decompile has no way to draw that and emits two blocks that `goto` each other
+with nothing entering either, which reads as dead code and is the hot path. `AmainPlayer_C::
+LookAtFunction` is the worked example: its action-row rebuild is pushed at one block, its field
+store at another, and they run in the reverse of the order they appear. Read
+`tools/bp_cfg.py <BP> --fn <Fn>` before believing a listing's control flow, and note what this
+costs a seam rather than a reader -- nothing, because the script gate sees a body entered by a pop
+exactly as it sees one entered by a call. `[V]`
 
 A tick park is a claim about ONE dispatch, never about the actor. The hook lane parks a mirror's
 brain with a PRE interceptor that cancels the Blueprint body of `hook_C::ReceiveTick`, per actor
