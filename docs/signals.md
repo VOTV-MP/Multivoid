@@ -110,9 +110,10 @@ The drive chain is idempotent per-slot state lines any peer announces and the ho
 with the drive's payload as content rows the host stores (`coop/interactables/drive_sync`); the
 rack is presser index-operations the host terminates, a full canonical array back, and a deny
 ring for races (`coop/interactables/drive_rack_sync`). A slot freezes the drive it takes, and only a
-grab takes one out -- the drive ejects itself, then the grab unfreezes it -- so a peer applying
-another's eject runs the unfreeze too, or its copy stays frozen in the port and the prop lane drops
-every pose of the hand that carries it. The desk's twelve physical modules are a
+grab takes one out -- the drive ejects itself, and the grab unfreezes it -- so a peer applying
+another's eject runs the unfreeze too, unless the carrying hand's stream reached it first: the prop
+lane gives any frozen copy a peer is holding the same unfreeze ([props.md](props.md)), and the
+eject leaves a drive that is already free alone. The desk's twelve physical modules are a
 set, so plug and unplug are value operations the host applies and re-broadcasts whole
 (`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second

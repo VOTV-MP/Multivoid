@@ -406,14 +406,16 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             return;
         }
         // A slot freezes the drive it takes, and in the game only a grab takes one out: the drive's
-        // playerTryToGrab ejects it, then the grab's playerGrabbed_pre unfreezes it. The line is
-        // that grab on another machine, so the unfreeze is applied with the eject; left frozen, the
-        // drive stays in the port and the prop lane drops every pose of the hand that holds it.
+        // playerTryToGrab ejects it, and the grab's playerGrabbed_pre unfreezes it. The line is
+        // that grab on another machine, so the unfreeze is applied with the eject -- unless the
+        // holder's stream got here first: the prop lane runs the same unfreeze when a held stream
+        // starts on a frozen prop, and a second one mid-carry would re-run the prop's init and
+        // switch its physics back on under the drive.
         bool unfrozen = false;
         {
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
-            unfrozen = ue_wrap::prop::CallAwakeUnfreeze(cur);
+            if (ue_wrap::prop::IsFrozen(cur)) unfrozen = ue_wrap::prop::CallAwakeUnfreeze(cur);
             DC::CompleteEjectLatch(slot, cur);
             g_slotBase[p.role] = {true, false, 0};
         }

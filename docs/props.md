@@ -109,7 +109,12 @@ While a prop is held, its holder owns it. The holder streams the held prop's wor
 every frame, unreliable and newest-wins (`coop/player/local_streams`). A receiver resolves the
 prop by key on the first frame, turns its physics off, and follows the stream with a fixed-delay
 snapshot interpolation that renders one interval behind the newest pose on its own clock
-(`coop/props/remote_prop`, `coop/props/active_drive`). On release, a reliable message carries
+(`coop/props/remote_prop`, `coop/props/active_drive`). A grab changes the prop as well as moving
+it: every grab verb of the game unfreezes a frozen prop before it takes it, on the grabbing machine
+only. So a copy that is frozen here -- a fire extinguisher on its wall mount, a drive in a slot,
+anything the toolgun froze -- gets the game's own unfreeze once the stream is sustained, five poses
+in, which keeps the stale poses of a hold that ended frozen on the sender from freeing it. A static
+prop is never driven: the game refuses to hold a body that does not simulate. On release, a reliable message carries
 the linear and angular velocity the body had at the instant of release: the game's throw is not
 an impulse but the tracking velocity the physics engine accumulated while the player flicked the
 camera, and a receiver that re-enables physics and hands that velocity back reproduces it. The
@@ -286,6 +291,8 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | Limit | Evidence |
 |---|---|
 | Two peers grabbing the same prop both stream it; nothing assigns the prop to one holder, so receivers follow whichever stream is newest | `[V]` `coop/props/remote_prop` has no claim |
+| A prop let go of lands by each peer's own physics from the same release velocity, and nothing converges where it comes to rest: a fire extinguisher dropped from the hand, which rolls, rested 37 cm apart on the two peers in one run and 3 cm apart in another | `[V]` the fire extinguisher drill (`coop/dev/fireext_drill`), the host's last line against the client's last watch line |
+| A grab wakes a prop that is asleep, on the grabbing machine only, and the receiver drives and releases its copy without the wake; that copy keeps the sleep flag, whose hit handler wakes it on its first collision and applies that hit's impulse again | `[RD]` `prop_C::playerGrabbed_pre` runs `awakeUnfreeze` for a frozen or sleeping prop; `coop/props/remote_prop` runs it for a frozen copy only |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
 | The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |

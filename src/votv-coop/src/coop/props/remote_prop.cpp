@@ -55,10 +55,11 @@ using namespace coop::active_drive;
 // different props never race.
 std::array<coop::active_drive::ActiveDrive, coop::players::kMaxPeers> g_drives{};
 
-// The unstick gate: a PropPose stream aimed at a stuck wall-attachable may be one or two stale
-// packets in flight from between the sender's stick commit and its hold-break, which must not
-// unstick the mirror. Only a sustained stream (a real re-grab) does: kUnstickStreak consecutive
-// fresh poses for one identity inside the window. Per slot, like the drive cache.
+// The unstick gate: a PropPose stream aimed at a frozen or stuck prop may be one or two stale
+// packets in flight from a hold that ended with the prop frozen on the sender (a wall-attachable's
+// stick commit, a mount's snap), which must not free the copy here. Only a sustained stream (a real
+// grab) does: kUnstickStreak consecutive fresh poses for one identity inside the window. Per slot,
+// like the drive cache.
 struct PendingUnstick {
     void*    actor = nullptr;
     int      streak = 0;
@@ -67,6 +68,10 @@ struct PendingUnstick {
 std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
 constexpr int      kUnstickStreak   = 5;
 constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
+
+// The static prop each slot's stream was last refused for, compared and never dereferenced, so the
+// refusal is said once per stream rather than once per pose.
+std::array<void*, coop::players::kMaxPeers> g_staticRefused{};
 
 }  // namespace [drive helpers part 1]
 
@@ -184,14 +189,25 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
-    // A stuck wall-attachable unsticks for an incoming drive only on a sustained stream: the stale
-    // poses in flight after the sender's stick commit land here with the drive cache just cleared
-    // by OnStickState, and without the streak they would unstick it right back. A static
-    // non-attachable never streams legitimately, so it is skipped outright.
+    // A stream on a prop this peer holds frozen is a grab the holder's game made first: every grab
+    // verb unfreezes a frozen prop before it takes it (playerGrabbed_pre, Hold Object and
+    // putObjectInventory2 all run awakeUnfreeze), on the grabbing machine only. A mounted fire
+    // extinguisher, a drive in a slot and anything the toolgun froze look exactly like this on the
+    // peer that did not grab it, so the copy here gets the game's own unfreeze, the half of the grab
+    // it never ran; a stuck wall-attachable is freed by its own lane's unstick instead. Both wait for
+    // a sustained stream, since the stale poses of a hold that ended frozen on the sender land here
+    // with the drive cache already cleared. A static prop never streams: the game refuses to hold a
+    // body that does not simulate.
     if (ue_wrap::prop::IsDescendantOfProp(prop) &&
         (ue_wrap::prop::IsFrozen(prop) || ue_wrap::prop::IsStatic(prop))) {
-        if (!coop::prop_stick_sync::IsWallAttachable(prop)) {
-            UE_LOGW("remote_prop: slot %d PropPose for frozen/static non-attachable %p -- ignored", slot, prop);
+        const bool attachable = coop::prop_stick_sync::IsWallAttachable(prop);
+        if (!attachable && ue_wrap::prop::IsStatic(prop)) {
+            if (g_staticRefused[slot] != prop) {
+                g_staticRefused[slot] = prop;
+                UE_LOGW("remote_prop: slot %d key '%ls' streams a prop that is STATIC here (%p) -- a static "
+                        "body cannot be held, so the two copies disagree on the flag; not driven",
+                        slot, keyW.c_str(), prop);
+            }
             return;
         }
         PendingUnstick& pu = g_pendingUnstick[slot];
@@ -201,12 +217,19 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
             pu.streak = 0;
         }
         pu.lastMs = now;
-        if (++pu.streak < kUnstickStreak) return;  // not yet proven a real re-grab
+        if (++pu.streak < kUnstickStreak) return;  // not yet proven a real grab
         pu.actor = nullptr;
         pu.streak = 0;
-        coop::prop_stick_sync::UnstickForDrive(prop);  // clears flags + simulate(true)/detach
+        if (attachable) {
+            coop::prop_stick_sync::UnstickForDrive(prop);  // clears flags + simulate(true)/detach
+        } else {
+            const bool ok = ue_wrap::prop::CallAwakeUnfreeze(prop);
+            UE_LOGI("remote_prop: slot %d key '%ls' is held by its peer and frozen here -- the grab's own "
+                    "unfreeze applied (%s)", slot, keyW.c_str(), ok ? "ok" : "the verb did not dispatch");
+        }
         // Then the drive starts on the freed prop.
     }
+    g_staticRefused[slot] = nullptr;
     // GetStaticMesh is null for the clump by design (it is driven through the root physics); only
     // an Aprop_C without a mesh is an error.
     void* mesh = ue_wrap::prop::GetStaticMesh(prop);
@@ -373,10 +396,10 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     }
     if (StickHoldsPhysicsOff(propActor)) {
-        // The prop stuck while held (PropStickState arrived first on the same reliable lane): no
-        // physics re-enable and no velocity, the camera stays on the wall; the drive cache still
-        // clears.
-        UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off",
+        // The prop froze while held -- a wall-attachable's stick (PropStickState arrived first on
+        // the same reliable lane), a mount's snap: no physics re-enable and no velocity, it stays
+        // where it froze; the drive cache still clears.
+        UE_LOGI("remote_prop: RELEASE for a prop frozen or static here %p -- physics stays off",
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;
