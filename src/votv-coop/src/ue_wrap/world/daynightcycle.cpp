@@ -221,6 +221,21 @@ void* SaveSlotOfCycle(void* cycle) {
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 
+bool IsMenuCycle(void* cycle) {
+    static int32_t s_off = -1;  // mainGamemode_C::isMainMenu, its byte and bit
+    static uint8_t s_mask = 0;
+    static bool s_missing = false;
+    if (!cycle || g_cycleGmOff < 0 || s_missing) return false;
+    void* gm = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(cycle) + g_cycleGmOff);
+    if (!gm || !R::IsLive(gm)) return false;
+    if (s_off < 0 && !R::FindBoolProperty(R::ClassOf(gm), L"isMainMenu", s_off, s_mask)) {
+        s_missing = true;
+        UE_LOGW("daynightcycle: mainGamemode_C has no isMainMenu -- the menu's cycle reads as a world's");
+        return false;
+    }
+    return (*(reinterpret_cast<const uint8_t*>(gm) + s_off) & s_mask) != 0;
+}
+
 bool LatchDailyDeliveryOf(void* saveSlot) {
     if (!saveSlot) return false;
     if (g_offDailyDelivery < 0)

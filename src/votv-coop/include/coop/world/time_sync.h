@@ -30,6 +30,11 @@ void Install(coop::net::Session* session);
 // is its late-join answer. The client's work runs at the cycle's own tick. Game thread.
 void Tick();
 
+// CLIENT: whether this client's clock mirror owns a cycle about to tick -- a connected client
+// session, and a cycle of the session's world, not the menu scene's. The event walk's hold asks the
+// same question, so the two switch on together. Game thread.
+bool HoldsCycle(void* cycle);
+
 // CLIENT: the host's day number as the last applied sample carried it, -1 before the first and
 // after a disconnect. Read-only, for instruments. Any thread.
 int32_t LastHostDayZ();

@@ -38,6 +38,11 @@ void* TickFunction();
 // Game thread.
 void* SaveSlotOfCycle(void* cycle);
 
+// Whether a cycle is the main menu's: its gamemode's own isMainMenu, which the gamemode sets when
+// its level is the menu scene, which ticks a cycle of its own. By the cycle's `gamemode` member, so
+// a tick observer may call it every frame. False while unresolved. Game thread.
+bool IsMenuCycle(void* cycle);
+
 // Read the cycle's clock into the outs. False if the cycle / offsets are not resolved
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);

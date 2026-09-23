@@ -13,6 +13,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/time_sync.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -401,14 +402,12 @@ void HostPollTick() {
 // CLIENT: the cycle is about to tick, and its settime walks the save's list of events on any clock
 // change: hold the list empty before the tick's body runs, so no row is ever due on a client -- the
 // first tick of a new world included, where the clock lane's pre-observer writes the host's newest
-// sample into the same tick.
+// sample into the same tick. Held on exactly the cycles the clock lane parks, by its own predicate.
 bool g_tickObserved = false;  // the pre-observer is registered (once per process)
 bool g_holdUnresolvable = false;  // the save slot's class has no allEvents; said once
 
 void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
-    if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    if (!GT::IsGameThread() || !coop::time_sync::HoldsCycle(self)) return;
     void* ss = ue_wrap::daynightcycle::SaveSlotOfCycle(self);
     if (!ss) return;
     // The list's offset from the live slot's own class, a property lookup with no object-array walk,

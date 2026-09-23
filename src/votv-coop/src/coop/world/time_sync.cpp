@@ -120,9 +120,8 @@ void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p) {
 // CLIENT: the cycle is about to tick. Park it and write the newest host sample into it, so the tick
 // reads the host's clock and a zero rate every time, the first tick of a new world included.
 void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
-    if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    if (!GT::IsGameThread() || !HoldsCycle(self)) return;
+    auto* s = g_session.load(std::memory_order_acquire);  // set, since HoldsCycle answered yes
     HoldTimeScale(self);
     coop::net::TimeSyncPayload p{};
     bool isNew = false;
@@ -182,6 +181,11 @@ void Tick() {
     s->SendHostClock(p);
     g_sentAbs = abs;
     g_sentAt = now;
+}
+
+bool HoldsCycle(void* cycle) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->connected() && s->role() == coop::net::Role::Client && !DNC::IsMenuCycle(cycle);
 }
 
 int32_t LastHostDayZ() { return g_lastHostDayZ.load(std::memory_order_acquire); }
