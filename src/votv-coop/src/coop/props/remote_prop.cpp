@@ -59,7 +59,7 @@ std::array<coop::active_drive::ActiveDrive, coop::players::kMaxPeers> g_drives{}
 // The holds per slot, by the generation the holder mints at each grab (PropPoseSnapshot::holdGen):
 // the newest one its release or stick closed, and the one its drive belongs to. A pose of a closed
 // hold is the tail of a stream that already ended, perhaps with the prop frozen on the holder by a
-// mount or a stick, and starts nothing; a pose of a newer hold is a new grab, whatever the drive
+// slot or a stick, and starts nothing; a pose of a newer hold is a new grab, whatever the drive
 // cache still holds. The driven-prop channel's claim generation, MTA's sync time context. A
 // generation of 0 is unversioned and passes.
 struct HoldGate {
@@ -220,10 +220,15 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         if (attachable && (isStatic || frozen)) {
             coop::prop_stick_sync::UnstickForDrive(prop);  // clears the flags, simulate on and detached
         } else if (frozen || asleep) {
-            const bool ok = ue_wrap::prop::CallAwakeUnfreeze(prop);
-            UE_LOGI("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own unfreeze "
-                    "applied (%s)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen),
-                    frozen ? "frozen" : "asleep", ok ? "ok" : "the verb did not dispatch");
+            if (ue_wrap::prop::CallAwakeUnfreeze(prop)) {
+                UE_LOGI("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own "
+                        "unfreeze applied (ok)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen),
+                        frozen ? "frozen" : "asleep");
+            } else {
+                UE_LOGW("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own "
+                        "unfreeze did not dispatch; the copy keeps its flags", slot, keyW.c_str(),
+                        static_cast<unsigned>(pose.holdGen), frozen ? "frozen" : "asleep");
+            }
         }
     }
     // GetStaticMesh is null for the clump by design (it is driven through the root physics); only
@@ -451,12 +456,12 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     }
     // The holder's frozen and sleep at the release edge, before the physics decision below reads
     // them. A grab that reached this copy through no pose still ends unfrozen here, and a hold that
-    // ended in a mount's snap ends frozen here too. The host authors a trash body's physics.
+    // ended in a drive slot's insert ends frozen here too. The host authors a trash body's physics.
     if (propActor && !HostAuthorsTrashBody(propActor))
         coop::prop_wire_parity::ConvergeFrozenSleep(propActor, payload.physFlags);
     if (StickHoldsPhysicsOff(propActor)) {
         // The prop froze while held -- a wall-attachable's stick (PropStickState arrived first on
-        // the same reliable lane), a mount's snap: no physics re-enable and no velocity, it stays
+        // the same reliable lane), a slot's insert: no physics re-enable and no velocity, it stays
         // where it froze; the drive cache still clears.
         UE_LOGI("remote_prop: RELEASE for a prop frozen or static here %p -- physics stays off",
                 propActor);

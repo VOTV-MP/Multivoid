@@ -515,8 +515,8 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
                     std::sqrt(linMagSq),
                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            // The prop's flags as the hold left them: not frozen after a grab, frozen when a mount or
-            // a dock took it in the hand. A pocketed prop is gone and reports none, a trash clump has
+            // The prop's flags as the hold left them: not frozen after a grab, frozen when a slot or
+            // a dock took it from the hand. A pocketed prop is gone and reports none, a trash clump has
             // none.
             const uint8_t relFlags = g_lastHeldProp.Alive()
                 ? coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw()) : uint8_t{0};
