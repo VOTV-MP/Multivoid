@@ -141,8 +141,8 @@ it rests. The held-prop stream never sees it, since that stream is sourced from 
 slot alone, so the host keeps a set of the props the hooks on its machine are tied to -- its own,
 the anchored ones it adopted, its mirrors of the clients' hooks, and the save's and the level's own
 -- fed by the hook lane rather than by a per-frame walk, and streams each one's pose while it moves
-(`coop/props/prop_drive_host`). Every hook's constraint exists on the host and nowhere else (the
-fifth rule under Deployables), so this one set is every prop any hook can move. A broom's push is
+(`coop/props/prop_drive_host`). Every hook's constraint exists on the host and nowhere else ([deployables.md](deployables.md)),
+so this one set is every prop any hook can move. A broom's push is
 the set's second feeder: every stroke is the host's ([piles.md](piles.md)), and each prop a stroke
 pushes coasts under the stream until it rests, while a prop a verb already holds stays that verb's
 (`coop/items/broom_push`). The trash a stroke knocks out of a dispenser pile coasts too, from its
@@ -213,51 +213,16 @@ is built; concrete and food are designed and not built.
 
 ### Deployables
 
-Tools that leave a persistent actor behind (the grappling hook and rope, the nail gun, the wall
-builder), timed explosives, the fishing rod and the physgun are reverse-engineered with a design
-each. The hook and the rope are built; the rest are not. Their shared shape: the owner keeps its
-previews, montages and ammo local; a commit becomes an intent to the host, either the spawn of a
-persistent actor the host replays through the native entry point or an action on an existing
-host-owned prop; the host mirrors the actor down; a late joiner gets it from the save; a
-player-attached phase (climbing a hook, a cast) is an extension of the player's own stream.
-
-Four rules govern a mirror of a deployable, and they are the four a first attempt at the hook
-lane did not have in front of it:
-
-- **A deployed actor descends from the save-participating base, so a mirror of one is written
-  into the save unless it says otherwise.** The game's save walk asks every object implementing
-  the save interface whether to ignore it, and that answer is a plain field on the base class.
-  Set it on every mirror, in the deferred window before the spawn finishes. This bites hardest on
-  the HOST, which holds mirrors of hooks its clients fired and owns the only save in the session.
-- **Transitions are polled, not caught at a spawn hook.** The player's fire path is
-  Blueprint-internal, and the player already holds a pointer
-  to their own deployed hook. One field read is the whole discovery channel, and it is more
-  precise than a class scan: a variant of the hook class is placed by the level and attaches
-  itself on every peer, so a scan that adopts by class doubles it.
-- **A mirror's Blueprint tick is cancelled, not merely disabled.** The deployed hook's tick reads
-  the LOCAL player, so one frame of it on the wrong machine drags the viewer toward somebody
-  else's hook. The class registers its tick while it spawns, so a disable can only land after;
-  the interceptor on the dispatched body needs no window at all.
-- **The actor's own save record is the handover payload.** It already carries both attach keys,
-  both component names and the cable length, and the game's own load path resolves them in
-  whatever world it lands in. Nothing about an anchor needs a format of ours.
-- **The physics constraint exists on the host and nowhere else.** The deployed hook's tie is a
-  PhysX constraint the game builds on whichever machine runs its attach verbs, and a constraint
-  pulling a host-owned prop on a client is that client moving shared state the host never sees.
-  So a client breaks every tie a hook builds on it, at the native seam the build funnels through,
-  and the host builds a client's hook its real tie on the mirror it holds of that hook, against
-  that client's puppet, from the bite the owner's state names. The client's own hook keeps its
-  pull on the client's own player, which is a velocity write in the tick and not the constraint;
-  its head still rides what it bit. Two players hooking one prop is then two host constraints on
-  one host body, which is what single-player physics would do (`coop/items/hook_constraint`).
+The tools that leave a persistent actor behind -- the grappling hook and rope, which are built,
+and the nail gun, the wall builder, explosives, the fishing rod and the physgun, which are not --
+have a page of their own, [deployables.md](deployables.md). A prop a hook drags rides the
+driven-prop channel above.
 
 ## Who owns what
 
 | State | Owner | Shape |
 |---|---|---|
 | a prop at rest: existence, transform, physics | the host | the birth broadcast; a client's births are intents |
-| a deployed hook, while its thrower still holds it | that peer | keyed by (slot, sequence); the others render a parked mirror |
-| a deployed hook once both ends are anchored | the host | the thrower hands over the hook's own save record; it is a save actor from then on |
 | a held prop | the holder | a per-frame stream under a generation the grab mints; the release carries the velocity and the frozen and sleep flags, and closes the generation |
 | a thrown prop after release | each peer's physics, from the same velocity | no stream in flight |
 | a prop a hook drags, and one still sliding after the hook lets go | the host | a per-tick stream while it moves; the end edge hands the velocity back |
@@ -311,9 +276,7 @@ edge that reaches a joiner before the prop it names is kept until the prop resol
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
-| The deployables other than the hook and the rope (nail gun, wall builder, explosives, fishing rod, physgun) are not synced; a nail or a wall placed by one peer reaches the others only through the save at their next join | `[V]` no lane under `coop/props` catches them |
 | A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it |
-| A client's hook into the ATV ties the host's ATV against the client's puppet; whether the ATV lane's corrector carries that pull back to the client's copy is not measured | `[?]` `coop/items/hook_constraint` ties any keyed actor the bite resolves; `coop/interactables/atv_sync` corrects rather than parks |
 | A prop the driven-prop channel set coasting can come to rest a few centimetres from the host's copy: the host ends a coasting stream half a second after the prop stops moving, before its body sleeps, and the end edge sets the client's copy to the host's pose and hands it back its physics, so each copy settles on its own. The broom drill measured 0 to 6.4 cm, and 12.1 cm for a prop whose support another prop knocked away on the host | `[V]` `coop/props/prop_drive_host` (`kRestMs`), `coop/props/prop_drive_stream` (the end edge restores simulation per `coop/props/prop_wire_parity`); the broom drill's push and dispense phases |
 | A prop that a pushed prop knocks moves on the host only: the driven-prop channel is fed by verbs, and a knock is none. One drill run measured a knocked prop moving 25.1 cm on the host and resting 15.9 cm from the client's copy | `[V]` the broom drill's push phases (`harness/autotest/autotest_broomstroke.cpp`); `coop/items/broom_push` streams only what a stroke itself pushed |
 | A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks with `DriveSimulate(mesh, false)`; `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |

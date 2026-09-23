@@ -257,6 +257,7 @@ docs/**
 !docs/status.md
 !docs/votv-ui-style.md
 !docs/devices.md
+!docs/deployables.md
 !docs/events-and-weather.md
 !docs/join.md
 !docs/master-server.md

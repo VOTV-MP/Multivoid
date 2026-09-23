@@ -55,7 +55,8 @@ messages, the late-join answer, the known limits with their evidence, and the co
 |---|---|
 | [join.md](join.md) | Joining a game: admission, the save transfer, the connect replay, the join window, and the late-join rule every lane answers |
 | [players.md](players.md) | The remote player: the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation |
-| [props.md](props.md) | Props: identity, the birth and death seams, holding and throwing, containers, the props that change on their own, the deployables |
+| [props.md](props.md) | Props: identity, the birth and death seams, holding and throwing, containers, the props that change on their own |
+| [deployables.md](deployables.md) | The tools that leave an actor behind: the grappling hook and rope, the owner's stream, the anchor handoff, the tie that lives on the host |
 | [piles.md](piles.md) | Trash piles: the host's id across pile and clump, the client's grab as an intent, the dispenser piles |
 | [npcs-and-kerfur.md](npcs-and-kerfur.md) | Host-owned characters, the creatures each peer owns, the killer wisp, the roaches, and the kerfur robot across its two forms |
 | [events-and-weather.md](events-and-weather.md) | The clock, the weather, who rolls, the story events and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task |
