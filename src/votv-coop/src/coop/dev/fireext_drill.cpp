@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "coop/net/session.h"
+#include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "coop/props/prop_snapshot.h"
@@ -76,6 +77,7 @@ constexpr float kWatchMoveCm    = 3.f;
 constexpr float kRouteEndReachCm = 160.f; // a route that ends further from the wall reaches no mount
 constexpr float kProbeOffCm     = 50.f;   // the carried copy is off its mount before the probe runs
 constexpr int   kProbeReadTicks = 3;      // the drive's tick has run between the verb and this read
+constexpr int   kStaleTailTicks = 30;     // the short arm's late poses of the closed hold
 
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
@@ -232,6 +234,36 @@ std::wstring g_targetKey;
 ue_wrap::FVector g_mountPos{};
 int g_stepTicks = 0;
 int g_aimPose = 0;
+
+// ---- The stale tail: the short arm's second measurement, on the host ----------------------------
+
+// For a moment after the drop the host sends its last pose again under the hold its release just
+// closed: the tail a slow network delivers after a release, made long and certain. Every receiver
+// must drop it (the hold is closed) and leave its copy to its own physics; the watch shows whether
+// one was pulled back.
+uint16_t g_staleGen = 0;
+
+void SendStaleTail(coop::net::Session& s, void* t, int tick) {
+    if (tick > kStaleTailTicks) return;
+    if (tick == 1) {
+        g_staleGen = coop::local_streams::CurrentHoldGen();
+        UE_LOGI("[FIREEXT-DRILL] [%c] STALE TAIL: re-sending hold %u's pose after its release, %d ticks",
+                Who(), static_cast<unsigned>(g_staleGen), kStaleTailTicks);
+    }
+    if (tick == kStaleTailTicks || !t) {
+        s.SetLocalPropPose(false, {});
+        return;
+    }
+    coop::net::PropPoseSnapshot pp{};
+    for (size_t i = 0; i < g_targetKey.size() && pp.key.len < 31; ++i)
+        pp.key.data[pp.key.len++] = static_cast<char>(g_targetKey[i]);
+    pp.holdGen = g_staleGen;
+    const ue_wrap::FVector loc = E::GetActorLocation(t);
+    const ue_wrap::FRotator rot = E::GetActorRotation(t);
+    pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+    pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
+    s.SetLocalPropPose(true, pp);
+}
 
 // The aim fan, nearest pose first: the extinguisher's origin, then offsets of growing size.
 const std::vector<std::pair<int, int>>& AimFan() {
@@ -470,6 +502,7 @@ void ActStep(coop::net::Session& s, void* player) {
         return;
     case Step::Rest: {
         void* t = g_target.Get();
+        if (ArmOf() == Arm::Short) SendStaleTail(s, t, g_stepTicks);
         const bool rested = t && g_stepTicks > 30 && E::IsActorRootBodyAtRest(t);
         if (!rested && g_stepTicks < kRestMaxTicks) return;
         LogTarget(rested ? "RESTED" : "NOT AT REST after the wait");

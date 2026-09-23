@@ -385,9 +385,10 @@ CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|j
     "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "
     "chain. carry: the host carries it a few metres once a client's join is over, and the client runs "
     "the laptop exit's setPropProps on its carried copy once, which the drive must re-latch. short: "
-    "the host lets go the moment it holds it. client: the client carries it and the host watches. join: the "
-    "host takes it off while a joiner is still loading. Both peers print every extinguisher they "
-    "have and every move of one.")
+    "the host lets go the moment it holds it, then re-sends the closed hold's pose for a moment, which "
+    "every receiver must drop. client: the client carries it and the host watches. join: the host "
+    "takes it off while a joiner is still loading. Both peers print every extinguisher they have and "
+    "every move of one.")
 CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "
