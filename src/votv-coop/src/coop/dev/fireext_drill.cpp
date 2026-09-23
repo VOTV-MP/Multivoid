@@ -73,6 +73,7 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool frozen = false, mounted = false, gone = false;
+    bool thrusting = false, spraying = false;  // a drop hard enough starts the runaway thrust
 };
 std::vector<Watched> g_watched;
 std::vector<ue_wrap::CachedObjRef> g_mounts;
@@ -133,12 +134,20 @@ void TickWatch(char who) {
         const ue_wrap::FVector at = E::GetActorLocation(o);
         const bool frozen = PR::IsFrozen(o);
         const bool mounted = IsMounted(o);
-        if (Dist(at, w.printed) < kWatchMoveCm && frozen == w.frozen && mounted == w.mounted) continue;
+        bool thrusting = false, spraying = false;
+        FX::ReadThrusting(o, thrusting);
+        FX::ReadSpraying(o, spraying);
+        if (Dist(at, w.printed) < kWatchMoveCm && frozen == w.frozen && mounted == w.mounted &&
+            thrusting == w.thrusting && spraying == w.spraying)
+            continue;
         w.printed = at;
         w.frozen = frozen;
         w.mounted = mounted;
-        UE_LOGI("[FIREEXT-DRILL] [%c] key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm frozen=%d mounted=%d",
-                who, w.key.c_str(), at.X, at.Y, at.Z, Dist(at, w.start), frozen ? 1 : 0, mounted ? 1 : 0);
+        w.thrusting = thrusting;
+        w.spraying = spraying;
+        UE_LOGI("[FIREEXT-DRILL] [%c] key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm frozen=%d mounted=%d "
+                "thrusting=%d spraying=%d", who, w.key.c_str(), at.X, at.Y, at.Z, Dist(at, w.start),
+                frozen ? 1 : 0, mounted ? 1 : 0, thrusting ? 1 : 0, spraying ? 1 : 0);
     }
 }
 

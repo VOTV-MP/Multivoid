@@ -10,7 +10,8 @@
 // refused step prints `INVALID` with its reason.
 //
 // The watch is the evidence: at its join's end each peer prints every extinguisher it has, and
-// again whenever one moves or its frozen or mounted bit changes, so the two logs name one key.
+// again whenever one moves or its frozen, mounted, thrusting or spraying bit changes, so the two
+// logs name one key.
 
 #pragma once
 
