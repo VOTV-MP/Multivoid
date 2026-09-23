@@ -4,5 +4,6 @@ pub mod common;
 pub mod http_transport;
 pub mod lobby;
 pub mod master_config;
+pub mod registration;
 pub mod thanks;
 pub mod tls;

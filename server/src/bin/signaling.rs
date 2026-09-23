@@ -59,9 +59,8 @@
 //! sender, and memory per destination is bounded by the channel capacity.
 
 use coop_server::admission::{Pool, Slot};
-use coop_server::common::{
-    clamp_str, ct_eq, env_int, env_str, hex_to_bytes, identity_shape_ok, log, token_hex,
-};
+use coop_server::common::{clamp_str, ct_eq, env_int, env_str, identity_shape_ok, log, token_hex};
+use coop_server::registration::check_registration_proof;
 use coop_server::tls;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -104,18 +103,6 @@ const MAX_IDENTITY: usize = 80;
 const RELAY_QUEUE: usize = 64;
 const MAX_RELAY_PAYLOAD: usize = 8 * 1024;
 const MAX_QUEUED_PER_DEST: usize = 128 * 1024;
-// Domain tag for the registration proof. Deliberately DIFFERENT from the admission
-// exchange's `multivoid-peer-admission-v1`: both are signed with the peer's one
-// durable key, and the separation is what stops a hostile relay -- which chooses
-// the nonce -- from steering a client into producing a signature that would also
-// be a valid admission proof. Since the two tags differ in their first bytes, no
-// choice of nonce can make one blob equal the other.
-//
-// The blob is tag ‖ identity ‖ nonce with no separators or lengths, which is
-// unambiguous by construction rather than by convention: `identity_shape_ok`
-// accepts exactly 68 characters and the nonce is exactly 64, so no two distinct
-// (identity, nonce) pairs can produce the same bytes.
-const REGISTER_TAG: &[u8] = b"multivoid-signaling-register-v1";
 
 static TOKEN: LazyLock<String> = LazyLock::new(|| env_str("COOP_SIGNALING_TOKEN", ""));
 static CLIENTS: LazyLock<Mutex<HashMap<String, Route>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -223,28 +210,6 @@ impl Drop for Reg {
             log(&format!("[{}@{}] disconnected", self.identity, self.ip));
         }
     }
-}
-
-/// The registration proof's whole DECISION, split from its I/O so it can be
-/// exercised with known-answer vectors. A gate whose only exercise is a live
-/// drill is one nobody has ever watched REFUSE, and that is indistinguishable
-/// from `Ok(())` -- so the negatives below are the test, not the positive.
-///
-/// `ident` must already have passed `identity_shape_ok`; `nonce` is the 64-hex
-/// value this connection was just sent, which is what makes a recorded proof
-/// useless against the next one.
-fn check_registration_proof(ident: &str, nonce: &str, auth_line: &str) -> Result<(), &'static str> {
-    let hex = ident.strip_prefix("gen:").ok_or("not a key identity")?;
-    let pubkey = hex_to_bytes::<32>(hex).ok_or("key identity did not decode")?;
-    let sig_hex = auth_line.trim().strip_prefix("auth ").ok_or("expected an auth line")?;
-    let sig = hex_to_bytes::<64>(sig_hex).ok_or("malformed proof")?;
-    let mut blob = Vec::with_capacity(REGISTER_TAG.len() + ident.len() + nonce.len());
-    blob.extend_from_slice(REGISTER_TAG);
-    blob.extend_from_slice(ident.as_bytes());
-    blob.extend_from_slice(nonce.as_bytes());
-    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &pubkey)
-        .verify(&blob, &sig)
-        .map_err(|_| "does not hold the key this identity names")
 }
 
 /// Run one connection, admitted at accept into the pre-auth pool: greet, prove, promote
@@ -649,94 +614,23 @@ mod admission_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_registration_proof, REGISTER_TAG};
-    use coop_server::common::identity_shape_ok;
+    use coop_server::registration::blob;
     use ring::rand::SystemRandom;
     use ring::signature::{Ed25519KeyPair, KeyPair};
 
-    /// A peer: its `gen:` identity and the key behind it. Built from a REAL
-    /// keypair rather than fixed bytes so the positive arm exercises the same
-    /// path a live client does.
-    struct Peer {
-        ident: String,
-        kp: Ed25519KeyPair,
-    }
-
-    fn peer() -> Peer {
-        let rng = SystemRandom::new();
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+    /// A throwaway key and the `gen:` identity it names.
+    fn peer() -> (String, Ed25519KeyPair) {
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
         let kp = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
-        let mut ident = String::from("gen:");
-        for b in kp.public_key().as_ref() {
-            ident.push_str(&format!("{b:02x}"));
-        }
-        Peer { ident, kp }
+        let ident: String =
+            std::iter::once("gen:".to_string()).chain(kp.public_key().as_ref().iter().map(|b| format!("{b:02x}"))).collect();
+        (ident, kp)
     }
 
-    /// Sign `ident ‖ nonce` under the register tag and render the wire line.
-    /// `as_ident` is what goes INTO the blob, which is how the squat arm makes a
-    /// signature that names one identity while being offered under another.
-    fn auth_line(p: &Peer, as_ident: &str, nonce: &str) -> String {
-        let mut blob = Vec::new();
-        blob.extend_from_slice(REGISTER_TAG);
-        blob.extend_from_slice(as_ident.as_bytes());
-        blob.extend_from_slice(nonce.as_bytes());
-        let sig = p.kp.sign(&blob);
-        let mut out = String::from("auth ");
-        for b in sig.as_ref() {
-            out.push_str(&format!("{b:02x}"));
-        }
-        out
-    }
-
-    const N1: &str = "1111111111111111111111111111111111111111111111111111111111111111";
-    const N2: &str = "2222222222222222222222222222222222222222222222222222222222222222";
-
-    #[test]
-    fn a_real_holder_registers() {
-        let p = peer();
-        assert!(
-            identity_shape_ok(&p.ident),
-            "the generated identity is not the shape the server gates on"
-        );
-        assert!(check_registration_proof(&p.ident, N1, &auth_line(&p, &p.ident, N1)).is_ok());
-    }
-
-    #[test]
-    fn the_ways_to_not_hold_the_key_are_all_refused() {
-        let victim = peer();
-        let attacker = peer();
-        assert_ne!(
-            victim.ident, attacker.ident,
-            "two peers minted the SAME identity -- every arm below would prove nothing"
-        );
-
-        // 1. SQUAT -- exactly A59: sign with your own key, register as someone
-        //    else. The attacker signs a blob naming the VICTIM, which is the
-        //    strongest form (a blob naming itself would never be offered).
-        assert!(
-            check_registration_proof(&victim.ident, N1, &auth_line(&attacker, &victim.ident, N1))
-                .is_err()
-        );
-
-        // 2. REPLAY -- a proof recorded from an earlier connection, whose nonce
-        //    this one never issued.
-        assert!(
-            check_registration_proof(&victim.ident, N2, &auth_line(&victim, &victim.ident, N1))
-                .is_err()
-        );
-
-        // 3. NO PROOF -- not an auth line at all (what a peer that skips the step
-        //    produces, and what a relayed peer line would look like).
-        assert!(check_registration_proof(&victim.ident, N1, "gen:dead beef").is_err());
-        assert!(check_registration_proof(&victim.ident, N1, "").is_err());
-
-        // 4. MALFORMED -- right verb, wrong bytes. Uppercase is its own case: the
-        //    identity alphabet is lowercase-only for a measured reason, and the
-        //    proof must not be laxer than the name it proves.
-        let good = auth_line(&victim, &victim.ident, N1);
-        assert!(check_registration_proof(&victim.ident, N1, &good[..good.len() - 2]).is_err());
-        assert!(check_registration_proof(&victim.ident, N1, &good.to_uppercase()).is_err());
+    /// The proof line `kp` signs for `ident` and the relay's `nonce`.
+    fn auth_line(kp: &Ed25519KeyPair, ident: &str, nonce: &str) -> String {
+        let sig = kp.sign(&blob(ident, nonce));
+        std::iter::once("auth ".to_string()).chain(sig.as_ref().iter().map(|b| format!("{b:02x}"))).collect()
     }
 
     /// Poll `cond` for up to three seconds: the relay moves the slots on its own task.
@@ -798,16 +692,16 @@ mod tests {
         let addr = l.local_addr().unwrap();
         tokio::spawn(serve_plain(l, &PENDING, Duration::from_secs(10)));
 
-        let p = peer();
+        let (ident, kp) = peer();
         let (rd, mut wr) = TcpStream::connect(addr).await.unwrap().into_split();
         let mut rd = BufReader::new(rd);
-        wr.write_all(format!("test-token {}\n", p.ident).as_bytes()).await.unwrap();
+        wr.write_all(format!("test-token {ident}\n").as_bytes()).await.unwrap();
         let mut nonce = String::new();
         rd.read_line(&mut nonce).await.unwrap();
         let nonce = nonce.trim().strip_prefix("nonce ").expect("no nonce line").to_string();
-        wr.write_all(format!("{}\n", auth_line(&p, &p.ident, &nonce)).as_bytes()).await.unwrap();
+        wr.write_all(format!("{}\n", auth_line(&kp, &ident, &nonce)).as_bytes()).await.unwrap();
 
-        let routed = || CLIENTS.lock().unwrap().contains_key(&p.ident);
+        let routed = || CLIENTS.lock().unwrap().contains_key(&ident);
         wait_for("the registration's route, one authed slot and no pre-auth slot", || {
             routed() && AUTHED.held_by("127.0.0.1") == 1 && PENDING.held() == 0
         })
@@ -817,15 +711,5 @@ mod tests {
             !routed() && AUTHED.held_by("127.0.0.1") == 0
         })
         .await;
-    }
-
-    #[test]
-    fn one_flipped_bit_is_refused() {
-        // The arm that fails if verification is ever reduced to a length check.
-        let p = peer();
-        let mut line = auth_line(&p, &p.ident, N1).into_bytes();
-        let last = line.len() - 1;
-        line[last] = if line[last] == b'0' { b'1' } else { b'0' };
-        assert!(check_registration_proof(&p.ident, N1, &String::from_utf8(line).unwrap()).is_err());
     }
 }
