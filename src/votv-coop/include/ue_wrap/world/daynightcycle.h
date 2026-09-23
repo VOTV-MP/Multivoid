@@ -33,10 +33,6 @@ void* Cycle();
 // before the tick reads the clock. Null until EnsureResolved has succeeded. Game thread.
 void* TickFunction();
 
-// The cycle a tick is dispatching on, handed in by such an observer: it becomes the cached
-// singleton at once, so a new world's first tick needs no object-array walk. Game thread.
-void NoteCycle(void* cycle);
-
 // The save slot of the gamemode a given cycle belongs to, by its own `gamemode` member: no walk, so
 // a tick observer may call it every frame. Null while anything on the way is unresolved or dead.
 // Game thread.
@@ -45,17 +41,22 @@ void* SaveSlotOfCycle(void* cycle);
 // Read the cycle's clock into the outs. False if the cycle / offsets are not resolved
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);
+// The same on a given cycle, for a caller the engine has just handed one (a tick observer's own
+// `self`): no cached singleton, so no world-memo lag and no walk. False if `cycle` is null.
+bool ReadClockOf(void* cycle, float& totalTime, float& day, float& timeScale);
 
 // Read maxTime -- the length of ONE day in `day` units; the within-day clock runs [0, maxTime)
 // and wraps at the midnight roll. Lets a caller map a time-of-day FRACTION (0..1) onto a `day`
 // value, which is how the named clock reads it. The SUN is that fraction plus a mode-dependent
 // offset, so it is not the same angle. False if unresolved. Game thread.
 bool ReadMaxTime(float& maxTime);
+bool ReadMaxTimeOf(void* cycle, float& maxTime);  // on a given cycle, as ReadClockOf
 
 // Overwrite the cycle's two accumulators by direct field write, totalTime and day, as loadtime
 // writes them but without its skipDaySet test. The cycle re-derives the sun from `day`, and its
 // next tick rebuilds the named clock from it. No-op if unresolved. Game thread.
 void ApplyClock(float totalTime, float day);
+void ApplyClockOf(void* cycle, float totalTime, float day);  // on a given cycle, as ReadClockOf
 
 // ---- the NAMED clock: `timeZ` (FIntVector: X=hour, Y=minute, Z=day number) ----
 // The game's own running triple, and derived: the cycle rebuilds it every tick -- hour and minute
@@ -72,11 +73,14 @@ bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day);
 // rewrites the whole triple whenever the hour or the minute moves. False until the gamemode and
 // its saveSlot resolve. Game thread.
 bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day);
+// The same in a given save slot (SaveSlotOfCycle's): no gamemode lookup. False if `saveSlot` is null.
+bool ReadSavedTimeOf(void* saveSlot, int32_t& hour, int32_t& minute, int32_t& day);
 
 // Write the day number, savedtime.Z, alone: the hour and minute stay settime's, so the next tick
 // sees them move and raises its pulses as it would for any clock change. A raw write, as the day
 // roll's own increment is. False until the saveSlot resolves. Game thread.
 bool WriteSavedDay(int32_t day);
+bool WriteSavedDayOf(void* saveSlot, int32_t day);  // in a given save slot, as ReadSavedTimeOf
 
 // The cycle's rate inputs, read-only, for instruments. Outside realtime mode each tick adds
 // deltaSeconds * timeScale * diffMult * settingMultiplayer * sleepingTimeDilation to `day`; in
@@ -101,11 +105,12 @@ bool ReadRates(Rates& out);
 // Write timeScale alone: 0 to park a client's clock, 1.0f -- the game's own running value, the
 // one its rewind restores after the hour it spends at -1 -- to hand it back. No-op if unresolved.
 void WriteTimeScale(float scale);
+void WriteTimeScaleOf(void* cycle, float scale);  // on a given cycle, as ReadClockOf
 
-// saveSlot.dailyDelivery := true -- the game's OWN 6am-order latch (its only
-// writers are the suppressed midnight reset and the order placement itself,
-// so one write holds for the session). Called with every clock correction;
-// cheap (cached offsets + one bool write). False until saveSlot resolves.
-bool LatchDailyDelivery();
+// saveSlot.dailyDelivery := true in a given save slot -- the game's OWN 6am-order latch (its only
+// writers are the suppressed midnight reset and the order placement itself, so one write holds for
+// the session). Called with every clock correction; cheap (a cached offset and one bool write).
+// False if `saveSlot` is null or the field is unresolved.
+bool LatchDailyDeliveryOf(void* saveSlot);
 
 }  // namespace ue_wrap::daynightcycle

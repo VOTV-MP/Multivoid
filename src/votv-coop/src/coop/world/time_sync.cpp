@@ -5,6 +5,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/world/daynightcycle.h"
@@ -35,10 +36,10 @@ constexpr auto   kRestInterval = std::chrono::milliseconds(500);
 double g_sentAbs = -1.0;
 Clock::time_point g_sentAt{};
 
-// CLIENT, game thread. Whether we hold the cycle's time scale (it is handed back on disconnect), the
-// last applied absolute clock that a backward step is measured against, and the counts behind the
-// rate-limited lines.
-bool     g_held = false;
+// CLIENT, game thread. The cycle whose time scale we hold -- each world brings its own, and the one
+// held last is handed back on disconnect -- the last applied absolute clock that a backward step is
+// measured against, and the counts behind the rate-limited lines.
+ue_wrap::CachedObjRef g_heldCycle;
 double   g_lastAbs = -1.0;
 uint32_t g_backSteps = 0;
 uint32_t g_scaleOverrides = 0;
@@ -70,33 +71,37 @@ bool MakePayload(coop::net::TimeSyncPayload& out, double& absOut, float& maxTime
     return true;
 }
 
-// CLIENT: park the cycle's clock. A game writer on this machine -- the cheat menu, the purple wisp's
-// rewind, the ending -- is overwritten before the cycle's next tick reads it, and named.
-void HoldTimeScale() {
+// CLIENT: park the ticked cycle's clock. Its first tick under the session parks it -- a new world's
+// cycle starts at the game's own rate -- and after that a game writer on this machine, the cheat
+// menu or the purple wisp's rewind, is overwritten before the tick reads it, and named.
+void HoldTimeScale(void* cycle) {
     float t = 0, d = 0, s = 0;
-    if (!DNC::ReadClock(t, d, s) || s == 0.f) return;
-    DNC::WriteTimeScale(0.f);
-    if (!g_held) {
-        g_held = true;
+    if (!DNC::ReadClockOf(cycle, t, d, s)) return;
+    if (!g_heldCycle.Is(cycle)) {
+        g_heldCycle.Set(cycle);
+        if (s != 0.f) DNC::WriteTimeScaleOf(cycle, 0.f);
         UE_LOGI("time_sync: client clock parked (time scale %.2f -> 0; the host's samples move it)", s);
         return;
     }
+    if (s == 0.f) return;
+    DNC::WriteTimeScaleOf(cycle, 0.f);
     const uint32_t n = ++g_scaleOverrides;
     if (n <= 5 || (n % 50) == 0)
         UE_LOGW("time_sync: the client's clock rate was set to %.2f on this machine -- held at 0, the host owns "
                 "the clock (#%u)", s, n);
 }
 
-// CLIENT: write one host sample into the parked cycle. The day number is written only when it moved,
-// and never the hour and minute: those are the client's settime's, so its pulses fire as the host's
-// samples cross each minute.
-void ApplyClockSnapshot(const coop::net::TimeSyncPayload& p) {
-    DNC::ApplyClock(p.totalTime, p.day);
+// CLIENT: write one host sample into the parked cycle and its own save slot. The day number is
+// written only when it moved, and never the hour and minute: those are the client's settime's, so
+// its pulses fire as the host's samples cross each minute.
+void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p) {
+    DNC::ApplyClockOf(cycle, p.totalTime, p.day);
+    void* slot = DNC::SaveSlotOfCycle(cycle);
     int32_t sh = 0, sm = 0, sz = 0;
-    if (DNC::ReadSavedTime(sh, sm, sz) && sz != p.dayZ && DNC::WriteSavedDay(p.dayZ))
+    if (DNC::ReadSavedTimeOf(slot, sh, sm, sz) && sz != p.dayZ && DNC::WriteSavedDayOf(slot, p.dayZ))
         UE_LOGI("time_sync: day number %d -> %d, the host's", sz, p.dayZ);
     float maxT = 0.f;
-    if (DNC::ReadMaxTime(maxT) && maxT > 0.f) {
+    if (DNC::ReadMaxTimeOf(cycle, maxT) && maxT > 0.f) {
         const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
         if (g_lastAbs >= 0.0 && abs < g_lastAbs) {
             const uint32_t n = ++g_backSteps;
@@ -109,17 +114,16 @@ void ApplyClockSnapshot(const coop::net::TimeSyncPayload& p) {
     g_lastHostDayZ.store(p.dayZ, std::memory_order_release);
     // The 6 am order latch: func_newHour still runs on the client's pulse, and the game's own reset
     // of the flag is part of the midnight the client no longer rolls; a save load could reset it.
-    DNC::LatchDailyDelivery();
+    DNC::LatchDailyDeliveryOf(slot);
 }
 
-// CLIENT: the cycle is about to tick. Park it and write the newest host sample, so the tick reads the
-// host's clock and a zero rate every time, the first tick of a new world included.
+// CLIENT: the cycle is about to tick. Park it and write the newest host sample into it, so the tick
+// reads the host's clock and a zero rate every time, the first tick of a new world included.
 void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
-    DNC::NoteCycle(self);
-    HoldTimeScale();
+    HoldTimeScale(self);
     coop::net::TimeSyncPayload p{};
     bool isNew = false;
     if (!s->TryGetHostClock(p, &isNew) || !isNew) return;
@@ -130,7 +134,7 @@ void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
                     p.totalTime, p.day, p.dayZ, n);
         return;
     }
-    ApplyClockSnapshot(p);
+    ApplyClockSnapshot(self, p);
     ++g_appliedSince;
     const auto now = Clock::now();
     if (now >= g_nextStreamLine) {  // confirms convergence and the stream's rate, every 10 s
@@ -189,13 +193,13 @@ void OnDisconnect() {
     g_lastAbs = -1.0;
     g_backSteps = g_scaleOverrides = g_malformed = g_appliedSince = 0;
     g_nextStreamLine = Clock::time_point{};
-    if (g_held) {
+    if (void* cycle = g_heldCycle.Get()) {
         // Hand the clock back: 1.0 is the game's own running value, the one its rewind restores. The
         // day runs on from the last sample, and the delivery latch self-heals at the next midnight.
-        g_held = false;
-        DNC::WriteTimeScale(1.0f);
+        DNC::WriteTimeScaleOf(cycle, 1.0f);
         UE_LOGI("time_sync: restore -- client time scale back to 1.0");
     }
+    g_heldCycle.Reset();
 }
 
 }  // namespace coop::time_sync

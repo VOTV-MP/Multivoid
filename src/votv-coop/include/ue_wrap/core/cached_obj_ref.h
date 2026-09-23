@@ -74,6 +74,15 @@ public:
         return true;
     }
 
+    // Whether `p`, which the engine has just handed the caller (a tick's own `self`), is the object
+    // cached at Set: the same pointer, its slot still live with the serial captured then. The world
+    // term is left out: the current world memoises on its timer, so for a moment after a world
+    // change Alive answers no for the new world's actors, while an object held fresh needs only its
+    // identity.
+    bool Is(void* p) const {
+        return p && p == ptr_ && reflection::IsLiveByIndex(ptr_, idx_) &&
+               reflection::SlotSerial(idx_) == serial_;
+    }
     // The world stamped at Set, or null for a non-world-scoped object. A comparison token, never
     // dereferenced; exposed for the world-currency drill.
     void* StampedWorld() const { return world_; }
