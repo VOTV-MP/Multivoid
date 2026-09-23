@@ -38,14 +38,16 @@ double g_sentAbs = -1.0;
 Clock::time_point g_sentAt{};
 
 // CLIENT, game thread. The cycle whose time scale we hold -- each world brings its own, and the one
-// held last is handed back on disconnect -- the last applied absolute clock, the backward run in
-// progress against it, and the counts behind the rate-limited lines.
+// held last is handed back on disconnect -- the last applied sample, which the parked cycle presents
+// at every tick, the backward run in progress against it, and the counts behind the rate-limited
+// lines.
 ue_wrap::CachedObjRef g_heldCycle;
-bool     g_haveLastAbs = false;
-double   g_lastAbs = 0.0;
+bool     g_haveHeld = false;
+coop::net::TimeSyncPayload g_held{};
 uint32_t g_backRun = 0;         // consecutive samples that stepped back
 double   g_backRunUnits = 0.0;  // and how far, in all
 uint32_t g_scaleOverrides = 0;
+uint32_t g_clockOverrides = 0;
 uint32_t g_malformed = 0;
 uint32_t g_appliedSince = 0;  // samples since the last convergence line, which reports them every 10 s
 Clock::time_point g_nextStreamLine{};
@@ -76,22 +78,42 @@ bool MakePayload(coop::net::TimeSyncPayload& out, double& absOut, float& maxTime
 
 // CLIENT: park the ticked cycle's clock. Its first tick under the session parks it -- a new world's
 // cycle starts at the game's own rate -- and after that a game writer on this machine, the cheat
-// menu or the purple wisp's rewind, is overwritten before the tick reads it, and named.
-void HoldTimeScale(void* cycle) {
-    float t = 0, d = 0, s = 0;
-    if (!DNC::ReadClockOf(cycle, t, d, s)) return;
+// menu or the purple wisp's rewind, is overwritten before the tick reads it, and named. True on the
+// tick that parked a new cycle.
+bool HoldTimeScale(void* cycle, float s) {
     if (!g_heldCycle.Is(cycle)) {
         g_heldCycle.Set(cycle);
         if (s != 0.f) DNC::WriteTimeScaleOf(cycle, 0.f);
         UE_LOGI("time_sync: client clock parked (time scale %.2f -> 0; the host's samples move it)", s);
-        return;
+        return true;
     }
-    if (s == 0.f) return;
+    if (s == 0.f) return false;
     DNC::WriteTimeScaleOf(cycle, 0.f);
     const uint32_t n = ++g_scaleOverrides;
     if (n <= 5 || (n % 50) == 0)
         UE_LOGW("time_sync: the client's clock rate was set to %.2f on this machine -- held at 0, the host owns "
                 "the clock (#%u)", s, n);
+    return false;
+}
+
+// CLIENT: between samples, the parked cycle presents the last applied one. A write on this machine
+// since the last tick -- the cheat menu's day buttons, the halloween mode's reset of the day every
+// second -- is overwritten before the tick reads it, so the roll test never sees this machine's
+// `day`, and is named. A new world's cycle takes it at its park, unnamed: its clock is the save's.
+void HoldClock(void* cycle, float t, float d, bool parked) {
+    if (!g_haveHeld) return;
+    const bool clock = (t != g_held.totalTime || d != g_held.day);
+    if (clock) DNC::ApplyClockOf(cycle, g_held.totalTime, g_held.day);
+    void* slot = DNC::SaveSlotOfCycle(cycle);
+    int32_t sh = 0, sm = 0, sz = -1;
+    const bool dayNumber = DNC::ReadSavedTimeOf(slot, sh, sm, sz) && sz != g_held.dayZ &&
+                           DNC::WriteSavedDayOf(slot, g_held.dayZ);
+    if ((!clock && !dayNumber) || parked) return;
+    const uint32_t n = ++g_clockOverrides;
+    if (n <= 5 || (n % 50) == 0)
+        UE_LOGW("time_sync: the client's clock was written on this machine (day=%.2f totalTime=%.1f day number %d) "
+                "-- held at the host's last sample (day=%.2f day number %d), the host owns the clock (#%u)", d, t, sz,
+                g_held.day, g_held.dayZ, n);
 }
 
 // CLIENT: say a backward run once, when it ends. The host's rewind runs its clock back for an hour,
@@ -104,9 +126,9 @@ void EndBackRun() {
     g_backRunUnits = 0.0;
 }
 
-// CLIENT: write one host sample into the parked cycle and its own save slot. The day number is
-// written only when it moved, and never the hour and minute: those are the client's settime's, so
-// its pulses fire as the host's samples cross each minute.
+// CLIENT: write one host sample into the parked cycle and its own save slot, and hold it until the
+// next. The day number is written only when it moved, and never the hour and minute: those are the
+// client's settime's, so its pulses fire as the host's samples cross each minute.
 void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float maxT) {
     DNC::ApplyClockOf(cycle, p.totalTime, p.day);
     void* slot = DNC::SaveSlotOfCycle(cycle);
@@ -114,14 +136,15 @@ void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float 
     if (DNC::ReadSavedTimeOf(slot, sh, sm, sz) && sz != p.dayZ && DNC::WriteSavedDayOf(slot, p.dayZ))
         UE_LOGI("time_sync: day number %d -> %d, the host's", sz, p.dayZ);
     const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
-    if (g_haveLastAbs && abs < g_lastAbs) {
+    const double heldAbs = static_cast<double>(g_held.dayZ) * maxT + g_held.day;
+    if (g_haveHeld && abs < heldAbs) {
         ++g_backRun;
-        g_backRunUnits += g_lastAbs - abs;
+        g_backRunUnits += heldAbs - abs;
     } else {
         EndBackRun();
     }
-    g_lastAbs = abs;
-    g_haveLastAbs = true;
+    g_held = p;
+    g_haveHeld = true;
     g_lastHostDayZ.store(p.dayZ, std::memory_order_release);
     // The 6 am order latch: func_newHour still runs on the client's pulse, and the game's own reset
     // of the flag is part of the midnight the client no longer rolls; a save load could reset it.
@@ -129,15 +152,20 @@ void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float 
 }
 
 // CLIENT: the cycle is about to tick. Park it and write the newest host sample into it, if one has
-// arrived since the last was read: nothing reads the stream before a joined world's cycle does, so
-// that world's first tick reads the host's clock at a zero rate.
+// arrived since the last was read, or else hold the last: nothing reads the stream before a joined
+// world's cycle does, so that world's first tick reads the host's clock at a zero rate.
 void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
     if (!GT::IsGameThread() || !HoldsCycle(self)) return;
     auto* s = g_session.load(std::memory_order_acquire);  // set, since HoldsCycle answered yes
-    HoldTimeScale(self);
+    float t = 0, d = 0, rate = 0;
+    if (!DNC::ReadClockOf(self, t, d, rate)) return;
+    const bool parked = HoldTimeScale(self, rate);
     coop::net::TimeSyncPayload p{};
     bool isNew = false;
-    if (!s->TryGetHostClock(p, &isNew) || !isNew) return;
+    if (!s->TryGetHostClock(p, &isNew) || !isNew) {
+        HoldClock(self, t, d, parked);
+        return;
+    }
     // A `day` past the day's end would run this client's own midnight at the tick -- the game's roll
     // test is `day > maxTime` -- and the host wraps inside its own tick, so no sample it makes has one.
     float maxT = 0.f;
@@ -146,6 +174,7 @@ void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
         if (n <= 5 || (n % 100) == 0)
             UE_LOGW("time_sync: streamed clock out of range (t=%.1f d=%.1f day %d; the day ends at %.1f) -- "
                     "dropped (#%u)", p.totalTime, p.day, p.dayZ, maxT, n);
+        HoldClock(self, t, d, parked);
         return;
     }
     ApplyClockSnapshot(self, p, maxT);
@@ -210,8 +239,9 @@ void OnDisconnect() {
     g_sentAbs = -1.0;
     g_sentAt = Clock::time_point{};
     EndBackRun();
-    g_haveLastAbs = false;
-    g_scaleOverrides = g_malformed = g_appliedSince = 0;
+    g_haveHeld = false;
+    g_held = coop::net::TimeSyncPayload{};
+    g_scaleOverrides = g_clockOverrides = g_malformed = g_appliedSince = 0;
     g_nextStreamLine = Clock::time_point{};
     if (void* cycle = g_heldCycle.Get()) {
         // Hand the clock back: 1.0 is the game's own running value, the one its rewind restores. The

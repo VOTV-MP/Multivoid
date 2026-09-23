@@ -2,17 +2,17 @@
 // Owns the wire, the host's send decision and the client's parked cycle; reaches the engine only
 // through ue_wrap::daynightcycle. Weather is weather_sync's.
 // The host streams its cycle's two accumulators and its day number. The client's cycle is a parked
-// mirror: before each tick (a pre-observer on its own ReceiveTick) its rate is held at 0 and a newly
-// arrived sample written in, so its own advance never reaches a midnight -- a sample's `day` is below
-// maxTime, as the host wraps inside its tick. A local write of `day` between samples stands until the
-// next one: the cheat menu's day buttons can roll the client's own midnight at the tick between.
-// Its settime pulses run per machine; the weather births, the event walk and the 6 am order are held,
-// the sky eye, jellyfish, flesh rain, gifts and red sky's noon end still run per peer. MTA's server
-// keeps the anchor (reference/mtasa-blue/Server/mods/deathmatch/logic/CClock.cpp:35-42) and sends the
-// time and minute length at a join (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:444-455);
-// its client can freeze its clock (reference/mtasa-blue/Client/game_sa/CClockSA.cpp:34). A running
-// client clock here reaches its own midnight first, so the value streams: a sample per half game
-// minute of the host's clock, at least twice a second.
+// mirror: before each tick (a pre-observer on its own ReceiveTick) its rate is held at 0 and the host's
+// last applied sample written in, a newly arrived one or else the one before it again, so neither its
+// own advance nor a local write (the cheat menu's day buttons) reaches a midnight -- a sample's `day`
+// is below maxTime, as the host wraps inside its tick. Its settime pulses run per machine; the weather
+// births, the event walk and the 6 am order are held, the sky eye, jellyfish, flesh rain, gifts and red
+// sky's noon end still run per peer. MTA's server keeps the anchor
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CClock.cpp:35-42) and sends the time and minute
+// length at a join (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:444-455); its
+// client can freeze its clock (reference/mtasa-blue/Client/game_sa/CClockSA.cpp:34). A running client
+// clock here reaches its own midnight first, so the value streams: a sample per half game minute of
+// the host's clock, at least twice a second.
 
 #pragma once
 

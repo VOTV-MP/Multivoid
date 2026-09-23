@@ -15,11 +15,12 @@ client never rolls a shared outcome.
 The game's clock lives on one actor, the day-night cycle, and the sun is a pure function of it.
 The host streams its clock -- the within-day time, the absolute time and the day number. On a
 client, right before each tick of its world's cycle (the menu scene's own cycle is left alone), the
-lane holds the cycle's rate at zero and writes a newly arrived sample in, so the client's clock advances
-only with the host's and its own advance never reaches a midnight: the midnight's shared outputs
-(the dish hash codes, the daily task, the Bad Sun roll, the results mail) are the host's, and the
-host's midnight reaches a client as one sample carrying the next day number `[V]`
-(`coop/world/time_sync`). A sample is sent each time the host's clock has moved half a game minute,
+lane holds the cycle's rate at zero and writes the host's last sample in, a newly arrived one or
+else the last one again, so the client's clock advances only with the host's and neither its own
+advance nor a write on the client (its cheat menu's day buttons, which do nothing there) reaches a
+midnight: the midnight's shared outputs (the dish hash codes, the daily task, the Bad Sun roll, the
+results mail) are the host's, and the host's midnight reaches a client as one sample carrying the
+next day number `[V]` (`coop/world/time_sync`). A sample is sent each time the host's clock has moved half a game minute,
 and at least twice a second: every 500 ms at the normal speed, where a game minute holds about six,
 so a client's own minute and hour pulses, its sun, sounds, decals and weekday, follow the host's
 minute for minute `[RD]`; in the shared sleep (on [players.md](players.md)) one comes about every
@@ -179,7 +180,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
 | The sky eye, the jellyfish and the flesh rain are rolled by every peer's own hour pulse, and none of them is mirrored | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
-| A client's cheat-menu day buttons (a day forward, or two hours after 22:00) still roll that client's own midnight at its next tick, unless a host sample lands first: the hold covers the clock's rate, and a written time stands until the next sample | `[RD]` the cheat menu's writes and the cycle's roll test |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither refused on a client nor mirrored from the host, so each peer rolls its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses" |
