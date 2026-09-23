@@ -63,6 +63,7 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 // The shared physics and collision helpers (prop_wire_parity) under local names.
+using coop::prop_wire_parity::ConvergeFrozenSleep;
 using coop::prop_wire_parity::ReconcileToHostPhysics;
 using coop::prop_wire_parity::RestoreCollisionIfNeeded;
 using coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge;
@@ -326,6 +327,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // reconcile here made every bound prop ungrabbable until a host grab.
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- already aligned (d=%.2fcm), skipping teleport (no physics wake)",
                     keyW.c_str(), existing, std::sqrt(dx * dx + dy * dy + dz * dz));
+            // Its frozen and sleep still converge where they differ: a prop the host froze or woke in
+            // place after the blob was cut. The game's own verb, which wakes nothing that agrees.
+            ConvergeFrozenSleep(existing, payload.physFlags);
         } else {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm), converging transform to host (loc=(%.1f,%.1f,%.1f))",
                     keyW.c_str(), existing, std::sqrt(dx * dx + dy * dy + dz * dz),
@@ -338,6 +342,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
             ue_wrap::engine::SetActorRotation(existing,
                 ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+            // The host's frozen and sleep after the move (the extinguisher it took off a mount is no
+            // longer frozen there), then the simulate state the flags give.
+            ConvergeFrozenSleep(existing, payload.physFlags);
             RestoreSpParityPhysicsAfterConverge(existing, payload.physFlags);
         }
         // The client's copy may have come through spawnedNaturally() in its own spawner, leaving
@@ -453,6 +460,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(fuzzy,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        ConvergeFrozenSleep(fuzzy, payload.physFlags);
         RestoreSpParityPhysicsAfterConverge(fuzzy, payload.physFlags);
         // Rekey the matched actor to the wire Key: it otherwise keeps its client-local Key while
         // the host's PropPose carries the wire one, and the host's grab and move stream would be

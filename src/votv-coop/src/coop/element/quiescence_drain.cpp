@@ -10,6 +10,7 @@
 #include "coop/element/registry.h"             // Registry
 #include "coop/props/prop_element_tracker.h"   // IsBoundMirrorNative, InPurgeEpisode
 #include "coop/props/remote_prop.h"            // TryApplyDestroy, KeyToWString, IsActorUnderAnyDrive
+#include "coop/props/prop_wire_parity.h"       // ConvergeFrozenSleep, a keyed prop's corrected state
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced
 #include "coop/props/save_identity_bind.h"     // BindUnboundReCreates
 #include "coop/player/players_registry.h"      // Local
@@ -73,8 +74,13 @@ constexpr int kMaxTwinPasses = 40;
 // sweep once the bind has registered the native; keyed by host eid, the latest wins. Bounded: a
 // correction whose eid never binds must not retry forever, since a pinned HasPendingWork runs
 // the full-array reconcile at 4 Hz in perpetuity. The identity re-bind is what makes the eid
-// bindable; the cap is the terminalisation.
-struct PendingPosCorrection { float x, y, z, pitch, yaw, roll; int unresolvedPasses = 0; };
+// bindable; the cap is the terminalisation. `physFlags` is the host's state for a keyed prop
+// (without kLiveState for a pile, or for a re-arm that has no state to give).
+struct PendingPosCorrection {
+    float x, y, z, pitch, yaw, roll;
+    uint8_t physFlags = 0;
+    int unresolvedPasses = 0;
+};
 std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
 constexpr int kMaxPosCorrectionPasses = 40;  // about 10 s at the 250 ms debounce
 
@@ -343,12 +349,12 @@ void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& old
 }
 
 void ArmPendingPosCorrection(coop::element::ElementId eid,
-                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t physFlags) {
     g_pendingPosCorrection[static_cast<uint32_t>(eid)] =
-        PendingPosCorrection{loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll};
-    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) -- a save-authoritative pile "
-            "the host moved in-window (convert dropped); snap the bound native at quiescence",
-            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z);
+        PendingPosCorrection{loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll, physFlags};
+    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) flags=0x%02x -- a "
+            "save-authoritative entity the host moved in-window; snap the bound native at quiescence",
+            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z, static_cast<unsigned>(physFlags));
 }
 
 void ApplyPendingPosCorrections() {
@@ -404,6 +410,9 @@ void ApplyPendingPosCorrections() {
         ue_wrap::engine::SetActorRootMovable(actor);
         ue_wrap::engine::SetActorLocation(actor, loc);
         ue_wrap::engine::SetActorRotation(actor, rot);
+        // Then the host's frozen and sleep, where it moved a keyed prop through a verb that changed
+        // them: the extinguisher it took off a mount is not frozen at its new place.
+        coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags);
         const ue_wrap::FVector got = ue_wrap::engine::GetActorLocation(actor);
         const float dx = got.X - c.x, dy = got.Y - c.y, dz = got.Z - c.z;
         UE_LOGI("[PILE-B3] CLIENT pos-correction APPLIED eid=%u applied=(%.1f,%.1f,%.1f) host=(%.1f,%.1f,%.1f) "
@@ -424,7 +433,7 @@ void EnsurePosCorrection(coop::element::ElementId eid,
     // rotation.
     const auto key = static_cast<uint32_t>(eid);
     if (g_pendingPosCorrection.count(key) > 0) return;
-    ArmPendingPosCorrection(eid, loc, rot);
+    ArmPendingPosCorrection(eid, loc, rot, /*physFlags=*/0);  // a position alone: the state stays
 }
 
 void CancelPendingSaveTimeTwin(coop::element::ElementId eid) {

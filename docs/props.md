@@ -278,7 +278,7 @@ lane did not have in front of it:
 | `PropDriveEnd` | the host to all | the final pose and velocity of a driven prop that rested or that a hand took; closes its generation |
 | `PropDropIntent`, `ReelEjectIntent` | a client to the host | a place, or an unavoidable birth, for the host to author |
 | `PropStickState` | the sticking peer to all | frozen or static, the commit pose, and the hold the stick ended |
-| `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window |
+| `PropSnapPos` | the host to one joiner | a position correction for a save-authoritative prop moved in the join window, with a keyed prop's frozen and sleep |
 | `ContainerState`, `ContainerContents` | the presser; the host | open or closed; one slice of the host's object array |
 | `InventoryPickup` | each peer, relayed | the pocket blip, so others hear a pickup |
 
@@ -288,7 +288,9 @@ The join page owns the mechanism: explicit deletes for the props the joiner's sa
 host's world no longer has, then the snapshot bracket with one spawn per live keyed prop
 (adopted by key, created when missing, transform converged), then position corrections for what
 the host moved during the window, then the membership sweep that removes the locals the host
-never claimed. Container slices are sent per live container at the ready edge. A stuck prop
+never claimed. A keyed prop's frozen and sleep converge with its snapshot row and with its
+correction, so an extinguisher the host took off its mount during the window is loose on the joiner
+too. Container slices are sent per live container at the ready edge. A stuck prop
 reaches a joiner through the save, which carries the frozen state. A prop held by someone at
 the moment of the join is resolved on its first streamed frame, and a prop under a hook's drive
 parks on its first one the same way. A pose of a hold that ended before the joiner's world came up

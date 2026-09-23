@@ -346,7 +346,7 @@ bool HandleEntityEvent(net::Session& session,
         }
         coop::element::quiescence_drain::ArmPendingPosCorrection(
             p.eid, ue_wrap::FVector{p.locX, p.locY, p.locZ},
-            ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll});
+            ue_wrap::FRotator{p.rotPitch, p.rotYaw, p.rotRoll}, p.physFlags);
         // The correction is also identity: the new position is recorded as the entry's
         // host-position overlay (the save position stays immutable, since a purge re-create spawns
         // there), so a re-bind prefers the surviving actor at the new position; and if the entity

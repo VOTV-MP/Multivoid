@@ -53,12 +53,13 @@ void ArmHostVacateTwin(coop::element::ElementId eid, const ue_wrap::FVector& old
 // host-vacate twin, which only retires one)? Game thread.
 bool HasPendingSaveTimeTwin(coop::element::ElementId eid);
 
-// A join-window position correction for a save-authoritative chip pile the host moved while
-// the joiner's reliable channel was not ready. Armed on receipt; the latest wins. Applied at
-// quiescence, or immediately by the caller via ApplyPendingPosCorrections if already
-// quiesced.
+// A join-window position correction for a save-authoritative entity (a chip pile, a keyed prop)
+// the host moved while the joiner's reliable channel was not ready. Armed on receipt; the latest
+// wins. Applied at quiescence, or immediately by the caller via ApplyPendingPosCorrections if
+// already quiesced; a keyed prop's frozen and sleep converge to `physFlags` after the snap when
+// they were read off the host's prop (kLiveState).
 void ArmPendingPosCorrection(coop::element::ElementId eid,
-                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
+                             const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t physFlags);
 
 // Drain the armed corrections (applied ones erased). Called from the sequence and, for a
 // late arrival after the sweep already fired and bound, immediately from the receive

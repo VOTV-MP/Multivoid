@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 176;
+inline constexpr uint16_t kProtocolVersion = 177;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -2402,14 +2402,17 @@ struct PileResyncRequestPayload {
 };
 static_assert(sizeof(PileResyncRequestPayload) == 8, "PileResyncRequestPayload must be 8 bytes");
 
-// A position correction (PropSnapPos): the eid and the host's current transform; the client snaps
-// its bound native at the quiescence sweep. Identity is preserved; idempotent.
+// A position correction (PropSnapPos): the eid and the host's current transform, and for a prop its
+// physics flags there; the client snaps its bound native at the quiescence sweep and converges the
+// prop's frozen and sleep to the host's. Identity is preserved; idempotent.
 struct PropSnapPosPayload {
     uint32_t eid;                       // the save-authoritative pile eid to reposition
     float    locX, locY, locZ;          // host's CURRENT authoritative world position (cm)
     float    rotPitch, rotYaw, rotRoll; // host's CURRENT authoritative rotation (deg)
+    uint8_t  physFlags;                 // propspawn_flags on the host; meaningful for an Aprop_C only
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(PropSnapPosPayload) == 28, "PropSnapPosPayload must be 28 bytes (eid + loc + rot)");
+static_assert(sizeof(PropSnapPosPayload) == 32, "PropSnapPosPayload must be 32 bytes (eid + loc + rot + flags)");
 static_assert(sizeof(PropSnapPosPayload) <= 256 - 20 - 8, "PropSnapPosPayload must fit one datagram");
 
 // The world clock (ClockPose): the cycle's two accumulators and the day number. The client's cycle

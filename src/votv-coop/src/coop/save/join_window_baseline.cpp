@@ -6,6 +6,7 @@
 #include "coop/element/registry.h"   // the host's eid-to-actor lookup
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"  // the capture-instant collectors
+#include "coop/props/prop_wire_parity.h"      // PhysFlagsOf, the state a correction carries
 #include "ue_wrap/actors/prop.h"     // IsChipPile: a grabbed clump belongs to the convert stream
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/engine/engine.h"   // the host's current prop position
@@ -62,9 +63,13 @@ std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
 // joiner's authoritative positions keep flushing for a window past world-ready, so every in-window
 // move is delivered; a per-(slot, eid) last-sent position dedupes the wire to actual changes. The
 // one-shot opens the window; TickLateArm re-runs on the cadence until it expires.
-std::unordered_map<coop::element::ElementId, ue_wrap::FVector> g_lastFlushedPilePos[coop::net::kMaxPeers];
+struct FlushedAt {
+    ue_wrap::FVector pos;
+    uint8_t          flags = 0;  // the propspawn_flags the correction carried
+};
+std::unordered_map<coop::element::ElementId, FlushedAt> g_lastFlushedPilePos[coop::net::kMaxPeers];
 // The keyed half's own last-sent dedupe, sharing the arm window.
-std::unordered_map<coop::element::ElementId, ue_wrap::FVector> g_lastFlushedKeyedPos[coop::net::kMaxPeers];
+std::unordered_map<coop::element::ElementId, FlushedAt> g_lastFlushedKeyedPos[coop::net::kMaxPeers];
 // The keyed scan reads GetActorLocation (a UFunction dispatch) for every keyed prop, about 2,000
 // in a mature world, and at the pile cadence it hitched the host's game thread through the join
 // tail. It runs on the first run (every already-moved prop) and then every Nth late-arm tick, a
@@ -98,29 +103,42 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
     constexpr float kDivergeCm2 = 4.0f * 4.0f;  // >4cm moved (above settle jitter) = a real in-window move
     constexpr float kResendCm2  = 4.0f * 4.0f;  // only re-send when the pos moved >4cm from what we last sent
 
-    // The shared sender: a PropSnapPos at the actor's current transform, deduped per (slot, eid);
-    // true when a correction went out. `kind` is a log tag.
+    // The shared sender: a PropSnapPos at the actor's current transform and physics state, deduped
+    // per (slot, eid); true when a correction went out. Once one went out, a prop back at its save
+    // position is a move too: an extinguisher taken off its mount and put back. `kind` is a log tag.
     auto sendCorrection = [&](coop::element::ElementId eid, const ue_wrap::FVector& savePos, void* actor,
-                              std::unordered_map<coop::element::ElementId, ue_wrap::FVector>& lastSent,
+                              std::unordered_map<coop::element::ElementId, FlushedAt>& lastSent,
                               const char* kind) -> bool {
+        namespace pf = coop::net::propspawn_flags;
         const ue_wrap::FVector cur = ue_wrap::engine::GetActorLocation(actor);
         const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
-        if (dx * dx + dy * dy + dz * dz <= kDivergeCm2) return false;  // unmoved (save IS current)
-        if (auto it = lastSent.find(eid); it != lastSent.end()) {
-            const float sx = cur.X - it->second.X, sy = cur.Y - it->second.Y, sz = cur.Z - it->second.Z;
-            if (sx * sx + sy * sy + sz * sz <= kResendCm2) return false;  // already delivered @this pos
+        // The state is read only for a prop that moved or was corrected already, never across the
+        // whole keyed scan: a prop's flags cost two engine calls. 0 for a pile.
+        uint8_t flags = 0;
+        const auto it = lastSent.find(eid);
+        if (it == lastSent.end()) {
+            if (dx * dx + dy * dy + dz * dz <= kDivergeCm2) return false;  // unmoved (save IS current)
+            flags = coop::prop_wire_parity::PhysFlagsOf(actor);
+        } else {
+            flags = coop::prop_wire_parity::PhysFlagsOf(actor);
+            const float sx = cur.X - it->second.pos.X, sy = cur.Y - it->second.pos.Y, sz = cur.Z - it->second.pos.Z;
+            const bool sameState = ((flags ^ it->second.flags) & (pf::kFrozen | pf::kSleep)) == 0;
+            if (sx * sx + sy * sy + sz * sz <= kResendCm2 && sameState)
+                return false;  // already delivered at this position and state
         }
         const ue_wrap::FRotator rot = ue_wrap::engine::GetActorRotation(actor);
         coop::net::PropSnapPosPayload p{};
         p.eid = static_cast<uint32_t>(eid);
         p.locX = cur.X; p.locY = cur.Y; p.locZ = cur.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
+        p.physFlags = flags;
         g_session->SendReliableToSlot(peerSlot, coop::net::ReliableKind::PropSnapPos, &p, sizeof(p));
-        lastSent[eid] = cur;
+        lastSent[eid] = FlushedAt{cur, flags};
         UE_LOGI("[PILE-B3] HOST slot %d %s pos-correction eid=%u save=(%.1f,%.1f,%.1f) -> current=(%.1f,%.1f,%.1f) "
-                "drift=%.1fcm (%s in-window move -> deliver the authoritative position)",
+                "drift=%.1fcm flags=0x%02x (%s in-window move -> deliver the authoritative position)",
                 peerSlot, kind, static_cast<unsigned>(eid), savePos.X, savePos.Y, savePos.Z,
-                cur.X, cur.Y, cur.Z, std::sqrt(dx * dx + dy * dy + dz * dz), firstRun ? "one-shot" : "late-arm");
+                cur.X, cur.Y, cur.Z, std::sqrt(dx * dx + dy * dy + dz * dz), static_cast<unsigned>(flags),
+                firstRun ? "one-shot" : "late-arm");
         return true;
     };
 

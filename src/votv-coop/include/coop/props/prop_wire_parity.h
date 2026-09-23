@@ -35,8 +35,8 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 // The propspawn_flags of a live Aprop_C on THIS peer, read off the actor: the static, frozen,
 // sleep, heavy and removeWOrespawn bits, kSimulatePhysics only while none of the first three holds
 // and the root body is awake, so a settled prop is expressed at rest, and kLiveState. The one
-// builder for every wire that carries a prop's live flags (the join snapshot, the held prop's
-// release, the driven-prop end edge). 0 for anything not an Aprop_C.
+// builder for every wire that carries a prop's live flags (the join snapshot and its position
+// corrections, the held prop's release, the driven-prop end edge). 0 for anything not an Aprop_C.
 uint8_t PhysFlagsOf(void* actor);
 
 // Make this copy's frozen and sleep what `physFlags` (another peer's) say, through the game's own
