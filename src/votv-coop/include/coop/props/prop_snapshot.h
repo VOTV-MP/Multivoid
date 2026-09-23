@@ -83,4 +83,11 @@ void CancelForSlot(int peerSlot);
 // count of candidates that were enumerated but not yet drained.
 size_t OnDisconnect();
 
+// HOST: did `peerSlot`'s last bracket close -- its SnapshotComplete went out, and no trigger,
+// defer, cancel or session end has opened or abandoned a bracket for it since? The host's own view
+// of a join's end. One gap: a re-trigger of the slot being drained, for the same seed generation,
+// is absorbed by the running drain, so the flag can close on a bracket begun before that trigger.
+// Read-only; game thread.
+bool IsBracketClosed(int peerSlot);
+
 }  // namespace coop::prop_snapshot

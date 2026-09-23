@@ -59,6 +59,11 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 // must not block the remaining sleepers).
 void OnDisconnectForSlot(int slot);
 
+// Is the ACCELERATE phase on here: the host decided it, or this client received it? Not the same
+// as isSleep with dilation 20, which the native sleep entry sets by itself for the one tick before
+// the WAITING enforcement undoes it. Read-only, for instruments.
+bool InAcceleratePhase();
+
 void OnDisconnect();
 
 }  // namespace coop::sleep_sync

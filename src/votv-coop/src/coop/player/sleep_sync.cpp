@@ -300,6 +300,8 @@ void OnDisconnectForSlot(int slot) {
     HostRetally(s);
 }
 
+bool InAcceleratePhase() { return g_accelerate; }
+
 void OnDisconnect() {
     auto* s = g_session.load(std::memory_order_acquire);
     // Restore the SP nightmare sentinel + normal time policy. A peer still in

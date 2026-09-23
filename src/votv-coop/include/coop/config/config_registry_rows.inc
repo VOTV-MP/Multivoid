@@ -367,6 +367,11 @@ CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATC
     "(the dish hash codes, the task shuffle, the Bad Sun), the minute and hour pulses and every "
     "Blueprint bound to them, and prints each peer's day number and a digest of the 24 hash codes "
     "whenever the day changes. Read-only; it never refuses a call.")
+CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VOTVCOOP_MIDNIGHT_DRILL",
+    "Drill (BOTH peers, with rollover_watch): once a client's join is over, the host sets its clock "
+    "just short of midnight. awake: both peers stay up. asleep: both go to bed first, so the "
+    "midnight falls inside the shared sleep's fast-forward. Run it on a fresh host world; every "
+    "refused step is logged and ends the arm as invalid.")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "

@@ -72,6 +72,11 @@ std::vector<int> g_pendingSlots;
 std::array<bool, coop::players::kMaxPeers> g_deferredSlots{};
 uint64_t g_drainSeedGen = 0;  // SeedGeneration captured when the current drain started
 
+// Slots whose last bracket closed: set only where a SnapshotComplete send succeeded, cleared by
+// every path that opens a new bracket or abandons one (the trigger, a defer, a cancel, the session
+// end). Read by IsBracketClosed. Game thread.
+std::array<bool, coop::players::kMaxPeers> g_bracketClosed{};
+
 // WHEN EACH DEFERRED SLOT IS TRIED AGAIN. The retry used to be a seed-generation bump, i.e. a
 // WORLD TRANSITION -- and so did the other two paths that could reach a deferred slot. With the
 // host settled and the joiner already world-ready, nothing re-armed the slot at all: the lanes
@@ -96,6 +101,7 @@ int64_t NowMsSteady_() {
 // new. Every site that refuses to bracket a slot goes through here.
 void DeferSlot_(int peerSlot, DeferReason why, const char* what) {
     g_deferredSlots[peerSlot] = true;
+    g_bracketClosed[peerSlot] = false;
     g_deferRetryAtMs[peerSlot] = NowMsSteady_() + kDeferRetryMs;
     if (g_deferLogged[peerSlot] == why) return;
     g_deferLogged[peerSlot] = why;
@@ -237,8 +243,9 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
         const int budget = coop::net::kMaxReliablePayload - static_cast<int>(sizeof(e));
         coop::snapshot_census::BuildHostTail(tail, budget);
         buf.insert(buf.end(), tail.begin(), tail.end());
-        s->SendReliableToSlot(g_currentTargetSlot, coop::net::ReliableKind::SnapshotComplete,
-                              buf.data(), static_cast<int>(buf.size()));
+        if (s->SendReliableToSlot(g_currentTargetSlot, coop::net::ReliableKind::SnapshotComplete,
+                                  buf.data(), static_cast<int>(buf.size())))
+            g_bracketClosed[g_currentTargetSlot] = true;
     }
     UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent)",
             g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal);
@@ -377,6 +384,7 @@ void TriggerForSlot(int peerSlot) {
     // The deferred flag is consumed here; the gates below re-set it through DeferSlot_, which
     // re-arms the retry and decides whether the reason is worth printing again.
     g_deferredSlots[peerSlot] = false;
+    g_bracketClosed[peerSlot] = false;
     // IsSlotReady, not IsSlotConnected: the connection handle exists a few ms before the lanes are
     // configured, and a drain triggered in that window queues ~1,700 PropSpawns on the
     // high-priority lane instead of the bulk lane.
@@ -610,6 +618,7 @@ void CancelForSlot(int peerSlot) {
     // A slot that disconnects while deferred is not retried; cleared before the in-progress check.
     if (peerSlot >= 1 && peerSlot < coop::players::kMaxPeers) {
         g_deferredSlots[peerSlot] = false;
+        g_bracketClosed[peerSlot] = false;
         g_deferRetryAtMs[peerSlot] = 0;
         g_deferLogged[peerSlot] = DeferReason::None;
         g_drillHoldUntilMs[peerSlot] = 0;  // a recycled slot is not still being held
@@ -632,8 +641,9 @@ size_t OnDisconnect() {
     ClearDrainState_();
     g_pendingSlots.clear();
     g_pendingSlots.shrink_to_fit();
-    // No deferred slot survives into the next session.
+    // No deferred slot survives into the next session, and no closed bracket either.
     g_deferredSlots.fill(false);
+    g_bracketClosed.fill(false);
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
         g_deferRetryAtMs[slot] = 0;
         g_deferLogged[slot] = DeferReason::None;
@@ -641,6 +651,10 @@ size_t OnDisconnect() {
     }
     g_drainSeedGen = 0;
     return pending;
+}
+
+bool IsBracketClosed(int peerSlot) {
+    return peerSlot >= 1 && peerSlot < coop::players::kMaxPeers && g_bracketClosed[peerSlot];
 }
 
 }  // namespace coop::prop_snapshot
