@@ -1,0 +1,417 @@
+// coop/dev/fireext_drill.cpp -- see coop/dev/fireext_drill.h.
+
+#include "coop/dev/fireext_drill.h"
+
+#include "coop/config/config.h"
+#include "coop/dev/director/director.h"
+#include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/roster.h"
+#include "coop/props/prop_snapshot.h"
+#include "coop/save/join_window_baseline.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/net_pump.h"
+
+#include "ue_wrap/actors/fire_extinguisher.h"
+#include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_attach.h"
+#include "ue_wrap/engine/engine_mainplayer.h"
+#include "ue_wrap/engine/engine_nav.h"
+#include "ue_wrap/engine/engine_pawn.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace coop::dev::fireext_drill {
+namespace {
+
+namespace R  = ue_wrap::reflection;
+namespace E  = ue_wrap::engine;
+namespace FX = ue_wrap::fire_extinguisher;
+namespace PR = ue_wrap::prop;
+
+enum class Step { WaitJoin, WalkTo, Aim, Grab, WalkAway, Rest, Done, Invalid };
+
+constexpr float kReachCm        = 110.f;  // the director's stop distance from the extinguisher, level
+constexpr float kCarryCm        = 450.f;  // how far off the carry's end should be
+constexpr int   kAimTicksPerPose = 6;     // the trace runs on the player's own tick: hold each pose
+constexpr int   kAimFanHalf     = 5;      // an 11 x 11 fan of 3 degrees round the extinguisher
+constexpr float kAimFanStepDeg  = 3.f;
+constexpr int   kGrabVerifyTicks = 30;
+constexpr int   kRestMaxTicks   = 600;    // ~10 s for a dropped extinguisher to come to rest
+constexpr int   kWatchEveryTicks = 15;
+constexpr float kWatchMoveCm    = 3.f;
+
+float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
+    const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& to) {
+    const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
+    constexpr float kRad2Deg = 57.2957795f;
+    return ue_wrap::FRotator{std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * kRad2Deg,
+                             std::atan2(dy, dx) * kRad2Deg, 0.f};
+}
+
+// ---- The watch: both peers, every extinguisher --------------------------------------------------
+
+struct Watched {
+    ue_wrap::CachedObjRef ref;
+    std::wstring key;
+    ue_wrap::FVector start{}, printed{};
+    bool frozen = false, mounted = false, gone = false;
+};
+std::vector<Watched> g_watched;
+std::vector<ue_wrap::CachedObjRef> g_mounts;
+bool g_watchArmed = false;
+int  g_watchTick = 0;
+
+bool IsMounted(void* ext) {
+    for (const auto& m : g_mounts)
+        if (void* mount = m.Get(); mount && FX::MountedExtinguisher(mount) == ext) return true;
+    return false;
+}
+
+// One walk of the object array, when the watch arms, never again.
+void ArmWatch(char who) {
+    g_watched.clear();
+    g_mounts.clear();
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+        if (FX::IsMount(o)) {
+            g_mounts.emplace_back();
+            g_mounts.back().Set(o);
+        } else if (FX::IsExtinguisher(o)) {
+            Watched w;
+            w.ref.Set(o);
+            w.key = PR::GetInteractableKeyString(o);
+            w.start = w.printed = E::GetActorLocation(o);
+            w.frozen = PR::IsFrozen(o);
+            g_watched.push_back(std::move(w));
+        }
+    }
+    for (auto& w : g_watched) {
+        void* o = w.ref.Get();
+        w.mounted = o && IsMounted(o);
+        float charge = -1.f;
+        if (o) FX::ReadCharge(o, charge);
+        UE_LOGI("[FIREEXT-DRILL] [%c] HAS key='%ls' at (%.1f, %.1f, %.1f) frozen=%d mounted=%d charge=%.2f",
+                who, w.key.c_str(), w.start.X, w.start.Y, w.start.Z, w.frozen ? 1 : 0, w.mounted ? 1 : 0,
+                charge);
+    }
+    UE_LOGI("[FIREEXT-DRILL] [%c] watching %zu extinguishers and %zu mounts", who, g_watched.size(),
+            g_mounts.size());
+    g_watchArmed = true;
+}
+
+void TickWatch(char who) {
+    if (!g_watchArmed || ++g_watchTick < kWatchEveryTicks) return;
+    g_watchTick = 0;
+    for (auto& w : g_watched) {
+        if (w.gone) continue;
+        void* o = w.ref.Get();
+        if (!o) {
+            w.gone = true;
+            UE_LOGI("[FIREEXT-DRILL] [%c] GONE key='%ls'", who, w.key.c_str());
+            continue;
+        }
+        const ue_wrap::FVector at = E::GetActorLocation(o);
+        const bool frozen = PR::IsFrozen(o);
+        const bool mounted = IsMounted(o);
+        if (Dist(at, w.printed) < kWatchMoveCm && frozen == w.frozen && mounted == w.mounted) continue;
+        w.printed = at;
+        w.frozen = frozen;
+        w.mounted = mounted;
+        UE_LOGI("[FIREEXT-DRILL] [%c] key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm frozen=%d mounted=%d",
+                who, w.key.c_str(), at.X, at.Y, at.Z, Dist(at, w.start), frozen ? 1 : 0, mounted ? 1 : 0);
+    }
+}
+
+// ---- The host's steps ---------------------------------------------------------------------------
+
+Step g_step = Step::WaitJoin;
+ue_wrap::CachedObjRef g_target;
+std::wstring g_targetKey;
+ue_wrap::FVector g_mountPos{};
+int g_stepTicks = 0;
+int g_aimPose = 0;
+
+// The aim fan, nearest pose first: the extinguisher's origin, then offsets of growing size.
+const std::vector<std::pair<int, int>>& AimFan() {
+    static const std::vector<std::pair<int, int>> fan = [] {
+        std::vector<std::pair<int, int>> v;
+        for (int p = -kAimFanHalf; p <= kAimFanHalf; ++p)
+            for (int y = -kAimFanHalf; y <= kAimFanHalf; ++y) v.emplace_back(p, y);
+        std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
+            return a.first * a.first + a.second * a.second < b.first * b.first + b.second * b.second;
+        });
+        return v;
+    }();
+    return fan;
+}
+
+// The director blocks, so a walk runs on a worker; the step polls the shared state.
+struct Walk {
+    coop::director::DirectorGoal goal;
+    bool carry = false;          // the hand keeps what it holds
+    std::atomic<int> state{0};   // 0 walking, 1 reached, 2 failed
+};
+std::shared_ptr<Walk> g_walk;
+
+DWORD WINAPI WalkThread(LPVOID arg) {
+    auto* holder = static_cast<std::shared_ptr<Walk>*>(arg);
+    std::shared_ptr<Walk> w = *holder;
+    delete holder;
+    coop::director::ControlManager mgr;
+    if (w->carry) coop::director::AddCarryToProcesses(mgr, w->goal);
+    else coop::director::AddWalkToProcesses(mgr, w->goal);
+    mgr.Run(w->goal, /*maxSeconds=*/90);
+    w->state.store(w->goal.reached ? 1 : 2);
+    return 0;
+}
+
+void StartWalk(const ue_wrap::FVector& to, float reachCm, bool carry) {
+    g_walk = std::make_shared<Walk>();
+    g_walk->goal.targetPos = to;
+    g_walk->goal.reachCm = reachCm;
+    g_walk->carry = carry;
+    auto* arg = new std::shared_ptr<Walk>(g_walk);
+    if (HANDLE t = ::CreateThread(nullptr, 0, &WalkThread, arg, 0, nullptr)) ::CloseHandle(t);
+    else { delete arg; g_walk->state.store(2); }
+}
+
+// 0 walking, 1 reached, 2 failed.
+int WalkState() { return g_walk ? g_walk->state.load() : 2; }
+
+void Invalid(const char* why) {
+    UE_LOGW("[FIREEXT-DRILL] INVALID %s", why);
+    g_step = Step::Invalid;
+}
+
+void Go(Step s) {
+    g_step = s;
+    g_stepTicks = 0;
+}
+
+bool CallWithPlayer(void* obj, const wchar_t* fnName, void* player) {
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(obj), fnName);
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(obj, f);
+}
+
+bool CallOnPlayer(void* player, const wchar_t* fnName) {
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), fnName);
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(player, f);
+}
+
+void* Grabbing(void* player) {
+    E::MainPlayerGrabState gs{};
+    return E::ReadMainPlayerGrabState(player, gs) ? gs.grabbingActor : nullptr;
+}
+
+// The mounted extinguisher nearest the player, from the watch's own lists.
+bool PickTarget(void* player) {
+    const ue_wrap::FVector me = E::GetActorLocation(player);
+    float best = 1e12f;
+    for (const auto& w : g_watched) {
+        void* o = w.ref.Get();
+        if (!o || !w.mounted || !PR::IsFrozen(o)) continue;
+        const float d = Dist(E::GetActorLocation(o), me);
+        if (d < best) { best = d; g_target.Set(o); g_targetKey = w.key; }
+    }
+    if (!g_target.Raw()) return false;
+    g_mountPos = E::GetActorLocation(g_target.Get());
+    UE_LOGI("[FIREEXT-DRILL] [H] target key='%ls' at (%.1f, %.1f, %.1f), %.0f cm from the player", g_targetKey.c_str(),
+            g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best);
+    return true;
+}
+
+// A point the NavMesh routes to, some metres from the mount: the route's own last point is on the
+// mesh by construction, which a computed offset is not.
+bool PickCarryEnd(void* player, ue_wrap::FVector& out) {
+    const ue_wrap::FVector me = E::GetActorLocation(player);
+    for (int k = 0; k < 8; ++k) {
+        const float a = static_cast<float>(k) * 0.785398f;
+        const ue_wrap::FVector want{me.X + kCarryCm * std::cos(a), me.Y + kCarryCm * std::sin(a), me.Z};
+        std::vector<ue_wrap::FVector> route;
+        if (!E::FindNavPath(player, me, want, route) || route.size() < 2) continue;
+        if (Dist(route.back(), g_mountPos) < kCarryCm * 0.6f) continue;
+        out = route.back();
+        return true;
+    }
+    return false;
+}
+
+void LogTarget(const char* what) {
+    void* t = g_target.Get();
+    if (!t) { UE_LOGI("[FIREEXT-DRILL] [H] %s key='%ls' -- the extinguisher is gone", what, g_targetKey.c_str()); return; }
+    const ue_wrap::FVector at = E::GetActorLocation(t);
+    UE_LOGI("[FIREEXT-DRILL] [H] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
+            what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
+            IsMounted(t) ? 1 : 0);
+}
+
+void HostStep(coop::net::Session& s, void* player) {
+    ++g_stepTicks;
+    switch (g_step) {
+    case Step::WaitJoin: {
+        // A client's join is over and so is its join window: while the late flush is armed, a move
+        // of the host's reaches the joiner as the join's position correction, not through the lane
+        // under test.
+        bool joined = false;
+        for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && !joined; ++slot)
+            joined = s.IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot) &&
+                     !coop::join_window_baseline::IsLateWindowOpen(slot);
+        if (!joined) return;
+        ArmWatch('H');
+        if (!PickTarget(player)) { Invalid("no mounted, frozen extinguisher in this world"); return; }
+        StartWalk(g_mountPos, kReachCm, /*carry=*/false);
+        Go(Step::WalkTo);
+        return;
+    }
+    case Step::WalkTo:
+        if (WalkState() == 0) return;
+        if (WalkState() == 2) { Invalid("the walk to the extinguisher did not arrive"); return; }
+        g_aimPose = 0;
+        Go(Step::Aim);
+        return;
+    case Step::Aim: {
+        void* t = g_target.Get();
+        if (!t) { Invalid("the extinguisher died before the grab"); return; }
+        if (E::ReadMainPlayerHitActor(player) == t) {
+            UE_LOGI("[FIREEXT-DRILL] [H] the trace took the extinguisher at fan pose %d", g_aimPose);
+            Go(Step::Grab);
+            return;
+        }
+        if (g_stepTicks % kAimTicksPerPose != 1) return;
+        const auto& fan = AimFan();
+        if (g_aimPose >= static_cast<int>(fan.size())) {
+            void* hit = E::ReadMainPlayerHitActor(player);
+            UE_LOGI("[FIREEXT-DRILL] [H] the fan ended on '%ls'", hit ? R::ClassNameOf(hit).c_str() : L"nothing");
+            Invalid("no aim the trace would take");
+            return;
+        }
+        // The bounds' centre: a lying extinguisher's origin can sit at the floor's surface.
+        ue_wrap::FVector centre{}, extent{};
+        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent)) centre = E::GetActorLocation(t);
+        ue_wrap::FRotator r = LookAt(E::GetCameraLocation(), centre);
+        r.Pitch += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].first);
+        r.Yaw   += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].second);
+        E::SetControlRotation(E::GetController(player), r);
+        ++g_aimPose;
+        return;
+    }
+    case Step::Grab: {
+        void* t = g_target.Get();
+        if (!t) { Invalid("the extinguisher died before the grab"); return; }
+        if (g_stepTicks == 1) {
+            LogTarget("BEFORE GRAB");
+            // The use key's release on an aimed prop with an empty hand, in its order.
+            const bool pre = CallWithPlayer(t, L"playerGrabbed_pre", player);
+            void* useFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"useAction");
+            bool use = false;
+            if (useFn) {
+                ue_wrap::ParamFrame f(useFn);
+                use = f.valid() && f.Set<bool>(L"sec", false) && ue_wrap::Call(player, f);
+            }
+            const bool post = CallWithPlayer(t, L"playerGrabbed", player);
+            UE_LOGI("[FIREEXT-DRILL] [H] grab chain: playerGrabbed_pre=%d useAction=%d playerGrabbed=%d",
+                    pre ? 1 : 0, use ? 1 : 0, post ? 1 : 0);
+            return;
+        }
+        if (Grabbing(player) == t) {
+            LogTarget("GRABBED");
+            ue_wrap::FVector end{};
+            if (!PickCarryEnd(player, end)) { Invalid("no NavMesh route to carry it along"); return; }
+            StartWalk(end, 80.f, /*carry=*/true);
+            Go(Step::WalkAway);
+            return;
+        }
+        if (g_stepTicks > kGrabVerifyTicks) Invalid("the grab chain did not put the extinguisher in the hand");
+        return;
+    }
+    case Step::WalkAway:
+        if (g_stepTicks % 30 == 0) LogTarget("CARRY");
+        if (WalkState() == 0) return;
+        if (Grabbing(player) != g_target.Get()) { Invalid("the hand lost the extinguisher on the way"); return; }
+        LogTarget("CARRIED");
+        CallOnPlayer(player, L"dropGrabObject");
+        LogTarget("DROPPED");
+        Go(Step::Rest);
+        return;
+    case Step::Rest: {
+        void* t = g_target.Get();
+        const bool rested = t && g_stepTicks > 30 && E::IsActorRootBodyAtRest(t);
+        if (!rested && g_stepTicks < kRestMaxTicks) return;
+        LogTarget(rested ? "RESTED" : "NOT AT REST after the wait");
+        Go(Step::Done);
+        return;
+    }
+    case Step::Done:
+        UE_LOGI("[FIREEXT-DRILL] HOST DONE");
+        g_step = Step::Invalid;  // terminal: nothing further runs, and nothing is printed twice
+        g_walk.reset();
+        return;
+    case Step::Invalid:
+        return;
+    }
+}
+
+}  // namespace
+
+bool IsEnabled() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::fireext_drill);
+    return s;
+}
+
+void Tick(coop::net::Session* session) {
+    if (!IsEnabled() || !session || !session->connected()) return;
+    if (!FX::ResolveNames()) return;
+    void* player = coop::players::Registry::Get().Local();
+    if (!player || !R::IsLive(player) || !E::GetController(player)) return;
+
+    if (coop::roster::LocalIsHost()) {
+        HostStep(*session, player);
+        TickWatch('H');
+        return;
+    }
+    if (!g_watchArmed) {
+        if (!coop::net_pump::HasAnnouncedWorldReady() ||
+            coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
+            return;
+        ArmWatch('C');
+    }
+    TickWatch('C');
+}
+
+void OnDisconnect() {
+    g_watched.clear();
+    g_mounts.clear();
+    g_watchArmed = false;
+    g_watchTick = 0;
+    g_step = Step::WaitJoin;
+    g_stepTicks = 0;
+    g_target.Reset();
+    g_targetKey.clear();
+    g_walk.reset();
+}
+
+}  // namespace coop::dev::fireext_drill

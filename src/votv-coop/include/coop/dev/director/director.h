@@ -91,6 +91,11 @@ void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal);
 // probe). In proc_walkgrab.cpp.
 void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal);
 
+// The walk-TO set without ClearHand: Goto prio 50 > Reach prio 40, for a walk that carries what the
+// hand holds -- ClearHand would drop it at the first tick, since a full hand out of reach is
+// exactly its trigger. In proc_walkgrab.cpp.
+void AddCarryToProcesses(ControlManager& mgr, DirectorGoal& goal);
+
 // Pick the chipPile a walking player can actually get to: among the live piles `minCm`..`maxCm`
 // from `player`, the one with the SHORTEST NavMesh route whose last point lies within grab distance
 // of the pile (a pile on a shelf or behind a wall has a route that ends short or winds far around).

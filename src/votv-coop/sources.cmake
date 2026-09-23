@@ -97,6 +97,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
     src/ue_wrap/actors/broom.cpp
+    src/ue_wrap/actors/fire_extinguisher.cpp
     src/ue_wrap/actors/chip_pile.cpp
     src/ue_wrap/engine/engine_pawn.cpp
     src/ue_wrap/engine/world_identity.cpp
@@ -412,6 +413,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/food_clock_probe.cpp
     src/coop/dev/lookat_churn_probe.cpp
     src/coop/dev/lookat_aim_drill.cpp
+    src/coop/dev/fireext_drill.cpp
     src/coop/dev/rehost_rejoin.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/wire_census.cpp

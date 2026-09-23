@@ -250,6 +250,16 @@ inline constexpr const wchar_t* BroomNotifyNameParam = L"NotifyName";
 inline constexpr const wchar_t* BroomStrokeNotifyName = L"clean";
 inline constexpr const wchar_t* BroomHolderProp = L"player";
 
+// The fire extinguisher and its wall mount (ue_wrap/actors/fire_extinguisher). The extinguisher's
+// own members are its charge, its hand spray and its runaway thrust; the mount's `fireExt` names
+// the extinguisher its box last snapped onto its attach point.
+inline constexpr const wchar_t* FireExtinguisherClass = L"prop_fireExt_C";
+inline constexpr const wchar_t* FireExtinguisherMountClass = L"fireExtHolder_C";
+inline constexpr const wchar_t* FireExtMountHeldProp = L"fireExt";
+inline constexpr const wchar_t* FireExtChargeProp = L"life";
+inline constexpr const wchar_t* FireExtSprayingProp = L"firing";
+inline constexpr const wchar_t* FireExtThrustingProp = L"active";
+
 // The held item's right mouse button, int_objects_C's playerHandUse_RMB / playerHandRelease_RMB:
 // the player's input reaches the item in its hand through these, with itself as the argument.
 inline constexpr const wchar_t* HandUseRmbFn = L"playerHandUse_RMB";

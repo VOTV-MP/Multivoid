@@ -346,6 +346,11 @@ void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal) {
     mgr.Add(std::make_unique<ReachProcess>(goal));
 }
 
+void AddCarryToProcesses(ControlManager& mgr, DirectorGoal& goal) {
+    mgr.Add(std::make_unique<GotoProcess>(goal));
+    mgr.Add(std::make_unique<ReachProcess>(goal));
+}
+
 // Honesty accessor for the verdict: did ClearHand have to fall back to the effect seam because
 // the input-seam drop was measured inert (i.e. the drop was NOT authority-equivalent to a human)?
 bool DidClearHandUseEffectFallback() { return g_clearHandUsedEffectFallback; }
