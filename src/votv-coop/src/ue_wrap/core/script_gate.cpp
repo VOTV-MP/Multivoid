@@ -166,7 +166,8 @@ void LogFault(const char* phase, const Call& call, void* ip) {
 }
 
 // ---- the call path ----------------------------------------------------------------------------
-// Every matching entry of a table fires; the first Cancel wins. Returns true when cancelled.
+// Every matching entry of a table fires, and any Cancel cancels the call: the entries after it still
+// run and cannot restore it. Returns true when cancelled.
 bool FireTable(Entry* table, std::uint64_t key, const Call& base, bool post) {
     bool cancel = false;
     for (int i = SlotOf(key), n = 0; n < kSlots; ++n, i = (i + 1) & (kSlots - 1)) {
