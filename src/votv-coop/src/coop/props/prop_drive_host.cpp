@@ -206,10 +206,11 @@ void OnPeerWorldReady() {
     if (g_driven.empty()) return;
     // Every driven prop's pose goes out again on the next tick, resting ones included, so the
     // joiner parks them where the other peers already have them. MTA's ResyncForPlayer
-    // (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp) sends the
-    // entering player alone;
-    // ours rides the broadcast stream, so the others receive a pose they already hold -- one
-    // datagram per join, not worth a targeted lane.
+    // (reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp) sends its
+    // unoccupied vehicles, resting ones included, reliably and to that player alone, when it enters
+    // a dimension; ours rides the unreliable broadcast stream once per join, so the others receive a
+    // pose they already hold, and a joiner that loses the datagram of a prop at rest does not park it
+    // until the prop moves again (docs/props.md, Known limits).
     for (Driven& d : g_driven) {
         d.everSent    = false;
         d.nextProbeMs = 0;
