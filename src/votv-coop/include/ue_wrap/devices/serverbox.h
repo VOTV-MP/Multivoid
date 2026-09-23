@@ -80,4 +80,15 @@ bool WriteAggregates(const Aggregates& in);
 // a gamemode that no longer exists, and the next reading off the new one would read as an edge.
 uint32_t GamemodeGeneration();
 
+// ---- server upgrades, read-only, for instruments -----------------------------------------------
+
+// The box's upgrade level, serverBox_C.upgrades, which initialServerUpgradeSpawn_C rolls at a new
+// game (clamped 0..3). False for a null box or an unresolved member.
+bool ReadUpgrades(void* box, int32_t& out);
+
+// How many initialServerUpgradeSpawn_C are alive: the one-shot actor that rolls those levels at
+// the gamemode's begin-play and then destroys itself. Counted from the object index, never by a
+// walk; 0 while its class is not loaded.
+int32_t CountUpgradeSpawners();
+
 }  // namespace ue_wrap::serverbox

@@ -13,6 +13,7 @@
 #include "coop/dev/dev_gate.h"
 #include "coop/dev/force_weather.h"
 #include "coop/dev/hotbar_icon_probe.h"
+#include "coop/dev/load_reroll_watch.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/restore_vitals.h"
@@ -412,8 +413,10 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                 }
                 // The readout, OUTSIDE the world gate: it catches a dispatch that happens during
                 // the load, so its watch has to be armed while the menu is still up. A no-op
-                // unless its own row is set.
+                // unless its own row is set. The load-reroll watch has the same reason: a world
+                // loaded from the menu before any session is seen from this tick only.
                 coop::dev::hotbar_icon_probe::Tick();
+                coop::dev::load_reroll_watch::Tick(g_session);
             }
             // The roster shows a board in a world and none at the menu, which is a live question:
             // out of session it synthesises the local row, and at the menu there is nobody to show.

@@ -18,8 +18,10 @@
 
 #include "ue_wrap/desk/comp_pane.h"
 #include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/desk/coord_tower.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/dish.h"
+#include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -122,6 +124,38 @@ int32_t SatConsoleLineCount(bool& found, bool& resolved) {
 
 char RoleChar(coop::net::Session* s) {
     return (s->role() == coop::net::Role::Host) ? 'H' : 'C';
+}
+
+// What the day rollover and a world load roll per machine, as digests to diff across peers: the
+// dish hash codes, the coordinate towers' repair state (by tower id), each server's upgrade level
+// (by its index in the gamemode's list) and how many upgrade spawners are alive.
+std::string RollLine() {
+    char buf[900];
+    int n = 0;
+    auto put = [&](const char* fmt, auto... args) {
+        if (n >= 0 && n < static_cast<int>(sizeof(buf))) n += std::snprintf(buf + n, sizeof(buf) - n, fmt, args...);
+    };
+    DSH::HashDigest hd{};
+    if (DSH::ReadHashDigest(hd))
+        put("hash(digest=%016llx filled=%d/%d)", static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes);
+    else
+        put("hash(UNRESOLVED)");
+    ue_wrap::coord_tower::State towers[4];
+    const int32_t nt = ue_wrap::coord_tower::ReadAll(towers, 4);
+    put(" towers(%d:", nt);
+    for (int32_t i = 0; i < nt; ++i)
+        put(" %d=b%d o%d f%ls p%ls", towers[i].id, towers[i].isBroken ? 1 : 0, towers[i].opened ? 1 : 0,
+            towers[i].fuses.c_str(), towers[i].puzzleLights.c_str());
+    std::vector<void*> servers;
+    ue_wrap::serverbox::ReadServers(servers);
+    put(") serverUpgrades(%zu:", servers.size());
+    for (size_t i = 0; i < servers.size(); ++i) {
+        int32_t up = -1;
+        if (servers[i] && R::IsLive(servers[i])) ue_wrap::serverbox::ReadUpgrades(servers[i], up);
+        put(" %d", up);
+    }
+    put(") upgradeSpawnersAlive=%d", ue_wrap::serverbox::CountUpgradeSpawners());
+    return buf;
 }
 
 }  // namespace
@@ -279,6 +313,9 @@ void Tick() {
                 role, dishes[i].index, dishes[i].lookAtX, dishes[i].lookAtY,
                 dishes[i].lookAtZ, dishes[i].isMoving ? 1 : 0);
     }
+
+    // ---- line 5: what a rollover or a load rolls per machine ----
+    UE_LOGI("[desk_diag] %c | %s", role, RollLine().c_str());
 
     // ---- caught-signal identity ----
     if (haveSig) {

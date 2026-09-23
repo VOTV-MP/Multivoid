@@ -11,6 +11,7 @@
 #include "ui/chat_input.h"           // Close() on flee -- an OPEN chat box must not survive into the menu
 #include "ui/voice_panel.h"          // Close() on flee -- don't leave the voice panel open across the transition
 #include "coop/dev/hotbar_icon_probe.h"
+#include "coop/dev/load_reroll_watch.h"
 #include "coop/dev/leak_probe.h"
 #include "coop/dev/heap_probe.h"
 #include "coop/dev/perf_probe.h"
@@ -555,8 +556,10 @@ void Tick(coop::net::Session& session) {
 
     // Outside the world-up gate on purpose: the quick-slot bar's icons are decided during the
     // load, and a reader that only starts once the world is up cannot see that window at all.
-    // Flag-gated to one load and a branch.
+    // Flag-gated to one load and a branch. The load-reroll watch has the same reason: what it
+    // watches runs inside the world load.
     coop::dev::hotbar_icon_probe::Tick();
+    coop::dev::load_reroll_watch::Tick(session);
 
     // The per-tick gameplay subsystem chain (connect-broadcast drains, module polls and applies,
     // NPC streams, dev probes), world-up-gated whole: every one acts on gameplay-world state, and a

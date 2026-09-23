@@ -78,6 +78,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/comp_pane.cpp
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
+    src/ue_wrap/desk/coord_tower.cpp
     src/ue_wrap/desk/tape_caddy.cpp
     src/ue_wrap/devices/floppy_slot.cpp
     src/ue_wrap/devices/laptop.cpp
@@ -397,6 +398,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/desk_diag.cpp
     src/coop/dev/rollover_watch.cpp
     src/coop/dev/midnight_drill.cpp
+    src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/hand_drop_selftest.cpp

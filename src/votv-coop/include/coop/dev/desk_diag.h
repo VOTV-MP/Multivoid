@@ -5,13 +5,13 @@
 // than from guesses. One root: the desk's output and simulation are generated PER-PEER instead
 // of being owned by the holder and mirrored, so the coordLog, the decode needle, the frequency
 // and polarity filters and the dishes all drift between peers. The probe dumps every peer's
-// readable desk state at a fixed cadence, plus the coordLog line delta on every change, tagged
-// with role and desk-claim holder, so the host and client logs diff line by line and pin which
-// field each peer self-simulates.
+// readable desk state at a fixed cadence, plus the coordLog line delta on every change, and the
+// digests of what a rollover or a load rolls per machine (hash codes, towers, server upgrades),
+// tagged with role and desk-claim holder, so the two logs diff line by line.
 //
-// Ini-gated `[dev] desk_diag=1` (interval `[dev] desk_diag_ms`, default 1000); zero cost when
-// off, one memoized bool early-out. Game thread only -- every read dispatches to, or reads,
-// engine state on the game thread.
+// `[dev] desk_diag=1` or env VOTVCOOP_DESK_DIAG (interval `[dev] desk_diag_ms`, default 1000);
+// zero cost when off, one memoized bool early-out. Game thread only -- every read dispatches to,
+// or reads, engine state on the game thread.
 
 #pragma once
 

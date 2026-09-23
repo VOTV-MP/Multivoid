@@ -226,8 +226,10 @@ CFG_FLAG(freecam, "freecam", "dev", false, nullptr,
     "Enable the freecam toggle.")
 CFG_FLAG(spawn_menu_unlock, "spawn_menu_unlock", "dev", false, nullptr,
     "Unlock the native spawn menu while in a coop session.")
-CFG_FLAG(desk_diag, "desk_diag", "dev", false, nullptr,
-    "Diagnostic: periodically log the signal-desk state.")
+CFG_FLAG(desk_diag, "desk_diag", "dev", false, "VOTVCOOP_DESK_DIAG",
+    "Diagnostic (BOTH peers): periodically log the signal desk's state, and the digests a day "
+    "rollover or a world load rolls per machine (the dish hash codes, the coordinate towers, the "
+    "servers' upgrades), to diff host against client. The env twin arms both peers for one run.")
 CFG_INT(desk_diag_ms, "desk_diag_ms", "dev", 1000, 100, 60000, nullptr,
     "Interval in milliseconds for the desk_diag log.")
 CFG_INT(vitals_keepalive_sec, "vitals_keepalive_sec", "dev", 0, 0, 86400, nullptr,
@@ -367,6 +369,11 @@ CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATC
     "(the dish hash codes, the task shuffle, the Bad Sun), the minute and hour pulses and every "
     "Blueprint bound to them, and prints each peer's day number and a digest of the 24 hash codes "
     "whenever the day changes. Read-only; it never refuses a call.")
+CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_REROLL_WATCH",
+    "Diagnostic probe (BOTH peers): what a world load rolls again. Watches the server-upgrade "
+    "spawner and the coordinate towers' scramble from before a joining client's world exists, "
+    "since both run inside the load, and logs every call with its caller. It holds the script "
+    "gate on while set; read-only otherwise.")
 CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch): once a client's join is over, the host sets its clock "
     "just short of midnight. awake: both peers stay up. asleep: both go to bed first, so the "

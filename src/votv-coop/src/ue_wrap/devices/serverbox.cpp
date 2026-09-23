@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 
@@ -231,6 +232,46 @@ bool WriteAggregates(const Aggregates& in) {
 uint32_t GamemodeGeneration() {
     Gamemode();  // a stale cache is revalidated here, so the generation a caller reads is current
     return g_gmGeneration;
+}
+
+namespace {
+int32_t  g_offUpgrades = -1;        // serverBox_C.upgrades (int)
+bool     g_upgradesMissing = false; // the class loaded without the member: never retried
+uint64_t g_spawnerMissMs = 0;       // the spawner class was not loaded at this time
+}  // namespace
+
+bool ReadUpgrades(void* box, int32_t& out) {
+    if (!box || g_upgradesMissing) return false;
+    if (g_offUpgrades < 0) {
+        void* cls = R::FindClass(L"serverBox_C");
+        if (!cls) return false;
+        g_offUpgrades = R::FindPropertyOffset(cls, L"upgrades");
+        if (g_offUpgrades < 0) {
+            g_upgradesMissing = true;
+            UE_LOGW("serverbox: serverBox_C carries no 'upgrades' -- the upgrade reads stay off");
+            return false;
+        }
+    }
+    out = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(box) + g_offUpgrades);
+    return true;
+}
+
+int32_t CountUpgradeSpawners() {
+    // A class lookup that misses walks the object array, so a miss holds off the next one.
+    const uint64_t now = NowMs();
+    if (g_spawnerMissMs != 0 && now - g_spawnerMissMs < 10000) return 0;
+    void* cls = R::FindClass(L"initialServerUpgradeSpawn_C");
+    if (!cls) {
+        g_spawnerMissMs = now;
+        return 0;
+    }
+    g_spawnerMissMs = 0;
+    int32_t n = 0;
+    object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
+        if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
+            ++*static_cast<int32_t*>(ctx);
+    }, &n);
+    return n;
 }
 
 }  // namespace ue_wrap::serverbox
