@@ -106,34 +106,34 @@ picks the subject on its own, which today is the client's pile cone described in
 
 ### Holding, throwing, dropping
 
-While a prop is held, its holder owns it. The holder streams the held prop's world transform
-every frame, unreliable and newest-wins, under a generation it mints at the grab
+While a prop is held, its holder owns it. The holder streams the held prop's world transform every
+frame, unreliable and newest-wins, under a generation it mints at the grab
 (`coop/player/local_streams`). A receiver resolves the prop by key, turns its physics off, and
 follows the stream with a fixed-delay snapshot interpolation that renders one interval behind the
 newest pose on its own clock (`coop/props/remote_prop`, `coop/props/active_drive`). A grab changes
-the prop as well as moving it, on the grabbing machine only: the base prop's grab prelude clears
-its lifespan, broadcasts that it was touched and wakes and unfreezes it, and a prop carrying the
+the prop as well as moving it, on the grabbing machine only: the base prop's grab prelude clears its
+lifespan, broadcasts that it was touched and wakes and unfreezes it, and a prop carrying the
 wall-attach component runs the component's unstick instead. So the first pose of a hold runs the
 same prelude on the receiver's copy -- a fire extinguisher on its wall mount, a drive in a slot, a
 prop the toolgun froze or a save left asleep, a spawner's prop on a lifespan -- the unstick with the
 tool, since the holder had the prop off the wall. The release closes the hold, as do a stick and a
-slot that takes the prop from the hand, so a pose still in flight from an ended hold starts
-nothing: MTA's sync time context, minted here by the holder rather than assigned. A driven copy the
-game here switches back to simulating, as a laptop exit does to a chair another peer carries, is
-re-latched kinematic. A copy static here with no unstick is not driven, since the game cannot hold
-a body that does not simulate; the refusal is logged once per hold. On release, a reliable message
-carries the prop's transform, its frozen and sleep and its linear and angular velocity at that
-instant -- the game's throw is not an impulse but the tracking velocity the physics engine
-accumulated while the player flicked the camera. The receiver's copy takes the flags (a wall-attach
-component's owner refuses sleep) and lets go from the holder's transform, so lost last poses still
-end where the holder's did, and gets the velocity back unless it ended frozen in a slot or a mount,
-where it stays; a stuck wall-attachable keeps the place its stick gave it. A release for a prop
-something else moves now -- this peer's own grab, another hold, the host's driven-prop channel --
-changes nothing but its own hold. Above a launch speed the receiver also calls the prop's own thrown
-event, so the sound and the trail come from the engine. A stream that stops for half a second, or a
-holder that switches to another prop, is an implicit release. Grab and throw sounds the game plays
-only for the local player are synthesised on the receiver at the prop's position
-(`coop/props/prop_sound`), and the pocket blip is relayed (`coop/items/inventory_pickup_sync`).
+slot that takes the prop from the hand, so a pose still in flight from an ended hold starts nothing:
+MTA's sync time context, minted here by the holder rather than assigned. A driven copy the game here
+switches back to simulating, as a laptop exit does to a chair another peer carries, is re-latched
+kinematic. A copy static here with no unstick is not driven, since the game cannot hold a body that
+does not simulate; the refusal is logged once per hold. On release, a reliable message carries the
+prop's transform, its frozen and sleep and its linear and angular velocity at that instant -- the
+game's throw is not an impulse but the tracking velocity the physics engine accumulated while the
+player flicked the camera. The receiver's copy takes the flags and lets go from the holder's
+transform, so lost last poses still end where the holder's did, and gets the velocity back unless it
+ended frozen in a slot or a mount, where it stays; a stuck wall-attachable keeps the place its stick
+gave it. A release for a prop something else moves now -- this peer's own grab, another hold, the
+host's driven-prop channel -- changes nothing but its own hold. Above a launch speed the receiver
+also calls the prop's own thrown event, so the sound and the trail come from the engine. A stream
+that stops for half a second, or a holder that switches to another prop, is an implicit release.
+Grab and throw sounds the game plays only for the local player are synthesised on the receiver at
+the prop's position (`coop/props/prop_sound`), and the pocket blip is relayed
+(`coop/items/inventory_pickup_sync`).
 
 ### Dragged by a hook
 
@@ -165,17 +165,16 @@ does not broadcast it back (`coop/props/prop_echo_suppress`).
 
 ### Sticking to a wall
 
-A prop sticks through its wall-attach component, which the wall-attachable props (the cameras,
-the signs) and the plasma TV carry. The component commits its stick inside the Blueprint; the one
-visible seam is the commit entry, reached through a latent delay that the engine resumes through
-the function dispatch. The sticking peer broadcasts the frozen or static state and the commit pose
-before its own hold breaks, on the same ordered lane as the release so the order is structural;
-the receiver re-poses the prop and dispatches the component's own force-stick, so the attach, the
-effect and the destroy binding are the game's (`coop/props/prop_stick_sync`). The unstick crosses
-too, since not every unstick is a grab: a crowbar's pry frees a pryable sign and kicks it off the
-wall with nobody holding it. The script gate watches the component's unstick on every route; the
-unsticking peer broadcasts the prop's pose and velocity, and a receiver runs the same unstick with
-the tool and lets its copy go from there.
+A prop sticks through its wall-attach component, which the wall-attachable props (the cameras, the
+signs) and the plasma TV carry. The component commits its stick inside the Blueprint; the one
+visible seam is the commit entry, reached through a latent delay that the engine resumes through the
+function dispatch. The sticking peer broadcasts the frozen or static state and the commit pose
+before its own hold breaks, on the same ordered lane as the release so the order is structural; the
+receiver re-poses the prop and dispatches the component's own force-stick, so the attach, the effect
+and the destroy binding are the game's (`coop/props/prop_stick_sync`). The unstick crosses too,
+since a crowbar's pry frees a pryable sign with nobody holding it: the script gate watches the
+component's unstick on every route, the unsticking peer broadcasts the prop's pose and velocity, and
+a receiver runs the same unstick with the tool and lets its copy go.
 
 ### Containers
 
@@ -250,33 +249,34 @@ is built; concrete and food are designed and not built.
 ## Late join
 
 The join page owns the mechanism: explicit deletes for the props the joiner's save had and the
-host's world no longer has, then the snapshot bracket with one spawn per live keyed prop
-(adopted by key, created when missing, transform converged), then position corrections for what
-the host moved during the window, then the membership sweep that removes the locals the host
-never claimed. A keyed prop's frozen and sleep converge with its snapshot row and its correction,
-and a flag change without a move gets a correction too, so an extinguisher taken off its mount
-during the window is loose on the joiner; a wall-attach component's owner converges its stuck state
-there through the component's own unstick or force-stick, so a sign pried in the window is off its
-wall. A stuck prop otherwise reaches a joiner through the save, which carries the frozen and static
-state. Container slices are sent per live container at the ready edge. A joiner gets no held-prop
-or driven-prop pose until its world is ready, since the release and the end edge that close them
-are not sent to a world that is not ready either: a prop held at the join resolves on the first
-pose after it, and at the ready edge the host re-sends every driven prop's pose, the resting ones
-included, which the delta gate would otherwise never send. An end edge that reaches a joiner
-before the prop it names is kept until the prop resolves.
+host's world no longer has, then the snapshot bracket with one spawn per live keyed prop (adopted by
+key, created when missing, transform converged), then position corrections for what the host moved
+during the window, then the membership sweep that removes the locals the host never claimed. A keyed
+prop's frozen and sleep converge with its snapshot row and its correction, and a flag change without
+a move gets a correction too, so an extinguisher taken off its mount during the window is loose on
+the joiner; a wall-attach component's owner converges its stuck state there through the component's
+own unstick or force-stick, so a sign pried in the window is off its wall. A stuck prop otherwise
+reaches a joiner through the save, which carries the frozen and static state. Container slices are
+sent per live container at the ready edge. A joiner gets no held-prop or driven-prop pose until its
+world is ready, since the release and the end edge that close them are not sent to a world that is
+not ready either: a prop held at the join resolves on the first pose after it, and at the ready edge
+the host re-sends every driven prop's pose, the resting ones included, which the delta gate would
+otherwise never send. An end edge that reaches a joiner before the prop it names is kept until the
+prop resolves.
 
 ## Known limits
 
 | Limit | Evidence |
 |---|---|
-| Two peers grabbing the same prop both stream it; nothing assigns the prop to one holder, so a receiver's two drives both write it each tick, the higher slot last. For the same reason a release only knows its own holder's holds: one delayed past another peer's whole hold of the prop puts it back where the first holder let go | `[V]` `coop/props/remote_prop` has no claim and orders holds per holder, where MTA's server assigns one syncer per object and rejects a late packet of the previous one by its sync time context |
+| Two peers grabbing the same prop both stream it; nothing assigns the prop to one holder, so a receiver's two drives both write it each tick, the higher slot last. For the same reason a release only knows its own holder's holds: one delayed past another peer's whole hold of the prop puts it back where the first holder let go. And a join's snapshot row read before a live stick, unstick or release can reach the joiner after it and undo it there, until the window's late re-flush corrects the prop | `[V]` `coop/props/remote_prop` has no claim and orders holds per holder, where MTA's server keeps one syncer per unoccupied vehicle and relays only that syncer's packets; `[RD]` the rows ride the bulk lane behind the stick and the release, and carry no version |
 | A prop let go of lands by each peer's own physics from the same release transform and velocity, and nothing converges where it comes to rest: a fire extinguisher dropped from the hand ended between 0.2 and 152.6 cm apart on the two peers over eight drops, the widest where the client's copy stayed on a surface about a metre up that the host's copy landed on and rolled off | `[V]` the fire extinguisher drill (`coop/dev/fireext_drill`): the host's rest line (its last watch line where its copy had not settled) against the client's last watch line, which prints a move of 3 cm or more |
 | A prop whose own grab prelude adds to the base one gets only the base one on a receiver: the sprinkler's also detaches its hose, so the hose stays tied to a sprinkler another peer carries away. The glowstick's replaces the base one with its own release, and a receiver runs the base one | `[V]` the sprinkler and glowstick Blueprints: `prop_sprinkler_C`'s prelude calls `prop_C::playerGrabbed_pre` and `hose->detachSprinkler`, `prop_glowstick_C`'s calls `releaseGlowstick` alone; `coop/props/remote_prop` runs the base prelude |
 | A prop the toolgun freezes, unfreezes or makes static changes on the tool user's machine only; the next hold of it converges frozen and sleep, never static, and a copy static on one peer, without a wall-attach component's unstick, is not driven there while another peer holds the prop -- a refusal that lasts until a lane carries static | `[V]` no lane under `src/coop` catches `setPropProps`; `coop/props/remote_prop` refuses a stream for a copy static here |
 | Another peer's hold can carry away the chair this peer sits in at the laptop, which single player never allows: the laptop freezes the seat only on the machine whose player sits | `[V]` the laptop Blueprint: `stabilizeSeat` sets the seat frozen, and the exit's `setPropProps` clears it; `coop/props/remote_prop` unfreezes a held copy at the hold's first pose |
 | A keyed prop a client creates outside the intent door (a place after a pickup, the whitelisted births, a container extract, a player's own spawn verb) never reaches the host. It is logged now: the drain names its exit, and `[dev] prop_birth_key_probe` tallies every exit by name | `[V]` `coop/props/prop_drop_intent` drops it at the drain; `coop/dev/prop_birth_key_probe` |
 | Concrete, food and every other local-accumulator prop drift between peers; only the tape reel has its corrector | `[V]` `coop/interactables/tape_caddy_sync` is the only corrector |
-| A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it |
+| A prop tied by any hook -- a player's, an anchored one, the level's own -- is parked on every client for as long as the tie holds, since the host streams it, so it cannot be grabbed there until the hook lets go. A joiner parks one at rest on the host's ready-edge re-send, a single unreliable datagram: lost, it leaves that prop unparked there until it moves | `[V]` `coop/items/hook_prop_claim` claims every tied prop on the host every pass; `coop/props/prop_drive_stream` parks it; `coop/props/prop_drive_host` re-sends at the ready edge |
+| A wall-attachable whose stick replay finds no surface here is frozen in place without the attach, so when the thing it stuck to is destroyed it stays in the air here while every other copy falls | `[V]` `coop/props/prop_stick_sync`'s fallback writes the flag without the component's attach or its destroy binding; `[RD]` the stick carries no parent |
 | A prop the driven-prop channel set coasting can come to rest a few centimetres from the host's copy: the host ends a coasting stream half a second after the prop stops moving, before its body sleeps, and the end edge sets the client's copy to the host's pose and hands it back its physics, so each copy settles on its own. The broom drill measured 0 to 6.4 cm, and 12.1 cm for a prop whose support another prop knocked away on the host | `[V]` `coop/props/prop_drive_host` (`kRestMs`), `coop/props/prop_drive_stream` (the end edge restores simulation per `coop/props/prop_wire_parity`); the broom drill's push and dispense phases |
 | A prop that a pushed prop knocks moves on the host only: the driven-prop channel is fed by verbs, and a knock is none. One drill run measured a knocked prop moving 25.1 cm on the host and resting 15.9 cm from the client's copy | `[V]` the broom drill's push phases (`harness/autotest/autotest_broomstroke.cpp`); `coop/items/broom_push` streams only what a stroke itself pushed |
 | A prop parked under the host's drive cannot be grabbed on a client while the drag lasts: the park turns the body kinematic and the game's grab needs a simulating one. It is grabbable again after the end edge | `[V]` `coop/props/prop_drive_stream` parks by switching the mesh's simulation off (`ue_wrap/engine/engine_physics`); `coop/props/prop_wire_parity` records why a kinematic mirror is ungrabbable |
