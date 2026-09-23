@@ -186,9 +186,12 @@ void TickApplyAndDrive(coop::net::Session& s) {
             continue;
         }
         // The physics receiver's re-latch, as the held-prop drive does it: a parked copy stays
-        // kinematic when the game here switches its simulation back on.
-        if (dr.physicsParked && dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
+        // kinematic when the game here switches its simulation back on. That includes a copy parked
+        // frozen, which the park left as it was, and which an unstick or an unfreeze here has since
+        // freed: it is parked kinematic from then on, and the end edge hands its physics back.
+        if (dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
             ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
+            dr.physicsParked = true;
             if (++dr.relatches == 1) {
                 UE_LOGI("[PROP-DRIVE] CLIENT eid=%u -- the game turned simulation back on under the park; "
                         "re-latched kinematic", it->first);
