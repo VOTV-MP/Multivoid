@@ -12,6 +12,7 @@
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
 #include "coop/props/prop_spawn_authoring.h" // BirthIsPlayerAuthored (the spawn menu / the toolgun)
+#include "coop/props/prop_wire_parity.h"    // PhysFlagsOf, the one builder of a live prop's flags
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey
 #include "coop/props/container_contents_sync.h"  // TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
@@ -437,11 +438,7 @@ void Tick(coop::net::Session* session) {
         if (ue_wrap::prop::IsDescendantOfProp(e.actor)) {
             const std::wstring nm = ue_wrap::prop::GetPropNameString(e.actor);
             FillWireStr(p.propName.len, p.propName.data, nm);
-            p.physFlags = 0;
-            if (ue_wrap::prop::IsStatic(e.actor))           p.physFlags |= pf::kStatic;
-            if (ue_wrap::prop::IsFrozen(e.actor))           p.physFlags |= pf::kFrozen;
-            if (ue_wrap::prop::IsSleeping(e.actor))         p.physFlags |= pf::kSleep;
-            if (ue_wrap::prop::ReadRemoveWOrespawn(e.actor)) p.physFlags |= pf::kRemoveWOrespawn;
+            p.physFlags = coop::prop_wire_parity::PhysFlagsOf(e.actor);  // the host reads its four identity bits
         }
         if (freshBirth) {
             // Born asleep on the host (no free fall; the held-prop pose stream takes over) -- for

@@ -49,10 +49,10 @@ uint8_t FrozenSleepBitsOf(void* actor);
 // other copy froze or slept (setPropProps, as a mount does). Static is left alone -- no grab
 // changes it. Acts only on flags read off a live prop (kLiveState), never on a spawn's default;
 // only on a difference, and only on an Aprop_C, so an agreeing copy is never touched: a write here
-// runs init(), which wakes the body. True when the copy now matches; false when there was nothing
-// to do, the verb did not dispatch, or the class's own setter refused a flag (a wall-attachable's
-// override forces sleep off). Game thread.
-bool ConvergeFrozenSleep(void* actor, uint8_t physFlags);
+// runs init(), which wakes the body. A class's own setter can still refuse a flag: a
+// wall-attach component's owner passes sleep as false, so such a copy never sleeps here. A verb that
+// does not dispatch is said. Game thread.
+void ConvergeFrozenSleep(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes
 // SetSimulatePhysics(NOT(static || frozen || sleep)), so a settled prop is simulate-ENABLED but
