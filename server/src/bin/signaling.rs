@@ -64,15 +64,18 @@ use coop_server::common::{
 };
 use coop_server::tls;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::time::{timeout_at, Instant};
 
-const MAX_LINE: usize = 64 * 1024;
+// Before registration the only lines are the greeting (the token, a space, a 68-character
+// identity: about 120 bytes) and the proof (134 bytes). 512 leaves room and keeps an
+// unauthenticated peer from making the relay buffer more than that per slot.
+const MAX_PREAUTH_LINE: usize = 512;
 const GREETING_TIMEOUT: Duration = Duration::from_secs(15);
 // The relay loop has no app idle timeout, so keepalive IS the reap of a dead authed peer -- and at
 // the OS default (Linux waits two hours for a first probe) that reap is far too late to matter. A
@@ -89,14 +92,18 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 // identity, which GNS renders as `gen:` + 64 hex = 68 chars. At 64 the greeting
 // was refused outright, which reads as "P2P is down" rather than as a length cap.
 const MAX_IDENTITY: usize = 80;
-// Bounded relay backlog per destination. Worst-case per-dest heap =
-// RELAY_QUEUE * MAX_RELAY_PAYLOAD. Sizing (security audit 2026-07-16, S-1): the
-// prior 1024-deep queue of up-to-MAX_LINE (64 KiB) items let ONE token-holder pin
-// ~64 MiB per stalled destination and OOM the shared box. Signaling payloads
-// (SDP/ICE trickle) are a few KB, so we cap the relayed frame at MAX_RELAY_PAYLOAD
-// and keep the queue shallow: 64 * 8 KiB = 512 KiB per dest, hard bound.
+// Bounded relay backlog per destination. Sizing (security audit 2026-07-16, S-1): the
+// prior 1024-deep queue of up-to-64 KiB items let ONE token-holder pin ~64 MiB per
+// stalled destination. Signaling payloads (SDP/ICE trickle) are a few KB, so the
+// relayed frame is capped at MAX_RELAY_PAYLOAD -- the longest line a registered peer
+// may send at all -- and the queue at RELAY_QUEUE frames AND MAX_QUEUED_PER_DEST
+// bytes. The byte cap is what bounds the whole relay: frames alone (64 x 8 KiB)
+// times the 512 authed slots came to 256 MiB, twice the unit's MemoryMax, so a few
+// sources that register and stop reading could have it OOM-killed. 128 KiB per
+// destination is 64 MiB over every slot, and still holds 64 small ICE frames.
 const RELAY_QUEUE: usize = 64;
-const MAX_RELAY_PAYLOAD: usize = 8 * 1024; // drop a relayed line longer than this
+const MAX_RELAY_PAYLOAD: usize = 8 * 1024;
+const MAX_QUEUED_PER_DEST: usize = 128 * 1024;
 // Domain tag for the registration proof. Deliberately DIFFERENT from the admission
 // exchange's `multivoid-peer-admission-v1`: both are signed with the peer's one
 // durable key, and the separation is what stops a hostile relay -- which chooses
@@ -111,8 +118,7 @@ const MAX_RELAY_PAYLOAD: usize = 8 * 1024; // drop a relayed line longer than th
 const REGISTER_TAG: &[u8] = b"multivoid-signaling-register-v1";
 
 static TOKEN: LazyLock<String> = LazyLock::new(|| env_str("COOP_SIGNALING_TOKEN", ""));
-static CLIENTS: LazyLock<Mutex<HashMap<String, (u64, mpsc::Sender<Vec<u8>>)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CLIENTS: LazyLock<Mutex<HashMap<String, Route>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 // Connections that have not proved their key yet: the small pool an anonymous flood can fill,
 // taken at accept, and one address may hold only a few of its slots.
 static PENDING: LazyLock<Pool> = LazyLock::new(|| Pool::new("pre-auth", 128, 8));
@@ -127,6 +133,10 @@ static CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 struct LineReader<S> {
     rh: ReadHalf<S>,
     buf: Vec<u8>,
+    // How much of `buf` has been searched for a newline, so each byte is scanned once:
+    // rescanning the whole buffer made a line trickled a byte at a time cost quadratic
+    // CPU (588 ms for a 64 KiB line, per connection).
+    scanned: usize,
     max: usize,
 }
 
@@ -137,16 +147,18 @@ enum LineErr {
 
 impl<S: AsyncRead + Unpin> LineReader<S> {
     fn new(rh: ReadHalf<S>, max: usize) -> LineReader<S> {
-        LineReader { rh, buf: Vec::with_capacity(256), max }
+        LineReader { rh, buf: Vec::with_capacity(256), scanned: 0, max }
     }
 
     /// Next line INCLUDING its trailing '\n' (matches the Python `readuntil(b"\n")`).
     async fn next_line(&mut self) -> Result<Vec<u8>, LineErr> {
         loop {
-            if let Some(i) = self.buf.iter().position(|b| *b == b'\n') {
-                let line: Vec<u8> = self.buf.drain(..=i).collect();
+            if let Some(i) = self.buf[self.scanned..].iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = self.buf.drain(..=self.scanned + i).collect();
+                self.scanned = 0;
                 return Ok(line);
             }
+            self.scanned = self.buf.len();
             if self.buf.len() > self.max {
                 return Err(LineErr::TooLong);
             }
@@ -160,11 +172,57 @@ impl<S: AsyncRead + Unpin> LineReader<S> {
     }
 }
 
+/// Where a registered identity's relayed lines go: its connection's queue.
+struct Route {
+    conn_id: u64,
+    tx: mpsc::Sender<Queued>,
+    // Bytes waiting in `tx`, against MAX_QUEUED_PER_DEST.
+    queued: Arc<AtomicUsize>,
+}
+
+/// One relayed frame in a destination's queue. Its bytes count against that queue's budget
+/// until it is written out or dropped with the queue, so no path can leave them charged.
+struct Queued {
+    bytes: Vec<u8>,
+    budget: Arc<AtomicUsize>,
+}
+
+impl Queued {
+    /// Charge `bytes` to a destination's budget, or refuse them when it is spent.
+    fn charge(bytes: Vec<u8>, budget: &Arc<AtomicUsize>) -> Option<Queued> {
+        let n = bytes.len();
+        if budget.fetch_add(n, Ordering::Relaxed) + n > MAX_QUEUED_PER_DEST {
+            budget.fetch_sub(n, Ordering::Relaxed);
+            return None;
+        }
+        Some(Queued { bytes, budget: Arc::clone(budget) })
+    }
+}
+
+impl Drop for Queued {
+    fn drop(&mut self) {
+        self.budget.fetch_sub(self.bytes.len(), Ordering::Relaxed);
+    }
+}
+
+/// A live registration. Dropping it -- on return or on an unwind -- takes its route out
+/// of CLIENTS (unless a newer connection under the same identity has replaced it) and
+/// then gives its authed slot back.
 struct Reg {
     identity: String,
     conn_id: u64,
-    // The authed slot lives as long as the registration and is given back when it drops.
+    ip: String,
     _authed: Slot<'static>,
+}
+
+impl Drop for Reg {
+    fn drop(&mut self) {
+        let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+        if cl.get(&self.identity).map(|r| r.conn_id) == Some(self.conn_id) {
+            cl.remove(&self.identity);
+            log(&format!("[{}@{}] disconnected", self.identity, self.ip));
+        }
+    }
 }
 
 /// The registration proof's whole DECISION, split from its I/O so it can be
@@ -189,10 +247,12 @@ fn check_registration_proof(ident: &str, nonce: &str, auth_line: &str) -> Result
         .map_err(|_| "does not hold the key this identity names")
 }
 
-/// One connection, admitted at accept into the pre-auth pool. Both of its slots give themselves
-/// back when they drop -- the pre-auth one here unless promotion took it first, the authed one with
-/// the registration -- and a drop also runs on an unwind, so a panicking task cannot leak either
-/// (a leaked slot refuses every later accept once the pool is full, until a restart).
+/// Run one connection, admitted at accept into the pre-auth pool: greet, prove, promote
+/// into the authed pool, then relay. Returns when the connection ends. What it holds
+/// gives itself back when it drops -- the pre-auth slot unless promotion took it first,
+/// the registration with its route and authed slot -- and a drop also runs on an unwind,
+/// so a panicking task leaks none of them (a leaked slot refuses every later accept once
+/// its pool is full, until a restart).
 async fn handle<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     ip: String,
@@ -200,35 +260,13 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(
     pending: Slot<'static>,
     deadline: Instant,
 ) {
+    let ip = ip.as_str();
     let mut pending = Some(pending);
-    let mut reg: Option<Reg> = None;
-    serve(stream, &ip, listener, &mut pending, deadline, &mut reg).await;
-
-    // ---- cleanup: what is left once the slots are handled is the route ----
-    if let Some(reg) = reg {
-        let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
-        if cl.get(&reg.identity).map(|(id, _)| *id) == Some(reg.conn_id) {
-            cl.remove(&reg.identity);
-            log(&format!("[{}@{}] disconnected", reg.identity, ip));
-        }
-    }
-}
-
-/// Run one connection: greet, promote out of the pre-auth pool on success (filling
-/// `reg_out`), then the relay loop. Returns when the connection ends.
-async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
-    stream: S,
-    ip: &str,
-    listener: &str,
-    pending: &mut Option<Slot<'static>>,
-    deadline: Instant,
-    reg_out: &mut Option<Reg>,
-) {
     // NOTE: SO_KEEPALIVE is set on the raw TcpStream at accept time (before any
     // TLS wrap), since socket options belong to the socket, not to the
     // record layer -- see serve_plain/serve_tls.
     let (rh, mut wh) = tokio::io::split(stream);
-    let mut lr = LineReader::new(rh, MAX_LINE);
+    let mut lr = LineReader::new(rh, MAX_PREAUTH_LINE);
 
     // ONE budget for the WHOLE pre-registration phase (handshake + greeting + proof),
     // set at accept, not one per line: a peer that answers each line just inside a
@@ -294,8 +332,10 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         // the same discipline authdrill uses when it puts its sabotage entirely on
         // the client side. Bounded by the pre-registration deadline either way.
         let delay = env_int("COOP_SIGNALING_NONCE_DELAY_MS", 0);
-        if delay > 0 {
-            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+        if delay > 0
+            && timeout_at(deadline, tokio::time::sleep(Duration::from_millis(delay as u64))).await.is_err()
+        {
+            return;
         }
         let nonce = token_hex(32);
         if wh.write_all(format!("nonce {nonce}\n").as_bytes()).await.is_err() {
@@ -329,21 +369,25 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
 
     let identity = ident.to_string();
     let conn_id = CONN_SEQ.fetch_add(1, Ordering::Relaxed);
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(RELAY_QUEUE);
+    let (tx, mut rx) = mpsc::channel::<Queued>(RELAY_QUEUE);
+    let queued = Arc::new(AtomicUsize::new(0));
 
     // Register (evict-on-duplicate-identity, token-gated). Overwriting the map entry
     // drops the previous Sender -> the previous connection's select sees recv()==None
     // -> it stops and closes its socket.
     {
         let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((prev_id, _)) = cl.get(&identity) {
-            if *prev_id != conn_id {
+        if let Some(prev) = cl.get(&identity) {
+            if prev.conn_id != conn_id {
                 log(&format!("[{identity}@{ip}] replaced previous connection"));
             }
         }
-        cl.insert(identity.clone(), (conn_id, tx));
+        cl.insert(identity.clone(), Route { conn_id, tx, queued });
     }
-    *reg_out = Some(Reg { identity: identity.clone(), conn_id, _authed: authed });
+    let _reg = Reg { identity: identity.clone(), conn_id, ip: ip.to_string(), _authed: authed };
+    // A registered peer's lines are relay frames: one longer than the relay forwards
+    // ends the connection instead of being buffered.
+    lr.max = MAX_RELAY_PAYLOAD;
     // `key proved` is the drill's positive needle AND the operator's answer to
     // "is the A59 gate armed on this deployment". `listener` is the evidence base
     // for the arc-3 flip: the proof is RELAYABLE on a plaintext leg (an on-path
@@ -363,8 +407,8 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             }
             outbound = rx.recv() => {
                 match outbound {
-                    Some(bytes) => {
-                        if wh.write_all(&bytes).await.is_err() {
+                    Some(frame) => {
+                        if wh.write_all(&frame.bytes).await.is_err() {
                             break;
                         }
                     }
@@ -387,8 +431,9 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
 /// make every host reconnect on a timer forever.
 fn relay_line(sender: &str, line: &[u8]) {
     // S-1 (audit 2026-07-16): drop over-length lines BEFORE building/queuing the
-    // relayed frame, so a single sender can't pin RELAY_QUEUE * MAX_LINE per dest.
-    // Real SDP/ICE frames are a few KB; MAX_RELAY_PAYLOAD is generous headroom.
+    // relayed frame. The reader already ends a connection whose line outgrows
+    // MAX_RELAY_PAYLOAD, but a line that arrives whole in one read can pass that
+    // check by up to a read's length. Real SDP/ICE frames are a few KB.
     if line.len() > MAX_RELAY_PAYLOAD {
         return;
     }
@@ -404,10 +449,14 @@ fn relay_line(sender: &str, line: &[u8]) {
     }
     let msg = format!("{sender} {payload}").into_bytes();
     let cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, dest_tx)) = cl.get(dest) {
-        // try_send is non-blocking: drop on Full (slow dest) or Closed (gone). This is
-        // the bounded-channel form of the Python 5s-drain best-effort relay.
-        let _ = dest_tx.try_send(msg);
+    if let Some(route) = cl.get(dest) {
+        // Non-blocking and best-effort: drop when the destination's byte budget is
+        // spent, its queue is Full (slow dest) or Closed (gone) -- the bounded form of
+        // the Python 5s-drain relay. A refused frame comes back in the error and drops,
+        // which gives its bytes back.
+        if let Some(frame) = Queued::charge(msg, &route.queued) {
+            let _ = route.tx.try_send(frame);
+        }
     }
 }
 
@@ -468,27 +517,18 @@ async fn main() {
     serve_plain(listener, &PENDING, GREETING_TIMEOUT).await
 }
 
-/// Admission into the pre-auth pool at accept, before a byte is read or a handshake
-/// starts (see `admission`). A refused connection is dropped unanswered.
-fn admit(pool: &'static Pool, ip: &str) -> Option<Slot<'static>> {
-    match pool.admit(ip) {
-        Ok(slot) => Some(slot),
-        Err(why) => {
-            log(&format!("[{ip}] refused: {why}"));
-            None
-        }
-    }
-}
-
-/// Plaintext accept loop. Every accept is logged with the listener tag -- this
-/// is the evidence base for the arc-5 plaintext-retirement gate.
+/// Plaintext accept loop. Every admitted accept is logged with the listener tag --
+/// this is the evidence base for the arc-5 plaintext-retirement gate; a refused one
+/// is counted by the pool's refusal line. Admission into the pre-auth pool is taken
+/// at accept, before a byte is read (see `admission`); a refused connection is
+/// dropped unanswered.
 async fn serve_plain(listener: TcpListener, pool: &'static Pool, budget: Duration) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let ip = addr.ip().to_string();
+                let Some(pending) = pool.admit_or_log(&ip) else { continue };
                 log(&format!("accept [listener=plain] [{ip}]"));
-                let Some(pending) = admit(pool, &ip) else { continue };
                 set_keepalive(&stream);
                 let deadline = Instant::now() + budget;
                 tokio::spawn(handle(stream, ip, "plain", pending, deadline));
@@ -512,7 +552,7 @@ async fn serve_tls(
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let ip = addr.ip().to_string();
-                let Some(pending) = admit(pool, &ip) else { continue };
+                let Some(pending) = pool.admit_or_log(&ip) else { continue };
                 set_keepalive(&stream);
                 let deadline = Instant::now() + budget;
                 let acceptor = acceptor.clone();
@@ -588,6 +628,7 @@ mod admission_tests {
         let (l, addr) = listen().await;
         tokio::spawn(serve_plain(l, &POOL, Duration::from_millis(400)));
         let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(!closed_within(&mut c, Duration::from_millis(100)).await, "dropped before its deadline");
         assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a silent greeter was held past the deadline");
     }
 
@@ -696,6 +737,86 @@ mod tests {
         let good = auth_line(&victim, &victim.ident, N1);
         assert!(check_registration_proof(&victim.ident, N1, &good[..good.len() - 2]).is_err());
         assert!(check_registration_proof(&victim.ident, N1, &good.to_uppercase()).is_err());
+    }
+
+    /// Poll `cond` for up to three seconds: the relay moves the slots on its own task.
+    async fn wait_for(what: &str, cond: impl Fn() -> bool) {
+        for _ in 0..300 {
+            if cond() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for: {what}");
+    }
+
+    #[test]
+    fn a_destination_queue_is_capped_in_bytes_and_gives_them_back() {
+        use super::{Queued, MAX_QUEUED_PER_DEST};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let budget = Arc::new(AtomicUsize::new(0));
+        let frame = || vec![0u8; MAX_QUEUED_PER_DEST / 4];
+        let held: Vec<Queued> = (0..4).map(|_| Queued::charge(frame(), &budget).expect("under budget")).collect();
+        assert!(Queued::charge(frame(), &budget).is_none(), "a frame past the byte budget was queued");
+        assert_eq!(budget.load(Ordering::Relaxed), MAX_QUEUED_PER_DEST, "a refused frame stayed charged");
+        drop(held);
+        assert_eq!(budget.load(Ordering::Relaxed), 0, "dropped frames kept their bytes charged");
+    }
+
+    #[tokio::test]
+    async fn a_line_split_across_reads_is_found_and_an_overlong_one_refused() {
+        use super::{LineErr, LineReader};
+        use tokio::io::AsyncWriteExt;
+
+        let (mut tx, rx) = tokio::io::duplex(64);
+        let (rh, _wh) = tokio::io::split(rx);
+        let mut lr = LineReader::new(rh, 16);
+        tx.write_all(b"abc").await.unwrap();
+        tx.write_all(b"def\nxyz\n").await.unwrap();
+        assert_eq!(lr.next_line().await.ok().unwrap(), b"abcdef\n");
+        assert_eq!(lr.next_line().await.ok().unwrap(), b"xyz\n");
+        tx.write_all(&[b'a'; 40]).await.unwrap();
+        assert!(matches!(lr.next_line().await, Err(LineErr::TooLong)), "a line past the cap was buffered on");
+    }
+
+    #[tokio::test]
+    async fn a_registration_trades_its_pre_auth_slot_for_an_authed_one_and_gives_it_back() {
+        use super::{serve_plain, AUTHED, CLIENTS};
+        use coop_server::admission::Pool;
+        use std::sync::LazyLock;
+        use std::time::Duration;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::{TcpListener, TcpStream};
+
+        // The token is read once, at the first greeting, and no other test in this binary
+        // sends one.
+        std::env::set_var("COOP_SIGNALING_TOKEN", "test-token");
+        static PENDING: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 8));
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(serve_plain(l, &PENDING, Duration::from_secs(10)));
+
+        let p = peer();
+        let (rd, mut wr) = TcpStream::connect(addr).await.unwrap().into_split();
+        let mut rd = BufReader::new(rd);
+        wr.write_all(format!("test-token {}\n", p.ident).as_bytes()).await.unwrap();
+        let mut nonce = String::new();
+        rd.read_line(&mut nonce).await.unwrap();
+        let nonce = nonce.trim().strip_prefix("nonce ").expect("no nonce line").to_string();
+        wr.write_all(format!("{}\n", auth_line(&p, &p.ident, &nonce)).as_bytes()).await.unwrap();
+
+        let routed = || CLIENTS.lock().unwrap().contains_key(&p.ident);
+        wait_for("the registration's route, one authed slot and no pre-auth slot", || {
+            routed() && AUTHED.held_by("127.0.0.1") == 1 && PENDING.held() == 0
+        })
+        .await;
+        drop((rd, wr));
+        wait_for("the route and the authed slot to go with the connection", || {
+            !routed() && AUTHED.held_by("127.0.0.1") == 0
+        })
+        .await;
     }
 
     #[test]

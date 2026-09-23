@@ -72,6 +72,11 @@ pub fn token_urlsafe(nbytes: usize) -> String {
 pub fn ip_bucket(ip: &str) -> String {
     if ip.contains(':') {
         if let Ok(v6) = ip.parse::<Ipv6Addr>() {
+            // A dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d; as a /64 every one
+            // of them would share a single bucket.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.to_string();
+            }
             let s = v6.segments();
             return format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]);
         }
@@ -253,6 +258,13 @@ mod tests {
         assert_eq!(clamp_str("x\u{FEFF}y", 64), "xy"); // BOM
         assert_eq!(clamp_str("p\u{E000}q", 64), "pq"); // PUA
         assert_eq!(clamp_str("normal Name 123", 64), "normal Name 123"); // real text intact
+    }
+
+    #[test]
+    fn a_mapped_v4_address_is_its_own_bucket() {
+        assert_eq!(ip_bucket("::ffff:203.0.113.7"), "203.0.113.7");
+        assert_ne!(ip_bucket("::ffff:203.0.113.7"), ip_bucket("::ffff:198.51.100.1"));
+        assert_eq!(ip_bucket("2001:db8:1:2::1"), "2001:db8:1:2::/64");
     }
 
     #[test]

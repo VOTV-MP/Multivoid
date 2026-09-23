@@ -11,7 +11,7 @@
 //! ever held across an await — while still using the multi-thread tokio runtime.
 
 
-use coop_server::admission::{Pool, Slot};
+use coop_server::admission::Pool;
 use coop_server::common::{clamp_str, env_int, env_str, log};
 use coop_server::http_transport::{
     json_bytes, read_head, write_response, HeadErr, CONNS, HTTP_TIMEOUT, MAX_BODY, MAX_HEADER,
@@ -230,29 +230,20 @@ async fn main() {
     serve_plain(listener, &CONNS, HTTP_TIMEOUT).await
 }
 
-/// Admission at accept, before a byte is read or a handshake starts (see `admission`). A refused
-/// connection is dropped unanswered.
-fn admit(pool: &'static Pool, peer_ip: &str) -> Option<Slot<'static>> {
-    match pool.admit(peer_ip) {
-        Ok(slot) => Some(slot),
-        Err(why) => {
-            log(&format!("[{peer_ip}] refused: {why}"));
-            None
-        }
-    }
-}
-
-/// Plaintext accept loop. Logs EVERY accept with the listener tag: this log is
-/// the evidence base for the arc-5 retirement gate ("zero unknown-source
+/// Plaintext accept loop. Logs EVERY admitted accept with the listener tag: this
+/// log is the evidence base for the arc-5 retirement gate ("zero unknown-source
 /// plaintext connections over 24h"). Without it the gate would be a hope -- the
-/// 400 path below never logs, so a stray connection could pass unseen.
+/// 400 path below never logs, so a stray connection could pass unseen. A refused
+/// one is counted by the pool's refusal line instead. Admission is taken at accept,
+/// before a byte is read (see `admission`); a refused connection is dropped
+/// unanswered.
 async fn serve_plain(listener: TcpListener, pool: &'static Pool, budget: Duration) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let peer_ip = addr.ip().to_string();
+                let Some(slot) = pool.admit_or_log(&peer_ip) else { continue };
                 log(&format!("accept [listener=plain] [{peer_ip}]"));
-                let Some(slot) = admit(pool, &peer_ip) else { continue };
                 let deadline = Instant::now() + budget;
                 tokio::spawn(async move {
                     let _slot = slot;
@@ -280,7 +271,7 @@ async fn serve_tls(
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let peer_ip = addr.ip().to_string();
-                let Some(slot) = admit(pool, &peer_ip) else { continue };
+                let Some(slot) = pool.admit_or_log(&peer_ip) else { continue };
                 let deadline = Instant::now() + budget;
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
@@ -356,6 +347,7 @@ mod tests {
         let (l, addr) = listen().await;
         tokio::spawn(serve_plain(l, &POOL, Duration::from_millis(400)));
         let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(!closed_within(&mut c, Duration::from_millis(100)).await, "dropped before its deadline");
         assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a silent client was held past the deadline");
     }
 

@@ -49,8 +49,9 @@ per-address and per-class rate limits, a global and a per-address lobby cap, an 
 distinct from the secret session id, control characters stripped and strings clamped, bounded
 bodies and headers, and the forwarded-for header trusted only from a loopback proxy. Both services
 admit a connection at accept, before its TLS handshake, into a pool with a total and a per-address
-cap, and one deadline bounds the handshake and everything read after it: a source that opens
-sockets and sends nothing holds a few slots for fifteen seconds, never the whole pool.
+cap, and one deadline bounds the handshake and everything read before the answer (on the relay,
+before registration): a source that opens sockets and sends nothing holds a few slots for fifteen
+seconds, never the whole pool.
 
 ### Direct and brokered
 

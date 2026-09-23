@@ -58,7 +58,8 @@ cannot be spoofed; constant-time token compare; an opaque `lobbyId` against a se
 control-character strip and codepoint clamp on every string; per-(address, class) sliding-window
 rate limits; a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
 body; connection admission at accept (`admission.rs`: a total and a per-address cap, taken before
-the TLS handshake) under one deadline that covers the handshake and every read after it.
+the TLS handshake) under one deadline that covers the handshake and every read before the
+answer, or on the relay before registration; a relay destination's queue is capped in bytes.
 
 ## Design notes
 
@@ -67,7 +68,8 @@ the TLS handshake) under one deadline that covers the handshake and every read a
 - Evicting a duplicate identity drops the peer's relay `Sender`, which closes the channel and
   shuts the old socket down at once; nothing waits on the OS to unwedge a stale reader.
 - A bounded per-destination channel with drop-on-full: a slow destination can never
-  head-of-line-block a sender, and memory per destination is hard-bounded.
+  head-of-line-block a sender, and memory per destination is hard-bounded at 128 KiB, so every
+  destination together fits the unit's memory cap.
 - Typed JSON through serde replaces hand-rolled key validation.
 - `LATEST_PROTO`, `LATEST_MOD` and `LATEST_URL` in the master binary's source are the operator
   constants that name the newest build for the update check, which is informational and never
