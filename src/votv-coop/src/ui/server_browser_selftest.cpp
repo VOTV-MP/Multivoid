@@ -9,10 +9,16 @@
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
+#include "ui/server_browser_tabs.h"     // the master tabs the TABS phases click
 #include "ui/browser_input_screens.h"  // the input windows the last phases drive
 #include "ui/host_session_settings.h"  // ...and what NEXT must open, one step further
 #include "ui/host_window_native.h"     // ...and what it must open
 
+#include "coop/config/config.h"           // the ini line a tab click must have written
+#include "coop/config/config_registry.h"
+#include "coop/net/lobby_client.h"        // LobbyRow::master -- which master a row came from
+#include "coop/net/master_slots.h"
+#include "coop/session/session_manager.h"  // CopyRows
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/log.h"
@@ -25,6 +31,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace ui::server_browser_selftest {
 namespace {
@@ -72,81 +80,92 @@ constexpr int kActConnMove    = 112;
 constexpr int kActConnDown    = 120;
 constexpr int kActConnUp      = 124;
 constexpr int kActConnVerify  = 128;
+// The master tabs, while nothing is selected: a real click on the second tab must choose that
+// master, write it to the ini and re-feed the list from it; then the first tab is clicked back,
+// so every phase below runs on the list it was written for. Two verdicts, TABS and TABS BACK.
+constexpr int kTabAimB        = 130;
+constexpr int kTabDownB       = 138;
+constexpr int kTabUpB         = 142;
+constexpr int kTabVerifyB     = 146;  // HOLDING -- until that master's rows land
+constexpr int kTabAimA        = 150;
+constexpr int kTabDownA       = 158;
+constexpr int kTabUpA         = 162;
+constexpr int kTabVerifyA     = 166;  // HOLDING -- until the first master's rows are back
 // Row hover and selection, before Back: a browser whose rows cannot be picked is not a browser.
-constexpr int kRowMove        = 132;
-constexpr int kRowRead        = 140;
-constexpr int kRowDown        = 142;
-constexpr int kRowUp          = 146;
-constexpr int kRowVerify      = 150;
+constexpr int kRowMove        = 172;
+constexpr int kRowRead        = 180;
+constexpr int kRowDown        = 182;
+constexpr int kRowUp          = 186;
+constexpr int kRowVerify      = 190;
 // Then hold still twice, so a capture shows what the two state channels drew: ROW SELECT PASS
 // proves the state changed and says nothing about pixels. Shot A parks the cursor on a row that
 // is not the selected one (purple with a grey frame, the hovered row yellow, idle rows between);
 // shot B moves it back onto the selected row, which must stay purple with no yellow frame. Each
 // holds kShotHoldMs, the window the rig's 3 s capture poll needs.
-constexpr int kSkinAimOther   = 151;
-constexpr int kSkinHoldOther  = 152;  // HOLDING -- wall clock
-constexpr int kSkinAimSelf    = 153;
-constexpr int kSkinHoldSelf   = 154;  // HOLDING -- wall clock
-constexpr int kClickMove      = 156;
-constexpr int kClickSample    = 164;  // eight ticks after the move -- the scrim's budget
-constexpr int kClickDown      = 166;
-constexpr int kClickUp        = 170;
-constexpr int kClickVerify    = 180;
+constexpr int kSkinAimOther   = 191;
+constexpr int kSkinHoldOther  = 192;  // HOLDING -- wall clock
+constexpr int kSkinAimSelf    = 193;
+constexpr int kSkinHoldSelf   = 194;  // HOLDING -- wall clock
+constexpr int kClickMove      = 196;
+constexpr int kClickSample    = 204;  // eight ticks after the move -- the scrim's budget
+constexpr int kClickDown      = 206;
+constexpr int kClickUp        = 210;
+constexpr int kClickVerify    = 220;
 // Then the HOST link, after the Back phases because clicking HOST closes the browser.
-constexpr int kHostReopen     = 186;
-constexpr int kHostMove       = 194;
-constexpr int kHostDown       = 204;
-constexpr int kHostUp         = 208;
-constexpr int kHostVerify     = 220;
+constexpr int kHostReopen     = 226;
+constexpr int kHostMove       = 234;
+constexpr int kHostDown       = 244;
+constexpr int kHostUp         = 248;
+constexpr int kHostVerify     = 260;
 // Then the world list inside that window, a different screen's rows in a different ScrollBox:
 // its own phases, since a row hit test through IsHovered does not answer inside a ScrollBox.
-constexpr int kWorldMove      = 228;
-constexpr int kWorldRead      = 236;
-constexpr int kWorldDown      = 238;
-constexpr int kWorldUp        = 242;
-constexpr int kWorldVerify    = 252;
+constexpr int kWorldMove      = 268;
+constexpr int kWorldRead      = 276;
+constexpr int kWorldDown      = 278;
+constexpr int kWorldUp        = 282;
+constexpr int kWorldVerify    = 292;
 // Then the hosting window's exits. No native VOTV window has an X, so neither does ours: Back and
 // ESC are the only ways out, and they fail independently (Back goes through the WidgetIsHovered
 // predicate and inherits the capture-starved pointer that makes every native widget read
 // not-hovered; ESC is a GetAsyncKeyState poll and survives that), so each gets a phase.
-constexpr int kHostWindowHold = 253;   // one frame of the hosting window, for the eye; kWorldVerify + 1,
+constexpr int kHostWindowHold = 293;   // one frame of the hosting window, for the eye; kWorldVerify + 1,
                                        // since the counter advances by one after a break
-constexpr int kHostBackMove   = 258;
-constexpr int kHostBackDown   = 266;
-constexpr int kHostBackUp     = 270;
-constexpr int kHostBackVerify = 278;
-constexpr int kHostEscReopen  = 286;
-constexpr int kHostEscPress   = 292;
-constexpr int kHostEscHold    = 298;
-constexpr int kHostEscRelease = 302;
-constexpr int kHostEscVerify  = 308;
+constexpr int kHostBackMove   = 298;
+constexpr int kHostBackDown   = 306;
+constexpr int kHostBackUp     = 310;
+constexpr int kHostBackVerify = 318;
+constexpr int kHostEscReopen  = 326;
+constexpr int kHostEscPress   = 332;
+constexpr int kHostEscHold    = 338;
+constexpr int kHostEscRelease = 342;
+constexpr int kHostEscVerify  = 348;
 // The two input windows, last because they are the only phases that leave a window other than
 // the browser on screen; each asserts that it opens (the browser itself has no text entry) and
 // holds long enough to be photographed.
-constexpr int kInputDirectShot = 314;
-constexpr int kInputDirectHold = 315;
-constexpr int kInputNameOpen   = 322;
-constexpr int kInputNameShot   = 328;
-constexpr int kInputNameHold   = 329;
+constexpr int kInputDirectShot = 354;
+constexpr int kInputDirectHold = 355;
+constexpr int kInputNameOpen   = 362;
+constexpr int kInputNameShot   = 368;
+constexpr int kInputNameHold   = 369;
 // Session settings, step two of hosting and the only caller of HostWithSave: reached by pressing
 // Next on the hosting window and by nothing else (no dev auto-open for it), so these phases drive
 // the real path. The Host button itself is never pressed: it would leave the rig hosting.
-constexpr int kSessOpen       = 336;
-constexpr int kSessNextMove   = 344;
-constexpr int kSessNextDown   = 350;
-constexpr int kSessNextUp     = 354;
-constexpr int kSessVerify     = 362;
-constexpr int kSessShotHold   = 363;
-constexpr int kSessWarnHold   = 364;   // the version warning, held for the eye; then Next again
-constexpr int kSessLockMove   = 370;
-constexpr int kSessLockDown   = 376;
-constexpr int kSessLockUp     = 380;
-constexpr int kSessLockVerify = 388;
-constexpr int kSessLockHold   = 389;
-constexpr int kSessBackMove   = 396;
-constexpr int kSessBackDown   = 402;
-constexpr int kSessBackUp     = 406;
-constexpr int kSessBackVerify = 414;
+constexpr int kSessOpen       = 376;
+constexpr int kSessNextMove   = 384;
+constexpr int kSessNextDown   = 390;
+constexpr int kSessNextUp     = 394;
+constexpr int kSessVerify     = 402;
+constexpr int kSessShotHold   = 403;
+constexpr int kSessWarnHold   = 404;   // the version warning, held for the eye; then Next again
+constexpr int kSessLockMove   = 410;
+constexpr int kSessLockDown   = 416;
+constexpr int kSessLockUp     = 420;
+constexpr int kSessLockVerify = 428;
+constexpr int kSessLockHold   = 429;
+constexpr int kSessBackMove   = 436;
+constexpr int kSessBackDown   = 442;
+constexpr int kSessBackUp     = 446;
+constexpr int kSessBackVerify = 454;
 
 // The forced offset for the positive control, far past any real extent: a getter that returns it
 // unchanged echoes the request rather than reading Slate.
@@ -532,7 +551,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         what, btn, sz.X, sz.Y);
                 // Fall through to the row phases rather than abort: the action bar is not a
                 // precondition for anything below.
-                g_selfCheckStep = (g_selfCheckStep == kActRefMove) ? kActConnMove - 1 : kRowMove - 1;
+                g_selfCheckStep = (g_selfCheckStep == kActRefMove) ? kActConnMove - 1 : kTabAimB - 1;
                 return;
             }
             UE_LOGW("server_browser_native: %s at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
@@ -579,6 +598,66 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "Expected 'connect:none' with the screen still up. If the outcome is "
                         "empty the click never reached the action bar at all.",
                         out ? out : "(null)", open ? 1 : 0);
+            break;
+        }
+        case kTabAimB:
+        case kTabAimA: {
+            const bool toB = (g_selfCheckStep == kTabAimB);
+            if (ui::server_browser_tabs::Count() < 2) {
+                UE_LOGW("server_browser_tabs: TABS SKIP -- the list holds %d master(s); a switch "
+                        "needs two (the lab run serves two fake masters)",
+                        ui::server_browser_tabs::Count());
+                g_selfCheckStep = kRowMove - 1;
+                return;
+            }
+            void* tab = ui::server_browser_tabs::Tab(toB ? 1 : 0);
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!tab || !U::WidgetScreenRect(tab, tl, sz) || sz.X < 1.f || sz.Y < 1.f) {
+                UE_LOGE("server_browser_tabs: TABS FAIL -- tab %d reports no usable geometry "
+                        "(%p %.0fx%.0f): the master cannot be changed by pointer",
+                        toB ? 1 : 0, tab, sz.X, sz.Y);
+                g_selfCheckStep = kRowMove - 1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            break;
+        }
+        case kTabDownB:
+        case kTabDownA:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kTabUpB:
+        case kTabUpA:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            g_holdUntilMs = nowMs + kRowWaitMs;
+            break;
+        case kTabVerifyB:
+        case kTabVerifyA: {
+            // The whole path, not the handler: the choice, the ini line a restart reads it back
+            // from, and rows that came from THAT master (each row names its master).
+            const bool toB = (g_selfCheckStep == kTabVerifyB);
+            const int want = toB ? 1 : 0;
+            const auto masters = coop::net::master_slots::List();
+            const std::string label = masters[static_cast<size_t>(want)].label;
+            std::vector<coop::net::lobby::LobbyRow> rows;
+            coop::session_manager::CopyRows(rows);
+            const bool chosen = coop::net::master_slots::SelectedIndex() == want;
+            const bool fromIt = !rows.empty() && rows.front().master ==
+                                                     masters[static_cast<size_t>(want)].url;
+            if ((!chosen || !fromIt) && nowMs < g_holdUntilMs) return;   // the fetch is out
+            const std::string saved =
+                coop::config::ResolveString(::coop::config_registry::rows::net_master);
+            const bool remembered = (saved == label);
+            const char* verdict = toB ? "TABS" : "TABS BACK";
+            if (chosen && fromIt && remembered)
+                UE_LOGW("server_browser_tabs: %s PASS -- a real click on the '%s' tab chose it, "
+                        "wrote net.master=%s, and the list now holds %zu server(s) from that "
+                        "master", verdict, label.c_str(), saved.c_str(), rows.size());
+            else
+                UE_LOGE("server_browser_tabs: %s FAIL -- after a real click on '%s': chosen=%d, "
+                        "rows from it=%d (%zu rows), net.master='%s'. All three must hold.",
+                        verdict, label.c_str(), chosen ? 1 : 0, fromIt ? 1 : 0, rows.size(),
+                        saved.c_str());
             break;
         }
         case kRowMove: {
@@ -1090,6 +1169,16 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "settings open=%d, hosting window closed=%d. Both must be true.",
                         up ? 1 : 0, gone ? 1 : 0);
             if (!up) { g_selfCheckStep = -1; return; }
+            {
+                const std::string chosen = coop::net::master_slots::Selected().label;
+                const std::string& shown = ui::host_session_settings::MasterShown();
+                if (shown == chosen)
+                    UE_LOGW("host_session_settings: SESSION MASTER PASS -- the window names "
+                            "'%s', the master chosen in the browser", shown.c_str());
+                else
+                    UE_LOGE("host_session_settings: SESSION MASTER FAIL -- the window names "
+                            "'%s' while '%s' is chosen", shown.c_str(), chosen.c_str());
+            }
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
