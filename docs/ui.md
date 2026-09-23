@@ -29,7 +29,11 @@ own tick, which needs no new engine primitive; binding the button's delegate wou
 no-parameter function of our own to point at, and the mod owns no class to mint one on. The
 button opens the native server browser (`ui/server_browser_native`): the master server's lobby
 list with name, players, version, world and age, an amber mark on a version pair that differs
-from ours, which always means the connect will be refused, a Host button and a Join. The address
+from ours, which always means the connect will be refused, a Host button and a Join. A row of tabs
+above the list picks which master's list it is, one tab per master, the chosen one filled; the
+choice is remembered in the ini and is also where a hosted game is listed
+(`ui/server_browser_tabs`, [master-server.md](master-server.md)). When a master stops answering,
+the status pane names it and points at the other tabs. The address
 and the nickname are typed in their own small windows rather than inline
 (`ui/browser_input_screens`). The old ImGui browser stays as a fallback chosen by an ini row
 and needing a restart (`ui/server_browser`, `ui/server_browser_surface`).
@@ -37,8 +41,8 @@ and needing a restart (`ui/server_browser`, `ui/server_browser_surface`).
 Hosting is two windows. The first chooses the world (a save, or a new game through the game's
 own save creation) and how the session is reachable, direct or brokered through the master
 (`ui/host_window_native`, `ui/host_save_picker`); the second chooses who may join and who may
-find it: a password, and whether the lobby is listed (`ui/host_session_settings`). Only then is
-Host offered.
+find it: a password, and whether the lobby is listed (`ui/host_session_settings`), and it names
+the master the game will be listed on, the tab chosen in the browser. Only then is Host offered.
 
 The save list is scanned rather than loaded (`ue_wrap/engine/save_browser`). Driving the game's
 own slot loader would deserialize every world file on the game thread to fill a row that needs
@@ -193,7 +197,8 @@ the two tables published 233 ms apart in that run.
 
 | State | Owner | Shape |
 |---|---|---|
-| the browser's list | the master server | fetched on open and refresh |
+| the browser's list | the master chosen with the tabs | fetched on open, on refresh and on a tab switch |
+| which master is chosen | the player, in the ini's `net.master` | written on a tab click |
 | the hosting choices | the host, at creation | the reachability and the listing are announced once |
 | the loading state | the joining client | a snapshot the screen renders |
 | the version line's verdict | the master's latest record | silent without one |
@@ -226,7 +231,7 @@ scoreboard fills as roster rows arrive; nameplates appear with each puppet's fir
 | Concept | Files |
 |---|---|
 | the thanks roll | `ui/thanks_roll`, `coop/thanks/thanks_list`, `assets/thanks/thanks.txt`, `resources/thanks.rc` |
-| the main menu and the native screens | `ui/multiplayer_menu`, `ui/server_browser_native` with `ui/server_browser_rows`, `ui/server_browser_actions`, `ui/server_browser_panels`, `ui/server_browser_surface`, `ui/host_window_native`, `ui/host_save_picker`, `ui/host_session_settings`, `ui/host_session_choices`, `ui/browser_input_screens`, `ui/native_screen`, `ui/native_text_field`, `ue_wrap/engine/umg_build` |
+| the main menu and the native screens | `ui/multiplayer_menu`, `ui/server_browser_native` with `ui/server_browser_rows`, `ui/server_browser_tabs`, `ui/server_browser_actions`, `ui/server_browser_panels`, `ui/server_browser_surface`, `ui/host_window_native`, `ui/host_save_picker`, `ui/host_session_settings`, `ui/host_session_choices`, `ui/browser_input_screens`, `ui/native_screen`, `ui/native_text_field`, `ue_wrap/engine/umg_build` |
 | the fallback browser | `ui/server_browser` |
 | joining and failing | `ui/loading_screen`, `ui/join_curtain`, `ui/end_reason_dialog`, `ui/boot_warning_dialog`, `ui/console` |
 | the overlay host | `ui/imgui_overlay`, `ui/overlay_backend`, `ui/overlay_backend_dx11`, `ui/overlay_backend_dx12`, `ui/overlay_cursor`, `ui/input_focus`, `ui/fonts`, `ui/atlas_watch`, `ui/scale`, `ui/style` |

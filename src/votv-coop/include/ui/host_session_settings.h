@@ -60,6 +60,10 @@ int PasswordLength();
 // the check was written to catch.
 int GeneratedPasswordLength();
 
+// The master label the window named when it was last shown: the chosen slot, which is where
+// the Host button announces. Empty before the first showing.
+const std::string& MasterShown();
+
 // Driven from the main-menu tick observer, beside the browser's and the hosting window's.
 void OnMenuTick(void* menu, void* switcher);
 

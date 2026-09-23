@@ -6,6 +6,7 @@
 #include "coop/config/config.h"
 #include "coop/text/utf8_codec.h"   // the server name is sanitised where it is authored
 #include "coop/config/config_registry.h"
+#include "coop/net/master_slots.h"      // the master this session will be listed on
 #include "coop/net/peer_identity.h"     // RandomBytes -- the CSPRNG the identity already uses
 #include "coop/session/host_mode.h"
 #include "coop/session/session_manager.h"
@@ -130,6 +131,9 @@ void* g_pwBlock  = nullptr;   // the label + field + hint, shown only while lock
 void* g_pwHint   = nullptr;
 void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
+void* g_recapMaster = nullptr;
+// The master label the recap last named, for the self-check (MasterShown).
+std::string g_shownMaster;
 // The questions, each a host_session_choices::Selector; `chosen` carries the answer, so there are
 // no parallel booleans.
 HC::Selector g_who;   // 0 = anyone may join, 1 = a password is required
@@ -396,8 +400,10 @@ bool BuildScreen(void* switcher) {
         if (!g_nameField) return false;
         g_recapWorld = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
         g_recapConn  = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
+        g_recapMaster = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
         U::SetClipping(g_recapWorld, 1);
         U::SetClipping(g_recapConn, 1);
+        U::SetClipping(g_recapMaster, 1);
     }
 
     if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) { ReleaseFields(); return false; }
@@ -680,6 +686,11 @@ void Show() {
             std::wstring(L"Connection: ") +
                 (g_connMode == 1 ? L"direct (you forward the port)" : L"automatic"),
             kDim);
+    // Which master the session is listed on, by its label (the address is not the player's
+    // concern here): the tab chosen in the server browser. On AUTOMATIC it is also the relay and
+    // the rendezvous; the choice is settled here with everything else, before the announce.
+    g_shownMaster = coop::net::master_slots::Selected().label;
+    SetText(g_recapMaster, L"Master server: " + Widen(g_shownMaster), kDim);
 
     // The lock and the password come back the way they were left.
     const std::string saved = cfg::ResolveString(::coop::config_registry::rows::net_lobby_password);
@@ -743,6 +754,8 @@ int PasswordLength() {
 
 int GeneratedPasswordLength() { return kPwLen; }
 
+const std::string& MasterShown() { return g_shownMaster; }
+
 void OnMenuTick(void* menu, void* switcher) {
     if (!Armed() || !menu || !switcher) return;
     g_switcher = switcher;
@@ -755,7 +768,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_root = nullptr; g_box = nullptr; g_scrim = nullptr; g_status = nullptr;
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_pwBlock = nullptr; g_pwHint = nullptr;
-        g_recapWorld = g_recapConn = nullptr;
+        g_recapWorld = g_recapConn = g_recapMaster = nullptr;
         HC::ClearWidgets(g_who);
         // The visibility rows die with the same menu instance; a widget missing from this block is
         // a dangling pointer RepaintChoices would dispatch into on the next hover. Anything added

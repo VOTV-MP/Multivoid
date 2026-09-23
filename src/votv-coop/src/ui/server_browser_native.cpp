@@ -13,6 +13,8 @@
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
+#include "ui/server_browser_tabs.h"      // the master tabs above it
+#include "coop/net/master_slots.h"       // which master a switch landed on, for the notice
 #include "ui/native_text_field.h"        // AnyFocused() -- a focused field owns Escape
 #include "coop/dev/native_text_probe.h"   // the HALT rung: can a native field take text?
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
@@ -43,15 +45,15 @@ using ue_wrap::FLinearColor;
 
 // Slate units, the window's own; the row metrics live with the rows.
 constexpr float kWindowW  = 980.f;
-constexpr float kWindowH  = 620.f;
+constexpr float kWindowH  = 662.f;
 // Frame and spacing, from the native windows.
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
 // The list's height is explicit, not the VerticalBox's leftover slack: with a Fill slot the box
 // allotted the ScrollBox more than the window had left, so the list overflowed upward and its
 // first row drew clipped under the header. Everything in the left column comes out of this
-// number: two grid rows at 46 plus their gaps, Back at 48 and two 6 px separations is about
-// 160, and the body is about 564.
+// number: the master tabs at 38 plus their 4 px gap, two grid rows at 46 plus their gaps, Back
+// at 48 and two 6 px separations is about 202, and the body is about 606.
 constexpr float kListH    = 396.f;
 // The two body columns: the list is the subject; the panes hold prose and need enough to spell a
 // sentence. The save browser this mirrors splits about the same way.
@@ -206,6 +208,9 @@ bool BuildScreen(void* switcher) {
     if (void* s = NS::AddHFill(body, leftCol, kListWeight, kFill, kFill))
         NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, kPadPx, 0.f);
 
+    // The master tabs sit on the list they choose, the way MTA's source tabs sit on theirs.
+    if (!ui::server_browser_tabs::Build(leftCol)) return false;
+
     // The list wears its own frame, as in the game: on the native Keybinds window the list panel's
     // ring sits flush against the window's. The ScrollBox goes inside the framed overlay; the
     // SizeBox still bounds the height, so the row layout's allotment is unchanged.
@@ -304,6 +309,7 @@ void Show() {
     g_escPrimed = false;   // re-prime: an ESC held while the screen opens must not close it
     g_lmbPrimed = false;   // ...and the same for the release that OPENED us
     rows::OnShown();       // ...and the hover, for the same reason: nothing else re-asks
+    ui::server_browser_tabs::Sync(true);
     SyncRows();
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
@@ -382,6 +388,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_root = nullptr;
         g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
+        ui::server_browser_tabs::Forget();
         panels::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
@@ -460,6 +467,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_escPrimed = false;   // the screen just became live -- see either hosting window's
         g_lmbPrimed = false;   // BecameLive for why a revive owes these two
         rows::OnShown();
+        ui::server_browser_tabs::Sync(true);
         UE_LOGI("server_browser_native: live again (the switcher index returned to ours)");
     }
 
@@ -500,6 +508,21 @@ void OnMenuTick(void* menu, void* switcher) {
             // The action bar before the rows: its buttons sit outside the list, and returning here
             // keeps a click on CONNECT from also reading as a click on what is behind it.
             if (ui::server_browser_actions::OnReleaseEdge()) return;
+            // A tab: another master's list is fetched now, not at the next 5 s tick, and the
+            // emptied list and the panes repaint this tick, so the switch is visible at once.
+            bool switched = false;
+            if (ui::server_browser_tabs::OnReleaseEdge(switched)) {
+                if (switched) {
+                    g_lastRefreshMs = ::GetTickCount64();
+                    sm::Refresh();
+                    SyncRows();
+                    const std::string notice =
+                        "Showing the " + coop::net::master_slots::Selected().label +
+                        " server list.";
+                    panels::SetNotice(notice.c_str());
+                }
+                return;
+            }
             // A click on a hovered row selects it; the row is known from the hover pass, so this
             // costs no dispatch, and a handled click returns like the two above. The details panel
             // repaints now rather than at the 1 Hz cadence: a pane that fills in a second later
@@ -509,6 +532,7 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     rows::UpdateHover();
+    ui::server_browser_tabs::UpdateHover();
 
     // Fetch on a timer, paint on an arrival: with paint coupled to the fetch tick a lobby that
     // arrived early was not drawn until the next fetch, and REFRESH showed "Refreshing..." over an

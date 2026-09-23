@@ -77,6 +77,9 @@ void* g_list = nullptr;   // the UScrollBox holding the rows
 int              g_hoverRow = -1;   // index into the live rows, or -1
 NS::HoverTracker g_hover;           // pointer + scroll + settling, one owner
 std::string      g_selectedId;      // the SELECTED LOBBY, keyed by id and not by index
+// The master the rows on screen came from. An id is unique on one master only, so the selection
+// is dropped the moment the list becomes another master's (see Sync).
+std::string      g_rowsMaster;
 
 // Row identity: g_rowIds[i] is the lobbyId the child at index i was rendered with, written in the
 // same pass as its text by the one function that owns the panel.
@@ -412,6 +415,14 @@ void UpdateHover() {
 // pairing safe.
 void Sync() {
     g_lastRowsGen = sm::CopyRows(g_rows);
+    // One master's list at a time (lobby_client.h): a switch replaces the list whole, and the new
+    // list's ids are its master's, so a selection made on the old one is dropped rather than
+    // resolved against a different lobby that happens to share its id.
+    const std::string listMaster = g_rows.empty() ? std::string() : g_rows.front().master;
+    if (listMaster != g_rowsMaster) {
+        g_rowsMaster = listMaster;
+        g_selectedId.clear();
+    }
     // A successful fetch resets the age clock; a repaint or a failed fetch does not. Keyed on the
     // data generation, not the repaint generation, which also moves on a failed attempt (the status
     // line changed): a down master would otherwise re-stamp "last fetched" every 5 s and the stale

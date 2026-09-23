@@ -496,6 +496,7 @@ set(VOTVCOOP_SOURCES
     src/ui/server_browser_native.cpp
     src/ui/server_browser_panels.cpp
     src/ui/server_browser_rows.cpp
+    src/ui/server_browser_tabs.cpp
     src/ui/server_browser_surface.cpp
     src/ui/server_browser_selftest.cpp
     src/ui/boot_warning_dialog.cpp

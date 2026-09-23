@@ -3,6 +3,7 @@
 #include "ui/server_browser_panels.h"
 
 #include "coop/net/lobby_client.h"
+#include "coop/net/master_slots.h"      // the list the alarm names, and whether another exists
 #include "coop/net/protocol.h"            // kProtocolVersion -- which side must update
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"         // the one owner of text encoding; names and status sentences arrive as UTF-8
@@ -277,9 +278,18 @@ void Sync(bool force) {
     // master did not answer either of the last two tries, whereas a long time since a success is
     // also true of a player who alt-tabbed, and telling them the master is down would be a claim
     // the UI invented. See the lobby client's consecutive-failure count.
+    // It names the list, and with another master to pick it says so: the tabs above the list are
+    // the answer when one master is unreachable from where the player sits, and they are the one
+    // control on this screen a player in that state would not think to try.
     const int fails = sm::FetchFailures();
-    g_sAlarm.Set(fails >= 2 ? "Cannot reach the server list. Check your connection."
-                            : std::string());
+    std::string alarm;
+    if (fails >= 2) {
+        namespace slots = coop::net::master_slots;
+        alarm = "Cannot reach the " + slots::Selected().label + " server list. " +
+                (slots::List().size() > 1 ? "Try another list above, or check your connection."
+                                          : "Check your connection.");
+    }
+    g_sAlarm.Set(alarm);
 
     if (now >= g_noticeUntilMs) g_notice.clear();
     g_sNotice.Set(g_notice);
