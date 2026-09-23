@@ -1,6 +1,6 @@
 // coop/dispatch/event_dispatch_world.cpp -- the ambient and world-event reliable-kind case
 // bodies (the firefly, the event cue, fire and snapshot, the alarm, the server box, the
-// roaches, the inventory pickup, chat, the clock, the sky, the red sky, lightning, weather)
+// roaches, the inventory pickup, chat, the sky, the red sky, lightning, weather)
 // and the shared sender-eid range check; see coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
@@ -17,7 +17,6 @@
 #include "coop/world/firefly_sync.h"
 #include "coop/items/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
-#include "coop/world/time_sync.h"
 #include "coop/world/weather_lightning.h"
 #include "coop/world/weather_redsky.h"
 #include "coop/world/weather_sync.h"
@@ -247,35 +246,6 @@ bool HandleWorldEvent(net::Session& session,
         net::ChatLinePayload lp{};
         std::memcpy(&lp, msg.payload, sizeof(lp));
         coop::chat_sync::OnChatLine(lp);
-        break;
-    }
-    case net::ReliableKind::TimeSync: {
-        // The host-authoritative world clock, host to client; the client applies it to its cycle
-        // (the module no-ops on the host). The trust gate, like every host-only kind: only slot 0
-        // may set the clock.
-        if (msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: TimeSync from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
-            break;
-        }
-        if (msg.payloadLen < sizeof(net::TimeSyncPayload)) {
-            UE_LOGW("event_feed: TimeSync payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::TimeSyncPayload));
-            break;
-        }
-        net::TimeSyncPayload tp{};
-        std::memcpy(&tp, msg.payload, sizeof(tp));
-        // Reject NaN, infinity and absurd values before the raw float write into the cycle struct:
-        // a NaN clock reaches the sun and moon rotation, a black sky or a rotator assert. The time
-        // and day are monotonic game counters, tens of thousands of seconds per game day; the time
-        // scale is about 1.
-        if (!std::isfinite(tp.totalTime) || !std::isfinite(tp.day) || !std::isfinite(tp.timeScale) ||
-            std::fabs(tp.totalTime) > 1.0e7f || std::fabs(tp.day) > 1.0e7f ||
-            tp.timeScale < 0.0f || tp.timeScale > 1.0e4f) {
-            UE_LOGW("event_feed: TimeSync values out of range (t=%.1f d=%.1f s=%.3f) -- dropping",
-                    tp.totalTime, tp.day, tp.timeScale);
-            break;
-        }
-        coop::time_sync::OnReliable(tp);
         break;
     }
     case net::ReliableKind::SkyState: {

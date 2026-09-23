@@ -2,7 +2,7 @@
 // (Anewsky_C: the star dome + celestial body meshes, owned by AdaynightCycle_C::skysphere).
 // Principle-7 engine-wrapper layer (no network/coop state); coop::sky_sync drives the sync.
 //
-// Two values diverge per-peer and are NOT covered by TimeSync (which already converges the
+// Two values diverge per-peer and are NOT covered by the clock sync (which already converges the
 // sun/moon ORBIT + brightness from the clock):
 //   (1) the star-dome orientation -- Anewsky_C's `sky` mesh is given an UNSEEDED random yaw,
 //       RandomFloatInRange(-45,-135), once on the BeginPlay path, then spun by DeltaSeconds/32

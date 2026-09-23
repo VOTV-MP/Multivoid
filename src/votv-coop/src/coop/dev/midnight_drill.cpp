@@ -55,6 +55,8 @@ bool    g_saidArm = false;
 bool    g_saidEvents = false;
 int     g_slot = -1;          // the host's client whose join armed it
 int32_t g_setDayZ = -1;       // the host's day number when it set the clock
+uint64_t g_minutesAtAccel = 0;  // this peer's minute pulses when the fast-forward began
+bool     g_pokedRate = false;   // the clock latch's control write is done (client, once per session)
 
 // Who ends the night. Three classes declare a function of this name (the gamemode's, the player's,
 // the ATV's wakeUp), so the watch keeps only the gamemode's, by its declaring class. Each entry is
@@ -155,6 +157,7 @@ void CheckAccelerate(char role) {
     if (coop::sleep_sync::InAcceleratePhase()) {
         float total = 0.f, day = 0.f, scale = 0.f;
         DNC::ReadClock(total, day, scale);
+        g_minutesAtAccel = coop::dev::rollover_watch::RanCount(L"func_newMinute");
         UE_LOGI("midnight_drill: [%c] ACCELERATE -- timescale %.3f day=%.2f | %s", role, scale, day,
                 SleepInputs().c_str());
         g_step = Step::WatchWake;
@@ -178,7 +181,11 @@ void WatchWake(char role) {
     DNC::ReadClock(total, day, scale);
     int32_t h = 0, m = 0, z = 0;
     DNC::ReadSavedTime(h, m, z);
-    UE_LOGI("midnight_drill: [%c] woke -- savedtime %d:%02d day %d, day=%.2f | %s", role, h, m, z, day,
+    // The minute pulses this peer ran through the night: a client that saw every game minute of the
+    // host's clock matches the host's count; one whose samples skipped minutes falls short.
+    const uint64_t minutes = coop::dev::rollover_watch::RanCount(L"func_newMinute") - g_minutesAtAccel;
+    UE_LOGI("midnight_drill: [%c] woke -- savedtime %d:%02d day %d, day=%.2f, %llu minute pulses since the "
+            "fast-forward | %s", role, h, m, z, day, static_cast<unsigned long long>(minutes),
             SleepInputs().c_str());
     g_step = Step::Done;
 }
@@ -278,7 +285,21 @@ void TickHost(coop::net::Session* s) {
     }
 }
 
+// The clock latch's own control, both arms: once joined, write a rate into this client's clock as a
+// game writer would (the cheat menu, the purple wisp's rewind); time_sync must name it and hold 0
+// before the cycle's next tick, so the clock does not move.
+void PokeClockRate() {
+    if (g_pokedRate || !coop::net_pump::HasAnnouncedWorldReady() ||
+        coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
+        return;
+    g_pokedRate = true;
+    DNC::WriteTimeScale(1.f);
+    UE_LOGI("midnight_drill: [C] wrote 1 into this client's clock rate, as a game writer would -- time_sync "
+            "must name it and hold 0");
+}
+
 void TickClient() {
+    PokeClockRate();
     if (ArmOf() != Arm::Asleep) return;  // awake: the client only watches
     switch (g_step) {
     case Step::WaitJoin:
@@ -330,6 +351,8 @@ void OnDisconnect() {
     g_saidEvents = false;
     g_slot = -1;
     g_setDayZ = -1;
+    g_minutesAtAccel = 0;
+    g_pokedRate = false;
     g_wakeLines = 0;
 }
 

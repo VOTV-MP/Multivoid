@@ -184,9 +184,8 @@ public:
     // Host: one world-clock sample to send, unreliably, on the next stream round. The clock lane
     // (time_sync) decides when a sample is due; a client call stores nothing that is read. Game thread.
     void SendHostClock(const TimeSyncPayload& clock);
-    // Client: the latest host clock; apply only on isNew (the frozen mirror holds between
-    // arrivals). False until the first ClockPose; the connect-edge TimeSync seeds the value before
-    // then.
+    // Client: the latest host clock; apply only on isNew (the parked mirror holds between
+    // arrivals). False until the first ClockPose, which flows from the connect.
     bool TryGetHostClock(TimeSyncPayload& out, bool* outIsNew = nullptr);
 
     // Host: the download-sim output vector, sent unreliably on a ~100 ms throttle. `set` false

@@ -39,9 +39,9 @@ void Install(coop::net::Session* session);
 //   HOST + connected: passEvents growth poll -> broadcast new fires.
 //   CLIENT: assert allEvents.Num == 0 (scheduler suppression) + drain pending replays.
 //
-// The client assert is what closes the sleep-accelerate hole: during an accelerate the client
-// clock free-runs at TimeScale=1 and its own settime walk RUNS, so day-boundary rows would
-// otherwise fire natively there. Restored on disconnect; the local world resumes scheduling.
+// The client assert is what keeps the client's own walk dormant: its settime walks the list on
+// every clock change the host's samples make, so due rows would otherwise fire natively there.
+// Restored on disconnect; the local world resumes scheduling.
 //
 // Three classes of fire this poll cannot see, all deliberate. A trigger-volume fire (bedEvent,
 // a scare armed by TBoxActivator) executes per-peer natively when THAT peer overlaps, which

@@ -1,6 +1,6 @@
 // coop/world/daily_task_sync.h -- the L7 daily-task mirror (saveSlot.taskNew).
-// HOST-authored: every live taskNew writer is host-only (createNewTask -- the client
-// daynightCycle is frozen at TimeScale=0; lib.processTask -- reachable only via
+// HOST-authored: every live taskNew writer is host-only (createNewTask -- part of the midnight
+// the client's parked clock never reaches; lib.processTask -- reachable only via
 // setTaskNew + sell; droneSellLocation.sell -- the client drone tick is suppressed;
 // GUID census across all dumped assets). Wire: ReliableKind::TaskNewState=103
 // (host ~1 Hz change-hash poll; fires a few times per game-day). Rewards themselves

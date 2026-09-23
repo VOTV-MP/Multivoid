@@ -41,7 +41,7 @@ host validates and commits contested writes), `local` (never shared).
 | Pyramid | the walking-pyramid choreography | host | world-actor snapshot and replay | works |
 | World actors | the event-spawned non-character actors | host | replay or seed | works |
 | Drone | the delivery drone's flight and state | host | snapshot | built |
-| Sky and time | sky rotation, moon phase, the clock (clients never free-run) | host | seed at connect | built |
+| Sky and time | sky rotation, moon phase, the clock and the day number (a client's clock never runs on its own, so it never rolls a midnight) | host | the clock stream from the connect; the sky seeded at connect | built |
 | Weather | rain, snow, fog, wind, lightning, red sky, the event-born weathers | host | snapshot | tested, one known break |
 | Fireflies, ambient spawners | cosmetic spawns and the flora and forage spawners (host only) | peer for cosmetics, host for spawners | none or parked at join | built |
 | Story and scheduled events | host-observed fires replayed on clients by a per-event policy; the active-events registry mirrored for late joiners | host | replay and snapshot | built |

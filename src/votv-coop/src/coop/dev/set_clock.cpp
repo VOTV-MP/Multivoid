@@ -46,18 +46,17 @@ void SetClock(int day, int hour, int minute) {
             UE_LOGW("set_clock: SetClock -- world clock not resolved (world up?)");
             return;
         }
-        const int rawZ = day - 1;  // displayed day -> the scheduler/save day-Z
-        // INSTANT and COMPLETE. A timeZ-only write leaves the sun where it was and does not even
-        // hold: the cycle rebuilds timeZ from the accumulator on its next tick, so the write snaps
-        // back. All three pieces move together:
-        //   day       -- the within-day accumulator the sun derives from AND the midnight
-        //                cascade fires on, so writing it moves the lighting;
-        //   totalTime -- the absolute elapsed clock, kept equal to day so the two never
-        //                disagree about where in the day we are;
-        //   timeZ     -- the NAMED clock (the HUD, settime's scheduler, save persistence).
-        // The next minute pulse persists via settime; a forward day jump fires skipped scheduled
-        // events natively, through settime's own walk. Connected clients converge on the next
-        // streamed correction, which carries timeZ too.
+        const int rawZ = day - 1;  // displayed day -> the save's day number
+        // INSTANT and COMPLETE, from the two pieces the cycle derives everything else from:
+        //   day              -- the within-day accumulator the sun derives from AND the midnight
+        //                       cascade fires on, so writing it moves the lighting; totalTime,
+        //                       the absolute elapsed clock, is kept equal to it so the two never
+        //                       disagree about where in the day we are;
+        //   savedtime's day  -- the day number, where it lives; the cycle copies it into the
+        //                       named clock every tick, which is why a write of that never held.
+        // The next tick rebuilds the named clock and settime raises its pulses; a forward day jump
+        // fires skipped scheduled events natively, through settime's own walk. Connected clients
+        // converge on the next streamed sample, which carries the day number.
         float total = 0.f, dayAcc = 0.f, scale = 0.f, maxT = 0.f;
         if (!DNC::ReadClock(total, dayAcc, scale) || !DNC::ReadMaxTime(maxT) || maxT <= 0.f) {
             UE_LOGW("set_clock: SetClock -- cycle accumulators not resolved");
@@ -65,10 +64,13 @@ void SetClock(int day, int hour, int minute) {
         }
         const float frac = (hour * 60 + minute) / 1440.0f;
         const float newTotal = frac * maxT;
-        DNC::WriteTimeZ(hour, minute, rawZ);
-        DNC::ApplyClock(newTotal, newTotal, scale);
+        if (!DNC::WriteSavedDay(rawZ)) {
+            UE_LOGW("set_clock: SetClock -- the save's day number not resolved");
+            return;
+        }
+        DNC::ApplyClock(newTotal, newTotal);
         UE_LOGI("set_clock: clock set Day %d %02d:%02d -> Day %d %02d:%02d INSTANT "
-                "(timeZ.Z %d -> %d; totalTime %.1f -> %.1f of %.1f; sun re-derives this tick; "
+                "(day number %d -> %d; totalTime %.1f -> %.1f of %.1f; sun re-derives this tick; "
                 "a forward day jump fires skipped scheduled events natively)",
                 curD + 1, curH, curM, day, hour, minute, curD, rawZ, total, newTotal, maxT);
     });
@@ -86,17 +88,10 @@ bool ApplyTimeFraction(float frac) {
         UE_LOGW("set_clock: SetTimeFraction -- world clock not resolved (world up?)");
         return false;
     }
-    int32_t h = 0, m = 0, dz = 0;
-    if (!DNC::ReadTimeZ(h, m, dz)) {
-        UE_LOGW("set_clock: SetTimeFraction -- timeZ not resolved");
-        return false;
-    }
-    // Sun AND the named clock together: a sun-only write desynced the HUD clock from the lighting,
-    // and the next tick rebuilt timeZ from the accumulator anyway. Same day; the two accumulators
-    // are kept equal, as in SetClock.
+    // The accumulators alone: the next tick rebuilds the named clock from `day`, so the HUD and the
+    // lighting move together. Same day; the two accumulators are kept equal, as in SetClock.
     const int minutes = static_cast<int>(frac * 1440.0f);
-    DNC::WriteTimeZ(minutes / 60, minutes % 60, dz);
-    DNC::ApplyClock(frac * maxT, frac * maxT, scale);
+    DNC::ApplyClock(frac * maxT, frac * maxT);
     UE_LOGI("set_clock: sun+clock set to %.3f of day (%02d:%02d; totalTime=%.1f / MaxTime=%.1f)",
             frac, minutes / 60, minutes % 60, frac * maxT, maxT);
     return true;

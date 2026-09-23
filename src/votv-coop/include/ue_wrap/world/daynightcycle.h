@@ -28,6 +28,15 @@ bool EnsureResolved();
 // has streamed in. Game thread.
 void* Cycle();
 
+// The cycle's own ReceiveTick event (declared on daynightCycle_C, dispatched by the engine through
+// ProcessEvent every frame), the seam a lane parks the cycle at: a pre-observer on it runs right
+// before the tick reads the clock. Null until EnsureResolved has succeeded. Game thread.
+void* TickFunction();
+
+// The cycle a tick is dispatching on, handed in by such an observer: it becomes the cached
+// singleton at once, so a new world's first tick needs no object-array walk. Game thread.
+void NoteCycle(void* cycle);
+
 // Read the cycle's clock into the outs. False if the cycle / offsets are not resolved
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);
@@ -38,29 +47,31 @@ bool ReadClock(float& totalTime, float& day, float& timeScale);
 // offset, so it is not the same angle. False if unresolved. Game thread.
 bool ReadMaxTime(float& maxTime);
 
-// Overwrite the cycle's clock by direct field write: totalTime and day, as loadtime writes
-// them but without its skipDaySet test, AND timeScale, which loadtime never touches and the
-// day-roll suppression below depends on. The client applies the host's authoritative clock
-// here and the cycle re-derives the sun from `day`. No-op if unresolved. Game thread.
-void ApplyClock(float totalTime, float day, float timeScale);
+// Overwrite the cycle's two accumulators by direct field write, totalTime and day, as loadtime
+// writes them but without its skipDaySet test. The cycle re-derives the sun from `day`, and its
+// next tick rebuilds the named clock from it. No-op if unresolved. Game thread.
+void ApplyClock(float totalTime, float day);
 
 // ---- the NAMED clock: `timeZ` (FIntVector: X=hour, Y=minute, Z=day number) ----
-// The game's own running triple. The cycle rebuilds it every tick -- hour and minute derived
+// The game's own running triple, and derived: the cycle rebuilds it every tick -- hour and minute
 // from `day` and `maxTime`, Z copied from saveSlot.savedtime.Z, which is where the DAY NUMBER
-// actually lives -- and hands it to saveSlot.settime, whose new-minute and new-hour out flags
-// drive those two cascades. Its new-day flag is read nowhere; the day roll is the tick
-// threshold `day > maxTime` instead, which is also what increments savedtime.Z. The float
-// `day` is NOT the day number: it is the within-day accumulator that threshold fires on.
-// Reads and writes here are plain FIntVector field access; the Blueprint writes it with a Let
-// and offers no setter. Game thread; false or a no-op if unresolved.
+// lives -- and hands it to saveSlot.settime, which raises the new-minute and new-hour pulses on
+// any difference from savedtime. A write here lasts until that tick, so there is no writer. Its
+// new-day flag is read nowhere; the day roll is the tick threshold `day > maxTime` instead,
+// which is also what increments savedtime.Z. The float `day` is NOT the day number: it is the
+// within-day accumulator that threshold fires on. Game thread; false if unresolved.
 bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day);
-void WriteTimeZ(int32_t hour, int32_t minute, int32_t day);
 
 // saveSlot.savedtime, the same triple as the save keeps it. Its Z is the day number's SOURCE: the
 // cycle copies it into timeZ.Z every tick and the day roll increments it, and saveSlot.settime
-// rewrites the whole triple whenever the hour or the minute moves. Read-only; false until the
-// gamemode and its saveSlot resolve. Game thread.
+// rewrites the whole triple whenever the hour or the minute moves. False until the gamemode and
+// its saveSlot resolve. Game thread.
 bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day);
+
+// Write the day number, savedtime.Z, alone: the hour and minute stay settime's, so the next tick
+// sees them move and raises its pulses as it would for any clock change. A raw write, as the day
+// roll's own increment is. False until the saveSlot resolves. Game thread.
+bool WriteSavedDay(int32_t day);
 
 // The cycle's rate inputs, read-only, for instruments. Outside realtime mode each tick adds
 // deltaSeconds * timeScale * diffMult * settingMultiplayer * sleepingTimeDilation to `day`; in
@@ -74,19 +85,16 @@ struct Rates {
 };
 bool ReadRates(Rates& out);
 
-// ---- day-roll suppression (coop/world/time_sync drives these) ----
-// The midnight cascade -- the task roll every night, the results email and points on the week
-// boundary -- is a tick threshold, `day > maxTime` inside the cycle's own tick chain, and it
-// is armed on every peer: a connected client would roll its OWN task batch on different RNG,
-// and func_newHour would place a duplicate automatic drone order (hour >= 6 while
-// dailyDelivery is false), including an instant one at a join whose first clock snap crosses
-// 06:00. The suppression is state-level rather than a timer kill: a client's `day` advances
-// only through our corrections, always below maxTime because the host wraps in-tick, so
-// writing timeScale = 0 puts the whole cascade structurally out of reach while the sky keeps
-// deriving from the corrected `day`.
+// ---- the client's parked clock (coop/world/time_sync drives these) ----
+// The midnight cascade -- the hash codes, the task roll, the Bad Sun, the results mail and points
+// -- is a tick threshold, `day > maxTime` inside the cycle's own tick chain, armed on every peer.
+// A client's cycle is held at timeScale 0, so its `day` moves only by the host's samples, which
+// are below maxTime because the host wraps inside its own tick: the cascade is out of reach while
+// the sky keeps deriving from `day`. The hour pulse still runs, and func_newHour would place the
+// automatic 6 am drone order while dailyDelivery is false, so that is latched too.
 
-// Write timeScale alone. 1.0f is the game's own running value, the one its rewind restores
-// after the hour it spends at -1; used by the disconnect restore. No-op if unresolved.
+// Write timeScale alone: 0 to park a client's clock, 1.0f -- the game's own running value, the
+// one its rewind restores after the hour it spends at -1 -- to hand it back. No-op if unresolved.
 void WriteTimeScale(float scale);
 
 // saveSlot.dailyDelivery := true -- the game's OWN 6am-order latch (its only

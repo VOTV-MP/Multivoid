@@ -4,7 +4,6 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/net/session.h"
-#include "coop/world/time_sync.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/sleep.h"
@@ -71,13 +70,10 @@ void ApplyAccelerateLocal(coop::net::Session* s, bool on) {
             if (SLP::SetSleepViewTarget(SLP::SleepCam()))
                 UE_LOGI("sleep_sync: camera -> sleepCam (the timelapse view)");
         }
-        if (!IsHost(s)) coop::time_sync::SetSleepAccelerate(true);
         coop::chat_feed::Push(L"Everyone is asleep -- the night passes...",
                               coop::chat_feed::Keep::Transient);
         UE_LOGI("sleep_sync: ACCELERATE (local dilation -> %s)",
                 SLP::IsSleeping() ? "20" : "1 (not in bed)");
-    } else {
-        if (!IsHost(s)) coop::time_sync::SetSleepAccelerate(false);
     }
     ApplyDreamProbPolicy(s);
 }
@@ -303,17 +299,14 @@ void OnDisconnectForSlot(int slot) {
 bool InAcceleratePhase() { return g_accelerate; }
 
 void OnDisconnect() {
-    auto* s = g_session.load(std::memory_order_acquire);
     // Restore the SP nightmare sentinel + normal time policy. A peer still in
     // bed keeps sleeping -- with the session gone its world is SP again and
     // the native 20x timelapse is exactly the stock behavior; time_sync's own
-    // OnDisconnect restores the client TimeScale.
+    // OnDisconnect hands the client's clock back.
     if (g_dreamProbSuppressed) {
         SLP::SetDreamProbability(-1.f);
         g_dreamProbSuppressed = false;
     }
-    if (g_accelerate && s && s->role() == coop::net::Role::Client)
-        coop::time_sync::SetSleepAccelerate(false);
     g_accelerate = false;
     g_waitUndone = false;
     g_lastInBed = false;

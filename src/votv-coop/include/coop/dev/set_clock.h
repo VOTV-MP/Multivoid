@@ -8,11 +8,10 @@
 // number, rebuilt each tick from the accumulator and saveSlot.savedtime.Z and handed to settime,
 // which persists it and walks the scheduled events. The float accumulators are `totalTime` and
 // `day`: `day` is the within-day counter the midnight cascade fires on and what the sun derives
-// from, `totalTime` drives nothing in the blueprint. Neither is the day number, which is why
-// printing the accumulator as "day" was a display bug. Setting the clock writes BOTH: the
-// accumulators, so the sky moves at once, and `timeZ`, so the HUD agrees before the next rebuild. A
-// FORWARD day jump fires every skipped scheduled row through settime, which the event lane mirrors
-// to clients.
+// from, `totalTime` drives nothing in the blueprint. Neither is the day number, which lives in
+// savedtime.Z. Setting the clock writes the accumulators, and for a day change the day number; the
+// next tick rebuilds `timeZ` from them. A FORWARD day jump fires every skipped scheduled row
+// through settime, which the event lane mirrors to clients.
 
 #pragma once
 
@@ -28,16 +27,14 @@ namespace coop::dev::set_clock {
 bool ReadCurrent(int& hourOut, int& minuteOut, int& dayOut, float& sunFracOut);
 
 // HOST-only (dev_gate): set the clock to (displayed day, hour, minute). Clamps day >= 1, hour
-// 0..23, minute 0..59, and writes timeZ = (hour, minute, day-1) together with both accumulators,
-// so the sky moves with the HUD. Posted to the game thread; the cycle's next minute pulse feeds
-// it through saveSlot.settime, savedtime persists, and a forward jump fires the skipped scheduled
-// events natively.
+// 0..23, minute 0..59, and writes the day number (day-1) with both accumulators. Posted to the
+// game thread; the cycle's next tick rebuilds the named clock and feeds it through
+// saveSlot.settime, and a forward jump fires the skipped scheduled events natively.
 void SetClock(int day, int hour, int minute);
 
-// HOST-only (dev_gate): set the SUN position as a fraction of one day, keeping the same day.
-// It writes timeZ too: a sun-only write left the HUD clock disagreeing with the lighting, and the
-// next tick rebuilt timeZ from the accumulator anyway. Clamped [0, 0.999]. Posted to the game
-// thread, so any thread may call it.
+// HOST-only (dev_gate): set the SUN position as a fraction of one day, keeping the same day: both
+// accumulators, from which the next tick rebuilds the HUD's clock. Clamped [0, 0.999]. Posted to
+// the game thread, so any thread may call it.
 void SetTimeFraction(float frac);
 
 // The same set, done now, for a caller already on the game thread that has to know it landed (a

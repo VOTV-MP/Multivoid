@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; }
 
 namespace coop::dev::rollover_watch {
@@ -30,6 +32,10 @@ void Install(coop::net::Session* session);
 // Register the watches (once per process), arm per world, flush this tick's bursts, and print the
 // DAY and DIGEST lines. Every pump tick in a world, after time_sync's. Game thread.
 void Tick();
+
+// How many times a watched function's body has run this session (its post count); 0 for a name that
+// is not one of the twelve. For a drill that judges a window of the run. Game thread.
+uint64_t RanCount(const wchar_t* name);
 
 // The session ended: reset the per-world state and the counters. The watches stay registered.
 void OnDisconnect();

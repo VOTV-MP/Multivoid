@@ -13,13 +13,17 @@ client never rolls a shared outcome.
 ### The clock and the sky
 
 The game's clock lives on one actor, the day-night cycle, and the sun is a pure function of it.
-The host polls the clock and pushes it on a throttle and at a joiner's connect edge; the client
-writes the three fields and keeps its own time scale at zero, so its scheduler never advances and
-nothing it owns can fire on its own (`coop/world/time_sync`). The one exception is the shared
-sleep: while everyone is in bed the client's clock runs at the accelerated scale for the phase
-(the sleep gate is on [players.md](players.md)). An absolute clock snapshot also streams a few
-times a second so a client's sun never steps. The star dome's random orientation and the
-save-derived moon phase are pushed once (`coop/world/sky_sync`).
+The host streams its clock -- the within-day time, the absolute time and the day number. On a
+client, right before each tick of the cycle, the lane holds the cycle's own rate at zero and writes
+the newest sample in, so the client's clock moves only with the host's and never reaches a
+midnight of its own: the midnight's shared outputs (the dish hash codes, the daily task, the Bad
+Sun roll, the results mail) are the host's alone, and the host's midnight reaches a client as one
+sample carrying the next day number `[V]` (`coop/world/time_sync`). A sample is sent each time the
+host's clock has moved half a game minute, and at least twice a second -- every 500 ms at the
+normal speed, about every 80 ms in the shared sleep (on [players.md](players.md)) -- so a client's
+own minute and hour pulses, its sun, sounds, decals and weekday, come at the same game minutes as
+the host's `[V]`. The star dome's random orientation and the save-derived moon phase are pushed
+once (`coop/world/sky_sync`).
 
 ### Weather
 
@@ -35,12 +39,12 @@ Fog is not a flag: the enable flags are config gates, and the active fog is an a
 fog controller, the super fog) that ramps the height-fog density over its own duration and
 destroys itself; the host mirrors the actor's life (`coop/world/weather_fog`). A lightning
 strike is a transient actor; the host observes its spawn and sends the location
-(`coop/world/weather_lightning`). The red sky is a story event actor whose organic trigger is a
-one-percent roll in the new-day handler on every peer, dispatched inside the Blueprint, so the
-host polls the state field for the edge and the client's own roll is killed at birth: every
-new-day weather birth (red sky, black fog, rolling fog) funnels through the engine's
-finish-spawning call, where a client-side catch destroys any birth the host did not command
-(`coop/world/weather_redsky`, `coop/world/weather_event_births`).
+(`coop/world/weather_lightning`). The red sky is a story event actor that the clock's hour pulse
+toggles at noon on every peer -- a living one ends, else a one-percent roll starts one --
+dispatched inside the Blueprint, so the host polls the state field for the edge and the client's
+own start is killed at birth: every weather birth the clock rolls (red sky, black fog, rolling
+fog) funnels through the engine's finish-spawning call, where a client-side catch destroys any
+birth the host did not command (`coop/world/weather_redsky`, `coop/world/weather_event_births`).
 
 Fireflies are the one peer-symmetric weather: the spawner rolls a ring around the local camera,
 so every peer keeps its own and shares each spawn, and the union is fireflies near everyone
@@ -67,7 +71,7 @@ through the eventer, all inside Blueprints. The host cannot hook the fire, so it
 save's list of passed events once a second and broadcasts each new row
 (`coop/world/event_fire_sync`). The client keeps its own copy of the walkable event list empty,
 a one-integer write the game rebuilds unconditionally at every world load, so its scheduler
-fires nothing even while its clock runs during a shared sleep. What a client does with a
+fires nothing as the host's clock moves it. What a client does with a
 received fire is a per-row policy kept in the code: rows whose outputs already ride a lane
 (props, creatures, the ATV, sleep, the wisps, the cues, the devices) are not replayed, because
 replaying them would deliver the effect twice; the level flips, story flags and cosmetic sounds
@@ -120,8 +124,8 @@ Every email producer funnels through one gamemode function into the save's list;
 the append, and a receiver reproduces the whole thing in one reflected call, the row, the ding
 at the laptop and the tab highlight, re-stamping the date from the synced clock; a deletion is
 mirrored from either side (`coop/world/email_sync`). The daily task is host-authored, because
-every live writer of it runs only on the host: the task creation on the frozen client clock
-cannot, and the drone sale is suppressed on clients; the host polls a change hash and sends the
+every live writer of it runs only on the host: the task creation is part of the midnight a
+client's clock never reaches, and the drone sale is suppressed on clients; the host polls a change hash and sends the
 task state (`coop/world/daily_task_sync`). The rewards land in the shared balance, on
 [devices.md](devices.md).
 
@@ -129,7 +133,7 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 
 | State | Owner | Shape |
 |---|---|---|
-| the clock, the sky | the host | pushed on a throttle; the client's scheduler frozen |
+| the clock, the sky | the host | streamed; the client's clock held at zero rate |
 | rain, snow, fog, wind, lightning, red sky | the host | scheduler observed on the host, cancelled on the client; the client's births killed |
 | fireflies | each peer | peer-symmetric union |
 | ambient spawners | the host | parked or cancelled on clients; the camera-anchored ones per peer |
@@ -144,7 +148,7 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `TimeSync`, `ClockPose` (stream), `SkyState` | the host to all | the clock; an absolute snapshot; the dome and the moon |
+| `ClockPose` (stream), `SkyState` | the host to all | the clock and the day number; the dome and the moon |
 | `WeatherState`, `LightningStrike`, `RedSky` | the host to all | the state fields; a strike location; the red sky's edge |
 | `FireflySpawn` | each peer, relayed | one spawn |
 | `EventFire`, `EventSnapshot`, `EventCue` | the host to all; the host to one joiner; the host to all | a fired row; an in-flight event; an emitter cue |
@@ -155,7 +159,9 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 
 ## Late join
 
-The clock, the sky, the weather state and an active red sky are seeded at the joiner's connect.
+The clock streams from the connect, so a joiner's first sample once its world exists sets its time
+and day number; the sky, the weather state and an active red sky are seeded at the joiner's
+connect.
 The in-flight events arrive as snapshot entries and replay with the override; the live cues are
 re-sent; every tracked event actor is re-spawned on the joiner; the pyramid's gather in flight
 is re-sent after its mirrors exist; the alarm's current flag is sent unconditionally, and the
@@ -168,6 +174,8 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | Limit | Evidence |
 |---|---|
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
+| A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
+| The sky eye, the jellyfish and the flesh rain are rolled by every peer's own hour pulse, and none of them is mirrored | `[V]` the clock's hour roll; no lane under `coop/world` carries them |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither parked on a client nor mirrored from the host, so each peer rolls its own | `[V]` `coop/world/spawn_authority.h`, the unmirrored families |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |

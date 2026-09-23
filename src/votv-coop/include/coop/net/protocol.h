@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 174;
+inline constexpr uint16_t kProtocolVersion = 175;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -119,7 +119,7 @@ enum class MsgType : uint8_t {
 };
 
 // Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
-// 22, 24 and 138 stay unassigned; 32 and 128 are reserved.
+// 22, 24, 29 and 138 stay unassigned; 32 and 128 are reserved.
 enum class ReliableKind : uint8_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
     // the skin, the display flags, the nick colour and the game target, parsed field by field. The
@@ -230,10 +230,6 @@ enum class ReliableKind : uint8_t {
     // Host to one client: the last PropSpawn of the snapshot has been sent; the client lifts its
     // loading cover. Same lane, so it lands after the props. SnapshotEndPayload.
     SnapshotComplete = 28,
-
-    // Host to one client at the connect edge: the world clock. The periodic clock rides ClockPose.
-    // TimeSyncPayload.
-    TimeSync = 29,
 
     // Any peer, relayed by the host: a base window's dirt scalar decreased (a wipe), keyed by the
     // window's Key. The receiver applies the minimum of local and wire; a connect snapshot applies
@@ -2408,26 +2404,22 @@ struct PropSnapPosPayload {
 static_assert(sizeof(PropSnapPosPayload) == 28, "PropSnapPosPayload must be 28 bytes (eid + loc + rot)");
 static_assert(sizeof(PropSnapPosPayload) <= 256 - 20 - 8, "PropSnapPosPayload must fit one datagram");
 
-// The world clock (TimeSync and ClockPose): the cycle's within-day clock, its accumulator and rate,
-// plus the named hour, minute and day the HUD reads (a client at TimeScale 0 never runs its own
-// minute pulse).
+// The world clock (ClockPose): the cycle's two accumulators and the day number. The client's cycle
+// rebuilds the hour and minute from `day` itself, and its time scale is its own (0).
 struct TimeSyncPayload {
     float totalTime;   // the absolute elapsed clock, never wrapped
     float day;         // the within-day accumulator the sun and the midnight threshold both read
-    float timeScale;   // clock advance rate (so the client advances at the host's rate)
-    int32_t hour;
-    int32_t minute;
-    int32_t dayZ;
+    int32_t dayZ;      // the day number, saveSlot.savedtime.Z
 };
-static_assert(sizeof(TimeSyncPayload) == 24, "TimeSyncPayload must be 24 bytes");
+static_assert(sizeof(TimeSyncPayload) == 12, "TimeSyncPayload must be 12 bytes");
 
-// The clock stream datagram (MsgType::ClockPose): the same payload as the reliable connect-edge
-// TimeSync, on the unreliable channel, newest wins.
+// The clock stream datagram (MsgType::ClockPose), newest wins. It is the clock's one channel: it
+// flows from the connect, so a joiner's first sample once its world exists is its late-join answer.
 struct ClockPosePacket {
     PacketHeader    header;  // 20
-    TimeSyncPayload clock;   // 24
+    TimeSyncPayload clock;   // 12
 };
-static_assert(sizeof(ClockPosePacket) == 44, "ClockPosePacket must be 44 bytes");
+static_assert(sizeof(ClockPosePacket) == 32, "ClockPosePacket must be 32 bytes");
 
 // The desk simulation's outputs (MsgType::DeskSimPose), host-owned and streamed newest-wins; the
 // client overwrites its own.

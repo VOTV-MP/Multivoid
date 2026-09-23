@@ -134,7 +134,7 @@ On the ready announce the host runs the replay for that slot, in this order
    transferred save may predate; the drain's own pacing is what keeps that off the wire in a burst.
 3. **Position corrections** for the save-authoritative objects the host moved during the window.
 4. **Every state lane's current state**, each in its own kind: held items, weather, doors, lights
-   and containers, keypads, the clock, the sky, power, the ATV, the drone, the turbine, device
+   and containers, keypads, the sky, power, the ATV, the drone, the turbine, device
    occupancy, the console and desk, physical modules, drives and racks, the laptop and its
    buffer, the floppy box, container contents, the dish, sleep, the decode pane, voice states,
    windows, grime, trash piles, NPCs and world actors, the balance, hand items, in-flight events,

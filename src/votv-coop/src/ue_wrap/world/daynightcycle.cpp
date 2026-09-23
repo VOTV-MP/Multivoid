@@ -45,6 +45,7 @@ constexpr int32_t kTimeZOffFallback     = 0x02D0;
                                  // pointer corrupt the foreign occupant, which is
                                  // reachable from the quit-to-menu teardown)
 ue_wrap::CachedObjRef g_cycleCache;
+void* g_tickFn = nullptr;         // daynightCycle_C::ReceiveTick
 
 }  // namespace
 
@@ -74,6 +75,7 @@ bool EnsureResolved() {
     g_diffMultOff  = R::FindPropertyOffset(cls, L"diff_mult");
     g_settingMpOff = R::FindPropertyOffset(cls, L"settingMultiplayer");
     g_sleepDilOff  = R::FindPropertyOffset(cls, L"sleepingTimeDilation");
+    g_tickFn       = R::FindFunction(cls, L"ReceiveTick");
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X timeZ@0x%04X",
             cls, totalOff, dayOff, scaleOff, maxOff, timeZOff);
@@ -96,6 +98,13 @@ void* Cycle() {
     return g_cycleCache.Raw();  // fresh from the walk (null on miss)
 }
 
+void* TickFunction() { return g_resolved.load(std::memory_order_acquire) ? g_tickFn : nullptr; }
+
+void NoteCycle(void* cycle) {
+    // A new world's cycle may sit at the old one's address; the cached slot serial tells them apart.
+    if (cycle && (cycle != g_cycleCache.Raw() || !g_cycleCache.Alive())) g_cycleCache.Set(cycle);
+}
+
 bool ReadClock(float& totalTime, float& day, float& timeScale) {
     void* cyc = Cycle();
     if (!cyc || g_totalTimeOff < 0) return false;
@@ -113,13 +122,12 @@ bool ReadMaxTime(float& maxTime) {
     return true;
 }
 
-void ApplyClock(float totalTime, float day, float timeScale) {
+void ApplyClock(float totalTime, float day) {
     void* cyc = Cycle();
     if (!cyc || g_totalTimeOff < 0) return;
     char* base = reinterpret_cast<char*>(cyc);
     *reinterpret_cast<float*>(base + g_totalTimeOff) = totalTime;
     *reinterpret_cast<float*>(base + g_dayOff)       = day;
-    *reinterpret_cast<float*>(base + g_timeScaleOff) = timeScale;
 }
 
 void WriteTimeScale(float scale) {
@@ -136,15 +144,6 @@ bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day) {
     minute = v[1];
     day = v[2];
     return true;
-}
-
-void WriteTimeZ(int32_t hour, int32_t minute, int32_t day) {
-    void* cyc = Cycle();
-    if (!cyc || g_timeZOff < 0) return;
-    int32_t* v = reinterpret_cast<int32_t*>(reinterpret_cast<char*>(cyc) + g_timeZOff);
-    v[0] = hour;
-    v[1] = minute;
-    v[2] = day;
 }
 
 bool ReadRates(Rates& out) {
@@ -185,8 +184,8 @@ bool ResolveSaveSlotSurface() {
 void* LiveSaveSlot() {
     if (!g_gm.Alive()) {
         // Throttle the miss-path GUObjectArray walk: the callers are caller-rate-driven -- the
-        // latch once per streamed clock correction, the savedtime read by the dev rollover watch
-        // every tick -- so a world transition would otherwise re-scan on every call. A world change
+        // latch and the day number once per streamed clock sample, the savedtime read by the dev
+        // rollover watch every tick -- so a world transition would otherwise re-scan on every call. A world change
         // lifts the throttle: it is there for a gamemode that is missing, not one a new world brought.
         static std::chrono::steady_clock::time_point s_lastScan{};
         static uint32_t s_scanGen = 0;
@@ -221,16 +220,31 @@ bool LatchDailyDelivery() {
     return true;
 }
 
-bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day) {
-    if (!ResolveSaveSlotSurface()) return false;
+namespace {
+// The live saveSlot's savedtime triple, or null. The offset is resolved on the first call.
+int32_t* SavedTimeOf() {
+    if (!ResolveSaveSlotSurface()) return nullptr;
     if (g_offSavedTime < 0) g_offSavedTime = R::FindPropertyOffset(g_saveSlotCls, L"savedtime");
-    if (g_offSavedTime < 0) return false;
+    if (g_offSavedTime < 0) return nullptr;
     void* slot = LiveSaveSlot();
-    if (!slot) return false;
-    const int32_t* v = reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(slot) + g_offSavedTime);
+    if (!slot) return nullptr;
+    return reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(slot) + g_offSavedTime);
+}
+}  // namespace
+
+bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day) {
+    const int32_t* v = SavedTimeOf();
+    if (!v) return false;
     hour = v[0];
     minute = v[1];
     day = v[2];
+    return true;
+}
+
+bool WriteSavedDay(int32_t day) {
+    int32_t* v = SavedTimeOf();
+    if (!v) return false;
+    v[2] = day;
     return true;
 }
 

@@ -1,61 +1,41 @@
-// coop/world/time_sync.h -- host-authoritative WORLD CLOCK sync (time of day).
+// coop/world/time_sync.h -- host-authoritative WORLD CLOCK sync (time of day and the day number).
+// Owns the wire, the host's send decision and the client's parked cycle; reaches the engine only
+// through ue_wrap::daynightcycle. Weather is weather_sync's.
 //
-// Gameplay/network layer: owns the wire protocol, the host poll, the client apply and the connect
-// snapshot. Talks to the engine ONLY through ue_wrap::daynightcycle. Distinct from weather_sync
-// (rain, fog, lightning, red sky) on purpose -- the clock is its own subsystem.
-//
-// WHY: the cycle's clock is not otherwise replicated, so a fresh joiner free-runs its own day-zero
-// night clock while the host is at midday, and the client world renders DARK. The sun is re-derived
-// from the cycle's within-day accumulator, so syncing the clock fixes the brightness.
-//
-// MODEL (host-authoritative, single-syncer): the HOST polls its cycle and streams the clock each time
-// it has moved half a game minute and at least twice a second -- it is continuous, so it is pushed
-// on its progress rather than on change -- plus a reliable push on a joiner's connect edge. The CLIENT direct-writes the three floats and stays
-// FROZEN at TimeScale=0 between pushes, so its `day` never wraps maxTime locally and the midnight
-// cascade stays unreachable. The client never drives the sun or light fields, only the clock.
+// The host streams its cycle's two accumulators and its day number; the client's cycle is a parked
+// mirror: before each of its ticks (a pre-observer on the cycle's own ReceiveTick) its time scale is
+// held at 0 and the newest sample is written in, so its `day` moves only by the host's samples,
+// which are below maxTime because the host wraps inside its own tick. The client never runs the
+// midnight's shared outputs; the host's midnight reaches it as one sample, a small `day` with the
+// next day number. Its settime pulses do run -- the sun, the decal, the weekday, the stings are each
+// machine's own -- and the pulse outputs that write shared state are parked by their own lanes. MTA's
+// CClock sends an anchor and lets the client's clock run; here a running client clock reaches its own
+// midnight first, so the value streams, a sample each time the host's clock has moved half a game
+// minute and at least twice a second: the client's settime sees every minute, the shared sleep too.
 
 #pragma once
 
 #include <cstdint>
 
-namespace coop::net {
-class Session;
-struct TimeSyncPayload;
-}  // namespace coop::net
+namespace coop::net { class Session; }
 
 namespace coop::time_sync {
 
-// Store the session pointer + resolve the cycle (idempotent; retried each tick until the
-// daynightCycle_C BP class loads). Game thread.
+// Store the session pointer and, once the daynightCycle_C class has loaded, register the pre-observer
+// on the cycle's tick (once per process). Called every pump tick by the install fanout. Game thread.
 void Install(coop::net::Session* session);
 
-// CLIENT receiver: a TimeSync packet arrived -- apply the host's authoritative clock to the
-// local cycle. No-op on the host. Called from event_feed's reliable drain. Game thread.
-void OnReliable(const coop::net::TimeSyncPayload& payload);
-
-// HOST: send the current clock to a freshly connected client `peerSlot` immediately (so the
-// joiner's world isn't dark until the first throttled push). Net-pump connect edge. Game thread.
-void QueueConnectBroadcastForSlot(int peerSlot);
-
-// Per-tick pump: HOST reads the clock and hands the net thread a sample when one is due; CLIENT
-// applies a new streamed sample. No-op when solo. Call every
-// net-pump tick on the game thread.
+// Per-tick pump, HOST: read the clock and hand the net thread a sample when one is due. The stream
+// reaches every connected peer from the connect on, so a joiner's first sample once its world exists
+// is its late-join answer. The client's work runs at the cycle's own tick. Game thread.
 void Tick();
 
-// Sleep gate (coop/player/sleep_sync): while the accelerate phase runs, the CLIENT clock free-runs at
-// TimeScale=1 -- its world is dilated 20x, which matches the host's advance rate -- instead of the
-// frozen 0. Otherwise the timelapse sky only moves on the streamed corrections and pans in visible
-// steps. Toggled at the phase edges, applied immediately and on every subsequent correction.
-// time_sync is the only decider of the client's TimeScale, so there is one authority. No-op on the
-// host. Game thread.
-void SetSleepAccelerate(bool on);
-
-// CLIENT: the host's day number as the last applied clock correction carried it (its timeZ.Z),
-// -1 before the first and after a disconnect. Read-only, for instruments: the client's own day
-// number is rebuilt from its save every tick and is not the host's. Any thread.
+// CLIENT: the host's day number as the last applied sample carried it, -1 before the first and
+// after a disconnect. Read-only, for instruments. Any thread.
 int32_t LastHostDayZ();
 
-// Session teardown: reset the throttle. Game thread.
+// Session teardown: hand the client's clock back (time scale 1) and reset the host's send state.
+// Game thread.
 void OnDisconnect();
 
 }  // namespace coop::time_sync

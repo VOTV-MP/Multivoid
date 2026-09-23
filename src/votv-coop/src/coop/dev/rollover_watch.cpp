@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <string>
 
 namespace coop::dev::rollover_watch {
@@ -102,6 +103,7 @@ Clock::time_point g_nextDigestRead{};
 int32_t  g_lastOwnDayZ = INT_MIN;
 int32_t  g_lastHostDayZ = -1;
 float    g_dayMax = -1.f;           // the highest `day` since the last DAY line
+int      g_settleTicks = -1;        // pump ticks since a DAY line, while the cycle's rebuild is awaited
 
 bool IsHost() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -314,11 +316,16 @@ void PrintDay(const char* trigger, float day, float scale) {
     DSH::HashDigest dg{};
     const bool haveDigest = DSH::ReadHashDigest(dg);
     const bool host = IsHost();
+    // Whether this peer's clock saw the day's last game minute before the new day: the premise an
+    // absence of roll entries is read against. The cycle adds and wraps inside one tick, so the highest
+    // `day` sampled between ticks is always below maxTime and says nothing by itself.
+    const bool lastMinute = maxTime > 0.f && g_dayMax >= maxTime - maxTime / 1440.f;
     UE_LOGI("rollover_watch: [%c] DAY (%s) -- host day %d | savedtime %d:%02d day %d, timeZ(diag) %d:%02d day %d | "
-            "day=%.2f dayMax=%.2f maxTime=%.1f timescale=%.3f dilation=%.2f isSleep=%d | phase %s, gate %s | "
-            "digest %016llx filled %d/%d, %s since ARMED",
+            "day=%.2f dayMax=%.2f (the last minute %s) maxTime=%.1f timescale=%.3f dilation=%.2f isSleep=%d | "
+            "phase %s, gate %s | digest %016llx filled %d/%d, %s since ARMED",
             RoleChar(), trigger, host ? sz : coop::time_sync::LastHostDayZ(), sh, sm, sz, th, tm, tz, day, g_dayMax,
-            maxTime, scale, SLP::GetGlobalTimeDilation(), SLP::IsSleeping() ? 1 : 0,
+            lastMinute ? "reached" : "NOT reached", maxTime, scale, SLP::GetGlobalTimeDilation(),
+            SLP::IsSleeping() ? 1 : 0,
             host ? "host" : JP::PhaseName(JP::CurrentPhase()), sg::IsEnabled() ? "on" : "OFF",
             static_cast<unsigned long long>(haveDigest ? dg.digest : 0), haveDigest ? dg.filled : -1,
             haveDigest ? dg.dishes : -1,
@@ -333,7 +340,8 @@ void PrintDay(const char* trigger, float day, float scale) {
 }
 
 // A DAY line on the host when its own day number moves; on a client when the host's day number (the
-// last clock correction's) moves, and again when its own does, which only its own roll can do.
+// last clock sample's) moves, and again when its own does: our write of the host's, or a roll of its
+// own. The cycle's rebuilt named clock is then read back.
 void CheckDay(float day, float scale) {
     int32_t sh = 0, sm = 0, sz = 0;
     if (!DNC::ReadSavedTime(sh, sm, sz)) return;
@@ -352,6 +360,21 @@ void CheckDay(float day, float scale) {
     g_lastOwnDayZ = sz;
     if (hostMoved) g_lastHostDayZ = hostDay;
     g_dayMax = day;
+    g_settleTicks = 0;
+}
+
+// After a DAY line, the cycle's own rebuild of the named clock from `day` and the day number: read
+// once its day matches, or after 30 pump ticks, which the line then says. The pump is not in step with
+// the cycle's tick, so a fixed one-tick wait could read the value from before the rebuild.
+void CheckSettled() {
+    int32_t sh = 0, sm = 0, sz = 0, th = 0, tm = 0, tz = 0;
+    if (!DNC::ReadSavedTime(sh, sm, sz) || !DNC::ReadTimeZ(th, tm, tz)) return;
+    ++g_settleTicks;
+    if (tz != sz && g_settleTicks < 30) return;
+    UE_LOGI("rollover_watch: [%c] DAY settled after %d pump ticks -- timeZ %d:%02d day %d, savedtime %d:%02d day "
+            "%d, host day %d%s", RoleChar(), g_settleTicks, th, tm, tz, sh, sm, sz,
+            IsHost() ? sz : coop::time_sync::LastHostDayZ(), tz == sz ? "" : " (the rebuild never caught up)");
+    g_settleTicks = -1;
 }
 
 }  // namespace
@@ -393,7 +416,14 @@ void Tick() {
     if (!DNC::ReadClock(total, day, scale)) return;
     if (day > g_dayMax) g_dayMax = day;
     CheckDigest(hashBurst);
+    if (g_settleTicks >= 0) CheckSettled();
     CheckDay(day, scale);
+}
+
+uint64_t RanCount(const wchar_t* name) {
+    for (int i = 0; i < kCount; ++i)
+        if (std::wcscmp(kWatches[i].name, name) == 0) return g_tally[i].ran;
+    return 0;
 }
 
 void OnDisconnect() {
@@ -407,6 +437,7 @@ void OnDisconnect() {
     g_lastOwnDayZ = INT_MIN;
     g_lastHostDayZ = -1;
     g_dayMax = -1.f;
+    g_settleTicks = -1;
 }
 
 }  // namespace coop::dev::rollover_watch
