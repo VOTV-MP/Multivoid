@@ -300,6 +300,33 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     lastRemoteHandSeq_[peerSlot] = 0;
     remoteHandStamp_[peerSlot] = 0;
     lastReadHandStamp_[peerSlot] = 0;
+    // The desk cursor slot, the same reason.
+    hasRemoteDeskCursor_[peerSlot] = false;
+    lastRemoteDeskCursorSeq_[peerSlot] = 0;
+    remoteDeskCursorStamp_[peerSlot] = 0;
+    lastReadDeskCursorStamp_[peerSlot] = 0;
+    // Slot 0 is the host, and its single streams -- the clock, the download sim, the dish and reel
+    // poses -- are its remote state too. Their sequence is the host process's own counter, so a
+    // client judging a restarted host's samples against the last host's would drop every one until
+    // the new counter passed the old.
+    if (peerSlot == 0) {
+        hasRemoteHostClock_ = false;
+        lastRemoteHostClockSeq_ = 0;
+        remoteHostClockStamp_ = 0;
+        lastReadHostClockStamp_ = 0;
+        hasRemoteDeskSim_ = false;
+        lastRemoteDeskSimSeq_ = 0;
+        remoteDeskSimStamp_ = 0;
+        lastReadDeskSimStamp_ = 0;
+        hasRemoteDishPose_ = false;
+        lastRemoteDishPoseSeq_ = 0;
+        remoteDishPoseStamp_ = 0;
+        lastReadDishPoseStamp_ = 0;
+        hasRemoteReelPose_ = false;
+        lastRemoteReelPoseSeq_ = 0;
+        remoteReelPoseStamp_ = 0;
+        lastReadReelPoseStamp_ = 0;
+    }
     // Clear the latched senderEpoch so the next connection on this slot re-latches on its first
     // packet; a reconnecting peer's fresh epoch would otherwise fail the compare.
     expectedEpoch_[peerSlot] = 0;

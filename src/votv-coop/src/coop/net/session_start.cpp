@@ -141,18 +141,23 @@ bool Session::Start(const Config& cfg) {
         std::random_device rd;
         do { ownEpoch_ = rd(); } while (ownEpoch_ == 0);
     }
-    // Stale latches from a previous cycle on this Session instance cleared.
-    for (int i = 0; i < kMaxPeers; ++i) expectedEpoch_[i] = 0;
-    // The per-slot occupancy generations too: a reused Session must not open with slots that look
+    // The per-slot occupancy generations: a reused Session must not open with slots that look
     // occupied. The counter is not reset, so generations stay unique across cycles and a stale
     // captured token can never alias a fresh occupant.
     for (int i = 0; i < kMaxPeers; ++i) peerGenBySlot_[i].store(0, std::memory_order_relaxed);
-    // The local-stream "has published" flags too (no lock: the net thread is not spawned yet). A
-    // Session reused after a Stop mid-ragdoll would otherwise fan out the prior session's pelvis or
-    // prop pose on its first send, before the game thread republishes.
+    // The local-stream "has published" flags and the host's one-shot samples too (no lock: the net
+    // thread is not spawned yet). A Session reused after a Stop would otherwise fan out the prior
+    // session's last pose, pelvis, hand, cursor or host sample on its first send, before the game
+    // thread publishes this session's.
     hasLocal_ = false;
     hasLocalProp_ = false;
     hasLocalRagdoll_ = false;
+    hasLocalHand_ = false;
+    hasLocalDeskCursor_ = false;
+    hasLocalDeskSim_ = false;
+    hostClockDue_ = false;
+    dishPoseDirty_ = false;
+    reelPoseDirty_ = false;
 
     if (!EnsureGnsInit()) return false;
 
@@ -432,6 +437,11 @@ void Session::Stop() {
     // a client rejoining a fresh host would otherwise drop every batch as stale until the new
     // host's sequence climbed past the old one's.
     ResetPoseBatches();
+    // And every slot's receive state and epoch latch, for the same reason: the close path resets a
+    // slot when its peer goes, but a connection this side closes gets no status callback, so a
+    // session that ends here would carry its last senders' sequences into the next.
+    { std::lock_guard<std::mutex> lk(remoteMutex_);
+      for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

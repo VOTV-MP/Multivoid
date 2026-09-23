@@ -457,7 +457,8 @@ private:
     int FindFreePeerSlotForClient();
     // The peer slot that owns hConn, or -1.
     int FindPeerSlotForConn(uint32_t hConn);
-    // Per-peer reset on slot disconnect. The caller holds remoteMutex_.
+    // Per-peer reset, at the slot's disconnect and at session stop; slot 0's covers the host's single
+    // streams too. The caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
 
     // Host relay of an unreliable datagram from `originSlot` to every other client: the header's
