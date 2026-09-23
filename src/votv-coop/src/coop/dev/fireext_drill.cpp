@@ -226,6 +226,32 @@ void TickRelatchProbe() {
             o ? (coop::remote_prop::IsActorUnderAnyDrive(o) ? 1 : 0) : -1);
 }
 
+// ---- The release readout: the carry arm's watching client, after the drive ends -----------------
+
+// Once the probed copy's drive has ended, what its body does: its place, whether it simulates,
+// whether it is at rest, its flags and its velocity, a few times over the following second.
+int g_afterTicks = -1;  // -1 = the drive has not ended yet
+
+void TickReleaseReadout() {
+    void* o = g_probed.Get();
+    if (!o || g_probeTicks < kProbeReadTicks || g_afterTicks > 60) return;
+    if (g_afterTicks < 0) {
+        if (coop::remote_prop::IsActorUnderAnyDrive(o)) return;
+        g_afterTicks = 0;
+    } else {
+        ++g_afterTicks;
+    }
+    const int t = g_afterTicks;
+    if (t != 0 && t != 1 && t != 2 && t != 5 && t != 10 && t != 30 && t != 60) return;
+    const ue_wrap::FVector at = E::GetActorLocation(o);
+    const PR::VelocityState v = PR::GetPhysicsVelocity(o);
+    UE_LOGI("[FIREEXT-DRILL] [C] AFTER RELEASE +%d ticks key='%ls' at (%.1f, %.1f, %.1f) simulating=%d atRest=%d "
+            "frozen=%d sleep=%d vel=(%.1f, %.1f, %.1f)", t, g_probedKey.c_str(), at.X, at.Y, at.Z,
+            ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o)) ? 1 : 0,
+            E::IsActorRootBodyAtRest(o) ? 1 : 0, PR::IsFrozen(o) ? 1 : 0, PR::IsSleeping(o) ? 1 : 0,
+            v.linearCmS.X, v.linearCmS.Y, v.linearCmS.Z);
+}
+
 // ---- The acting peer's steps -------------------------------------------------------------------
 
 Step g_step = Step::WaitJoin;
@@ -240,18 +266,26 @@ int g_aimPose = 0;
 // For a moment after the drop the host sends its last pose again under the hold its release just
 // closed: the tail a slow network delivers after a release, made long and certain. Every receiver
 // must drop it (the hold is closed) and leave its copy to its own physics; the watch shows whether
-// one was pulled back.
+// one was pulled back. The pose stays set in the session until cleared, so every way out of the
+// tail clears it: its end, a target that died, a tick on which the drill does not act.
 uint16_t g_staleGen = 0;
+bool g_tailSet = false;
+
+void ClearStaleTail(coop::net::Session& s) {
+    if (!g_tailSet) return;
+    s.SetLocalPropPose(false, {});
+    g_tailSet = false;
+}
 
 void SendStaleTail(coop::net::Session& s, void* t, int tick) {
-    if (tick > kStaleTailTicks) return;
+    if (tick > kStaleTailTicks + 1) return;
     if (tick == 1) {
         g_staleGen = coop::local_streams::CurrentHoldGen();
         UE_LOGI("[FIREEXT-DRILL] [%c] STALE TAIL: re-sending hold %u's pose after its release, %d ticks",
                 Who(), static_cast<unsigned>(g_staleGen), kStaleTailTicks);
     }
-    if (tick == kStaleTailTicks || !t) {
-        s.SetLocalPropPose(false, {});
+    if (tick > kStaleTailTicks || !t) {
+        ClearStaleTail(s);
         return;
     }
     coop::net::PropPoseSnapshot pp{};
@@ -263,6 +297,7 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
     pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
     s.SetLocalPropPose(true, pp);
+    g_tailSet = true;
 }
 
 // The aim fan, nearest pose first: the extinguisher's origin, then offsets of growing size.
@@ -529,7 +564,10 @@ void Tick(coop::net::Session* session) {
     if (LocalActs()) {
         if (g_step != Step::Invalid) {
             void* player = coop::players::Registry::Get().Local();
-            if (!player || !R::IsLive(player) || !E::GetController(player)) return;
+            if (!player || !R::IsLive(player) || !E::GetController(player)) {
+                ClearStaleTail(*session);  // no step runs to end it
+                return;
+            }
             ActStep(*session, player);
         }
         TickWatch(Who());
@@ -544,10 +582,14 @@ void Tick(coop::net::Session* session) {
         ArmWatch(Who());
     }
     TickWatch(Who());
-    if (ArmOf() == Arm::Carry) TickRelatchProbe();
+    if (ArmOf() == Arm::Carry) {
+        TickRelatchProbe();
+        TickReleaseReadout();
+    }
 }
 
 void OnDisconnect() {
+    g_tailSet = false;  // the session drops its own local pose at the end
     g_watched.clear();
     g_mounts.clear();
     g_watchArmed = false;
@@ -560,6 +602,7 @@ void OnDisconnect() {
     g_probed.Reset();
     g_probedKey.clear();
     g_probeTicks = -1;
+    g_afterTicks = -1;
     if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
         g_walk->goal.failed = true;
         g_walk->goal.failReason = "session ended";
