@@ -31,8 +31,12 @@ struct Drive {
     AD::ActiveDrive d;
     uint8_t gen = 0;
     bool physicsParked = false;   // this module turned simulation off, so the end turns it on
-    bool relatchSaid = false;     // the game switched a parked copy's simulation back on; said once
+    uint32_t relatches = 0;       // the game switched the parked copy's simulation back on, this park
 };
+
+// A park whose copy the game switches back to simulating this many times is being fought every
+// tick, not nudged once: said loudly, once, as the held-prop drive says it (remote_prop).
+constexpr uint32_t kRelatchLoud = 60;
 std::unordered_map<uint32_t, Drive>   g_drives;    // eid -> drive
 std::unordered_map<uint32_t, uint8_t> g_endedGen;  // eid -> the generation its end edge closed
 
@@ -152,6 +156,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
             dr.d.lastEid  = eid;
             dr.gen        = e.ctx;
             dr.physicsParked = false;
+            dr.relatches  = 0;
             if (dr.d.mesh && !PhysicsStaysOff(actor)) {
                 ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
                 dr.physicsParked = true;
@@ -184,10 +189,12 @@ void TickApplyAndDrive(coop::net::Session& s) {
         // kinematic when the game here switches its simulation back on.
         if (dr.physicsParked && dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
             ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
-            if (!dr.relatchSaid) {
-                dr.relatchSaid = true;
+            if (++dr.relatches == 1) {
                 UE_LOGI("[PROP-DRIVE] CLIENT eid=%u -- the game turned simulation back on under the park; "
                         "re-latched kinematic", it->first);
+            } else if (dr.relatches == kRelatchLoud) {
+                UE_LOGW("[PROP-DRIVE] CLIENT eid=%u -- re-latched %u times: something here keeps switching the "
+                        "parked copy's simulation back on", it->first, static_cast<unsigned>(dr.relatches));
             }
         }
         AD::AdvanceLerp(dr.d, nowMs);
@@ -255,8 +262,10 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
 bool IsParked(void* actor) {
     UE_ASSERT_GAME_THREAD("prop_drive_stream::IsParked");
     if (!actor) return false;
+    // The live actor, not the cached pointer: a row whose actor died is erased only on the next tick,
+    // and a new actor at the freed address is not parked.
     for (const auto& kv : g_drives)
-        if (kv.second.d.actor == actor) return true;
+        if (kv.second.d.LiveActor() == actor) return true;
     return false;
 }
 
