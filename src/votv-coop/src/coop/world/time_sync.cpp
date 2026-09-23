@@ -37,11 +37,13 @@ double g_sentAbs = -1.0;
 Clock::time_point g_sentAt{};
 
 // CLIENT, game thread. The cycle whose time scale we hold -- each world brings its own, and the one
-// held last is handed back on disconnect -- the last applied absolute clock that a backward step is
-// measured against, and the counts behind the rate-limited lines.
+// held last is handed back on disconnect -- the last applied absolute clock, the backward run in
+// progress against it, and the counts behind the rate-limited lines.
 ue_wrap::CachedObjRef g_heldCycle;
-double   g_lastAbs = -1.0;
-uint32_t g_backSteps = 0;
+bool     g_haveLastAbs = false;
+double   g_lastAbs = 0.0;
+uint32_t g_backRun = 0;         // consecutive samples that stepped back
+double   g_backRunUnits = 0.0;  // and how far, in all
 uint32_t g_scaleOverrides = 0;
 uint32_t g_malformed = 0;
 uint32_t g_appliedSince = 0;  // samples since the last convergence line, which reports them every 10 s
@@ -91,26 +93,34 @@ void HoldTimeScale(void* cycle) {
                 "the clock (#%u)", s, n);
 }
 
+// CLIENT: say a backward run once, when it ends. The host's rewind runs its clock back for an hour,
+// so every sample inside it steps back; a clock set back steps back once.
+void EndBackRun() {
+    if (g_backRun == 0) return;
+    UE_LOGI("time_sync: the host's clock went back %.2f units over %u sample(s) -- its rewind or a set clock",
+            g_backRunUnits, g_backRun);
+    g_backRun = 0;
+    g_backRunUnits = 0.0;
+}
+
 // CLIENT: write one host sample into the parked cycle and its own save slot. The day number is
 // written only when it moved, and never the hour and minute: those are the client's settime's, so
 // its pulses fire as the host's samples cross each minute.
-void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p) {
+void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float maxT) {
     DNC::ApplyClockOf(cycle, p.totalTime, p.day);
     void* slot = DNC::SaveSlotOfCycle(cycle);
     int32_t sh = 0, sm = 0, sz = 0;
     if (DNC::ReadSavedTimeOf(slot, sh, sm, sz) && sz != p.dayZ && DNC::WriteSavedDayOf(slot, p.dayZ))
         UE_LOGI("time_sync: day number %d -> %d, the host's", sz, p.dayZ);
-    float maxT = 0.f;
-    if (DNC::ReadMaxTimeOf(cycle, maxT) && maxT > 0.f) {
-        const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
-        if (g_lastAbs >= 0.0 && abs < g_lastAbs) {
-            const uint32_t n = ++g_backSteps;
-            if (n <= 10 || (n % 100) == 0)
-                UE_LOGW("time_sync: the clock stepped BACK %.2f units: day %d at %.2f after %.2f (#%u)",
-                        g_lastAbs - abs, p.dayZ, p.day, g_lastAbs, n);
-        }
-        g_lastAbs = abs;
+    const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
+    if (g_haveLastAbs && abs < g_lastAbs) {
+        ++g_backRun;
+        g_backRunUnits += g_lastAbs - abs;
+    } else {
+        EndBackRun();
     }
+    g_lastAbs = abs;
+    g_haveLastAbs = true;
     g_lastHostDayZ.store(p.dayZ, std::memory_order_release);
     // The 6 am order latch: func_newHour still runs on the client's pulse, and the game's own reset
     // of the flag is part of the midnight the client no longer rolls; a save load could reset it.
@@ -126,14 +136,17 @@ void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
     coop::net::TimeSyncPayload p{};
     bool isNew = false;
     if (!s->TryGetHostClock(p, &isNew) || !isNew) return;
-    if (!IsWellFormed(p)) {
+    // A `day` past the day's end would run this client's own midnight at the tick -- the game's roll
+    // test is `day > maxTime` -- and the host wraps inside its own tick, so no sample it makes has one.
+    float maxT = 0.f;
+    if (!IsWellFormed(p) || !DNC::ReadMaxTimeOf(self, maxT) || maxT <= 0.f || p.day > maxT) {
         const uint32_t n = ++g_malformed;
         if (n <= 5 || (n % 100) == 0)
-            UE_LOGW("time_sync: streamed clock out of range (t=%.1f d=%.1f day %d) -- dropped (#%u)",
-                    p.totalTime, p.day, p.dayZ, n);
+            UE_LOGW("time_sync: streamed clock out of range (t=%.1f d=%.1f day %d; the day ends at %.1f) -- "
+                    "dropped (#%u)", p.totalTime, p.day, p.dayZ, maxT, n);
         return;
     }
-    ApplyClockSnapshot(self, p);
+    ApplyClockSnapshot(self, p, maxT);
     ++g_appliedSince;
     const auto now = Clock::now();
     if (now >= g_nextStreamLine) {  // confirms convergence and the stream's rate, every 10 s
@@ -194,8 +207,9 @@ void OnDisconnect() {
     g_lastHostDayZ.store(-1, std::memory_order_release);
     g_sentAbs = -1.0;
     g_sentAt = Clock::time_point{};
-    g_lastAbs = -1.0;
-    g_backSteps = g_scaleOverrides = g_malformed = g_appliedSince = 0;
+    EndBackRun();
+    g_haveLastAbs = false;
+    g_scaleOverrides = g_malformed = g_appliedSince = 0;
     g_nextStreamLine = Clock::time_point{};
     if (void* cycle = g_heldCycle.Get()) {
         // Hand the clock back: 1.0 is the game's own running value, the one its rewind restores. The
