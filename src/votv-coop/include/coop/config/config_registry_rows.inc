@@ -380,6 +380,10 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VO
     "just short of midnight. awake: both peers stay up. asleep: both go to bed first, so the "
     "midnight falls inside the shared sleep's fast-forward. Run it on a fresh host world; every "
     "refused step is logged and ends the arm as invalid.")
+CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
+    "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
+    "by its verb, then turn the prop back on through the menu event a press dispatches, where the "
+    "verb runs nested inside a watched body. Prints the kerfur form assembler's order counters.")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "

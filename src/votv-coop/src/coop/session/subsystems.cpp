@@ -67,6 +67,7 @@
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
 #include "coop/dev/rollover_watch.h"  // [dev] the day rollover: its verbs, the pulses' consumers, the day numbers and the hash digest
 #include "coop/dev/midnight_drill.h"  // [dev] the host's midnight on demand, awake or inside the shared sleep
+#include "coop/dev/kerfur_menu_drill.h"  // [dev] a kerfur turned on through its menu event, nested in a watched body
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
@@ -246,6 +247,7 @@ void Install(coop::net::Session& session) {
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
     coop::dev::midnight_drill::Install(&session);  // [dev] the midnight drill (no-op unless midnight_drill is set)
+    coop::dev::kerfur_menu_drill::Install(&session);  // [dev] the kerfur menu drill (no-op unless kerfur_menu_drill=1)
     coop::dev::container_selftest::Install(&session);  // [dev] the container-lane e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
     coop::dev::hand_drop_selftest::Install(&session);  // [dev] hand pickup+drop episodes (no-op unless hand_drop_selftest=1)
@@ -451,6 +453,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::lookat_churn_probe::OnDisconnect();  // [dev] the aim episodes, after the run's last reading
     coop::dev::rollover_watch::OnDisconnect();  // [dev] the per-world arm and the session's watch totals
     coop::dev::midnight_drill::OnDisconnect();  // [dev] back to the first phase
+    coop::dev::kerfur_menu_drill::OnDisconnect();  // [dev] back to the first phase
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
     coop::dev::hookdrag_selftest::EmitVerdict();  // [dev] how far the dragged prop moved here
@@ -596,6 +599,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::rollover_watch::Tick();  // [dev] the day rollover, after time_sync's apply this pass (a single bool read when off)
     coop::dev::midnight_drill::Tick();  // [dev] the midnight drill's phases (a single enum read when off)
+    coop::dev::kerfur_menu_drill::Tick();  // [dev] the kerfur menu drill's phases (a single bool read when off)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
     coop::dev::food_clock_probe::Tick();  // [dev] the food catch-up's clock reading (a single bool read when off)
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)

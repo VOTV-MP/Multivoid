@@ -60,4 +60,8 @@ void Tick();
 // teardown fanout. The detour itself stays (process-lifetime by design).
 void OnDisconnect();
 
+// The summary lines the teardown prints -- the containment counters, the observe gates and the
+// gate's own counts -- now, tagged `when`. For a drill that ends inside its session. Game thread.
+void LogSummary(const char* when);
+
 }  // namespace coop::kerfur_form_assembler

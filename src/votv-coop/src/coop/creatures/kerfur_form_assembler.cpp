@@ -108,8 +108,8 @@ std::atomic<std::uint64_t> g_spawnBIndexLive{0};     // B had a live internal in
 std::atomic<std::uint64_t> g_spawnBIndexDead{0};     // B's index not live at spawn (HALT -- repoint would dangle)
 
 // The per-bracket order record, thread-local: the verb runs synchronously on the game thread,
-// so one slot tracks the outermost bracket, and nested depth is counted as an anomaly through
-// the substrate's depth. Reset at each outermost verb entry.
+// so one slot tracks the outermost of our verbs, and a verb entered inside another is counted as
+// an anomaly. Reset at each outermost verb entry (OwnVerbRunning).
 thread_local bool     tls_spawnFormFiredThisBracket = false;
 thread_local void*    tls_bracketCtx = nullptr;       // the Context whose bracket owns the TLS record
 thread_local E::ElementId tls_bracketEntryEid = E::kInvalidId; // A's eid captured at entry (for re-entry check)
@@ -162,7 +162,35 @@ void StoreCapturedForm(void* b, int32_t idx, void* cls) {
     tls_capturedIsNpc   = IsKerfurNpcClass(cls);
     tls_capturedLastTick = coop::net_pump::TickSerial() + kCaptureFreshTicks;
 }
-// Is the host executing a client's convert request through CallFunction?
+// The verb UFunctions seen at entry. A name watch fires for every class's function of that name,
+// so each form's declaration is its own UFunction; the cooked game has one per verb per form class.
+constexpr int kMaxVerbFns = 8;
+void* g_verbFns[kMaxVerbFns] = {};
+int   g_verbFnCount = 0;
+bool  g_saidVerbFnsFull = false;
+
+void NoteVerbFn(void* fn) {
+    for (int i = 0; i < g_verbFnCount; ++i)
+        if (g_verbFns[i] == fn) return;
+    if (g_verbFnCount < kMaxVerbFns) { g_verbFns[g_verbFnCount++] = fn; return; }
+    if (!g_saidVerbFnsFull) {
+        g_saidVerbFnsFull = true;
+        UE_LOGW("[kerfur_asm] more than %d conversion-verb functions -- a verb nested in an untracked one "
+                "reads as outermost", kMaxVerbFns);
+    }
+}
+
+// Is one of our verbs already running on this thread? The gate publishes a body's scope only after
+// its pre callbacks, so at a verb's entry this sees the verbs around it and never the verb itself.
+// The gate's depth cannot answer this: it counts every watched body, any consumer's, and the prop's
+// actionOptionIndex -- which other lanes name-watch -- calls spawnKerfuro from its event graph, so a
+// press's verb sits at depth 2 while being the outermost of ours.
+bool OwnVerbRunning() {
+    for (int i = 0; i < g_verbFnCount; ++i)
+        if (sg::IsBodyActive(g_verbFns[i])) return true;
+    return false;
+}
+
 // The gate's pre callback, observe-only: every verb runs.
 sg::Verdict OnVerbEntry(const sg::Call& b) {
     if (b.tag == kVerbTurnOff) g_catchTurnOff.fetch_add(1, std::memory_order_relaxed);
@@ -176,7 +204,9 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
 
     // Gate 3b: the per-bracket order record resets on the outermost entry. A nested bracket on the
     // same eid is the double-capture hazard: counted, and the outer record is kept.
-    if (b.depth <= 1) {
+    const bool outermost = !OwnVerbRunning();
+    NoteVerbFn(b.function);
+    if (outermost) {
         tls_spawnFormFiredThisBracket = false;
         tls_bracketCtx = b.object;
         tls_bracketEntryEid = entryEid;
@@ -190,8 +220,8 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
     if (g_logged.fetch_add(1, std::memory_order_relaxed) >= kLogCap) return sg::Verdict::Run;
     const wchar_t* verb = (b.tag == kVerbTurnOff) ? kVerbNameTurnOff : kVerbNameTurnOn;
     std::wstring cls = R::ClassNameOf(b.object);
-    UE_LOGI("[kerfur_asm][%s] VERB %ls tag=%d Context=%p class=%ls depth=%d eid=%s%u (observe-only)",
-            RoleTag(), verb, b.tag, b.object, cls.c_str(), b.depth,
+    UE_LOGI("[kerfur_asm][%s] VERB %ls tag=%d Context=%p class=%ls depth=%d outermost=%d eid=%s%u (observe-only)",
+            RoleTag(), verb, b.tag, b.object, cls.c_str(), b.depth, outermost ? 1 : 0,
             bound ? "" : "UNBOUND:", bound ? entryEid : 0u);
     return sg::Verdict::Run;
 }
@@ -373,6 +403,8 @@ void DumpSummary(const char* when) {
 }
 
 }  // namespace
+
+void LogSummary(const char* when) { DumpSummary(when); }
 
 // The capture accessors, consumed by kerfur_convert.
 CapturedForm ConsumeCapturedForm(bool wantNpc) {

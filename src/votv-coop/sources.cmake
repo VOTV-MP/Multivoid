@@ -399,6 +399,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/desk_diag.cpp
     src/coop/dev/rollover_watch.cpp
     src/coop/dev/midnight_drill.cpp
+    src/coop/dev/kerfur_menu_drill.cpp
     src/coop/dev/load_reroll_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
