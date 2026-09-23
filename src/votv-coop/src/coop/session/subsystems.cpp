@@ -45,6 +45,7 @@
 #include "coop/session/rig_ready.h"
 #include "coop/session/pause_guard.h"  // coop no-pause invariant (ESC pause froze clients)
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
+#include "coop/dev/look_probe.h"  // [dev] the crosshair target letting go and coming back
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
 #include "coop/dev/inventory_pickup_drill.h"  // dev drill: one client pickup through putObjectInventory2
@@ -578,6 +579,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:hook"}; coop::hook_sync::Tick(); }  // hook: one activeHook read, then a gated 4/20 Hz head poll only while a hook exists
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Tick(session); }  // HOST: publish the driven props that moved, close the streams that rested (after the hook poll that feeds it; an empty set costs one size check)
+    coop::dev::look_probe::Tick(isHost);  // [dev] the crosshair blink probe (one bool read when off)
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)

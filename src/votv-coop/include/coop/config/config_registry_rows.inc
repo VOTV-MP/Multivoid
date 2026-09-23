@@ -222,6 +222,9 @@ CFG_FLAG(menu_autoload, "menu_autoload", "dev", false, "VOTVCOOP_MENU_AUTOLOAD",
     "under a player who asked for the main menu.")
 CFG_FLAG(static_2nd_player, "static_2nd_player", "dev", false, nullptr,
     "Spawn a static second-player puppet for camera/pose testing.")
+CFG_FLAG(look_probe, "look_probe", "dev", false, "VOTVCOOP_DEV_LOOK_PROBE",
+    "Diagnostic probe (both roles): logs every time a target under the crosshair lets go and comes "
+    "back within half a second -- the hint and action menu blinking. Read-only.")
 CFG_FLAG(freecam, "freecam", "dev", false, nullptr,
     "Enable the freecam toggle.")
 CFG_FLAG(spawn_menu_unlock, "spawn_menu_unlock", "dev", false, nullptr,
