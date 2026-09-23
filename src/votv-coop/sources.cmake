@@ -412,6 +412,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/food_clock_probe.cpp
     src/coop/dev/lookat_churn_probe.cpp
     src/coop/dev/lookat_aim_drill.cpp
+    src/coop/dev/rehost_rejoin.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/wire_census.cpp
     src/coop/input/input_owner.cpp

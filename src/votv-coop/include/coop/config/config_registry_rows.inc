@@ -388,6 +388,11 @@ CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AI
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
     "one readiness line once the game's own trace resolves the prop.")
+CFG_FLAG(rehost_rejoin, "rehost_rejoin", "dev", false, "VOTVCOOP_REHOST_REJOIN",
+    "Drill (CLIENT): join the host again without restarting the game. At the main menu, with no "
+    "session and no join in flight, a file named multivoid-rejoin.trigger beside the game exe is "
+    "deleted and net.peer:net.port dialed through the direct connect, once per file. The rig's "
+    "host-restart arm drops it when the relaunched host is up.")
 CFG_FLAG(prop_birth_key_probe, "prop_birth_key_probe", "dev", false, "VOTVCOOP_PROP_BIRTH_KEY_PROBE",
     "Diagnostic probe (CLIENT): the place/birth seam -- how many drain ticks the save Key takes to "
     "restore after a spawn, and which of the seven drain exits each pending spawn leaves by. Set it "

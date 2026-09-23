@@ -16,6 +16,7 @@
 #include "coop/dev/load_reroll_watch.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
+#include "coop/dev/rehost_rejoin.h"
 #include "coop/dev/restore_vitals.h"
 #include "coop/dispatch/event_feed.h"
 #include "coop/items/hotbar_icon_edge.h"
@@ -417,6 +418,8 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                 // loaded from the menu before any session is seen from this tick only.
                 coop::dev::hotbar_icon_probe::Tick();
                 coop::dev::load_reroll_watch::Tick(g_session);
+                // A client left at the menu by its host joins again when the rig says the host is back.
+                coop::dev::rehost_rejoin::Tick(g_session);
             }
             // The roster shows a board in a world and none at the menu, which is a live question:
             // out of session it synthesises the local row, and at the menu there is nobody to show.
