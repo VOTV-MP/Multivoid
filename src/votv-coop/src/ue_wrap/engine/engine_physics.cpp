@@ -27,6 +27,7 @@ struct Thunk {
     const wchar_t* param0;
     const wchar_t* param1;  // nullptr for a one-parameter call
     void*   fn = nullptr;
+    void*   cls = nullptr;       // the class `fn` was found on; a new one resolves it again
     int32_t off0 = -1;
     int32_t off1 = -1;
     bool    missed = false;  // said once; the call is a no-op from then on
@@ -37,16 +38,18 @@ Thunk g_setLinVel{P::name::SetPhysicsLinearVelocityFn, L"NewVel", L"BoneName"};
 Thunk g_setAngVel{P::name::SetPhysicsAngularVelocityInDegreesFn, L"NewAngVel", L"BoneName"};
 Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"};
 
-// The class they are found on. A native class outlives every world, but the reference is checked
-// and a freed one re-resolves every thunk.
+// The class they are found on. A native class outlives every world, but the reference is checked:
+// a freed one is found again, and each thunk resolves again against the class it now names. A
+// native class is found at boot or never, so a miss is said once like a function's.
 ue_wrap::CachedObjRef g_primitiveClass;
 
 // Found up the class chain: IsSimulatingPhysics is declared on USceneComponent.
 bool Resolve(Thunk& t) {
-    if (t.fn && g_primitiveClass.Alive()) return true;
     if (t.missed) return false;
     if (!g_primitiveClass.Alive()) g_primitiveClass.Set(R::FindClass(P::name::PrimitiveComponentClass));
     void* cls = g_primitiveClass.Raw();
+    if (t.fn && cls && t.cls == cls) return true;
+    t.cls = cls;
     t.fn = cls ? R::FindDispatchFunction(cls, t.name, nullptr) : nullptr;
     const int32_t frame = t.fn ? R::FunctionFrameSize(t.fn) : 0;
     t.off0 = t.fn ? R::FindParamOffset(t.fn, t.param0) : -1;
