@@ -73,17 +73,25 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool frozen = false, mounted = false, gone = false;
-    bool thrusting = false, spraying = false;  // a drop hard enough starts the runaway thrust
+    int thrusting = 0, spraying = 0;  // a drop hard enough starts the runaway thrust; -1 = unread
 };
 std::vector<Watched> g_watched;
 std::vector<ue_wrap::CachedObjRef> g_mounts;
 bool g_watchArmed = false;
 int  g_watchTick = 0;
 
-bool IsMounted(void* ext) {
+// What the mounts hold, read once per watch pass rather than once per extinguisher.
+std::vector<void*> g_held;
+
+void ReadMounts() {
+    g_held.clear();
     for (const auto& m : g_mounts)
-        if (void* mount = m.Get(); mount && FX::MountedExtinguisher(mount) == ext) return true;
-    return false;
+        if (void* mount = m.Get())
+            if (void* ext = FX::MountedExtinguisher(mount)) g_held.push_back(ext);
+}
+
+bool IsMounted(void* ext) {
+    return std::find(g_held.begin(), g_held.end(), ext) != g_held.end();
 }
 
 // One walk of the object array, when the watch arms, never again.
@@ -92,12 +100,16 @@ void ArmWatch(char who) {
     g_mounts.clear();
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
+        // The class tests read name indices; the name render the CDO test needs runs on a match only.
         void* o = R::ObjectAt(i);
-        if (!o || !R::IsLive(o) || R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-        if (FX::IsMount(o)) {
+        if (!o || !R::IsLive(o)) continue;
+        const bool mount = FX::IsMount(o);
+        if (!mount && !FX::IsExtinguisher(o)) continue;
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+        if (mount) {
             g_mounts.emplace_back();
             g_mounts.back().Set(o);
-        } else if (FX::IsExtinguisher(o)) {
+        } else {
             Watched w;
             w.ref.Set(o);
             w.key = PR::GetInteractableKeyString(o);
@@ -106,6 +118,7 @@ void ArmWatch(char who) {
             g_watched.push_back(std::move(w));
         }
     }
+    ReadMounts();
     for (auto& w : g_watched) {
         void* o = w.ref.Get();
         w.mounted = o && IsMounted(o);
@@ -123,6 +136,7 @@ void ArmWatch(char who) {
 void TickWatch(char who) {
     if (!g_watchArmed || ++g_watchTick < kWatchEveryTicks) return;
     g_watchTick = 0;
+    ReadMounts();
     for (auto& w : g_watched) {
         if (w.gone) continue;
         void* o = w.ref.Get();
@@ -134,9 +148,9 @@ void TickWatch(char who) {
         const ue_wrap::FVector at = E::GetActorLocation(o);
         const bool frozen = PR::IsFrozen(o);
         const bool mounted = IsMounted(o);
-        bool thrusting = false, spraying = false;
-        FX::ReadThrusting(o, thrusting);
-        FX::ReadSpraying(o, spraying);
+        bool th = false, sp = false;
+        const int thrusting = FX::ReadThrusting(o, th) ? (th ? 1 : 0) : -1;
+        const int spraying = FX::ReadSpraying(o, sp) ? (sp ? 1 : 0) : -1;
         if (Dist(at, w.printed) < kWatchMoveCm && frozen == w.frozen && mounted == w.mounted &&
             thrusting == w.thrusting && spraying == w.spraying)
             continue;
@@ -147,7 +161,7 @@ void TickWatch(char who) {
         w.spraying = spraying;
         UE_LOGI("[FIREEXT-DRILL] [%c] key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm frozen=%d mounted=%d "
                 "thrusting=%d spraying=%d", who, w.key.c_str(), at.X, at.Y, at.Z, Dist(at, w.start),
-                frozen ? 1 : 0, mounted ? 1 : 0, thrusting ? 1 : 0, spraying ? 1 : 0);
+                frozen ? 1 : 0, mounted ? 1 : 0, thrusting, spraying);
     }
 }
 
@@ -270,6 +284,7 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out) {
 }
 
 void LogTarget(const char* what) {
+    ReadMounts();
     void* t = g_target.Get();
     if (!t) { UE_LOGI("[FIREEXT-DRILL] [H] %s key='%ls' -- the extinguisher is gone", what, g_targetKey.c_str()); return; }
     const ue_wrap::FVector at = E::GetActorLocation(t);
@@ -394,11 +409,12 @@ bool IsEnabled() {
 void Tick(coop::net::Session* session) {
     if (!IsEnabled() || !session || !session->connected()) return;
     if (!FX::ResolveNames()) return;
-    void* player = coop::players::Registry::Get().Local();
-    if (!player || !R::IsLive(player) || !E::GetController(player)) return;
-
     if (coop::roster::LocalIsHost()) {
-        HostStep(*session, player);
+        if (g_step != Step::Invalid) {
+            void* player = coop::players::Registry::Get().Local();
+            if (!player || !R::IsLive(player) || !E::GetController(player)) return;
+            HostStep(*session, player);
+        }
         TickWatch('H');
         return;
     }
@@ -420,6 +436,11 @@ void OnDisconnect() {
     g_stepTicks = 0;
     g_target.Reset();
     g_targetKey.clear();
+    g_held.clear();
+    if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
+        g_walk->goal.failed = true;
+        g_walk->goal.failReason = "session ended";
+    }
     g_walk.reset();
 }
 
