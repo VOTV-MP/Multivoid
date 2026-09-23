@@ -61,10 +61,11 @@ std::array<coop::active_drive::ActiveDrive, coop::players::kMaxPeers> g_drives{}
 // hold is the tail of a stream that already ended, perhaps with the prop frozen on the holder by a
 // slot or a stick, and starts nothing; a pose of a newer hold is a new grab, whatever the drive
 // cache still holds. A generation of 0 is unversioned and passes. The shape is MTA's sync time
-// context, with one divergence: MTA's server mints it per element for the one syncer it assigns
-// (CElement.cpp, CObjectSync.cpp), as the driven-prop channel's host mints its claim per prop, while
-// here the holder mints it per hold and nothing assigns a prop to one holder -- two peers grabbing one
-// prop both stream it (docs/props.md, Known limits).
+// context, which settles a state change against sync still in flight (CElement.cpp), with one
+// divergence: MTA's server also keeps one syncer per unoccupied vehicle and relays only that
+// syncer's packets (CUnoccupiedVehicleSync.cpp), as the driven-prop channel's host claims a prop,
+// while here the holder mints a generation per hold and nothing assigns a prop to one holder -- two
+// peers grabbing one prop both stream it (docs/props.md, Known limits).
 struct HoldGate {
     uint16_t closedGen   = 0;
     bool     haveClosed  = false;
@@ -492,11 +493,16 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 static_cast<unsigned>(payload.holdGen), propActor,
                 otherOwner ? "another drive" : "this peer's own grab");
         if (releasedSlot >= 0) {
-            if (localGrab && !otherOwner) DriveTogglePhysics(propActor, meshToActOn, true);
+            if (localGrab && !otherOwner && !StickHoldsPhysicsOff(propActor) && !HostAuthorsTrashBody(propActor))
+                DriveTogglePhysics(propActor, meshToActOn, true);
             ResetDriveState(g_drives[releasedSlot]);
         }
         return;
     }
+    // A wall-attachable already stuck here was stuck by its stick, which arrived first on the same lane,
+    // and the component's own re-trace placed it; read before the converge below, which freezes a
+    // copy whose stick did not land here and must not be taken for one.
+    const bool stuckOnWall = StickHoldsPhysicsOff(propActor) && coop::prop_stick_sync::IsWallAttachable(propActor);
     // The holder's frozen and sleep at the release edge, before the physics decision below reads
     // them. A grab that reached this copy through no pose still ends unfrozen here, and a hold that
     // ended in a drive slot or a mount ends frozen here too. The host authors a trash body's physics.
@@ -504,10 +510,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         coop::prop_wire_parity::ConvergeFrozenSleep(propActor, payload.physFlags);
     // Where the holder's copy was at the edge: this copy lets go from there even when the hold's last
     // poses were lost, or none arrived, and a hold that ended frozen stays where it ended, which is
-    // where the holder's slot or mount put it. A stuck wall-attachable is the exception: its stick
-    // arrived first on the same lane, and the component's own re-trace placed it. The host authors a
+    // where the holder's slot or mount put it -- all but a copy its stick placed. The host authors a
     // trash body's place.
-    const bool stuckOnWall = StickHoldsPhysicsOff(propActor) && coop::prop_stick_sync::IsWallAttachable(propActor);
     if (propActor && payload.hasPose && !HostAuthorsTrashBody(propActor) && !stuckOnWall) {
         ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(propActor,
