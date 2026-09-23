@@ -180,8 +180,6 @@ void TickHost(coop::net::Session* s) {
 
 }  // namespace
 
-bool IsEnabled() { return IsEnabled_(); }
-
 void Install(coop::net::Session* session) {
     if (!IsEnabled_()) return;
     g_session.store(session, std::memory_order_release);

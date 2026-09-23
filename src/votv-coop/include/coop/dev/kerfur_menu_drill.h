@@ -19,8 +19,6 @@ namespace coop::net { class Session; }
 
 namespace coop::dev::kerfur_menu_drill {
 
-bool IsEnabled();
-
 // Cache the session, for the role. Called from the subsystems Install fanout every pump tick;
 // idempotent. No-op when off.
 void Install(coop::net::Session* session);
