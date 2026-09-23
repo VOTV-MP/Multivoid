@@ -54,12 +54,6 @@ bool Locked();
 // needs the characters lives outside this module.
 int PasswordLength();
 
-// What a freshly MINTED password is expected to measure, so a self-check can assert the mint
-// without hard-coding a number the generator is free to change under it. A literal that has
-// gone stale fails a working feature, and in the log that is indistinguishable from the defect
-// the check was written to catch.
-int GeneratedPasswordLength();
-
 // The master label the window named when it was last shown: the chosen slot, which is where
 // the Host button announces. Empty before the first showing.
 const std::string& MasterShown();

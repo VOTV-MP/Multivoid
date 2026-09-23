@@ -31,16 +31,27 @@ using Tag = std::array<uint8_t, kTagBytes>;
 // tampered with on the plaintext signaling leg): with binding intact no offline oracle exists
 // and this number buys nothing; without it, this number is the whole delay. About 100 ms on
 // the joining client, once, and nothing on the host, which caches K. Read this with the
-// generated password length in ui/host_session_settings.cpp: six characters from a 32-symbol
-// alphabet is 30 bits, so an exposed proof is hours of GPU time to exhaust, and raising the
-// round count cannot buy that back (recovering 20 bits would need a million times the rounds
-// at 100 ms each); the number to reach for first is the length. On the self-addressed lane
-// there is no binding to be the control, and this count is the whole delay.
+// generated password's length below: six characters from a 32-symbol alphabet is 30 bits, so
+// an exposed proof is hours of GPU time to exhaust, and raising the round count cannot buy that
+// back (recovering 20 bits would need a million times the rounds at 100 ms each); the number to
+// reach for first is the length. On the self-addressed lane there is no binding to be the
+// control, and this count is the whole delay.
 inline constexpr uint32_t kIterations = 200000;
 // Asserted at compile time, because the selftest cannot: its full-cost arm only shows that the
 // shipped count differs from the cheap one, which would pass for 2.
 static_assert(kIterations == 200000, "the shipped round count moved -- change it here and "
                                      "in lobby_password.h's rationale together, or not at all");
+
+// A new lobby's password, the one the hosting window's lock offers: kGeneratedLength characters
+// from a 32-symbol alphabet with no look-alikes (no I, l, 1, O or 0, no lower case), since it is
+// read aloud and typed back. Six characters are 30 bits, about six GPU-hours against kIterations;
+// safe only because a proof is sent solely to a host the joiner bound to an identity given in
+// advance or typed themselves (peer_admission.cpp): that gate must not be relaxed on the strength
+// of this length, and a typed-address typo hands the password to whoever answers. Empty when the
+// system RNG refused, which the caller treats as a refusal, never a reason to fall back to rand():
+// a predictable password under a lit padlock is worse than an open lobby.
+inline constexpr int kGeneratedLength = 6;
+std::string Generate();
 
 // K = PBKDF2(password, hostPub). False if CNG refused or the password is empty: an empty
 // password must never derive a key, since it would give no-password a well-formed tag that a

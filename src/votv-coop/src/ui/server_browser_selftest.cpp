@@ -16,7 +16,8 @@
 
 #include "coop/config/config.h"           // the ini line a tab click must have written
 #include "coop/config/config_registry.h"
-#include "coop/net/lobby_client.h"        // LobbyRow::master -- which master a row came from
+#include "coop/net/lobby_client.h"        // LobbyRow -- the rows a tab click must bring
+#include "coop/net/lobby_password.h"      // kGeneratedLength -- what a minted password measures
 #include "coop/net/master_slots.h"
 #include "coop/session/session_manager.h"  // CopyRows
 #include "ue_wrap/core/call.h"
@@ -1227,7 +1228,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // broken when the mint was shortened.
             const bool locked = ui::host_session_settings::Locked();
             const int  len    = ui::host_session_settings::PasswordLength();
-            const int  want   = ui::host_session_settings::GeneratedPasswordLength();
+            const int  want   = coop::net::lobby_password::kGeneratedLength;
             const bool minted = (g_lockPwLenBefore == 0);
             const int  expect = minted ? want : g_lockPwLenBefore;
             // And the lock must have actually moved: without this term the no-mint arm passes a

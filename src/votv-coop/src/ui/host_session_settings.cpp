@@ -7,7 +7,7 @@
 #include "coop/text/utf8_codec.h"   // the server name is sanitised where it is authored
 #include "coop/config/config_registry.h"
 #include "coop/net/master_slots.h"      // the master this session will be listed on
-#include "coop/net/peer_identity.h"     // RandomBytes -- the CSPRNG the identity already uses
+#include "coop/net/lobby_password.h"    // the password the lock mints
 #include "coop/session/host_mode.h"
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"
@@ -87,36 +87,6 @@ constexpr HC::Answer kVis[2] = {
     {L"Hidden",
      L"Only friends you give your address to."},
 };
-
-// ---- the generated password ----
-// No I, l, 1, O or 0 and no lower case: the value is read aloud and typed back, so look-alikes cost
-// a retry.
-constexpr char kPwAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-constexpr int  kPwAlphabetN  = 32;   // sizeof - 1, stated so the modulo claim below is checkable
-// Six characters = 30 bits: ~six GPU-hours against lobby_password.h's 200 000 PBKDF2 iterations.
-// Safe only because a proof is sent solely to a host the joiner bound to an identity given in
-// advance or typed themselves (peer_admission.cpp): that binding gate must not be relaxed on the
-// strength of this constant, and a typed-address typo hands the password to whoever answers.
-constexpr int  kPwLen        = 6;
-
-static_assert(sizeof(kPwAlphabet) - 1 == kPwAlphabetN, "the alphabet and its size must agree");
-// 256 % 32 == 0, so `byte % 32` is exactly uniform; a 33-character alphabet would bias the modulo.
-static_assert(256 % kPwAlphabetN == 0, "modulo would bias the alphabet");
-
-// Empty on failure, which the caller treats as a refusal, never a reason to fall back to rand(): a
-// predictable password under a lit padlock is worse than an open lobby.
-std::string GeneratePassword() {
-    unsigned char raw[kPwLen];
-    if (!coop::net::peer_identity::RandomBytes(raw, sizeof(raw))) {
-        UE_LOGE("host_session_settings: the system RNG refused -- NOT generating a password "
-                "(a guessable one would be worse than none, because the lock would still "
-                "say you are protected)");
-        return {};
-    }
-    std::string s(kPwLen, '\0');
-    for (int i = 0; i < kPwLen; ++i) s[static_cast<size_t>(i)] = kPwAlphabet[raw[i] % kPwAlphabetN];
-    return s;
-}
 
 // ---- state (game thread only unless marked) ----
 void* g_menu     = nullptr;
@@ -343,7 +313,7 @@ void SetLocked(bool locked) {
     if (locked == IsLocked()) return;
     g_who.chosen = locked ? 1 : 0;
     if (IsLocked() && TF::Text(g_pwField).empty()) {
-        const std::string pw = GeneratePassword();
+        const std::string pw = coop::net::lobby_password::Generate();
         if (pw.empty()) {
             // Fail closed: the RNG refused, so the lock stays off; a padlock with no secret is a
             // false promise.
@@ -751,8 +721,6 @@ int PasswordLength() {
     // carried one.
     return static_cast<int>(TF::Text(g_pwField).size());
 }
-
-int GeneratedPasswordLength() { return kPwLen; }
 
 const std::string& MasterShown() { return g_shownMaster; }
 

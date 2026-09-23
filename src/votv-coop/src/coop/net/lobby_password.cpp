@@ -26,7 +26,27 @@ constexpr NTSTATUS kOk = 0;
 constexpr char kTag[] = "MVLP1";
 constexpr size_t kTagLen = sizeof(kTag) - 1;
 
+constexpr char kGenAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+constexpr int  kGenAlphabetN  = 32;   // sizeof - 1, stated so the modulo claim below is checkable
+static_assert(sizeof(kGenAlphabet) - 1 == kGenAlphabetN, "the alphabet and its size must agree");
+// 256 % 32 == 0, so `byte % 32` is exactly uniform; a 33-character alphabet would bias the modulo.
+static_assert(256 % kGenAlphabetN == 0, "modulo would bias the alphabet");
+
 }  // namespace
+
+std::string Generate() {
+    unsigned char raw[kGeneratedLength];
+    if (!peer_identity::RandomBytes(raw, sizeof(raw))) {
+        UE_LOGE("lobby_password: the system RNG refused -- NOT generating a password (a guessable "
+                "one would be worse than none, because the lock would still say you are "
+                "protected)");
+        return {};
+    }
+    std::string s(kGeneratedLength, '\0');
+    for (int i = 0; i < kGeneratedLength; ++i)
+        s[static_cast<size_t>(i)] = kGenAlphabet[raw[i] % kGenAlphabetN];
+    return s;
+}
 
 // The derivation, with the round count as a parameter. Production always uses `kIterations`; the
 // selftest uses a cheap count for the arms that only need to show which INPUTS reach the KDF, and
