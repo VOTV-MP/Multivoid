@@ -41,10 +41,9 @@ using NS::Spawn;
 
 // Slate units; the row height is the game's own (uicomp_saveSlot_C is 64 px).
 constexpr float kRowH     = 64.f;
-constexpr float kRowGapPx = 2.f;
+constexpr float kRowGapPx = NS::kListGapPx;
 // Every row carries its own frame (docs/votv-ui-style.md: nothing floats unboxed), inside the
-// 64 px row so the scroll arithmetic is unchanged; the 2 px slot gap stays, or two adjacent frames
-// read as one 4 px rule.
+// 64 px row so the scroll arithmetic is unchanged, and the kit's list gap between rows.
 constexpr float kRowBorderPx = 2.f;
 // Bounds the whole sync loop, not only the display: `want` clamps to it and the grow loop to
 // `want`. The master emits every listed lobby, so an over-cap list is truncated (Sync logs it on
@@ -52,9 +51,7 @@ constexpr float kRowBorderPx = 2.f;
 // and waits for a measured baseline.
 constexpr int   kMaxRows  = 64;
 
-const FLinearColor kRowBg  = NS::RowBg();   // a list row at rest
-const FLinearColor kRowSel = NS::RowSel();  // ...and selected. Fill, not text.
-const FLinearColor kBorder = NS::Border();  // #646464 -- every frame in the game's menus
+const FLinearColor kRowBg  = NS::RowBg();   // a list row at rest; selected, the kit's skin fills it
 const FLinearColor kText   = NS::Text();    // the default: most text is white
 const FLinearColor kAccent = NS::Accent();  // orange -- the interactive accent
 const FLinearColor kHover  = NS::Hover();   // #FFFF00 -- hover, on the text AND the frame
@@ -73,7 +70,7 @@ void* g_list = nullptr;   // the UScrollBox holding the rows
 // text colour change to #FFFF00 and native selection a row fill change to #400040 (the style doc,
 // measured); here hover also yellows the frame, since a 640 px data row's glyphs alone are a
 // change the eye misses, and a selected row ignores hover entirely. Hover owns the frame and the
-// text, selection owns the fill; where both apply, PointerLit suppresses hover at the source.
+// text, selection owns the fill; where both apply, NS::PointerLit suppresses hover at the source.
 int              g_hoverRow = -1;   // index into the live rows, or -1
 NS::HoverTracker g_hover;           // pointer + scroll + settling, one owner
 std::string      g_selectedId;      // the SELECTED LOBBY, keyed by id and not by index
@@ -236,26 +233,12 @@ std::string MismatchMark(const Row& r) {
     return {};
 }
 
-// Does the pointer get to change this row at all: a selected row is deaf to hover in every
-// channel. Written once so the three painters cannot disagree.
-bool PointerLit(bool hovered, bool selected) { return hovered && !selected; }
-
-// A row's two fill channels, one owner: the fill says chosen (#400040, set by a click), the frame
-// says pointed at (#FFFF00, transient) and falls back to the #646464 every native box carries.
-// Independent writes to independent widgets; the precedence lives in PointerLit.
-void ApplyRowSkin(const RowParts& rp, bool hovered, bool selected) {
-    // SetImageTint, not the raw write: these images are attached to Slate, and a raw property write
-    // does not repaint.
-    if (rp.face) U::SetImageTint(rp.face, selected ? kRowSel : kRowBg);
-    if (rp.edge) U::SetImageTint(rp.edge, PointerLit(hovered, selected) ? kHover : kBorder);
-}
-
 // A row's three text colours, one owner, so un-hovering cannot restore the wrong base.
 void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool stale,
                         bool hovered, bool selected) {
     // Hovering turns the label yellow and leaves the fill alone; a selected row keeps its data
     // colours on the purple, and the pointer does not override that.
-    const bool lit = PointerLit(hovered, selected);
+    const bool lit = NS::PointerLit(hovered, selected);
     // The name carries the accent, green for our own lobby, yellow under the pointer. The mismatch
     // mark stays red under the pointer: yellowing it would erase the one thing it says.
     FLinearColor name = lit ? kHover : (isOwn ? kOwn : kAccent);
@@ -349,7 +332,7 @@ void RepaintSelectionChange(const std::string& wasId) {
         if (!RowPartsAt(i, rp)) continue;
         const Row& r = g_rows[static_cast<size_t>(i)];
         const bool sel = (id == g_selectedId);
-        ApplyRowSkin(rp, i == g_hoverRow, sel);
+        NS::ApplySelectableSkin(rp.face, rp.edge, i == g_hoverRow, sel);
         ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, IsStale(r),
                            i == g_hoverRow, sel);
     }
@@ -406,7 +389,7 @@ void UpdateHover() {
         if (!RowPartsAt(i, rp)) continue;
         const Row& r = g_rows[static_cast<size_t>(i)];
         const bool sel = RowIsSelected(i);
-        ApplyRowSkin(rp, i == hit, sel);
+        NS::ApplySelectableSkin(rp.face, rp.edge, i == hit, sel);
         ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, IsStale(r), i == hit, sel);
     }
 }
@@ -524,7 +507,7 @@ void Sync() {
         // there. Read from r.lobbyId, not RowIsSelected(i): the assign above cleared g_rowIds and
         // this loop is refilling it.
         const bool sel = !g_selectedId.empty() && r.lobbyId == g_selectedId;
-        ApplyRowSkin(rp, i == g_hoverRow, sel);
+        NS::ApplySelectableSkin(rp.face, rp.edge, i == g_hoverRow, sel);
         ApplyRowTextColors(rp, r, isOwn, IsStale(r), i == g_hoverRow, sel);
         // The id is captured here, in the same pass as the text, so a click resolves to the server
         // the player was looking at.

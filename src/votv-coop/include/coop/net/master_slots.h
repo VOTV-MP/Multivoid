@@ -22,8 +22,8 @@ struct Slot {
     std::string url;     // the master's address in the HTTP client's grammar ("host:port" is TLS)
 };
 
-// Bounds on a list. The picker lays out one tab per slot, so the count bounds its width, and a
-// label is one tab's text.
+// Bounds on a list. The picker lays out one tab per slot, so the count bounds how narrow a tab
+// gets, and a label is one tab's text, shrunk whole when it is wider than its tab.
 inline constexpr size_t kMaxSlots = 6;
 inline constexpr size_t kMaxLabelChars = 16;
 

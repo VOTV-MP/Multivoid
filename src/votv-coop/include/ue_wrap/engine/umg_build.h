@@ -81,6 +81,12 @@ bool SetSizeBoxWidth(void* sizeBox, float width);
 // that should hug what it holds and still never grow past a bound.
 bool SetSizeBoxMaxWidth(void* sizeBox, float width);
 
+// UScaleBox::SetStretch and SetStretchDirection, through the UFunctions (EStretch: ScaleToFit 2;
+// EStretchDirection: DownOnly 1, in Slate_enums). ScaleToFit with DownOnly is the engine's own fit
+// for a label whose room its neighbours set: drawn at its size while it fits, shrunk whole when it
+// does not, never cut.
+bool SetScaleBoxFit(void* scaleBox, uint8_t stretch, uint8_t direction);
+
 // Style a freshly spawned UTextBlock as one of the game's own menu labels: its UI font at the
 // given size, the colour with the slate colour rule forced to specified, no outline, and the
 // native drop shadow (the constants the button inject sets, which clones no donor text style,

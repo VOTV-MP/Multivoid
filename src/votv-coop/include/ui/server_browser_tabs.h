@@ -3,12 +3,14 @@
 // shows and where a game the player hosts is listed, and the choice is remembered in the ini.
 //
 // MTA's browser keeps one tab per list SOURCE (CServerBrowser.cpp: a tab each for Internet, LAN,
-// Favourites and Recent; OnTabChanged saves the options and refreshes that source; the saved tab
-// is restored on open). Divergence: the tabs re-feed the ONE list rather than each owning a list
-// widget, because a lobby id is per master and the rows are the same shape on every tab. The skin
-// is the list rows' own two channels (docs/votv-ui-style.md, State): selection is the FILL, hover
-// the frame and the TEXT colour, and a selected tab is never lit by the pointer. Hit-tested by
-// geometry, since these are hand-built images. Game thread only.
+// Favourites and Recent; OnTabChanged saves the options and fetches that source's list on its
+// first view, or on every switch with auto-refresh on; the saved tab is restored when the browser
+// is created). Divergence: the tabs re-feed the ONE list rather than each owning a list widget,
+// because a lobby id is per master and the rows are the same shape on every tab; so a switch
+// always fetches, since the rows it showed were the other master's. The skin is the list rows'
+// own, the kit's selectable skin (native_screen.h): selection is the FILL, hover the frame and the
+// TEXT colour, and a selected tab is never lit by the pointer. Hit-tested by geometry, since these
+// are hand-built images. Game thread only.
 
 #pragma once
 
@@ -21,9 +23,9 @@ bool Build(void* parent);
 // The menu instance died and took the widgets with it.
 void Forget();
 
-// Repaint both channels if the selection or the pointer moved since the last paint; `force`
-// repaints regardless (a screen just shown). Cheap otherwise: two integer compares.
-void Sync(bool force);
+// Repaint every tab (a screen just shown). A pointer move or a click repaints only the tabs whose
+// look changed, by itself.
+void Sync();
 
 // Re-evaluate the hover. Only when the pointer moved (plus one settling pass after): resolving the
 // cursor into widget space reaches an object-array walk.

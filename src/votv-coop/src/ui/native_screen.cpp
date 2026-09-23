@@ -287,6 +287,14 @@ void ForgetBorderDonor() {
 
 bool BorderDonorResolved() { return g_borderDonorTried; }
 
+bool PointerLit(bool hovered, bool selected) { return hovered && !selected; }
+
+void ApplySelectableSkin(void* face, void* edge, bool hovered, bool selected) {
+    static const FLinearColor kFace = RowBg(), kChosen = RowSel(), kEdge = Border(), kLit = Hover();
+    if (face) U::SetImageTint(face, selected ? kChosen : kFace);
+    if (edge) U::SetImageTint(edge, PointerLit(hovered, selected) ? kLit : kEdge);
+}
+
 bool FramedBoxParts(void* overlay, FramedParts& out) {
     if (!overlay) return false;
     const int32_t n = U::ChildCount(overlay);

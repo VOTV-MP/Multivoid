@@ -23,6 +23,10 @@ using ue_wrap::FLinearColor;
 // is how a second ring once merged into the first.
 inline constexpr float kNativeRingPx = 4.f;
 
+// The gap between neighbouring framed boxes of a list, in Slate units: with none, two adjacent
+// frames read as one 4 px rule. The browser's rows and its master tabs both keep it.
+inline constexpr float kListGapPx = 2.f;
+
 // EHorizontalAlignment / EVerticalAlignment: Fill=0, Left=1 / Top=1, Center=2, Right=3 / Bottom=3.
 inline constexpr uint8_t kFill = 0, kLeft = 1, kCenter = 2, kRight = 3;
 inline constexpr uint8_t kTop = 1, kBottom = 3;
@@ -131,6 +135,15 @@ struct FramedParts {
     void* content = nullptr;  // whatever the caller put in
 };
 bool FramedBoxParts(void* overlay, FramedParts& out);
+
+// The skin of a box the player picks from a set (a list row, a tab), one owner so the copies
+// cannot drift (docs/votv-ui-style.md, State). Selection is the FILL (#400040 over #313131); the
+// pointer lights the FRAME (#FFFF00 over #646464) and, in the caller's hands, the text; a selected
+// box is deaf to the pointer in every channel, which PointerLit says for the text a caller colours
+// itself. The dispatch setters: the parts are attached to Slate, where a raw write does not
+// repaint.
+bool PointerLit(bool hovered, bool selected);
+void ApplySelectableSkin(void* face, void* edge, bool hovered, bool selected);
 
 // A chrome UButton with an authored label, styled from a donor UButton: a real UButton, since
 // that is what carries the game's press and hover sounds. The label size is the donor's own,

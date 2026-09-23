@@ -54,6 +54,8 @@ FnCache g_imgTint    {L"Image",          L"SetBrushTintColor",    nullptr, false
 FnCache g_sbHeight   {L"SizeBox",        L"SetHeightOverride",    nullptr, false};
 FnCache g_sbWidth    {L"SizeBox",        L"SetWidthOverride",     nullptr, false};
 FnCache g_sbMaxWidth {L"SizeBox",        L"SetMaxDesiredWidth",   nullptr, false};
+FnCache g_scStretch  {L"ScaleBox",       L"SetStretch",           nullptr, false};
+FnCache g_scDir      {L"ScaleBox",       L"SetStretchDirection",  nullptr, false};
 FnCache g_setClip    {L"Widget",         L"SetClipping",          nullptr, false};
 FnCache g_scrollSet  {L"ScrollBox",      L"SetScrollOffset",      nullptr, false};
 FnCache g_scrollGet  {L"ScrollBox",      L"GetScrollOffset",      nullptr, false};
@@ -402,6 +404,17 @@ bool SetSizeBoxMaxWidth(void* sizeBox, float width) {
     ParamFrame f(fn);
     f.Set<float>(L"InMaxDesiredWidth", width);
     return Call(sizeBox, f);
+}
+
+bool SetScaleBoxFit(void* scaleBox, uint8_t stretch, uint8_t direction) {
+    void* fnStretch = Resolve(g_scStretch);
+    void* fnDir = Resolve(g_scDir);
+    if (!scaleBox || !fnStretch || !fnDir) return false;
+    ParamFrame s(fnStretch);
+    s.Set<uint8_t>(L"InStretch", stretch);
+    ParamFrame d(fnDir);
+    d.Set<uint8_t>(L"InStretchDirection", direction);
+    return Call(scaleBox, s) && Call(scaleBox, d);
 }
 
 bool SetClipping(void* widget, uint8_t clipping) {

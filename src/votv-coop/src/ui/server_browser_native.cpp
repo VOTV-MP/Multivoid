@@ -52,8 +52,9 @@ constexpr float kPadPx    = 6.f;
 // The list's height is explicit, not the VerticalBox's leftover slack: with a Fill slot the box
 // allotted the ScrollBox more than the window had left, so the list overflowed upward and its
 // first row drew clipped under the header. Everything in the left column comes out of this
-// number: the master tabs at 38 plus their 4 px gap, two grid rows at 46 plus their gaps, Back
-// at 48 and two 6 px separations is about 202, and the body is about 606.
+// number: the master tabs at 38 plus the kit's 2 px list gap, two grid rows at 46 plus their
+// gaps, Back at 48 and two 6 px separations is about 200, and the body is about 606; the fit
+// probe reads what is left over.
 constexpr float kListH    = 396.f;
 // The two body columns: the list is the subject; the panes hold prose and need enough to spell a
 // sentence. The save browser this mirrors splits about the same way.
@@ -309,7 +310,7 @@ void Show() {
     g_escPrimed = false;   // re-prime: an ESC held while the screen opens must not close it
     g_lmbPrimed = false;   // ...and the same for the release that OPENED us
     rows::OnShown();       // ...and the hover, for the same reason: nothing else re-asks
-    ui::server_browser_tabs::Sync(true);
+    ui::server_browser_tabs::Sync();
     SyncRows();
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
@@ -469,7 +470,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_escPrimed = false;   // the screen just became live -- see either hosting window's
         g_lmbPrimed = false;   // BecameLive for why a revive owes these two
         rows::OnShown();
-        ui::server_browser_tabs::Sync(true);
+        ui::server_browser_tabs::Sync();
         UE_LOGI("server_browser_native: live again (the switcher index returned to ours)");
     }
 
