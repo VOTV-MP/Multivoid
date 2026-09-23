@@ -117,11 +117,12 @@ bool SetScrollOffset(void* scrollBox, float offset);
 bool ScrollOffset(void* scrollBox, float& out);
 bool ScrollOffsetOfEnd(void* scrollBox, float& out);
 
-// Where the view is, 0 to 1. Read this, not ScrollOffset, whenever the question is "did it
-// move": GetScrollOffset echoes the request (asked for a million it returns a million, on an
-// empty box too), since it reports the desired offset with no clamp, so a set-then-get through
-// it is a tautology. This reads the scrollbar's own distance from the top, post-layout state;
-// with ScrollOffsetOfEnd it makes a verdict possible.
+// Where the view is, as a share of the CONTENT: 0 at the top, travel/content at the bottom
+// (0.4945 on a list about twice its viewport), never 1. Read this, not ScrollOffset, whenever the
+// question is "did it move": GetScrollOffset echoes the request (asked for a million it returns a
+// million, on an empty box too), since it reports the desired offset with no clamp, so a
+// set-then-get through it is a tautology. This reads the scrollbar's own distance from the top,
+// post-layout state; with ScrollOffsetOfEnd it makes a verdict possible.
 bool ViewOffsetFraction(void* scrollBox, float& out);
 
 // Geometry: where a widget is on screen and how big, both in Slate's absolute space, the space

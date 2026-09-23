@@ -10,6 +10,7 @@
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
 #include "ui/server_browser_tabs.h"     // the master tabs the TABS phases click
+#include "ui/native_screen.h"          // CursorOverWidget -- the kit's one hit test
 #include "ui/browser_input_screens.h"  // the input windows the last phases drive
 #include "ui/host_session_settings.h"  // ...and what NEXT must open, one step further
 #include "ui/host_window_native.h"     // ...and what it must open
@@ -391,13 +392,15 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             g_controlPassed  = moved && g_endAtRest > 0.f;
             if (g_controlPassed)
                 UE_LOGW("server_browser_native: SCROLL CONTROL PASS -- a forced offset "
-                        "moved the view fraction %.4f -> %.4f over a maximum of %.1f, so "
-                        "this widget DOES scroll and GetViewOffsetFraction reads real "
-                        "state. (GetScrollOffset returned %.1f for a request of %.0f -- it "
-                        "echoes the request, which is why it is not the verdict.) The "
-                        "capture below should show the list at the BOTTOM.",
-                        g_fracAtRest, g_fracAfterBig, g_endAtRest, g_offAfterBig,
-                        kHugeOffset);
+                        "moved the view fraction %.4f -> %.4f over a maximum of %.1f (so "
+                        "the content is %.1f), so this widget DOES scroll and "
+                        "GetViewOffsetFraction reads real state. (GetScrollOffset returned "
+                        "%.1f for a request of %.0f -- it echoes the request, which is why "
+                        "it is not the verdict.) The capture below should show the list at "
+                        "the BOTTOM.",
+                        g_fracAtRest, g_fracAfterBig, g_endAtRest,
+                        g_fracAfterBig > 0.f ? g_endAtRest / g_fracAfterBig : 0.f,
+                        g_offAfterBig, kHugeOffset);
             else
                 UE_LOGE("server_browser_native: SCROLL CONTROL FAIL -- a forced offset of "
                         "%.0f left the view fraction at %.4f (was %.4f) with a maximum of "
@@ -428,10 +431,12 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             moveTo(w / 2, h / 2);   // the list occupies the middle of the window
             break;
         case kScrollWheelPre:
-            // Ask Slate whether the cursor is over the list before blaming the wheel: a false here
-            // means the notches went somewhere else, a different finding from "the box ignores the
-            // wheel".
-            g_listHovered = E::WidgetIsHovered(list) ? 1 : 0;
+            // Ask whether the cursor is over the list before blaming the wheel: a false here means
+            // the notches went somewhere else, a different finding from "the box ignores the
+            // wheel". By geometry, the kit's one hit test: IsHovered reads 0 for this list, a
+            // UScrollBox, whatever the pointer does (the scrim and Back read 1 in the same run), and
+            // a run whose four notches did scroll it read hovered=0.
+            g_listHovered = ui::native_screen::CursorOverWidget(list) ? 1 : 0;
             U::ScrollOffset(list, g_wheelPre);
             U::ViewOffsetFraction(list, g_fracWheelPre);
             UE_LOGW("server_browser_native: injecting wheel notches at the list centre "
@@ -452,9 +457,13 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             const float delta = g_fracWheelPost - g_fracWheelPre;
             // A verdict on movement, not direction: which sign a negative WHEEL_DELTA produces here
             // is unmeasured, and the question is whether the wheel reaches the widget at all. The
-            // threshold is one row's worth of the total travel; a bare != would fire on layout
-            // noise.
-            const float oneRow = g_endAtRest > 0.f ? (kMinOverflow / g_endAtRest) : 1.f;
+            // threshold is one row, as a share of what the view fraction measures: the CONTENT, not
+            // the travel. The forced control shows which -- the offset's maximum, the travel, reads
+            // as g_fracAfterBig rather than 1 -- so the content is the travel over that fraction. A
+            // row as a share of the travel (this check's first form) is larger by content/travel,
+            // and it read four notches that moved two rows of a 12-row list as less than one.
+            const float content = g_fracAfterBig > 0.f ? g_endAtRest / g_fracAfterBig : 0.f;
+            const float oneRow = content > 0.f ? kMinOverflow / content : 1.f;
             if (std::fabs(delta) >= oneRow)
                 UE_LOGW("server_browser_native: WHEEL VERDICT YES -- four notches moved "
                         "the view fraction %.4f -> %.4f (delta %+.4f, one row = %.4f, "
@@ -462,8 +471,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         g_fracWheelPre, g_fracWheelPost, delta, oneRow, g_listHovered);
             else if (g_listHovered == 0)
                 UE_LOGE("server_browser_native: WHEEL VERDICT NO -- view fraction %.4f -> "
-                        "%.4f, but IsHovered was FALSE, so the notches were not delivered "
-                        "over the list. This is a harness fault, not a widget answer.",
+                        "%.4f, but the cursor was not over the list, so the notches were not "
+                        "delivered there. This is a harness fault, not a widget answer.",
                         g_fracWheelPre, g_fracWheelPost);
             else
                 UE_LOGE("server_browser_native: WHEEL VERDICT NO -- the cursor was over "
