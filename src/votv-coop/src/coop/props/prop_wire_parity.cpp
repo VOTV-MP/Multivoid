@@ -88,7 +88,7 @@ void ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
     if (isFrozen == wantFrozen && isSleep == wantSleep) return;
     const bool ok = (!wantFrozen && !wantSleep)
         ? ue_wrap::prop::CallAwakeUnfreeze(actor)
-        : ue_wrap::prop::CallSetPropProps(actor, ue_wrap::prop::IsStatic(actor), wantFrozen, wantSleep);
+        : ue_wrap::prop::CallBaseSetPropProps(actor, ue_wrap::prop::IsStatic(actor), wantFrozen, wantSleep);
     if (!ok) {
         UE_LOGW("prop_wire_parity: %p frozen=%d sleep=%d -> want frozen=%d sleep=%d -- the game's verb did "
                 "not dispatch; the copy keeps its flags", actor, isFrozen ? 1 : 0, isSleep ? 1 : 0,

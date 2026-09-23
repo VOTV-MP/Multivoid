@@ -28,6 +28,7 @@ struct BaseEvent {
 
 BaseEvent g_grabPrelude{L"playerGrabbed_pre"};
 BaseEvent g_thrown{P::name::PropThrownFn};
+BaseEvent g_setPropProps{L"setPropProps"};
 
 void* Resolve(BaseEvent& e) {
     if (e.missed) return nullptr;
@@ -51,6 +52,15 @@ bool CallBaseGrabPrelude(void* prop) {
     if (!fn) return false;
     ParamFrame f(fn);  // the player and the hit result stay zeroed: the base body reads neither
     return f.valid() && Call(prop, f);
+}
+
+bool CallBaseSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping) {
+    if (!prop) return false;
+    void* fn = Resolve(g_setPropProps);
+    if (!fn) return false;
+    ParamFrame f(fn);  // `active` stays false: the base body never reads it
+    return f.valid() && f.Set<bool>(L"static", isStatic) && f.Set<bool>(L"frozen", frozen) &&
+           f.Set<bool>(L"sleeping", sleeping) && Call(prop, f);
 }
 
 bool CallPropThrown(void* prop, void* player) {

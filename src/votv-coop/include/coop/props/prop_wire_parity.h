@@ -45,13 +45,14 @@ uint8_t PhysFlagsOf(void* actor);
 uint8_t FrozenSleepBitsOf(void* actor);
 
 // Make this copy's frozen and sleep what `physFlags` (another peer's) say, through the game's own
-// verbs: its unfreeze when the other copy is neither (a grab's awakeUnfreeze), its setter when the
-// other copy froze or slept (setPropProps, as a mount does). Static is left alone -- no grab
-// changes it. Acts only on flags read off a live prop (kLiveState), never on a spawn's default;
-// only on a difference, and only on an Aprop_C, so an agreeing copy is never touched: a write here
-// runs init(), which wakes the body. A class's own setter can still refuse a flag: a
-// wall-attach component's owner passes sleep as false, so such a copy never sleeps here. A verb that
-// does not dispatch is said. Game thread.
+// verbs: its unfreeze when the other copy is neither (a grab's awakeUnfreeze), prop_C's own setter
+// when the other copy froze or slept (setPropProps, as a mount does). The base setter, since a
+// subclass's override reads `active` as its own state -- a spotlight's power, an explosive's
+// arming, the plasma TV's stick switch -- which a flag converge must not touch. Static is left
+// alone -- no grab changes it. Acts only on flags read off a live prop (kLiveState), never on a
+// spawn's default; only on a difference, and only on an Aprop_C, so an agreeing copy is never
+// touched: a write here runs init(), which wakes the body. A verb that does not dispatch is said.
+// Game thread.
 void ConvergeFrozenSleep(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes

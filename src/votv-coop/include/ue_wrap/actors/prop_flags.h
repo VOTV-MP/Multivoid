@@ -42,10 +42,12 @@ bool IsSleeping(void* prop);
 // Aprop_C.removeWOrespawn, one of the bools the save round-trips. Live Aprop_C only.
 bool ReadRemoveWOrespawn(void* prop);
 
-// The game's own setter, setPropProps(static, frozen, active, sleeping): it writes the flags and
-// runs init(), which derives physics and collision from them -- what a wall mount does to the
-// extinguisher it takes. Resolved on the prop's own class, so an override runs. False if the verb
-// did not resolve or dispatch. Game thread.
+// The game's own setter, setPropProps(static, frozen, active, sleeping), as a caller in the game
+// runs it: resolved on the prop's own class, so an override runs, and with `active` false, as a
+// laptop's exit passes it to its chair. It writes the flags and runs init(), which derives physics
+// and collision from them. A flag converge goes through prop_C's own setter instead
+// (CallBaseSetPropProps), since an override reads `active` as its own state. False if the verb did
+// not resolve or dispatch. Game thread.
 bool CallSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping);
 
 }  // namespace ue_wrap::prop

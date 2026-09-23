@@ -14,6 +14,14 @@ namespace ue_wrap::prop {
 // Game thread.
 bool CallBaseGrabPrelude(void* prop);
 
+// prop_C's own setPropProps(static, frozen, active, sleeping): the flags written and init() run. The
+// base body never reads `active`, where a subclass's override does, as its own state -- a spotlight's
+// power, an explosive's arming, the plasma TV's stick switch -- and forces sleep off on the
+// wall-attach component's owners, so a flag that only the physics state should change is written
+// through the base. False for a null prop or when the class or the function did not resolve. Game
+// thread.
+bool CallBaseSetPropProps(void* prop, bool isStatic, bool frozen, bool sleeping);
+
 // prop_C's thrown(Player) event, run as a throw runs it, so the Blueprint plays the swing's trail and
 // sound. False for a null prop or player, or when the class or the event did not resolve. Game
 // thread.
