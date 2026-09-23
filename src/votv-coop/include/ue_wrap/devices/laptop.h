@@ -67,6 +67,14 @@ bool WriteQuadAndRebuild(const BufferQuad& in);
 // over each row widget's 'data' string. False when the widget is unreachable.
 bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv);
 
+// ---- the two disc verbs (the disc selftest drives them) ----
+// The insert the slot's own hitbox dispatches: processFloppy(slot=floppyHitbox, player=null,
+// manual=disc), the entry that takes a disc with nobody pressing anything. It runs the class test
+// and the zip refusal a player's press runs before it reaches insertFloppy.
+bool CallInsertDisc(void* disc);
+// The eject verb. The slot empties here; the disc appears when the out-timeline finishes.
+bool CallEjectFloppy();
+
 void ResetCache();  // level reload: drop the cached instance
 
 }  // namespace ue_wrap::laptop

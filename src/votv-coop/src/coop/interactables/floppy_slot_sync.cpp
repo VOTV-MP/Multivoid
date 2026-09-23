@@ -370,9 +370,9 @@ void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void*
         auto& aw = g_awaiting[key];
         if (aw.deadline == 0) aw.tries = 0;
         aw.deadline = NowMs() + kAnswerMs;
-        UE_LOGI("floppy_slot_sync: CLIENT claim sent (device=%zu type=%d rw=%d rows=%zu json=%zu)",
-                index, cur.st.floppyType, cur.st.readWrites, cur.c.data.size(),
-                cur.c.objectData.size());
+        UE_LOGI("floppy_slot_sync: CLIENT claim sent (device=%zu type=%d rw=%d rows=%zu json=%zu "
+                "key '%ls')", index, cur.st.floppyType, cur.st.readWrites, cur.c.data.size(),
+                cur.c.objectData.size(), FS::ObjectDataKey(cur.c.objectData).c_str());
     } else {
         if (!g_retry.count(ShadowKey(kind, index)))
             UE_LOGW("floppy_slot_sync: claim for device %zu send refused -- retry armed", index);
@@ -584,11 +584,22 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                     in.st.floppyType);
             return;
         }
+        // [bug 19] What the claim replaces: an occupied slot overwritten by a claim naming another
+        // disc is a second author of this slot, which is how a live run lost a disc's content.
+        Slot prev;
+        const bool held = ReadSlotOf(kind, devices[index], prev) && prev.st.floppyType >= 0;
+        const std::wstring prevKey = held ? FS::ObjectDataKey(prev.c.objectData) : std::wstring();
+        const std::wstring inKey = FS::ObjectDataKey(in.c.objectData);
         ApplySlot(kind, index, devices[index], in);
-        UE_LOGI("floppy_slot_sync: HOST took slot claim (device=%u type=%d rw=%d rows=%zu) from "
-                "slot %u -- answering with the canonical", static_cast<unsigned>(index),
-                in.st.floppyType, in.st.readWrites, in.c.data.size(),
-                static_cast<unsigned>(senderSlot));
+        UE_LOGI("floppy_slot_sync: HOST took slot claim (device=%u type=%d rw=%d rows=%zu key "
+                "'%ls') from slot %u -- answering with the canonical; the host's slot held type %d "
+                "key '%ls' rows %zu%s", static_cast<unsigned>(index), in.st.floppyType,
+                in.st.readWrites, in.c.data.size(), inKey.c_str(),
+                static_cast<unsigned>(senderSlot), prev.st.floppyType, prevKey.c_str(),
+                prev.c.data.size(),
+                !held || in.st.floppyType < 0 ? ""
+                : prevKey == inKey ? " -- OVERWROTE AN OCCUPIED SLOT (same key)"
+                                   : " -- OVERWROTE AN OCCUPIED SLOT HOLDING ANOTHER DISC");
         // The re-publish IS the acknowledgement, and it goes to the author too: if the host's own
         // copy differs from what the claim said, the author is the peer that most needs correcting.
         HostBroadcastOne(s, kind, index, devices[index]);

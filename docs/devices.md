@@ -254,7 +254,16 @@ A disc a peer ejects reaches the others through the ordinary birth channel: a cl
 prop spawn is not broadcast, so its device's eject is reported to the host, which authors the disc
 and broadcasts it like any other world prop. Three other lineages travel that way, and all three
 are born into a hand and spawn inert on the host until the holder's pose stream drives them; a
-disc is not held by anyone, so it falls on the host instead.
+disc is not held by anyone, so it falls on the host instead. Either way the disc's files and
+remaining writes travel as its save record behind the birth; a disc the host ejects gets its record
+from the host's finish-spawning drain, since the eject fills the disc in after the finish call
+([props.md](props.md)).
+
+The laptop's slot crosses as one blob, and the save JSON carries the rows a second time, so a disc
+with a few dozen rows is kilobytes. The blob is held to the ceiling the server slot uses and refused
+whole past it, never cut: a cut JSON is one the receiver's own eject cannot parse, and the disc it
+hands back comes out blank under a new key. The laptop keeps at most 31 rows in the slot itself
+(`ui_laptop.updFloppy` trims `floppyData`); the JSON keeps all of them.
 
 A device takes a disc by two entries, and only one of them is a player. Pressing E with a disc in
 hand is deliberate, happens on one machine, and the slot carries its outcome. The other is the
@@ -274,6 +283,11 @@ re-reports every body already inside it, which is how the game re-takes a disc s
 slot, and that report comes once. The two devices disagree on the pause: a signal server waits a
 second, a laptop half of one. The window is set under the shorter of the two, so neither device's
 own re-take is touched and an ejecting peer behaves exactly as it does in single player.
+
+The hitbox also takes a disc another peer is holding. That peer's pose drives this machine's copy
+of the disc, and bringing it to the slot brings the copy into this machine's copy of the slot, so
+the watching peer would insert it too and claim a second insert of one disc. The entry refuses a
+disc under another peer's hold on every peer; the holder's own insert is the one the slot carries.
 
 ## Who owns what
 

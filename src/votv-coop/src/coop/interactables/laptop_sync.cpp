@@ -9,8 +9,10 @@
 #include "coop/interactables/laptop_buffer_sync.h"  // the quad baseline prime
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_element_tracker.h"  // ResolveLiveActorByKey (the eject check)
 
 #include "ue_wrap/actors/floppy_disc.h"
+#include "ue_wrap/actors/prop.h"  // the eject check's row and mesh (the ERROR trace)
 #include "ue_wrap/devices/floppy_slot.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
@@ -57,7 +59,13 @@ constexpr uint64_t kPollMs        = 250;    // the 4 Hz edge poll
 constexpr uint64_t kLidSweepMs    = 1000;   // 1 Hz portable-PC lid sweep (the rack cadence)
 constexpr uint64_t kChunkTtlMs    = 10000;  // half-assembled content stream TTL
 constexpr uint64_t kPendingTtlMs  = 30000;  // deferred lid apply TTL
-constexpr size_t   kContentCapBytes = 4096;  // the total content cap (truncate with a warning)
+// The slot-content ceiling, the one floppy_slot_sync holds a server's slot to. A slot's content is
+// its disc's save JSON and its rows, and the JSON carries the rows again, so a disc with a few
+// dozen satellite rows is well past the 4 KB this used to cut at -- and a cut JSON is one the
+// receiver's own eject cannot parse: bug 19's run 1 had the client eject a disc under a NEW key,
+// named None, the original gone from both worlds. So a slot past the ceiling is refused whole and
+// said out loud, never cut.
+constexpr size_t   kContentCapBytes = 32 * 1024;
 // The pending-lid table is keyed by a wire eid and inserted into precisely when that eid does
 // not resolve: the garbage case is the inserting case, so an attacker-chosen eid stream grows
 // it at line rate, and the TTL bounds it in time but not in rate. This is the absolute size
@@ -138,6 +146,42 @@ std::map<uint8_t, PendingSlot> g_pendingSlots;
 
 bool g_announced = false;
 
+// [bug 19] A laptop eject in a live run handed back a blank disc under a new key. The key a slot's
+// JSON names is the identity the eject should hand back, so each eject is followed by one look for
+// that key a few seconds on, when the disc has had its out-timeline and its birth channel. On the
+// ejecting peer it says whether the slot still held the inserted disc; on the other, whether the
+// disc that arrived is the one this peer's copy of the slot said it was.
+struct EjectCheck { std::wstring key; uint64_t due = 0; const char* who = ""; };
+EjectCheck g_ejectCheck;
+constexpr uint64_t kEjectCheckMs = 3000;
+
+void ArmEjectCheck(const std::wstring& key, const char* who) {
+    g_ejectCheck = EjectCheck{key, NowMs() + kEjectCheckMs, who};
+}
+
+void RunEjectCheck(uint64_t now) {
+    if (!g_ejectCheck.due || now < g_ejectCheck.due) return;
+    const EjectCheck c = g_ejectCheck;
+    g_ejectCheck = EjectCheck{};
+    if (c.key.empty() || c.key == L"None") {
+        UE_LOGW("laptop_sync: EJECT CHECK (%s) -- the slot's JSON named NO key, so the disc came "
+                "out under a freshly minted identity with whatever rows the slot kept", c.who);
+        return;
+    }
+    void* disc = coop::prop_element_tracker::ResolveLiveActorByKey(c.key, nullptr);
+    ue_wrap::floppy_disc::DiscContent dc;
+    if (disc && ue_wrap::floppy_disc::ReadDiscContent(disc, dc)) {
+        UE_LOGI("laptop_sync: EJECT CHECK (%s) -- the disc keyed '%ls' is here: rw=%d rows=%zu "
+                "name='%ls' mesh='%ls'", c.who, c.key.c_str(), dc.readWrites, dc.data.size(),
+                ue_wrap::prop::GetPropNameString(disc).c_str(),
+                ue_wrap::prop::GetShownMeshName(disc).c_str());
+        return;
+    }
+    UE_LOGW("laptop_sync: EJECT CHECK (%s) -- NO disc keyed '%ls' is in this world %llu ms after "
+            "the eject: it came out under another identity, or something took it again", c.who,
+            c.key.c_str(), static_cast<unsigned long long>(kEjectCheckMs));
+}
+
 // Serialisation: fields joined by 0x1F, UTF-8.
 constexpr char kSep = '\x1F';
 
@@ -178,22 +222,21 @@ void SendOut(coop::net::Session* s, const coop::net::LaptopStatePayload& p, int 
     }
 }
 
-// Build the content-blob bytes (kind, eid, content) with the cap warning.
-std::vector<uint8_t> MakeContentBlob(const std::string& bytes) {
-    std::string data = bytes;
-    if (data.size() > kContentCapBytes) {
-        UE_LOGW("laptop_sync: slot content %zu B over the %zu cap -- TRUNCATED (OPEN-9 residual)",
-                data.size(), kContentCapBytes);
-        data.resize(kContentCapBytes);
-    }
-    return std::vector<uint8_t>(data.begin(), data.end());
+// A slot's content fits the ceiling, or it goes nowhere: the caller sends neither the edge nor the
+// blob, so no peer is ever left holding an occupied slot whose JSON is a fragment.
+bool ContentFits(const std::string& bytes, const char* what) {
+    if (bytes.size() <= kContentCapBytes) return true;
+    UE_LOGE("laptop_sync: %s -- slot content %zu B is past the %zu B ceiling: NOT published, not "
+            "cut. The other peers keep an empty slot and cannot eject this disc; only this peer "
+            "holds it.", what, bytes.size(), kContentCapBytes);
+    return false;
 }
 
 // Broadcast content (the host to every ready slot; the client to the host, which re-fans
 // each chunk unchanged with the origin byte).
 void SendContentBlob(coop::net::Session* s, const std::string& bytes) {
-    coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopBlob,
-                                g_blobSeq++, MakeContentBlob(bytes));
+    coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopBlob, g_blobSeq++,
+                                std::vector<uint8_t>(bytes.begin(), bytes.end()));
 }
 
 void PrimeBaselines() {
@@ -216,15 +259,19 @@ void BroadcastInsert(coop::net::Session* s) {
     FS::Scalars st;
     FS::Content c;
     if (!ReadSlot(st) || !ReadSlotContent(c)) return;
+    const std::string packed = PackSlotContent(c);
+    if (!ContentFits(packed, "local INSERT edge")) return;
     coop::net::LaptopStatePayload p{};
     p.op = 1;
     p.zip = st.zip ? 1 : 0;
     p.floppyType = st.floppyType;
     p.readWrites = st.readWrites;
     SendOut(s, p, -1);
-    SendContentBlob(s, PackSlotContent(c));
-    UE_LOGI("laptop_sync: local INSERT edge (type=%d zip=%u rw=%d) -- broadcast + content",
-            st.floppyType, static_cast<unsigned>(p.zip), st.readWrites);
+    SendContentBlob(s, packed);
+    UE_LOGI("laptop_sync: local INSERT edge (type=%d zip=%u rw=%d) -- broadcast + content %zu B "
+            "(json %zu chars, key '%ls', rows %zu)", st.floppyType,
+            static_cast<unsigned>(p.zip), st.readWrites, packed.size(), c.objectData.size(),
+            FS::ObjectDataKey(c.objectData).c_str(), c.data.size());
 }
 
 void ApplyAssembledContent(const std::string& bytes, uint8_t senderSlot) {
@@ -238,10 +285,23 @@ void ApplyAssembledContent(const std::string& bytes, uint8_t senderSlot) {
     } else if (!ReadSlot(st)) {
         return;
     }
-    WriteSlot(st, UnpackSlotContent(bytes));
+    // [bug 19] What this write replaces. A live run applied two inserts of one disc within a
+    // second, the second from a peer that had only watched, and the host kept the later one.
+    FS::Scalars prevSt{};
+    FS::Content prev;
+    const bool held = ReadSlot(prevSt) && prevSt.floppyType >= 0 && ReadSlotContent(prev);
+    const FS::Content in = UnpackSlotContent(bytes);
+    WriteSlot(st, in);
     PrimeBaselines();
-    UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, from slot %u)",
-            st.floppyType, bytes.size(), static_cast<unsigned>(senderSlot));
+    const std::wstring inKey = FS::ObjectDataKey(in.objectData);
+    const std::wstring prevKey = held ? FS::ObjectDataKey(prev.objectData) : std::wstring();
+    UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, from slot %u) "
+            "-- key '%ls' json %zu rows %zu; this peer's slot held type %d key '%ls' rows %zu%s",
+            st.floppyType, bytes.size(), static_cast<unsigned>(senderSlot), inKey.c_str(),
+            in.objectData.size(), in.data.size(), prevSt.floppyType, prevKey.c_str(),
+            prev.data.size(),
+            !held ? "" : prevKey == inKey ? " -- OVERWROTE AN OCCUPIED SLOT (same key)"
+                                          : " -- OVERWROTE AN OCCUPIED SLOT HOLDING ANOTHER DISC");
 }
 
 // The portable-PC lid axis (op 6).
@@ -391,9 +451,18 @@ void Tick() {
             coop::net::LaptopStatePayload p{};
             p.op = 2;
             SendOut(s, p, -1);
-            UE_LOGI("laptop_sync: local EJECT edge -- broadcast");
+            // [bug 19] The eject cleared the type and the rows; the JSON and the read-writes it
+            // left are what the out-timeline rebuilds the disc from.
+            FS::Content c;
+            const std::wstring key = ReadSlotContent(c) ? FS::ObjectDataKey(c.objectData)
+                                                        : std::wstring();
+            UE_LOGI("laptop_sync: local EJECT edge -- broadcast; the disc is rebuilt from json "
+                    "%zu chars naming key '%ls', rw=%d", c.objectData.size(), key.c_str(),
+                    st.readWrites);
+            ArmEjectCheck(key, "this peer ejected");
         }
     }
+    RunEjectCheck(now);
 
     g_prevOpened = ps.isOpened;
     g_prevType = st.floppyType;
@@ -485,10 +554,14 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
         break;
     }
     case 2: { // eject edge: clear scalars; the spawn arrives on the birth channels
+        FS::Content c;
+        const std::wstring key = ReadSlotContent(c) ? FS::ObjectDataKey(c.objectData)
+                                                    : std::wstring();
         ClearSlot();
         PrimeBaselines();
-        UE_LOGI("laptop_sync: wire EJECT applied (from slot %u)",
-                static_cast<unsigned>(senderSlot));
+        UE_LOGI("laptop_sync: wire EJECT applied (from slot %u) -- this peer's copy of the slot "
+                "named key '%ls'", static_cast<unsigned>(senderSlot), key.c_str());
+        ArmEjectCheck(key, "another peer ejected");
         break;
     }
     default:
@@ -520,6 +593,15 @@ void OnLaptopBlobChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot)
         UE_LOGW("laptop_sync: slot content blob declined (laptop unresolved)");
         return;
     }
+    // The sender's ceiling, held on receive too. Its parked edge goes with it: left to expire, that
+    // edge applies scalar-only, an occupied slot with no JSON, which is the blank disc again.
+    if (blob.size() > kContentCapBytes) {
+        UE_LOGW("laptop_sync: slot content blob from slot %u is %zu B, past the %zu B ceiling -- "
+                "dropped with its insert edge", static_cast<unsigned>(senderSlot), blob.size(),
+                kContentCapBytes);
+        g_pendingSlots.erase(senderSlot);
+        return;
+    }
     ApplyAssembledContent(std::string(reinterpret_cast<const char*>(blob.data()), blob.size()),
                           senderSlot);
 }
@@ -532,18 +614,24 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     FS::Scalars st;
     FS::Content c;
     if (!L::ReadPower(ps) || !ReadSlot(st)) return;
+    // An occupied slot goes out with its content or as empty: the joiner parks the edge until the
+    // blob lands, and an edge whose blob never comes applies scalar-only after the TTL.
+    std::string packed;
+    const bool occupied = st.floppyType >= 0 && ReadSlotContent(c) &&
+                          ContentFits(packed = PackSlotContent(c), "connect state");
     coop::net::LaptopStatePayload p{};
     p.op = 3;
     p.isOpened = ps.isOpened ? 1 : 0;
     p.zip = st.zip ? 1 : 0;
-    p.floppyType = st.floppyType;
+    p.floppyType = occupied ? st.floppyType : -1;
     p.readWrites = st.readWrites;
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::LaptopState, &p, sizeof(p));
-    if (st.floppyType >= 0 && ReadSlotContent(c)) {
+    if (occupied) {
         // Point-to-point content toward the joiner only, in-lane after the state line (the state
         // and the blob share one lane, one FIFO).
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
-                                          g_blobSeq++, MakeContentBlob(PackSlotContent(c)));
+                                          g_blobSeq++,
+                                          std::vector<uint8_t>(packed.begin(), packed.end()));
     }
     // Live discs are NOT seeded here any more: a disc's content is its save record, and
     // coop/props/prop_save_data seeds one per keyed prop by Key, after the prop snapshot.
@@ -584,6 +672,7 @@ void OnDisconnect() {
     g_lidPending.clear();
     g_nextLidSweep = 0;
     g_announced = false;
+    g_ejectCheck = EjectCheck{};
     L::ResetCache();
     FS::ResetCache();
     ue_wrap::floppy_disc::ResetCache();  // the disc's class and offsets are world-scoped too

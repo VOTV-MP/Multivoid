@@ -85,6 +85,11 @@ bool WriteSlot(DeviceKind kind, void* device, const Scalars& st, const Content& 
 // and no more. Its deferred spawn reads floppyReadwrites and floppyObjectData a second later.
 bool ClearSlot(DeviceKind kind, void* device);
 
+// The save key an objectData JSON carries: the identity the device's own eject hands its disc
+// back under (prop_C::loadData takes the key from it). Empty when the JSON has no key member,
+// which is what a blank or a cut JSON reads, and the eject then keeps the key it minted.
+std::wstring ObjectDataKey(const std::wstring& json);
+
 // Level change: the classes, offsets and functions are world-scoped.
 void ResetCache();
 

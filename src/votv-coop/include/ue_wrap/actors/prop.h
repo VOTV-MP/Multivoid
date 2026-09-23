@@ -162,6 +162,11 @@ bool WriteSpParityIdentity(void* prop, reflection::FName nameRow,
 // Aprop_C.StaticMesh, the UPrimitiveComponent the physics handle or constraint binds.
 void* GetStaticMesh(void* prop);
 
+// The name of the mesh asset that component shows: what init() resolved from list_props[Name],
+// or `00000000error`, the red ERROR init() falls back to when the row has no mesh. Empty for a
+// non-Aprop_C or an unresolvable component. Game thread.
+std::wstring GetShownMeshName(void* prop);
+
 // The chipType variant selector of the pile and clump family (a 1-byte enum, 14 variants), which
 // picks the mesh through Ulib_getFunc_C::getChipPileType. It lives at the same offset (0x0238)
 // that is StaticMesh on an Aprop_C, so the offset resolves by reflection: -1 on a class without

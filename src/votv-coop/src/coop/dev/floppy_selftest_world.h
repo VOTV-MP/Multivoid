@@ -15,18 +15,34 @@
 #include <cstdint>
 #include <string>
 
+namespace coop::net { class Session; }
+
 namespace coop::dev::floppy_selftest::world {
 
 // Boxes the episodes use. Discs outnumber them because the cross-peer eject is REPEATED: it is a
 // race, and one pass of a race is an anecdote, so each repeat takes a disc of its own and the run
 // reads as a ratio. A repeat that re-used the previous disc would measure nothing once the first
-// one was lost.
+// one was lost. The last three go through the laptop instead of a box.
 constexpr int kTargets = 3;
-constexpr int kDiscs   = 8;
+constexpr int kDiscs   = 11;
 
-// The marker a seeded disc carries in its own data array, so the peer that wrote the content can
-// be told from one that only mirrors the actor. The read-writes value is this plus the disc index;
-// the class default is a round 32.
+// Discs 8 and 9 carry this many rows of this width, which puts the laptop's slot content past the
+// 4 KB laptop_sync used to cut a slot blob at (the rows ride twice, in the save JSON and in
+// floppyData): a live run lost a disc's content through that cut (bug 19). 31 is the laptop's own
+// ceiling -- ui_laptop.updFloppy resizes floppyData to at most 31 rows -- so a bigger disc would
+// measure the game's trim, which is what 64 rows did on the first run. Every other disc has one row.
+constexpr int kBigFirst = 8;
+constexpr int kBigLast  = 9;
+constexpr int kBigRows  = 31;
+constexpr size_t kRowChars = 150;
+inline int ExpectedRows(int disc) { return (disc >= kBigFirst && disc <= kBigLast) ? kBigRows : 1; }
+
+// The near census's radius around the local player: what a player standing at a table can see.
+constexpr float kNearCm = 500.f;
+
+// The marker a seeded disc carries in its own data array, so a disc this instrument prepared can
+// be told from one it did not. The read-writes value is this plus the disc index; the class
+// default is a round 32.
 constexpr const wchar_t* kMarker = L"MULTIVOID-FLOPPY-SELFTEST";
 constexpr int32_t kMarkerReadWrites = 900;
 
@@ -39,6 +55,10 @@ struct BoxSlot {
     int32_t objectDataLen = 0;
 };
 bool ReadBoxSlot(void* box, BoxSlot& out);
+
+// The base laptop, or null before it resolves, and its slot in the same shape.
+void* Laptop();
+bool ReadLaptopSlot(BoxSlot& out);
 
 // The first boxes in the gamemode's own order whose slot is empty, on a retry backoff until the
 // world is up. False until every target is in hand; latches off with a line saying so rather than
@@ -53,9 +73,9 @@ const std::wstring& BoxName(int index);
 const std::wstring& DiscKey(int index);
 
 // HOST only, once: make sure the world holds enough discs and that each carries a payload a reader
-// can attribute, so "the content is on this peer only" is a value in two logs rather than an
-// inference.
-void SeedAndStamp();
+// can attribute, and publish each stamp as the disc's save record, so the client's copy carries it
+// too and an episode whose insert is the client's has something to lose.
+void SeedAndStamp(coop::net::Session* session);
 
 // Both peers name their discs by the same rule -- the lowest keys in the world -- and print them,
 // so a set that is not shared shows up as two different lists rather than as an episode that
@@ -65,6 +85,11 @@ void PickDiscs(bool isHost);
 // Every live disc and every target box, in one line. `sinceMs` is the age of the run, printed so
 // two logs can be read side by side.
 void Census(const char* tag, bool isHost, uint64_t sinceMs);
+
+// Every disc within kNearCm of the local player, with its key, class, list_props row and the mesh
+// it shows, so a player's "that disc shows ERROR" can be matched to one actor in the log. Silent
+// when no disc is near.
+void NearCensus(bool isHost, uint64_t sinceMs);
 
 // Session teardown: the targets, the names, the picks and the per-class verdict cache.
 void Reset();
