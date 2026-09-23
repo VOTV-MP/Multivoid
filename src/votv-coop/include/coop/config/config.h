@@ -64,13 +64,6 @@ std::string ResolveString(const config_registry::StringRow& row);
 // otherwise hands-on play stays single-machine.
 coop::net::Config ReadNetConfig(bool& enabled);
 
-// The master server URL. Precedence: the env twin of the net.master row, then the
-// custom-master gate (net.master.custom=1 selects the ini's net.master), then the official
-// endpoint, coop::net::kOfficialMasterUrl, which is also the row default. Pushed into
-// session_manager at boot, so a native launch points the browser at the official master out of
-// the box.
-std::string ReadMasterUrl();
-
 // A forced P2P-host transport Config from the same keys as ReadNetConfig's P2P path. The
 // Host-Game flow falls back to it when the master announce fails, so hosting never dies on an
 // unreachable master. It does not read net.role, so it never triggers the play-path

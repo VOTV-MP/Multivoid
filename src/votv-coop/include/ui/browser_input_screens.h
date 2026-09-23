@@ -34,8 +34,9 @@ enum class Kind { DirectConnect, ChangeName, LobbyPassword };
 // `session_manager::ConnectDirect` has worked the whole time -- it was homeless, not missing --
 // and a LAN-only host is reachable by no other route, so this is a functional hole rather than
 // a convenience.
-void OpenPasswordPrompt(const std::string& lobbyId, const std::string& displayName,
-                        int hostProto, const std::string& hostGame);
+void OpenPasswordPrompt(const std::string& masterUrl, const std::string& lobbyId,
+                        const std::string& displayName, int hostProto,
+                        const std::string& hostGame);
 
 // Ask for a screen. Safe from any thread: it records the intent and the next main-menu
 // tick performs it, the same deferral the browser and the hosting window use (the switcher

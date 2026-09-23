@@ -1,9 +1,10 @@
 // coop/session/session_manager.h -- the bridge between the multiplayer browser and the network
-// layer. It owns the master URL, drives the lobby client (discover, join) and the lobby
-// announcer (host, heartbeat) on worker threads so the UI never blocks on a round trip, and
-// turns a browser action into a ready coop::net::Config. Bringing the session up is the
-// harness's job: it polls TakePendingStart and starts the session, which keeps UI, net and
-// harness decoupled.
+// layer. It drives the lobby client (discover, join) and the lobby announcer (host, heartbeat)
+// on worker threads so the UI never blocks on a round trip, and turns a browser action into a
+// ready coop::net::Config. Which master a new contact goes to is the player's chosen slot
+// (coop/net/master_slots.h); a join goes through the master its lobby was listed on. Bringing
+// the session up is the harness's job: it polls TakePendingStart and starts the session, which
+// keeps UI, net and harness decoupled.
 
 #pragma once
 
@@ -18,13 +19,10 @@
 
 namespace coop::session_manager {
 
-// Push the master URL and the host fallback Config from the harness at boot, which owns the
-// env and ini readers; call once before any browser action. The fallback is what HostWithSave
-// uses when the master announce fails: hosting must not require a reachable master.
-void Configure(const std::string& masterUrl, const coop::net::Config& fallbackHostCfg);
-
-// The master URL ("host:port") as set by Configure, or the env/localhost default before it.
-std::string MasterUrl();
+// Push the host fallback Config from the harness at boot, which owns the env and ini readers;
+// call once before any browser action. The fallback is what HostWithSave uses when the master
+// announce fails: hosting must not require a reachable master.
+void Configure(const coop::net::Config& fallbackHostCfg);
 
 // The mod's version identity is a pair: GameTarget names the VOTV cook this build targets, compiled
 // in from the header generated out of coop/version.h.in; the build number is kProtocolVersion,
@@ -116,13 +114,16 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                   coop::session::HostMode mode = {});
 
 // Join a master lobby by its opaque id (the join request on a worker), building a client
-// Config and queuing a session start. `displayName` is shown on the loading screen. Raises the
+// Config and queuing a session start. `masterUrl` is the master the lobby was listed on, from its
+// row: a lobby id means nothing on another master, and the relay the join is answered with is
+// that master's. `displayName` is shown on the loading screen. Raises the
 // browser-only loading state and drops it again on a master or HTTP failure. True when accepted
 // (the browser should close); false when another action is in flight. `hostProto` and
 // `hostGame` are the row's announced identity pair: the equality gate rejects here with the
 // connect-failed popup, and 0 or empty (an older host) skips that tier, leaving the wire gate
 // as the backstop.
-bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto = 0,
+bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
+               const std::string& displayName, int hostProto = 0,
                const std::string& hostGame = {});
 
 // Direct connect, which works with the master down: "host" or "host:port". Builds a direct

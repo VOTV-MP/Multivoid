@@ -9,6 +9,7 @@
 #include "coop/session/player_handshake.h"  // kNickMaxChars
 #include "coop/text/utf8_codec.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/master_slots.h"  // the chosen master, whose relay a master-less P2P dial uses
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/skin_registry.h"  // IsValidSkinName and PickRandomStarterSkin
@@ -294,33 +295,15 @@ std::string ReadIniValue(const char* key, const char* def) {
     return v;
 }
 
-// The built-in public net endpoints: a fresh install with no multivoid.ini reaches the real master
-// out of the box, and the master mints the per-session signaling token, STUN and ephemeral TURN
-// credentials. These are public connection endpoints, not secrets; the signaling token, the TURN
-// secret and the ops credentials are never compiled in. The constants live in coop/net/protocol.h
-// (kOfficial*Url), shared with the UI mask that prints "DEFAULT" instead of the raw address.
-
-// The custom-master gate: net.master.custom opts out of the built-in endpoints for the ini's own
-// net.master and net.signaling. Off by default, so a stale net.master in the ini is ignored and a
-// no-config install works. An env override always wins over both.
-static bool UseCustomNetMaster() {
-    return ResolveFlag(config_registry::rows::net_master_custom);
-}
-
 // The P2P transport fields of `c` from env, then ini, then default; shared by ReadNetConfig and
 // the master-unreachable host fallback, so the key set lives once. c.role picks the identity
 // default.
 static void FillP2PFields(coop::net::Config& c) {
-    // The signaling rendezvous server; both peers connect outbound, no port forward. Env, then the
-    // ini under the custom-master gate, then the built-in signaling; the token stays ini- or
-    // master-minted, and in the normal master-up flow the master overrides the URL and token per
-    // session, so this default seeds only the master-down fallback. The chain is bespoke (the ini
-    // layer counts only under the gate), but the env name rides the row.
-    std::string sig = ReadEnv(config_registry::rows::net_signaling.row->envVar);
-    if (sig.empty())
-        sig = UseCustomNetMaster()
-                  ? ResolveString(config_registry::rows::net_signaling)
-                  : std::string(coop::net::kOfficialSignalingUrl);
+    // The signaling rendezvous server; both peers connect outbound, no port forward. The row if it
+    // is set, else the relay on the chosen master's host. Only a session dialled with no master
+    // reads this: a lobby's rendezvous and token come from its master's own answer.
+    std::string sig = ResolveString(config_registry::rows::net_signaling);
+    if (sig.empty()) sig = coop::net::master_slots::DefaultSignalingUrl();
     c.signalingUrl = sig;
     c.signalingToken = ResolveString(config_registry::rows::net_signaling_token);
 
@@ -347,18 +330,12 @@ static void FillP2PFields(coop::net::Config& c) {
     // Session::StartP2P. An enum row: an unknown token is garbage, the default plus a sweep row.
     c.iceMode = ResolveEnum(config_registry::rows::net_ice);
 
-    // The console line masks any endpoint on the official host as "DEFAULT" (the connect console
-    // must not advertise the raw address; session_manager's DisplayMaster is the twin); a custom
-    // endpoint prints as configured.
-    auto maskOfficial = [](const std::string& v) -> std::string {
-        std::string host = coop::net::kOfficialMasterUrl;
-        const size_t colon = host.find(':');
-        if (colon != std::string::npos) host.resize(colon);  // not-name-text: host:port
-        return v.rfind(host, 0) == 0 ? std::string("DEFAULT") : v;
-    };
+    // The console line names an endpoint on a master's host by the master's label: the connect
+    // console must not advertise an address the player did not type.
+    namespace slots = coop::net::master_slots;
     UE_LOGI("config: P2P fields -- identity=<durable key> host='%s' signaling='%s' stun='%s'",
-            c.hostIdentity.c_str(),
-            maskOfficial(c.signalingUrl).c_str(), maskOfficial(c.stunList).c_str());
+            c.hostIdentity.c_str(), slots::DisplayName(c.signalingUrl).c_str(),
+            slots::DisplayName(c.stunList).c_str());
 }
 
 coop::net::Config ReadNetConfig(bool& enabled) {
@@ -415,25 +392,6 @@ coop::net::Config ReadNetConfig(bool& enabled) {
     }
 
     return c;
-}
-
-std::string ReadMasterUrl() {
-    // The master server "host:port": env, then the ini's net.master under the custom-master gate,
-    // then the built-in endpoint. A native launch has no env and no gate, so it reaches the
-    // built-in master, which drives the server browser and the Host-Game flow. The env name rides
-    // the row.
-    std::string m = ReadEnv(config_registry::rows::net_master.row->envVar);
-    if (!m.empty()) return m;
-    if (UseCustomNetMaster()) {
-        std::string v = ResolveString(config_registry::rows::net_master);
-        // The "DEFAULT" sentinel (the shipped ini) resolves to the official server even under the
-        // gate, so the ini never spells out the raw address.
-        std::string lower = v;
-        for (char& c : lower) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        if (v.empty() || lower == "default") return coop::net::kOfficialMasterUrl;
-        return v;
-    }
-    return coop::net::kOfficialMasterUrl;
 }
 
 coop::net::Config ReadP2PHostFallback() {

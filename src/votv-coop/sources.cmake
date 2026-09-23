@@ -328,6 +328,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/http_client.cpp
     src/coop/net/lobby_client.cpp
     src/coop/net/lobby_announcer.cpp
+    src/coop/net/master_slots.cpp
     src/coop/save/join_window_baseline.cpp
     src/coop/save/save_transfer.cpp
     src/coop/save/save_indicator_suppress.cpp

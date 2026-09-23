@@ -3,7 +3,7 @@
 #include "coop/thanks/thanks_list.h"
 
 #include "coop/net/lobby_client.h"
-#include "coop/session/session_manager.h"  // MasterUrl
+#include "coop/net/master_slots.h"  // the chosen master, the one the browser talks to
 #include "coop/session/shutdown.h"
 #include "coop/text/repertoire.h"
 #include "coop/text/utf8_codec.h"
@@ -393,7 +393,7 @@ void Init() {
                 "download lands");
     }
     std::string cached;
-    if (ReadCacheFor(coop::session_manager::MasterUrl(), cached)) {
+    if (ReadCacheFor(coop::net::master_slots::Selected().url, cached)) {
         std::lock_guard<std::mutex> lk(g_mu);
         g_masterRaw = std::move(cached);
     }
@@ -406,7 +406,7 @@ void RefreshFromMaster() {
     if (last != 0 && now - last < kFetchFloorMs) return;
     if (g_fetchInFlight.exchange(true)) return;
     g_fetchStartMs.store(now, std::memory_order_relaxed);
-    const std::string masterUrl = coop::session_manager::MasterUrl();
+    const std::string masterUrl = coop::net::master_slots::Selected().url;
     std::thread([masterUrl] {
         // Everything is caught, the shape of every other master worker: an exception out of a
         // detached thread is a terminate, and one that skipped the line below would leave the

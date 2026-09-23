@@ -70,6 +70,7 @@ Screen  g_screen[3];                 // indexed by Kind
 // back from the selection at OK: the list re-fetches every 5 s and a refresh re-sorts it, so
 // the highlighted row may be a different server by then.
 struct PendingJoin {
+    std::string masterUrl;   // the master the lobby was listed on; the join goes through it
     std::string lobbyId;
     std::string displayName;
     int         hostProto = 0;
@@ -223,8 +224,9 @@ void Confirm(Kind kind) {
         // Handed over, never stored: SetJoinPassword holds it for one join attempt and nothing
         // writes it to the ini, the file people paste into bug reports.
         sm::SetJoinPassword(value);
-        if (!sm::JoinLobby(g_pendingJoin.lobbyId, g_pendingJoin.displayName,
-                           g_pendingJoin.hostProto, g_pendingJoin.hostGame)) {
+        if (!sm::JoinLobby(g_pendingJoin.masterUrl, g_pendingJoin.lobbyId,
+                           g_pendingJoin.displayName, g_pendingJoin.hostProto,
+                           g_pendingJoin.hostGame)) {
             // Dropped on a refusal, so it cannot ride into the next connection the player makes.
             sm::SetJoinPassword("");
             SetStatus(s, "Could not start that connection -- another action is already "
@@ -400,11 +402,13 @@ void Open(Kind kind) {
     g_wantAtMs.store(::GetTickCount64(), std::memory_order_relaxed);
 }
 
-void OpenPasswordPrompt(const std::string& lobbyId, const std::string& displayName,
-                        int hostProto, const std::string& hostGame) {
+void OpenPasswordPrompt(const std::string& masterUrl, const std::string& lobbyId,
+                        const std::string& displayName, int hostProto,
+                        const std::string& hostGame) {
     // The row travels with the request (see PendingJoin). Written before the intent is published
     // and read on the game thread after the intent is consumed: one writer, one reader, a tick
     // between them.
+    g_pendingJoin.masterUrl   = masterUrl;
     g_pendingJoin.lobbyId     = lobbyId;
     g_pendingJoin.displayName = displayName;
     g_pendingJoin.hostProto   = hostProto;

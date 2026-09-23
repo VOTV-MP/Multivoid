@@ -137,8 +137,6 @@ std::vector<std::string> BuildExampleLines() {
                                                    : FormatDouble(r.hi)) +
                               "]",
                           "  ");
-            if (r.gatedBy)
-                EmitProse(out, std::string("read only when ") + r.gatedBy + " is 1", "  ");
             if (r.envVar)
                 EmitProse(out, std::string("env twin: ") + r.envVar + " (env overrides the ini)",
                           "  ");

@@ -211,7 +211,8 @@ void Render() {
                     g_selectedId = r.lobbyId;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
-                        else if (sm::JoinLobby(r.lobbyId, r.name, r.proto, r.game)) Close();
+                        else if (sm::JoinLobby(r.master, r.lobbyId, r.name, r.proto, r.game))
+                            Close();
                     }
                 }
                 if (isOwn) ImGui::PopStyleColor();
@@ -259,7 +260,8 @@ void Render() {
         const bool canConnect = sel && !selOwn;
         if (!canConnect) ImGui::BeginDisabled();
         if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
-            if (sm::JoinLobby(sel->lobbyId, sel->name, sel->proto, sel->game)) Close();
+            if (sm::JoinLobby(sel->master, sel->lobbyId, sel->name, sel->proto, sel->game))
+                Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;

@@ -9,7 +9,6 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -37,6 +36,9 @@ struct LobbyRow {
     // is at the host's own admission, not at the listing.
     bool locked = false;
     bool direct = false;    // a port-forwarded UDP host (a browser badge; join returns ip:port, not relay credentials)
+    // The master this lobby was listed on. A join goes through it and no other: the lobby id is
+    // that master's, and so are the relay and the rendezvous the join is answered with.
+    std::string master;
 };
 
 // Everything a joining client needs to dial the host, returned by the join POST. ok=false on
@@ -81,7 +83,9 @@ class LobbyClient {
 public:
     // Kick off an async lobby-list GET against `masterUrl` ("host:port"), optionally filtered to
     // `versionFilter` (empty: all). Non-blocking; a refresh already in flight is coalesced
-    // (returns immediately). Results are readable via CopyRows.
+    // (returns immediately). Results are readable via CopyRows. One master's list is held at a
+    // time: a different master than the one shown drops the rows and the failure count at once,
+    // and a fetch still out to the old master is discarded when it lands, the new one fetched.
     void RefreshAsync(const std::string& masterUrl, const std::string& versionFilter);
 
     // Blocking GET of the latest record (the launch check). Call on a worker thread.
@@ -136,7 +140,8 @@ private:
     uint64_t dataGeneration_ = 0;  // successful attempts -- "the rows changed"
     std::string status_ = "Not refreshed yet.";
     int consecutiveFailures_ = 0;
-    std::atomic<bool> inFlight_{false};
+    std::string viewUrl_;          // the master whose list rows_ holds, or is being fetched
+    bool inFlight_ = false;        // a refresh worker is running; under mu_ with viewUrl_
 };
 
 }  // namespace coop::net::lobby

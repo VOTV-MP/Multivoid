@@ -43,16 +43,18 @@ static_assert(kDefaultPort == 47621,
               "kDefaultDirectAddr spells kDefaultPort out -- update both, or the "
               "direct-connect box teaches a port nothing listens on");
 
-// The official public endpoints: connection endpoints, not secrets (the signaling token and the
-// TURN credentials are never compiled in). One definition, so the config resolver and the display
-// mask share it: a user-visible surface shows DEFAULT instead of the address when the master
-// equals this. The URL grammar is schemeless = secure: a bare host:port means TLS, and only an
-// explicit http:// or tcp:// opts a self-hoster down to cleartext. The signaling constant names
-// the plaintext port: it only seeds the master-down fallback, and the master's own answer is what
-// a session dials. The root domain is proxied and must never be used here; the proxy does not
-// pass custom ports.
-inline constexpr const char* kOfficialMasterUrl    = "master.multivoid.dev:10443";
-inline constexpr const char* kOfficialSignalingUrl = "master.multivoid.dev:10000";
+// The official master servers: the default of the net.masters row, comma-separated `label=address`
+// slots, the first being the default (coop/net/master_slots.h). Public connection endpoints, not
+// secrets: each master hands out its own signaling token and TURN credentials, never compiled in.
+// A label is only what the browser's tab says. The URL grammar is schemeless = secure: a bare
+// host:port means TLS, and only an explicit http:// opts a self-hoster down to cleartext. The root
+// domain is proxied and must never be used here; the proxy does not pass custom ports.
+inline constexpr const char* kOfficialMasterSlots =
+    "USA=master.multivoid.dev:10443,EU=master2.multivoid.dev:10443";
+
+// The signaling relay's port on a master's host (server/src/bin/signaling.rs's default). A lobby's
+// rendezvous comes from its master's answer; only a P2P session dialled with no master reads this.
+inline constexpr uint16_t kSignalingPort = 10000;
 
 // Where a person fetches a newer build: one constant for every update-available surface.
 inline constexpr const char* kReleasesUrl = "github.com/VOTV-MP/Multivoid/releases";

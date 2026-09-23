@@ -6,10 +6,9 @@
 // the allowed tokens, ranges and env twin are generator-emitted from the columns): CFG_FLAG
 // (ident, key, section, default, envVar, desc); CFG_INT and CFG_FLOAT add a range; CFG_ENUM
 // takes the token list, an empty default being the unset sentinel allowed only for the role
-// and ICE rows; CFG_STRING adds the seeded flag; CFG_STRING_GATED adds the flag row key that
-// gates the ini read; CFG_IDENTITY is minted with no default; CFG_FONTROLE takes the role
-// suffix and the default family index. A default is either the value the code used before the
-// registry or an alias of the one owning constant.
+// and ICE rows; CFG_STRING adds the seeded flag; CFG_IDENTITY is minted with no default;
+// CFG_FONTROLE takes the role suffix and the default family index. A default is either the
+// value the code used before the registry or an alias of the one owning constant.
 
 // The [net] section.
 CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", true,
@@ -69,16 +68,21 @@ CFG_INT(net_fakelink_kbs, "net.fakelink_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NE
     "Simulated OUTBOUND link capacity, KB/s (GNS FakeRateLimit_Send: a process-global policer "
     "that silently DROPS packets beyond the budget -- worst-case thin-uplink physics). 0 = off. "
     "Testing knob for the overdrive drill; pair with net.sendrate_kbs above this value.")
-CFG_STRING_GATED(net_master, "net.master", "net", ::coop::net::kOfficialMasterUrl,
-    "VOTVCOOP_MASTER_URL", false, "net.master.custom",
-    "Master (lobby list) server, host:port. The special value DEFAULT also means the official "
-    "server.")
-CFG_FLAG(net_master_custom, "net.master.custom", "net", false, nullptr,
-    "Set to 1 to use your own master/signaling servers from net.master / net.signaling instead "
-    "of the official ones (run-your-own-master).")
-CFG_STRING_GATED(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSignalingUrl,
-    "VOTVCOOP_NET_SIGNALING", false, "net.master.custom",
-    "Signaling (rendezvous) server for internet sessions.")
+// The env twin keeps the name every lab tool already sets: a bare address is a list of one, so
+// VOTVCOOP_MASTER_URL=http://127.0.0.1:5555 means exactly what it meant before the list existed.
+CFG_STRING(net_masters, "net.masters", "net", ::coop::net::kOfficialMasterSlots,
+    "VOTVCOOP_MASTER_URL", false,
+    "The master servers the server browser can list, comma-separated as Label=host:port, the "
+    "first being the default. A label is what the browser's tab says (up to 16 plain characters). "
+    "To use a master of your own, add it as another entry, e.g. ...,Home=my.host:10443 -- "
+    "host:port means TLS, http://host:port a master without a certificate.")
+CFG_STRING(net_master, "net.master", "net", "", nullptr, false,
+    "Which master the server browser lists and where a game you host is listed: a label from "
+    "net.masters. Written when you pick a tab in the browser; empty means the first one.")
+CFG_STRING(net_signaling, "net.signaling", "net", "", "VOTVCOOP_NET_SIGNALING", false,
+    "Signaling (rendezvous) server for a P2P connection made WITHOUT a master (a test, or a "
+    "host's gen: line). Empty means the chosen master's own. Games found in the server browser "
+    "always use the one their master hands out.")
 CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false,
     "Access token for a self-hosted signaling server. The official flow mints per-session "
     "tokens automatically -- leave empty.")

@@ -30,6 +30,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
 #include "coop/config/config_review.h"      // RunBootSweep, the settings check
+#include "coop/net/master_slots.h"         // the master list and the chosen slot
 #include "coop/net/peer_identity.h"        // the durable Ed25519 identity
 #include "coop/player/local_body.h"         // SetInitialSkin
 #include "coop/text/utf8_codec.h"
@@ -109,9 +110,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
     UE_LOGI("harness: timeline start, scenario='%s'", scenario.c_str());
 
-    // The master URL and the host fallback Config go into session_manager before any browser action
-    // can fire; a native launch has no env, so this is where the ini's net.master takes effect.
-    coop::session_manager::Configure(cfg::ReadMasterUrl(), cfg::ReadP2PHostFallback());
+    // The master list and the chosen slot settle first (every master contact reads them), then
+    // the host fallback Config goes into session_manager before any browser action can fire.
+    coop::net::master_slots::Init();
+    coop::session_manager::Configure(cfg::ReadP2PHostFallback());
     // A fresh install seeds the multivoid.ini skeleton before anything reads or writes the file
     // this launch: absent-only, atomic.
     cfg::EnsureIniSkeleton();

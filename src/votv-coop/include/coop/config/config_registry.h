@@ -76,7 +76,6 @@ struct Row {
     float defF;
     const char* defS;     // Enum: the default token, empty meaning unset; String: the default; null otherwise
     // The catalog columns.
-    const char* gatedBy;  // key of the Flag row gating the ini read, or null; must exist and be a Flag row
     const char* desc;     // catalog text, semantics only; tokens, range and env twin are emitted from the columns
 };
 
@@ -165,8 +164,6 @@ namespace rows {
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) extern const FloatRow ident;
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) extern const EnumRow ident;
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) extern const StringRow ident;
-#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc) \
-    extern const StringRow ident;
 #define CFG_IDENTITY(ident, key, section, desc) extern const IdentityRow ident;
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) extern const EnumRow ident;
 #include "coop/config/config_registry_rows.inc"
@@ -175,7 +172,6 @@ namespace rows {
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
-#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 }  // namespace rows
@@ -205,7 +201,6 @@ inline constexpr int kFontRoleDefaultFamily[] = {
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
-#define CFG_STRING_GATED(ident, key, section, defS, envVar, seeded, gatedBy, desc)
 #define CFG_IDENTITY(ident, key, section, desc)
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) defFam,
 #include "coop/config/config_registry_rows.inc"
@@ -214,7 +209,6 @@ inline constexpr int kFontRoleDefaultFamily[] = {
 #undef CFG_FLOAT
 #undef CFG_ENUM
 #undef CFG_STRING
-#undef CFG_STRING_GATED
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
 };

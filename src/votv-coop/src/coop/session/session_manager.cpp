@@ -7,7 +7,8 @@
 #include "coop/config/config.h"           // ResolveString -- the lobby password row
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
 #include "coop/net/lobby_announcer.h"
-#include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask) + kProtocolVersion (the b<N> build rev)
+#include "coop/net/master_slots.h"  // which master a new lobby, the list and the update check use
+#include "coop/net/protocol.h"  // kProtocolVersion (the b<N> build rev), kDefaultPort
 #include "coop/session/join_progress.h"
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the game half of the Paper-pair identity (CMake-generated)
@@ -29,11 +30,7 @@ namespace {
 
 namespace net = coop::net;
 namespace lobby = coop::net::lobby;
-
-// The pre-Configure seed: the harness calls Configure() at boot with the resolved master URL, so
-// this only makes an earlier read reach the official endpoint instead of localhost. The one
-// definition is protocol.h's.
-constexpr const char* kDefaultMaster = coop::net::kOfficialMasterUrl;
+namespace slots = coop::net::master_slots;
 
 
 // Leaked process-lifetime singletons: no thread join runs at static destruction or DLL unload
@@ -83,11 +80,9 @@ bool PeekDeferredAnnounce(DeferredAnnounce& out) {
     return true;
 }
 
-// Config pushed from the harness at boot: the master URL and the host fallback Config (used when
-// the announce fails); g_hostStatus is the last host-action result the UI shows. All under
-// g_cfgMu.
+// Config pushed from the harness at boot: the host fallback Config (used when the announce
+// fails); g_hostStatus is the last host-action result the UI shows. All under g_cfgMu.
 std::mutex g_cfgMu;
-std::string g_masterUrl = kDefaultMaster;  // overwritten by Configure
 net::Config g_fallbackHostCfg;
 std::string g_hostStatus;
 std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
@@ -171,21 +166,13 @@ std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked)
     return s;
 }
 
-// The user-visible form of a master URL: the official server prints as "DEFAULT"; a custom
-// master prints as typed, since its operator needs to see it.
-std::string DisplayMaster(const std::string& url) {
-    return url == coop::net::kOfficialMasterUrl ? std::string("DEFAULT") : url;
-}
-
 }  // namespace
 
-void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg) {
+void Configure(const net::Config& fallbackHostCfg) {
     {
         std::lock_guard<std::mutex> lk(g_cfgMu);
-        g_masterUrl = masterUrl.empty() ? std::string(kDefaultMaster) : masterUrl;
         g_fallbackHostCfg = fallbackHostCfg;
-        UE_LOGI("session_manager: configured -- master='%s' fallback(signaling-set=%d)",
-                DisplayMaster(g_masterUrl).c_str(),
+        UE_LOGI("session_manager: configured -- fallback(signaling-set=%d)",
                 g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1);
     }
     // No update check here: one at boot config time would tell the master every player's source
@@ -194,14 +181,6 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
     // master, the same trigger the lobby list has; everything else the mod sends follows an action
     // the player took. The main-menu label falls back to DisplayVersion() when no check has landed,
     // so it is never empty, and the check is informational, never a gate.
-}
-
-std::string MasterUrl() {
-    // Every caller is a post-boot action and the harness Configure()s at boot before any can run;
-    // the static init already aliases the official endpoint, so a pre-Configure read still reaches
-    // the right place. The env override is resolved once, in config.cpp's registry row.
-    std::lock_guard<std::mutex> lk(g_cfgMu);
-    return g_masterUrl;
 }
 
 void SetHostStatus(const std::string& status) {
@@ -275,7 +254,7 @@ void RefreshLatestVersion() {
     if (last != 0 && now - last < kLatestMinIntervalMs) return;
     if (g_latestInFlight.exchange(true)) return;  // one worker at a time
     g_latestFetchMs.store(now, std::memory_order_relaxed);
-    const std::string masterUrl = MasterUrl();
+    const std::string masterUrl = slots::Selected().url;
     std::thread([masterUrl] {
         try {
             if (coop::shutdown::IsShuttingDown()) { g_latestInFlight.store(false, std::memory_order_release); return; }
@@ -320,7 +299,7 @@ std::string LatestVersionLine(bool* outdated) {
 }
 
 void Refresh() {
-    Client().RefreshAsync(MasterUrl(), /*versionFilter=*/std::string());  // show all
+    Client().RefreshAsync(slots::Selected().url, /*versionFilter=*/std::string());  // show all
 }
 
 uint64_t CopyRows(std::vector<lobby::LobbyRow>& out) { return Client().CopyRows(out); }
@@ -333,7 +312,7 @@ uint64_t RowsDataGeneration() { return Client().DataGeneration(); }
 
 void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Host ignored"); return; }
-    const std::string masterUrl = MasterUrl();
+    const std::string masterUrl = slots::Selected().url;
     std::thread([masterUrl, name, world, locked, playersMax] {
         // An exception escaping a detached thread is std::terminate; the store(false) is outside
         // the try so g_actionBusy clears on every path.
@@ -369,7 +348,7 @@ extern std::atomic<bool> g_listedState;  // defined below at SetListed (UI mirro
 
 void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- env announce skipped"); return; }
-    const std::string masterUrl = MasterUrl();
+    const std::string masterUrl = slots::Selected().url;
     std::thread([masterUrl, name, world] {
         // An exception escaping a detached thread is std::terminate; the store(false) is outside
         // the try so g_actionBusy clears on every path.
@@ -449,7 +428,8 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         }
         g_listedState.store(false, std::memory_order_relaxed);
         g_hostIsDirect.store(true, std::memory_order_relaxed);
-        ArmDeferredAnnounce(MasterUrl(), name, choice.newGame ? choice.newName : choice.slot,
+        ArmDeferredAnnounce(slots::Selected().url, name,
+                            choice.newGame ? choice.newName : choice.slot,
                             locked, playersMax, static_cast<int>(directPort));
         // Through the same builder as the two fallback lines, so the deliberately unlisted
         // configuration gets the same password wording.
@@ -461,7 +441,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_actionBusy.store(false);
         return true;
     }
-    const std::string masterUrl = MasterUrl();
+    const std::string masterUrl = slots::Selected().url;
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
     // `hideFromBrowser` is not captured: the only branch that reads it returned above, before this
@@ -550,14 +530,14 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 SetHostStatus(UnlistedDirectStatus("Hosting DIRECT",
                                                    "master unreachable, NOT listed", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
-                        DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
+                        slots::DisplayName(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
                 // The line describes what happened: a DIRECT listen, joinable by address.
                 SetHostStatus(UnlistedDirectStatus("Hosting",
                                                    "master unreachable, NOT listed", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
                         "-- fell back to a DIRECT listen on port %u so the session stays joinable",
-                        DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
+                        slots::DisplayName(masterUrl).c_str(), static_cast<unsigned>(directPort));
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());
@@ -607,8 +587,8 @@ PreflightVerdict VersionMismatchVerdict(const std::string& hostGame, int hostPro
 
 }  // namespace
 
-bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int hostProto,
-               const std::string& hostGame) {
+bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
+               const std::string& displayName, int hostProto, const std::string& hostGame) {
     // Never connect to our own lobby (the host clicking its own listed server); rejected before any
     // loading state is raised.
     if (!lobbyId.empty() && lobbyId == OwnLobbyId()) {
@@ -630,13 +610,18 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
             return false;
         }
     }
+    // The lobby's own master, from its row: a lobby id means nothing on another master, and the
+    // signaling relay and TURN the join is answered with are that master's.
+    if (masterUrl.empty()) {
+        UE_LOGW("session_manager: JoinLobby '%s' has no master to ask -- refused", lobbyId.c_str());
+        return false;
+    }
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Join ignored"); return false; }
     // Raise the browser-only loading state before the master round trip, so "Connecting to <name>"
     // shows at once; on a master failure the worker Fails it (drops the cover, reopens the
     // browser).
     coop::join_progress::BeginConnect(displayName.empty() ? std::string("the server") : displayName,
                                       coop::join_progress::Stage::FindingHost);
-    const std::string masterUrl = MasterUrl();
     std::thread([masterUrl, lobbyId] {
         try {
             // Shutdown race: BeginConnect raised the cover before this worker spawned, so every

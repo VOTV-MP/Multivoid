@@ -15,147 +15,171 @@ namespace {
 
 namespace J = coop::net::jsonu;
 
+// One GET of `masterUrl`'s lobby list, parsed into `out`. True when the rows are a real answer;
+// false with `st` saying why not. Blocking: the refresh worker's body.
+bool FetchList(const std::string& masterUrl, const std::string& versionFilter,
+               std::vector<LobbyRow>& out, std::string& st) {
+    // Sanitise the version filter into the request line: keep only an unreserved allowlist, so a
+    // caller can never inject a space, a line break or a hash into the request line or a header
+    // (defensive; the current caller passes empty).
+    std::string vf;
+    for (char ch : versionFilter)
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_')
+            vf += ch;
+    std::string path = "/v1/lobbies";
+    if (!vf.empty()) path += "?version=" + vf;
+    const http::Response resp = http::Get(masterUrl, path, 8000);
+
+    // A failed fetch does not mean there are no servers: publishing the empty parse on every path
+    // once emptied the browser on one unanswered request, and the player watched every server
+    // disappear. The master is not the world, it is our view of it, and losing the view is not the
+    // view being empty. MTA does not delete on a failed query either; its rows stay and go
+    // half-alpha, the treatment a stale entry gets here. So the return decides whether the parse
+    // replaces the list. No address in the status: it reaches the screen, and the browser names
+    // the list by its label.
+    if (!resp.ok) { st = "master unreachable"; return false; }
+    if (resp.status != 200) { st = "master error " + std::to_string(resp.status); return false; }
+    J::Json j;
+    J::Json::const_iterator lit;
+    if (!J::ParseObject(resp.body, j) || (lit = j.find("lobbies")) == j.cend() ||
+        !lit->is_array()) {
+        st = "master sent a malformed list";
+        return false;
+    }
+    for (const auto& e : *lit) {
+        if (!e.is_object()) continue;
+        LobbyRow r;
+        // Length-cap and range-clamp every server-supplied field: a hostile or on-path master must
+        // not feed oversized strings or out-of-range numbers into the browser. The caps mirror the
+        // master's own clamps.
+        r.lobbyId    = J::StrN(e, "lobbyId", 64);
+        r.name       = J::StrN(e, "name", 64);
+        r.version    = J::StrN(e, "version", 24);
+        r.game       = J::StrN(e, "game", 24);  // the game target; empty means a host older than the field
+        r.world      = J::StrN(e, "world", 40);
+        r.playersCur = J::IntClamped(e, "players_cur", 0, 64);
+        r.playersMax = J::IntClamped(e, "players_max", 0, 64);
+        r.ageSec     = J::IntClamped(e, "age", 0, 2000000000);
+        r.proto      = J::IntClamped(e, "proto", 0, 65535);  // the join gate; 0 means a host older than the field
+        r.locked     = J::Bool(e, "locked");
+        r.direct     = (J::Str(e, "conn") == "direct");  // direct lobbies
+        r.master     = masterUrl;
+        if (!r.lobbyId.empty()) out.push_back(std::move(r));
+    }
+    // A total order, imposed here, because the list arrives with none: the master stores lobbies
+    // in a hash map and emits its values, so two fetches of the same lobbies can arrive in
+    // different orders, and both browsers render by position, so the rows would permute under the
+    // reader every refresh. Here, not in the browser: this is the one place the list is produced,
+    // and both surfaces (the native browser and the overlay fallback) read the rows, so sorting in
+    // one would leave the other with the defect; it also costs once per fetch on this worker
+    // rather than once per sync on the game thread. The key is the name, then the lobby id, and
+    // may not be anything else that moves: sorting by player count reorders the list every time
+    // somebody joins or leaves a server the player is not even looking at, the same defect
+    // wearing a reason; the id breaks ties so two servers sharing a name still hold a fixed
+    // order. Byte-wise on UTF-8, which is codepoint order, and deliberately not case-folded: a
+    // correct fold needs the repertoire table (coop/text/case_fold.h), and the ASCII-only lowering
+    // that suggests itself here is the hand-rolled casing rule that header exists to have retired.
+    std::sort(out.begin(), out.end(), [](const LobbyRow& a, const LobbyRow& b) {
+        if (a.name != b.name) return a.name < b.name;
+        return a.lobbyId < b.lobbyId;
+    });
+    // Bounded, and the bound belongs here rather than in a renderer. Every field is length-capped
+    // but the row count never was, and the row copy is a deep copy of five strings per row taken
+    // under the mutex, which the overlay browser performs every frame and then renders unbounded,
+    // so a master that is hostile, on-path or merely large buys a multi-megabyte copy per frame on
+    // the render thread; the native browser's row cap bounds its display loop and never bounded
+    // this. Truncating after the sort is what makes it defensible: the kept subset is
+    // deterministic rather than whichever ones the hash map yielded first.
+    constexpr size_t kMaxLobbies = 512;
+    if (out.size() > kMaxLobbies) {
+        UE_LOGW("lobby: the master listed %zu lobbies -- keeping the first %zu after sorting and "
+                "dropping the rest", out.size(), kMaxLobbies);
+        out.resize(kMaxLobbies);
+    }
+    st = std::to_string(out.size()) + (out.size() == 1 ? " server" : " servers");
+    return true;
+}
+
 }  // namespace
 
 void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& versionFilter) {
-    bool expected = false;
-    if (!inFlight_.compare_exchange_strong(expected, true)) return;  // coalesce
     {
         std::lock_guard<std::mutex> lk(mu_);
+        // One master's list at a time. A different master than the one shown switches the view at
+        // once: the rows belong to the old master (a lobby id means nothing on another one), and so
+        // does the failure count behind the cannot-reach alarm, so both restart. Both generations
+        // move, because the rows on screen were replaced -- by nothing, until the fetch lands.
+        if (masterUrl != viewUrl_) {
+            viewUrl_ = masterUrl;
+            rows_.clear();
+            consecutiveFailures_ = 0;
+            ++generation_;
+            ++dataGeneration_;
+            status_ = "Refreshing...";
+        }
+        // Coalesced: a worker already running re-reads the view before it publishes, so a switch
+        // made while it waits on the old master is fetched next instead of being dropped.
+        if (inFlight_) return;
+        inFlight_ = true;
         status_ = "Refreshing...";
     }
-    // A detached worker. The client is a process-lifetime singleton (the session manager owns it
-    // as a never-destroyed static), so `this` outlives the thread.
-    std::thread([this, masterUrl, versionFilter] {
-      // A try and catch around the whole body: a bad allocation from the row parse must not escape
-      // a detached thread (a terminate) nor leave the in-flight latch true, which would coalesce
-      // every future refresh into a no-op and freeze the browser at refreshing. The same shape as
-      // every other action worker.
-      try {
-        // Sanitise the version filter into the request line: keep only an unreserved allowlist, so
-        // a caller can never inject a space, a line break or a hash into the request line or a
-        // header (defensive; the current caller passes empty).
-        std::string vf;
-        for (char ch : versionFilter)
-            if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_')
-                vf += ch;
-        std::string path = "/v1/lobbies";
-        if (!vf.empty()) path += "?version=" + vf;
-        const http::Response resp = http::Get(masterUrl, path, 8000);
-
-        std::vector<LobbyRow> parsed;
-        std::string st;
-        // A failed fetch does not mean there are no servers: publishing the empty parse on every
-        // path once emptied the browser on one unanswered request, and the player watched every
-        // server disappear. The master is not the world, it is our view of it, and losing the view
-        // is not the view being empty. MTA does not delete on a failed query either; its rows stay
-        // and go half-alpha, the treatment a stale entry gets here. So `ok` decides whether the
-        // parse replaces the list.
-        bool ok = false;
-        if (!resp.ok) {
-            st = "master unreachable (" + masterUrl + ")";
-        } else if (resp.status != 200) {
-            st = "master error " + std::to_string(resp.status);
-        } else {
-            J::Json j;
-            J::Json::const_iterator lit;
-            if (J::ParseObject(resp.body, j) &&
-                (lit = j.find("lobbies")) != j.cend() && lit->is_array()) {
-                for (const auto& e : *lit) {
-                    if (!e.is_object()) continue;
-                    LobbyRow r;
-                    // Length-cap and range-clamp every server-supplied field: a hostile or on-path
-                    // master must not feed oversized strings or out-of-range numbers into the
-                    // browser. The caps mirror the master's own clamps.
-                    r.lobbyId    = J::StrN(e, "lobbyId", 64);
-                    r.name       = J::StrN(e, "name", 64);
-                    r.version    = J::StrN(e, "version", 24);
-                    r.game       = J::StrN(e, "game", 24);  // the game target; empty means a host older than the field
-                    r.world      = J::StrN(e, "world", 40);
-                    r.playersCur = J::IntClamped(e, "players_cur", 0, 64);
-                    r.playersMax = J::IntClamped(e, "players_max", 0, 64);
-                    r.ageSec     = J::IntClamped(e, "age", 0, 2000000000);
-                    r.proto      = J::IntClamped(e, "proto", 0, 65535);  // the join gate; 0 means a host older than the field
-                    r.locked     = J::Bool(e, "locked");
-                    r.direct     = (J::Str(e, "conn") == "direct");  // direct lobbies
-                    if (!r.lobbyId.empty()) parsed.push_back(std::move(r));
-                }
-                // A total order, imposed here, because the list arrives with none: the master
-                // stores lobbies in a hash map and emits its values, so two fetches of the same
-                // lobbies can arrive in different orders, and both browsers render by position, so
-                // the rows would permute under the reader every refresh. Here, not in the browser:
-                // this is the one place the list is produced, and both surfaces (the native browser
-                // and the overlay fallback) read the rows, so sorting in one would leave the other
-                // with the defect; it also costs once per fetch on this worker rather than once per
-                // sync on the game thread. The key is the name, then the lobby id, and may not be
-                // anything else that moves: sorting by player count reorders the list every time
-                // somebody joins or leaves a server the player is not even looking at, the same
-                // defect wearing a reason; the id breaks ties so two servers sharing a name still
-                // hold a fixed order. Byte-wise on UTF-8, which is codepoint order, and
-                // deliberately not case-folded: a correct fold needs the repertoire table
-                // (coop/text/case_fold.h), and the ASCII-only lowering that suggests itself here is
-                // the hand-rolled casing rule that header exists to have retired.
-                std::sort(parsed.begin(), parsed.end(),
-                          [](const LobbyRow& a, const LobbyRow& b) {
-                              if (a.name != b.name) return a.name < b.name;
-                              return a.lobbyId < b.lobbyId;
-                          });
-                // Bounded, and the bound belongs here rather than in a renderer. Every field is
-                // length-capped but the row count never was, and the row copy is a deep copy of
-                // five strings per row taken under the mutex, which the overlay browser performs
-                // every frame and then renders unbounded, so a master that is hostile, on-path or
-                // merely large buys a multi-megabyte copy per frame on the render thread; the
-                // native browser's row cap bounds its display loop and never bounded this.
-                // Truncating after the sort is what makes it defensible: the kept subset is
-                // deterministic rather than whichever ones the hash map yielded first.
-                constexpr size_t kMaxLobbies = 512;
-                if (parsed.size() > kMaxLobbies) {
-                    UE_LOGW("lobby: the master listed %zu lobbies -- keeping the first %zu "
-                            "after sorting and dropping the rest", parsed.size(), kMaxLobbies);
-                    parsed.resize(kMaxLobbies);
-                }
-                ok = true;
-                st = std::to_string(parsed.size()) +
-                     (parsed.size() == 1 ? " server" : " servers");
-            } else {
-                st = "master sent a malformed list";
-            }
-        }
-
+    // A detached worker. The client is a process-lifetime singleton (the session manager owns it as
+    // a never-destroyed static), so `this` outlives the thread.
+    std::thread([this, versionFilter] {
+        std::string url;
         {
             std::lock_guard<std::mutex> lk(mu_);
-            if (ok) {
-                rows_ = std::move(parsed);
-                consecutiveFailures_ = 0;
-                // Only here: the rows-are-new signal the age clock keys on; see DataGeneration.
-                ++dataGeneration_;
-            } else if (consecutiveFailures_ < 1000000) {
-                ++consecutiveFailures_;
-            }
-            // The generation moves on every completed attempt, success or not: it is the
-            // something-happened, repaint signal the browser polls, and after a failure there is
-            // something to repaint, the status line changed and the rows on screen got older.
-            // Bumping it only on success would freeze the screen's clock at the last good fetch. It
-            // is not the age clock; that distinction is the data generation above. Answering both
-            // questions with one counter meant a failed fetch re-stamped last-fetched, which pinned
-            // every row's age and made the stale dimming unreachable.
-            ++generation_;
-            status_ = st;  // keep st for the log line below
+            url = viewUrl_;
         }
-        // No raw master URL in this line: it mirrors into the user-visible console (the official
-        // server shows as DEFAULT elsewhere, and the status string already carries the row count or
-        // the error).
-        UE_LOGI("lobby: refresh done [%s]", st.c_str());
-      } catch (...) {
-        std::lock_guard<std::mutex> lk(mu_);
-        status_ = "refresh error";
-        if (consecutiveFailures_ < 1000000) ++consecutiveFailures_;
-        // A thrown attempt is a completed attempt: without this the browser never repaints and the
-        // player reads a status line from before the failure.
-        ++generation_;
-      }
-      inFlight_.store(false);  // ALWAYS clear (the latch that gates the next refresh)
+        std::string done;   // the status published, logged once the lock is released
+        for (;;) {
+            std::vector<LobbyRow> parsed;
+            std::string st;
+            bool ok = false;
+            // A bad allocation from the parse must not escape a detached thread (a terminate) nor
+            // leave the in-flight latch set, which would coalesce every future refresh into a no-op
+            // and freeze the browser at refreshing. A thrown attempt is a completed, failed one.
+            try {
+                ok = FetchList(url, versionFilter, parsed, st);
+            } catch (...) {
+                parsed.clear();
+                st = "refresh error";
+                ok = false;
+            }
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                // The player switched lists while this fetch waited: its answer is the old
+                // master's, and the rows now on screen are the new one's (empty until it answers).
+                if (url != viewUrl_) {
+                    url = viewUrl_;
+                    continue;
+                }
+                if (ok) {
+                    rows_ = std::move(parsed);
+                    consecutiveFailures_ = 0;
+                    // Only here: the rows-are-new signal the age clock keys on; see DataGeneration.
+                    ++dataGeneration_;
+                } else if (consecutiveFailures_ < 1000000) {
+                    ++consecutiveFailures_;
+                }
+                // The generation moves on every completed attempt, success or not: it is the
+                // something-happened, repaint signal the browser polls, and after a failure there
+                // is something to repaint, the status line changed and the rows on screen got
+                // older. Bumping it only on success would freeze the screen's clock at the last
+                // good fetch. It is not the age clock; that distinction is the data generation
+                // above. Answering both questions with one counter meant a failed fetch
+                // re-stamped last-fetched, which pinned every row's age and made the stale dimming
+                // unreachable.
+                ++generation_;
+                status_ = st;
+                // Under the lock, so a switch cannot land between the view check and the clear.
+                inFlight_ = false;
+            }
+            done = std::move(st);
+            break;
+        }
+        UE_LOGI("lobby: refresh done [%s]", done.c_str());
     }).detach();
 }
 

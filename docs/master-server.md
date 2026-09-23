@@ -44,6 +44,22 @@ what makes publishing safe while players are connected. The disk is read off the
 and outside the cache's lock, and the response body is built once per re-read window rather than
 per request.
 
+### Several masters
+
+There is more than one master, and they do not know about each other: each box has its own lobby
+list, its own signaling relay and TURN server, its own secrets and its own certificate. The
+client's list of them is one ini row, `net.masters`, whose default names the official ones (USA
+first, then EU); the browser shows one master's lobbies at a time, chosen with a tab above the
+list, and the choice is the `net.master` row, written on the click and read back on the next
+launch (`coop/net/master_slots`, `ui/server_browser_tabs`). A lobby lives on the master it was
+announced to, and everything a session needs follows from that one fact: a host announces to the
+chosen master, which is then also its rendezvous and relay; a row remembers the master it came
+from, and a join goes through that master whichever tab is shown later; switching tabs drops the
+old list at once, since a lobby id means nothing on another master. The update check and the thanks
+list come from the chosen master too, so only the master the player picked learns their address.
+Every build before the list existed knows only the first master's address, which is why the default
+slot keeps it.
+
 The master never sees game traffic. Its posture is the ordinary one for a public endpoint:
 per-address and per-class rate limits, a global and a per-address lobby cap, an opaque lobby id
 distinct from the secret session id, control characters stripped and strings clamped, bounded
@@ -78,8 +94,10 @@ only after a drill proves the deployed relay speaks it.
 ### Self-hosting
 
 Run the two binaries with their environment (the TURN secret, the signaling token, the
-signaling and TURN addresses) and a TURN server that shares the secret, then point the ini's
-custom master and signaling rows at them. The rig builds and launches the signaling binary
+signaling and TURN addresses) and a TURN server that shares the secret, then add the master to
+`net.masters` as another entry (`Home=host:port`) and pick its tab in the browser. `net.signaling`
+names a relay only for a P2P connection made with no master at all; a lobby's own relay always
+comes from its master. The rig builds and launches the signaling binary
 locally for a scripted run, and serves a synthetic lobby list to the browser in place of a master.
 
 ## Who owns what
@@ -113,7 +131,8 @@ most until its heartbeats lapse.
 | Limit | Evidence |
 |---|---|
 | The signaling leg is plaintext, so an on-path attacker can relay the registration challenge and hold a victim's name; encrypting it is the next transport item | `[V]` `coop/net/signaling_client.h` |
-| One master, no redundancy | `[V]` `coop/net/lobby_announcer` |
+| The masters do not share lobbies: a game is found only on the master it was announced to, and a player sees one master's list at a time | `[RD]` `coop/net/master_slots`, `coop/net/lobby_client` |
+| The list of official masters is compiled into each build, so a master added later reaches only the builds after it | `[RD]` `coop/net/protocol.h` |
 | The `http://` downgrade grammar still ships and is queued for removal | `[V]` `coop/net/http_client` |
 
 ## Code map
@@ -121,6 +140,6 @@ most until its heartbeats lapse.
 | Concept | Files |
 |---|---|
 | the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
-| the mod's master client | `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
+| the mod's master client | `coop/net/master_slots`, `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/session/host_mode` |
 | the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs` |

@@ -11,6 +11,7 @@
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "coop/session/join_progress.h"
+#include "coop/net/master_slots.h"
 #include "coop/session/session_manager.h"
 #include "ue_wrap/core/log.h"
 
@@ -77,7 +78,8 @@ void ArmFromEnv() {
     // POST /v1/join -> P2P client session (the exact path JoinLobby() runs). TEST-ONLY.
     char jlEnv[64] = {};
     if (::GetEnvironmentVariableA("VOTVCOOP_TEST_JOIN_LOBBY", jlEnv, sizeof(jlEnv)) > 0 && jlEnv[0]) {
-        coop::session_manager::JoinLobby(jlEnv, jlEnv);  // lobbyId doubles as the display label in the test
+        // The lobby id doubles as the display label; the lobby is on the chosen master.
+        coop::session_manager::JoinLobby(coop::net::master_slots::Selected().url, jlEnv, jlEnv);
         UE_LOGI("imgui_overlay: VOTVCOOP_TEST_JOIN_LOBBY=%s -- fired a browser-path JOIN (test)", jlEnv);
     }
     // VOTVCOOP_TEST_HOST_SAVE=<slot> simulates the Host-Game picker's "Host selected
