@@ -160,6 +160,6 @@ if ($tag.Dev) {
 Write-Host "published: $title ($TagName @ $TagSha)"
 Write-Host 'RITUAL REMINDER: verify the release page, then append the published row to .github/ci/LEDGER.tsv (closes state(N) API-free).'
 if (-not $tag.Dev) {
-    Write-Host 'STABLE: update the master env constants, then run .github/ci/verify_latest.ps1:'
+    Write-Host 'STABLE: update EVERY master''s env constants, then run .github/ci/verify_latest.ps1:'
     Write-Host "  COOP_LATEST_PROTO=$($tag.N)  COOP_LATEST_MOD=`"$($tag.Game) b$($tag.N)`""
 }

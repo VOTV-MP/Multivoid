@@ -63,13 +63,15 @@ builds.
 7. **The published row.** Append `published` with the same N, game, tag, commit and today's
    date, and push it while watching the green run.
 8. **The update check.** For a stable, set `COOP_LATEST_PROTO=<N>` and
-   `COOP_LATEST_MOD=<game> b<N>` in the master's environment and restart it; the in-game line
+   `COOP_LATEST_MOD=<game> b<N>` in EVERY master's environment and restart each (a player reads the
+   check from the master they chose, [master-server.md](master-server.md)); the in-game line
    informs and never gates a join. A dev release skips this unless it is retiring an older
    cohort, since the client has no dev-or-stable axis and compares the build number alone. Then
-   `.github/ci/verify_latest.ps1` must pass (`-AllowDev` when the master was pointed at a
-   prerelease on purpose).
-   If `src/votv-coop/assets/thanks/thanks.txt` changed since the last release, publish it to the
-   master's `COOP_THANKS_FILE` too: the build embeds it, the master serves it, and the higher
+   `.github/ci/verify_latest.ps1` must pass: it asks every official master
+   (`kOfficialMasterSlots`), and one left behind fails it (`-AllowDev` when the masters were
+   pointed at a prerelease on purpose).
+   If `src/votv-coop/assets/thanks/thanks.txt` changed since the last release, publish it to
+   every master's `COOP_THANKS_FILE` too: the build embeds it, the master serves it, and the higher
    `revision` wins in the game, so the two are kept equal. **Put it in place atomically** -- copy
    beside the target and `mv` onto it, never write over it in place. A plain copy truncates the
    destination first, and a read landing in that window sees a file it cannot serve whole. The
@@ -91,8 +93,8 @@ builds.
   are cheap, and the public sequence keeps its gaps.
 - **A retraction**, when published bytes must go: delete the release page and the tag, append a
   `retracted` row, push now. A retracted number never republishes; fixed bytes take a new number.
-  For a stable, roll the master's update-check values back and restart it, then run the verify
-  script again.
+  For a stable, roll every master's update-check values back and restart each, then run the
+  verify script again.
 - **A re-run on a completed tag** is a no-op that touches no asset. A tag or body mismatch is
   reconciled by hand; the workflow never overwrites a live release.
 
