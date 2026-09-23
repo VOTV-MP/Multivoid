@@ -31,11 +31,6 @@ void* Gamemode();
 // mainGamemode.isSleep -- THE world sleep flag (false if unresolved).
 bool IsSleeping();
 
-// mainGamemode.activeEvents -- how many events hold the world active. Above zero, the sleep entry
-// refuses and the wake loop ends a sleep (lib_C::getEvent, which is also true while the camera is
-// far outside the map). Read-only; false if unresolved.
-bool ReadActiveEvents(int32_t& out);
-
 // mainGamemode.dreamProbability: -1 = SP sentinel (use bed.dreamProb);
 // 0 = nightmares suppressed. Returns false if unresolved.
 bool SetDreamProbability(float v);

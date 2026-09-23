@@ -16,6 +16,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/world/active_events.h"
 #include "ue_wrap/world/daynightcycle.h"
 
 #include <atomic>
@@ -30,6 +31,7 @@ namespace DNC = ue_wrap::daynightcycle;
 namespace SLP = ue_wrap::sleep;
 namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
+namespace AE  = ue_wrap::active_events;
 
 enum class Arm { Off, Awake, Asleep };
 
@@ -85,7 +87,7 @@ std::string SleepInputs(bool withDilation = true) {
     int32_t events = -1;
     ue_wrap::vitals::Read(ue_wrap::vitals::Field::Food, &food);
     SLP::ReadSleepNeed(need);
-    SLP::ReadActiveEvents(events);
+    AE::ReadCount(events);
     char buf[128];
     int n = std::snprintf(buf, sizeof(buf), "food %.1f need %.1f activeEvents %d isSleep %d", food, need, events,
                           SLP::IsSleeping() ? 1 : 0);
@@ -227,7 +229,7 @@ void TickHost(coop::net::Session* s) {
     }
     case Step::WaitQuiet: {
         int32_t events = -1;
-        if (!SLP::ReadActiveEvents(events)) return;
+        if (!AE::ReadCount(events)) return;
         if (HostDayMoved()) {
             Invalid('H', "the host reached midnight before its bed: the runway burnt out at 1x");
             return;
@@ -280,6 +282,7 @@ void Tick() {
     if (!IsEnabled()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running() || !SLP::EnsureResolved()) return;
+    AE::EnsureResolved();
     const bool host = IsHost(s);
     if (!g_saidArm) {
         g_saidArm = true;

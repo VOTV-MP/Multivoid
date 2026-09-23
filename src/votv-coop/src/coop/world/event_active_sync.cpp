@@ -22,6 +22,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/active_events.h"
 
 #include <atomic>
 #include <chrono>
@@ -36,71 +37,9 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace AE = ue_wrap::active_events;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-
-// ---- resolution (game thread; lazy, 2 s retry throttle; capped LOUD latch -- the
-// event_fire_sync pattern: a member lookup that fails 5x on a loaded class never succeeds) -----
-void* g_gmCls = nullptr;
-int32_t g_offActiveEvents = -1;    // mainGamemode.activeEvents (int refcount)
-int32_t g_offSenders = -1;         // mainGamemode.activeEvents_senders (TArray<UObject*>)
-std::chrono::steady_clock::time_point g_nextResolve{};
-int g_postClassAttempts = 0;
-bool g_resolveLatched = false;
-constexpr int kMaxPostClassAttempts = 5;
-
-void ResolvePass() {
-    if (g_resolveLatched) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (now < g_nextResolve) return;
-    g_nextResolve = now + std::chrono::seconds(2);
-    if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
-    if (!g_gmCls) return;  // world not loaded yet -- keep trying
-    if (g_offActiveEvents < 0) g_offActiveEvents = R::FindPropertyOffset(g_gmCls, L"activeEvents");
-    if (g_offSenders < 0) g_offSenders = R::FindPropertyOffset(g_gmCls, L"activeEvents_senders");
-    if (g_offActiveEvents >= 0 && g_offSenders >= 0) {
-        g_resolveLatched = true;
-        UE_LOGI("event_active: resolved (activeEvents=0x%X activeEvents_senders=0x%X)",
-                g_offActiveEvents, g_offSenders);
-        return;
-    }
-    if (++g_postClassAttempts >= kMaxPostClassAttempts) {
-        g_resolveLatched = true;
-        UE_LOGW("event_active: resolution INCOMPLETE after %d passes on a loaded mainGamemode_C "
-                "(activeEvents=0x%X activeEvents_senders=0x%X) -- latched OFF; game version "
-                "mismatch?",
-                g_postClassAttempts, g_offActiveEvents, g_offSenders);
-    }
-}
-
-bool Resolved() { return g_offActiveEvents >= 0 && g_offSenders >= 0; }
-
-// Live mainGamemode instance (cached; revalidated by internal index -- freed-memory misreads).
-void* g_gm = nullptr;
-int32_t g_gmIdx = -1;
-
-void* Gamemode() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        g_gm = nullptr;
-        g_gmIdx = -1;
-        if (!g_gmCls) return nullptr;
-        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-                g_gm = obj;
-                g_gmIdx = R::InternalIndexOf(obj);
-                break;
-            }
-        }
-    }
-    return g_gm;
-}
-
-// UE4 TArray<UObject*> header (8-byte pointer elements).
-struct RawPtrArray {
-    void** Data;
-    int32_t Num;
-    int32_t Max;
-};
 
 // ---- host poll state (game thread) -----------------------------------------------------------
 struct ActiveEntry {
@@ -181,13 +120,16 @@ std::string Narrow(const std::wstring& w) {
     return s;
 }
 
-int ReadRefcount(void* gm) {
-    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(gm) + g_offActiveEvents);
+int ReadRefcount() {
+    int32_t n = 0;
+    AE::ReadCount(n);
+    return n;
 }
 
 void HostPollTick() {
-    if (!Resolved()) return;  // before Gamemode(): the latched-OFF failure mode must not keep a cache warm nothing reads
-    void* gm = Gamemode();
+    if (!AE::EnsureResolved()) return;  // before Gamemode(): the latched-OFF failure mode must not keep a cache warm nothing reads
+    int32_t gmIdx = -1;
+    void* gm = AE::Gamemode(&gmIdx);
     if (!gm) return;
     // World/save reload minted a new gamemode -> the old membership's pointers dangle. Drop and
     // re-prime against the new instance (already-active events log BEGIN fresh -- correct: they
@@ -195,19 +137,20 @@ void HostPollTick() {
     if (gm != g_polledGm || !R::IsLiveByIndex(g_polledGm, g_polledGmIdx)) {
         g_active.clear();
         g_polledGm = gm;
-        g_polledGmIdx = g_gmIdx;
+        g_polledGmIdx = gmIdx;
         g_primed = false;
     }
-    auto* arr = reinterpret_cast<RawPtrArray*>(reinterpret_cast<uint8_t*>(gm) + g_offSenders);
-    if (arr->Num < 0 || arr->Num > 4096) return;  // sanity: ~95 registrant classes, few concurrent
+    AE::Senders arr{};
+    if (!AE::ReadSenders(arr)) return;
+    if (arr.num < 0 || arr.num > 4096) return;  // sanity: ~95 registrant classes, few concurrent
     const long long now = NowMs();
     if (!g_primed) {
         g_primed = true;
-        UE_LOGI("event_active: host poll primed (n=%d active)", ReadRefcount(gm));
+        UE_LOGI("event_active: host poll primed (n=%d active)", ReadRefcount());
     }
     // BEGIN edges: senders in the array we aren't tracking yet.
-    for (int32_t i = 0; i < arr->Num; ++i) {
-        void* obj = arr->Data ? arr->Data[i] : nullptr;
+    for (int32_t i = 0; i < arr.num; ++i) {
+        void* obj = arr.data ? arr.data[i] : nullptr;
         if (!obj || g_active.count(obj)) continue;
         if (!R::IsLive(obj)) continue;  // freshly read from the engine array; defensive
         ActiveEntry e;
@@ -215,7 +158,7 @@ void HostPollTick() {
         e.className = Narrow(R::ClassNameOf(obj));
         e.firstSeenMs = now;
         UE_LOGI("event_active: BEGIN class=%s n=%d (senders=%d)",
-                e.className.c_str(), ReadRefcount(gm), arr->Num);
+                e.className.c_str(), ReadRefcount(), arr.num);
         g_active.emplace(obj, std::move(e));
     }
     // END edges: tracked senders gone from the array (deregistered), or dead without
@@ -223,13 +166,13 @@ void HostPollTick() {
     std::vector<void*> ended;
     for (auto& [obj, e] : g_active) {
         bool present = false;
-        if (arr->Data)
-            for (int32_t i = 0; i < arr->Num; ++i)
-                if (arr->Data[i] == obj) { present = true; break; }
+        if (arr.data)
+            for (int32_t i = 0; i < arr.num; ++i)
+                if (arr.data[i] == obj) { present = true; break; }
         const bool live = R::IsLiveByIndex(obj, e.objIdx);
         if (present && live) continue;
         UE_LOGI("event_active: END class=%s n=%d elapsed=%llds%s",
-                e.className.c_str(), ReadRefcount(gm), (now - e.firstSeenMs) / 1000,
+                e.className.c_str(), ReadRefcount(), (now - e.firstSeenMs) / 1000,
                 live ? "" : " (sender died unregistered)");
         ended.push_back(obj);
     }
@@ -249,7 +192,6 @@ void Tick() {
     const long long now = NowMs();
     if (now - g_lastPollMs < kPollIntervalMs) return;
     g_lastPollMs = now;
-    ResolvePass();
     HostPollTick();
 }
 
@@ -312,8 +254,6 @@ void OnDisconnect() {
     g_polledGm = nullptr;
     g_polledGmIdx = -1;
     g_primed = false;
-    g_gm = nullptr;
-    g_gmIdx = -1;
     g_session.store(nullptr, std::memory_order_release);
 }
 

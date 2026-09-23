@@ -37,7 +37,6 @@ void* g_bedCls = nullptr;           // bed_C (probe helper)
 
 int32_t g_offSleepCam = -1;         // mainGamemode.sleepCam (ACameraActor)
 int32_t g_offSleepingPawn = -1;     // mainGamemode.sleepingPawn (the body in bed)
-int32_t g_offActiveEvents = -1;     // mainGamemode.activeEvents (int), read by instruments
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
@@ -72,8 +71,6 @@ void ResolvePass() {
     if (g_offSleepCam < 0) g_offSleepCam = R::FindPropertyOffset(g_gmCls, L"sleepCam");
     if (g_offSleepingPawn < 0)
         g_offSleepingPawn = R::FindPropertyOffset(g_gmCls, L"sleepingPawn");
-    if (g_offActiveEvents < 0)
-        g_offActiveEvents = R::FindPropertyOffset(g_gmCls, L"activeEvents");
 
     const bool core = g_offIsSleep >= 0 && g_offDreamProb >= 0 && g_offSaveSlot >= 0 &&
                       g_wakeupFn && g_offSleepNeed >= 0 && g_setDilationFn;
@@ -120,13 +117,6 @@ bool IsSleeping() {
     void* gm = Gamemode();
     if (!gm || g_offIsSleep < 0) return false;
     return *(reinterpret_cast<uint8_t*>(gm) + g_offIsSleep) != 0;
-}
-
-bool ReadActiveEvents(int32_t& out) {
-    void* gm = Gamemode();
-    if (!gm || g_offActiveEvents < 0) return false;
-    out = *reinterpret_cast<const int32_t*>(reinterpret_cast<uint8_t*>(gm) + g_offActiveEvents);
-    return true;
 }
 
 bool SetDreamProbability(float v) {
