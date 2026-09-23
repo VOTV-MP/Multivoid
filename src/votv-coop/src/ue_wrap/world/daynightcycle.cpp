@@ -46,6 +46,7 @@ constexpr int32_t kTimeZOffFallback     = 0x02D0;
                                  // reachable from the quit-to-menu teardown)
 ue_wrap::CachedObjRef g_cycleCache;
 void* g_tickFn = nullptr;         // daynightCycle_C::ReceiveTick
+int32_t g_cycleGmOff = -1;        // AdaynightCycle_C::gamemode
 
 }  // namespace
 
@@ -76,6 +77,7 @@ bool EnsureResolved() {
     g_settingMpOff = R::FindPropertyOffset(cls, L"settingMultiplayer");
     g_sleepDilOff  = R::FindPropertyOffset(cls, L"sleepingTimeDilation");
     g_tickFn       = R::FindFunction(cls, L"ReceiveTick");
+    g_cycleGmOff   = R::FindPropertyOffset(cls, L"gamemode");
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X timeZ@0x%04X",
             cls, totalOff, dayOff, scaleOff, maxOff, timeZOff);
@@ -208,6 +210,17 @@ void* LiveSaveSlot() {
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 }  // namespace
+
+void* SaveSlotOfCycle(void* cycle) {
+    if (!cycle || g_cycleGmOff < 0) return nullptr;
+    void* gm = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(cycle) + g_cycleGmOff);
+    if (!gm || !R::IsLive(gm)) return nullptr;
+    // From the live gamemode's own class: a class lookup by name walks the object array on a miss.
+    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
+    if (g_offGmSaveSlot < 0) return nullptr;
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
+    return (slot && R::IsLive(slot)) ? slot : nullptr;
+}
 
 bool LatchDailyDelivery() {
     if (!ResolveSaveSlotSurface()) return false;

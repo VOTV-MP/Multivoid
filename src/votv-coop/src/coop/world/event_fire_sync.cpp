@@ -19,6 +19,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/daynightcycle.h"
 
 #include <atomic>
 #include <chrono>
@@ -397,9 +398,30 @@ void HostPollTick() {
     g_passBaseline = pass->Num;
 }
 
-void ClientSuppressTick() {
-    void* ss = SaveSlotOf(Gamemode());
-    if (!ss || g_offAllEvents < 0) return;
+// CLIENT: the cycle is about to tick, and its settime walks the save's list of events on any clock
+// change: hold the list empty before the tick's body runs, so no row is ever due on a client -- the
+// first tick of a new world included, where the clock lane's pre-observer writes the host's newest
+// sample into the same tick.
+bool g_tickObserved = false;  // the pre-observer is registered (once per process)
+bool g_holdUnresolvable = false;  // the save slot's class has no allEvents; said once
+
+void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
+    if (!GT::IsGameThread()) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    void* ss = ue_wrap::daynightcycle::SaveSlotOfCycle(self);
+    if (!ss) return;
+    // The list's offset from the live slot's own class, a property lookup with no object-array walk,
+    // so the first tick of a world is held even before the throttled resolve has run.
+    if (g_offAllEvents < 0) {
+        if (g_holdUnresolvable) return;
+        g_offAllEvents = R::FindPropertyOffset(R::ClassOf(ss), L"allEvents");
+        if (g_offAllEvents < 0) {
+            g_holdUnresolvable = true;
+            UE_LOGW("event_fire: the save slot has no allEvents -- a client's event walk cannot be held");
+            return;
+        }
+    }
     RawArray* all = ArrayAt(ss, g_offAllEvents);
     if (!all || all->Num <= 0 || all->Num > 100000) return;  // 0 = already suppressed
     // A legal array state (empty with slack): data and capacity untouched, and the engine frees
@@ -409,8 +431,8 @@ void ClientSuppressTick() {
     g_zeroedSaveSlot = ss;
     g_zeroedSaveSlotIdx = R::InternalIndexOf(ss);
     all->Num = 0;
-    UE_LOGI("event_fire: client scheduler SUPPRESSED (allEvents %d -> 0; host is the only firer; "
-            "restored on disconnect)", g_zeroedAllEventsNum);
+    UE_LOGI("event_fire: client scheduler SUPPRESSED at the cycle's tick (allEvents %d -> 0; host is the only "
+            "firer; restored on disconnect)", g_zeroedAllEventsNum);
 }
 
 void ClientDrainTick() {
@@ -424,6 +446,23 @@ void ClientDrainTick() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    // Called every pump tick by the install fanout, which is the retry until the cycle class loads.
+    namespace DNC = ue_wrap::daynightcycle;
+    if (g_tickObserved || !DNC::EnsureResolved()) return;
+    void* fn = DNC::TickFunction();
+    if (!fn) {
+        UE_LOGW("event_fire: daynightCycle_C::ReceiveTick not found -- a client's event walk cannot be held");
+        g_tickObserved = true;
+        return;
+    }
+    if (!GT::RegisterPreObserver(fn, &OnCycleTickPre)) {
+        static bool s_said = false;  // retried every pump tick; said once
+        if (!s_said) UE_LOGW("event_fire: the cycle tick's pre-observer did not register (table full?) -- retrying");
+        s_said = true;
+        return;
+    }
+    g_tickObserved = true;
+    UE_LOGI("event_fire: a client's event walk is held at the cycle's own tick (pre-observer on ReceiveTick)");
 }
 
 void Tick() {
@@ -437,7 +476,6 @@ void Tick() {
     if (s->role() == coop::net::Role::Host) {
         HostPollTick();
     } else {
-        ClientSuppressTick();
         ClientDrainTick();
     }
 }

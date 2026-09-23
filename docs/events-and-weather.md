@@ -70,8 +70,8 @@ The scheduler is the save's own time step: it walks the event table and runs eac
 through the eventer, all inside Blueprints. The host cannot hook the fire, so it polls the
 save's list of passed events once a second and broadcasts each new row
 (`coop/world/event_fire_sync`). The client keeps its own copy of the walkable event list empty,
-a one-integer write the game rebuilds unconditionally at every world load, so its scheduler
-fires nothing as the host's clock moves it. What a client does with a
+a one-integer write held right before each tick of the clock's cycle, which the game rebuilds
+unconditionally at every world load, so its scheduler fires nothing as the host's clock moves it. What a client does with a
 received fire is a per-row policy kept in the code: rows whose outputs already ride a lane
 (props, creatures, the ATV, sleep, the wisps, the cues, the devices) are not replayed, because
 replaying them would deliver the effect twice; the level flips, story flags and cosmetic sounds

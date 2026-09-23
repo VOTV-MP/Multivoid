@@ -32,16 +32,17 @@ enum class FireKind : uint8_t {
     SpecialEvent = 1,  // trigger_eventer.runSpecialEvent(name)
 };
 
-// Cache the session. Resolution (gamemode/saveSlot/eventer offsets) is lazy in Tick. Game thread.
+// Cache the session and, once the daynightCycle_C class has loaded, register the client's hold on
+// the cycle's own tick (once per process): right before each tick, allEvents.Num is held at 0. The
+// cycle's settime walks that list on every clock change the host's samples make, so without the
+// hold due rows would fire natively on the client -- and the first sample after a world load, which
+// the clock lane writes at the same tick, could make many due at once. Restored on disconnect; the
+// local world resumes scheduling. Called every pump tick by the install fanout. Game thread.
 void Install(coop::net::Session* session);
 
 // Per net-pump tick, game thread, ~1 Hz internally throttled:
 //   HOST + connected: passEvents growth poll -> broadcast new fires.
-//   CLIENT: assert allEvents.Num == 0 (scheduler suppression) + drain pending replays.
-//
-// The client assert is what keeps the client's own walk dormant: its settime walks the list on
-// every clock change the host's samples make, so due rows would otherwise fire natively there.
-// Restored on disconnect; the local world resumes scheduling.
+//   CLIENT: drain pending replays.
 //
 // Three classes of fire this poll cannot see, all deliberate. A trigger-volume fire (bedEvent,
 // a scare armed by TBoxActivator) executes per-peer natively when THAT peer overlaps, which

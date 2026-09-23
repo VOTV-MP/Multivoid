@@ -37,6 +37,11 @@ void* TickFunction();
 // singleton at once, so a new world's first tick needs no object-array walk. Game thread.
 void NoteCycle(void* cycle);
 
+// The save slot of the gamemode a given cycle belongs to, by its own `gamemode` member: no walk, so
+// a tick observer may call it every frame. Null while anything on the way is unresolved or dead.
+// Game thread.
+void* SaveSlotOfCycle(void* cycle);
+
 // Read the cycle's clock into the outs. False if the cycle / offsets are not resolved
 // (outs untouched on failure). Game thread.
 bool ReadClock(float& totalTime, float& day, float& timeScale);
