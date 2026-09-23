@@ -1,4 +1,5 @@
 //! Shared helpers for the coop master + signaling binaries.
+pub mod admission;
 pub mod common;
 pub mod http_transport;
 pub mod lobby;

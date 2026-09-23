@@ -8,6 +8,7 @@ use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
+use std::net::Ipv6Addr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type HmacSha1 = Hmac<Sha1>;
@@ -62,6 +63,20 @@ pub fn token_urlsafe(nbytes: usize) -> String {
     let mut buf = vec![0u8; nbytes];
     getrandom::getrandom(&mut buf).expect("OS CSPRNG unavailable");
     B64URL.encode(&buf)
+}
+
+/// Coarsen a client address to the allocation an attacker realistically controls, so
+/// abuse controls (rate limits, lobby caps, TURN-cred accounting, connection admission) can't be bypassed by
+/// address rotation (audit M2/M3): a full IPv4 address, or an IPv6 /64 (the smallest
+/// prefix a host is routably assigned — a single tenant typically owns a whole /64).
+pub fn ip_bucket(ip: &str) -> String {
+    if ip.contains(':') {
+        if let Ok(v6) = ip.parse::<Ipv6Addr>() {
+            let s = v6.segments();
+            return format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]);
+        }
+    }
+    ip.to_string()
 }
 
 /// `clamp_str(v, maxlen)` — keep only genuinely printable chars (plus ASCII space),

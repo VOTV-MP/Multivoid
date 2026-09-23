@@ -1,18 +1,26 @@
 //! The master's HTTP plumbing: the request head, the response, the connection cap. Nothing here
 //! knows what a lobby is -- the routes live in the binary and the lobby domain in `lobby`.
 
+use crate::admission::Pool;
 use serde_json::Value;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 
+/// One budget per connection for everything before the answer: the TLS handshake, the head and
+/// the body. The answer's write is bounded separately (`write_response`).
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 pub const MAX_HEADER: usize = 16 * 1024;
 pub const MAX_BODY: usize = 64 * 1024;
 pub const MAX_CONNS: usize = 256;
+/// Per source address. A client holds one short request at a time, so 16 leaves room for a
+/// household or a carrier NAT while keeping one source from holding the whole pool.
+pub const MAX_CONNS_PER_ADDR: u32 = 16;
 
-pub static CONNS: AtomicUsize = AtomicUsize::new(0);
+/// Every connection the master holds, the ones still in their TLS handshake included.
+pub static CONNS: LazyLock<Pool> =
+    LazyLock::new(|| Pool::new("connection", MAX_CONNS, MAX_CONNS_PER_ADDR));
 
 pub fn reason_phrase(status: u16) -> &'static str {
     match status {
@@ -86,11 +94,4 @@ pub async fn read_head<S: AsyncRead + Unpin>(
 pub enum HeadErr {
     TooLarge,
     Closed,
-}
-
-pub struct ConnGuard;
-impl Drop for ConnGuard {
-    fn drop(&mut self) {
-        CONNS.fetch_sub(1, Ordering::Relaxed);
-    }
 }

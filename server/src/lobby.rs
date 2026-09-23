@@ -3,12 +3,11 @@
 //! snapshot and the sweeper that reaps what stopped heartbeating.
 
 use crate::common::{
-    clamp_str, ct_eq, identity_shape_ok, log, token_hex, token_urlsafe, turn_creds,
+    clamp_str, ct_eq, identity_shape_ok, ip_bucket, log, token_hex, token_urlsafe, turn_creds,
 };
 use crate::master_config::CFG;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -205,20 +204,6 @@ pub fn resolve_client_ip(peer_ip: &str, headers: &HashMap<String, String>) -> St
         }
     }
     peer_ip.to_string()
-}
-
-/// Coarsen a client address to the allocation an attacker realistically controls, so
-/// abuse controls (rate limits, lobby caps, TURN-cred accounting) can't be bypassed by
-/// address rotation (audit M2/M3): a full IPv4 address, or an IPv6 /64 (the smallest
-/// prefix a host is routably assigned — a single tenant typically owns a whole /64).
-pub fn ip_bucket(ip: &str) -> String {
-    if ip.contains(':') {
-        if let Ok(v6) = ip.parse::<Ipv6Addr>() {
-            let s = v6.segments();
-            return format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]);
-        }
-    }
-    ip.to_string()
 }
 
 pub fn rate_ok(state: &mut MasterState, ip: &str, cls: &str, window: Duration, limit: usize) -> bool {

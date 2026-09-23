@@ -56,8 +56,9 @@ limits and per-IP caps are the wrong fixture for many synthetic rows from one ad
 Rightmost `X-Forwarded-For` from a loopback proxy only, so the rate-limit and target address
 cannot be spoofed; constant-time token compare; an opaque `lobbyId` against a secret `sessionId`;
 control-character strip and codepoint clamp on every string; per-(address, class) sliding-window
-rate limits; a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header, body
-and connection caps with read timeouts.
+rate limits; a global LRU and per-address lobby caps; a `LOBBY_TTL` sweep; bounded header and
+body; connection admission at accept (`admission.rs`: a total and a per-address cap, taken before
+the TLS handshake) under one deadline that covers the handshake and every read after it.
 
 ## Design notes
 

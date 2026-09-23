@@ -11,10 +11,10 @@
 //! ever held across an await — while still using the multi-thread tokio runtime.
 
 
+use coop_server::admission::{Pool, Slot};
 use coop_server::common::{clamp_str, env_int, env_str, log};
 use coop_server::http_transport::{
-    json_bytes, read_head, write_response, ConnGuard, HeadErr, CONNS, HTTP_TIMEOUT, MAX_BODY,
-    MAX_CONNS, MAX_HEADER,
+    json_bytes, read_head, write_response, HeadErr, CONNS, HTTP_TIMEOUT, MAX_BODY, MAX_HEADER,
 };
 use coop_server::lobby::{
     dispatch_post, filter_lobbies, lobbies_snapshot, lock_state, resolve_client_ip, sweeper,
@@ -24,24 +24,18 @@ use coop_server::master_config::CFG;
 use coop_server::thanks::{thanks_answer, Answer};
 use coop_server::tls;
 use serde_json::{json, Value};
-use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use tokio::time::timeout;
+use tokio::time::{timeout_at, Instant};
 use std::collections::HashMap;
 use tokio::net::TcpListener;
 
-async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, peer_ip: String) {
-    // Concurrent-connection admission cap: shed before any read.
-    if CONNS.fetch_add(1, Ordering::Relaxed) >= MAX_CONNS {
-        CONNS.fetch_sub(1, Ordering::Relaxed);
-        log(&format!("[{peer_ip}] refused: connection cap ({MAX_CONNS})"));
-        return;
-    }
-    let _guard = ConnGuard;
-
+/// One request. The connection was admitted at accept, and `deadline` -- set there too -- bounds
+/// everything up to the answer: the TLS handshake the caller already did, the head and the body.
+async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, peer_ip: String, deadline: Instant) {
     // ---- read + parse header block (bounded + timed) ----
-    let (head, leftover) = match timeout(HTTP_TIMEOUT, read_head(&mut stream, MAX_HEADER)).await {
+    let (head, leftover) = match timeout_at(deadline, read_head(&mut stream, MAX_HEADER)).await {
         Ok(Ok(v)) => v,
         Ok(Err(HeadErr::TooLarge)) => {
             write_response(&mut stream, 413, &json_bytes(&json!({"error": "headers too large"}))).await;
@@ -94,7 +88,7 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, peer_ip: Strin
         if raw.len() < clen {
             let need = clen - raw.len();
             let mut rest = vec![0u8; need];
-            match timeout(HTTP_TIMEOUT, stream.read_exact(&mut rest)).await {
+            match timeout_at(deadline, stream.read_exact(&mut rest)).await {
                 Ok(Ok(_)) => raw.extend_from_slice(&rest),
                 _ => return, // eof / timeout
             }
@@ -219,7 +213,7 @@ async fn main() {
             match TcpListener::bind(&tls_addr).await {
                 Ok(l) => {
                     log(&format!("master TLS listening on {tls_addr}"));
-                    tokio::spawn(serve_tls(l, acceptor));
+                    tokio::spawn(serve_tls(l, acceptor, &CONNS, HTTP_TIMEOUT));
                 }
                 Err(e) => {
                     // A configured TLS listener that cannot bind is FATAL: coming
@@ -233,20 +227,37 @@ async fn main() {
         None => log("TLS not configured (COOP_TLS_CERT/COOP_TLS_KEY unset) -- plaintext only"),
     }
 
-    serve_plain(listener).await
+    serve_plain(listener, &CONNS, HTTP_TIMEOUT).await
+}
+
+/// Admission at accept, before a byte is read or a handshake starts (see `admission`). A refused
+/// connection is dropped unanswered.
+fn admit(pool: &'static Pool, peer_ip: &str) -> Option<Slot<'static>> {
+    match pool.admit(peer_ip) {
+        Ok(slot) => Some(slot),
+        Err(why) => {
+            log(&format!("[{peer_ip}] refused: {why}"));
+            None
+        }
+    }
 }
 
 /// Plaintext accept loop. Logs EVERY accept with the listener tag: this log is
 /// the evidence base for the arc-5 retirement gate ("zero unknown-source
 /// plaintext connections over 24h"). Without it the gate would be a hope -- the
 /// 400 path below never logs, so a stray connection could pass unseen.
-async fn serve_plain(listener: TcpListener) -> ! {
+async fn serve_plain(listener: TcpListener, pool: &'static Pool, budget: Duration) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let peer_ip = addr.ip().to_string();
                 log(&format!("accept [listener=plain] [{peer_ip}]"));
-                tokio::spawn(handle(stream, peer_ip));
+                let Some(slot) = admit(pool, &peer_ip) else { continue };
+                let deadline = Instant::now() + budget;
+                tokio::spawn(async move {
+                    let _slot = slot;
+                    handle(stream, peer_ip, deadline).await
+                });
             }
             Err(e) => log(&format!("accept error: {e}")),
         }
@@ -257,21 +268,108 @@ async fn serve_plain(listener: TcpListener) -> ! {
 /// client-side cert problem produces); successful accepts are NOT logged per
 /// connection -- the lobby-list poll would make that pure noise, and the arc-5
 /// positive proof comes from the signaling server's per-identity registration
-/// lines instead.
-async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -> ! {
+/// lines instead. The handshake runs inside the connection's admitted slot and
+/// its deadline: a peer that never sends a ClientHello holds one slot until then.
+async fn serve_tls(
+    listener: TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+    pool: &'static Pool,
+    budget: Duration,
+) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let peer_ip = addr.ip().to_string();
+                let Some(slot) = admit(pool, &peer_ip) else { continue };
+                let deadline = Instant::now() + budget;
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => handle(tls_stream, peer_ip).await,
-                        Err(e) => log(&format!("tls handshake failed [{peer_ip}]: {e}")),
+                    let _slot = slot;
+                    match timeout_at(deadline, acceptor.accept(stream)).await {
+                        Ok(Ok(tls_stream)) => handle(tls_stream, peer_ip, deadline).await,
+                        Ok(Err(e)) => log(&format!("tls handshake failed [{peer_ip}]: {e}")),
+                        Err(_) => log(&format!("tls handshake timed out [{peer_ip}]")),
                     }
                 });
             }
             Err(e) => log(&format!("tls accept error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{serve_plain, serve_tls};
+    use coop_server::admission::Pool;
+    use std::sync::{Arc, LazyLock};
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+    use tokio_rustls::rustls::sign::CertifiedKey;
+    use tokio_rustls::rustls::ServerConfig;
+    use tokio_rustls::TlsAcceptor;
+
+    /// No certificate at all: enough to build an acceptor, since these clients never send the
+    /// ClientHello a certificate would answer.
+    #[derive(Debug)]
+    struct NoCert;
+    impl ResolvesServerCert for NoCert {
+        fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+            None
+        }
+    }
+
+    fn acceptor() -> TlsAcceptor {
+        let cfg = ServerConfig::builder().with_no_client_auth().with_cert_resolver(Arc::new(NoCert));
+        TlsAcceptor::from(Arc::new(cfg))
+    }
+
+    /// True when the server closes this idle client within `within`.
+    async fn closed_within(s: &mut TcpStream, within: Duration) -> bool {
+        let mut b = [0u8; 1];
+        matches!(tokio::time::timeout(within, s.read(&mut b)).await, Ok(Ok(0)) | Ok(Err(_)))
+    }
+
+    async fn listen() -> (TcpListener, std::net::SocketAddr) {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let a = l.local_addr().unwrap();
+        (l, a)
+    }
+
+    #[tokio::test]
+    async fn a_client_that_never_sends_a_client_hello_is_dropped_at_the_deadline() {
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 8));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_tls(l, acceptor(), &POOL, Duration::from_millis(400)));
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(!closed_within(&mut c, Duration::from_millis(100)).await, "dropped before its deadline");
+        assert!(
+            closed_within(&mut c, Duration::from_secs(3)).await,
+            "a client that never sent a ClientHello was held past the deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silent_plaintext_client_is_dropped_at_the_deadline() {
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 8));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_plain(l, &POOL, Duration::from_millis(400)));
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a silent client was held past the deadline");
+    }
+
+    #[tokio::test]
+    async fn one_address_over_its_cap_is_dropped_before_any_handshake() {
+        // The accept loop takes connections in order, so the third one is the one over the cap.
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 2));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_tls(l, acceptor(), &POOL, Duration::from_secs(20)));
+        let mut a = TcpStream::connect(addr).await.unwrap();
+        let mut b = TcpStream::connect(addr).await.unwrap();
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a third connection from one address was held");
+        assert!(!closed_within(&mut a, Duration::from_millis(300)).await, "an admitted connection was dropped");
+        assert!(!closed_within(&mut b, Duration::from_millis(300)).await, "an admitted connection was dropped");
     }
 }

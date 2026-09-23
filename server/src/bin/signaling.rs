@@ -32,8 +32,8 @@
 //! already in `CLIENTS`, so during the challenge window nothing can be delivered
 //! to this connection at all, and no peer can forge a line that looks like the
 //! challenge. The whole pre-registration phase shares ONE `GREETING_TIMEOUT`
-//! budget, so an unauthenticated peer cannot hold a `MAX_PENDING` slot longer
-//! than it could before.
+//! budget, counted from accept and covering the TLS handshake, so an
+//! unauthenticated peer cannot hold a pre-auth slot longer than it could before.
 //!
 //! WHAT THIS DOES NOT CLOSE, and it is why A59 is MITIGATED rather than CLOSED:
 //! the mod's signaling leg is still PLAINTEXT (`signaling_client.cpp` is raw
@@ -58,12 +58,13 @@
 //! 5s drain timeout — a slow/stalled destination can never head-of-line block a
 //! sender, and memory per destination is bounded by the channel capacity.
 
+use coop_server::admission::{Pool, Slot};
 use coop_server::common::{
     clamp_str, ct_eq, env_int, env_str, hex_to_bytes, identity_shape_ok, log, token_hex,
 };
 use coop_server::tls;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf};
@@ -73,9 +74,6 @@ use tokio::time::{timeout_at, Instant};
 
 const MAX_LINE: usize = 64 * 1024;
 const GREETING_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_PENDING: usize = 128;
-const MAX_AUTHED: usize = 512;
-const MAX_AUTHED_PER_IP: u32 = 32;
 // The relay loop has no app idle timeout, so keepalive IS the reap of a dead authed peer -- and at
 // the OS default (Linux waits two hours for a first probe) that reap is far too late to matter. A
 // registration outlives its socket for the whole of that window, and `relay_line` then routes a
@@ -115,9 +113,12 @@ const REGISTER_TAG: &[u8] = b"multivoid-signaling-register-v1";
 static TOKEN: LazyLock<String> = LazyLock::new(|| env_str("COOP_SIGNALING_TOKEN", ""));
 static CLIENTS: LazyLock<Mutex<HashMap<String, (u64, mpsc::Sender<Vec<u8>>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static AUTHED_PER_IP: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-static PENDING: AtomicUsize = AtomicUsize::new(0);
-static AUTHED: AtomicUsize = AtomicUsize::new(0);
+// Connections that have not proved their key yet: the small pool an anonymous flood can fill,
+// taken at accept, and one address may hold only a few of its slots.
+static PENDING: LazyLock<Pool> = LazyLock::new(|| Pool::new("pre-auth", 128, 8));
+// Registered peers: one per install while it hosts or joins, so 32 per address is a large
+// household or a carrier NAT.
+static AUTHED: LazyLock<Pool> = LazyLock::new(|| Pool::new("authed", 512, 32));
 static CONN_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Bounded, cancel-safe line reader over the connection's read half. On `select!`
@@ -162,6 +163,8 @@ impl<S: AsyncRead + Unpin> LineReader<S> {
 struct Reg {
     identity: String,
     conn_id: u64,
+    // The authed slot lives as long as the registration and is given back when it drops.
+    _authed: Slot<'static>,
 }
 
 /// The registration proof's whole DECISION, split from its I/O so it can be
@@ -186,66 +189,27 @@ fn check_registration_proof(ident: &str, nonce: &str, auth_line: &str) -> Result
         .map_err(|_| "does not hold the key this identity names")
 }
 
-/// The PRE-AUTH pool slot, released exactly once -- on promotion, on return, or on
-/// an UNWIND. It used to be released by a `match` after the `.await`, which a panic
-/// inside `serve` skips: `panic = "unwind"` isolates the task rather than crashing
-/// the process, so the slot would leak SILENTLY, and 128 leaks refuse every later
-/// accept with "pre-auth pool full" until a restart. Latent before, and worth
-/// closing now that this path calls `token_hex`, whose CSPRNG failure is an
-/// `expect` (post-ship audit M1). Only PENDING is guarded: the AUTHED and per-IP
-/// slots are taken only AFTER the proof, downstream of every panic this adds.
-struct PendingSlot {
-    armed: bool,
-}
-
-impl PendingSlot {
-    fn release(&mut self) {
-        if self.armed {
-            self.armed = false;
-            PENDING.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-}
-
-impl Drop for PendingSlot {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
-async fn handle<S: AsyncRead + AsyncWrite + Unpin>(stream: S, ip: String, listener: &'static str) {
-    // Admission into the bounded PRE-AUTH pool (an anonymous flood can fill only this
-    // small pool; each conn is dropped after GREETING_TIMEOUT).
-    if PENDING.fetch_add(1, Ordering::Relaxed) >= MAX_PENDING {
-        PENDING.fetch_sub(1, Ordering::Relaxed);
-        log(&format!("[{ip}] refused: pre-auth pool full"));
-        return;
-    }
-    let mut pending = PendingSlot { armed: true };
-
+/// One connection, admitted at accept into the pre-auth pool. Both of its slots give themselves
+/// back when they drop -- the pre-auth one here unless promotion took it first, the authed one with
+/// the registration -- and a drop also runs on an unwind, so a panicking task cannot leak either
+/// (a leaked slot refuses every later accept once the pool is full, until a restart).
+async fn handle<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    ip: String,
+    listener: &'static str,
+    pending: Slot<'static>,
+    deadline: Instant,
+) {
+    let mut pending = Some(pending);
     let mut reg: Option<Reg> = None;
-    serve(stream, &ip, listener, &mut pending, &mut reg).await;
+    serve(stream, &ip, listener, &mut pending, deadline, &mut reg).await;
 
-    // ---- cleanup (exactly mirrors the Python finally block) ----
-    // The None branch is gone: `pending` releases itself on drop, unwind included.
-    match reg {
-        None => {}
-        Some(reg) => {
-            AUTHED.fetch_sub(1, Ordering::Relaxed);
-            {
-                let mut per = AUTHED_PER_IP.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(c) = per.get_mut(&ip) {
-                    *c = c.saturating_sub(1);
-                    if *c == 0 {
-                        per.remove(&ip);
-                    }
-                }
-            }
-            let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
-            if cl.get(&reg.identity).map(|(id, _)| *id) == Some(reg.conn_id) {
-                cl.remove(&reg.identity);
-                log(&format!("[{}@{}] disconnected", reg.identity, ip));
-            }
+    // ---- cleanup: what is left once the slots are handled is the route ----
+    if let Some(reg) = reg {
+        let mut cl = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+        if cl.get(&reg.identity).map(|(id, _)| *id) == Some(reg.conn_id) {
+            cl.remove(&reg.identity);
+            log(&format!("[{}@{}] disconnected", reg.identity, ip));
         }
     }
 }
@@ -256,7 +220,8 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     ip: &str,
     listener: &str,
-    pending: &mut PendingSlot,
+    pending: &mut Option<Slot<'static>>,
+    deadline: Instant,
     reg_out: &mut Option<Reg>,
 ) {
     // NOTE: SO_KEEPALIVE is set on the raw TcpStream at accept time (before any
@@ -265,10 +230,10 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     let (rh, mut wh) = tokio::io::split(stream);
     let mut lr = LineReader::new(rh, MAX_LINE);
 
-    // ONE budget for the WHOLE pre-registration phase (greeting + proof), not one
-    // per line: a peer that answers each line just inside a per-line timeout could
-    // otherwise hold a bounded PENDING slot for as long as it kept adding lines.
-    let deadline = Instant::now() + GREETING_TIMEOUT;
+    // ONE budget for the WHOLE pre-registration phase (handshake + greeting + proof),
+    // set at accept, not one per line: a peer that answers each line just inside a
+    // per-line timeout could otherwise hold a pre-auth slot for as long as it kept
+    // adding lines.
 
     // --- greeting: "<token> <identity>", short timeout (anti-slowloris) ---
     let line = match timeout_at(deadline, lr.next_line()).await {
@@ -350,29 +315,17 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         }
     }
 
-    // Auth OK -> reserve an authed slot ATOMICALLY (audit LOW-1: the prior
-    // check-then-increment let concurrent connections over-admit past the caps on
-    // the multi-thread runtime). Take the global slot first and roll back if over;
-    // then check+take the per-IP slot under one lock.
-    if AUTHED.fetch_add(1, Ordering::Relaxed) >= MAX_AUTHED {
-        AUTHED.fetch_sub(1, Ordering::Relaxed);
-        log(&format!("[{ident}@{ip}] refused: authed cap"));
-        return; // pending stays +1 -> handle() cleanup decrements it (None branch)
-    }
-    {
-        let mut per = AUTHED_PER_IP.lock().unwrap_or_else(|e| e.into_inner());
-        let cnt = per.entry(ip.to_string()).or_insert(0);
-        if *cnt >= MAX_AUTHED_PER_IP {
-            drop(per);
-            AUTHED.fetch_sub(1, Ordering::Relaxed); // release the global slot we took
-            log(&format!("[{ident}@{ip}] refused: per-ip authed cap"));
+    // Auth OK -> an authed slot. The total and the per-address cap are checked and
+    // taken under one lock, so concurrent promotions cannot over-admit past either
+    // (audit LOW-1). Then the pre-auth slot goes back.
+    let authed = match AUTHED.admit(ip) {
+        Ok(slot) => slot,
+        Err(why) => {
+            log(&format!("[{ident}@{ip}] refused: {why}"));
             return;
         }
-        *cnt += 1;
-    }
-    // Promotion committed: this connection now owns one AUTHED + one per-IP slot,
-    // released exactly once by the handle() cleanup Some-branch.
-    pending.release();
+    };
+    pending.take();
 
     let identity = ident.to_string();
     let conn_id = CONN_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -390,7 +343,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         }
         cl.insert(identity.clone(), (conn_id, tx));
     }
-    *reg_out = Some(Reg { identity: identity.clone(), conn_id });
+    *reg_out = Some(Reg { identity: identity.clone(), conn_id, _authed: authed });
     // `key proved` is the drill's positive needle AND the operator's answer to
     // "is the A59 gate armed on this deployment". `listener` is the evidence base
     // for the arc-3 flip: the proof is RELAYABLE on a plaintext leg (an on-path
@@ -501,7 +454,7 @@ async fn main() {
             match TcpListener::bind(&tls_addr).await {
                 Ok(l) => {
                     log(&format!("signaling TLS listening on {tls_addr}"));
-                    tokio::spawn(serve_tls(l, acceptor));
+                    tokio::spawn(serve_tls(l, acceptor, &PENDING, GREETING_TIMEOUT));
                 }
                 Err(e) => {
                     log(&format!("FATAL: bind {tls_addr} failed: {e}"));
@@ -512,19 +465,33 @@ async fn main() {
         None => log("TLS not configured (COOP_TLS_CERT/COOP_TLS_KEY unset) -- plaintext only"),
     }
 
-    serve_plain(listener).await
+    serve_plain(listener, &PENDING, GREETING_TIMEOUT).await
+}
+
+/// Admission into the pre-auth pool at accept, before a byte is read or a handshake
+/// starts (see `admission`). A refused connection is dropped unanswered.
+fn admit(pool: &'static Pool, ip: &str) -> Option<Slot<'static>> {
+    match pool.admit(ip) {
+        Ok(slot) => Some(slot),
+        Err(why) => {
+            log(&format!("[{ip}] refused: {why}"));
+            None
+        }
+    }
 }
 
 /// Plaintext accept loop. Every accept is logged with the listener tag -- this
 /// is the evidence base for the arc-5 plaintext-retirement gate.
-async fn serve_plain(listener: TcpListener) -> ! {
+async fn serve_plain(listener: TcpListener, pool: &'static Pool, budget: Duration) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let ip = addr.ip().to_string();
                 log(&format!("accept [listener=plain] [{ip}]"));
+                let Some(pending) = admit(pool, &ip) else { continue };
                 set_keepalive(&stream);
-                tokio::spawn(handle(stream, ip, "plain"));
+                let deadline = Instant::now() + budget;
+                tokio::spawn(handle(stream, ip, "plain", pending, deadline));
             }
             Err(e) => log(&format!("accept error: {e}")),
         }
@@ -533,23 +500,109 @@ async fn serve_plain(listener: TcpListener) -> ! {
 
 /// TLS accept loop. The per-identity "registered" line inside serve() is what
 /// gives arc 5 its POSITIVE proof that each install converted, so successful
-/// accepts need no extra line here; handshake failures do get one.
-async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -> ! {
+/// accepts need no extra line here; handshake failures do get one. The handshake
+/// runs inside the pre-auth slot and its deadline.
+async fn serve_tls(
+    listener: TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+    pool: &'static Pool,
+    budget: Duration,
+) -> ! {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let ip = addr.ip().to_string();
+                let Some(pending) = admit(pool, &ip) else { continue };
                 set_keepalive(&stream);
+                let deadline = Instant::now() + budget;
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => handle(tls_stream, ip, "tls").await,
-                        Err(e) => log(&format!("tls handshake failed [{ip}]: {e}")),
+                    match timeout_at(deadline, acceptor.accept(stream)).await {
+                        Ok(Ok(tls_stream)) => handle(tls_stream, ip, "tls", pending, deadline).await,
+                        Ok(Err(e)) => log(&format!("tls handshake failed [{ip}]: {e}")),
+                        Err(_) => log(&format!("tls handshake timed out [{ip}]")),
                     }
                 });
             }
             Err(e) => log(&format!("tls accept error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::{serve_plain, serve_tls};
+    use coop_server::admission::Pool;
+    use std::sync::{Arc, LazyLock};
+    use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+    use tokio_rustls::rustls::sign::CertifiedKey;
+    use tokio_rustls::rustls::ServerConfig;
+    use tokio_rustls::TlsAcceptor;
+
+    /// No certificate at all: enough to build an acceptor, since these clients never send the
+    /// ClientHello a certificate would answer.
+    #[derive(Debug)]
+    struct NoCert;
+    impl ResolvesServerCert for NoCert {
+        fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+            None
+        }
+    }
+
+    fn acceptor() -> TlsAcceptor {
+        let cfg = ServerConfig::builder().with_no_client_auth().with_cert_resolver(Arc::new(NoCert));
+        TlsAcceptor::from(Arc::new(cfg))
+    }
+
+    /// True when the server closes this idle client within `within`.
+    async fn closed_within(s: &mut TcpStream, within: Duration) -> bool {
+        let mut b = [0u8; 1];
+        matches!(tokio::time::timeout(within, s.read(&mut b)).await, Ok(Ok(0)) | Ok(Err(_)))
+    }
+
+    async fn listen() -> (TcpListener, std::net::SocketAddr) {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let a = l.local_addr().unwrap();
+        (l, a)
+    }
+
+    #[tokio::test]
+    async fn a_client_that_never_sends_a_client_hello_is_dropped_at_the_deadline() {
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 8));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_tls(l, acceptor(), &POOL, Duration::from_millis(400)));
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(!closed_within(&mut c, Duration::from_millis(100)).await, "dropped before its deadline");
+        assert!(
+            closed_within(&mut c, Duration::from_secs(3)).await,
+            "a client that never sent a ClientHello was held past the deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silent_plaintext_greeter_is_dropped_at_the_deadline() {
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 8));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_plain(l, &POOL, Duration::from_millis(400)));
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a silent greeter was held past the deadline");
+    }
+
+    #[tokio::test]
+    async fn one_address_over_its_pre_auth_cap_is_dropped_before_any_handshake() {
+        // The accept loop takes connections in order, so the third one is the one over the cap.
+        static POOL: LazyLock<Pool> = LazyLock::new(|| Pool::new("test", 8, 2));
+        let (l, addr) = listen().await;
+        tokio::spawn(serve_tls(l, acceptor(), &POOL, Duration::from_secs(20)));
+        let mut a = TcpStream::connect(addr).await.unwrap();
+        let mut b = TcpStream::connect(addr).await.unwrap();
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        assert!(closed_within(&mut c, Duration::from_secs(3)).await, "a third connection from one address was held");
+        assert!(!closed_within(&mut a, Duration::from_millis(300)).await, "an admitted connection was dropped");
+        assert!(!closed_within(&mut b, Duration::from_millis(300)).await, "an admitted connection was dropped");
     }
 }
 
