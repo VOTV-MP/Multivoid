@@ -580,6 +580,8 @@ bool ClickSelect() {
 
 int HoveredRow() { return g_hoverRow; }
 
+int ShownRows() { return g_visibleRows; }
+
 const char* SelectedId() { return g_selectedId.c_str(); }
 
 bool Selected(coop::net::lobby::LobbyRow& out, std::string* master) {

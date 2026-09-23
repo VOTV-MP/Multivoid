@@ -10,6 +10,7 @@
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
 #include "ui/server_browser_tabs.h"     // the master tabs the TABS phases click
+#include "ui/server_browser_rows.h"     // ShownRows -- the rows a shot can aim at
 #include "ui/native_screen.h"          // CursorOverWidget -- the kit's one hit test
 #include "ui/browser_input_screens.h"  // the input windows the last phases drive
 #include "ui/host_session_settings.h"  // ...and what NEXT must open, one step further
@@ -201,6 +202,8 @@ uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
 // The ini's net.master before a tab click, which a list from the environment must leave as it was.
 std::string g_tabIniBefore;
+// A skin shot's aim has been checked on this hold (the first tick after the aim, see kSkinHoldOther).
+bool     g_skinAimChecked    = false;
 // The session phase has seen the version warning in THIS run. A gate, unlike the other per-run
 // values here, which their own phase overwrites before reading: so Arm resets it.
 bool     g_sessWarned        = false;
@@ -349,7 +352,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                     g_selfCheckStep = kScrimMoveOut;
                     return;
                 }
-                const int rows = U::ChildCount(list);
+                const int rows = ui::server_browser_rows::ShownRows();
                 if (rows >= kMinRows && end >= kMinOverflow) break;   // both terms -- proceed
                 if (nowMs - g_scrollWaitStartMs >= kRowWaitMs) {
                     g_rowsSeen = rows;
@@ -366,7 +369,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             }
             return;   // HOLDING: do not advance the counter
         case kScrollProbe:
-            g_rowsSeen = U::ChildCount(list);
+            g_rowsSeen = ui::server_browser_rows::ShownRows();
             U::ScrollOffset(list, g_offAtRest);
             U::ScrollOffsetOfEnd(list, g_endAtRest);
             U::ViewOffsetFraction(list, g_fracAtRest);
@@ -712,7 +715,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 const bool haveList = U::WidgetScreenRect(list, ltl, lsz);
                 const bool inList = haveList && cur.x >= ltl.X && cur.x < ltl.X + lsz.X &&
                                     cur.y >= ltl.Y && cur.y < ltl.Y + lsz.Y;
-                const int32_t kids = U::ChildCount(list);
+                // The rows shown: a collapsed row keeps the rect it last painted with.
+                const int32_t kids = ui::server_browser_rows::ShownRows();
                 UE_LOGW("server_browser_native:   gate -- cursor (%ld,%ld), list rect "
                         "%s(%.0f,%.0f) %.0fx%.0f, contains=%d, children=%d",
                         cur.x, cur.y, haveList ? "" : "UNREAD ", ltl.X, ltl.Y, lsz.X, lsz.Y,
@@ -796,7 +800,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // a line asserting a highlight that is not in it.
             ue_wrap::FVector2D ltl{}, lsz{};
             float scale = 0.f;
-            const int32_t rows = U::ChildCount(list);
+            // The rows shown, not the panel's children: a list the fixture shrank keeps its
+            // collapsed rows, and an aim counted against those lands in empty space.
+            const int32_t rows = ui::server_browser_rows::ShownRows();
             if (!U::WidgetScreenRect(list, ltl, lsz, &scale) || scale <= 0.f ||
                 lsz.Y < kRowPx * scale * 5.f || rows < 5) {
                 UE_LOGE("server_browser_native: ROW SKIN SHOT SKIP -- the list is %.0f px "
@@ -818,15 +824,30 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 UE_LOGW("server_browser_native: ROW SKIN SHOT A -- the cursor is three rows "
                         "BELOW the selected one (lobby '%s'). The frame should show that row "
                         "purple with a grey border, the row under the cursor with a YELLOW "
-                        "border and yellow text, and the rest idle. (HoveredRow reads %d one "
-                        "tick later; below zero means the aim missed and the shot asserts "
-                        "nothing.)",
-                        selId, ui::server_browser_native::HoveredRow());
+                        "border and yellow text, and the rest idle.",
+                        selId);
+            g_skinAimChecked = false;
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
         case kSkinHoldOther:
         case kSkinHoldSelf:
+            // The aim is checked here, not where it was made: the list's hover pass runs after this
+            // self-check in the same tick, so at the aim HoveredRow still held the last pointer's
+            // row. A miss means the capture shows another frame than the shot's line describes.
+            if (!g_skinAimChecked) {
+                g_skinAimChecked = true;
+                const bool self = (g_selfCheckStep == kSkinHoldSelf);
+                const int want = self ? 1 : 4;   // the aims above: one and a half, four and a half
+                const int got = ui::server_browser_native::HoveredRow();
+                if (got == want)
+                    UE_LOGW("server_browser_native: ROW SKIN SHOT %s AIM PASS -- HoveredRow reads "
+                            "%d, the row the shot is about", self ? "B" : "A", got);
+                else
+                    UE_LOGE("server_browser_native: ROW SKIN SHOT %s AIM MISSED -- HoveredRow "
+                            "reads %d, not %d, so the capture holds another frame than the "
+                            "shot's line describes", self ? "B" : "A", got, want);
+            }
             if (nowMs < g_holdUntilMs) return;   // HOLDING: give the capture poll a window
             break;
         case kClickMove: {

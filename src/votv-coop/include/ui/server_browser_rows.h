@@ -84,6 +84,10 @@ bool ClickSelect();
 int         HoveredRow();
 const char* SelectedId();
 
+// How many rows the list shows now. Not the panel's child count, which is a high-water mark: rows
+// are grown and collapsed, never removed, so a list that shrank still holds the rows it had.
+int         ShownRows();
+
 // The chosen row's DATA, false when nothing is chosen, and in `master`, when asked, the master
 // its list came from, the one a join goes through. Resolved BY LOBBY ID against the rows last
 // rendered (invariant above). A selection whose lobby has since vanished from the list answers
