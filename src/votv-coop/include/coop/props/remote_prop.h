@@ -26,21 +26,24 @@ namespace coop::remote_prop {
 // runs only while the session is connected.
 void Tick(coop::net::Session& session);
 
-// Handle an incoming reliable release: the receiver closes the hold it names, converges the
-// copy's frozen and sleep to the holder's at the edge, re-enables simulation on the cached prop,
-// applies the launch velocity, and fires the prop's own thrown event when the launch speed
-// exceeds the threshold, so a passive drop stays silent and a real throw plays the game's own
-// sound and trail. Clears the cached pointer, so the next pose re-resolves. `senderSlot` is
-// the sender's slot from the reliable header, which identifies which slot's drive to clear (a
-// scan by key returned the first match and could clear the wrong slot when two slots briefly
-// held a prop with the same key). `localPlayer` gives the thrown event a non-null player; the
-// game's throw statistics credit the local player, a minor inaccuracy for the natural
-// effects.
+// Handle an incoming reliable release: the receiver closes the hold it names and, unless another
+// owner moves the prop now (this peer's own grab, another slot's drive, the host's driven-prop
+// channel), converges the copy's frozen and sleep to the holder's at the edge, puts it at the
+// holder's transform at the edge (a stuck wall-attachable stays where its stick put it),
+// re-enables simulation and applies the launch velocity unless it ended frozen, and fires the
+// prop's own thrown event when the launch speed exceeds the threshold, so a passive drop stays
+// silent and a real throw plays the game's own sound and trail. Clears the cached pointer, so the
+// next pose re-resolves. `senderSlot` is the sender's slot from the reliable header, which
+// identifies which slot's drive to clear (a scan by key returned the first match and could clear
+// the wrong slot when two slots briefly held a prop with the same key). `localPlayer` gives the
+// thrown event a non-null player; the game's throw statistics credit the local player, a minor
+// inaccuracy for the natural effects.
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
 
 // Close hold `holdGen` of the peer in `slot` (PropPoseSnapshot::holdGen): a pose of it that
 // arrives later is the tail of an ended stream and starts no drive. The release closes its own
-// hold; the stick lane closes the hold its stick ended. An older generation than the slot's last
+// hold, the stick lane the hold its stick ended, a slot's insert the hold on the drive it took,
+// and each pose of a newer hold the one before it. An older generation than the slot's last
 // closed one, 0, or a slot out of range changes nothing. Game thread.
 void CloseHold(int slot, uint16_t holdGen);
 

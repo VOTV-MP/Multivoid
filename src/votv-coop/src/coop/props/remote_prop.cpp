@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/pile_look.h"
+#include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
@@ -479,36 +480,46 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             }
         }
     }
-    // Someone else holds the prop, this peer's own player or another slot's drive: that hold owns its
-    // physics and its flags, and this release closes its own hold, clears its own drive and does
-    // nothing more.
-    if (propActor && ((localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, propActor)) ||
-                      IsActorDrivenByOtherThan(propActor, releasedSlot))) {
-        UE_LOGI("remote_prop: RELEASE of hold %u for %p, which another hold has now -- nothing to apply",
-                static_cast<unsigned>(payload.holdGen), propActor);
-        if (releasedSlot >= 0) ResetDriveState(g_drives[releasedSlot]);
+    // Someone else moves the prop -- this peer's own player, another slot's drive, the host's
+    // driven-prop channel parking it: that owner has its physics and its flags, and this release
+    // closes its own hold, clears its own drive and moves nothing. This slot's drive left the copy
+    // kinematic, which this peer's own grab cannot hold, so a grab here gets its body back.
+    const bool localGrab = propActor && localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, propActor);
+    const bool otherOwner = propActor && (IsActorDrivenByOtherThan(propActor, releasedSlot) ||
+                                          coop::prop_drive_stream::IsParked(propActor));
+    if (localGrab || otherOwner) {
+        UE_LOGI("remote_prop: RELEASE of hold %u for %p, which %s has now -- nothing to apply",
+                static_cast<unsigned>(payload.holdGen), propActor,
+                otherOwner ? "another drive" : "this peer's own grab");
+        if (releasedSlot >= 0) {
+            if (localGrab && !otherOwner) DriveTogglePhysics(propActor, meshToActOn, true);
+            ResetDriveState(g_drives[releasedSlot]);
+        }
         return;
     }
     // The holder's frozen and sleep at the release edge, before the physics decision below reads
     // them. A grab that reached this copy through no pose still ends unfrozen here, and a hold that
-    // ended in a drive slot's insert ends frozen here too. The host authors a trash body's physics.
+    // ended in a drive slot or a mount ends frozen here too. The host authors a trash body's physics.
     if (propActor && !HostAuthorsTrashBody(propActor))
         coop::prop_wire_parity::ConvergeFrozenSleep(propActor, payload.physFlags);
+    // Where the holder's copy was at the edge: this copy lets go from there even when the hold's last
+    // poses were lost, or none arrived, and a hold that ended frozen stays where it ended, which is
+    // where the holder's slot or mount put it. A stuck wall-attachable is the exception: its stick
+    // arrived first on the same lane, and the component's own re-trace placed it. The host authors a
+    // trash body's place.
+    const bool stuckOnWall = StickHoldsPhysicsOff(propActor) && coop::prop_stick_sync::IsWallAttachable(propActor);
+    if (propActor && payload.hasPose && !HostAuthorsTrashBody(propActor) && !stuckOnWall) {
+        ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
+        ue_wrap::engine::SetActorRotation(propActor,
+                                          ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+    }
     if (StickHoldsPhysicsOff(propActor)) {
-        // The prop froze while held -- a wall-attachable's stick (PropStickState arrived first on
-        // the same reliable lane), a slot's insert: no physics re-enable and no velocity, it stays
-        // where it froze; the drive cache still clears.
+        // The prop froze while held -- a wall-attachable's stick, a slot's insert, a mount: no
+        // physics re-enable and no velocity, it stays where it froze; the drive cache still clears.
         UE_LOGI("remote_prop: RELEASE for a prop frozen or static here %p -- physics stays off",
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;
-    }
-    // Where the holder's copy was at the edge: this copy lets go from there even when the hold's last
-    // poses were lost, or none arrived. The host authors a trash body's place.
-    if (propActor && payload.hasPose && !HostAuthorsTrashBody(propActor)) {
-        ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
-        ue_wrap::engine::SetActorRotation(propActor,
-                                          ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
     }
     // A thrown trash mirror is not simulated here: local physics would diverge from the host's
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
