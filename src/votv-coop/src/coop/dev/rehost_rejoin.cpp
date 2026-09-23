@@ -19,11 +19,10 @@
 namespace coop::dev::rehost_rejoin {
 namespace {
 
-namespace rows = ::coop::config_registry::rows;
 namespace WI = ue_wrap::world_identity;
 
 bool IsEnabled() {
-    static const bool s = coop::config::ResolveFlag(rows::rehost_rejoin);
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::rehost_rejoin);
     return s;
 }
 
@@ -43,8 +42,9 @@ void Tick(const coop::net::Session& session) {
     static const std::wstring path = ue_wrap::paths::ExeDir() + L"\\multivoid-rejoin.trigger";
     if (::GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return;
     ::DeleteFileW(path.c_str());
-    const std::string addr = coop::config::ResolveString(rows::net_peer) + ":" +
-                             std::to_string(coop::config::ResolveInt(rows::net_port));
+    const std::string addr =
+        coop::config::ResolveString(::coop::config_registry::rows::net_peer) + ":" +
+        std::to_string(coop::config::ResolveInt(::coop::config_registry::rows::net_port));
     const bool accepted = coop::session_manager::ConnectDirect(addr);
     UE_LOGI("rehost_rejoin: [C] the rig's trigger -- dialing %s again (dial #%d, accepted=%d)",
             addr.c_str(), ++g_dials, accepted ? 1 : 0);
