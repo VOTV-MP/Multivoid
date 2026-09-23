@@ -79,14 +79,15 @@ void UpdateWindowing(Field* f) {
     if (!f || !f->text || !f->box) return;
     if (f->remeasureIn < 0) return;
     if (f->remeasureIn-- > 0) return;   // the deferred tick has not arrived yet
-    ue_wrap::FVector2D desired{}, topLeft{}, allotted{};
+    ue_wrap::FVector2D desired{}, allotted{};
     // The guards run before the measured length is claimed: a measurement that never happened
     // must not disarm the retry, since MarkValueChanged re-arms only on a length change, and a
     // screen shown with an over-long prefill (not yet arranged, so a zero rect) would keep left
     // alignment until the player typed.
     auto retry = [f] { f->remeasureIn = 1; };
     if (!U::WidgetDesiredSize(f->text, desired)) { retry(); return; }
-    if (!U::WidgetScreenRect(f->box, topLeft, allotted)) { retry(); return; }
+    // Slate units on both sides: the desired size is one.
+    if (!U::WidgetLocalSize(f->box, allotted)) { retry(); return; }
     const float inner = allotted.X - 2.f * kFrameBorderPx - kTextGutterPx;
     // A widget Slate has never laid out reports a zero rect, a real answer but not one to act on;
     // ask again next tick.

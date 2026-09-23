@@ -124,16 +124,24 @@ bool ScrollOffsetOfEnd(void* scrollBox, float& out);
 // with ScrollOffsetOfEnd it makes a verdict possible.
 bool ViewOffsetFraction(void* scrollBox, float& out);
 
-// Geometry: where a widget is on screen, in desktop pixels, and how big it is. The answer to
-// "point the cursor at that button", replacing arithmetic: a self-check that reconstructed a
+// Geometry: where a widget is on screen and how big, both in Slate's absolute space, the space
+// the OS cursor is converted into (CursorToWidgetAbsolute) and SetCursorPos aims in. The answer
+// to "point the cursor at that button", replacing arithmetic: a self-check that reconstructed a
 // button's position from the window's design constants was a second implementation of the
 // layout the engine had performed, went stale one commit later, and its failure was
-// indistinguishable from the one it was built to find. `outTopLeft` is in the same space as
-// the OS cursor calls (Slate's absolute space for a game window is desktop pixels, so no DPI
-// factor appears); `outSize` is the allotted size, not the desired one. False, logged, if any
-// link is unresolved, both outs untouched; a widget never painted has no cached geometry and
-// legitimately reports a zero rect.
-bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize);
+// indistinguishable from the one it was built to find. `outSize` is the allotted size (not the
+// desired one) in that same space. A widget's local size is in Slate units, which the UI scale
+// separates from absolute space at every window height but 1080, and a local size beside an
+// absolute corner mis-sized every hit test there: on an 853x640 window, rows 38 px apart each
+// reported 64 px tall. `outScale`, when asked, is absolute over local, what a Slate-unit constant
+// measures in this space. False, logged, if any link is unresolved, the outs untouched; a widget
+// never painted has no cached geometry and legitimately reports a zero rect.
+bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize,
+                      float* outScale = nullptr);
+
+// The allotted size in the widget's own Slate units, for layout arithmetic against other Slate
+// units (a desired size, a row-height constant). Never for a hit test: see WidgetScreenRect.
+bool WidgetLocalSize(void* widget, FVector2D& outSize);
 
 
 // The OS cursor converted into the space WidgetScreenRect reports in, by Slate's own inverse

@@ -541,9 +541,9 @@ void Sync() {
         // structural change reads as a real position. The bound is computed from the rows' own
         // metrics, not read back: GetScrollOffsetOfEnd reports last frame's extent, and this runs
         // in the tick that changes it.
-        ue_wrap::FVector2D ltl{}, lsz{};
+        ue_wrap::FVector2D lsz{};   // Slate units, as the rows' metrics and the offset are
         float target = keepOffset;
-        if (U::WidgetScreenRect(g_list, ltl, lsz) && lsz.Y > 0.f) {
+        if (U::WidgetLocalSize(g_list, lsz) && lsz.Y > 0.f) {
             const float content = static_cast<float>(want) * (kRowH + kRowGapPx);
             const float maxOff  = content > lsz.Y ? content - lsz.Y : 0.f;
             if (target > maxOff) target = maxOff;

@@ -65,6 +65,7 @@ FnCache g_cachedGeom {L"Widget",         L"GetCachedGeometry",    nullptr, false
 FnCache g_getVis     {L"Widget",         L"GetVisibility",        nullptr, false};
 FnCache g_getParent  {L"Widget",         L"GetParent",            nullptr, false};
 FnCache g_localSize  {L"SlateBlueprintLibrary", L"GetLocalSize",   nullptr, false};
+FnCache g_absSize    {L"SlateBlueprintLibrary", L"GetAbsoluteSize", nullptr, false};
 FnCache g_localToAbs {L"SlateBlueprintLibrary", L"LocalToAbsolute", nullptr, false};
 FnCache g_screenToAbs{L"SlateBlueprintLibrary", L"ScreenToWidgetAbsolute", nullptr, false};
 FnCache g_setContent {L"ContentWidget",  L"SetContent",           nullptr, false};
@@ -249,40 +250,40 @@ bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out) {
     return true;
 }
 
-bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
+namespace {
+
+// The library's functions are static, so they dispatch on the class default object, as the
+// engine's own function-library calls do. Latched, and that is the difference between a read
+// and a full-array scan: the default-object lookup is the uncached object find, which walks
+// the whole array rendering every object's name, and this is called per row per moving frame
+// by the browser's hover pass. A default object never moves for the life of the process, so
+// one resolve is all there is; a dynamic-initialiser static runs it exactly once, including
+// when it fails, where a latch of success only would re-walk on every call with an
+// unthrottled error log beside it (which the log flushes on every non-info line).
+void* SlateLibrary() {
+    static void* const sLib = [] {
+        void* lib = R::FindClassDefaultObject(L"SlateBlueprintLibrary");
+        if (!lib) UE_LOGE("umg: SlateBlueprintLibrary has no CDO -- widget geometry unavailable");
+        return lib;
+    }();
+    return sLib;
+}
+
+// A widget's cached geometry, copied into `blob` as an opaque span. How many bytes a geometry
+// occupies is asked of the engine rather than declared here: in the local-to-absolute frame
+// `abs` the geometry is the first parameter, so the offset of the one after it is the padded
+// size of the struct, and the cached-geometry frame holds nothing but the returned geometry at
+// offset 0. The struct crosses from one frame to the other as an opaque span, and this file
+// never learns a single field of it.
+bool ReadCachedGeometry(void* widget, ParamFrame& abs, std::vector<uint8_t>& blob) {
     void* geomFn = Resolve(g_cachedGeom);
-    void* sizeFn = Resolve(g_localSize);
-    void* absFn  = Resolve(g_localToAbs);
-    if (!widget || !geomFn || !sizeFn || !absFn) return false;
-
-    // The library's functions are static, so they dispatch on the class default object, as the
-    // engine's own function-library calls do. Latched, and that is the difference between a read
-    // and a full-array scan: the default-object lookup is the uncached object find, which walks
-    // the whole array rendering every object's name, and this is called per row per moving frame
-    // by the browser's hover pass. A default object never moves for the life of the process, so
-    // one resolve is all there is; a dynamic-initialiser static runs it exactly once, including
-    // when it fails, where a latch of success only would re-walk on every call with an
-    // unthrottled error log beside it (which the log flushes on every non-info line).
-    static void* const sLib = [] { return R::FindClassDefaultObject(L"SlateBlueprintLibrary"); }();
-    void* lib = sLib;
-    if (!lib) {
-        UE_LOGE("umg: SlateBlueprintLibrary has no CDO -- WidgetScreenRect unavailable");
-        return false;
-    }
-
-    // How many bytes a geometry occupies, asked of the engine rather than declared here: in the
-    // local-to-absolute frame the geometry is the first parameter, so the offset of the one after
-    // it is the padded size of the struct, and the cached-geometry frame holds nothing but the
-    // returned geometry at offset 0. The struct crosses from one frame to the other as an opaque
-    // span, and this file never learns a single field of it.
-    ParamFrame abs(absFn);
+    if (!widget || !geomFn) return false;
     const int32_t geomBytes = abs.ParamOffset(L"LocalCoordinate");
     if (geomBytes <= 0) {
         UE_LOGE("umg: LocalToAbsolute has no 'LocalCoordinate' parameter (offset=%d) -- the "
                 "signature is not what this code was written against", geomBytes);
         return false;
     }
-
     ParamFrame geom(geomFn);
     if (geom.FrameSize() < geomBytes) {
         UE_LOGE("umg: GetCachedGeometry's frame is %d bytes but an FGeometry parameter is %d "
@@ -290,41 +291,72 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
         return false;
     }
     if (!Call(widget, geom)) return false;
+    blob.assign(static_cast<size_t>(geomBytes), 0);
+    return geom.GetRaw(L"ReturnValue", blob.data(), geomBytes);
+}
 
-    std::vector<uint8_t> blob(static_cast<size_t>(geomBytes), 0);
-    if (!geom.GetRaw(L"ReturnValue", blob.data(), geomBytes)) return false;
-
-    // The local size first, because it is what makes the rect a rect. The desired size answers a
-    // different question, what the widget asked for rather than what its parent gave it, and a
-    // button in a fill-weighted row is exactly where those two part company.
-    ParamFrame size(sizeFn);
-    // The cross-check, the only guard against silent corruption. Two drift modes are caught above
-    // (the coordinate parameter first, the geometry wider than its frame); the third is the
-    // geometry too small, a parameter inserted before it, and that one does not fail: the blob
-    // is a truncated prefix, the tail stays zero, and this returns true with a plausible wrong
-    // rect, which downstream means clicking the wrong row. The size call returns a vector, so its
-    // return offset must also be the padded size of the geometry parameter; two independent
-    // frames agreeing is a signature check, one frame's offset an assumption.
-    if (size.ParamOffset(L"Geometry") != 0 ||
-        size.ParamOffset(L"ReturnValue") != geomBytes) {
+// One size of that geometry: GetAbsoluteSize or GetLocalSize, which share a signature. The
+// allotted size, not the desired one: that answers a different question, what the widget asked
+// for rather than what its parent gave it, and a button in a fill-weighted row is exactly where
+// those two part company. The cross-check is the only guard against silent corruption. Two
+// drift modes are caught when the geometry is read (the coordinate parameter first, the
+// geometry wider than its frame); the third is the geometry too small, a parameter inserted
+// before it, and that one does not fail: the blob is a truncated prefix, the tail stays zero,
+// and a plausible wrong rect comes back, which downstream means clicking the wrong row. The size
+// call returns a vector, so its return offset must also be the padded size of the geometry
+// parameter; two independent frames agreeing is a signature check, one frame's offset an
+// assumption.
+bool GeometrySize(void* lib, FnCache& which, const std::vector<uint8_t>& blob, FVector2D& out) {
+    void* fn = Resolve(which);
+    if (!fn) return false;
+    const int32_t geomBytes = static_cast<int32_t>(blob.size());
+    ParamFrame size(fn);
+    if (size.ParamOffset(L"Geometry") != 0 || size.ParamOffset(L"ReturnValue") != geomBytes) {
         UE_LOGE("umg: SlateBlueprintLibrary signature drift -- LocalToAbsolute puts an "
-                "FGeometry at %d bytes but GetLocalSize disagrees (Geometry@%d, "
-                "ReturnValue@%d). Refusing rather than reading a truncated struct.",
-                geomBytes, size.ParamOffset(L"Geometry"), size.ParamOffset(L"ReturnValue"));
+                "FGeometry at %d bytes but %ls disagrees (Geometry@%d, ReturnValue@%d). "
+                "Refusing rather than reading a truncated struct.", geomBytes, which.fn,
+                size.ParamOffset(L"Geometry"), size.ParamOffset(L"ReturnValue"));
         return false;
     }
     if (!size.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
     if (!Call(lib, size)) return false;
+    out = size.Get<FVector2D>(L"ReturnValue");
+    return true;
+}
 
-    if (!abs.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
+}  // namespace
+
+bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize, float* outScale) {
+    void* absFn = Resolve(g_localToAbs);
+    void* lib = SlateLibrary();
+    if (!widget || !absFn || !lib) return false;
+    ParamFrame abs(absFn);
+    std::vector<uint8_t> blob;
+    if (!ReadCachedGeometry(widget, abs, blob)) return false;
+    FVector2D size{}, local{};
+    if (!GeometrySize(lib, g_absSize, blob, size)) return false;
+    if (outScale && !GeometrySize(lib, g_localSize, blob, local)) return false;
+    if (!abs.SetRaw(L"Geometry", blob.data(), static_cast<int32_t>(blob.size()))) return false;
     abs.Set<FVector2D>(L"LocalCoordinate", FVector2D{0.f, 0.f});
     if (!Call(lib, abs)) return false;
-    // Both writes after the last failure point. The header promises the outs are untouched on
+    // Every write after the last failure point. The header promises the outs are untouched on
     // false, and writing the size before the second call broke that: a caller that logs a rect it
     // was told not to trust printed a half-updated one.
-    outSize    = size.Get<FVector2D>(L"ReturnValue");
+    outSize    = size;
     outTopLeft = abs.Get<FVector2D>(L"ReturnValue");
+    if (outScale)
+        *outScale = local.Y > 0.f ? size.Y / local.Y : (local.X > 0.f ? size.X / local.X : 0.f);
     return true;
+}
+
+bool WidgetLocalSize(void* widget, FVector2D& outSize) {
+    void* absFn = Resolve(g_localToAbs);
+    void* lib = SlateLibrary();
+    if (!widget || !absFn || !lib) return false;
+    ParamFrame abs(absFn);
+    std::vector<uint8_t> blob;
+    if (!ReadCachedGeometry(widget, abs, blob)) return false;
+    return GeometrySize(lib, g_localSize, blob, outSize);
 }
 
 bool ViewOffsetFraction(void* scrollBox, float& out) {

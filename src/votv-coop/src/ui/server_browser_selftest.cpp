@@ -231,7 +231,7 @@ int      g_worldBefore       = -2;   // -2 = unsampled; -1 is New game, a real v
 
 // One row's height (server_browser_native's kRowH), a constant rather than measured: the aim only
 // has to land inside a row, and the verdict prints the index it got, so a drift shows as a
-// different index.
+// different index. Slate units, so an aim multiplies it by the list's scale (WidgetScreenRect).
 constexpr float kRowPx = 64.f;
 
 // The hosting window's rows are 56; one constant for both landed inside row 0 only by margin.
@@ -674,14 +674,17 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // Aim at the second row: the first row's top edge is also the list's, so a rounding
             // error there would be the harness's failure. One and a half rows down is unambiguous.
             ue_wrap::FVector2D ltl{}, lsz{};
-            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 2.f) {
-                UE_LOGE("server_browser_native: ROW HOVER SKIP -- the list is %.0f px tall, "
-                        "too short to hold the two rows this phase aims between", lsz.Y);
+            float scale = 0.f;
+            if (!U::WidgetScreenRect(list, ltl, lsz, &scale) || scale <= 0.f ||
+                lsz.Y < kRowPx * scale * 2.f) {
+                UE_LOGE("server_browser_native: ROW HOVER SKIP -- the list is %.0f px tall at "
+                        "scale %.2f, too short to hold the two rows this phase aims between",
+                        lsz.Y, scale);
                 g_selfCheckStep = kClickMove - 1;   // fall through to the X phases
                 return;
             }
             PlaceCursorOnAbsolute(ltl.X + lsz.X * 0.5f,
-                                ltl.Y + kRowPx * 1.5f);
+                                ltl.Y + kRowPx * scale * 1.5f);
             break;
         }
         case kRowRead: {
@@ -783,8 +786,10 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // with three lobbies the aim lands in empty space and the shot would be archived under
             // a line asserting a highlight that is not in it.
             ue_wrap::FVector2D ltl{}, lsz{};
+            float scale = 0.f;
             const int32_t rows = U::ChildCount(list);
-            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 5.f || rows < 5) {
+            if (!U::WidgetScreenRect(list, ltl, lsz, &scale) || scale <= 0.f ||
+                lsz.Y < kRowPx * scale * 5.f || rows < 5) {
                 UE_LOGE("server_browser_native: ROW SKIN SHOT SKIP -- the list is %.0f px "
                         "tall with %d row(s); these shots need five. Whether the hover and "
                         "selection tints DRAW is UNMEASURED -- not passing.", lsz.Y, rows);
@@ -792,7 +797,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 return;
             }
             PlaceCursorOnAbsolute(ltl.X + lsz.X * 0.5f,
-                                ltl.Y + kRowPx * (self ? 1.5f : 4.5f));
+                                ltl.Y + kRowPx * scale * (self ? 1.5f : 4.5f));
             // The needle the rig captures on; it names what the frame should show, so the shot is
             // falsifiable by looking.
             if (self)
@@ -844,31 +849,30 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // extent; the list is the second reading.
             {
                 ue_wrap::FVector2D stl{}, ssz{}, ltl{}, lsz{};
-                const bool haveScrim = U::WidgetScreenRect(scrim, stl, ssz);
+                float uiScale = 0.f;
+                const bool haveScrim = U::WidgetScreenRect(scrim, stl, ssz, &uiScale);
                 const bool haveList  = U::WidgetScreenRect(list, ltl, lsz);
                 UE_LOGW("server_browser_native: space calibration -- scrim %s%.0fx%.0f at "
-                        "(%.0f,%.0f), list %s%.0fx%.0f at (%.0f,%.0f). A scrim of exactly "
-                        "the client size means absolute space IS client pixels; anything "
-                        "smaller is the UI scale, and every other number here divides by it.",
+                        "(%.0f,%.0f), list %s%.0fx%.0f at (%.0f,%.0f), UI scale %.3f. A scrim "
+                        "of exactly the client size means absolute space IS client pixels, "
+                        "whatever the UI scale.",
                         haveScrim ? "" : "UNREAD ", ssz.X, ssz.Y, stl.X, stl.Y,
-                        haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y);
-                // And something reads it: at any scale but 1 this harness is void, not failing
-                // (SetCursorPos takes desktop pixels, Slate reports absolute units, and they
-                // coincide only while the viewport is unscaled). A window that came up 1392x782
-                // instead of 1920x1080 once produced three false widget verdicts. So say VOID,
-                // loudly, about the run.
+                        haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y, uiScale);
+                // And something reads it: every aim here is a SetCursorPos, which takes pixels, at
+                // a point in absolute space, so the harness holds only while the two coincide. The
+                // UI scale no longer breaks that -- the rects carry it -- but a desktop scaled by
+                // the OS, or a viewport short of its window, still would. So say VOID, loudly.
                 if (haveScrim && w > 0 && h > 0) {
                     const float sx = ssz.X / static_cast<float>(w);
                     const float sy = ssz.Y / static_cast<float>(h);
                     if (sx < 0.99f || sx > 1.01f || sy < 0.99f || sy > 1.01f)
                         UE_LOGE("server_browser_native: SPACE VOID -- the scrim spans "
-                                "%.0fx%.0f Slate units over a %dx%d client, so absolute "
-                                "space is scaled by %.3fx%.3f and is NOT desktop pixels. "
-                                "Every driven click in this run aims at the wrong place and "
-                                "every geometry verdict below is meaningless. The usual "
-                                "cause is the game window not coming up at the size mp.py "
-                                "asked for -- fix the window, then re-run; do not read the "
-                                "failures as widget defects.",
+                                "%.0fx%.0f in absolute space over a %dx%d client (%.3fx%.3f), "
+                                "so absolute space is NOT client pixels here. Every driven "
+                                "click in this run aims at the wrong place and every geometry "
+                                "verdict below is meaningless: look for display scaling on the "
+                                "desktop or a viewport that does not fill the window; do not "
+                                "read the failures as widget defects.",
                                 ssz.X, ssz.Y, w, h, sx, sy);
                 }
             }
@@ -965,8 +969,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             void* saveList = ui::host_window_native::SaveListWidget();
             const int rows = ui::host_window_native::SaveRowCount();
             ue_wrap::FVector2D tl{}, sz{};
-            if (rows <= 0 || !saveList || !U::WidgetScreenRect(saveList, tl, sz) ||
-                sz.Y < kHostRowPx) {
+            float scale = 0.f;
+            if (rows <= 0 || !saveList || !U::WidgetScreenRect(saveList, tl, sz, &scale) ||
+                scale <= 0.f || sz.Y < kHostRowPx * scale) {
                 UE_LOGE("host_window_native: WORLD LIST SKIP -- %d save row(s), list rect "
                         "%.0fx%.0f. This rig has no saves to pick, so whether the world list "
                         "can be clicked is UNMEASURED -- not passing.", rows, sz.X, sz.Y);
@@ -979,7 +984,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // kHostRowPx, not the browser's kRowPx: this window's rows are 56 px, and half of 64
             // landed inside row 0 by margin, not by construction.
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f,
-                                tl.Y + kHostRowPx * 0.5f);
+                                tl.Y + kHostRowPx * scale * 0.5f);
             break;
         }
         case kWorldRead:
