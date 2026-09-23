@@ -544,9 +544,9 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     noteSent(rc, static_cast<int>(sizeof(pkt)));
                 }
                 // A joiner still loading gets no held-prop pose, as it gets no relayed one: the
-                // release and the stick that close a hold wait for its world (session_lanes.h), so
-                // a pose sent now names a hold it never sees end, and would drive the copy in the
-                // world it is loading.
+                // release and the stick that close a hold are not sent to a world that is not ready
+                // either (session_lanes.h), so a pose sent now names a hold it never sees end, and
+                // would drive the copy in the world it is loading.
                 if (haveProp && IsSlotWorldReady(i)) {
                     PropPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::PropPose,
@@ -615,7 +615,11 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     noteSent(rc, static_cast<int>(static_cast<uint32_t>(tcMsgLen)));
                 }
-                if (pdMsgLen > 0) {  // driven-prop batch -- body built once above; stamp per-peer
+                // A joiner still loading gets no driven-prop pose either: the end edge that would hand
+                // its copy back is not sent to a world that is not ready (session_lanes.h), so a park
+                // started now could outlive the drive, and the host re-sends every driven prop's pose
+                // at the ready edge (prop_drive_host::OnPeerWorldReady).
+                if (pdMsgLen > 0 && IsSlotWorldReady(i)) {  // driven-prop batch -- body built once above; stamp per-peer
                     PacketHeader pdHdr{};
                     WriteHeader(pdHdr, MsgType::PropDrivePose, sendSeq_.fetch_add(1), ownEpoch_);
                     std::memcpy(pdBuf, &pdHdr, sizeof(pdHdr));
