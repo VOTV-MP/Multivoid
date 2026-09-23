@@ -406,6 +406,15 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         UE_LOGI("drive_sync: slot role=%u INSERT eid=%u applied (from slot %u)",
                 p.role, p.driveEid, senderSlot);
     } else {
+        // A newer line supersedes an older pending one for the role, an eject as much as an insert:
+        // the slot's base can read the same after an eject as when the insert was queued, so the
+        // base check at replay would let a stale insert put the drive back in a slot it has left.
+        if (!fromPending) {
+            for (auto it2 = g_pending.begin(); it2 != g_pending.end();) {
+                if (it2->kind == 0 && it2->slotLine.role == p.role) it2 = g_pending.erase(it2);
+                else ++it2;
+            }
+        }
         if (!cur) {  // already empty: prime + belt latch completion
             g_slotBase[p.role] = {true, false, 0};
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
