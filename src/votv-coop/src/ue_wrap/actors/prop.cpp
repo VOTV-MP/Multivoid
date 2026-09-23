@@ -1,6 +1,6 @@
 // ue_wrap/actors/prop.cpp -- the prop accessors: class tests for the prop and pile lineages,
 // keys, the save-parity fields, the chip type, mesh and physics reads, and the GUObjectArray
-// finders. See ue_wrap/actors/prop.h.
+// finders. See ue_wrap/actors/prop.h; the physics-state flags are ue_wrap/actors/prop_flags.
 
 #include "ue_wrap/actors/prop.h"
 
@@ -312,44 +312,6 @@ std::wstring GetKeyString(void* prop) {
     return R::ToString(key);
 }
 
-bool IsHeavy(void* prop) {
-    if (!prop) return false;
-    return ReadField<bool>(prop, P::off::Aprop_propData_heavy);
-}
-
-bool IsStatic(void* prop) {
-    if (!prop) return false;
-    return ReadField<bool>(prop, P::off::Aprop_Static);
-}
-
-bool IsFrozen(void* prop) {
-    if (!prop) return false;
-    return ReadField<bool>(prop, P::off::Aprop_frozen);
-}
-
-void WriteStatic(void* prop, bool on) {
-    if (!prop) return;
-    *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_Static) = on;
-}
-
-void WriteFrozen(void* prop, bool on) {
-    if (!prop) return;
-    *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(prop) + P::off::Aprop_frozen) = on;
-}
-
-bool CallAwakeUnfreeze(void* prop) {
-    if (!prop) return false;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(prop), L"awakeUnfreeze");
-    if (!fn) return false;
-    ParamFrame f(fn);
-    return f.valid() && Call(prop, f);
-}
-
-bool IsSleeping(void* prop) {
-    if (!prop) return false;
-    return ReadField<bool>(prop, P::off::Aprop_sleep);
-}
-
 R::FName GetPropName(void* prop) {
     // The lineage gate, as in GetStaticMesh: the Name offset is a stray byte on a non-prop keyed
     // interactable.
@@ -360,11 +322,6 @@ R::FName GetPropName(void* prop) {
 std::wstring GetPropNameString(void* prop) {
     const R::FName n = GetPropName(prop);
     return n.ComparisonIndex == 0 ? std::wstring() : R::ToString(n);
-}
-
-bool ReadRemoveWOrespawn(void* prop) {
-    if (!prop) return false;
-    return ReadField<bool>(prop, P::off::Aprop_removeWOrespawn);
 }
 
 bool WriteSpParityIdentity(void* prop, R::FName nameRow,
