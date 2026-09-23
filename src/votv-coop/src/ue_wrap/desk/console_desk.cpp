@@ -75,19 +75,22 @@ FieldSlot g_fields[] = {
 
 // The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the same
 // update family the game's own apply chain uses, so a mirror repaint goes through the
-// blueprint's own painters (LEDs, toggles, text panes). None was found to write state; the comp
-// repaint takes a condition and is dispatched separately.
-struct RefreshSlot { const wchar_t* name; void* fn; };
+// blueprint's own painters (LEDs, toggles, text panes); the comp repaint takes a condition and is
+// dispatched separately. updToggles is not state-clean: it sets the local player's
+// lookAtComponent to none, the game's way of making the HUD rebuild the desk's hint after a
+// press. So it runs on a state apply and never on the sim pulse (`onPulse`): at 3 Hz it rebuilt
+// a guest's hint and action menu three times a second, whatever the guest was looking at.
+struct RefreshSlot { const wchar_t* name; void* fn; bool onPulse; };
 RefreshSlot g_refresh[] = {
-    { L"updText",            nullptr },
-    { L"updToggles",         nullptr },
-    { L"updPolarity",        nullptr },
-    { L"updVolume",          nullptr },
-    { L"updCoordLights",     nullptr },
-    { L"updPlaybackLights",  nullptr },
-    { L"updPolarityLights",  nullptr },
-    { L"updMaxLevelLights",  nullptr },
-    { L"updateCoordCoords",  nullptr },
+    { L"updText",            nullptr, true },
+    { L"updToggles",         nullptr, false },
+    { L"updPolarity",        nullptr, true },
+    { L"updVolume",          nullptr, true },
+    { L"updCoordLights",     nullptr, true },
+    { L"updPlaybackLights",  nullptr, true },
+    { L"updPolarityLights",  nullptr, true },
+    { L"updMaxLevelLights",  nullptr, true },
+    { L"updateCoordCoords",  nullptr, true },
 };
 void* g_writeToCoordLogFn = nullptr;  // writeToCoordLog_2 (the LIVE log writer)
 
@@ -618,10 +621,11 @@ bool WriteSimOutputs(const SimOutputs& in, bool repaint) {
     *reinterpret_cast<float*>(dld + ue_wrap::signal_dynamic::kOff_decoded) = in.decoded;
     // Repaint only on the throttled pulse, never per tick: the interpolation stream raw-writes
     // at 60 Hz for smoothness and the widget's own tick repaints the self-painting screens; this
-    // pulse (about 3 Hz) covers the fields only the update verbs paint.
+    // pulse (about 3 Hz) covers the fields only the update verbs paint. The toggles are not a sim
+    // output, and their painter is the one that is not state-clean.
     if (repaint) {
         for (auto& r : g_refresh) {
-            if (!r.fn) continue;
+            if (!r.fn || !r.onPulse) continue;
             ue_wrap::ParamFrame f(r.fn);
             if (f.valid()) ue_wrap::Call(d, f);
         }
