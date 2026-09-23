@@ -334,6 +334,11 @@ void ClearForSlot(int peerSlot) {
     g_lastFlushedKeyedPos[peerSlot].clear();
 }
 
+bool HasCapture(int peerSlot) {
+    if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
+    return !g_blobKeyedXforms[peerSlot].empty();  // filled at the capture, retired when the window closes
+}
+
 bool IsLateWindowOpen(int peerSlot) {
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
     return g_flushArmUntil[peerSlot].time_since_epoch().count() != 0;  // disarmed at expiry and at ClearForSlot

@@ -42,7 +42,23 @@ namespace E  = ue_wrap::engine;
 namespace FX = ue_wrap::fire_extinguisher;
 namespace PR = ue_wrap::prop;
 
+// carry: the host takes it off and carries it off. short: the host lets go the moment it holds it.
+// client: the client carries, the host watches. join: the host takes it off while a joiner loads.
+enum class Arm { Off, Carry, Short, Client, Join };
 enum class Step { WaitJoin, WalkTo, Aim, Grab, WalkAway, Rest, Done, Invalid };
+
+Arm ArmOf() {
+    static const Arm a = [] {
+        const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::fireext_drill);
+        return v == "carry" ? Arm::Carry : v == "short" ? Arm::Short : v == "client" ? Arm::Client
+             : v == "join" ? Arm::Join : Arm::Off;
+    }();
+    return a;
+}
+
+// The peer that grabs: the client in the client arm, the host otherwise.
+bool LocalActs() { return (ArmOf() == Arm::Client) != coop::roster::LocalIsHost(); }
+char Who() { return coop::roster::LocalIsHost() ? 'H' : 'C'; }
 
 constexpr float kReachCm        = 110.f;  // the director's stop distance from the extinguisher, level
 constexpr float kCarryCm        = 450.f;  // how far off the carry's end should be
@@ -165,7 +181,7 @@ void TickWatch(char who) {
     }
 }
 
-// ---- The host's steps ---------------------------------------------------------------------------
+// ---- The acting peer's steps -------------------------------------------------------------------
 
 Step g_step = Step::WaitJoin;
 ue_wrap::CachedObjRef g_target;
@@ -262,8 +278,8 @@ bool PickTarget(void* player) {
     }
     if (!g_target.Raw()) return false;
     g_mountPos = E::GetActorLocation(g_target.Get());
-    UE_LOGI("[FIREEXT-DRILL] [H] target key='%ls' at (%.1f, %.1f, %.1f), %.0f cm from the player", g_targetKey.c_str(),
-            g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best);
+    UE_LOGI("[FIREEXT-DRILL] [%c] target key='%ls' at (%.1f, %.1f, %.1f), %.0f cm from the player", Who(),
+            g_targetKey.c_str(), g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best);
     return true;
 }
 
@@ -286,26 +302,39 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out) {
 void LogTarget(const char* what) {
     ReadMounts();
     void* t = g_target.Get();
-    if (!t) { UE_LOGI("[FIREEXT-DRILL] [H] %s key='%ls' -- the extinguisher is gone", what, g_targetKey.c_str()); return; }
+    if (!t) { UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' -- the extinguisher is gone", Who(), what, g_targetKey.c_str()); return; }
     const ue_wrap::FVector at = E::GetActorLocation(t);
-    UE_LOGI("[FIREEXT-DRILL] [H] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
-            what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
+    UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
+            Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
             IsMounted(t) ? 1 : 0);
 }
 
-void HostStep(coop::net::Session& s, void* player) {
+// When the acting peer may start. carry and short: a client's join and its join window are over,
+// since while the host's late flush is armed a move reaches the joiner as the join's position
+// correction rather than through the lane under test. join: the opposite, a joiner whose world was
+// captured and has not come up, so the whole move lands inside its load. client: the client's own
+// join is over.
+bool ActorMayStart(coop::net::Session& s) {
+    if (ArmOf() == Arm::Client)
+        return coop::net_pump::HasAnnouncedWorldReady() &&
+               coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
+        if (ArmOf() == Arm::Join) {
+            if (coop::join_window_baseline::HasCapture(slot) && !s.IsSlotWorldReady(slot)) return true;
+        } else if (s.IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot) &&
+                   !coop::join_window_baseline::IsLateWindowOpen(slot)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ActStep(coop::net::Session& s, void* player) {
     ++g_stepTicks;
     switch (g_step) {
     case Step::WaitJoin: {
-        // A client's join is over and so is its join window: while the late flush is armed, a move
-        // of the host's reaches the joiner as the join's position correction, not through the lane
-        // under test.
-        bool joined = false;
-        for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && !joined; ++slot)
-            joined = s.IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot) &&
-                     !coop::join_window_baseline::IsLateWindowOpen(slot);
-        if (!joined) return;
-        ArmWatch('H');
+        if (!ActorMayStart(s)) return;
+        if (!g_watchArmed) ArmWatch(Who());
         if (!PickTarget(player)) { Invalid("no mounted, frozen extinguisher in this world"); return; }
         StartWalk(g_mountPos, kReachCm, /*carry=*/false);
         Go(Step::WalkTo);
@@ -321,7 +350,7 @@ void HostStep(coop::net::Session& s, void* player) {
         void* t = g_target.Get();
         if (!t) { Invalid("the extinguisher died before the grab"); return; }
         if (E::ReadMainPlayerHitActor(player) == t) {
-            UE_LOGI("[FIREEXT-DRILL] [H] the trace took the extinguisher at fan pose %d", g_aimPose);
+            UE_LOGI("[FIREEXT-DRILL] [%c] the trace took the extinguisher at fan pose %d", Who(), g_aimPose);
             Go(Step::Grab);
             return;
         }
@@ -329,7 +358,7 @@ void HostStep(coop::net::Session& s, void* player) {
         const auto& fan = AimFan();
         if (g_aimPose >= static_cast<int>(fan.size())) {
             void* hit = E::ReadMainPlayerHitActor(player);
-            UE_LOGI("[FIREEXT-DRILL] [H] the fan ended on '%ls'", hit ? R::ClassNameOf(hit).c_str() : L"nothing");
+            UE_LOGI("[FIREEXT-DRILL] [%c] the fan ended on '%ls'", Who(), hit ? R::ClassNameOf(hit).c_str() : L"nothing");
             Invalid("no aim the trace would take");
             return;
         }
@@ -357,12 +386,19 @@ void HostStep(coop::net::Session& s, void* player) {
                 use = f.valid() && f.Set<bool>(L"sec", false) && ue_wrap::Call(player, f);
             }
             const bool post = CallWithPlayer(t, L"playerGrabbed", player);
-            UE_LOGI("[FIREEXT-DRILL] [H] grab chain: playerGrabbed_pre=%d useAction=%d playerGrabbed=%d",
-                    pre ? 1 : 0, use ? 1 : 0, post ? 1 : 0);
+            UE_LOGI("[FIREEXT-DRILL] [%c] grab chain: playerGrabbed_pre=%d useAction=%d playerGrabbed=%d",
+                    Who(), pre ? 1 : 0, use ? 1 : 0, post ? 1 : 0);
             return;
         }
         if (Grabbing(player) == t) {
             LogTarget("GRABBED");
+            if (ArmOf() == Arm::Short || ArmOf() == Arm::Join) {
+                // Let go at once: the stream carries a pose or two, then the release.
+                CallOnPlayer(player, L"dropGrabObject");
+                LogTarget("DROPPED");
+                Go(Step::Rest);
+                return;
+            }
             ue_wrap::FVector end{};
             if (!PickCarryEnd(player, end)) { Invalid("no NavMesh route to carry it along"); return; }
             StartWalk(end, 80.f, /*carry=*/true);
@@ -390,7 +426,7 @@ void HostStep(coop::net::Session& s, void* player) {
         return;
     }
     case Step::Done:
-        UE_LOGI("[FIREEXT-DRILL] HOST DONE");
+        UE_LOGI("[FIREEXT-DRILL] ACTOR DONE");
         g_step = Step::Invalid;  // terminal: nothing further runs, and nothing is printed twice
         g_walk.reset();
         return;
@@ -401,30 +437,29 @@ void HostStep(coop::net::Session& s, void* player) {
 
 }  // namespace
 
-bool IsEnabled() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::fireext_drill);
-    return s;
-}
+bool IsEnabled() { return ArmOf() != Arm::Off; }
 
 void Tick(coop::net::Session* session) {
     if (!IsEnabled() || !session || !session->connected()) return;
     if (!FX::ResolveNames()) return;
-    if (coop::roster::LocalIsHost()) {
+    if (LocalActs()) {
         if (g_step != Step::Invalid) {
             void* player = coop::players::Registry::Get().Local();
             if (!player || !R::IsLive(player) || !E::GetController(player)) return;
-            HostStep(*session, player);
+            ActStep(*session, player);
         }
-        TickWatch('H');
+        TickWatch(Who());
         return;
     }
+    // The watching peer arms at its own join's end, or at once on a host (its world is up).
     if (!g_watchArmed) {
-        if (!coop::net_pump::HasAnnouncedWorldReady() ||
-            coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
+        if (!coop::roster::LocalIsHost() &&
+            (!coop::net_pump::HasAnnouncedWorldReady() ||
+             coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle))
             return;
-        ArmWatch('C');
+        ArmWatch(Who());
     }
-    TickWatch('C');
+    TickWatch(Who());
 }
 
 void OnDisconnect() {

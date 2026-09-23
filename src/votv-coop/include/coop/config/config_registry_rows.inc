@@ -380,10 +380,13 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VO
     "just short of midnight. awake: both peers stay up. asleep: both go to bed first, so the "
     "midnight falls inside the shared sleep's fast-forward. Run it on a fresh host world; every "
     "refused step is logged and ends the arm as invalid.")
-CFG_FLAG(fireext_drill, "fireext_drill", "dev", false, "VOTVCOOP_FIREEXT_DRILL",
-    "Drill (BOTH peers): once a client's join is over, the host walks to the nearest wall-mounted "
-    "fire extinguisher, takes it off the mount through the use key's own grab chain, carries it a "
-    "few metres and drops it. Both peers print every extinguisher they have and every move of one.")
+CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
+    "VOTVCOOP_FIREEXT_DRILL",
+    "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "
+    "chain. carry: the host carries it a few metres once a client's join is over. short: the host "
+    "lets go the moment it holds it. client: the client carries it and the host watches. join: the "
+    "host takes it off while a joiner is still loading. Both peers print every extinguisher they "
+    "have and every move of one.")
 CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "

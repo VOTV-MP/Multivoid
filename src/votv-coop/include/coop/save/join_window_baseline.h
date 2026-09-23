@@ -72,6 +72,10 @@ void RecordGrabTimePileXform(coop::element::ElementId eid, const ue_wrap::FVecto
 // A peer left, or its stream was cancelled: drop its baseline and disarm its late flush.
 void ClearForSlot(int peerSlot);
 
+// True from `peerSlot`'s capture instant until its join window closes: the world a joiner is
+// handed has been taken, whether or not its load is over.
+bool HasCapture(int peerSlot);
+
 // True while `peerSlot`'s late flush is armed: a keyed prop the host moves now reaches that joiner
 // as a position correction, the join's own reconcile rather than the lane that owns the move. A
 // drill measuring a lane's own delivery starts once this is false.
