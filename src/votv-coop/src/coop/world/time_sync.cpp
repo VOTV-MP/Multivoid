@@ -11,11 +11,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 
 namespace coop::time_sync {
 namespace {
 
 namespace DNC = ue_wrap::daynightcycle;
+using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_suppressedClient = false;  // we zeroed the local TimeScale (client)
@@ -28,15 +30,29 @@ std::atomic<bool> g_sleepAccelerate{false};
 // The host's day number as the last applied correction carried it; -1 before the first.
 std::atomic<int32_t> g_lastHostDayZ{-1};
 
+// HOST: when a sample is due. One is sent when the clock has moved half a game minute since the last
+// one sent, so a sample never carries the clock across more than one minute boundary even with one
+// datagram lost, and at the latest after the resting interval. Measured on the clock itself (the
+// day number times maxTime, plus `day`), whatever moved it: the sleep's time dilation, the difficulty,
+// the day-length rule, a rewind or a set clock, which is sent at once.
+constexpr double kGameMinutesPerDay = 1440.0;
+constexpr auto   kRestInterval = std::chrono::milliseconds(500);
+double g_sentAbs = -1.0;
+Clock::time_point g_sentAt{};
+
+// CLIENT: the samples applied since the last convergence line, which reports them every 10 s.
+uint32_t g_appliedSince = 0;
+Clock::time_point g_nextStreamLine{};
+
 float ClientTimeScale() { return g_sleepAccelerate.load(std::memory_order_acquire) ? 1.0f : 0.0f; }
 
 // The client daynightCycle is a PURE host-authoritative mirror frozen at TimeScale=0 and never
 // free-runs, which is what makes the load-bearing invariant hold: the client's `day` advances
 // only when an apply writes it, so it never crosses maxTime locally and the midnight cascade,
 // which the cycle's own tick fires on `day > maxTime`, stays unreachable. The host's clock streams as an
-// UNRELIABLE ClockPose snapshot about twice a second off the session net thread, refreshing the
-// frozen mirror at HH:MM display granularity. The RELIABLE TimeSync is kept only for the
-// connect-edge guaranteed initial sync -- there is no periodic reliable push.
+// UNRELIABLE ClockPose sample each time it has moved half a game minute, and at least twice a second,
+// refreshing the frozen mirror at HH:MM display granularity. The RELIABLE TimeSync is kept only for
+// the connect-edge guaranteed initial sync -- there is no periodic reliable push.
 
 bool MakePayload(coop::net::TimeSyncPayload& out) {
     float t = 0, d = 0, s = 0;
@@ -118,12 +134,19 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (s->role() == coop::net::Role::Host) {
-        // HOST: publish the current clock every tick; the session net thread fans it out as an
-        // unreliable ClockPose snapshot on its OWN ~500 ms throttle. Cheap -- two raw reflected
-        // reads and a mutex'd copy -- and MakePayload returns false until the cycle is streamed in,
-        // so we never publish garbage.
+        // HOST: read the clock every tick and hand the net thread a sample when one is due. Cheap --
+        // a few cached field reads -- and MakePayload returns false until the cycle is streamed in,
+        // so we never send garbage.
         coop::net::TimeSyncPayload p{};
-        if (MakePayload(p)) s->SetHostClock(true, p);
+        float maxT = 0.f;
+        if (!MakePayload(p) || !DNC::ReadMaxTime(maxT) || maxT <= 0.f) return;
+        const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
+        const auto now = Clock::now();
+        const bool moved = g_sentAbs < 0.0 || std::fabs(abs - g_sentAbs) >= maxT / (2.0 * kGameMinutesPerDay);
+        if (!moved && now - g_sentAt < kRestInterval) return;
+        s->SendHostClock(p);
+        g_sentAbs = abs;
+        g_sentAt = now;
     } else {
         // CLIENT: drain the latest unreliable host clock + apply on arrival. Between arrivals the
         // frozen mirror holds (pure host-auth mirror -- no local sim). The reliable connect-edge
@@ -132,10 +155,14 @@ void Tick() {
         bool isNew = false;
         if (s->TryGetHostClock(p, &isNew) && isNew) {
             ApplyClockSnapshot(p);
-            static int s_n = 0;
-            if ((s_n++ % 20) == 0)  // ~every 10s at 2 Hz -- confirm convergence, not spam
-                UE_LOGI("time_sync: applied STREAM host clock totalTime=%.1f day=%.1f (client scale=%.0f)",
-                        p.totalTime, p.day, ClientTimeScale());
+            ++g_appliedSince;
+            const auto now = Clock::now();
+            if (now >= g_nextStreamLine) {  // confirms convergence and the stream's rate, every 10 s
+                g_nextStreamLine = now + std::chrono::seconds(10);
+                UE_LOGI("time_sync: applied STREAM host clock totalTime=%.1f day=%.1f (client scale=%.0f; "
+                        "samples since the last line: %u)", p.totalTime, p.day, ClientTimeScale(), g_appliedSince);
+                g_appliedSince = 0;
+            }
         }
     }
 }
@@ -145,6 +172,10 @@ int32_t LastHostDayZ() { return g_lastHostDayZ.load(std::memory_order_acquire); 
 void OnDisconnect() {
     g_sleepAccelerate.store(false, std::memory_order_release);
     g_lastHostDayZ.store(-1, std::memory_order_release);
+    g_sentAbs = -1.0;
+    g_sentAt = Clock::time_point{};
+    g_appliedSince = 0;
+    g_nextStreamLine = Clock::time_point{};
     if (g_suppressedClient) {
         // Restore: 1.0 is the game's own TimeScale restore value, the one its cycle writes back.
         // Single-player day-rolling resumes from the last synced clock, and the dailyDelivery latch

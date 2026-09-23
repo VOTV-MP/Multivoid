@@ -62,10 +62,10 @@ void Session::SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose) {
     if (set) localDeskCursor_ = pose;
 }
 
-void Session::SetHostClock(bool set, const TimeSyncPayload& clock) {
+void Session::SendHostClock(const TimeSyncPayload& clock) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalHostClock_ = set;
-    if (set) localHostClock_ = clock;
+    localHostClock_ = clock;
+    hostClockDue_ = true;  // one-shot: the net thread sends once + clears
 }
 
 void Session::SetHostDeskSim(bool set, const DeskSimSnapshot& sim) {
@@ -443,11 +443,9 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
 void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                               std::chrono::milliseconds sendInterval,
                               std::chrono::steady_clock::time_point& nextSend,
-                              std::chrono::steady_clock::time_point& nextClockSend,
                               std::chrono::steady_clock::time_point& nextDeskSimSend,
                               uint64_t& sendFails) {
     auto* sockets = SteamNetworkingSockets();
-    constexpr auto kClockSendInterval = std::chrono::milliseconds(500);
     constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // ~10 Hz
 
     if (state_.load() == ConnState::Connected && now >= nextSend) {
@@ -463,7 +461,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
         DeskCursorPoseSnapshot localDeskCursor;
         bool haveDeskCursor;
         TimeSyncPayload localHostClock;
-        bool haveHostClock;
+        bool clockDue;
         DeskSimSnapshot localDeskSim;
         bool haveDeskSim;
         DishPoseBody localDishPose;
@@ -476,7 +474,10 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
           localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
           localHand = localHandPose_; haveHand = hasLocalHand_;
           localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
-          localHostClock = localHostClock_; haveHostClock = hasLocalHostClock_;
+          // One-shot, like the dish and reel samples: the clock lane decides when one is due.
+          localHostClock = localHostClock_;
+          clockDue = hostClockDue_ && cfg_.role == Role::Host;
+          hostClockDue_ = false;
           localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_;
           // Dirty one-shot -- the GT sweep owns the cadence; consume the flag.
           localDishPose = localDishPose_;
@@ -486,10 +487,6 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
           localReelPose = localReelPose_;
           reelPoseDue = reelPoseDirty_ && cfg_.role == Role::Host;
           reelPoseDirty_ = false; }
-        // The clock rides its OWN 500 ms throttle, and only the HOST originates it. Computed once
-        // here so the per-peer fan-out below sends the same snapshot to every peer this round (and
-        // nextClockSend advances once, after).
-        const bool clockDue = haveHostClock && cfg_.role == Role::Host && now >= nextClockSend;
         const bool deskSimDue = haveDeskSim && cfg_.role == Role::Host && now >= nextDeskSimSend;
         // Serialize the live NPC pose batch ONCE (same body for every peer; only the per-peer
         // header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads localNpcBatch_ under
@@ -661,7 +658,6 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                 }
             }
         }
-        if (clockDue) nextClockSend = now + kClockSendInterval;  // advance once per round, after the fan-out
         if (deskSimDue) nextDeskSimSend = now + kDeskSimSendInterval;
         nextSend = now + sendInterval;
     }

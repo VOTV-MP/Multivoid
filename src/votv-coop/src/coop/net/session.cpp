@@ -346,10 +346,6 @@ void Session::NetThread() {
     // The link measurement's own cadence, ten times the diagnostics sample's: a control input has
     // to see a queue build, which a 1 Hz reading cannot.
     auto nextLinkSample = std::chrono::steady_clock::now();
-    // The host world clock streams on its own ~500 ms cadence, far slower than the pose sendHz (one
-    // game minute of real time is well over 500 ms at any day length), keeping the client's frozen
-    // mirror within a minute of the host. Net-thread-local.
-    auto nextClockSend = std::chrono::steady_clock::now();
     auto nextDeskSimSend = std::chrono::steady_clock::now();
 
     auto* sockets = SteamNetworkingSockets();
@@ -480,7 +476,7 @@ void Session::NetThread() {
         // 3) The stream fan-out at sendHz (session_streams.cpp). `now` is computed once and shared
         // with step 4.
         const auto now = std::chrono::steady_clock::now();
-        SendStreamsTick(now, sendInterval, nextSend, nextClockSend, nextDeskSimSend, sendFails);
+        SendStreamsTick(now, sendInterval, nextSend, nextDeskSimSend, sendFails);
 
         // 3b) Drain the reliable-send backlogs, one pass per live slot; the GNS return is the
         // headroom read, and the reserve keeps the unreliable pose and voice streams flowing during

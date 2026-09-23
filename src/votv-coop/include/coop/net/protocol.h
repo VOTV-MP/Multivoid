@@ -93,7 +93,8 @@ enum class MsgType : uint8_t {
     // DeskCursorPosePacket.
     DeskCursorPose = 36,
 
-    // Host to all: the world clock, about twice a second, newest wins. ClockPosePacket.
+    // Host to all: the world clock, newest wins, each time it has moved half a game minute and at
+    // least twice a second. ClockPosePacket.
     ClockPose = 37,
 
     // Host to all: the desk download simulation's outputs, about 10 Hz. DeskSimPosePacket.

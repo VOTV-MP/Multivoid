@@ -8,9 +8,9 @@
 // night clock while the host is at midday, and the client world renders DARK. The sun is re-derived
 // from the cycle's within-day accumulator, so syncing the clock fixes the brightness.
 //
-// MODEL (host-authoritative, single-syncer): the HOST polls its cycle and streams the clock on a
-// throttle -- it is continuous, so it is pushed periodically rather than on change -- plus a
-// reliable push on a joiner's connect edge. The CLIENT direct-writes the three floats and stays
+// MODEL (host-authoritative, single-syncer): the HOST polls its cycle and streams the clock each time
+// it has moved half a game minute and at least twice a second -- it is continuous, so it is pushed
+// on its progress rather than on change -- plus a reliable push on a joiner's connect edge. The CLIENT direct-writes the three floats and stays
 // FROZEN at TimeScale=0 between pushes, so its `day` never wraps maxTime locally and the midnight
 // cascade stays unreachable. The client never drives the sun or light fields, only the clock.
 
@@ -37,7 +37,8 @@ void OnReliable(const coop::net::TimeSyncPayload& payload);
 // joiner's world isn't dark until the first throttled push). Net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick pump: HOST throttled poll + broadcast. No-op on the client / when solo. Call every
+// Per-tick pump: HOST reads the clock and hands the net thread a sample when one is due; CLIENT
+// applies a new streamed sample. No-op when solo. Call every
 // net-pump tick on the game thread.
 void Tick();
 

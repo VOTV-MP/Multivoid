@@ -181,10 +181,9 @@ public:
     // Per-peer coords-panel cursor (desk_cursor_sync consumes; newest wins).
     bool TryGetRemoteDeskCursor(int peerSlot, DeskCursorPoseSnapshot& out, bool* outIsNew = nullptr);
 
-    // Host: the world clock, published each tick (time_sync::Tick) and sent unreliably on a ~500 ms
-    // throttle of its own. `set` false clears it; a client call stores nothing that is read. Game
-    // thread.
-    void SetHostClock(bool set, const TimeSyncPayload& clock);
+    // Host: one world-clock sample to send, unreliably, on the next stream round. The clock lane
+    // (time_sync) decides when a sample is due; a client call stores nothing that is read. Game thread.
+    void SendHostClock(const TimeSyncPayload& clock);
     // Client: the latest host clock; apply only on isNew (the frozen mirror holds between
     // arrivals). False until the first ClockPose; the connect-edge TimeSync seeds the value before
     // then.
@@ -449,7 +448,6 @@ private:
     void SendStreamsTick(std::chrono::steady_clock::time_point now,
                          std::chrono::milliseconds sendInterval,
                          std::chrono::steady_clock::time_point& nextSend,
-                         std::chrono::steady_clock::time_point& nextClockSend,
                          std::chrono::steady_clock::time_point& nextDeskSimSend,
                          uint64_t& sendFails);
     // One measurement pass over every live connection (net thread, 10 Hz): the send-rate sample and
@@ -640,9 +638,9 @@ private:
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
     EidPoseQueue<PropPoseSnapshot>       propDrivePoses_;
     std::atomic<bool> saidClientTrashCarry_{false}, saidClientPropDrive_{false};
-    // Host world clock (SetHostClock), fanned out on its own ~500 ms throttle.
+    // Host world clock (SendHostClock), one datagram per sample handed over.
     TimeSyncPayload localHostClock_{};
-    bool hasLocalHostClock_ = false;
+    bool hostClockDue_ = false;
     // Host download-sim vector (SetHostDeskSim), fanned out on its own ~100 ms throttle.
     DeskSimSnapshot localDeskSim_{};
     bool hasLocalDeskSim_ = false;
