@@ -3,6 +3,7 @@
 #include "coop/dev/midnight_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/rollover_watch.h"
 #include "coop/dev/set_clock.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
@@ -16,10 +17,12 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/active_events.h"
 #include "ue_wrap/world/daynightcycle.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -32,12 +35,14 @@ namespace SLP = ue_wrap::sleep;
 namespace R   = ue_wrap::reflection;
 namespace sg  = ue_wrap::script_gate;
 namespace AE  = ue_wrap::active_events;
+namespace WI  = ue_wrap::world_identity;
 
 enum class Arm { Off, Awake, Asleep };
 
-// The host: the join, the set, (asleep) the jump landing, a quiet world, the bed, the fast-forward,
-// the wake. The client: (asleep) the join, the bed, the fast-forward, the wake.
-enum class Step { WaitJoin, WaitJump, WaitQuiet, WaitBed, WaitAccelerate, WatchWake, Done, Invalid };
+// The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake.
+// The client: (asleep) the join, the bed, the fast-forward, the wake. The set and the sleep entry both
+// finish inside their call, so each is judged the moment it returns.
+enum class Step { WaitJoin, WaitQuiet, WaitAccelerate, WatchWake, Done, Invalid };
 
 constexpr float kAwakeFraction  = 0.999f;  // a few game units before the wrap
 constexpr float kAsleepFraction = 0.98f;   // runway for the bed and the gate, burnt at 1x until then
@@ -49,9 +54,7 @@ Step    g_step = Step::WaitJoin;
 bool    g_saidArm = false;
 bool    g_saidEvents = false;
 int     g_slot = -1;          // the host's client whose join armed it
-float   g_target = 0.f;       // the host's `day` the set writes
 int32_t g_setDayZ = -1;       // the host's day number when it set the clock
-int     g_bedTicks = 0;       // pump ticks since this peer's sleep call
 
 // Who ends the night. Three classes declare a function of this name (the gamemode's, the player's,
 // the ATV's wakeUp), so the watch keeps only the gamemode's, by its declaring class. Each entry is
@@ -59,9 +62,13 @@ int     g_bedTicks = 0;       // pump ticks since this peer's sleep call
 constexpr const wchar_t* kWakeupName = L"wakeup";
 constexpr int kWakeupTag = 0x4D440001;  // 'MD'
 constexpr int kMaxWakeLines = 8;
-void* g_gmClass = nullptr;
-bool  g_wakeWatched = false;
-int   g_wakeLines = 0;
+void*    g_gmClass = nullptr;     // looked up once per world: a new world may load it anew
+uint32_t g_gmClassGen = 0;
+bool     g_wakeWatched = false;
+bool     g_wakeRefused = false;   // the gate refused it; a full table refuses it again, so never retried
+bool     g_wakeLive = false;
+std::chrono::steady_clock::time_point g_nextLiveCheck{};
+int      g_wakeLines = 0;
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -121,32 +128,27 @@ bool HostDayMoved() {
     return DNC::ReadSavedTime(h, m, z) && g_setDayZ >= 0 && z != g_setDayZ;
 }
 
+// The sleep entry sets isSleep inside the call itself, so the answer is read the moment it returns:
+// asleep, or refused (an active event, food at 10, no floor under the player or the bed).
 void GoToBed(char role) {
     const std::string before = SleepInputs();
     SLP::WriteSleepNeed(kNeedForTheArm);
     void* bed = SLP::FindBed();
     const bool called = bed && SLP::CallSleep(bed);
+    const std::string after = SleepInputs();
     UE_LOGI("midnight_drill: [%c] to bed -- bed %s, call %s | before: %s | after: %s", role,
-            bed ? "found" : "NONE", called ? "dispatched" : "FAILED", before.c_str(), SleepInputs().c_str());
+            bed ? "found" : "NONE", called ? "dispatched" : "FAILED", before.c_str(), after.c_str());
     if (!called) {
         Invalid(role, bed ? "the sleep call did not dispatch" : "no bed_C in the world");
         return;
     }
-    g_bedTicks = 0;
-    g_step = Step::WaitBed;
-}
-
-// The sleep entry writes isSleep inside the call itself; one more pump tick absorbs a frame's
-// delay, and a peer still awake after that was refused.
-void CheckBed(char role) {
-    if (SLP::IsSleeping()) {
-        UE_LOGI("midnight_drill: [%c] in bed; waiting for the shared fast-forward | %s", role, SleepInputs().c_str());
-        g_step = Step::WaitAccelerate;
+    if (!SLP::IsSleeping()) {
+        const std::string why = "the sleep call was refused | " + after;
+        Invalid(role, why.c_str());
         return;
     }
-    if (++g_bedTicks < 2) return;
-    const std::string why = "the sleep call was refused | " + SleepInputs();
-    Invalid(role, why.c_str());
+    UE_LOGI("midnight_drill: [%c] in bed; waiting for the shared fast-forward", role);
+    g_step = Step::WaitAccelerate;
 }
 
 void CheckAccelerate(char role) {
@@ -192,13 +194,40 @@ sg::Verdict OnWakeupPre(const sg::Call& c) {
     return sg::Verdict::Run;
 }
 
-// Registered once per process, on the asleep arm only; live once the gate resolves the name.
+// Registered once per process, on the asleep arm only, and said LIVE once the gate has resolved the
+// name; its liveness is asked at most once a second, since a name that resolved into a full table
+// never goes live. The class it filters on is looked up once per world.
 void EnsureWakeWatch() {
-    if (g_wakeWatched || ArmOf() != Arm::Asleep || !sg::IsInstalled()) return;
-    if (!g_gmClass) g_gmClass = R::FindClass(L"mainGamemode_C");
+    if (ArmOf() != Arm::Asleep || g_wakeRefused || !sg::IsInstalled()) return;
+    // A lookup that misses walks the object array, so a miss waits for the next world.
+    const uint32_t gen = WI::Generation();
+    if (gen != g_gmClassGen) {
+        g_gmClass = R::FindClass(L"mainGamemode_C");
+        g_gmClassGen = gen;
+    }
     if (!g_gmClass) return;
-    g_wakeWatched = sg::WatchName(kWakeupName, kWakeupTag, &OnWakeupPre, nullptr);
-    if (!g_wakeWatched) UE_LOGW("midnight_drill: the gate refused the wakeup watch -- a wake names no caller");
+    if (!g_wakeWatched) {
+        g_wakeWatched = sg::WatchName(kWakeupName, kWakeupTag, &OnWakeupPre, nullptr);
+        if (!g_wakeWatched) {
+            g_wakeRefused = true;
+            UE_LOGW("midnight_drill: the gate refused the wakeup watch -- a wake names no caller this run");
+            return;
+        }
+    }
+    if (g_wakeLive) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_nextLiveCheck) return;
+    g_nextLiveCheck = now + std::chrono::seconds(1);
+    sg::ResolvePendingNames();
+    if (!sg::NameWatchLive(kWakeupName, kWakeupTag)) {
+        if (sg::PendingNameCount() == 0) {
+            g_wakeRefused = true;  // resolved into a full table: it will never go live
+            UE_LOGW("midnight_drill: the wakeup watch is dead in a full gate table -- a wake names no caller this run");
+        }
+        return;
+    }
+    g_wakeLive = true;
+    UE_LOGI("midnight_drill: the wakeup watch is LIVE; each entry on the gamemode names its caller");
 }
 
 void TickHost(coop::net::Session* s) {
@@ -207,24 +236,23 @@ void TickHost(coop::net::Session* s) {
         for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
             if (s->IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot)) g_slot = slot;
         if (g_slot < 0) return;
-        float maxTime = 0.f;
         int32_t h = 0, m = 0;
-        if (!DNC::ReadMaxTime(maxTime) || !DNC::ReadSavedTime(h, m, g_setDayZ)) return;
+        if (!DNC::ReadSavedTime(h, m, g_setDayZ)) return;
         const float frac = ArmOf() == Arm::Awake ? kAwakeFraction : kAsleepFraction;
         UE_LOGI("midnight_drill: [H] arm %s -- slot %d's join is over (world-ready, bracket closed); setting "
                 "the clock to %.3f of day %d", ArmName(), g_slot, frac, g_setDayZ);
         PrintRunway(frac);
-        coop::dev::set_clock::SetTimeFraction(frac);
-        g_target = frac * maxTime;
-        g_step = ArmOf() == Arm::Awake ? Step::Done : Step::WaitJump;
-        return;
-    }
-    case Step::WaitJump: {
-        // The set is posted to the game thread; it has landed once `day` sits just past the target.
-        float total = 0.f, day = 0.f, scale = 0.f;
-        if (!DNC::ReadClock(total, day, scale) || day < g_target - 0.5f || day > g_target + 30.f) return;
-        UE_LOGI("midnight_drill: [H] the jump landed (day=%.2f); waiting for no event to be active", day);
-        g_step = Step::WaitQuiet;
+        if (!coop::dev::set_clock::ApplyTimeFraction(frac)) {
+            Invalid('H', "the clock set was refused (the dev gate, or a clock that did not resolve)");
+            return;
+        }
+        if (ArmOf() == Arm::Awake) {
+            UE_LOGI("midnight_drill: [H] the clock is set; the evidence is rollover_watch's DAY lines");
+            g_step = Step::Done;
+        } else {
+            UE_LOGI("midnight_drill: [H] the clock is set; waiting for no event to be active");
+            g_step = Step::WaitQuiet;
+        }
         return;
     }
     case Step::WaitQuiet: {
@@ -244,7 +272,6 @@ void TickHost(coop::net::Session* s) {
         GoToBed('H');
         return;
     }
-    case Step::WaitBed:        CheckBed('H'); return;
     case Step::WaitAccelerate: CheckAccelerate('H'); return;
     case Step::WatchWake:      WatchWake('H'); return;
     default:                   return;
@@ -262,7 +289,6 @@ void TickClient() {
         UE_LOGI("midnight_drill: [C] arm asleep -- joined; going to bed");
         GoToBed('C');
         return;
-    case Step::WaitBed:        CheckBed('C'); return;
     case Step::WaitAccelerate: CheckAccelerate('C'); return;
     case Step::WatchWake:      WatchWake('C'); return;
     default:                   return;
@@ -289,9 +315,11 @@ void Tick() {
         UE_LOGI("midnight_drill: [%c] arm %s -- %s", host ? 'H' : 'C', ArmName(),
                 host ? "waiting for a client's join to end"
                      : (ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock"));
+        if (!coop::dev::rollover_watch::IsEnabled())
+            UE_LOGW("midnight_drill: rollover_watch is off on this peer -- the arm runs, but prints none of its "
+                    "evidence");
     }
     EnsureWakeWatch();
-    if (g_wakeWatched) sg::ResolvePendingNames();
     if (host) TickHost(s);
     else      TickClient();
 }
@@ -301,9 +329,7 @@ void OnDisconnect() {
     g_saidArm = false;
     g_saidEvents = false;
     g_slot = -1;
-    g_target = 0.f;
     g_setDayZ = -1;
-    g_bedTicks = 0;
     g_wakeLines = 0;
 }
 

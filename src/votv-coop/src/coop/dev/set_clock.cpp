@@ -74,33 +74,36 @@ void SetClock(int day, int hour, int minute) {
     });
 }
 
-void SetTimeFraction(float frac) {
+bool ApplyTimeFraction(float frac) {
     if (!coop::dev_gate::Allowed()) {
         UE_LOGW("set_clock: SetTimeFraction REFUSED -- dev features disabled while a client");
-        return;
+        return false;
     }
     if (frac < 0.f)   frac = 0.f;
     if (frac > 0.999f) frac = 0.999f;  // keep strictly < MaxTime so it can't trip the day-roll threshold
-    GT::Post([frac] {
-        float total = 0.f, day = 0.f, scale = 0.f, maxT = 0.f;
-        if (!DNC::ReadClock(total, day, scale) || !DNC::ReadMaxTime(maxT) || maxT <= 0.f) {
-            UE_LOGW("set_clock: SetTimeFraction -- world clock not resolved (world up?)");
-            return;
-        }
-        int32_t h = 0, m = 0, dz = 0;
-        if (!DNC::ReadTimeZ(h, m, dz)) {
-            UE_LOGW("set_clock: SetTimeFraction -- timeZ not resolved");
-            return;
-        }
-        // Sun AND the named clock together: a sun-only write desynced the HUD clock from the
-        // lighting, and the next tick rebuilt timeZ from the accumulator anyway. Same day; the two
-        // accumulators are kept equal, as in SetClock.
-        const int minutes = static_cast<int>(frac * 1440.0f);
-        DNC::WriteTimeZ(minutes / 60, minutes % 60, dz);
-        DNC::ApplyClock(frac * maxT, frac * maxT, scale);
-        UE_LOGI("set_clock: sun+clock set to %.3f of day (%02d:%02d; totalTime=%.1f / MaxTime=%.1f)",
-                frac, minutes / 60, minutes % 60, frac * maxT, maxT);
-    });
+    float total = 0.f, day = 0.f, scale = 0.f, maxT = 0.f;
+    if (!DNC::ReadClock(total, day, scale) || !DNC::ReadMaxTime(maxT) || maxT <= 0.f) {
+        UE_LOGW("set_clock: SetTimeFraction -- world clock not resolved (world up?)");
+        return false;
+    }
+    int32_t h = 0, m = 0, dz = 0;
+    if (!DNC::ReadTimeZ(h, m, dz)) {
+        UE_LOGW("set_clock: SetTimeFraction -- timeZ not resolved");
+        return false;
+    }
+    // Sun AND the named clock together: a sun-only write desynced the HUD clock from the lighting,
+    // and the next tick rebuilt timeZ from the accumulator anyway. Same day; the two accumulators
+    // are kept equal, as in SetClock.
+    const int minutes = static_cast<int>(frac * 1440.0f);
+    DNC::WriteTimeZ(minutes / 60, minutes % 60, dz);
+    DNC::ApplyClock(frac * maxT, frac * maxT, scale);
+    UE_LOGI("set_clock: sun+clock set to %.3f of day (%02d:%02d; totalTime=%.1f / MaxTime=%.1f)",
+            frac, minutes / 60, minutes % 60, frac * maxT, maxT);
+    return true;
+}
+
+void SetTimeFraction(float frac) {
+    GT::Post([frac] { ApplyTimeFraction(frac); });
 }
 
 }  // namespace coop::dev::set_clock

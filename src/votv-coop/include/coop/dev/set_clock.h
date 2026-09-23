@@ -36,7 +36,12 @@ void SetClock(int day, int hour, int minute);
 
 // HOST-only (dev_gate): set the SUN position as a fraction of one day, keeping the same day.
 // It writes timeZ too: a sun-only write left the HUD clock disagreeing with the lighting, and the
-// next tick rebuilt timeZ from the accumulator anyway. Clamped [0, 0.999].
+// next tick rebuilt timeZ from the accumulator anyway. Clamped [0, 0.999]. Posted to the game
+// thread, so any thread may call it.
 void SetTimeFraction(float frac);
+
+// The same set, done now, for a caller already on the game thread that has to know it landed (a
+// drill). False, having written nothing, when the dev gate refuses or the clock is not resolved.
+bool ApplyTimeFraction(float frac);
 
 }  // namespace coop::dev::set_clock
