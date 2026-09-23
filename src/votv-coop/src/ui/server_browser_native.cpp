@@ -84,7 +84,10 @@ void* g_menu     = nullptr;   // the ui_menu_C we built into (compared, never de
 void* g_switcher = nullptr;
 void* g_root     = nullptr;   // our UUserWidget
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
-void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
+void* g_backBtn  = nullptr;   // BACK, bottom left, the lowest widget of the list's column
+void* g_frame    = nullptr;   // the window's frame, what the fit probe measures against
+// Whether the list's column (the master tabs, the list, the actions, Back) fits kWindowH.
+NS::FitProbe g_fit("server_browser_native", kWindowH);
 // LBUTTON edge state for the chrome poll, primed on Show so the release that opened the screen
 // is not read as a click on whatever sits under the cursor.
 bool  g_prevLmb   = false;
@@ -198,6 +201,7 @@ bool BuildScreen(void* switcher) {
     void* root = shell.root;
     void* col  = shell.column;
     g_scrimW   = shell.scrim;
+    g_frame    = shell.box;
     // The body, VOTV's own save-browser shape: the list on the left, what you picked top right, a
     // black status pane under it, the actions beneath the list, Back alone at the bottom left.
     void* body = Spawn(L"HorizontalBox", col);
@@ -312,6 +316,7 @@ void Show() {
     rows::OnShown();       // ...and the hover, for the same reason: nothing else re-asks
     ui::server_browser_tabs::Sync();
     SyncRows();
+    g_fit.Rearm();         // a fresh showing lays out again: measured on the next tick
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
 
@@ -389,7 +394,7 @@ void OnMenuTick(void* menu, void* switcher) {
     if (menu != g_menu) {
         g_menu = menu;
         g_root = nullptr;
-        g_backBtn = nullptr; g_scrimW = nullptr;
+        g_backBtn = nullptr; g_scrimW = nullptr; g_frame = nullptr;
         ui::server_browser_actions::Forget();
         ui::server_browser_tabs::Forget();
         panels::Forget();
@@ -471,6 +476,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_lmbPrimed = false;   // BecameLive for why a revive owes these two
         rows::OnShown();
         ui::server_browser_tabs::Sync();
+        g_fit.Rearm();
         UE_LOGI("server_browser_native: live again (the switcher index returned to ours)");
     }
 
@@ -536,6 +542,7 @@ void OnMenuTick(void* menu, void* switcher) {
 
     rows::UpdateHover();
     ui::server_browser_tabs::UpdateHover();
+    g_fit.Tick(g_frame, g_backBtn, "master tabs, list, actions, Back");   // after a showing only
 
     // Fetch on a timer, paint on an arrival: with paint coupled to the fetch tick a lobby that
     // arrived early was not drawn until the next fetch, and REFRESH showed "Refreshing..." over an

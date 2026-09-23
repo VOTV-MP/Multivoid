@@ -48,8 +48,8 @@ using ue_wrap::FLinearColor;
 // The same width as step one, so the next page reads as the next page; shorter, less to decide.
 constexpr float kWindowW  = 980.f;
 // One height across both lock states (a window that resizes as you click inside it is worse than
-// one with slack): sized for the locked state, the tallest cell, with ~57 px of margin over the
-// measured need; ReportFit logs an error the moment a cell overflows.
+// one with slack): sized for the locked state, the tallest cell; the fit probe logs an error the
+// moment a cell overflows.
 constexpr float kWindowH  = 690.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
@@ -139,43 +139,13 @@ std::string    g_name;
 int            g_connMode = 0;
 
 
-// The last overflow ReportFit reported, so the line is logged on change, not per tick.
-float g_fitLast = -9999.f;
-
-// The fit probe's dirty flag. Content taller than kWindowH pushes the footer past the frame with
-// nothing clipping, so the height is measured, not eyeballed: on the tick (on the frame the index
-// changes every rect reads 0x0) and only when the layout moved (the lock toggle, a fresh showing),
-// since a measurement is six dispatches and eight allocations at the menu's ~117 Hz.
-bool g_fitDirty = true;
+// Whether the tallest cell still fits kWindowH: the layout moves on the lock toggle (the password
+// block) and on a fresh showing.
+NS::FitProbe g_fit("host_session_settings", kWindowH);
 
 // The connection mode the visibility answer was chosen under; -1 = never, so the first Show()
 // derives (see Show()).
 int g_visModeWhenChosen = -1;
-
-void ReportFit() {
-    if (!g_fitDirty) return;
-    ue_wrap::FVector2D rtl{}, rsz{}, btl{}, bsz{};
-    if (!g_box || !g_hostBtn) return;
-    if (!U::WidgetScreenRect(g_box, rtl, rsz) || rsz.Y < 1.f) return;
-    if (!U::WidgetScreenRect(g_hostBtn, btl, bsz) || bsz.Y < 1.f) return;
-    const float frameBottom  = rtl.Y + rsz.Y;
-    const float footerBottom = btl.Y + bsz.Y;
-    const float overflow     = footerBottom - frameBottom;
-    // Cleared only after both rects read non-degenerate: on the switcher-change frame every rect is
-    // 0x0, and clearing on entry would spend the flag on the one tick that cannot answer.
-    g_fitDirty = false;
-    if (g_fitLast > -9000.f && std::fabs(overflow - g_fitLast) < 1.f) return;
-    g_fitLast = overflow;
-    if (overflow > 0.f) {
-        UE_LOGE("host_session_settings: [fit] FOOTER OUTSIDE THE FRAME by %.0f px "
-                "(frame ends %.0f, Host button ends %.0f; locked=%d conn=%d) -- kWindowH is "
-                "too small for this cell",
-                overflow, frameBottom, footerBottom, IsLocked() ? 1 : 0, g_connMode);
-    } else {
-        UE_LOGI("host_session_settings: [fit] footer inside the frame, %.0f px of slack "
-                "(locked=%d conn=%d)", -overflow, IsLocked() ? 1 : 0, g_connMode);
-    }
-}
 
 // Listed by default in both modes. There is no LAN-only mode: one that forced listed=false and
 // refused non-private remotes is DIRECT + Hidden, which this selector already expresses
@@ -327,7 +297,7 @@ void SetLocked(bool locked) {
         }
         TF::SetText(g_pwField, pw);
     }
-    g_fitDirty = true;   // the password block appears/collapses -> the footer moves
+    g_fit.MarkDirty();   // the password block appears/collapses -> the footer moves
     if (!IsLocked()) TF::Blur(g_pwField);   // a collapsed field must not keep the keyboard
     SetStatus(L"", kText);
     RepaintChoices();
@@ -594,7 +564,7 @@ void UpdateHover() {
     const int prevVis = g_vis.hover;
     g_who.hover = -1;
     g_vis.hover = -1;
-    // No g_fitDirty here: a hover reset is not a layout event. The rows are hand-built UImages, on
+    // No fit reading here: a hover reset is not a layout event. The rows are hand-built UImages, on
     // which IsHovered() reads 0, so geometry is the only mechanism; the cursor is converted once
     // for the sweep because each CursorOverWidget redoes the uncached GUObjectArray walk.
     long hx = 0, hy = 0;
@@ -627,7 +597,6 @@ void Show() {
     g_shown = true;
     g_who.hover = -1;
     g_vis.hover = -1;
-    g_fitDirty  = true;   // a fresh showing lays out again
     // Re-derived only when the mode moved: a Back to change the connection type resets a
     // listed/hidden choice made under other rules, a Back for any other reason keeps a chosen
     // "Hidden". The reset fails open, and what it opens is an announce with the host's address to a
@@ -677,9 +646,8 @@ void Show() {
 
     UE_LOGI("host_session_settings: shown (index %d -> %d; locked=%d)",
             g_priorIndex, g_ourIndex, IsLocked() ? 1 : 0);
-    // The fit measurement runs on the next tick (g_fitDirty, ReportFit); locked + AUTOMATIC is the
-    // tallest cell.
-    g_fitLast = -9999.f;   // re-arm the fit probe for this showing (see ReportFit)
+    // A fresh showing lays out again: measured on the next tick, and logged even if unchanged.
+    g_fit.Rearm();
 }
 
 void Hide(const char* why) {
@@ -823,7 +791,11 @@ void OnMenuTick(void* menu, void* switcher) {
     // keyboard from a click on the row above.
     TF::Tick(g_nameField);   // never collapsed, so unlike the password it is always live
     if (IsLocked()) TF::Tick(g_pwField);
-    ReportFit();   // no-op unless the layout moved -- see g_fitDirty
+    // A no-op unless the layout moved. Locked with AUTOMATIC is the tallest cell.
+    g_fit.Tick(g_box, g_hostBtn, IsLocked() ? (g_connMode == 1 ? "locked, direct"
+                                                               : "locked, automatic")
+                                            : (g_connMode == 1 ? "open, direct"
+                                                               : "open, automatic"));
     UpdateHover();
     PollChrome();
 

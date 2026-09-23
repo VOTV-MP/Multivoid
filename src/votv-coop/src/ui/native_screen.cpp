@@ -584,6 +584,28 @@ bool CursorOverWidget(void* w) {
     return WidgetContains(w, hx, hy);
 }
 
+void FitProbe::Tick(void* frame, void* footer, const char* layout) {
+    if (!dirty_ || !frame || !footer) return;
+    ue_wrap::FVector2D ftl{}, fsz{}, btl{}, bsz{};
+    if (!U::WidgetScreenRect(frame, ftl, fsz) || fsz.Y < 1.f) return;
+    if (!U::WidgetScreenRect(footer, btl, bsz) || bsz.Y < 1.f) return;
+    // Cleared only after both rects read: clearing on entry would spend the flag on the switch
+    // frame, the one tick that cannot answer.
+    dirty_ = false;
+    const float scale = windowH_ > 0.f ? fsz.Y / windowH_ : 1.f;
+    const float over = ((btl.Y + bsz.Y) - (ftl.Y + fsz.Y)) / (scale > 0.f ? scale : 1.f);
+    if (last_ != kNever && std::fabs(over - last_) < 1.f && layout == lastLayout_) return;
+    last_ = over;
+    lastLayout_ = layout;
+    if (over > 0.f)
+        UE_LOGE("%s: [fit] FOOTER OUTSIDE THE FRAME by %.0f units (%s; frame %.0f px at scale "
+                "%.2f) -- the window height is too small for this layout",
+                screen_, over, layout, fsz.Y, scale);
+    else
+        UE_LOGI("%s: [fit] footer inside the frame, %.0f units of slack (%s; frame %.0f px at "
+                "scale %.2f)", screen_, -over, layout, fsz.Y, scale);
+}
+
 void HoverTracker::Reset() {
     lastX_ = lastY_ = -1;
     lastFrac_  = -2.f;

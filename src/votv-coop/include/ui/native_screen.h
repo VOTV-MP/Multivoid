@@ -254,4 +254,31 @@ private:
     bool    pending_   = false;
 };
 
+// Whether a window's content fits its frame, measured rather than eyeballed: content taller than
+// the window pushes the footer past the frame's bottom with nothing clipping it. One per window,
+// read on the menu tick. It measures only after the layout moved (MarkDirty: a block that appears
+// or collapses; Rearm: a fresh showing, which also logs a reading equal to the last), since a
+// reading is two rect reads and six dispatches, and it waits out the switch frame, on which every
+// rect reads 0x0. The line, logged when the reading or the named layout changes, is in the
+// window's own units (the frame's measured height over `windowH`), so a reading on a small
+// desktop says what it says on a large one. With a footer pinned down by a spacer the slack reads
+// as the bottom padding until the content overflows; the overhang is what the probe is for.
+class FitProbe {
+public:
+    FitProbe(const char* screen, float windowH) : screen_(screen), windowH_(windowH) {}
+    void MarkDirty() { dirty_ = true; }
+    void Rearm() { dirty_ = true; last_ = kNever; }
+    // `frame` is the window's box (WindowShell::box), `footer` its lowest widget; `layout` names
+    // what the height depended on, for the log line: a literal, compared by address.
+    void Tick(void* frame, void* footer, const char* layout);
+
+private:
+    static constexpr float kNever = -99999.f;
+    const char* screen_;
+    float windowH_;
+    bool  dirty_ = true;
+    float last_  = kNever;
+    const char* lastLayout_ = nullptr;
+};
+
 }  // namespace ui::native_screen
