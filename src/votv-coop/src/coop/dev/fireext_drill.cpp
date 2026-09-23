@@ -540,6 +540,7 @@ void ActStep(coop::net::Session& s, void* player) {
         if (ArmOf() == Arm::Short) SendStaleTail(s, t, g_stepTicks);
         const bool rested = t && g_stepTicks > 30 && E::IsActorRootBodyAtRest(t);
         if (!rested && g_stepTicks < kRestMaxTicks) return;
+        ClearStaleTail(s);  // the tail ends here whatever its length
         LogTarget(rested ? "RESTED" : "NOT AT REST after the wait");
         Go(Step::Done);
         return;
