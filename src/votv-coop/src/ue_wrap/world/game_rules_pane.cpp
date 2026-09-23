@@ -5,6 +5,7 @@
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/world/daynightcycle.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -136,13 +137,8 @@ bool ReadLockInputs(LockInputs& out) {
     if (!profile || !R::IsLive(profile)) return false;
     out.maxDay = IntField(profile, L"maxDays", 0);
     // The menu also counts the listed slots' days; in a world, the running save's own day.
-    if (void* save = ObjectField(gamemode, L"saveSlot")) {
-        const int32_t off = R::IsLive(save) ? R::FindPropertyOffset(R::ClassOf(save), L"savedtime") : -1;
-        if (off >= 0) {  // an FIntVector: X, Y, then Z = the day
-            const int32_t day = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(save) + off + 8);
-            out.maxDay = std::max(out.maxDay, day);
-        }
-    }
+    int32_t hour = 0, minute = 0, day = 0;
+    if (ue_wrap::daynightcycle::ReadSavedTime(hour, minute, day)) out.maxDay = std::max(out.maxDay, day);
     const int32_t achOff = R::FindPropertyOffset(R::ClassOf(profile), L"achievementsNames");
     if (achOff >= 0) {
         const auto* arr = reinterpret_cast<const NameArray*>(reinterpret_cast<uint8_t*>(profile) + achOff);

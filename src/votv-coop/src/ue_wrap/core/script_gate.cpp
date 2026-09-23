@@ -478,6 +478,8 @@ bool NameWatchLive(const wchar_t* name, int tag) {
     return false;
 }
 
+int PendingNameCount() { return g_namesPending.load(std::memory_order_acquire); }
+
 void ResolvePendingNames() {
     if (g_namesPending.load(std::memory_order_acquire) == 0 || !GT::IsGameThread()) return;
     // The string-to-name conversion dispatches ProcessEvent, so it runs OUTSIDE the registration

@@ -168,8 +168,9 @@ int32_t g_offGmSaveSlot = -1;
 void* g_saveSlotCls = nullptr;
 int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery
 int32_t g_offSavedTime = -1;      // saveSlot_C::savedtime (FIntVector)
-void* g_gm = nullptr;
-int32_t g_gmIdx = -1;
+// Held world-stamped: a dying world's gamemode keeps its slot until the purge, tens of seconds
+// after the world changed, and its saveSlot is not the running world's.
+CachedObjRef g_gm;
 
 // Resolve the two classes and the gamemode's saveSlot member. False while either class is unloaded.
 bool ResolveSaveSlotSurface() {
@@ -182,24 +183,29 @@ bool ResolveSaveSlotSurface() {
 
 // The live saveSlot, or null. Call after ResolveSaveSlotSurface answered true.
 void* LiveSaveSlot() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        // Throttle the miss-path GUObjectArray walk: the latch is caller-rate-driven, once per
-        // streamed clock correction, so a world transition would otherwise re-scan on every one.
+    if (!g_gm.Alive()) {
+        // Throttle the miss-path GUObjectArray walk: the callers are caller-rate-driven -- the
+        // latch once per streamed clock correction, the savedtime read by the dev rollover watch
+        // every tick -- so a world transition would otherwise re-scan on every call. A world change
+        // lifts the throttle: it is there for a gamemode that is missing, not one a new world brought.
         static std::chrono::steady_clock::time_point s_lastScan{};
+        static uint32_t s_scanGen = 0;
         const auto now = std::chrono::steady_clock::now();
-        if (now - s_lastScan < std::chrono::seconds(2)) return nullptr;
+        const uint32_t gen = world_identity::Generation();
+        if (gen == s_scanGen && now - s_lastScan < std::chrono::seconds(2)) return nullptr;
         s_lastScan = now;
-        g_gm = nullptr;
+        s_scanGen = gen;
+        g_gm.Reset();
         for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
             if (obj && R::IsLive(obj)) {
-                g_gm = obj;
-                g_gmIdx = R::InternalIndexOf(obj);
-                break;
+                g_gm.Set(obj);
+                if (g_gm.Alive()) break;
+                g_gm.Reset();
             }
         }
-        if (!g_gm) return nullptr;
+        if (!g_gm.Alive()) return nullptr;
     }
-    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm) + g_offGmSaveSlot);
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm.Raw()) + g_offGmSaveSlot);
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 }  // namespace

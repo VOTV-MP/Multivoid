@@ -112,7 +112,8 @@ std::wstring TechName(int32_t index);
 // Every dish's hash code as one number: FNV-1a 64 over each `hashcode` (the nine-line text
 // generteHashcode writes), taken in gamemode.dishs order, never by a class walk, so a dish of a
 // subclass counts where the level placed it. Two peers with equal digests hold the same codes.
-// `dishes` is the array's length, `filled` how many entries carry a code. False while the
+// `dishes` is the array's length, `filled` how many entries carry a code of a sane length (a dead
+// entry and an oversize one are mixed as their own markers and not counted). False while the
 // gamemode or the field is unresolved. Read-only; game thread.
 struct HashDigest {
     uint64_t digest = 0;

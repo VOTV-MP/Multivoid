@@ -450,10 +450,12 @@ bool ReadHashDigest(HashDigest& out) {
     for (int32_t i = 0; i < a->num; ++i) {
         void* d = DishAt(a, i);
         // Each entry mixes its length first, so the concatenation of two codes cannot collide with
-        // a different split of the same characters; a dead entry mixes -1.
+        // a different split of the same characters. A dead entry mixes -1, and a code longer than
+        // the bound mixes -2 and is not counted as filled, so neither reads as an empty dish.
         const auto* s = d ? reinterpret_cast<const TArrayView*>(reinterpret_cast<uint8_t*>(d) + g_offHashcode)
                           : nullptr;
-        const int32_t len = (s && s->data && s->num > 1 && s->num <= 4096) ? s->num - 1 : (d ? 0 : -1);
+        int32_t len = -1;
+        if (d) len = (!s || !s->data || s->num <= 1) ? 0 : (s->num > 4096 ? -2 : s->num - 1);
         mix32(len);
         if (len <= 0) continue;
         const auto* w = reinterpret_cast<const wchar_t*>(s->data);

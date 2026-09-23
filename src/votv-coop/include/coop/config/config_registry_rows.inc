@@ -372,8 +372,9 @@ CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATC
 CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_REROLL_WATCH",
     "Diagnostic probe (BOTH peers): what a world load rolls again. Watches the server-upgrade "
     "spawner and the coordinate towers' scramble from before a joining client's world exists, "
-    "since both run inside the load, and logs every call with its caller. It holds the script "
-    "gate on while set; read-only otherwise.")
+    "since both run inside the load, and logs the first calls with their callers. It holds the "
+    "script gate on while set, with or without a session, so every lane's gate watch also runs "
+    "outside a session for that run; read-only otherwise.")
 CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch): once a client's join is over, the host sets its clock "
     "just short of midnight. awake: both peers stay up. asleep: both go to bed first, so the "

@@ -47,8 +47,8 @@ void Tick();
 //   20 so vitals refill natively, and the client clock free-runs (time_sync::SetSleepAccelerate).
 // END -- ANY peer's isSleep falling edge ends the night for everyone. EVERY wake cause funnels
 //   through gamemode.wakeup -- the natural fill, a manual exit, hunger at food <= 20, an active
-//   event, a nightmare, the ariral chains -- so one edge catches them all: the host broadcasts
-//   End{natural} and receivers reflect wakeup().
+//   event, a nightmare, the ariral chains, the delivery drone's own ubergraph -- so one edge catches
+//   them all: the host broadcasts End{natural} and receivers reflect wakeup().
 void OnReliable(const coop::net::SleepStatePayload& p, uint8_t senderSlot);
 
 // HOST: a joiner arrived (world-ready) -- ends a running accelerate phase
@@ -61,7 +61,7 @@ void OnDisconnectForSlot(int slot);
 
 // Is the ACCELERATE phase on here: the host decided it, or this client received it? Not the same
 // as isSleep with dilation 20, which the native sleep entry sets by itself for the one tick before
-// the WAITING enforcement undoes it. Read-only, for instruments.
+// the WAITING enforcement undoes it. Read-only, for instruments. Game thread.
 bool InAcceleratePhase();
 
 void OnDisconnect();

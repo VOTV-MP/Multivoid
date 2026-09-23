@@ -78,6 +78,11 @@ void ResolvePendingNames();
 // literal that was registered. Any thread.
 bool NameWatchLive(const wchar_t* name, int tag);
 
+// How many registered name watches still wait for their FName. At 0 every name watch is settled:
+// live, or dead for good because its name resolved into a full table (the gate logs which). A
+// consumer re-counting its own watches can stop there. Any thread.
+int PendingNameCount();
+
 // The session gate: disabled (the default, the solo single-player state) the detour pays one
 // load and a branch per call and never consults the tables. Any thread.
 void SetEnabled(bool on);

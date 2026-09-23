@@ -130,32 +130,44 @@ char RoleChar(coop::net::Session* s) {
 // dish hash codes, the coordinate towers' repair state (by tower id), each server's upgrade level
 // (by its index in the gamemode's list) and how many upgrade spawners are alive.
 std::string RollLine() {
-    char buf[900];
-    int n = 0;
-    auto put = [&](const char* fmt, auto... args) {
-        if (n >= 0 && n < static_cast<int>(sizeof(buf))) n += std::snprintf(buf + n, sizeof(buf) - n, fmt, args...);
-    };
+    // Every piece is its own snprintf with a literal format, so the compiler checks each one, and
+    // is bounded by its own buffer; the line grows as a string.
+    std::string line;
+    char part[192];
     DSH::HashDigest hd{};
     if (DSH::ReadHashDigest(hd))
-        put("hash(digest=%016llx filled=%d/%d)", static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes);
+        std::snprintf(part, sizeof(part), "hash(digest=%016llx filled=%d/%d)",
+                      static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes);
     else
-        put("hash(UNRESOLVED)");
+        std::snprintf(part, sizeof(part), "hash(UNRESOLVED)");
+    line += part;
     ue_wrap::coord_tower::State towers[4];
     const int32_t nt = ue_wrap::coord_tower::ReadAll(towers, 4);
-    put(" towers(%d:", nt);
-    for (int32_t i = 0; i < nt; ++i)
-        put(" %d=b%d o%d f%ls p%ls", towers[i].id, towers[i].isBroken ? 1 : 0, towers[i].opened ? 1 : 0,
-            towers[i].fuses.c_str(), towers[i].puzzleLights.c_str());
+    if (nt < 0) {
+        line += " towers(UNRESOLVED)";
+    } else {
+        std::snprintf(part, sizeof(part), " towers(%d:", nt);
+        line += part;
+        for (int32_t i = 0; i < nt; ++i) {
+            std::snprintf(part, sizeof(part), " %d=b%d o%d f%ls p%ls", towers[i].id, towers[i].isBroken ? 1 : 0,
+                          towers[i].opened ? 1 : 0, towers[i].fuses.c_str(), towers[i].puzzleLights.c_str());
+            line += part;
+        }
+        line += ")";
+    }
     std::vector<void*> servers;
     ue_wrap::serverbox::ReadServers(servers);
-    put(") serverUpgrades(%zu:", servers.size());
+    std::snprintf(part, sizeof(part), " serverUpgrades(%zu:", servers.size());
+    line += part;
     for (size_t i = 0; i < servers.size(); ++i) {
         int32_t up = -1;
         if (servers[i] && R::IsLive(servers[i])) ue_wrap::serverbox::ReadUpgrades(servers[i], up);
-        put(" %d", up);
+        std::snprintf(part, sizeof(part), " %d", up);
+        line += part;
     }
-    put(") upgradeSpawnersAlive=%d", ue_wrap::serverbox::CountUpgradeSpawners());
-    return buf;
+    std::snprintf(part, sizeof(part), ") upgradeSpawnersAlive=%d", ue_wrap::serverbox::CountUpgradeSpawners());
+    line += part;
+    return line;
 }
 
 }  // namespace

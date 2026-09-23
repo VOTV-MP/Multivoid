@@ -24,12 +24,19 @@ struct State {
     std::wstring puzzleLights;
 };
 
-// Every live tower, sorted by id. Returns how many were written, 0 while the class or a member is
-// unresolved.
+// Resolve the class and its five members. A missing class is looked for again at most every 2 s,
+// and so is one that has gone with its map; a member missing from the loaded class latches the
+// wrapper off with one warning naming it, since it will not appear later. True while resolved.
+bool EnsureResolved();
+
+// Every live tower, sorted by id. Returns how many were written, or -1 while the wrapper is not
+// resolved, so a caller never prints an unresolved read as "no towers".
 int32_t ReadAll(State* out, int32_t cap);
 
-// The id of `tower`, or -1 when it is not a live tower or the member is unresolved. A plain field
-// read, safe inside a script-gate callback.
+// The id of `tower`, or -1 when it is not a tower or a member is missing. An unresolved wrapper
+// resolves from the tower's own class: a name compare and that class's property chain, never a
+// walk of the object array. So it is safe inside a script-gate callback, and it names the tower
+// even inside the first world load, before any tick could have resolved the wrapper.
 int32_t IdOf(void* tower);
 
 }  // namespace ue_wrap::coord_tower

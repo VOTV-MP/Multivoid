@@ -6,9 +6,10 @@
 // coordinate tower's Scramble Radar Dish (from its own loadData when it loads broken, from its
 // breakdown timer, or from the generator saboteur). Both are name-watched at the script gate from
 // the pump's first tick -- on a joining client that is before its world -- so the watch is live
-// when the join's load runs; the probe holds the gate switch on while its flag is, and says at each
-// world change whether the switch was found off. Every entry is logged with the role, the join
-// phase and its caller. It never refuses.
+// when the join's load runs. The probe holds the gate switch on while its flag is, with or without
+// a session, so for that run every lane's gate watch also fires outside a session; it says at each
+// world change whether the switch was found off. The first 32 entries are logged with the role,
+// the join phase and the caller, and every entry is counted. It never refuses.
 
 #pragma once
 

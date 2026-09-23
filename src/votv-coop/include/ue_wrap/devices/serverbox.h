@@ -87,8 +87,9 @@ uint32_t GamemodeGeneration();
 bool ReadUpgrades(void* box, int32_t& out);
 
 // How many initialServerUpgradeSpawn_C are alive: the one-shot actor that rolls those levels at
-// the gamemode's begin-play and then destroys itself. Counted from the object index, never by a
-// walk; 0 while its class is not loaded.
+// the gamemode's begin-play and then destroys itself. Counted from the object index; the class
+// lookup walks the array only on a miss, and after a miss waits for the next world. 0 while the
+// class is not loaded.
 int32_t CountUpgradeSpawners();
 
 }  // namespace ue_wrap::serverbox

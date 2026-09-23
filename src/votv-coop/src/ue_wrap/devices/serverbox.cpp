@@ -9,6 +9,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <chrono>
 
@@ -237,7 +238,9 @@ uint32_t GamemodeGeneration() {
 namespace {
 int32_t  g_offUpgrades = -1;        // serverBox_C.upgrades (int)
 bool     g_upgradesMissing = false; // the class loaded without the member: never retried
-uint64_t g_spawnerMissMs = 0;       // the spawner class was not loaded at this time
+CachedObjRef g_spawnerCls;          // initialServerUpgradeSpawn_C
+bool     g_spawnerMissed = false;   // the last lookup missed, in world generation g_spawnerMissGen
+uint32_t g_spawnerMissGen = 0;
 }  // namespace
 
 bool ReadUpgrades(void* box, int32_t& out) {
@@ -257,19 +260,25 @@ bool ReadUpgrades(void* box, int32_t& out) {
 }
 
 int32_t CountUpgradeSpawners() {
-    // A class lookup that misses walks the object array, so a miss holds off the next one.
-    const uint64_t now = NowMs();
-    if (g_spawnerMissMs != 0 && now - g_spawnerMissMs < 10000) return 0;
-    void* cls = R::FindClass(L"initialServerUpgradeSpawn_C");
-    if (!cls) {
-        g_spawnerMissMs = now;
-        return 0;
+    if (!g_spawnerCls.Alive()) {
+        // A class lookup that misses walks the object array, so after a miss the next lookup waits
+        // for a new world: the class loads with a world or not at all.
+        const uint32_t gen = world_identity::Generation();
+        if (g_spawnerMissed && gen == g_spawnerMissGen) return 0;
+        void* cls = R::FindClass(L"initialServerUpgradeSpawn_C");
+        if (!cls) {
+            g_spawnerMissed = true;
+            g_spawnerMissGen = gen;
+            return 0;
+        }
+        g_spawnerMissed = false;
+        g_spawnerCls.Set(cls);
     }
-    g_spawnerMissMs = 0;
     int32_t n = 0;
-    object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t) {
-        if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__"))
-            ++*static_cast<int32_t*>(ctx);
+    object_index::ForEachInstance(g_spawnerCls.Raw(), [](void* ctx, void* obj, int32_t index) {
+        // An index member may still be loading, under construction or dying; the slot's flags say so.
+        if (!obj || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
+        if (R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) ++*static_cast<int32_t*>(ctx);
     }, &n);
     return n;
 }

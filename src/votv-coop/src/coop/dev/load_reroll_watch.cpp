@@ -12,6 +12,7 @@
 #include "ue_wrap/desk/coord_tower.h"
 #include "ue_wrap/engine/world_identity.h"
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 
@@ -37,7 +38,9 @@ constexpr int kMaxEntryLines = 32;    // the tower's own timer can call it for t
 char     g_role = '-';               // H, C, or '-' before a session runs
 bool     g_registered = false;
 bool     g_registerFailed = false;
-int      g_live = -1;
+int      g_live = -1;                // re-counted once a second until both are settled
+bool     g_liveSettled = false;      // both live, or the gate has no name left to resolve
+std::chrono::steady_clock::time_point g_nextLiveCount{};
 uint64_t g_reached[kCount] = {};
 uint64_t g_ran[kCount] = {};
 int      g_entryLines = 0;
@@ -89,15 +92,22 @@ void EnsureWatches() {
         }
         g_registered = true;
     }
-    if (!g_registered || g_live == kCount) return;
+    if (!g_registered || g_liveSettled) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_nextLiveCount) return;
+    g_nextLiveCount = now + std::chrono::seconds(1);
     sg::ResolvePendingNames();
     int live = 0;
     for (int i = 0; i < kCount; ++i)
         if (sg::NameWatchLive(kWatches[i].name, kTagBase + i)) ++live;
-    if (live == g_live) return;
+    // Nothing left to resolve means a watch not live now never will be.
+    const bool settled = (live == kCount || sg::PendingNameCount() == 0);
+    if (live == g_live && !settled) return;
     g_live = live;
-    UE_LOGI("load_reroll_watch: [%c] %d of %d name watches LIVE (%ls on %s, %ls on %s)", RoleChar(), live, kCount,
-            kWatches[0].name, kWatches[0].declarer, kWatches[1].name, kWatches[1].declarer);
+    g_liveSettled = settled;
+    UE_LOGI("load_reroll_watch: [%c] %d of %d name watches LIVE%s (%ls on %s, %ls on %s)", RoleChar(), live, kCount,
+            settled && live < kCount ? ", the rest DEAD in a full gate table" : "", kWatches[0].name,
+            kWatches[0].declarer, kWatches[1].name, kWatches[1].declarer);
 }
 
 }  // namespace

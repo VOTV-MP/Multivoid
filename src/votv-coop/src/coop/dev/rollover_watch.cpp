@@ -87,13 +87,15 @@ bool  g_burstPending = false;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_registered = false;       // the twelve are in the gate's table (once per process)
 bool g_registerFailed = false;   // the table refused one; said once, never retried
-int  g_live = -1;                // how many resolved; re-counted until all have
+int  g_live = -1;                // how many are live; re-counted once a second until all are settled
+bool g_liveSettled = false;      // every watch live, or the gate has no name left to resolve
+Clock::time_point g_nextLiveCount{};
 
 // Per world: the cycle actor it armed on, by identity only.
 void*    g_armedCycle = nullptr;
 int32_t  g_armedCycleIdx = -1;
 bool     g_armed = false;
-bool     g_saidNoDishes = false;
+uint32_t g_saidWaiting = 0;         // the reads already named as what arming waits on, one bit each
 uint64_t g_armedDigest = 0;
 uint64_t g_lastDigest = 0;
 Clock::time_point g_nextDigestRead{};
@@ -175,14 +177,27 @@ void EnsureWatches() {
         UE_LOGI("rollover_watch: [%c] %d name watches registered; each is trusted once its name resolves",
                 RoleChar(), kCount);
     }
-    if (!g_registered || g_live == kCount) return;
+    if (!g_registered || g_liveSettled) return;
+    const auto now = Clock::now();
+    if (now < g_nextLiveCount) return;
+    g_nextLiveCount = now + std::chrono::seconds(1);
     sg::ResolvePendingNames();
     int live = 0;
     for (int i = 0; i < kCount; ++i)
         if (sg::NameWatchLive(kWatches[i].name, kTagBase + i)) ++live;
-    if (live == g_live) return;
+    const bool changed = (live != g_live);
     g_live = live;
-    if (live == kCount) UE_LOGI("rollover_watch: [%c] all %d name watches LIVE", RoleChar(), kCount);
+    if (live == kCount) {
+        g_liveSettled = true;
+        UE_LOGI("rollover_watch: [%c] all %d name watches LIVE", RoleChar(), kCount);
+    } else if (sg::PendingNameCount() == 0) {
+        // Nothing is left to resolve, so a watch not live now never will be.
+        g_liveSettled = true;
+        UE_LOGW("rollover_watch: [%c] %d of %d name watches are DEAD (resolved into a full gate table; the gate "
+                "named them) -- their counts read 0", RoleChar(), kCount - live, kCount);
+    } else if (changed) {
+        UE_LOGI("rollover_watch: [%c] %d of %d name watches LIVE so far", RoleChar(), live, kCount);
+    }
 }
 
 // The day number and the time as the save keeps them, for the burst and digest lines.
@@ -230,22 +245,24 @@ const char* BadsunHeld() {
     return "no";
 }
 
+// Arming waits on every read below; the first time one keeps it waiting in a world, that read is
+// named, so a watch that never arms says why instead of staying silent.
+void Waiting(uint32_t bit, const char* what) {
+    if (g_saidWaiting & bit) return;
+    g_saidWaiting |= bit;
+    UE_LOGI("rollover_watch: [%c] not armed yet -- %s; arming when it is", RoleChar(), what);
+}
+
 void TryArm() {
     float total = 0, day = 0, scale = 0, maxTime = 0;
     int32_t th = 0, tm = 0, tz = 0, sh = 0, sm = 0, sz = 0;
-    if (!DNC::ReadClock(total, day, scale) || !DNC::ReadMaxTime(maxTime) || !DNC::ReadTimeZ(th, tm, tz) ||
-        !DNC::ReadSavedTime(sh, sm, sz))
-        return;
+    if (!DNC::ReadClock(total, day, scale)) { Waiting(1u << 0, "the clock does not read"); return; }
+    if (!DNC::ReadMaxTime(maxTime)) { Waiting(1u << 1, "the day length does not read"); return; }
+    if (!DNC::ReadTimeZ(th, tm, tz)) { Waiting(1u << 2, "the cycle's timeZ does not read"); return; }
+    if (!DNC::ReadSavedTime(sh, sm, sz)) { Waiting(1u << 3, "the save's savedtime does not read"); return; }
     DSH::HashDigest dg{};
-    if (!DSH::ReadHashDigest(dg)) return;
-    if (dg.dishes <= 0) {
-        if (!g_saidNoDishes) {
-            g_saidNoDishes = true;
-            UE_LOGW("rollover_watch: [%c] not armed -- the clock reads but gamemode.dishs is empty; "
-                    "arming when the dishes are in", RoleChar());
-        }
-        return;
-    }
+    if (!DSH::ReadHashDigest(dg)) { Waiting(1u << 4, "the dish hash codes do not read"); return; }
+    if (dg.dishes <= 0) { Waiting(1u << 5, "the clock reads but gamemode.dishs is empty"); return; }
     DNC::Rates rt{};
     const bool haveRates = DNC::ReadRates(rt);
     const int mode = ue_wrap::game_mode::ReadLocal();
@@ -357,7 +374,8 @@ void Tick() {
     bool hashBurst = false;
     FlushBursts(hashBurst);
 
-    // A new world is a new cycle actor; arm on it (identity only, never dereferenced here).
+    // A new world is a new cycle actor; arm on it. Cycle hands out a live actor only, so reading
+    // its slot index here is safe; the pointer and the index are kept as identity and never read.
     void* cyc = DNC::Cycle();
     if (!cyc) return;
     const int32_t idx = R::InternalIndexOf(cyc);
@@ -365,7 +383,7 @@ void Tick() {
         g_armedCycle = cyc;
         g_armedCycleIdx = idx;
         g_armed = false;
-        g_saidNoDishes = false;
+        g_saidWaiting = 0;
     }
     if (!g_armed) {
         TryArm();
@@ -384,7 +402,7 @@ void OnDisconnect() {
     g_armedCycle = nullptr;
     g_armedCycleIdx = -1;
     g_armed = false;
-    g_saidNoDishes = false;
+    g_saidWaiting = 0;
     g_armedDigest = g_lastDigest = 0;
     g_lastOwnDayZ = INT_MIN;
     g_lastHostDayZ = -1;
