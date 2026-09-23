@@ -8,6 +8,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/props/remote_prop.h"  // IsActorUnderAnyDrive, DriveIsSimulating: the re-latch probe
 #include "coop/save/join_window_baseline.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
@@ -67,8 +68,14 @@ constexpr int   kAimFanHalf     = 5;      // an 11 x 11 fan of 3 degrees round t
 constexpr float kAimFanStepDeg  = 3.f;
 constexpr int   kGrabVerifyTicks = 30;
 constexpr int   kRestMaxTicks   = 600;    // ~10 s for a dropped extinguisher to come to rest
+// A walk that stops making way ends here. The rig save puts the client about 760 m from the base,
+// a route of some 200 s (the container probe's long-route deadline).
+constexpr int   kWalkDeadlineS  = 300;
 constexpr int   kWatchEveryTicks = 15;
 constexpr float kWatchMoveCm    = 3.f;
+constexpr float kRouteEndReachCm = 160.f; // a route that ends further from the wall reaches no mount
+constexpr float kProbeOffCm     = 50.f;   // the carried copy is off its mount before the probe runs
+constexpr int   kProbeReadTicks = 3;      // the drive's tick has run between the verb and this read
 
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;
@@ -181,6 +188,42 @@ void TickWatch(char who) {
     }
 }
 
+// ---- The re-latch probe: the carry arm's watching client ------------------------------------------
+
+// Once its copy of an extinguisher is under the host's drive and off the mount, the client runs the
+// verb its own laptop exit runs on a chair another peer carries: setPropProps(F,F,F,F), whose init()
+// switches simulation on. The drive re-latches the copy kinematic; the probe reads the simulate
+// state right after the verb and again a few ticks later, and the watch shows whether the copy kept
+// following the carry.
+ue_wrap::CachedObjRef g_probed;
+std::wstring g_probedKey;
+int g_probeTicks = -1;  // -1 = not yet run
+
+void TickRelatchProbe() {
+    if (g_probeTicks < 0) {
+        for (auto& w : g_watched) {
+            void* o = w.ref.Get();
+            if (!o || !coop::remote_prop::IsActorUnderAnyDrive(o)) continue;
+            if (Dist(E::GetActorLocation(o), w.start) < kProbeOffCm) continue;
+            const bool ok = PR::CallSetPropProps(o, false, false, false);
+            const bool sim = coop::remote_prop::DriveIsSimulating(PR::GetStaticMesh(o));
+            UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' setPropProps(F,F,F,F) on the driven copy (%s) "
+                    "-- simulating=%d", w.key.c_str(), ok ? "dispatched" : "did not dispatch", sim ? 1 : 0);
+            g_probed.Set(o);
+            g_probedKey = w.key;
+            g_probeTicks = 0;
+            return;
+        }
+        return;
+    }
+    if (g_probeTicks >= kProbeReadTicks || ++g_probeTicks < kProbeReadTicks) return;
+    void* o = g_probed.Get();
+    UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' %d ticks later -- simulating=%d underDrive=%d",
+            g_probedKey.c_str(), kProbeReadTicks,
+            o ? (coop::remote_prop::DriveIsSimulating(PR::GetStaticMesh(o)) ? 1 : 0) : -1,
+            o ? (coop::remote_prop::IsActorUnderAnyDrive(o) ? 1 : 0) : -1);
+}
+
 // ---- The acting peer's steps -------------------------------------------------------------------
 
 Step g_step = Step::WaitJoin;
@@ -219,7 +262,7 @@ DWORD WINAPI WalkThread(LPVOID arg) {
     coop::director::ControlManager mgr;
     if (w->carry) coop::director::AddCarryToProcesses(mgr, w->goal);
     else coop::director::AddWalkToProcesses(mgr, w->goal);
-    mgr.Run(w->goal, /*maxSeconds=*/90);
+    mgr.Run(w->goal, kWalkDeadlineS);
     w->state.store(w->goal.reached ? 1 : 2);
     return 0;
 }
@@ -266,20 +309,28 @@ void* Grabbing(void* player) {
     return E::ReadMainPlayerGrabState(player, gs) ? gs.grabbingActor : nullptr;
 }
 
-// The mounted extinguisher nearest the player, from the watch's own lists.
+// The mounted extinguisher at the end of the shortest NavMesh route from the player, from the
+// watch's own lists: a route must exist and end within reach of the wall, as the director's pile
+// pick asks (director_run.cpp, PickReachablePile).
 bool PickTarget(void* player) {
     const ue_wrap::FVector me = E::GetActorLocation(player);
-    float best = 1e12f;
+    float best = 1e30f;
     for (const auto& w : g_watched) {
         void* o = w.ref.Get();
         if (!o || !w.mounted || !PR::IsFrozen(o)) continue;
-        const float d = Dist(E::GetActorLocation(o), me);
-        if (d < best) { best = d; g_target.Set(o); g_targetKey = w.key; }
+        const ue_wrap::FVector at = E::GetActorLocation(o);
+        std::vector<ue_wrap::FVector> route;
+        if (!E::FindNavPath(player, me, at, route) || route.empty()) continue;
+        const ue_wrap::FVector& end = route.back();
+        if (std::hypot(end.X - at.X, end.Y - at.Y) > kRouteEndReachCm) continue;
+        float len = 0.f;
+        for (size_t i = 1; i < route.size(); ++i) len += Dist(route[i - 1], route[i]);
+        if (len < best) { best = len; g_target.Set(o); g_targetKey = w.key; }
     }
     if (!g_target.Raw()) return false;
     g_mountPos = E::GetActorLocation(g_target.Get());
-    UE_LOGI("[FIREEXT-DRILL] [%c] target key='%ls' at (%.1f, %.1f, %.1f), %.0f cm from the player", Who(),
-            g_targetKey.c_str(), g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best);
+    UE_LOGI("[FIREEXT-DRILL] [%c] target key='%ls' at (%.1f, %.1f, %.1f), a %.0f cm route (%.0f cm straight)",
+            Who(), g_targetKey.c_str(), g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best, Dist(g_mountPos, me));
     return true;
 }
 
@@ -335,7 +386,7 @@ void ActStep(coop::net::Session& s, void* player) {
     case Step::WaitJoin: {
         if (!ActorMayStart(s)) return;
         if (!g_watchArmed) ArmWatch(Who());
-        if (!PickTarget(player)) { Invalid("no mounted, frozen extinguisher in this world"); return; }
+        if (!PickTarget(player)) { Invalid("no mounted, frozen extinguisher a route reaches"); return; }
         StartWalk(g_mountPos, kReachCm, /*carry=*/false);
         Go(Step::WalkTo);
         return;
@@ -460,6 +511,7 @@ void Tick(coop::net::Session* session) {
         ArmWatch(Who());
     }
     TickWatch(Who());
+    if (ArmOf() == Arm::Carry) TickRelatchProbe();
 }
 
 void OnDisconnect() {
@@ -472,6 +524,9 @@ void OnDisconnect() {
     g_target.Reset();
     g_targetKey.clear();
     g_held.clear();
+    g_probed.Reset();
+    g_probedKey.clear();
+    g_probeTicks = -1;
     if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
         g_walk->goal.failed = true;
         g_walk->goal.failReason = "session ended";

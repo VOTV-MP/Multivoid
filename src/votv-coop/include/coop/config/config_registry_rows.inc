@@ -383,8 +383,9 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep", "VO
 CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
     "VOTVCOOP_FIREEXT_DRILL",
     "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "
-    "chain. carry: the host carries it a few metres once a client's join is over. short: the host "
-    "lets go the moment it holds it. client: the client carries it and the host watches. join: the "
+    "chain. carry: the host carries it a few metres once a client's join is over, and the client runs "
+    "the laptop exit's setPropProps on its carried copy once, which the drive must re-latch. short: "
+    "the host lets go the moment it holds it. client: the client carries it and the host watches. join: the "
     "host takes it off while a joiner is still loading. Both peers print every extinguisher they "
     "have and every move of one.")
 CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
