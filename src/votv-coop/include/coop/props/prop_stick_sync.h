@@ -32,9 +32,10 @@ struct PropStickStatePayload;
 
 namespace coop::prop_stick_sync {
 
-// Idempotent install, retried each net-pump tick until comp_wallAttachable_C loads. Two halves,
-// each latched on its own, so a recook that loses one leaves the other working: the stick (the
-// component class, ExecuteUbergraph_comp_wallAttachable, the component's `prop` field and
+// Idempotent install, retried on a throttle (one net-pump tick in 125) until comp_wallAttachable_C
+// loads, and run once on demand when a join's converge or a live message needs the lane first. Two
+// halves, each latched on its own, so a recook that loses one leaves the other working: the stick
+// (the component class, ExecuteUbergraph_comp_wallAttachable, the component's `prop` field and
 // forceStick, then the POST observer) and the unstick (unstick and its script-gate watch). Caches
 // `session`.
 void Install(coop::net::Session* session);
@@ -65,10 +66,10 @@ void ConvergeStuck(void* actor, uint8_t physFlags);
 bool IsWallAttachable(void* actor);
 
 // The component's own unstick on this peer's copy, with the tool: the peer that freed the prop had
-// it off the wall, by hand or by a pry, so the copy takes that outcome, and the tool only skips the
-// check that fails a hand grab of a pried-on prop and shows its "Tool required" hint. Not mirrored
-// back. False when the unstick half is not installed or the component does not resolve. Game
-// thread.
+// it off the wall, by hand or by a pry, so the copy takes that outcome. The tool skips the check that
+// fails a hand grab of a pried-on prop and shows its "Tool required" hint, and on that branch clears
+// the component's `holding`, which nobody here has set on the copy. Not mirrored back. False when the
+// unstick half is not installed or the component does not resolve. Game thread.
 bool ReplayUnstick(void* actor);
 
 // Clear per-session state (the pending stick and unstick records). Net disconnect.

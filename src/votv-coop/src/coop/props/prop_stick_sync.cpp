@@ -12,6 +12,7 @@
 #include "coop/props/remote_prop.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_physics.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -49,8 +50,10 @@ coop::net::Session* LoadSession() {
     return g_session.load(std::memory_order_acquire);
 }
 
-// ---- resolved engine refs (written by Install on the game thread BEFORE the
-// observer registers; read-only afterwards).
+// ---- resolved engine refs, written on the game thread by the install -- the throttled Install, or
+// on demand when a join's converge or a live message needs the lane first -- before the observer
+// and the watch register; read-only afterwards. The component class can be taken from a live
+// component before either (WallAttachCompOf).
 void* g_compClass        = nullptr;  // comp_wallAttachable_C
 void* g_uberFn           = nullptr;  // comp_wallAttachable_C::ExecuteUbergraph_comp_wallAttachable
 void* g_forceStickFn     = nullptr;  // comp_wallAttachable_C::forceStick(bool skipHolding)
@@ -79,21 +82,32 @@ int g_replayDepth = 0;
 
 // The offset of each class's comp_wallAttachable variable, or -1, resolved once per class. Every
 // owner the game has names the component so: the wall-attachable lineage and the plasma TV, whose
-// grab preludes both call comp_wallAttachable->unstick. Game thread.
-std::unordered_map<void*, int32_t> g_compOffsets;
+// grab preludes both call comp_wallAttachable->unstick. The class is held by slot and serial, so a
+// class freed and another loaded at its address resolves again. Game thread.
+struct CompOffset {
+    ue_wrap::CachedObjRef cls;
+    int32_t off = -1;
+};
+std::unordered_map<void*, CompOffset> g_compOffsets;
+
+// The on-demand install runs once a session; the throttled Install keeps retrying after it.
+bool g_onDemandTried = false;
 
 // The wall-attach component `actor` carries, checked for its class, or null. Before the throttled
 // install has found the class, a live component names it: a joiner's first snapshot can arrive
 // before that install runs, and this takes the class without a walk of the object array.
 void* WallAttachCompOf(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_stick_sync::WallAttachCompOf");
     if (!actor) return nullptr;
     void* cls = R::ClassOf(actor);
     if (!cls) return nullptr;
-    auto it = g_compOffsets.find(cls);
-    if (it == g_compOffsets.end())
-        it = g_compOffsets.emplace(cls, R::FindPropertyOffset(cls, L"comp_wallAttachable")).first;
-    if (it->second < 0) return nullptr;
-    void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(actor) + it->second);
+    CompOffset& entry = g_compOffsets[cls];
+    if (!entry.cls.Alive()) {
+        entry.cls.Set(cls);
+        entry.off = R::FindPropertyOffset(cls, L"comp_wallAttachable");
+    }
+    if (entry.off < 0) return nullptr;
+    void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(actor) + entry.off);
     if (!comp || !R::IsLive(comp)) return nullptr;
     void* compCls = R::ClassOf(comp);
     if (!compCls) return nullptr;
@@ -230,7 +244,11 @@ void InstallStickHalf() {
         return;
     }
     if (!GT::RegisterPostObserver(g_uberFn, &OnCompUbergraphPost)) {
-        UE_LOGE("prop_stick_sync: RegisterPostObserver failed (table full?)");
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGE("prop_stick_sync: RegisterPostObserver failed (table full?) -- retrying");
+        }
         return;
     }
     g_stickInstalled.store(true, std::memory_order_release);
@@ -287,6 +305,16 @@ void InstallHalves() {
     }
     if (!g_stickInstalled.load(std::memory_order_acquire)) InstallStickHalf();
     if (!g_unstickInstalled.load(std::memory_order_acquire)) InstallUnstickHalf();
+}
+
+// A join's converge or a live message needs the lane before the throttled Install has run: one
+// attempt a session, after which the throttle carries the retries. Game thread.
+void InstallOnDemand() {
+    if (g_onDemandTried) return;
+    if (g_stickInstalled.load(std::memory_order_acquire) && g_unstickInstalled.load(std::memory_order_acquire))
+        return;
+    g_onDemandTried = true;
+    InstallHalves();
 }
 
 // The component's own forceStick on this peer's copy at the pose it now has (skipHolding: nobody
@@ -356,8 +384,10 @@ void BroadcastUnstick(coop::net::Session* s, void* prop) {
 // peer's pose with that peer's velocity, a pry's kick included.
 void ApplyUnstick(void* prop, const coop::net::PropStickStatePayload& p, const std::wstring& keyW,
                   uint8_t senderPeerSlot, void* localPlayer) {
+    // A copy already free -- the hold's first pose ran the unstick before this message came -- gets no
+    // second one: its init() would switch the copy's simulation on under the drive that owns it.
     const bool wasStuck = ue_wrap::prop::IsFrozen(prop) || ue_wrap::prop::IsStatic(prop);
-    if (!ReplayUnstick(prop)) {
+    if (wasStuck && !ReplayUnstick(prop)) {
         UE_LOGW("prop_stick_sync: UNSTICK key='%ls' eid=%u -- the component's unstick did not run here; the copy "
                 "stays as it is", keyW.c_str(), p.elementId);
         return;
@@ -431,18 +461,9 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
     // stick itself -- a copy it cannot resolve, a half that did not install -- so the hold closes
     // first, and a pose of it still in flight starts nothing here. An unstick carries 0 and closes
     // nothing.
+    UE_ASSERT_GAME_THREAD("prop_stick_sync::OnStickState");
     coop::remote_prop::CloseHold(senderPeerSlot, payload.holdGen);
     const bool unstick = payload.flags == 0;
-    const std::atomic<bool>& installed = unstick ? g_unstickInstalled : g_stickInstalled;
-    const std::atomic<bool>& disabled = unstick ? g_unstickDisabled : g_stickDisabled;
-    if (!installed.load(std::memory_order_acquire)) return;
-    if (disabled.load(std::memory_order_acquire)) {
-        static std::atomic<bool> sWarned{false};
-        if (!sWarned.exchange(true))
-            UE_LOGW("prop_stick_sync: %s received while signature-disabled -- dropping (peer game builds differ)",
-                    unstick ? "UNSTICK" : "STICK");
-        return;
-    }
     const std::wstring keyW = coop::remote_prop::KeyToWString(payload.key);
     void* prop = nullptr;
     if (!keyW.empty() && keyW != L"None")
@@ -460,10 +481,31 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
                 unstick ? "UNSTICK" : "STICK", keyW.c_str(), payload.elementId, senderPeerSlot);
         return;
     }
-    void* comp = WallAttachCompOf(prop);
+    void* comp = WallAttachCompOf(prop);  // takes the component class from the copy if nothing has yet
     if (!comp) {
         UE_LOGW("prop_stick_sync: %s target %p carries no wall-attach component -- dropped",
                 unstick ? "UNSTICK" : "STICK", prop);
+        return;
+    }
+    const std::atomic<bool>& installed = unstick ? g_unstickInstalled : g_stickInstalled;
+    const std::atomic<bool>& disabled = unstick ? g_unstickDisabled : g_stickDisabled;
+    if (!installed.load(std::memory_order_acquire)) InstallOnDemand();
+    if (!installed.load(std::memory_order_acquire)) {
+        static bool sSaid = false;
+        if (!sSaid) {
+            sSaid = true;
+            UE_LOGW("prop_stick_sync: %s for key='%ls' before the lane installed -- dropped (said once)",
+                    unstick ? "UNSTICK" : "STICK", keyW.c_str());
+        }
+        return;
+    }
+    if (disabled.load(std::memory_order_acquire)) {
+        static bool sWarned = false;
+        if (!sWarned) {
+            sWarned = true;
+            UE_LOGW("prop_stick_sync: %s received while signature-disabled -- dropping (peer game builds differ)",
+                    unstick ? "UNSTICK" : "STICK");
+        }
         return;
     }
     if (unstick) {
@@ -493,14 +535,12 @@ void OnStickState(const coop::net::PropStickStatePayload& payload, uint8_t sende
 void ConvergeStuck(void* actor, uint8_t physFlags) {
     namespace pf = coop::net::propspawn_flags;
     if (!(physFlags & pf::kLiveState) || !actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return;
-    void* comp = WallAttachCompOf(actor);
-    if (!comp) return;
     const bool hostStuck = (physFlags & (pf::kFrozen | pf::kStatic)) != 0;
     const bool copyStuck = ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor);
-    if (hostStuck == copyStuck) return;
-    // A join's snapshot can arrive before the throttled install has run.
-    if (!g_stickInstalled.load(std::memory_order_acquire) || !g_unstickInstalled.load(std::memory_order_acquire))
-        InstallHalves();
+    if (hostStuck == copyStuck) return;  // nearly every row: two field reads and out
+    void* comp = WallAttachCompOf(actor);
+    if (!comp) return;
+    InstallOnDemand();  // a join's snapshot can arrive before the throttled install has run
     const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(actor);
     if (!hostStuck) {
         const bool ok = ReplayUnstick(actor);
@@ -539,6 +579,7 @@ bool ReplayUnstick(void* actor) {
 }
 
 void OnDisconnect() {
+    g_onDemandTried = false;
     std::lock_guard<std::mutex> lk(g_pendingMutex);
     g_pendingCount = 0;
 }
