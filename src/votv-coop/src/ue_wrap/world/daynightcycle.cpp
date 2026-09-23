@@ -52,6 +52,12 @@ int32_t g_cycleGmOff = -1;        // AdaynightCycle_C::gamemode
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
+    // Until the class loads every caller retries -- the install fanout every pump tick -- and a
+    // class lookup that misses walks the whole object array: one attempt a second.
+    static std::chrono::steady_clock::time_point s_nextTry{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now < s_nextTry) return false;
+    s_nextTry = now + std::chrono::seconds(1);
     void* cls = R::FindClass(L"daynightCycle_C");
     if (!cls) return false;  // not loaded yet -- caller retries
 
@@ -78,6 +84,9 @@ bool EnsureResolved() {
     g_sleepDilOff  = R::FindPropertyOffset(cls, L"sleepingTimeDilation");
     g_tickFn       = R::FindFunction(cls, L"ReceiveTick");
     g_cycleGmOff   = R::FindPropertyOffset(cls, L"gamemode");
+    if (g_cycleGmOff < 0)
+        UE_LOGW("daynightcycle: daynightCycle_C has no gamemode -- a ticked cycle's save slot and menu flag "
+                "are out of reach");
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X timeZ@0x%04X",
             cls, totalOff, dayOff, scaleOff, maxOff, timeZOff);
@@ -162,32 +171,44 @@ bool ReadRates(Rates& out) {
 }
 
 namespace {
+// A member offset read from a live object's own class once, and latched either way: a class that
+// lacks the member -- a game update renamed it -- lacks it for the process, so the lookup, a walk
+// of the class's fields with a name rendered for each, never repeats, and the miss is said once.
+struct LatchedMember {
+    const wchar_t* cls;
+    const wchar_t* name;
+    const char* without;  // what cannot be done without it
+    int32_t off = -1;
+    bool missing = false;
+
+    int32_t Of(void* obj) {
+        if (off >= 0 || missing || !obj) return off;
+        off = R::FindPropertyOffset(R::ClassOf(obj), name);
+        if (off < 0) {
+            missing = true;
+            UE_LOGW("daynightcycle: %ls has no %ls -- %s", cls, name, without);
+        }
+        return off;
+    }
+};
+
 // The saveSlot substrate (gamemode -> saveSlot), shared by the delivery latch and the saved clock.
 // The gamemode pointer is cached + liveness-revalidated (the email.cpp shape); the walk only
-// re-runs after a loss, never per call. The slot's own fields resolve from the live slot's class.
-void* g_gmCls = nullptr;
-int32_t g_offGmSaveSlot = -1;
-int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery
-int32_t g_offSavedTime = -1;      // saveSlot_C::savedtime (FIntVector)
+// re-runs after a loss, never per call.
+LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"saveSlot", "the save slot's clock fields are out of reach"};
+LatchedMember g_slotDailyDelivery{L"saveSlot_C", L"dailyDelivery", "the 6 am order latch cannot be set"};
+LatchedMember g_slotSavedTime{L"saveSlot_C", L"savedtime", "the day number can be neither read nor written"};
 // Held world-stamped: a dying world's gamemode keeps its slot until the purge, tens of seconds
 // after the world changed, and its saveSlot is not the running world's.
 CachedObjRef g_gm;
 
-// Resolve the gamemode class and its saveSlot member. False while the class is unloaded.
-bool ResolveSaveSlotSurface() {
-    if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
-    if (!g_gmCls) return false;
-    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(g_gmCls, L"saveSlot");
-    return g_offGmSaveSlot >= 0;
-}
-
-// The live saveSlot, or null. Call after ResolveSaveSlotSurface answered true.
+// The running world's live saveSlot, for a caller with no cycle in hand, or null.
 void* LiveSaveSlot() {
     if (!g_gm.Alive()) {
-        // Throttle the miss-path GUObjectArray walk: the callers are caller-rate-driven -- the
-        // latch and the day number once per streamed clock sample, the savedtime read by the dev
-        // rollover watch every tick -- so a world transition would otherwise re-scan on every call. A world change
-        // lifts the throttle: it is there for a gamemode that is missing, not one a new world brought.
+        // Throttle the miss-path GUObjectArray walk: the callers read every tick -- the host's
+        // clock sample, the dev day instruments -- so a world transition would otherwise re-scan on
+        // every call. A world change lifts the throttle: it is there for a gamemode that is missing,
+        // not one a new world brought.
         static std::chrono::steady_clock::time_point s_lastScan{};
         static uint32_t s_scanGen = 0;
         const auto now = std::chrono::steady_clock::now();
@@ -205,7 +226,9 @@ void* LiveSaveSlot() {
         }
         if (!g_gm.Alive()) return nullptr;
     }
-    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm.Raw()) + g_offGmSaveSlot);
+    const int32_t off = g_gmSaveSlot.Of(g_gm.Raw());
+    if (off < 0) return nullptr;
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm.Raw()) + off);
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 }  // namespace
@@ -214,10 +237,9 @@ void* SaveSlotOfCycle(void* cycle) {
     if (!cycle || g_cycleGmOff < 0) return nullptr;
     void* gm = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(cycle) + g_cycleGmOff);
     if (!gm || !R::IsLive(gm)) return nullptr;
-    // From the live gamemode's own class: a class lookup by name walks the object array on a miss.
-    if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
-    if (g_offGmSaveSlot < 0) return nullptr;
-    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
+    const int32_t off = g_gmSaveSlot.Of(gm);
+    if (off < 0) return nullptr;
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + off);
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 
@@ -237,26 +259,19 @@ bool IsMenuCycle(void* cycle) {
 }
 
 bool LatchDailyDeliveryOf(void* saveSlot) {
-    if (!saveSlot) return false;
-    if (g_offDailyDelivery < 0)
-        g_offDailyDelivery = R::FindPropertyOffset(R::ClassOf(saveSlot), L"dailyDelivery");
-    if (g_offDailyDelivery < 0) return false;
-    *(reinterpret_cast<uint8_t*>(saveSlot) + g_offDailyDelivery) = 1;
+    const int32_t off = g_slotDailyDelivery.Of(saveSlot);
+    if (!saveSlot || off < 0) return false;
+    *(reinterpret_cast<uint8_t*>(saveSlot) + off) = 1;
     return true;
 }
 
 namespace {
-// A save slot's savedtime triple, or null. The offset is resolved from the slot's own class on the
-// first call.
+// A save slot's savedtime triple, or null.
 int32_t* SavedTimeIn(void* saveSlot) {
-    if (!saveSlot) return nullptr;
-    if (g_offSavedTime < 0) g_offSavedTime = R::FindPropertyOffset(R::ClassOf(saveSlot), L"savedtime");
-    if (g_offSavedTime < 0) return nullptr;
-    return reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(saveSlot) + g_offSavedTime);
+    const int32_t off = g_slotSavedTime.Of(saveSlot);
+    if (!saveSlot || off < 0) return nullptr;
+    return reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(saveSlot) + off);
 }
-
-// The running world's save slot, for a caller with no cycle in hand; null while unresolved.
-void* RunningSaveSlot() { return ResolveSaveSlotSurface() ? LiveSaveSlot() : nullptr; }
 }  // namespace
 
 bool ReadSavedTimeOf(void* saveSlot, int32_t& hour, int32_t& minute, int32_t& day) {
@@ -269,7 +284,7 @@ bool ReadSavedTimeOf(void* saveSlot, int32_t& hour, int32_t& minute, int32_t& da
 }
 
 bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day) {
-    return ReadSavedTimeOf(RunningSaveSlot(), hour, minute, day);
+    return ReadSavedTimeOf(LiveSaveSlot(), hour, minute, day);
 }
 
 bool WriteSavedDayOf(void* saveSlot, int32_t day) {
@@ -279,6 +294,6 @@ bool WriteSavedDayOf(void* saveSlot, int32_t day) {
     return true;
 }
 
-bool WriteSavedDay(int32_t day) { return WriteSavedDayOf(RunningSaveSlot(), day); }
+bool WriteSavedDay(int32_t day) { return WriteSavedDayOf(LiveSaveSlot(), day); }
 
 }  // namespace ue_wrap::daynightcycle
