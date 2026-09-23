@@ -438,8 +438,9 @@ void Session::Stop() {
     // host's sequence climbed past the old one's.
     ResetPoseBatches();
     // And every slot's receive state and epoch latch, for the same reason: the close path resets a
-    // slot when its peer goes, but a connection this side closes gets no status callback, so a
-    // session that ends here would carry its last senders' sequences into the next.
+    // slot when its peer closes or the link fails, but a connection this side closes is neither, and
+    // the loop below empties its slot first, so a session that ends here would carry its last
+    // senders' sequences into the next.
     { std::lock_guard<std::mutex> lk(remoteMutex_);
       for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
 

@@ -305,10 +305,10 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     lastRemoteDeskCursorSeq_[peerSlot] = 0;
     remoteDeskCursorStamp_[peerSlot] = 0;
     lastReadDeskCursorStamp_[peerSlot] = 0;
-    // Slot 0 is the host, and its single streams -- the clock, the download sim, the dish and reel
-    // poses -- are its remote state too. Their sequence is the host process's own counter, so a
-    // client judging a restarted host's samples against the last host's would drop every one until
-    // the new counter passed the old.
+    // On a client slot 0 is the host, and its single streams -- the clock, the download sim, the dish
+    // and reel poses -- are its remote state too. Their sequence is the host process's own counter, so
+    // a client judging a restarted host's samples against the last host's would drop every one until
+    // the new counter passed the old. A host never writes these fields.
     if (peerSlot == 0) {
         hasRemoteHostClock_ = false;
         lastRemoteHostClockSeq_ = 0;
@@ -725,9 +725,9 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, EndReason code, const ch
                                  reason ? reason : Describe(code).text, /*bEnableLinger*/false);
     }
 
-    // GNS delivers no status callback for a connection we close, so the ClosedByPeer teardown is
-    // replicated here; the exchange(0) above makes a racing callback's FindPeerSlotForConn return
-    // -1, so the teardown runs exactly once.
+    // A connection we close is not closed by its peer, so the close path's teardown does not run for
+    // it and is replicated here; the exchange(0) above makes a racing callback's FindPeerSlotForConn
+    // return -1, so the teardown runs exactly once.
     { std::lock_guard<std::mutex> lk(remoteMutex_); ResetPeerRemoteState(peerSlot); }
     { std::lock_guard<std::mutex> lk(reliableInboxMutex_);
       for (auto it = reliableInbox_.begin(); it != reliableInbox_.end();) {

@@ -192,9 +192,9 @@ struct LatchedMember {
     }
 };
 
-// The saveSlot substrate (gamemode -> saveSlot), shared by the delivery latch and the saved clock.
-// The gamemode pointer is cached + liveness-revalidated (the email.cpp shape); the walk only
-// re-runs after a loss, never per call.
+// The saveSlot substrate (gamemode -> saveSlot). The running world's gamemode, for the callers with no
+// cycle in hand (the host's clock sample, the dev instruments), is cached + liveness-revalidated (the
+// email.cpp shape); the walk only re-runs after a loss, never per call.
 LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"saveSlot", "the save slot's clock fields are out of reach"};
 LatchedMember g_slotDailyDelivery{L"saveSlot_C", L"dailyDelivery", "the 6 am order latch cannot be set"};
 LatchedMember g_slotSavedTime{L"saveSlot_C", L"savedtime", "the day number can be neither read nor written"};
