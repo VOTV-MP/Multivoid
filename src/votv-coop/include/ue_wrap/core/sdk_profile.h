@@ -208,9 +208,6 @@ inline constexpr size_t UHorizontalBoxSlot_Padding = 0x0040;
 inline constexpr size_t UHorizontalBoxSlot_Size    = 0x0050;  // FSlateChildSize (0x8)
 inline constexpr size_t UHorizontalBoxSlot_HAlign  = 0x0058;
 inline constexpr size_t UHorizontalBoxSlot_VAlign  = 0x0059;
-inline constexpr size_t UScrollBoxSlot_Padding = 0x0038;
-inline constexpr size_t UScrollBoxSlot_HAlign  = 0x0048;
-inline constexpr size_t UScrollBoxSlot_VAlign  = 0x0049;
 // UVerticalBoxSlot's individual members, for writing one field (the block above clones the
 // region). UMG.hpp:1705-1710.
 inline constexpr size_t UVerticalBoxSlot_Size    = 0x0038;  // FSlateChildSize (0x8)

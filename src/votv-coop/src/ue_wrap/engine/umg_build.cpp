@@ -9,6 +9,7 @@
 #include "ue_wrap/engine/engine.h"  // GetWorldContext -- the Slate library calls are static
 
 #include <cstring>
+#include <cwchar>
 #include <vector>
 
 namespace ue_wrap::umg {
@@ -514,31 +515,56 @@ bool SetAutoWrapText(void* textBlock, bool wrap) {
     return Call(textBlock, f);
 }
 
+namespace {
+
+// A slot's own setter, resolved against its runtime class and cached per class and function: every
+// slot type declares its own, and FindFunction does no super-walk. A small linear table is the whole
+// structure this needs; it never grows past the slot types in the tree times the setters asked for
+// (two today). `fnName` must be a literal: the table keeps the pointer.
+void* SlotSetter(void* slot, const wchar_t* fnName) {
+    void* cls = R::ClassOf(slot);
+    if (!cls) return nullptr;
+    struct Entry { void* cls; const wchar_t* fn; void* ptr; };
+    static Entry sCache[16] = {};
+    static int   sCount = 0;
+    for (int i = 0; i < sCount; ++i)
+        if (sCache[i].cls == cls && std::wcscmp(sCache[i].fn, fnName) == 0) return sCache[i].ptr;
+    void* ptr = R::FindFunction(cls, fnName);
+    if (sCount < 16) {
+        sCache[sCount++] = Entry{cls, fnName, ptr};
+        if (!ptr)
+            UE_LOGW("umg: %ls has no %ls -- a live change through it will not take",
+                    R::ClassNameOf(slot).c_str(), fnName);
+    } else {
+        // Past the table every call walks again; said once, and a miss then stays quiet.
+        static bool sSaidFull = false;
+        if (!sSaidFull) {
+            sSaidFull = true;
+            UE_LOGW("umg: the slot setter cache is full (16) -- a pair beyond it resolves on "
+                    "every call");
+        }
+    }
+    return ptr;
+}
+
+}  // namespace
+
 bool SetSlotHAlignLive(void* slot, uint8_t h) {
     if (!slot) return false;
-    void* cls = R::ClassOf(slot);
-    if (!cls) return false;
-    // Cached per slot class, not globally: a screen mixes overlay slots and box slots, and each
-    // declares its own setter. One entry is the steady state (the text field only ever asks about
-    // overlay slots), so a small linear scan is the whole structure this needs, and it never grows
-    // past the number of slot types in the tree.
-    struct Entry { void* cls; void* fn; };
-    static Entry sCache[8] = {};
-    static int   sCount = 0;
-    void* fn = nullptr;
-    bool  known = false;
-    for (int i = 0; i < sCount; ++i)
-        if (sCache[i].cls == cls) { fn = sCache[i].fn; known = true; break; }
-    if (!known) {
-        fn = R::FindFunction(cls, L"SetHorizontalAlignment");
-        if (sCount < 8) sCache[sCount++] = Entry{cls, fn};
-        if (!fn)
-            UE_LOGW("umg: %ls has no SetHorizontalAlignment -- a live alignment flip on it "
-                    "will not take", R::ClassNameOf(slot).c_str());
-    }
+    void* fn = SlotSetter(slot, L"SetHorizontalAlignment");
     if (!fn) return false;
     ParamFrame f(fn);
     f.Set<uint8_t>(L"InHorizontalAlignment", h);
+    return Call(slot, f);
+}
+
+bool SetSlotPaddingLive(void* slot, float left, float top, float right, float bottom) {
+    if (!slot) return false;
+    void* fn = SlotSetter(slot, L"SetPadding");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    const float margin[4] = {left, top, right, bottom};   // FMargin's own order
+    if (!f.SetRaw(L"InPadding", margin, static_cast<int32_t>(sizeof(margin)))) return false;
     return Call(slot, f);
 }
 

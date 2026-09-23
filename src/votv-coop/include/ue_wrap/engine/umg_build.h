@@ -168,6 +168,11 @@ bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uin
 // types, so Slate clips the head and keeps the tail and the caret visible.
 bool SetSlotHAlignLive(void* slot, uint8_t h);
 
+// A slot's padding the same way, through its own SetPadding. UMG builds the Slate slot inside
+// AddChild from the values the slot holds then, so a raw padding write after AddChild on a live
+// panel never reaches the screen: the browser's rows lost their 2 px gap exactly so.
+bool SetSlotPaddingLive(void* slot, float left, float top, float right, float bottom);
+
 // UWidget::GetDesiredSize, what the widget asked for, as opposed to what the parent gave it;
 // desired over allotted is the overflow. Zero is a legitimate answer (never laid out), hence
 // the bool and the reference.

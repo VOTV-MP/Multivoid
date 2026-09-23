@@ -454,15 +454,13 @@ void Sync() {
     for (int i = have; i < want; ++i) {
         void* row = BuildRow(g_list);
         if (!row) break;
-        if (void* s = U::AddChild(g_list, row)) {
-            U::SetSlotAlign(s, P::off::UScrollBoxSlot_HAlign, P::off::UScrollBoxSlot_VAlign,
-                            kFill, kCenter);
-            // The slot gap below each row: two adjacent 2 px frames with no gap would read as one 4
-            // px rule.
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UScrollBoxSlot_Padding);
-            pad[0] = 0.f; pad[1] = 0.f; pad[2] = 0.f; pad[3] = kRowGapPx;
-        }
+        // The slot gap below each row: two adjacent 2 px frames with no gap would read as one 4 px
+        // rule. Through the slot's own setter: the list is live, so AddChild built the Slate slot
+        // from the defaults and a raw write after it never reached the screen (the rows rendered
+        // 64 apart where 66 was meant). The defaults hold the rest: a scroll box slot fills
+        // across, and a vertical list gives a row no height to align in.
+        if (void* s = U::AddChild(g_list, row))
+            U::SetSlotPaddingLive(s, 0.f, 0.f, 0.f, kRowGapPx);
     }
     // What the pointer was on before this pass rewrites the ids (the invalidation check after the
     // loop).
