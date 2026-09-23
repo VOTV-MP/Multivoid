@@ -1,16 +1,16 @@
 // coop/dev/set_clock.h -- DEV: set the world day and clock time from the F1 menu.
 //
 // HOST-AUTHORITATIVE: it writes the host's AdaynightCycle_C clock through ue_wrap::daynightcycle,
-// and coop::time_sync's host poll broadcasts the accumulator clock each tick, so the sky snaps on
-// every peer. Host-only: dev_gate refuses on a connected client.
+// and coop::time_sync sends the moved clock as its next sample, so the sky snaps on every peer.
+// Host-only: dev_gate refuses on a connected client.
 //
 // TWO clocks live on the cycle. The NAMED clock `timeZ` is an FIntVector of hour, minute and day
 // number, rebuilt each tick from the accumulator and saveSlot.savedtime.Z and handed to settime,
 // which persists it and walks the scheduled events. The float accumulators are `totalTime` and
 // `day`: `day` is the within-day counter the midnight cascade fires on and what the sun derives
 // from, `totalTime` drives nothing in the blueprint. Neither is the day number, which lives in
-// savedtime.Z. Setting the clock writes the accumulators, and for a day change the day number; the
-// next tick rebuilds `timeZ` from them. A FORWARD day jump fires every skipped scheduled row
+// savedtime.Z. Setting the clock writes the day number and the accumulators; the next tick rebuilds
+// `timeZ` from them. A FORWARD day jump fires every skipped scheduled row
 // through settime, which the event lane mirrors to clients.
 
 #pragma once

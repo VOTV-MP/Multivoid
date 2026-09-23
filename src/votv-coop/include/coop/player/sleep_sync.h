@@ -44,8 +44,8 @@ void Tick();
 // TALLY -- each peer's isSleep edge reports inBed (op=Report); the host counts world-ready peers
 //   and broadcasts "N/M sleeping" as a chat feed line.
 // ACCELERATE -- everyone in bed: the host broadcasts, each sleeping peer sets its own dilation to
-//   20 so vitals refill natively; the host's clock runs 20x, and its stream speeds up with it
-//   (time_sync), so a client's parked clock follows every minute of the night.
+//   20 so vitals refill natively; the host's clock runs 20x and its stream with it (time_sync),
+//   so a client's parked clock follows the night, though a slow client frame can skip a minute.
 // END -- ANY peer's isSleep falling edge ends the night for everyone. EVERY wake cause funnels
 //   through gamemode.wakeup -- the natural fill, a manual exit, hunger at food <= 20, an active
 //   event, a nightmare, the ariral chains, the delivery drone's own ubergraph -- so one edge catches

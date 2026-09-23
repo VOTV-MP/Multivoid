@@ -27,8 +27,8 @@ std::atomic<int32_t> g_lastHostDayZ{-1};
 bool g_tickObserved = false;  // the pre-observer on the cycle's tick is registered (once per process)
 
 // HOST: when a sample is due. One is sent when the clock has moved half a game minute since the last
-// one sent, so a sample never carries the clock across more than one minute boundary even with one
-// datagram lost, and at the latest after the resting interval. Measured on the clock itself (the
+// one sent, so consecutive samples cross at most one minute boundary -- a lost or merged sample can
+// skip one -- and at the latest after the resting interval. Measured on the clock itself (the
 // day number times maxTime, plus `day`), whatever moved it: the sleep's time dilation, the difficulty,
 // the day-length rule, a rewind or a set clock, which is sent at once.
 constexpr double kGameMinutesPerDay = 1440.0;
@@ -50,8 +50,8 @@ uint32_t g_appliedSince = 0;  // samples since the last convergence line, which 
 Clock::time_point g_nextStreamLine{};
 
 // Receive-side format check: a NaN or absurd clock written raw into the cycle reaches the sun and
-// moon rotation (a black sky, a rotator assert). The accumulators are game seconds, thousands per
-// day, and `day` goes below zero while the game's rewind runs the clock backward; the day number
+// moon rotation (a black sky, a rotator assert). The accumulators are cycle units, 4500 a day by
+// default, and `day` goes below zero while the game's rewind runs the clock backward; the day number
 // counts days.
 bool IsWellFormed(const coop::net::TimeSyncPayload& p) {
     return std::isfinite(p.totalTime) && std::isfinite(p.day) && std::fabs(p.totalTime) <= 1.0e7f &&
@@ -127,8 +127,9 @@ void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float 
     DNC::LatchDailyDeliveryOf(slot);
 }
 
-// CLIENT: the cycle is about to tick. Park it and write the newest host sample into it, so the tick
-// reads the host's clock and a zero rate every time, the first tick of a new world included.
+// CLIENT: the cycle is about to tick. Park it and write the newest host sample into it, if one has
+// arrived since the last was read: nothing reads the stream before a joined world's cycle does, so
+// that world's first tick reads the host's clock at a zero rate.
 void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
     if (!GT::IsGameThread() || !HoldsCycle(self)) return;
     auto* s = g_session.load(std::memory_order_acquire);  // set, since HoldsCycle answered yes

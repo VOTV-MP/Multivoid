@@ -368,7 +368,7 @@ bool TryReplay(const PendingFire& pf) {
     return true;
 }
 
-// The host poll and client suppress ticks, game thread, throttled by the caller.
+// The host's passEvents poll, game thread, throttled by the caller.
 void HostPollTick() {
     void* ss = SaveSlotOf(Gamemode());
     if (!ss || g_offPassEvents < 0) return;

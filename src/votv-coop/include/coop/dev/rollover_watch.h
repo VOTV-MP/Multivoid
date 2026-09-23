@@ -30,7 +30,7 @@ bool IsEnabled();
 void Install(coop::net::Session* session);
 
 // Register the watches (once per process), arm per world, flush this tick's bursts, and print the
-// DAY and DIGEST lines. Every pump tick in a world, after time_sync's. Game thread.
+// DAY and DIGEST lines. Every pump tick in a world. Game thread.
 void Tick();
 
 // How many times a watched function's body has run this session (its post count); 0 for a name that

@@ -14,16 +14,18 @@ client never rolls a shared outcome.
 
 The game's clock lives on one actor, the day-night cycle, and the sun is a pure function of it.
 The host streams its clock -- the within-day time, the absolute time and the day number. On a
-client, right before each tick of the cycle, the lane holds the cycle's own rate at zero and writes
-the newest sample in, so the client's clock moves only with the host's and never reaches a
-midnight of its own: the midnight's shared outputs (the dish hash codes, the daily task, the Bad
-Sun roll, the results mail) are the host's alone, and the host's midnight reaches a client as one
-sample carrying the next day number `[V]` (`coop/world/time_sync`). A sample is sent each time the
-host's clock has moved half a game minute, and at least twice a second -- every 500 ms at the
-normal speed, about every 80 ms in the shared sleep (on [players.md](players.md)) -- so a client's
-own minute and hour pulses, its sun, sounds, decals and weekday, come at the same game minutes as
-the host's `[V]`. The star dome's random orientation and the save-derived moon phase are pushed
-once (`coop/world/sky_sync`).
+client, right before each tick of its world's cycle (the menu scene's own cycle is left alone), the
+lane holds the cycle's rate at zero and writes the newest sample in, so the client's clock advances
+only with the host's and its own advance never reaches a midnight: the midnight's shared outputs
+(the dish hash codes, the daily task, the Bad Sun roll, the results mail) are the host's, and the
+host's midnight reaches a client as one sample carrying the next day number `[V]`
+(`coop/world/time_sync`). A sample is sent each time the host's clock has moved half a game minute,
+and at least twice a second: every 500 ms at the normal speed, where a game minute holds about six,
+so a client's own minute and hour pulses, its sun, sounds, decals and weekday, follow the host's
+minute for minute `[RD]`; in the shared sleep (on [players.md](players.md)) one comes about every
+80 ms `[RD]`, and a slow client frame can merge two and skip a minute's pulse -- one night gave 44
+of 45 `[V]`. The star dome's random orientation and the save-derived moon phase are pushed once
+(`coop/world/sky_sync`).
 
 ### Weather
 
@@ -175,7 +177,8 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 |---|---|
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
 | A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
-| The sky eye, the jellyfish and the flesh rain are rolled by every peer's own hour pulse, and none of them is mirrored | `[V]` the clock's hour roll; no lane under `coop/world` carries them |
+| The sky eye, the jellyfish and the flesh rain are rolled by every peer's own hour pulse, and none of them is mirrored | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
+| A client's cheat-menu day buttons (a day forward, or two hours after 22:00) still roll that client's own midnight at its next tick: the hold covers the clock's rate, not a written time | `[RD]` the cheat menu's writes and the cycle's roll test |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
 | The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither parked on a client nor mirrored from the host, so each peer rolls its own | `[V]` `coop/world/spawn_authority.h`, the unmirrored families |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |

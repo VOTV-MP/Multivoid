@@ -29,8 +29,9 @@ bool EnsureResolved();
 void* Cycle();
 
 // The cycle's own ReceiveTick event (declared on daynightCycle_C, dispatched by the engine through
-// ProcessEvent every frame), the seam a lane parks the cycle at: a pre-observer on it runs right
-// before the tick reads the clock. Null until EnsureResolved has succeeded. Game thread.
+// ProcessEvent at each actor tick -- every frame by the class's defaults, which set no tick
+// interval), the seam a lane parks the cycle at: a pre-observer on it runs right before the tick
+// reads the clock. Null until EnsureResolved has succeeded. Game thread.
 void* TickFunction();
 
 // The save slot of the gamemode a given cycle belongs to, by its own `gamemode` member: no walk, so
@@ -102,10 +103,11 @@ bool ReadRates(Rates& out);
 // ---- the client's parked clock (coop/world/time_sync drives these) ----
 // The midnight cascade -- the hash codes, the task roll, the Bad Sun, the results mail and points
 // -- is a tick threshold, `day > maxTime` inside the cycle's own tick chain, armed on every peer.
-// A client's cycle is held at timeScale 0, so its `day` moves only by the host's samples, which
-// are below maxTime because the host wraps inside its own tick: the cascade is out of reach while
-// the sky keeps deriving from `day`. The hour pulse still runs, and func_newHour would place the
-// automatic 6 am drone order while dailyDelivery is false, so that is latched too.
+// A client's cycle is held at timeScale 0, so its own advance never moves `day`; a host sample's
+// is below maxTime, as the host wraps inside its own tick, so the cascade is out of its reach while
+// the sky keeps deriving from `day` -- a local write past maxTime, the cheat menu's day buttons,
+// still reaches it. The hour pulse still runs, and func_newHour would place the automatic 6 am drone
+// order while dailyDelivery is false, so that is latched too.
 
 // Write timeScale alone: 0 to park a client's clock, 1.0f -- the game's own running value, the
 // one its rewind restores after the hour it spends at -1 -- to hand it back. No-op if unresolved.
