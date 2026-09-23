@@ -1,7 +1,8 @@
 // coop/props/remote_prop.h -- the receiver-side held-prop driver, RemotePlayer's shape for
-// physics-prop grab replication: on the first pose for a new key the local prop is looked up
-// by key string, its mesh stops simulating so physics leaves it alone, and the pointer is
-// cached for the grab; each later pose writes the location and rotation on the cached actor;
+// physics-prop grab replication: on the first pose of a new hold the local prop is looked up
+// by key string, woken and unfrozen as the holder's grab did, its mesh stops simulating so
+// physics leaves it alone, and the pointer is cached for the hold; each later pose writes the
+// location and rotation on the cached actor;
 // a release (or a pose gap over half a second, an implicit release) re-enables simulation,
 // applies the launch velocity and clears the cache. The MTA-style ownership transfer: the
 // sender is authoritative for the held prop and the receiver displays it kinematically; on
@@ -25,7 +26,8 @@ namespace coop::remote_prop {
 // runs only while the session is connected.
 void Tick(coop::net::Session& session);
 
-// Handle an incoming reliable release: the receiver re-enables simulation on the cached prop,
+// Handle an incoming reliable release: the receiver closes the hold it names, converges the
+// copy's frozen and sleep to the holder's at the edge, re-enables simulation on the cached prop,
 // applies the launch velocity, and fires the prop's own thrown event when the launch speed
 // exceeds the threshold, so a passive drop stays silent and a real throw plays the game's own
 // sound and trail. Clears the cached pointer, so the next pose re-resolves. `senderSlot` is
@@ -35,6 +37,12 @@ void Tick(coop::net::Session& session);
 // game's throw statistics credit the local player, a minor inaccuracy for the natural
 // effects.
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
+
+// Close hold `holdGen` of the peer in `slot` (PropPoseSnapshot::holdGen): a pose of it that
+// arrives later is the tail of an ended stream and starts no drive. The release closes its own
+// hold; the stick lane closes the hold its stick ended. An older generation than the slot's last
+// closed one, 0, or a slot out of range changes nothing. Game thread.
+void CloseHold(int slot, uint16_t holdGen);
 
 // An incoming spawn (a peer dropped an inventory item into the world) is handled in
 // remote_prop_spawn; this header keeps the accessors the spawn receiver calls back into for
@@ -93,6 +101,10 @@ void* ResolveLiveActorByEid(uint32_t eid);
 void DriveSimulate(void* mesh, bool simulate);
 void DriveSetLinearVelocity(void* mesh, float vx, float vy, float vz);
 void DriveSetAngularVelocity(void* mesh, float wx, float wy, float wz);
+
+// True while `mesh` simulates physics (IsSimulatingPhysics); false for null or on a failed
+// resolve. The drive's re-latch reads it once per tick per driven prop. Game thread.
+bool DriveIsSimulating(void* mesh);
 
 // Force-release: called at disconnect or a level unload to put any cached prop back into its
 // normal physics state. Safe when not holding.

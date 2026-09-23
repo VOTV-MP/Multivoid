@@ -577,6 +577,7 @@ inline constexpr const wchar_t* ConvStringToNameFn       = L"Conv_StringToName";
 // release edge and the receiver writes it after SetSimulatePhysics(true), so the body re-enters
 // the simulation with the launch state.
 inline constexpr const wchar_t* SetSimulatePhysicsFn                 = L"SetSimulatePhysics";
+inline constexpr const wchar_t* IsSimulatingPhysicsFn                = L"IsSimulatingPhysics";
 inline constexpr const wchar_t* GetPhysicsLinearVelocityFn           = L"GetPhysicsLinearVelocity";
 inline constexpr const wchar_t* GetPhysicsAngularVelocityInDegreesFn = L"GetPhysicsAngularVelocityInDegrees";
 inline constexpr const wchar_t* SetPhysicsLinearVelocityFn           = L"SetPhysicsLinearVelocity";

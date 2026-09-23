@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 175;
+inline constexpr uint16_t kProtocolVersion = 176;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -934,7 +934,9 @@ static_assert(sizeof(WireClassName) == 64, "WireClassName must be 64 bytes");
 
 // A held prop's world transform, sent unreliably while the sender holds it. The receiver resolves
 // the prop by key (by eid for a keyless trash entity), disables its physics and drives the
-// transform; a stream that stops is an implicit release.
+// transform; a stream that stops is an implicit release. `holdGen` names the hold: the holder mints
+// a new one at each grab, its release closes it, and a pose of a closed hold is one that outlived
+// its stream (the driven-prop channel's generation, and MTA's sync time context).
 struct PropPoseSnapshot {
     WireKey key;        // 32 -- which prop (cross-peer stable string)
     float   x, y, z;    // world cm
@@ -948,7 +950,8 @@ struct PropPoseSnapshot {
     // the settled pile. 0 = no enforcement (a keyed prop). In a PropDrivePose batch the same byte is
     // the claim generation, which PropDriveEnd closes.
     uint8_t  ctx;
-    uint8_t  _pad[3];
+    uint8_t  _pad;
+    uint16_t holdGen;   // the holder's hold generation, wrapping, never 0; 0 in a PropDrivePose batch
 };
 static_assert(sizeof(PropPoseSnapshot) == 64, "PropPoseSnapshot must be 64 bytes");
 
@@ -1139,7 +1142,8 @@ struct PropStickStatePayload {
     WireKey  key;
     uint32_t elementId;
     uint8_t  flags;      // bit0 = frozen, bit1 = static
-    uint8_t  _pad[3];    // zeroed
+    uint8_t  _pad;       // zeroed
+    uint16_t holdGen;    // the sticking peer's hold, which the stick closes
     float locX, locY, locZ;
     float rotPitch, rotYaw, rotRoll;
 };
@@ -1182,7 +1186,9 @@ struct KerfurCommandPayload {
 static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
 
 // A release (PropRelease): the prop by key, its inherited linear and angular velocity at the
-// release edge, and for a keyless trash entity the eid and its generation. Sent once.
+// release edge, and for a keyless trash entity the eid and its generation. Sent once. It closes the
+// hold `holdGen` names and carries the holder's physics flags at the edge, so a copy the grab never
+// reached through a pose still gets the grab's unfreeze, and one the hold ended frozen stays so.
 struct PropReleasePayload {
     WireKey key;
     float   linVelX;   // cm/s -- GetPhysicsLinearVelocity at release
@@ -1194,8 +1200,9 @@ struct PropReleasePayload {
     // The trash entity's eid, so a keyless clump's throw routes by identity; 0 = a keyed prop.
     uint32_t elementId;
     // The trash entity's generation; a release older than the eid's known generation is dropped.
-    uint8_t ctx;
-    uint8_t _pad[3];
+    uint8_t  ctx;
+    uint8_t  physFlags;  // propspawn_flags of the prop on the holder at the release edge
+    uint16_t holdGen;    // the hold this release closes
 };
 static_assert(sizeof(PropReleasePayload) == 64, "PropReleasePayload must be 64 bytes");
 // Every reliable payload carries this guard: a payload past one datagram's budget would be
@@ -1286,11 +1293,12 @@ inline constexpr uint8_t kFrozen          = 0x04;
 inline constexpr uint8_t kStatic          = 0x08;  // Aprop_C.Static
 inline constexpr uint8_t kSleep           = 0x10;  // Aprop_C.sleep
 inline constexpr uint8_t kRemoveWOrespawn = 0x20;  // Aprop_C.removeWOrespawn
-// 0x40 was kHasSavedScalar, the one hand-picked save field a spawn row carried. PropSaveData now
-// carries the whole record for any class that has one, so the flag and its float went with it. The
-// four bits above stay: they are the BIRTH recipe, raw-written before FinishSpawningActor so the
-// prop's own init() derives physics and collision from them, which is a moment no later message
-// can reach.
+// The four bits above are the BIRTH recipe, raw-written before FinishSpawningActor so the prop's
+// own init() derives physics and collision from them, a moment no later message can reach. A
+// sender that spawns something new may state them as a default. kLiveState says they were read off
+// the sender's live Aprop_C instead (PhysFlagsOf), and only then does a receiver make an existing
+// copy's frozen and sleep match them.
+inline constexpr uint8_t kLiveState       = 0x40;
 }  // namespace propspawn_flags
 
 // A prop death (PropDestroy): the key, and the sender's element id for the mirror binding. The

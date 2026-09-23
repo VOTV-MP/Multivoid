@@ -15,6 +15,7 @@
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"
+#include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
 
@@ -47,6 +48,9 @@ coop::net::WireKey g_lastHeldKey{};
 // for a morph-bound clump may run) and reused per tick; a held actor's identity is stable for
 // the carry. kInvalidId = unkeyed.
 coop::element::ElementId g_lastHeldEid = coop::element::kInvalidId;
+// This peer's hold generation: a new one at every new-held edge, carried by each pose and closed by
+// the release, so a receiver can tell a late pose of an ended hold from the next hold. Wraps, skips 0.
+uint16_t g_holdGen = 0;
 uint64_t g_propEmitCount = 0;
 
 // The ragdoll-physics edge state, file scope for the same reason; cleared by OnSessionStart.
@@ -169,6 +173,8 @@ void NotifyPropEidRebound(void* actor) {
     g_lastHeldEid = neweid;
 }
 
+uint16_t CurrentHoldGen() { return g_holdGen; }
+
 void* LastHeldActor() {
     // The local player's held actor, or null, for the trash channel's rest exclusion; live-guarded
     // so a stale pointer never aliases a recycled address.
@@ -282,6 +288,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
+            if (++g_holdGen == 0) g_holdGen = 1;
             // The new-held edge. A held trash clump is adopted here onto the grabbed pile's eid:
             // the birth certificate the BeginDeferred thunk recorded at its spawn carries the pile
             // eid and chipType, and this edge consumes it and broadcasts the ToClump convert.
@@ -368,6 +375,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // The trash entity's sync-time context, so the receiver drops a carry pose that arrives
         // after a transition; 0 for a non-trash prop.
         pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
+        pp.holdGen = g_holdGen;
         const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
         const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
         pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
@@ -444,6 +452,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     pp.key.data[pp.key.len++] = static_cast<char>(fkeyW[i]);
                 pp.elementId = static_cast<uint32_t>(g_lastHeldEid);
                 pp.ctx       = coop::trash_channel::CtxForEid(g_lastHeldEid);
+                pp.holdGen   = g_holdGen;  // one continuous stream: the carry's own hold
                 const auto loc = ue_wrap::engine::GetActorLocation(g_lastHeldProp.Raw());
                 const auto rot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
                 pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
@@ -506,9 +515,15 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
                     std::sqrt(linMagSq),
                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
+            // The prop's flags as the hold left them: not frozen after a grab, frozen when a mount or
+            // a dock took it in the hand. A pocketed prop is gone and reports none, a trash clump has
+            // none.
+            const uint8_t relFlags = g_lastHeldProp.Alive()
+                ? coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw()) : uint8_t{0};
             session.SendPropRelease(g_lastHeldKey,
                                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
+                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u,
+                                    relFlags, g_holdGen);
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};

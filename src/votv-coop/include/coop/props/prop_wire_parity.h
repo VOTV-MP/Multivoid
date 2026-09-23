@@ -33,10 +33,19 @@ void RestoreCollisionIfNeeded(const wchar_t* pathLabel, const std::wstring& clas
 void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 
 // The propspawn_flags of a live Aprop_C on THIS peer, read off the actor: the static, frozen,
-// sleep, heavy and removeWOrespawn bits, and kSimulatePhysics only while none of the first three
-// holds and the root body is awake, so a settled prop is expressed at rest. The one builder for
-// every wire that carries the flags (the join snapshot, the driven-prop end edge).
+// sleep, heavy and removeWOrespawn bits, kSimulatePhysics only while none of the first three holds
+// and the root body is awake, so a settled prop is expressed at rest, and kLiveState. The one
+// builder for every wire that carries a prop's live flags (the join snapshot, the held prop's
+// release, the driven-prop end edge). 0 for anything not an Aprop_C.
 uint8_t PhysFlagsOf(void* actor);
+
+// Make this copy's frozen and sleep what `physFlags` (another peer's) say, through the game's own
+// verbs: its unfreeze when the other copy is neither (a grab's awakeUnfreeze), its setter when the
+// other copy froze or slept (setPropProps, as a mount does). Static is left alone -- no grab
+// changes it. Acts only on flags read off a live prop (kLiveState), never on a spawn's default;
+// only on a difference, and only on an Aprop_C, so an agreeing copy is never touched: a write here
+// runs init(), which wakes the body. True when it changed something. Game thread.
+bool ConvergeFrozenSleep(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes
 // SetSimulatePhysics(NOT(static || frozen || sleep)), so a settled prop is simulate-ENABLED but

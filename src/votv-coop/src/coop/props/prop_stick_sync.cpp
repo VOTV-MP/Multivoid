@@ -6,6 +6,7 @@
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/local_streams.h"  // CurrentHoldGen, the hold a stick ends
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/remote_prop.h"
 #include "ue_wrap/engine/engine.h"
@@ -216,6 +217,10 @@ void Tick() {
             continue;
         }
         p.flags = (frozen ? 1u : 0u) | (statiq ? 2u : 0u);
+        // The hold this stick ends, when the stuck prop is the one this peer holds (the release edge
+        // runs after this pass); 0 closes nothing.
+        p.holdGen = (coop::local_streams::LastHeldActor() == prop) ? coop::local_streams::CurrentHoldGen()
+                                                                    : uint16_t{0};
         const auto loc = E::GetActorLocation(prop);
         const auto rot = E::GetActorRotation(prop);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
@@ -258,9 +263,11 @@ void OnStickState(const coop::net::PropStickStatePayload& payload,
         UE_LOGW("prop_stick_sync: STICK target %p is not a wall-attachable -- dropped", prop);
         return;
     }
-    // 1. Stop any kinematic drive on it (the sticking peer was holding it, so
-    //    its PropPose stream was driving our copy). Cache clear only -- no
-    //    physics re-enable (that is exactly the falling bug).
+    // 1. Close the sticking peer's hold, so a pose of it still in flight cannot free the stuck copy,
+    //    and stop any kinematic drive on it (the sticking peer was holding it, so its PropPose stream
+    //    was driving our copy). Cache clear only -- no physics re-enable (that is exactly the falling
+    //    bug).
+    coop::remote_prop::CloseHold(senderPeerSlot, payload.holdGen);
     coop::remote_prop::ClearAnyDriveFor(prop);
     // 2. Pre-pose at the sender's commit transform (where its stick trace
     //    succeeded) so the SP replay's re-trace scans the same surface; the
@@ -322,7 +329,7 @@ bool UnstickForDrive(void* actor) {
     ue_wrap::prop::WriteFrozen(actor, false);
     ue_wrap::prop::WriteStatic(actor, false);
     E::SetActorSimulatePhysics(actor, true);
-    UE_LOGI("prop_stick_sync: UNSTUCK %p for incoming drive (sustained re-grab stream)", actor);
+    UE_LOGI("prop_stick_sync: UNSTUCK %p for incoming drive (the first pose of a new hold)", actor);
     return true;
 }
 

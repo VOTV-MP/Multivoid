@@ -20,7 +20,7 @@
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 
-#include "ue_wrap/actors/prop.h"  // CallAwakeUnfreeze: the grab's half of a crossed eject
+#include "ue_wrap/actors/prop.h"  // IsFrozen, CallAwakeUnfreeze: a conflicting drive's eject
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -387,8 +387,8 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             }
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
-            // Or it stays frozen in the port beside the new one; a drive a stream already freed is left
-            // alone, for the reason the eject below gives.
+            // Or it stays frozen in the port beside the new one. No grab took it out, so no hold of
+            // the prop lane will unfreeze it; a drive already free needs nothing.
             if (ue_wrap::prop::IsFrozen(cur)) ue_wrap::prop::CallAwakeUnfreeze(cur);
             DC::CompleteEjectLatch(slot, cur);
             ++g_cLatchCompleted;
@@ -409,22 +409,20 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         }
         // A slot freezes the drive it takes, and in the game only a grab takes one out: the drive's
         // playerTryToGrab ejects it, and the grab's playerGrabbed_pre unfreezes it. The line is
-        // that grab on another machine, so the unfreeze is applied with the eject -- unless the
-        // holder's stream got here first: the prop lane runs the same unfreeze when a held stream
-        // starts on a frozen prop, and a second one mid-carry would re-run the prop's init and
-        // switch its physics back on under the drive.
-        bool unfrozen = false;
+        // that grab on another machine, and the grab's own hold reaches the drive through the prop
+        // lane: its first pose runs the same unfreeze here, its release leaves the holder's flags.
+        bool frozen = false;
         {
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
-            if (ue_wrap::prop::IsFrozen(cur)) unfrozen = ue_wrap::prop::CallAwakeUnfreeze(cur);
+            frozen = ue_wrap::prop::IsFrozen(cur);  // 0 once the hold's first pose has unfrozen it
             DC::CompleteEjectLatch(slot, cur);
             g_slotBase[p.role] = {true, false, 0};
         }
         ++g_cSlotApplied;
         ++g_cLatchCompleted;
-        UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u, unfrozen=%d)",
-                p.role, curEid, senderSlot, unfrozen ? 1 : 0);
+        UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u, frozen=%d)",
+                p.role, curEid, senderSlot, frozen ? 1 : 0);
     }
 }
 

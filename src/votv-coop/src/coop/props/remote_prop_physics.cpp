@@ -55,6 +55,16 @@ void*   g_propThrownFn      = nullptr;
 int32_t g_propThrownFrameSize = 0;
 int32_t g_propThrownPPlayer  = -1;
 
+// IsSimulatingPhysics(FName BoneName) -> bool, the drive's per-tick re-latch read. The UFunction is
+// USceneComponent's, which UPrimitiveComponent overrides natively, so it is found up the class
+// chain. Resolved apart from the release trio, so a miss costs the re-latch alone; a miss is latched
+// until the class cache re-resolves, so it is not looked up again every tick.
+void*   g_isSimFn        = nullptr;
+int32_t g_isSimFrameSize = 0;
+int32_t g_isSimPBone     = -1;
+int32_t g_isSimPRet      = -1;
+bool    g_isSimMissed    = false;
+
 // Lazy resolver for Aprop_C.thrown. Called separately so primary-resolved
 // callers can still drive AddImpulse even if prop_C hasn't loaded yet, and
 // the next caller can pick up `thrown` once it does. Idempotent.
@@ -78,6 +88,8 @@ bool ResolveUFns() {
     TryResolvePropThrown();
     if (g_resolved && g_primCompCls.Alive()) return true;
     g_primCompCls.Set(R::FindClass(P::name::PrimitiveComponentClass));
+    g_isSimFn = nullptr;  // the re-latch read resolves again against the new class
+    g_isSimMissed = false;
     if (!g_primCompCls.Raw()) {
         UE_LOGW("remote_prop: PrimitiveComponent class not found");
         return false;
@@ -127,6 +139,28 @@ bool ResolveUFns() {
     g_resolved = true;
     return true;
 }
+// The re-latch read's resolve, after the release trio's (which owns the class cache) and re-run
+// when that cache re-resolves. Says a miss once.
+bool ResolveIsSimulating() {
+    if (!ResolveUFns()) return false;
+    if (g_isSimFn) return true;
+    if (g_isSimMissed) return false;
+    g_isSimFn = R::FindDispatchFunction(g_primCompCls.Raw(), P::name::IsSimulatingPhysicsFn, nullptr);
+    g_isSimFrameSize = g_isSimFn ? R::FunctionFrameSize(g_isSimFn) : 0;
+    g_isSimPBone = g_isSimFn ? R::FindParamOffset(g_isSimFn, L"BoneName") : -1;
+    g_isSimPRet  = g_isSimFn ? R::FindParamOffset(g_isSimFn, L"ReturnValue") : -1;
+    if (!g_isSimFn || g_isSimPBone < 0 || g_isSimPRet < 0 || g_isSimFrameSize > 64) {
+        UE_LOGW("remote_prop: IsSimulatingPhysics did not resolve (fn=%p frame=%d bone@%d ret@%d) -- a driven "
+                "prop is not re-latched kinematic", g_isSimFn, g_isSimFrameSize, g_isSimPBone, g_isSimPRet);
+        g_isSimFn = nullptr;
+        g_isSimMissed = true;
+        return false;
+    }
+    UE_LOGI("remote_prop: resolved IsSimulatingPhysics frame=%d (bone@%d ret@%d)",
+            g_isSimFrameSize, g_isSimPBone, g_isSimPRet);
+    return true;
+}
+
 }  // namespace
 
 // Fire Aprop_C.thrown(Player) on the prop actor so the BP's sound + particle-trail effects play.
@@ -158,6 +192,14 @@ void DriveSimulate(void* mesh, bool simulate) {
     if (g_setSimulateFrameSize > static_cast<int32_t>(sizeof(frame))) return;
     *reinterpret_cast<bool*>(frame + g_setSimulatePSim) = simulate;
     R::CallFunction(mesh, g_setSimulateFn, frame);
+}
+
+bool DriveIsSimulating(void* mesh) {
+    if (!mesh || !ResolveIsSimulating()) return false;
+    unsigned char frame[64] = {};
+    *reinterpret_cast<R::FName*>(frame + g_isSimPBone) = R::FName{0, 0};
+    R::CallFunction(mesh, g_isSimFn, frame);
+    return *reinterpret_cast<bool*>(frame + g_isSimPRet);
 }
 
 void DriveSetLinearVelocity(void* mesh, float vx, float vy, float vz) {

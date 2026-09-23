@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; }
 
 namespace coop::local_streams {
@@ -29,6 +31,10 @@ void NotifyPropEidRebound(void* actor);
 // held. Read by trash_channel::TickCarry for its rest exclusion: a still player holding a clump
 // must not read as a clump at rest and un-held. Game thread.
 void* LastHeldActor();
+
+// The generation of this peer's current hold, minted at each new-held edge and never 0 once one
+// happened; the stick lane stamps its message with it, so the stick closes the hold it ended.
+uint16_t CurrentHoldGen();
 
 // Per-tick outbound publish. `local` is the live local mainPlayer_C,
 // `controller` its cached controller (may be null -- pose pitch falls back to

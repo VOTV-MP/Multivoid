@@ -51,8 +51,8 @@ bool IsWallAttachable(void* actor);
 // recompute applied directly -- enabling simulate also detaches an attached root in
 // UE4.27, which the Blueprint's own unstick relies on. No init() is dispatched anywhere in
 // this module; the .cpp says why. Returns true if the actor WAS stuck and is now clear.
-// The caller (remote_prop) gates the call on IsWallAttachable and its sustained-stream
-// check. Game thread.
+// The caller (remote_prop) gates the call on IsWallAttachable and runs it at the first pose of
+// a new hold. Game thread.
 bool UnstickForDrive(void* actor);
 
 // Clear per-session state (the commit-pending list). Net disconnect.

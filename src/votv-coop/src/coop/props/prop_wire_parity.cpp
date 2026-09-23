@@ -57,7 +57,8 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags) {
 
 uint8_t PhysFlagsOf(void* actor) {
     namespace pf = coop::net::propspawn_flags;
-    uint8_t flags = 0;
+    if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return 0;  // the offsets are the prop's
+    uint8_t flags = pf::kLiveState;
     const bool isStatic = ue_wrap::prop::IsStatic(actor);
     const bool frozen   = ue_wrap::prop::IsFrozen(actor);
     const bool sleep    = ue_wrap::prop::IsSleeping(actor);
@@ -69,6 +70,25 @@ uint8_t PhysFlagsOf(void* actor) {
     if (sleep)    flags |= pf::kSleep;
     if (ue_wrap::prop::ReadRemoveWOrespawn(actor)) flags |= pf::kRemoveWOrespawn;
     return flags;
+}
+
+bool ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
+    namespace pf = coop::net::propspawn_flags;
+    if (!(physFlags & pf::kLiveState) || !actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return false;
+    const bool wantFrozen = (physFlags & pf::kFrozen) != 0;
+    const bool wantSleep  = (physFlags & pf::kSleep) != 0;
+    const bool isFrozen = ue_wrap::prop::IsFrozen(actor);
+    const bool isSleep  = ue_wrap::prop::IsSleeping(actor);
+    if (isFrozen == wantFrozen && isSleep == wantSleep) return false;
+    const bool ok = (!wantFrozen && !wantSleep)
+        ? ue_wrap::prop::CallAwakeUnfreeze(actor)
+        : ue_wrap::prop::CallSetPropProps(actor, ue_wrap::prop::IsStatic(actor), wantFrozen, wantSleep);
+    if (!ok) {
+        UE_LOGW("prop_wire_parity: %p frozen=%d sleep=%d -> want frozen=%d sleep=%d -- the game's verb did "
+                "not dispatch; the copy keeps its flags", actor, isFrozen ? 1 : 0, isSleep ? 1 : 0,
+                wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
+    }
+    return ok;
 }
 
 bool SpParitySimulate(uint8_t physFlags) {
