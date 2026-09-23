@@ -147,6 +147,8 @@ const char* WorldGateName(uint8_t g) {
     }
 }
 
+}  // namespace
+
 const char* PhaseName(Phase p) {
     switch (p) {
     case Phase::Connecting:          return "Connecting";
@@ -157,6 +159,8 @@ const char* PhaseName(Phase p) {
     default:                         return "Idle";
     }
 }
+
+namespace {
 
 const char* StageName(Stage s) {
     switch (s) {

@@ -26,6 +26,11 @@ int32_t g_dayOff       = -1;      // AdaynightCycle_C::Day       (0x0298)
 int32_t g_timeScaleOff = -1;      // AdaynightCycle_C::TimeScale (0x02B4)
 int32_t g_maxTimeOff   = -1;      // AdaynightCycle_C::MaxTime   (0x02AC) -- one day's length in totalTime units
 int32_t g_timeZOff     = -1;      // AdaynightCycle_C::timeZ     (0x02D0) -- FIntVector (hour, minute, DAY)
+// The rate inputs, read by instruments only, so no fallback: an unresolved one fails the read.
+int32_t g_realtimeOff  = -1;      // AdaynightCycle_C::realtime (bool)
+int32_t g_diffMultOff  = -1;      // AdaynightCycle_C::diff_mult
+int32_t g_settingMpOff = -1;      // AdaynightCycle_C::settingMultiplayer (the rules' day speed)
+int32_t g_sleepDilOff  = -1;      // AdaynightCycle_C::sleepingTimeDilation
 
 constexpr int32_t kTotalTimeOffFallback = 0x02B0;
 constexpr int32_t kDayOffFallback       = 0x0298;
@@ -65,6 +70,10 @@ bool EnsureResolved() {
     g_timeScaleOff = scaleOff;
     g_maxTimeOff   = maxOff;
     g_timeZOff     = timeZOff;
+    g_realtimeOff  = R::FindPropertyOffset(cls, L"realtime");
+    g_diffMultOff  = R::FindPropertyOffset(cls, L"diff_mult");
+    g_settingMpOff = R::FindPropertyOffset(cls, L"settingMultiplayer");
+    g_sleepDilOff  = R::FindPropertyOffset(cls, L"sleepingTimeDilation");
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("daynightcycle: resolved daynightCycle_C=%p totalTime@0x%04X Day@0x%04X TimeScale@0x%04X MaxTime@0x%04X timeZ@0x%04X",
             cls, totalOff, dayOff, scaleOff, maxOff, timeZOff);
@@ -138,33 +147,47 @@ void WriteTimeZ(int32_t hour, int32_t minute, int32_t day) {
     v[2] = day;
 }
 
+bool ReadRates(Rates& out) {
+    void* cyc = Cycle();
+    if (!cyc || g_realtimeOff < 0 || g_diffMultOff < 0 || g_settingMpOff < 0 || g_sleepDilOff < 0)
+        return false;
+    const char* base = reinterpret_cast<const char*>(cyc);
+    out.realtime             = *reinterpret_cast<const uint8_t*>(base + g_realtimeOff) != 0;
+    out.diffMult             = *reinterpret_cast<const float*>(base + g_diffMultOff);
+    out.settingMultiplayer   = *reinterpret_cast<const float*>(base + g_settingMpOff);
+    out.sleepingTimeDilation = *reinterpret_cast<const float*>(base + g_sleepDilOff);
+    return true;
+}
+
 namespace {
-// dailyDelivery latch substrate (gamemode -> saveSlot -> the bool). The
-// gamemode pointer is cached + liveness-revalidated (the email.cpp shape);
-// the walk only re-runs after a loss, never per call.
+// The saveSlot substrate (gamemode -> saveSlot), shared by the delivery latch and the saved clock.
+// The gamemode pointer is cached + liveness-revalidated (the email.cpp shape); the walk only
+// re-runs after a loss, never per call.
 void* g_gmCls = nullptr;
 int32_t g_offGmSaveSlot = -1;
 void* g_saveSlotCls = nullptr;
 int32_t g_offDailyDelivery = -1;  // saveSlot_C::dailyDelivery
+int32_t g_offSavedTime = -1;      // saveSlot_C::savedtime (FIntVector)
 void* g_gm = nullptr;
 int32_t g_gmIdx = -1;
-}  // namespace
 
-bool LatchDailyDelivery() {
+// Resolve the two classes and the gamemode's saveSlot member. False while either class is unloaded.
+bool ResolveSaveSlotSurface() {
     if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
     if (!g_gmCls) return false;
     if (g_offGmSaveSlot < 0) g_offGmSaveSlot = R::FindPropertyOffset(g_gmCls, L"saveSlot");
     if (!g_saveSlotCls) g_saveSlotCls = R::FindClass(L"saveSlot_C");
-    if (g_saveSlotCls && g_offDailyDelivery < 0)
-        g_offDailyDelivery = R::FindPropertyOffset(g_saveSlotCls, L"dailyDelivery");
-    if (g_offGmSaveSlot < 0 || g_offDailyDelivery < 0) return false;
+    return g_offGmSaveSlot >= 0 && g_saveSlotCls != nullptr;
+}
+
+// The live saveSlot, or null. Call after ResolveSaveSlotSurface answered true.
+void* LiveSaveSlot() {
     if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        // Throttle the miss-path GUObjectArray walk: this is caller-rate-driven,
-        // once per streamed clock correction, so a world transition would
-        // otherwise re-scan on every one of them.
+        // Throttle the miss-path GUObjectArray walk: the latch is caller-rate-driven, once per
+        // streamed clock correction, so a world transition would otherwise re-scan on every one.
         static std::chrono::steady_clock::time_point s_lastScan{};
         const auto now = std::chrono::steady_clock::now();
-        if (now - s_lastScan < std::chrono::seconds(2)) return false;
+        if (now - s_lastScan < std::chrono::seconds(2)) return nullptr;
         s_lastScan = now;
         g_gm = nullptr;
         for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
@@ -174,11 +197,34 @@ bool LatchDailyDelivery() {
                 break;
             }
         }
-        if (!g_gm) return false;
+        if (!g_gm) return nullptr;
     }
     void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm) + g_offGmSaveSlot);
-    if (!slot || !R::IsLive(slot)) return false;
+    return (slot && R::IsLive(slot)) ? slot : nullptr;
+}
+}  // namespace
+
+bool LatchDailyDelivery() {
+    if (!ResolveSaveSlotSurface()) return false;
+    if (g_offDailyDelivery < 0)
+        g_offDailyDelivery = R::FindPropertyOffset(g_saveSlotCls, L"dailyDelivery");
+    if (g_offDailyDelivery < 0) return false;
+    void* slot = LiveSaveSlot();
+    if (!slot) return false;
     *(reinterpret_cast<uint8_t*>(slot) + g_offDailyDelivery) = 1;
+    return true;
+}
+
+bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day) {
+    if (!ResolveSaveSlotSurface()) return false;
+    if (g_offSavedTime < 0) g_offSavedTime = R::FindPropertyOffset(g_saveSlotCls, L"savedtime");
+    if (g_offSavedTime < 0) return false;
+    void* slot = LiveSaveSlot();
+    if (!slot) return false;
+    const int32_t* v = reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(slot) + g_offSavedTime);
+    hour = v[0];
+    minute = v[1];
+    day = v[2];
     return true;
 }
 

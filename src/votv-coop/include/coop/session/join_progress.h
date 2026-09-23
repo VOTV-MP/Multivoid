@@ -199,6 +199,7 @@ void ClearNotice();              // acknowledge (hide the dialog)
 // Read by the renderer, and by the pump for the stage forwarding.
 bool Active();        // phase != Idle (the cover should be drawn)
 Phase CurrentPhase(); // one atomic load; stages are forwarded only while Connecting
+const char* PhaseName(Phase p);  // the phase's name in the log vocabulary ("Receiving")
 View Snapshot();      // thread-safe copy of the current state
 
 // The phase watchdogs. There is nothing behind them.

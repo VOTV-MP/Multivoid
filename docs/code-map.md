@@ -35,7 +35,7 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 | `coop/text/` | text encoding and names | `utf8_codec` (the one owner of decoding), `repertoire` + `repertoire_ranges` (what this build can draw), `case_fold`, `mark_ranges`, `ignorable_ranges`, `exclude_ranges`, `novelty_ledger` |
 | `coop/config/` | the ini | `config`, `config_registry` + `config_registry_rows` (every key is a registered row with a description), `config_ini_write`, `config_review`, `config_selftest` |
 | `coop/input/` | who owns the keyboard | `input_owner` (the game, a text field, or the overlay) |
-| `coop/dev/` | developer features and probes, ini-gated, off by default | `freecam`, `pos_hud`, `set_clock`, `spawn_npc`, `force_weather`, `event_force`, `event_trigger`, the `*_probe` and `*_selftest` instruments, `perf_probe`; `dev/director/` drives a player through a test scenario |
+| `coop/dev/` | developer features and probes, ini-gated, off by default | `freecam`, `pos_hud`, `set_clock`, `spawn_npc`, `force_weather`, `event_force`, `event_trigger`, the `*_probe`, `*_watch` and `*_selftest` instruments, `perf_probe`; `dev/director/` drives a player through a test scenario |
 
 ## `ui/` — what the player sees
 

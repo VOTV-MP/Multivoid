@@ -25,6 +25,8 @@ bool g_suppressedClient = false;  // we zeroed the local TimeScale (client)
 // 40-game-second steps. Corrections keep landing throughout, so drift stays bounded;
 // coop/player/sleep_sync toggles this at the phase edges.
 std::atomic<bool> g_sleepAccelerate{false};
+// The host's day number as the last applied correction carried it; -1 before the first.
+std::atomic<int32_t> g_lastHostDayZ{-1};
 
 float ClientTimeScale() { return g_sleepAccelerate.load(std::memory_order_acquire) ? 1.0f : 0.0f; }
 
@@ -59,6 +61,7 @@ void ApplyClockSnapshot(const coop::net::TimeSyncPayload& p) {
     // client minute pulse never rebuilds it locally, and an instant host set-clock jump from the
     // dev menu has to land here.
     DNC::WriteTimeZ(p.hour, p.minute, p.dayZ);
+    g_lastHostDayZ.store(p.dayZ, std::memory_order_release);
     // Re-assert the daily-delivery latch. The suppressed cascade cannot reset it, but a fresh
     // save-load mid-session could.
     DNC::LatchDailyDelivery();
@@ -137,8 +140,11 @@ void Tick() {
     }
 }
 
+int32_t LastHostDayZ() { return g_lastHostDayZ.load(std::memory_order_acquire); }
+
 void OnDisconnect() {
     g_sleepAccelerate.store(false, std::memory_order_release);
+    g_lastHostDayZ.store(-1, std::memory_order_release);
     if (g_suppressedClient) {
         // Restore: 1.0 is the game's own TimeScale restore value, the one its cycle writes back.
         // Single-player day-rolling resumes from the last synced clock, and the dailyDelivery latch

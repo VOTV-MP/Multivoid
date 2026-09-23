@@ -395,6 +395,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/rng_roll_census.cpp
     src/coop/dev/death_write_diff.cpp
     src/coop/dev/desk_diag.cpp
+    src/coop/dev/rollover_watch.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/hand_drop_selftest.cpp

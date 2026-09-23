@@ -65,6 +65,7 @@
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/rng_roll_census.h"  // the dev roll census
 #include "coop/dev/desk_diag.h"  // [dev] desk/console divergence census
+#include "coop/dev/rollover_watch.h"  // [dev] the day rollover: its verbs, the pulses' consumers, the day numbers and the hash digest
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
@@ -242,6 +243,7 @@ void Install(coop::net::Session& session) {
     coop::spawn_authority::Install(&session);  // the client spawner cancels and park-class resolve (host results stream through the mirrors)
     coop::dev::rng_roll_census::Install(&session);  // [dev] driver/QuitGame interceptors (no-op unless rng_roll_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
+    coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
     coop::dev::container_selftest::Install(&session);  // [dev] the container-lane e2e circle (no-op unless container_selftest=1)
     coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1)
     coop::dev::hand_drop_selftest::Install(&session);  // [dev] hand pickup+drop episodes (no-op unless hand_drop_selftest=1)
@@ -445,6 +447,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::spawn_match_probe::EmitVerdict();
     coop::dev::food_clock_probe::OnDisconnect();  // [dev] tallies and the cached class, which a level change can unload
     coop::dev::lookat_churn_probe::OnDisconnect();  // [dev] the aim episodes, after the run's last reading
+    coop::dev::rollover_watch::OnDisconnect();  // [dev] the per-world arm and the session's watch totals
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::floppy_selftest::EmitVerdict();  // [dev] which disc episodes fired, and which never did
     coop::dev::hookdrag_selftest::EmitVerdict();  // [dev] how far the dragged prop moved here
@@ -588,6 +591,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:prop_drive_host"}; coop::prop_drive_host::Tick(session); }  // HOST: publish the driven props that moved, close the streams that rested (after the hook poll that feeds it; an empty set costs one size check)
     coop::dev::rng_roll_census::Tick();  // [dev] the roll censuses (a single bool read when off)
     coop::dev::desk_diag::Tick();  // [dev] desk divergence census (single bool read when off; self-throttled)
+    coop::dev::rollover_watch::Tick();  // [dev] the day rollover, after time_sync's apply this pass (a single bool read when off)
     coop::dev::prop_birth_key_probe::Tick();  // [dev] periodic seam totals (a single bool read when off)
     coop::dev::food_clock_probe::Tick();  // [dev] the food catch-up's clock reading (a single bool read when off)
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)

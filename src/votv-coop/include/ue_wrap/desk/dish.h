@@ -109,6 +109,18 @@ bool WriteCalibration(int32_t index, float v);
 // Returns L"?" when unresolved/empty.
 std::wstring TechName(int32_t index);
 
+// Every dish's hash code as one number: FNV-1a 64 over each `hashcode` (the nine-line text
+// generteHashcode writes), taken in gamemode.dishs order, never by a class walk, so a dish of a
+// subclass counts where the level placed it. Two peers with equal digests hold the same codes.
+// `dishes` is the array's length, `filled` how many entries carry a code. False while the
+// gamemode or the field is unresolved. Read-only; game thread.
+struct HashDigest {
+    uint64_t digest = 0;
+    int32_t  dishes = 0;
+    int32_t  filled = 0;
+};
+bool ReadHashDigest(HashDigest& out);
+
 // Reflected mainGamemode.checkFordDishes() -- the native arm/display tail
 // (gate Contains(activeDishes,true) -> ret; all-false -> dishesStop broadcast
 // + camera aim + objectRenderer.begin() + signalFound). The L4 client ARM

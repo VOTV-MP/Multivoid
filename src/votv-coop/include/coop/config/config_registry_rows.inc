@@ -362,6 +362,11 @@ CFG_FLAG(lookat_churn_probe, "lookat_churn_probe", "dev", false, "VOTVCOOP_LOOKA
     "changes while the aim holds still, and which of its five fields moves. A held aim should "
     "change nothing; every change past the first is one visible reset of the hovertext and the "
     "action list, and the interval between them names the timer behind it.")
+CFG_FLAG(rollover_watch, "rollover_watch", "dev", false, "VOTVCOOP_ROLLOVER_WATCH",
+    "Diagnostic probe (BOTH peers): the world clock's day rollover. Watches the roll's own verbs "
+    "(the dish hash codes, the task shuffle, the Bad Sun), the minute and hour pulses and every "
+    "Blueprint bound to them, and prints each peer's day number and a digest of the 24 hash codes "
+    "whenever the day changes. Read-only; it never refuses a call.")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "

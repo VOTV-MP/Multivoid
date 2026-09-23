@@ -56,6 +56,24 @@ void ApplyClock(float totalTime, float day, float timeScale);
 bool ReadTimeZ(int32_t& hour, int32_t& minute, int32_t& day);
 void WriteTimeZ(int32_t hour, int32_t minute, int32_t day);
 
+// saveSlot.savedtime, the same triple as the save keeps it. Its Z is the day number's SOURCE: the
+// cycle copies it into timeZ.Z every tick and the day roll increments it, and saveSlot.settime
+// rewrites the whole triple whenever the hour or the minute moves. Read-only; false until the
+// gamemode and its saveSlot resolve. Game thread.
+bool ReadSavedTime(int32_t& hour, int32_t& minute, int32_t& day);
+
+// The cycle's rate inputs, read-only, for instruments. Outside realtime mode each tick adds
+// deltaSeconds * timeScale * diffMult * settingMultiplayer * sleepingTimeDilation to `day`; in
+// realtime mode `day` is the machine's own wall-clock hour and the day rolls at its midnight.
+// False if the cycle or a field is unresolved. Game thread.
+struct Rates {
+    bool  realtime = false;
+    float diffMult = 0.f;
+    float settingMultiplayer = 0.f;
+    float sleepingTimeDilation = 0.f;
+};
+bool ReadRates(Rates& out);
+
 // ---- day-roll suppression (coop/world/time_sync drives these) ----
 // The midnight cascade -- the task roll every night, the results email and points on the week
 // boundary -- is a tick threshold, `day > maxTime` inside the cycle's own tick chain, and it

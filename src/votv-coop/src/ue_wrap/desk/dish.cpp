@@ -31,6 +31,7 @@ int32_t g_offMoveCue = -1;      // Adish_C::satellite_move_Cue
 int32_t g_offCue = -1;          // Adish_C::satellite_Cue
 int32_t g_offCalibration = -1;  // Adish_C::calibration (float)
 int32_t g_offTechName = -1;     // Adish_C::techName (FString)
+int32_t g_offHashcode = -1;     // Adish_C::hashcode (FString), outside the L4 set: nothing mirrors it
 void* g_startMovingToFn = nullptr;  // startMovingTo(lookAt) -- the relative slew entry
 void* g_stopFn = nullptr;           // stop() -- two flag writes
 
@@ -81,6 +82,7 @@ void ResolvePass() {
     if (g_offCue < 0) g_offCue = R::FindPropertyOffset(g_dishCls, L"satellite_Cue");
     if (g_offCalibration < 0) g_offCalibration = R::FindPropertyOffset(g_dishCls, L"calibration");
     if (g_offTechName < 0) g_offTechName = R::FindPropertyOffset(g_dishCls, L"techName");
+    if (g_offHashcode < 0) g_offHashcode = R::FindPropertyOffset(g_dishCls, L"hashcode");
     if (!g_stopFn) g_stopFn = R::FindFunction(g_dishCls, L"stop");
     if (g_offRelRot < 0 || !g_setRelRotFn) {
         if (void* sc = R::FindClass(L"SceneComponent")) {
@@ -433,6 +435,37 @@ std::wstring TechName(int32_t index) {
     if (!s->data || s->num <= 1 || s->num > 128) return L"?";
     return std::wstring(reinterpret_cast<const wchar_t*>(s->data),
                         static_cast<size_t>(s->num - 1));
+}
+
+bool ReadHashDigest(HashDigest& out) {
+    out = HashDigest{};
+    ResolvePass();
+    TArrayView* a = Dishs();
+    if (!a || g_offHashcode < 0 || a->num < 0 || a->num > 64) return false;
+    uint64_t h = 0xcbf29ce484222325ull;
+    const auto mix = [&h](uint8_t byte) { h ^= byte; h *= 0x100000001b3ull; };
+    const auto mix32 = [&mix](int32_t v) {
+        for (int k = 0; k < 4; ++k) mix(static_cast<uint8_t>(static_cast<uint32_t>(v) >> (8 * k)));
+    };
+    for (int32_t i = 0; i < a->num; ++i) {
+        void* d = DishAt(a, i);
+        // Each entry mixes its length first, so the concatenation of two codes cannot collide with
+        // a different split of the same characters; a dead entry mixes -1.
+        const auto* s = d ? reinterpret_cast<const TArrayView*>(reinterpret_cast<uint8_t*>(d) + g_offHashcode)
+                          : nullptr;
+        const int32_t len = (s && s->data && s->num > 1 && s->num <= 4096) ? s->num - 1 : (d ? 0 : -1);
+        mix32(len);
+        if (len <= 0) continue;
+        const auto* w = reinterpret_cast<const wchar_t*>(s->data);
+        for (int32_t c = 0; c < len; ++c) {
+            mix(static_cast<uint8_t>(w[c] & 0xFF));
+            mix(static_cast<uint8_t>((w[c] >> 8) & 0xFF));
+        }
+        ++out.filled;
+    }
+    out.digest = h;
+    out.dishes = a->num;
+    return true;
 }
 
 bool CallCheckFordDishes() {

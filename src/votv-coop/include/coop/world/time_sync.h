@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct TimeSyncPayload;
@@ -46,6 +48,11 @@ void Tick();
 // time_sync is the only decider of the client's TimeScale, so there is one authority. No-op on the
 // host. Game thread.
 void SetSleepAccelerate(bool on);
+
+// CLIENT: the host's day number as the last applied clock correction carried it (its timeZ.Z),
+// -1 before the first and after a disconnect. Read-only, for instruments: the client's own day
+// number is rebuilt from its save every tick and is not the host's. Any thread.
+int32_t LastHostDayZ();
 
 // Session teardown: reset the throttle. Game thread.
 void OnDisconnect();
