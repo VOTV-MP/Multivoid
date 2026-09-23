@@ -234,10 +234,10 @@ a body can schedule a block, run several others, and arrive there from whichever
 first. A linearising decompile has no way to draw that and emits two blocks that `goto` each other
 with nothing entering either, which reads as dead code and is the hot path. `AmainPlayer_C::
 LookAtFunction` is the worked example: its action-row rebuild is pushed at one block, its field
-store at another, and they run in the reverse of the order they appear. Read
-`tools/bp_cfg.py <BP> --fn <Fn>` before believing a listing's control flow, and note what this
-costs a seam rather than a reader -- nothing, because the script gate sees a body entered by a pop
-exactly as it sees one entered by a call. `[V]`
+store at another, and they run in the reverse of the order they appear. Read the function's
+control-flow graph, built from the bytecode offsets, before believing a listing's control flow, and
+note what this costs a seam rather than a reader -- nothing, because the script gate sees a body
+entered by a pop exactly as it sees one entered by a call. `[V]`
 
 A tick park is a claim about ONE dispatch, never about the actor. The hook lane parks a mirror's
 brain with a PRE interceptor that cancels the Blueprint body of `hook_C::ReceiveTick`, per actor
