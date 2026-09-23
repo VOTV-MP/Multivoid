@@ -11,6 +11,7 @@
 #include "coop/props/prop_snapshot.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/world/time_sync.h"
 
 #include "ue_wrap/actors/sleep.h"
 #include "ue_wrap/actors/vitals.h"
@@ -37,16 +38,17 @@ namespace sg  = ue_wrap::script_gate;
 namespace AE  = ue_wrap::active_events;
 namespace WI  = ue_wrap::world_identity;
 
-enum class Arm { Off, Awake, Asleep };
+enum class Arm { Off, Awake, Asleep, Cheat };
 
 // The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake.
-// The client: (asleep) the join, the bed, the fast-forward, the wake. The set and the sleep entry both
-// finish inside their call, so each is judged the moment it returns.
+// The client: (asleep) the join, the bed, the fast-forward, the wake; (cheat) its writes. The set and
+// the sleep entry both finish inside their call, so each is judged the moment it returns.
 enum class Step { WaitJoin, WaitQuiet, WaitAccelerate, WatchWake, Done, Invalid };
 
 constexpr float kAwakeFraction  = 0.999f;  // a few game units before the wrap
 constexpr float kAsleepFraction = 0.98f;   // runway for the bed and the gate, burnt at 1x until then
 constexpr float kNeedForTheArm  = 30.f;    // the wake loop ends a sleep at a need of 100
+constexpr int   kCheatWrites    = 3;       // one write can meet a host sample at the same tick
 
 // Game thread only, but for the session pointer the Install fanout stores.
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -57,6 +59,17 @@ int     g_slot = -1;          // the host's client whose join armed it
 int32_t g_setDayZ = -1;       // the host's day number when it set the clock
 uint64_t g_minutesAtAccel = 0;  // this peer's minute pulses when the fast-forward began
 bool     g_pokedRate = false;   // the clock latch's control write is done (client, once per session)
+
+// The cheat arm, client: the writes made and how each ended, and the one awaiting the cycle's tick
+// with what it is judged against.
+int      g_cheatWrites = 0;
+int      g_cheatRolled = 0;
+int      g_cheatHeld = 0;      // the tick found the day it had before the write
+int      g_cheatMet = 0;       // a host sample was written in at the same tick
+bool     g_cheatPending = false;
+uint64_t g_cheatHashRan = 0;   // generteHashcode's run count before the write
+int32_t  g_cheatDayZ = -1;     // this client's day number before the write
+float    g_cheatDay = 0.f;     // and its `day`
 
 // Who ends the night. Three classes declare a function of this name (the gamemode's, the player's,
 // the ATV's wakeUp), so the watch keeps only the gamemode's, by its declaring class. Each entry is
@@ -75,12 +88,27 @@ int      g_wakeLines = 0;
 Arm ArmOf() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveEnum(::coop::config_registry::rows::midnight_drill);
-        return v == "awake" ? Arm::Awake : v == "asleep" ? Arm::Asleep : Arm::Off;
+        return v == "awake" ? Arm::Awake : v == "asleep" ? Arm::Asleep : v == "cheat" ? Arm::Cheat : Arm::Off;
     }();
     return a;
 }
 
-const char* ArmName() { return ArmOf() == Arm::Awake ? "awake" : "asleep"; }
+const char* ArmName() {
+    switch (ArmOf()) {
+    case Arm::Awake:  return "awake";
+    case Arm::Asleep: return "asleep";
+    case Arm::Cheat:  return "cheat";
+    default:          return "off";
+    }
+}
+
+// What this peer does on its arm, for the first line.
+const char* ArmPlan(bool host) {
+    if (ArmOf() == Arm::Cheat)
+        return host ? "this host leaves its clock alone" : "writing a day onto this client's clock once joined";
+    if (host) return "waiting for a client's join to end";
+    return ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock";
+}
 
 bool IsHost(coop::net::Session* s) { return s->role() == coop::net::Role::Host; }
 
@@ -243,6 +271,12 @@ void TickHost(coop::net::Session* s) {
         for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
             if (s->IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot)) g_slot = slot;
         if (g_slot < 0) return;
+        if (ArmOf() == Arm::Cheat) {
+            UE_LOGI("midnight_drill: [H] arm cheat -- slot %d's join is over; this host's clock is left alone "
+                    "while its client writes a day onto its own", g_slot);
+            g_step = Step::Done;
+            return;
+        }
         int32_t h = 0, m = 0;
         if (!DNC::ReadSavedTime(h, m, g_setDayZ)) return;
         const float frac = ArmOf() == Arm::Awake ? kAwakeFraction : kAsleepFraction;
@@ -298,8 +332,65 @@ void PokeClockRate() {
             "must name it and hold 0");
 }
 
+// The cheat arm: what the cheat menu's day button writes -- a whole day onto both accumulators,
+// `ui_cheatMenu` @23765 -- written into this client's clock, which puts `day` past the day's end, so
+// the cycle's next tick rolls this machine's own midnight unless the clock lane rewrites it first.
+// Each write waits for the clock to be the host's (a sample applied, the day number the host's, the
+// rate held again after the control write); each is judged once the cycle has ticked, which brings
+// `day` back below the day's end whether it rolled, was held at the day it had, or met a new sample.
+void TickCheat() {
+    if (g_step == Step::Done || g_step == Step::Invalid || !g_pokedRate) return;
+    if (!coop::dev::rollover_watch::IsEnabled()) {
+        Invalid('C', "rollover_watch is off on this peer: a roll of the hash codes would go uncounted");
+        return;
+    }
+    float total = 0.f, day = 0.f, scale = 0.f, maxT = 0.f;
+    int32_t h = 0, m = 0, z = 0;
+    if (!DNC::ReadClock(total, day, scale) || !DNC::ReadMaxTime(maxT) || maxT <= 0.f || !DNC::ReadSavedTime(h, m, z))
+        return;
+    if (g_cheatPending) {
+        if (day > maxT) return;  // the cycle has not ticked since the write
+        g_cheatPending = false;
+        const uint64_t ran = coop::dev::rollover_watch::RanCount(L"generteHashcode") - g_cheatHashRan;
+        const bool rolled = ran > 0 || z != g_cheatDayZ;
+        const bool held = !rolled && day == g_cheatDay;
+        const char* verdict = rolled ? "ROLLED this client's own midnight"
+                              : held ? "HELD at the day it had before the write"
+                                     : "MET a host sample at the same tick, no roll";
+        ++(rolled ? g_cheatRolled : held ? g_cheatHeld : g_cheatMet);
+        UE_LOGI("midnight_drill: [C] write %d of %d %s -- generteHashcode ran %llu time(s), this client's day "
+                "number %d -> %d, day %.2f -> %.2f", g_cheatWrites, kCheatWrites, verdict,
+                static_cast<unsigned long long>(ran), g_cheatDayZ, z, g_cheatDay, day);
+        if (g_cheatWrites >= kCheatWrites) {
+            UE_LOGI("midnight_drill: [C] cheat done -- %d write(s): %d rolled this client's own midnight, %d held, "
+                    "%d met a host sample", g_cheatWrites, g_cheatRolled, g_cheatHeld, g_cheatMet);
+            g_step = Step::Done;
+        }
+        return;
+    }
+    const int32_t hostDay = coop::time_sync::LastHostDayZ();
+    if (hostDay < 0 || z != hostDay || scale != 0.f) return;
+    if (day <= 0.f) {
+        Invalid('C', "the clock is at the day's start or running back: a day forward would not pass midnight");
+        return;
+    }
+    g_cheatHashRan = coop::dev::rollover_watch::RanCount(L"generteHashcode");
+    g_cheatDayZ = z;
+    g_cheatDay = day;
+    ++g_cheatWrites;
+    g_cheatPending = true;
+    DNC::ApplyClock(total + maxT, day + maxT);
+    UE_LOGI("midnight_drill: [C] write %d of %d -- a day onto this client's clock, as the cheat menu's day button "
+            "writes it: day %.2f -> %.2f, past the day's end %.1f (day number %d, the host's)", g_cheatWrites,
+            kCheatWrites, day, day + maxT, maxT, z);
+}
+
 void TickClient() {
     PokeClockRate();
+    if (ArmOf() == Arm::Cheat) {
+        TickCheat();
+        return;
+    }
     if (ArmOf() != Arm::Asleep) return;  // awake: the client only watches
     switch (g_step) {
     case Step::WaitJoin:
@@ -333,9 +424,7 @@ void Tick() {
     const bool host = IsHost(s);
     if (!g_saidArm) {
         g_saidArm = true;
-        UE_LOGI("midnight_drill: [%c] arm %s -- %s", host ? 'H' : 'C', ArmName(),
-                host ? "waiting for a client's join to end"
-                     : (ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock"));
+        UE_LOGI("midnight_drill: [%c] arm %s -- %s", host ? 'H' : 'C', ArmName(), ArmPlan(host));
         if (!coop::dev::rollover_watch::IsEnabled())
             UE_LOGW("midnight_drill: rollover_watch is off on this peer -- the arm runs, but prints none of its "
                     "evidence");
@@ -353,6 +442,11 @@ void OnDisconnect() {
     g_setDayZ = -1;
     g_minutesAtAccel = 0;
     g_pokedRate = false;
+    g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = 0;
+    g_cheatPending = false;
+    g_cheatHashRan = 0;
+    g_cheatDayZ = -1;
+    g_cheatDay = 0.f;
     g_wakeLines = 0;
 }
 

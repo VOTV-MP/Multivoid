@@ -1,15 +1,17 @@
-// coop/dev/midnight_drill.h -- drill: bring the host's midnight to where the day rollover can be
-// watched (ini midnight_drill=off|awake|asleep / env VOTVCOOP_MIDNIGHT_DRILL; BOTH peers, with
+// coop/dev/midnight_drill.h -- drill: a midnight where the day rollover can be watched (ini
+// midnight_drill=off|awake|asleep|cheat / env VOTVCOOP_MIDNIGHT_DRILL; BOTH peers, with
 // rollover_watch on, on a fresh host world, since a save can carry an active event).
 //
 // Every phase waits on a state its peer can read, never on a clock. The host arms once a client's
 // join is over by its own account -- the slot world-ready and its bracket closed. awake sets the
 // clock to 0.999 of the day. asleep sets 0.98 while still awake (a forward jump can start an event,
-// and an active event refuses sleep), waits for no event to be active, then goes to bed; the client
-// goes to bed once it has joined. Both print their dilation and time scale when the shared
-// fast-forward begins, and the host prints the runway at every set, so an arm's premise is in the
-// log. A refused step ends the arm INVALID with its reason. The evidence is rollover_watch's: the
-// client's DAY line keyed on the host's day number.
+// and an active event refuses sleep), waits for no event to be active, then goes to bed, as the
+// client does once joined; both print their dilation and time scale at the shared fast-forward, and
+// the host its runway at every set. cheat leaves the host's clock alone: the joined client writes a
+// day onto its own as the cheat menu's day button does, three times, and says how each next tick
+// ended (its own midnight rolled, the day it had held, or a new host sample met the write). A
+// refused step ends the arm INVALID with its reason. The evidence is rollover_watch's: its DAY lines
+// for awake and asleep, and the run counts cheat's verdicts read.
 
 #pragma once
 
