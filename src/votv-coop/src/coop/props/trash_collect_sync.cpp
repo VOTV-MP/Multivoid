@@ -25,6 +25,7 @@
 #include "coop/props/trash_sweep.h"        // NoteSwept, a broom stroke's clumps
 #include "coop/props/trash_use_intercept.h"
 #include "coop/props/trash_morph_gate.h"  // the client-side refusal of the trash morph verbs
+#include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the one flag builder
 #include "ue_wrap/actors/broom.h"         // SweptChipPile, the pile a stroke's clump is born of
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
@@ -312,18 +313,14 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     // The trash variant, so the mirror shows the same chip or clump type; 0 for a non-trash actor.
     p.chipType = ue_wrap::prop::GetChipType(heldActor);
-    p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
+    // The live prop's own flags (0 for anything but an Aprop_C), with simulation stated on: a
+    // birth moves.
+    p.physFlags = coop::prop_wire_parity::PhysFlagsOf(heldActor) |
+                  coop::net::propspawn_flags::kSimulatePhysics;
     // The physics flags read Aprop_C offsets, so only on an Aprop_C; the receiver ignores them for
     // a kinematic clump mirror.
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(heldActor)) {
-        if (ue_wrap::prop::IsHeavy(heldActor))  p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-        if (ue_wrap::prop::IsFrozen(heldActor)) p.physFlags |= coop::net::propspawn_flags::kFrozen;
-        if (ue_wrap::prop::IsStatic(heldActor)) p.physFlags |= coop::net::propspawn_flags::kStatic;
-        if (ue_wrap::prop::IsSleeping(heldActor)) p.physFlags |= coop::net::propspawn_flags::kSleep;
-        if (ue_wrap::prop::ReadRemoveWOrespawn(heldActor)) {
-            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
-        }
         // The identity row: a held generic prop mirrors as itself, not as the class default.
         const std::wstring nm = ue_wrap::prop::GetPropNameString(heldActor);
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {

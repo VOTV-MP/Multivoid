@@ -31,6 +31,7 @@ struct Drive {
     AD::ActiveDrive d;
     uint8_t gen = 0;
     bool physicsParked = false;   // this module turned simulation off, so the end turns it on
+    bool relatchSaid = false;     // the game switched a parked copy's simulation back on; said once
 };
 std::unordered_map<uint32_t, Drive>   g_drives;    // eid -> drive
 std::unordered_map<uint32_t, uint8_t> g_endedGen;  // eid -> the generation its end edge closed
@@ -82,6 +83,10 @@ void GiveBackPhysics(Drive& dr, void* actor) {
 void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedHere) {
     E::SetActorLocation(actor, ue_wrap::FVector{p.x, p.y, p.z});
     E::SetActorRotation(actor, ue_wrap::FRotator{p.pitch, p.yaw, p.roll});
+    // The host's frozen and sleep at the end first: a hook that bites a frozen prop unfreezes it on
+    // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
+    // host's flags before the physics decision reads them.
+    coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags);
     if (PhysicsStaysOff(actor)) return;
     coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);
     const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
@@ -175,6 +180,16 @@ void TickApplyAndDrive(coop::net::Session& s) {
             it = g_drives.erase(it);
             continue;
         }
+        // The physics receiver's re-latch, as the held-prop drive does it: a parked copy stays
+        // kinematic when the game here switches its simulation back on.
+        if (dr.physicsParked && dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
+            ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
+            if (!dr.relatchSaid) {
+                dr.relatchSaid = true;
+                UE_LOGI("[PROP-DRIVE] CLIENT eid=%u -- the game turned simulation back on under the park; "
+                        "re-latched kinematic", it->first);
+            }
+        }
         AD::AdvanceLerp(dr.d, nowMs);
         ++it;
     }
@@ -235,6 +250,14 @@ void OnEnd(const coop::net::PropDriveEndPayload& p) {
     }
     g_drives.erase(it);
     g_endedGen[p.eid] = p.gen;
+}
+
+bool IsParked(void* actor) {
+    UE_ASSERT_GAME_THREAD("prop_drive_stream::IsParked");
+    if (!actor) return false;
+    for (const auto& kv : g_drives)
+        if (kv.second.d.actor == actor) return true;
+    return false;
 }
 
 void OnDisconnect() {

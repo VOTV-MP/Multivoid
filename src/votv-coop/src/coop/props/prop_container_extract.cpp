@@ -17,6 +17,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/join_membership_sweep.h"  // self-claim after the wire express
+#include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the one flag builder
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -112,16 +113,12 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     // bytes.
     const auto scl = ue_wrap::engine::GetActorScale3D(spawnedActor);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-    p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
+    // The live prop's own flags (0 for anything but an Aprop_C), with simulation stated on: a
+    // birth moves.
+    p.physFlags = coop::prop_wire_parity::PhysFlagsOf(spawnedActor) |
+                  coop::net::propspawn_flags::kSimulatePhysics;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(spawnedActor)) {
-        if (ue_wrap::prop::IsHeavy(spawnedActor))   p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-        if (ue_wrap::prop::IsFrozen(spawnedActor))  p.physFlags |= coop::net::propspawn_flags::kFrozen;
-        if (ue_wrap::prop::IsStatic(spawnedActor))  p.physFlags |= coop::net::propspawn_flags::kStatic;
-        if (ue_wrap::prop::IsSleeping(spawnedActor)) p.physFlags |= coop::net::propspawn_flags::kSleep;
-        if (ue_wrap::prop::ReadRemoveWOrespawn(spawnedActor)) {
-            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
-        }
         const std::wstring nm = ue_wrap::prop::GetPropNameString(spawnedActor);
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);

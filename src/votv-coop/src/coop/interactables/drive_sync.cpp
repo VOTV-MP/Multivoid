@@ -19,6 +19,7 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
+#include "coop/props/remote_prop.h"           // EndAnyHoldOn: an insert ends the hold on the drive
 
 #include "ue_wrap/actors/prop.h"  // IsFrozen, CallAwakeUnfreeze: a conflicting drive's eject
 #include "ue_wrap/core/log.h"
@@ -395,6 +396,9 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         }
         {
             coop::desk_snd_fx::ScopedWireApply guard;
+            // The slot takes the drive out of whoever's hand held it, ending that hold: closed
+            // here, so a pose of it still in flight cannot pull the drive back out of the slot.
+            coop::remote_prop::EndAnyHoldOn(drive);
             DC::CallPutDriveIn(slot, drive);
             g_slotBase[p.role] = {true, true, p.driveEid};
         }

@@ -543,7 +543,11 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
                     noteSent(rc, static_cast<int>(sizeof(pkt)));
                 }
-                if (haveProp) {
+                // A joiner still loading gets no held-prop pose, as it gets no relayed one: the
+                // release and the stick that close a hold wait for its world (session_lanes.h), so
+                // a pose sent now names a hold it never sees end, and would drive the copy in the
+                // world it is loading.
+                if (haveProp && IsSlotWorldReady(i)) {
                     PropPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::PropPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);

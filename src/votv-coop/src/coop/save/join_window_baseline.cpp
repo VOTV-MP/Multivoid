@@ -56,6 +56,9 @@ std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
 // map.
 std::unordered_map<coop::element::ElementId, ue_wrap::FVector>
     g_blobKeyedXforms[coop::net::kMaxPeers];
+// Each of those keyed props' frozen and sleep bits at the same instant: the state the joiner's blob
+// holds, so a flag change the host makes in the window without moving the prop is still a change.
+std::unordered_map<coop::element::ElementId, uint8_t> g_blobKeyedState[coop::net::kMaxPeers];
 
 // The late-armed flush: as a one-shot at the connect replay, a pile the host moved after that
 // instant (a cluster cleared late in the joiner's long load tail) got no correction, its frozen
@@ -108,16 +111,20 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
     // position is a move too: an extinguisher taken off its mount and put back. `kind` is a log tag.
     auto sendCorrection = [&](coop::element::ElementId eid, const ue_wrap::FVector& savePos, void* actor,
                               std::unordered_map<coop::element::ElementId, FlushedAt>& lastSent,
-                              const char* kind) -> bool {
+                              const char* kind, int capturedBits) -> bool {
         namespace pf = coop::net::propspawn_flags;
         const ue_wrap::FVector cur = ue_wrap::engine::GetActorLocation(actor);
         const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
-        // The state is read only for a prop that moved or was corrected already, never across the
-        // whole keyed scan: a prop's flags cost two engine calls. 0 for a pile.
+        // The full state is read only for a prop that moved, changed its frozen or sleep bits (two raw
+        // reads, `capturedBits` -1 for a pile) or was corrected already, never across the whole keyed
+        // scan: PhysFlagsOf costs two engine calls. 0 for a pile.
         uint8_t flags = 0;
         const auto it = lastSent.find(eid);
         if (it == lastSent.end()) {
-            if (dx * dx + dy * dy + dz * dz <= kDivergeCm2) return false;  // unmoved (save IS current)
+            const bool moved = dx * dx + dy * dy + dz * dz > kDivergeCm2;
+            const bool restated = capturedBits >= 0 &&
+                                  coop::prop_wire_parity::FrozenSleepBitsOf(actor) != static_cast<uint8_t>(capturedBits);
+            if (!moved && !restated) return false;  // unmoved and unchanged (save IS current)
             flags = coop::prop_wire_parity::PhysFlagsOf(actor);
         } else {
             flags = coop::prop_wire_parity::PhysFlagsOf(actor);
@@ -152,7 +159,7 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
         // is a clump on an arc, which the convert stream owns, and chasing its waypoints armed
         // twins at airborne spots and doubled the pile.
         if (!ue_wrap::prop::IsChipPile(actor)) continue;  // grabbed clump / proxy -> the convert stream owns it
-        if (sendCorrection(eid, savePos, actor, g_lastFlushedPilePos[peerSlot], "pile")) ++sentPile;
+        if (sendCorrection(eid, savePos, actor, g_lastFlushedPilePos[peerSlot], "pile", -1)) ++sentPile;
     }
 
     // The keyed scan runs on the first run, then every Nth late-arm tick.
@@ -174,7 +181,9 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
         // mid-join sends transient positions that the late arm corrects, so no resting gate. A
         // keyed eid resolving to a pile is the pile map's row.
         if (ue_wrap::prop::IsChipPile(actor)) continue;
-        if (sendCorrection(eid, savePos, actor, g_lastFlushedKeyedPos[peerSlot], "keyed")) ++sentKeyed;
+        const auto st = g_blobKeyedState[peerSlot].find(eid);
+        const int captured = (st == g_blobKeyedState[peerSlot].end()) ? -1 : st->second;
+        if (sendCorrection(eid, savePos, actor, g_lastFlushedKeyedPos[peerSlot], "keyed", captured)) ++sentKeyed;
     }
 
     if (sentPile > 0 || sentKeyed > 0 || firstRun)
@@ -209,6 +218,12 @@ void CaptureForSlot(int peerSlot) {
     // the joiner's loadObjects clobber.
     g_blobKeyedXforms[peerSlot].clear();
     coop::prop_element_tracker::CollectTrackedKeyedPropTransforms(g_blobKeyedXforms[peerSlot]);
+    g_blobKeyedState[peerSlot].clear();
+    for (const auto& [eid, pos] : g_blobKeyedXforms[peerSlot]) {
+        coop::element::Element* el = coop::element::Registry::Get().Get(eid);
+        if (void* actor = el ? el->LiveActor() : nullptr)
+            g_blobKeyedState[peerSlot][eid] = coop::prop_wire_parity::FrozenSleepBitsOf(actor);
+    }
     UE_LOGI("join_window_baseline: slot %d -- captured %zu keyed-prop keys + %zu pile + %zu clump + "
             "%zu kerfur + %zu keyed save-time xforms at the blob instant",
             peerSlot, g_blobKeys[peerSlot].size(), g_blobPileXforms[peerSlot].size(),
@@ -279,6 +294,7 @@ void TickLateArm() {
                 g_blobClumpXforms[slot].clear();
                 g_blobKerfurXforms[slot].clear();
                 g_blobKeyedXforms[slot].clear();
+                g_blobKeyedState[slot].clear();
             }
             continue;
         }
@@ -347,6 +363,7 @@ void ClearForSlot(int peerSlot) {
     g_blobClumpXforms[peerSlot].clear();
     g_blobKerfurXforms[peerSlot].clear();
     g_blobKeyedXforms[peerSlot].clear();
+    g_blobKeyedState[peerSlot].clear();
     g_flushArmUntil[peerSlot] = {};        // disarm the late flush and drop its dedupe baselines
     g_lastFlushedPilePos[peerSlot].clear();
     g_lastFlushedKeyedPos[peerSlot].clear();

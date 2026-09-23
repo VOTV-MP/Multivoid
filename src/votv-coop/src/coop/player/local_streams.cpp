@@ -14,7 +14,6 @@
 #include "coop/player/skin_effects.h"  // own-body step FX at the wire-pose stride
 #include "coop/props/trash_channel.h"   // CtxForEid, the trash sync-time context
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/prop_stick_sync.h"
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the flags a release carries
 #include "coop/props/remote_prop.h"     // ResolveMirrorEidByActor (the bound-clump held-pose eid fallback)
 #include "coop/props/trash_collect_sync.h"
@@ -260,16 +259,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     haKeyed, hKey.c_str());
         }
     }
-    // A held wall-attachable that just stuck (frozen or static; the engine hold lingers up to
-    // 100 ms) ends the stream now: streamed poses could reach the receiver's unstick streak and rip
-    // the mirror back off, and ending here fires the release edge in the same pump pass as, and
-    // lane-ordered after, the PropStickState broadcast. A re-grab unstick clears the flags before
-    // this read, so the stream resumes at once.
-    if (heldActor && R::IsLive(heldActor) &&
-        coop::prop_stick_sync::IsWallAttachable(heldActor) &&
-        (ue_wrap::prop::IsFrozen(heldActor) || ue_wrap::prop::IsStatic(heldActor))) {
-        heldActor = nullptr;
-    }
     // The held-state diagnostic at the branch point: the pose branch, the release edge, or idle;
     // about 8 a second while something is or was held.
     if (heldActor || g_lastHeldProp.Raw()) {
@@ -288,7 +277,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // the same pipeline identified by eid (key None), renders as the bare dirtball, floats in
         // front of the puppet through this stream and gets physics on release.
         if (heldActor != g_lastHeldProp.Raw()) {
-            if (++g_holdGen == 0) g_holdGen = 1;
             // The new-held edge. A held trash clump is adopted here onto the grabbed pile's eid:
             // the birth certificate the BeginDeferred thunk recorded at its spawn carries the pile
             // eid and chipType, and this edge consumes it and broadcasts the ToClump convert.
@@ -328,6 +316,10 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             if (!churnRegrab)
                 g_lastHeldEid = (adoptedEid != coop::element::kInvalidId) ? adoptedEid
                                                                           : ResolveHeldPropEid(heldActor);
+            // A new hold, and a new generation for it -- except the game's churn re-grab of the
+            // entity this peer is carrying, which is the same carry in a new clump actor: no
+            // release closed the last one, and a receiver must not replay the grab.
+            if (!churnRegrab && ++g_holdGen == 0) g_holdGen = 1;
             const unsigned eidLog =
                 (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid);
             UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' eid=%u -> %s",
@@ -518,12 +510,22 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             // The prop's flags as the hold left them: not frozen after a grab, frozen when a slot or
             // a dock took it from the hand. A pocketed prop is gone and reports none, a trash clump has
             // none.
-            const uint8_t relFlags = g_lastHeldProp.Alive()
-                ? coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw()) : uint8_t{0};
-            session.SendPropRelease(g_lastHeldKey,
-                                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u,
-                                    relFlags, g_holdGen);
+            coop::net::PropReleasePayload rel{};
+            rel.key = g_lastHeldKey;
+            rel.linVelX = vel.linearCmS.X; rel.linVelY = vel.linearCmS.Y; rel.linVelZ = vel.linearCmS.Z;
+            rel.angVelX = vel.angularDegS.X; rel.angVelY = vel.angularDegS.Y; rel.angVelZ = vel.angularDegS.Z;
+            rel.elementId = relEid;  // a keyless clump is routed by eid (key None cannot disambiguate)
+            rel.holdGen = g_holdGen;
+            if (g_lastHeldProp.Alive()) {
+                rel.physFlags = coop::prop_wire_parity::PhysFlagsOf(g_lastHeldProp.Raw());
+                // Where the hold let go, so a receiver whose last poses were lost lets go from here.
+                const auto loc = ue_wrap::engine::GetActorLocation(g_lastHeldProp.Raw());
+                const auto rot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
+                rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
+                rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
+                rel.hasPose = 1;
+            }
+            session.SendPropRelease(rel);
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};

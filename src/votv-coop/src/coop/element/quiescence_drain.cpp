@@ -10,6 +10,7 @@
 #include "coop/element/registry.h"             // Registry
 #include "coop/props/prop_element_tracker.h"   // IsBoundMirrorNative, InPurgeEpisode
 #include "coop/props/remote_prop.h"            // TryApplyDestroy, KeyToWString, IsActorUnderAnyDrive
+#include "coop/props/prop_drive_stream.h"      // IsParked: a prop the host's driven stream owns
 #include "coop/props/prop_wire_parity.h"       // ConvergeFrozenSleep, a keyed prop's corrected state
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced
 #include "coop/props/save_identity_bind.h"     // BindUnboundReCreates
@@ -390,7 +391,7 @@ void ApplyPendingPosCorrections() {
         // guard. Deferred under the shared bound, so a transient grab still gets its correction
         // after release; dropped with a warning if it stays held past the cap.
         if ((localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, actor)) ||
-            coop::remote_prop::IsActorUnderAnyDrive(actor)) {
+            coop::remote_prop::IsActorUnderAnyDrive(actor) || coop::prop_drive_stream::IsParked(actor)) {
             if (++c.unresolvedPasses >= kMaxPosCorrectionPasses) {
                 UE_LOGW("[PILE-B3] CLIENT dropping pos-correction eid=%u -- actor stayed HELD/driven for %d "
                         "passes (a grab/convert owns its position now); accepting the divergence over fighting "

@@ -46,14 +46,12 @@ void OnStickState(const coop::net::PropStickStatePayload& payload,
 // class resolves. Cheap SuperStruct walk; any thread.
 bool IsWallAttachable(void* actor);
 
-// Clear a stuck wall-attachable for an incoming kinematic drive: frozen=false, static=false
-// and SetActorSimulatePhysics(true), which is the SP unstick shape with the simulate
-// recompute applied directly -- enabling simulate also detaches an attached root in
-// UE4.27, which the Blueprint's own unstick relies on. No init() is dispatched anywhere in
-// this module; the .cpp says why. Returns true if the actor WAS stuck and is now clear.
-// The caller (remote_prop) gates the call on IsWallAttachable and runs it at the first pose of
-// a new hold. Game thread.
-bool UnstickForDrive(void* actor);
+// The grab's own half on a wall-attachable copy: its component's unstick(false), which is all
+// prop_wallAttachable_C's playerGrabbed_pre runs on the grabbing machine -- the flags cleared, the
+// prop's init(), the stick re-armed. False when the module is not installed or the component does
+// not resolve. The caller (remote_prop) gates the call on IsWallAttachable and runs it once per
+// hold. Game thread.
+bool UnstickForGrab(void* actor);
 
 // Clear per-session state (the commit-pending list). Net disconnect.
 void OnDisconnect();

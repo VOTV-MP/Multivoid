@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 177;
+inline constexpr uint16_t kProtocolVersion = 178;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1185,10 +1185,12 @@ struct KerfurCommandPayload {
 };
 static_assert(sizeof(KerfurCommandPayload) == 8, "KerfurCommandPayload must be 8 bytes");
 
-// A release (PropRelease): the prop by key, its inherited linear and angular velocity at the
-// release edge, and for a keyless trash entity the eid and its generation. Sent once. It closes the
-// hold `holdGen` names and carries the holder's physics flags at the edge, so a copy the grab never
-// reached through a pose still gets the grab's unfreeze, and one the hold ended frozen stays so.
+// A release (PropRelease): the prop by key, and for a keyless trash entity the eid and its
+// generation; its world transform and its inherited linear and angular velocity at the release edge.
+// Sent once. It closes the hold `holdGen` names and carries the holder's physics flags at the edge,
+// so a copy lets go from where the holder's did even when the hold's last poses were lost, a copy the
+// grab never reached through a pose still gets the grab's unfreeze, and one the hold ended frozen
+// stays so.
 struct PropReleasePayload {
     WireKey key;
     float   linVelX;   // cm/s -- GetPhysicsLinearVelocity at release
@@ -1203,8 +1205,12 @@ struct PropReleasePayload {
     uint8_t  ctx;
     uint8_t  physFlags;  // propspawn_flags of the prop on the holder at the release edge
     uint16_t holdGen;    // the hold this release closes
+    float    locX, locY, locZ;           // world cm at the edge
+    float    rotPitch, rotYaw, rotRoll;  // degrees at the edge
+    uint8_t  hasPose;    // 0: the prop was gone at the edge (pocketed), and the transform is unset
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(PropReleasePayload) == 64, "PropReleasePayload must be 64 bytes");
+static_assert(sizeof(PropReleasePayload) == 92, "PropReleasePayload must be 92 bytes");
 // Every reliable payload carries this guard: a payload past one datagram's budget would be
 // refused at send time, so catch it at compile time.
 static_assert(sizeof(PropReleasePayload) <= 256 - 20 - 8,

@@ -71,6 +71,13 @@ uint8_t PhysFlagsOf(void* actor) {
     return flags;
 }
 
+uint8_t FrozenSleepBitsOf(void* actor) {
+    namespace pf = coop::net::propspawn_flags;
+    if (!actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return 0;
+    return static_cast<uint8_t>((ue_wrap::prop::IsFrozen(actor) ? pf::kFrozen : 0) |
+                                (ue_wrap::prop::IsSleeping(actor) ? pf::kSleep : 0));
+}
+
 bool ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
     namespace pf = coop::net::propspawn_flags;
     if (!(physFlags & pf::kLiveState) || !actor || !ue_wrap::prop::IsDescendantOfProp(actor)) return false;
@@ -86,8 +93,11 @@ bool ConvergeFrozenSleep(void* actor, uint8_t physFlags) {
         UE_LOGW("prop_wire_parity: %p frozen=%d sleep=%d -> want frozen=%d sleep=%d -- the game's verb did "
                 "not dispatch; the copy keeps its flags", actor, isFrozen ? 1 : 0, isSleep ? 1 : 0,
                 wantFrozen ? 1 : 0, wantSleep ? 1 : 0);
+        return false;
     }
-    return ok;
+    // Read back: a class's own setter can refuse a flag -- a wall-attachable's override passes sleep
+    // as false -- so a dispatch is not a match.
+    return ue_wrap::prop::IsFrozen(actor) == wantFrozen && ue_wrap::prop::IsSleeping(actor) == wantSleep;
 }
 
 bool SpParitySimulate(uint8_t physFlags) {

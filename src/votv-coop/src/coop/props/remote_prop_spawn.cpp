@@ -28,6 +28,7 @@
 #include "coop/props/snapshot_census.h"  // the per-class completeness floor for the claim sweep
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_drive_stream.h"  // IsParked: a prop the host's driven stream owns
 #include "coop/props/prop_snapshot.h"      // ExpressIncrementalSpawn, the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
 #include "coop/props/prop_lifecycle.h"
@@ -289,8 +290,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // A prop under active kinematic drive (the host holds it) is not converged: the write would
         // stomp the drive for one frame, a visible pop until the next PropPose. The stream owns a
         // held prop's position.
-        if (coop::remote_prop::IsActorUnderAnyDrive(existing)) {
-            UE_LOGI("remote_prop::OnSpawn: key '%ls' is under active kinematic drive (some slot) -- skipping convergence (PropPose owns position)",
+        if (coop::remote_prop::IsActorUnderAnyDrive(existing) || coop::prop_drive_stream::IsParked(existing)) {
+            UE_LOGI("remote_prop::OnSpawn: key '%ls' is under a held or driven stream -- skipping convergence (the stream owns position)",
                     keyW.c_str());
             // The mirror is still registered, so the sender's PropDestroy resolves by eid.
             coop::remote_prop::RegisterPropMirror(payload.elementId, existing, keyW, classW, senderSlot);
@@ -444,8 +445,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         }
         // The exact-key drive guard's mirror: a match under active kinematic drive is not
         // converged.
-        if (coop::remote_prop::IsActorUnderAnyDrive(fuzzy)) {
-            UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> active drive actor (some slot) -- skipping (PropPose owns position)",
+        if (coop::remote_prop::IsActorUnderAnyDrive(fuzzy) || coop::prop_drive_stream::IsParked(fuzzy)) {
+            UE_LOGI("remote_prop::OnSpawn: Gap-I-1 fuzzy match '%ls' -> under a held or driven stream -- skipping (the stream owns position)",
                     classW.c_str());
             // The mirror binding on the drive-skip path too, or Registry::Get(eid) would never
             // resolve for a fuzzy, drive-skipped prop.

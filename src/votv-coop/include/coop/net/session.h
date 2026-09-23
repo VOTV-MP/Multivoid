@@ -308,13 +308,7 @@ public:
     // thread.
     int DrainVoiceFrames(VoiceFrameMsg* out, int maxCount);
 
-    bool SendPropRelease(const WireKey& key,
-                         float linVelX, float linVelY, float linVelZ,
-                         float angVelX, float angVelY, float angVelZ,
-                         uint32_t elementId,  // trash-entity eid (0 = a keyed Aprop, routed by key)
-                         uint8_t ctx,         // trash-entity sync-time context (0 = not trash, no enforcement)
-                         uint8_t physFlags,   // the prop's propspawn_flags at the release edge
-                         uint16_t holdGen);   // the hold this release closes
+    bool SendPropRelease(const PropReleasePayload& payload);
     bool SendPropSpawn(const PropSpawnPayload& payload);
     bool SendPropDestroy(const PropDestroyPayload& payload);
     bool SendEntitySpawn(const EntitySpawnPayload& payload);

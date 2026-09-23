@@ -47,18 +47,17 @@ void* g_compClass        = nullptr;  // comp_wallAttachable_C
 void* g_wallAttachClass  = nullptr;  // prop_wallAttachable_C (the owning prop lineage)
 void* g_uberFn           = nullptr;  // comp_wallAttachable_C::ExecuteUbergraph_comp_wallAttachable
 void* g_forceStickFn     = nullptr;  // comp_wallAttachable_C::forceStick(bool skipHolding)
+void* g_unstickFn        = nullptr;  // comp_wallAttachable_C::unstick(bool withTool), a grab's own unstick
 int32_t g_entryParamOff  = -1;       // ExecuteUbergraph 'EntryPoint' int32 param offset
 int32_t g_skipHoldingOff = -1;       // forceStick 'skipHolding' bool param offset
+int32_t g_withToolOff    = -1;       // unstick 'withTool' bool param offset
 int32_t g_compPropOff    = -1;       // comp_wallAttachable_C::prop (Aprop_C*) field offset
 int32_t g_propCompOff    = -1;       // prop_wallAttachable_C::comp_wallAttachable field offset
-// NOTE deliberately NO prop init() dispatch anywhere in this module: init is
-// overridden along the camera lineage (resolving the right override per
-// instance is the kerfur PickDropPropFn problem again), and its only load-
-// bearing effect for stick/unstick is the SetSimulatePhysics(NOT(static||
-// frozen||sleep)) recompute -- which SetActorSimulatePhysics performs
-// directly. The full-parity path (forceStick replay) runs the real BP's own
-// init internally anyway; only the raw fallback + UnstickForDrive use the
-// direct toggle.
+// NOTE this module never dispatches a prop's init() itself: init is overridden
+// along the camera lineage, and the component's own verbs -- the forceStick
+// replay and a grab's unstick -- run the right override inside the Blueprint.
+// Only the raw fallback writes the flags and applies the simulate recompute
+// (SetSimulatePhysics(NOT(static||frozen||sleep))) directly.
 
 // The commit's ubergraph entry: offset 45 in ExecuteUbergraph_comp_wallAttachable, from
 // the kismet bytecode. The byte offset is part of the cooked BP the same way the keypad
@@ -149,26 +148,33 @@ void Install(coop::net::Session* session) {
             g_skipHoldingOff = R::FindParamOffset(g_forceStickFn, L"skipHolding");
         }
     }
+    if (!g_unstickFn) {
+        g_unstickFn = R::FindFunction(g_compClass, L"unstick");
+        if (g_unstickFn) g_withToolOff = R::FindParamOffset(g_unstickFn, L"withTool");
+    }
     if (g_compPropOff < 0) g_compPropOff = R::FindPropertyOffset(g_compClass, L"prop");
     if (g_propCompOff < 0)
         g_propCompOff = R::FindPropertyOffset(g_wallAttachClass, L"comp_wallAttachable");
 
     if (!g_uberFn || g_entryParamOff < 0 || !g_forceStickFn || g_skipHoldingOff < 0 ||
-        g_compPropOff < 0 || g_propCompOff < 0) {
-        UE_LOGW("prop_stick_sync: partial resolve (uber=%p entryOff=%d force=%p skipOff=%d compPropOff=%d propCompOff=%d) -- retrying",
-                g_uberFn, g_entryParamOff, g_forceStickFn, g_skipHoldingOff,
+        !g_unstickFn || g_withToolOff < 0 || g_compPropOff < 0 || g_propCompOff < 0) {
+        UE_LOGW("prop_stick_sync: partial resolve (uber=%p entryOff=%d force=%p skipOff=%d unstick=%p toolOff=%d "
+                "compPropOff=%d propCompOff=%d) -- retrying",
+                g_uberFn, g_entryParamOff, g_forceStickFn, g_skipHoldingOff, g_unstickFn, g_withToolOff,
                 g_compPropOff, g_propCompOff);
         return;
     }
     const int32_t forceFrame = R::FunctionFrameSize(g_forceStickFn);
-    if (g_skipHoldingOff >= 16 || forceFrame > 16) {
-        // forceStick's dispatch frame is a 16-byte zeroed buffer; a param
+    const int32_t unstickFrame = R::FunctionFrameSize(g_unstickFn);
+    if (g_skipHoldingOff >= 16 || forceFrame > 16 || g_withToolOff >= 16 || unstickFrame > 16) {
+        // forceStick's and unstick's dispatch frames are 16-byte zeroed buffers; a param
         // offset OR a PropertiesSize past it means the signature changed
         // (game update) -- refuse rather than over-write (the offset) or let
         // ProcessEvent memcpy past our buffer (the frame size; the
         // house pattern of ue_wrap/engine/engine_physics).
-        UE_LOGE("prop_stick_sync: forceStick signature drift (skipHoldingOff=%d frameSize=%d vs 16-byte frame) -- module DISABLED (re-RE comp_wallAttachable)",
-                g_skipHoldingOff, forceFrame);
+        UE_LOGE("prop_stick_sync: forceStick/unstick signature drift (skipHoldingOff=%d frameSize=%d, withToolOff=%d "
+                "frameSize=%d vs 16-byte frames) -- module DISABLED (re-RE comp_wallAttachable)",
+                g_skipHoldingOff, forceFrame, g_withToolOff, unstickFrame);
         g_disabled.store(true, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);  // latch off
         return;
@@ -234,7 +240,10 @@ void Tick() {
 void OnStickState(const coop::net::PropStickStatePayload& payload,
                   uint8_t senderPeerSlot) {
     // Game thread (event_feed drain). Resolve key-first, eid fallback (the
-    // PropDestroy shape).
+    // PropDestroy shape). The stick ends the sticking peer's hold whatever this peer makes of the
+    // stick itself -- a copy it cannot resolve, a class this lane does not replay -- so the hold
+    // closes first, and a pose of it still in flight starts nothing here.
+    coop::remote_prop::CloseHold(senderPeerSlot, payload.holdGen);
     if (!g_installed.load(std::memory_order_acquire)) return;
     if (g_disabled.load(std::memory_order_acquire)) {
         static std::atomic<bool> sWarned{false};
@@ -263,11 +272,9 @@ void OnStickState(const coop::net::PropStickStatePayload& payload,
         UE_LOGW("prop_stick_sync: STICK target %p is not a wall-attachable -- dropped", prop);
         return;
     }
-    // 1. Close the sticking peer's hold, so a pose of it still in flight cannot free the stuck copy,
-    //    and stop any kinematic drive on it (the sticking peer was holding it, so its PropPose stream
+    // 1. Stop any kinematic drive on it (the sticking peer was holding it, so its PropPose stream
     //    was driving our copy). Cache clear only -- no physics re-enable (that is exactly the falling
     //    bug).
-    coop::remote_prop::CloseHold(senderPeerSlot, payload.holdGen);
     coop::remote_prop::ClearAnyDriveFor(prop);
     // 2. Pre-pose at the sender's commit transform (where its stick trace
     //    succeeded) so the SP replay's re-trace scans the same surface; the
@@ -316,21 +323,16 @@ bool IsWallAttachable(void* actor) {
     return cls && R::IsDescendantOfAny(cls, &g_wallAttachClass, 1);
 }
 
-bool UnstickForDrive(void* actor) {
-    if (!actor) return false;
-    const bool frozen = ue_wrap::prop::IsFrozen(actor);
-    const bool statiq = ue_wrap::prop::IsStatic(actor);
-    if (!frozen && !statiq) return false;
-    // The SP unstick shape (comp_wallAttachable.unstick = clear flags +
-    // init()), with the simulate recompute applied directly (header note on
-    // the init overrides): SetSimulatePhysics(true) also detaches the
-    // attached root (UE4.27 behavior the BP's own unstick relies on). The
-    // caller immediately re-disables simulate for its kinematic drive.
-    ue_wrap::prop::WriteFrozen(actor, false);
-    ue_wrap::prop::WriteStatic(actor, false);
-    E::SetActorSimulatePhysics(actor, true);
-    UE_LOGI("prop_stick_sync: UNSTUCK %p for incoming drive (the first pose of a new hold)", actor);
-    return true;
+bool UnstickForGrab(void* actor) {
+    if (!actor || !g_installed.load(std::memory_order_acquire) || g_disabled.load(std::memory_order_acquire))
+        return false;
+    void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(actor) + g_propCompOff);
+    if (!comp || !R::IsLive(comp)) return false;
+    // The component's own unstick with the hand, not a tool: what prop_wallAttachable_C's
+    // playerGrabbed_pre runs on the grabbing machine (clear the flags, init(), re-arm the stick).
+    unsigned char frame[16] = {};
+    frame[g_withToolOff] = 0;
+    return R::CallFunction(comp, g_unstickFn, frame);
 }
 
 void OnDisconnect() {

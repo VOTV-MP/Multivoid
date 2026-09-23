@@ -59,15 +59,19 @@ std::array<coop::active_drive::ActiveDrive, coop::players::kMaxPeers> g_drives{}
 // the newest one its release or stick closed, and the one its drive belongs to. A pose of a closed
 // hold is the tail of a stream that already ended, perhaps with the prop frozen on the holder by a
 // slot or a stick, and starts nothing; a pose of a newer hold is a new grab, whatever the drive
-// cache still holds. The driven-prop channel's claim generation, MTA's sync time context. A
-// generation of 0 is unversioned and passes.
+// cache still holds. A generation of 0 is unversioned and passes. The shape is MTA's sync time
+// context, with one divergence: MTA's server mints it per element for the one syncer it assigns
+// (CElement.cpp, CObjectSync.cpp), as the driven-prop channel's host mints its claim per prop, while
+// here the holder mints it per hold and nothing assigns a prop to one holder -- two peers grabbing one
+// prop both stream it (docs/props.md, Known limits).
 struct HoldGate {
     uint16_t closedGen   = 0;
     bool     haveClosed  = false;
     uint16_t driveGen    = 0;      // the hold the slot's drive belongs to, while there is one
     uint16_t refusedGen  = 0;      // the hold a static refusal was said for
+    uint16_t preludeGen  = 0;      // the hold the grab's prelude ran for
     uint16_t tailSaidGen = 0;      // the closed hold a late pose was said for
-    bool     relatchSaid = false;  // the drive's first re-latch was said
+    uint32_t relatches   = 0;      // re-latches during the drive, said at the first and at the loud mark
 };
 std::array<HoldGate, coop::players::kMaxPeers> g_holds{};
 
@@ -78,7 +82,23 @@ bool IsHoldClosed(const HoldGate& h, uint16_t gen) {
     return gen != 0 && h.haveClosed && !GenAfter(gen, h.closedGen);
 }
 
+// A drive whose copy the game switches back to simulating this many times is being fought every
+// tick, not nudged once (a welded body, a Blueprint that sets it each frame): said loudly, once.
+constexpr uint32_t kRelatchLoud = 60;
+
 }  // namespace [drive helpers part 1]
+
+namespace {  // [drive helpers part 2]
+
+// A drive on `actor` belonging to a slot other than `slot` (-1 excludes none).
+bool IsActorDrivenByOtherThan(void* actor, int slot) {
+    if (!actor) return false;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s)
+        if (s != slot && g_drives[s].actor == actor) return true;
+    return false;
+}
+
+}  // namespace [drive helpers part 2]
 
 // True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
 // for a driven prop (PropPose owns its position).
@@ -194,20 +214,18 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
-    // The half of the grab this peer never ran. Every grab verb wakes and unfreezes the prop on the
-    // grabbing machine only (playerGrabbed_pre runs awakeUnfreeze on a frozen or sleeping prop; Hold
-    // Object and putObjectInventory2 run it too), so a copy frozen here -- a mounted fire
-    // extinguisher, a drive in a slot, anything the toolgun froze -- or asleep gets the same verb at
-    // the first pose of the hold, and a stuck wall-attachable its own lane's unstick. A closed hold's
-    // late pose never gets this far. A static prop cannot be held, so a stream for one that is static
-    // here means the two copies disagree on the flag: refused, said once per hold.
+    // The half of the grab this peer never ran. A grab runs its prelude on the grabbing machine only:
+    // prop_C's playerGrabbed_pre clears the prop's lifespan, broadcasts `touched` and runs
+    // awakeUnfreeze on a frozen or sleeping prop, and a wall-attachable's own playerGrabbed_pre runs its
+    // component's unstick instead. So a copy frozen here -- a mounted fire extinguisher, a drive in a
+    // slot, anything the toolgun froze -- or asleep, or on a spawner's lifespan, gets the same, once per
+    // hold, at the first pose that starts its drive; what a subclass adds to its prelude is not replayed.
+    // A closed hold's late pose never gets this far. A static prop cannot be held, so a stream for one
+    // that is static here means the two copies disagree on the flag: refused, said once per hold.
     HoldGate& hold = g_holds[slot];
     if (ue_wrap::prop::IsDescendantOfProp(prop)) {
-        const bool isStatic = ue_wrap::prop::IsStatic(prop);
-        const bool frozen   = ue_wrap::prop::IsFrozen(prop);
-        const bool asleep   = ue_wrap::prop::IsSleeping(prop);
         const bool attachable = coop::prop_stick_sync::IsWallAttachable(prop);
-        if (isStatic && !attachable) {
+        if (ue_wrap::prop::IsStatic(prop) && !attachable) {
             if (hold.refusedGen != pose.holdGen) {
                 hold.refusedGen = pose.holdGen;
                 UE_LOGW("remote_prop: slot %d key '%ls' hold %u streams a prop that is STATIC here (%p) -- a "
@@ -216,17 +234,20 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
             }
             return;
         }
-        if (attachable && (isStatic || frozen)) {
-            coop::prop_stick_sync::UnstickForDrive(prop);  // clears the flags, simulate on and detached
-        } else if (frozen || asleep) {
-            if (ue_wrap::prop::CallAwakeUnfreeze(prop)) {
-                UE_LOGI("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own "
-                        "unfreeze applied (ok)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen),
+        if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
+            hold.preludeGen = pose.holdGen;
+            const bool frozen = ue_wrap::prop::IsFrozen(prop);
+            const bool asleep = ue_wrap::prop::IsSleeping(prop);
+            const bool ok = attachable ? coop::prop_stick_sync::UnstickForGrab(prop)
+                                       : ue_wrap::prop::CallBaseGrabPrelude(prop);
+            if (!ok) {
+                UE_LOGW("remote_prop: slot %d key '%ls' hold %u -- the grab's own prelude did not run here; the "
+                        "copy keeps its flags and its lifespan", slot, keyW.c_str(),
+                        static_cast<unsigned>(pose.holdGen));
+            } else if (frozen || asleep) {
+                UE_LOGI("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own prelude "
+                        "applied (ok)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen),
                         frozen ? "frozen" : "asleep");
-            } else {
-                UE_LOGW("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own "
-                        "unfreeze did not dispatch; the copy keeps its flags", slot, keyW.c_str(),
-                        static_cast<unsigned>(pose.holdGen), frozen ? "frozen" : "asleep");
             }
         }
     }
@@ -254,7 +275,7 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
     g_drives[slot].lastEid = pose.elementId;
     hold.driveGen = pose.holdGen;
-    hold.relatchSaid = false;
+    hold.relatches = 0;
     // A host-authoritative trash mirror freezes on a stream gap instead of timing out; it releases
     // only on the explicit reliable edge, and it interpolates rather than snapping. The test is
     // whether the host authors this body (HostAuthorsTrashBody), not what class it is: a client's
@@ -303,6 +324,10 @@ void Tick(coop::net::Session& session) {
                         static_cast<unsigned>(pose.holdGen));
             }
         } else if (have && isNew) {
+            // The stream is newest-wins by sequence, so every hold before this pose's is over: the
+            // closed floor follows the live one and can never fall half the counter behind it,
+            // where a newer hold would read as closed.
+            if (pose.holdGen != 0) CloseHold(slot, static_cast<uint16_t>(pose.holdGen - 1));
             // A first snapshot, a changed identity (key or eid) or a new hold resolves and switches
             // physics off. The eid check catches a re-grab of a new clump whose key is still None; the
             // generation, a re-grab of the same prop before the last hold's release has arrived.
@@ -359,14 +384,19 @@ void Tick(coop::net::Session& session) {
         }
         // The physics receiver's re-latch (docs/coop-sync-doctrine.md, parking): a driven copy stays
         // kinematic when the game here turns its simulation back on. A flag verb's init() recomputes
-        // it from the flags, as this peer's own laptop exit does to a chair another peer carries. The
-        // prop drive only: the clump has no such verb.
+        // it from the flags, as this peer's own laptop exit does to a chair another peer carries, and
+        // Blueprints call SetSimulatePhysics directly too (the drive's own eject among them), so the
+        // state is read each tick rather than one verb hooked: one call per driven prop, a tick's lag.
+        // The prop drive only: the clump has no such verb.
         if (drive.mesh && drive.LiveActor() && ue_wrap::engine::IsComponentSimulatingPhysics(drive.mesh)) {
             ue_wrap::engine::SetComponentSimulatePhysics(drive.mesh, false);
-            if (!hold.relatchSaid) {
-                hold.relatchSaid = true;
+            if (++hold.relatches == 1) {
                 UE_LOGI("remote_prop: slot %d hold %u -- the game turned simulation back on under the drive; "
                         "re-latched kinematic", slot, static_cast<unsigned>(hold.driveGen));
+            } else if (hold.relatches == kRelatchLoud) {
+                UE_LOGW("remote_prop: slot %d hold %u -- re-latched %u times: something here keeps switching the "
+                        "driven copy's simulation back on", slot, static_cast<unsigned>(hold.driveGen),
+                        static_cast<unsigned>(hold.relatches));
             }
         }
     }
@@ -444,14 +474,16 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 meshToActOn = ue_wrap::prop::GetStaticMesh(prop2);
             }
         }
-        // Someone else holds the prop by now, this peer's own player or another slot's drive: that hold
-        // owns its physics and its flags, and this release has closed its own hold and nothing more.
-        if (propActor && ((localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, propActor)) ||
-                          IsActorUnderAnyDrive(propActor))) {
-            UE_LOGI("remote_prop: RELEASE of hold %u for %p, which another hold has now -- nothing to apply",
-                    static_cast<unsigned>(payload.holdGen), propActor);
-            return;
-        }
+    }
+    // Someone else holds the prop, this peer's own player or another slot's drive: that hold owns its
+    // physics and its flags, and this release closes its own hold, clears its own drive and does
+    // nothing more.
+    if (propActor && ((localPlayer && ue_wrap::engine::IsMainPlayerGrabbing(localPlayer, propActor)) ||
+                      IsActorDrivenByOtherThan(propActor, releasedSlot))) {
+        UE_LOGI("remote_prop: RELEASE of hold %u for %p, which another hold has now -- nothing to apply",
+                static_cast<unsigned>(payload.holdGen), propActor);
+        if (releasedSlot >= 0) ResetDriveState(g_drives[releasedSlot]);
+        return;
     }
     // The holder's frozen and sleep at the release edge, before the physics decision below reads
     // them. A grab that reached this copy through no pose still ends unfrozen here, and a hold that
@@ -466,6 +498,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;
+    }
+    // Where the holder's copy was at the edge: this copy lets go from there even when the hold's last
+    // poses were lost, or none arrived. The host authors a trash body's place.
+    if (propActor && payload.hasPose && !HostAuthorsTrashBody(propActor)) {
+        ue_wrap::engine::SetActorLocation(propActor, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
+        ue_wrap::engine::SetActorRotation(propActor,
+                                          ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
     }
     // A thrown trash mirror is not simulated here: local physics would diverge from the host's
     // trajectory, and the host streams the clump's flight as poses until it re-piles. It freezes at
@@ -589,6 +628,19 @@ void* ResolveLiveActorByEid(uint32_t eid) {
     return (actor && R::IsLiveByIndex(actor, e->GetInternalIdx())) ? actor : nullptr;
 }
 
+void EndAnyHoldOn(void* actor) {
+    UE_ASSERT_GAME_THREAD("g_drives (remote_prop::EndAnyHoldOn)");
+    if (!actor) return;
+    for (int s = 0; s < static_cast<int>(coop::players::kMaxPeers); ++s) {
+        ActiveDrive& d = g_drives[s];
+        if (d.actor != actor) continue;
+        CloseHold(s, g_holds[s].driveGen);
+        UE_LOGI("remote_prop: slot %d hold %u ends where the prop was taken from the hand (%p)", s,
+                static_cast<unsigned>(g_holds[s].driveGen), actor);
+        ResetDriveState(d);
+    }
+}
+
 void ClearAnyDriveFor(void* actor) {
     // Every slot's drive on `actor` clears so nothing drives a destroyed actor next tick; the
     // adoption sweep destroys through the same contract.
@@ -645,7 +697,8 @@ void OnDisconnectForSlot(int peerSlot) {
     // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // The leaver's generations must not gate the slot's next occupant, whose count starts anew.
+    // The leaver's generations must not gate the slot's next occupant, whose counter need not start
+    // above them.
     g_holds[peerSlot] = {};
     // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
     // reach the next occupant; cleared before the early return, since a slot can have rows without

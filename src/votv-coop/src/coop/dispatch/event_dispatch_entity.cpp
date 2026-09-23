@@ -97,8 +97,17 @@ bool HandleEntityEvent(net::Session& session,
         for (float v : vals) {
             if (!std::isfinite(v)) { finite = false; break; }
         }
+        if (p.hasPose) {
+            const float pose[6] = {p.locX, p.locY, p.locZ, p.rotPitch, p.rotYaw, p.rotRoll};
+            for (float v : pose) {
+                if (!std::isfinite(v)) { finite = false; break; }
+            }
+            constexpr float kMaxCoord = 1.0e6f;
+            if (std::fabs(p.locX) > kMaxCoord || std::fabs(p.locY) > kMaxCoord || std::fabs(p.locZ) > kMaxCoord)
+                finite = false;
+        }
         if (!finite) {
-            UE_LOGW("event_feed: PropRelease velocity non-finite -- dropping");
+            UE_LOGW("event_feed: PropRelease velocity or pose non-finite or out of bounds -- dropping");
             break;
         }
         // The bounds: real throws peak at a few thousand cm/s and a fast tumble at a few thousand

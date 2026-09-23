@@ -126,6 +126,11 @@ bool TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
 // implementation. Game thread only; a no-op for null.
 void ClearAnyDriveFor(void* actor);
 
+// The hold a slot's drive of `actor` belongs to ends here, closed, and its drive clears with no
+// physics touch: something took the prop out of the holder's hand (a drive slot's insert), so a pose
+// of that hold still in flight must not pull it back. Game thread; a no-op when nothing drives it.
+void EndAnyHoldOn(void* actor);
+
 // Handle an incoming convert, the bind-model pile morph: the re-skin of eid E in place (the
 // old and new eids equal). Resolves this peer's current rendering of E (a pile or a clump),
 // spawns the new rendering bound to the same E at the payload transform (to-clump: a

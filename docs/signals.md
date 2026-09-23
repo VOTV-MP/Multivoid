@@ -113,8 +113,9 @@ ring for races (`coop/interactables/drive_rack_sync`). A slot freezes the drive 
 grab takes one out -- the drive ejects itself, and the grab unfreezes it -- so a peer applying
 another's eject leaves the unfreeze to that grab's own hold, which reaches the drive through the prop
 lane: its first pose unfreezes the copy, and its release leaves the holder's flags
-([props.md](props.md)). A drive a conflicting line ejects is unfrozen with the eject, since no hold
-follows it. The desk's twelve physical modules are a
+([props.md](props.md)). An insert ends the hold of whoever carried the drive in, so a late pose of it
+cannot pull the drive back out; a drive a conflicting line ejects is unfrozen with the eject, since
+no hold follows it. The desk's twelve physical modules are a
 set, so plug and unplug are value operations the host applies and re-broadcasts whole
 (`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second

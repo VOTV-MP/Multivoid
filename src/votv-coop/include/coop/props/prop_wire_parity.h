@@ -36,15 +36,22 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags);
 // sleep, heavy and removeWOrespawn bits, kSimulatePhysics only while none of the first three holds
 // and the root body is awake, so a settled prop is expressed at rest, and kLiveState. The one
 // builder for every wire that carries a prop's live flags (the join snapshot and its position
-// corrections, the held prop's release, the driven-prop end edge). 0 for anything not an Aprop_C.
+// corrections, the held prop's release, the driven-prop end edge, and the births, which state
+// simulation on over it). 0 for anything not an Aprop_C.
 uint8_t PhysFlagsOf(void* actor);
+
+// Only the frozen and sleep bits of an Aprop_C, read raw (two field reads, no engine call): what a
+// cheap scan compares. 0 for anything else.
+uint8_t FrozenSleepBitsOf(void* actor);
 
 // Make this copy's frozen and sleep what `physFlags` (another peer's) say, through the game's own
 // verbs: its unfreeze when the other copy is neither (a grab's awakeUnfreeze), its setter when the
 // other copy froze or slept (setPropProps, as a mount does). Static is left alone -- no grab
 // changes it. Acts only on flags read off a live prop (kLiveState), never on a spawn's default;
 // only on a difference, and only on an Aprop_C, so an agreeing copy is never touched: a write here
-// runs init(), which wakes the body. True when it changed something. Game thread.
+// runs init(), which wakes the body. True when the copy now matches; false when there was nothing
+// to do, the verb did not dispatch, or the class's own setter refused a flag (a wall-attachable's
+// override forces sleep off). Game thread.
 bool ConvergeFrozenSleep(void* actor, uint8_t physFlags);
 
 // SP-parity simulate state from the wire identity flags. Aprop_C::init() computes

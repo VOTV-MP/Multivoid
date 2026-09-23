@@ -22,6 +22,7 @@
 #include "coop/props/join_membership_sweep.h"  // the join claim
 #include "coop/session/world_load_episode.h"     // the client world-load window
 #include "coop/props/prop_drop_intent.h"       // a client keyed destroy parked for the host's re-place
+#include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the one flag builder
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -235,16 +236,12 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // at variant 0 and wears the wrong mesh. GetChipType answers 0 on a class without the
     // property, so this is one line for the whole family rather than a case for one class.
     p.chipType = ue_wrap::prop::GetChipType(self);
-    p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
+    // The live prop's own flags (0 for anything but an Aprop_C), with simulation stated on: a
+    // birth moves.
+    p.physFlags = coop::prop_wire_parity::PhysFlagsOf(self) |
+                  coop::net::propspawn_flags::kSimulatePhysics;
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(self)) {
-        if (ue_wrap::prop::IsHeavy(self))   p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
-        if (ue_wrap::prop::IsFrozen(self))  p.physFlags |= coop::net::propspawn_flags::kFrozen;
-        if (ue_wrap::prop::IsStatic(self))  p.physFlags |= coop::net::propspawn_flags::kStatic;
-        if (ue_wrap::prop::IsSleeping(self)) p.physFlags |= coop::net::propspawn_flags::kSleep;
-        if (ue_wrap::prop::ReadRemoveWOrespawn(self)) {
-            p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
-        }
         const std::wstring nm = ue_wrap::prop::GetPropNameString(self);
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);

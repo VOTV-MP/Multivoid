@@ -27,6 +27,10 @@ void TickApplyAndDrive(coop::net::Session& s);
 // CLIENT, game thread: the host closed a prop's stream. Validated at the router.
 void OnEnd(const coop::net::PropDriveEndPayload& p);
 
+// True while this stream has `actor` parked: its pose is the host's stream's, so a converge that
+// would move it or re-run its init() leaves it alone, as it leaves a held prop. Game thread.
+bool IsParked(void* actor);
+
 // Session end: every driven prop gets its physics back. Game thread.
 void OnDisconnect();
 

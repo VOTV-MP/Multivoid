@@ -26,6 +26,7 @@ struct BaseEvent {
     bool  missed = false;
 };
 
+BaseEvent g_grabPrelude{L"playerGrabbed_pre"};
 BaseEvent g_thrown{P::name::PropThrownFn};
 
 void* Resolve(BaseEvent& e) {
@@ -43,6 +44,14 @@ void* Resolve(BaseEvent& e) {
 }
 
 }  // namespace
+
+bool CallBaseGrabPrelude(void* prop) {
+    if (!prop) return false;
+    void* fn = Resolve(g_grabPrelude);
+    if (!fn) return false;
+    ParamFrame f(fn);  // the player and the hit result stay zeroed: the base body reads neither
+    return f.valid() && Call(prop, f);
+}
 
 bool CallPropThrown(void* prop, void* player) {
     if (!prop || !player) return false;
