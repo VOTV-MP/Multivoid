@@ -11,6 +11,7 @@
 #include "coop/props/prop_element_tracker.h"   // IsBoundMirrorNative, InPurgeEpisode
 #include "coop/props/remote_prop.h"            // TryApplyDestroy, KeyToWString, IsActorUnderAnyDrive
 #include "coop/props/prop_drive_stream.h"      // IsParked: a prop the host's driven stream owns
+#include "coop/props/prop_stick_sync.h"        // ConvergeStuck, a wall-attach copy's stuck state
 #include "coop/props/prop_wire_parity.h"       // ConvergeFrozenSleep, a keyed prop's corrected state
 #include "coop/props/join_membership_sweep.h"  // HasLoadTailQuiesced
 #include "coop/props/save_identity_bind.h"     // BindUnboundReCreates
@@ -411,8 +412,10 @@ void ApplyPendingPosCorrections() {
         ue_wrap::engine::SetActorRootMovable(actor);
         ue_wrap::engine::SetActorLocation(actor, loc);
         ue_wrap::engine::SetActorRotation(actor, rot);
-        // Then the host's frozen and sleep, where it moved a keyed prop through a verb that changed
-        // them: the extinguisher it took off a mount is not frozen at its new place.
+        // Then the host's stuck state, frozen and sleep, where it moved a keyed prop through a verb
+        // that changed them: the extinguisher it took off a mount is not frozen at its new place, and
+        // a sign it pried off its wall is not stuck there.
+        coop::prop_stick_sync::ConvergeStuck(actor, c.physFlags);
         coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags);
         const ue_wrap::FVector got = ue_wrap::engine::GetActorLocation(actor);
         const float dx = got.X - c.x, dy = got.Y - c.y, dz = got.Z - c.z;

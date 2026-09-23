@@ -32,6 +32,7 @@
 #include "coop/props/prop_snapshot.h"      // ExpressIncrementalSpawn, the handback re-express
 #include "coop/props/prop_fresh_spawn.h"   // the deferred-spawn materialiser
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/prop_stick_sync.h"    // ConvergeStuck, a wall-attach copy's stuck state
 #include "coop/props/prop_wire_parity.h"   // the shared physics and collision helpers
 #include "coop/props/remote_prop.h"
 #include "coop/props/trash_mirror.h"  // a rooted real chipPile native as the pile mirror
@@ -328,8 +329,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             // reconcile here made every bound prop ungrabbable until a host grab.
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- already aligned (d=%.2fcm), skipping teleport (no physics wake)",
                     keyW.c_str(), existing, std::sqrt(dx * dx + dy * dy + dz * dz));
-            // Its frozen and sleep still converge where they differ: a prop the host froze or woke in
-            // place after the blob was cut. The game's own verb, which wakes nothing that agrees.
+            // Its stuck state, frozen and sleep still converge where they differ: a prop the host
+            // stuck, froze or woke in place after the blob was cut. The game's own verbs, which wake
+            // nothing that agrees.
+            coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
             ConvergeFrozenSleep(existing, payload.physFlags);
         } else {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm), converging transform to host (loc=(%.1f,%.1f,%.1f))",
@@ -343,8 +346,10 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                 ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
             ue_wrap::engine::SetActorRotation(existing,
                 ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
-            // The host's frozen and sleep after the move (the extinguisher it took off a mount is no
-            // longer frozen there), then the simulate state the flags give.
+            // The host's stuck state, frozen and sleep after the move (the extinguisher it took off a
+            // mount is no longer frozen there, a sign it pried is no longer on its wall), then the
+            // simulate state the flags give.
+            coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
             ConvergeFrozenSleep(existing, payload.physFlags);
             RestoreSpParityPhysicsAfterConverge(existing, payload.physFlags);
         }
@@ -461,6 +466,7 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(fuzzy,
             ue_wrap::FRotator{payload.rotPitch, payload.rotYaw, payload.rotRoll});
+        coop::prop_stick_sync::ConvergeStuck(fuzzy, payload.physFlags);
         ConvergeFrozenSleep(fuzzy, payload.physFlags);
         RestoreSpParityPhysicsAfterConverge(fuzzy, payload.physFlags);
         // Rekey the matched actor to the wire Key: it otherwise keeps its client-local Key while

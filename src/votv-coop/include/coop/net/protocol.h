@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 178;
+inline constexpr uint16_t kProtocolVersion = 179;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -372,8 +372,9 @@ enum class ReliableKind : uint8_t {
     // host runs the real verb and the result rides KerfurConvert. KerfurConvertPayload.
     KerfurConvertRequest = 63,
 
-    // Any peer, relayed: a wall-attachable prop committed its stick at this pose; the receiver
-    // re-poses and replays the prop's own forceStick. Unsticking rides the pose stream.
+    // Any peer, relayed: a wall-attach component committed its stick at this pose, and the receiver
+    // re-poses and replays the component's own forceStick; or it came unstuck (flags 0), by a grab or
+    // a pry, and the receiver replays the component's own unstick and lets its copy go.
     // PropStickStatePayload.
     PropStickState = 64,
 
@@ -1135,19 +1136,23 @@ struct VoiceStatePayload {
 };
 static_assert(sizeof(VoiceStatePayload) == 4, "VoiceStatePayload must be 4 bytes");
 
-// A wall-attachable's stick (PropStickState): the prop by key (eid as fallback), which field the
-// Blueprint set (bit 0 frozen, bit 1 static) and the commit-time transform the receiver pre-poses
-// to before replaying the prop's own forceStick.
+// A wall-attach component's stick or unstick (PropStickState): the prop by key (eid as fallback)
+// and which field the Blueprint set (bit 0 frozen, bit 1 static), or 0 for an unstick. A stick
+// carries the commit-time transform the receiver pre-poses to before replaying the component's own
+// forceStick; an unstick carries the prop's transform and velocity once the unsticking peer's body
+// freed it, which a pry's kick is part of, and the receiver lets its copy go from there.
 struct PropStickStatePayload {
     WireKey  key;
     uint32_t elementId;
-    uint8_t  flags;      // bit0 = frozen, bit1 = static
+    uint8_t  flags;      // bit0 = frozen, bit1 = static; 0 = unstuck
     uint8_t  _pad;       // zeroed
-    uint16_t holdGen;    // the sticking peer's hold, which the stick closes
+    uint16_t holdGen;    // the sticking peer's hold, which the stick closes; 0 on an unstick
     float locX, locY, locZ;
     float rotPitch, rotYaw, rotRoll;
+    float linVelX, linVelY, linVelZ;  // cm/s, an unstick's; zero on a stick
+    float angVelX, angVelY, angVelZ;  // deg/s, an unstick's; zero on a stick
 };
-static_assert(sizeof(PropStickStatePayload) == 64, "PropStickStatePayload must be 64 bytes");
+static_assert(sizeof(PropStickStatePayload) == 88, "PropStickStatePayload must be 88 bytes");
 
 // A kerfur conversion request (KerfurConvertRequest): the element id of the form the client's menu
 // targeted (a character when toProp is 1, a prop when 0). The host resolves it, validates the actor

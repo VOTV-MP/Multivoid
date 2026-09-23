@@ -45,9 +45,9 @@ bool HandleEntityEvent(net::Session& session,
     (void)session;
     switch (msg.kind) {
     case net::ReliableKind::PropStickState: {
-        // A peer stuck a wall-attachable (the camera) to a surface. Symmetric prop state, relayed
-        // by the host; prop_stick_sync stops any drive, re-poses and replays the BP's own
-        // forceStick.
+        // A peer stuck a wall-attach component's prop (the camera) to a surface, or it came unstuck.
+        // Symmetric prop state, relayed by the host; prop_stick_sync replays the component's own
+        // forceStick or unstick.
         if (msg.payloadLen < sizeof(net::PropStickStatePayload)) {
             UE_LOGW("event_feed: PropStickState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PropStickStatePayload));
@@ -56,21 +56,21 @@ bool HandleEntityEvent(net::Session& session,
         net::PropStickStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         // NaN and Inf rejected before any engine write.
-        const float vals[6] = {p.locX, p.locY, p.locZ,
-                               p.rotPitch, p.rotYaw, p.rotRoll};
+        const float vals[12] = {p.locX, p.locY, p.locZ, p.rotPitch, p.rotYaw, p.rotRoll,
+                                p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ};
         bool bad = false;
         for (float v : vals) {
             if (!std::isfinite(v)) { bad = true; break; }
         }
         if (bad) {
-            UE_LOGW("event_feed: PropStickState non-finite pose -- dropping");
+            UE_LOGW("event_feed: PropStickState non-finite pose or velocity -- dropping");
             break;
         }
         const uint8_t senderSlot =
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::prop_stick_sync::OnStickState(p, senderSlot);
+        coop::prop_stick_sync::OnStickState(p, senderSlot, localPlayer);
         break;
     }
     case net::ReliableKind::PropRelease: {

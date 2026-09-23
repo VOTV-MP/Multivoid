@@ -216,12 +216,15 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
     // The half of the grab this peer never ran. A grab runs its prelude on the grabbing machine only:
     // prop_C's playerGrabbed_pre clears the prop's lifespan, broadcasts `touched` and runs
-    // awakeUnfreeze on a frozen or sleeping prop, and a wall-attachable's own playerGrabbed_pre runs its
-    // component's unstick instead. So a copy frozen here -- a mounted fire extinguisher, a drive in a
-    // slot, anything the toolgun froze -- or asleep, or on a spawner's lifespan, gets the same, once per
-    // hold, at the first pose that starts its drive; what a subclass adds to its prelude is not replayed.
-    // A closed hold's late pose never gets this far. A static prop cannot be held, so a stream for one
-    // that is static here means the two copies disagree on the flag: refused, said once per hold.
+    // awakeUnfreeze on a frozen or sleeping prop, and a prop carrying the wall-attach component (the
+    // wall-attachable lineage, the plasma TV) runs its component's unstick instead, which the copy
+    // gets with the tool: the holder had it off the wall. So a copy frozen here -- a mounted fire
+    // extinguisher, a drive in a slot, anything the toolgun froze -- or stuck, asleep or on a
+    // spawner's lifespan, gets the same, once per hold, at the first pose that starts its drive. What a
+    // subclass adds to its prelude is not replayed (the sprinkler's hose), and the glowstick's, which
+    // replaces the base one, gets the base one here. A closed hold's late pose never gets this far. A
+    // static prop cannot be held, so a stream for one that is static here and has no unstick means the
+    // two copies disagree on the flag: refused, said once per hold.
     HoldGate& hold = g_holds[slot];
     if (ue_wrap::prop::IsDescendantOfProp(prop)) {
         const bool attachable = coop::prop_stick_sync::IsWallAttachable(prop);
@@ -236,18 +239,19 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         }
         if (pose.holdGen == 0 || hold.preludeGen != pose.holdGen) {
             hold.preludeGen = pose.holdGen;
-            const bool frozen = ue_wrap::prop::IsFrozen(prop);
-            const bool asleep = ue_wrap::prop::IsSleeping(prop);
-            const bool ok = attachable ? coop::prop_stick_sync::UnstickForGrab(prop)
+            const char* state = ue_wrap::prop::IsStatic(prop)   ? "static"
+                                : ue_wrap::prop::IsFrozen(prop) ? "frozen"
+                                : ue_wrap::prop::IsSleeping(prop) ? "asleep"
+                                                                  : nullptr;
+            const bool ok = attachable ? coop::prop_stick_sync::ReplayUnstick(prop)
                                        : ue_wrap::prop::CallBaseGrabPrelude(prop);
             if (!ok) {
                 UE_LOGW("remote_prop: slot %d key '%ls' hold %u -- the grab's own prelude did not run here; the "
                         "copy keeps its flags and its lifespan", slot, keyW.c_str(),
                         static_cast<unsigned>(pose.holdGen));
-            } else if (frozen || asleep) {
+            } else if (state) {
                 UE_LOGI("remote_prop: slot %d key '%ls' hold %u grabs a prop %s here -- the grab's own prelude "
-                        "applied (ok)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen),
-                        frozen ? "frozen" : "asleep");
+                        "applied (ok)", slot, keyW.c_str(), static_cast<unsigned>(pose.holdGen), state);
             }
         }
     }
