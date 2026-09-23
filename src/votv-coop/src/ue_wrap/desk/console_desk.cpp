@@ -73,31 +73,19 @@ FieldSlot g_fields[] = {
     { L"coord_coordLog2Text", &g_offCoordCoordLog2Text },
 };
 
-// The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the same
-// update family the game's own apply chain uses, so a mirror repaint goes through the
-// blueprint's own painters (LEDs, toggles, text panes). The comp repaint takes a condition and
-// is dispatched separately.
+// The parameterless screen-refresh verbs WriteScalars runs after the raw writes, the update family
+// the game's own apply chain uses, so a mirror repaints through the blueprint's own painters (LEDs,
+// toggles, text panes). The comp repaint takes a condition and is dispatched separately.
 //
-// ONE OF THEM WRITES PLAYER STATE, and an earlier reading of this list that said none did cost
-// the interaction-UI flicker every client saw on every prop. `updToggles` ends with
-// `lib::getMainPlayer(this)->lookAtComponent = nullptr`
-// (the last statement of its decompiled body) -- the game invalidating the look-at
-// cache so the tooltip of the toggle the player just flipped is re-resolved. In single player it
-// fires on a human flipping a switch; the rebuild of the action row that follows IS the intended
-// behaviour there.
-//
-// So a verb here belongs ONLY on an edge that really changed a scalar IT paints. Calling the chain
-// on a CLOCK turns an invalidation verb into a metronome: every pulse leaves the local player with
-// a null lookAtComponent beside a live lookAtActor, LookAtFunction's five-field compare fails on
-// exactly that pair the next tick, and the whole action row is destroyed and rebuilt. Measured
-// 2026-09-22: 284 of 284 rebuilds under a held aim disagreed on lookAtComponent and on nothing
-// else. Never add a periodic caller.
-//
-// That is why callers name PAINTERS rather than getting the whole chain. Running all nine for one
-// changed scalar is the same defect at a lower rate: a cooldown charge ships as often as every
-// 250 ms while a peer holds the scan, and it paints NOTHING -- no verb below reads coord_cooldown.
-// Each verb's scalar dependencies, read off its bytecode, are on its row in the array. None of the
-// nine reads a SIM output either, which is why WriteSimOutputs runs none of them.
+// One of them writes PLAYER state: updToggles ends by nulling the local player's lookAtComponent,
+// the game invalidating its look-at cache after a real press. Called on a clock, that invalidation
+// rebuilds the whole action row under a held aim at the clock's rate (the measurement is in
+// docs/coop-dispatch-visibility.md), so a verb here runs only on an edge that changed a scalar IT
+// paints, and never from a periodic caller. That is why callers name PAINTERS rather than taking
+// the whole chain: a cooldown charge, which ships every 250 ms while a peer holds the scan, paints
+// nothing, since no verb below reads coord_cooldown. Each verb's scalar dependencies, read off its
+// bytecode, are on its row in the array; none of the nine reads a SIM output, which is why
+// WriteSimOutputs runs none of them.
 struct RefreshSlot { const wchar_t* name; void* fn; };
 // ORDER IS THE CONTRACT: slot i is Painter bit i (console_desk.h). A caller selects verbs by those
 // bits, so re-ordering this array silently re-points every selection.

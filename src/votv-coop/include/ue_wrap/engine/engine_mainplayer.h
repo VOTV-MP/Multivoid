@@ -109,7 +109,14 @@ bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out);
 // until the body writes them. Neither side can be sampled from outside the call, so an observer
 // that wants the comparison ITSELF reads the stored five in a script_gate PRE callback and these
 // in the POST one, off Call::function and Call::locals.
-//
+struct MainPlayerLookAtLocals {
+    void*   actor       = nullptr;
+    void*   component   = nullptr;
+    void*   boundObject = nullptr;
+    uint8_t number      = 0;
+    uint8_t stateByte   = 0;
+};
+
 // A local is resolved exactly as an instance property is: a UFunction is a UStruct, so the same
 // ChildProperties walk finds it. Offsets cached per UFunction. Pointers are compared, never
 // dereferenced. False if the names no longer resolve (a recook renaming a local), which a caller
@@ -120,14 +127,6 @@ bool ReadMainPlayerLookAt(void* mainPlayer, MainPlayerLookAt& out);
 // on the stack when our post callback runs, and the loop's destructor pass has only touched
 // non-POD locals. The same reader aimed at an FString or TArray local would be reading freed
 // storage.
-struct MainPlayerLookAtLocals {
-    void*   actor       = nullptr;
-    void*   component   = nullptr;
-    void*   boundObject = nullptr;
-    uint8_t number      = 0;
-    uint8_t stateByte   = 0;
-};
-
 bool ReadMainPlayerLookAtLocals(void* lookAtFunction, const uint8_t* locals,
                                 MainPlayerLookAtLocals& out);
 
