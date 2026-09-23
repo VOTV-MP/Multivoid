@@ -8,6 +8,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"   // kDefaultPort -- was reaching it only transitively
 #include "coop/session/host_mode.h"
+#include "coop/net/master_slots.h"  // the chosen master, where the lobby is announced
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
@@ -101,7 +102,7 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
     // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          HostModeFromPicker())) {
+                          coop::net::master_slots::Selected().url, HostModeFromPicker())) {
         UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
         return;
     }
@@ -124,7 +125,7 @@ void DoHostNew() {
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          HostModeFromPicker())) {
+                          coop::net::master_slots::Selected().url, HostModeFromPicker())) {
         UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
         return;
     }

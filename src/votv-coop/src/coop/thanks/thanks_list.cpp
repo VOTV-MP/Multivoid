@@ -44,7 +44,8 @@ constexpr uint64_t kFetchFloorMs = 8000;  // the same floor the version check ke
 std::mutex g_mu;
 List g_embedded;             // the build's own copy; what is shown when no master copy beats it
 List g_shown;                // the winner
-std::string g_masterRaw;     // what this master last said, as cached; empty for nothing
+std::string g_masterRaw;     // what a master last said, as cached; empty for nothing
+std::string g_masterRawFrom; // the master that said it: only its own no-list retires it
 std::atomic<uint64_t> g_generation{0};
 std::atomic<bool> g_fetchInFlight{false};
 std::atomic<uint64_t> g_fetchStartMs{0};
@@ -218,6 +219,15 @@ bool ReadCacheFor(const std::string& masterUrl, std::string& outRaw) {
     return !outRaw.empty();
 }
 
+// Deletes the cache only when it is this master's: the file may hold another master's word from
+// an earlier run on that master, and that word is not this one's to retire.
+void DeleteCacheOf(const std::string& masterUrl) {
+    std::string mine;
+    if (!ReadCacheFor(masterUrl, mine)) return;
+    const std::wstring path = CachePath();
+    if (!path.empty()) ::DeleteFileW(path.c_str());
+}
+
 void WriteCacheFor(const std::string& masterUrl, const std::string& raw) {
     const std::wstring path = CachePath();
     const std::string tag = std::string(kCacheMasterTag) + masterUrl + "\n";
@@ -291,19 +301,29 @@ void FetchOnce(const std::string& masterUrl) {
         return;
     }
     if (!parsed) raw.clear();  // NoList: this master has nothing, so its last word no longer stands
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lk(g_mu);
-        if (raw == g_masterRaw) return;  // the same word as last time: nothing to write, nothing to rebuild
+        if (raw.empty()) {
+            // Only the master whose word is held may retire it: the player may have chosen another
+            // master since, and that one having no list says nothing about what the first served.
+            if (g_masterRaw.empty() || g_masterRawFrom != masterUrl) return;
+        } else if (raw == g_masterRaw && g_masterRawFrom == masterUrl) {
+            return;  // the same word as last time: nothing to write, nothing to rebuild
+        }
+        changed = raw != g_masterRaw;
         g_masterRaw = raw;
+        g_masterRawFrom = raw.empty() ? std::string() : masterUrl;
     }
     if (raw.empty()) {
-        const std::wstring path = CachePath();
-        if (!path.empty()) ::DeleteFileW(path.c_str());
+        DeleteCacheOf(masterUrl);
         Settle("the master serves no list");
-    } else {
-        WriteCacheFor(masterUrl, raw);
-        Settle("the master's copy changed");
+        return;
     }
+    // The same text from another master is only re-tagged, so the next boot on that master reads
+    // it; the list shown did not change, so nothing is rebuilt.
+    WriteCacheFor(masterUrl, raw);
+    if (changed) Settle("the master's copy changed");
 }
 
 }  // namespace
@@ -392,10 +412,12 @@ void Init() {
         UE_LOGE("thanks_list: the embedded list did not load -- the menu shows none until a "
                 "download lands");
     }
+    const std::string masterUrl = coop::net::master_slots::Selected().url;
     std::string cached;
-    if (ReadCacheFor(coop::net::master_slots::Selected().url, cached)) {
+    if (ReadCacheFor(masterUrl, cached)) {
         std::lock_guard<std::mutex> lk(g_mu);
         g_masterRaw = std::move(cached);
+        g_masterRawFrom = masterUrl;
     }
     Settle("boot");
 }

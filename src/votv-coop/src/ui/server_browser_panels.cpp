@@ -264,15 +264,24 @@ void Sync(bool force) {
     }
 
     // The status.
-    const int count = rows::Count();
-    const uint64_t sinceMs = rows::MsSinceFetch();
-    g_sCount.Set(std::to_string(count) + (count == 1 ? " server" : " servers"));
-    // Always say when, and say just now for the sub-second case rather than dropping the clause:
-    // written only for a positive elapsed time, the line vanished on a capture taken in the same
-    // millisecond as a fetch, and a clause that appears and disappears is a worse instrument
-    // than one that is always there.
-    g_sFresh.Set(std::string("updated ") +
-                 (sinceMs < 1000 ? "just now" : Sec(static_cast<int>(sinceMs / 1000u))));
+    namespace slots = coop::net::master_slots;
+    if (!sm::RowsHaveData()) {
+        // Nothing has answered for this list yet -- the browser just opened, or another master
+        // was chosen -- so there is neither a count nor an age to state, and dating the empty
+        // list would claim a fetch that never happened. The alarm below speaks if it stays silent.
+        g_sCount.Set("Waiting for the " + slots::Selected().label + " list...");
+        g_sFresh.Set(std::string());
+    } else {
+        const int count = rows::Count();
+        const uint64_t sinceMs = rows::MsSinceFetch();
+        g_sCount.Set(std::to_string(count) + (count == 1 ? " server" : " servers"));
+        // Always say when, and say just now for the sub-second case rather than dropping the
+        // clause: written only for a positive elapsed time, the line vanished on a capture taken
+        // in the same millisecond as a fetch, and a clause that appears and disappears is a
+        // worse instrument than one that is always there.
+        g_sFresh.Set(std::string("updated ") +
+                     (sinceMs < 1000 ? "just now" : Sec(static_cast<int>(sinceMs / 1000u))));
+    }
 
     // The alarm keys on consecutive failures, never on a clock: two failed attempts means the
     // master did not answer either of the last two tries, whereas a long time since a success is
@@ -284,7 +293,6 @@ void Sync(bool force) {
     const int fails = sm::FetchFailures();
     std::string alarm;
     if (fails >= 2) {
-        namespace slots = coop::net::master_slots;
         alarm = "Cannot reach the " + slots::Selected().label + " server list. " +
                 (slots::List().size() > 1 ? "Try another list above, or check your connection."
                                           : "Check your connection.");

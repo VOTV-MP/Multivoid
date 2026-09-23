@@ -102,8 +102,10 @@ void* g_pwHint   = nullptr;
 void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
 void* g_recapMaster = nullptr;
-// The master label the recap last named, for the self-check (MasterShown).
+// The master the recap last named: its label for the self-check (MasterShown), its address for the
+// Host button, so the announce goes where the window said it would.
 std::string g_shownMaster;
+std::string g_shownMasterUrl;
 // The questions, each a host_session_choices::Selector; `chosen` carries the answer, so there are
 // no parallel booleans.
 HC::Selector g_who;   // 0 = anyone may join, 1 = a password is required
@@ -493,7 +495,7 @@ void DoHost() {
                         : coop::session::Reachability::Brokered,
         !hideFromBrowser};
     const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
-                                           mode);
+                                           g_shownMasterUrl, mode);
     // The password is never logged: a log line is the easiest place for it to end up in a
     // screenshot.
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
@@ -659,7 +661,9 @@ void Show() {
     // Which master the session is listed on, by its label (the address is not the player's
     // concern here): the tab chosen in the server browser. On AUTOMATIC it is also the relay and
     // the rendezvous; the choice is settled here with everything else, before the announce.
-    g_shownMaster = coop::net::master_slots::Selected().label;
+    const coop::net::master_slots::Slot shown = coop::net::master_slots::Selected();
+    g_shownMaster = shown.label;
+    g_shownMasterUrl = shown.url;
     SetText(g_recapMaster, L"Master server: " + Widen(g_shownMaster), kDim);
 
     // The lock and the password come back the way they were left.

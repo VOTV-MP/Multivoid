@@ -9,6 +9,7 @@
 #include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
 #include "coop/config/config_registry.h"  // rows::net_fakelink_kbs, the connect-cap rows
 #include "coop/net/connect_history.h"
+#include "coop/net/master_slots.h"       // an empty relay is the chosen master's
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/nickname_arbiter.h"
@@ -328,9 +329,13 @@ bool Session::StartP2P() {
     ApplyGlobalIceConfig(ice);
 
     // 3. The signaling transport, the out-of-band rendezvous for the opaque ICE blobs; constructed
-    // after the identity install, so its greeting carries our identity.
+    // after the identity install, so its greeting carries our identity. A session from a lobby
+    // carries its master's relay; one dialled with no master and no net.signaling uses the relay on
+    // the chosen master's host.
+    if (cfg_.signalingUrl.empty()) cfg_.signalingUrl = master_slots::DefaultSignalingUrl();
     if (cfg_.signalingUrl.empty()) {
-        UE_LOGE("net: P2P requires a signalingUrl");
+        UE_LOGE("net: P2P requires a signaling server: net.signaling is empty and no master is "
+                "chosen to take the relay from");
         return false;
     }
     if (cfg_.signalingToken.empty()) {

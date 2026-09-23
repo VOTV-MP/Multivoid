@@ -39,11 +39,10 @@ std::wstring Widen(const std::string& s) {
 // Split "host:port" into host + numeric port, and decide TLS.
 //
 // URL grammar (Tier B): SCHEMELESS = SECURE. A bare "host:port" is TLS, so the
-// compiled-in official endpoint gets TLS without carrying a scheme (which also
-// keeps the exact-string "DEFAULT" display mask intact). "https://" is explicit
-// TLS; "http://" is an explicit cleartext DOWNGRADE, which exists only for a
-// self-hoster running their own master without a certificate -- it is never used
-// against the official endpoint.
+// compiled-in official masters get TLS without carrying a scheme. "https://" is
+// explicit TLS; "http://" is an explicit cleartext DOWNGRADE, which exists only for
+// a self-hoster running their own master without a certificate -- it is never used
+// against an official master.
 //
 // Returns false if the port is missing/out of range (the master URL must carry an
 // explicit port -- it lives on a spare port, never the default :80/:443).

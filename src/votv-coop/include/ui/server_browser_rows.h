@@ -19,6 +19,7 @@
 #include "coop/net/lobby_client.h"   // LobbyRow -- what Selected() hands back
 
 #include <cstdint>
+#include <string>
 
 namespace ui::server_browser_rows {
 
@@ -83,11 +84,12 @@ bool ClickSelect();
 int         HoveredRow();
 const char* SelectedId();
 
-// The chosen row's DATA, false when nothing is chosen. Resolved BY LOBBY ID against the
-// rows last rendered (invariant above). A selection whose lobby has since vanished from
-// the list answers false and drops the highlight, because the host quit while the screen
-// was open and there is nothing left to connect to.
-bool Selected(coop::net::lobby::LobbyRow& out);
+// The chosen row's DATA, false when nothing is chosen, and in `master`, when asked, the master
+// its list came from, the one a join goes through. Resolved BY LOBBY ID against the rows last
+// rendered (invariant above). A selection whose lobby has since vanished from the list answers
+// false and drops the highlight, because the host quit while the screen was open and there is
+// nothing left to connect to.
+bool Selected(coop::net::lobby::LobbyRow& out, std::string* master = nullptr);
 
 // ---- diagnostics --------------------------------------------------------------------
 

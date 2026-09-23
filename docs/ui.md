@@ -36,7 +36,8 @@ choice is remembered in the ini and is also where a hosted game is listed
 the status pane names it and points at the other tabs. The address
 and the nickname are typed in their own small windows rather than inline
 (`ui/browser_input_screens`). The old ImGui browser stays as a fallback chosen by an ini row
-and needing a restart (`ui/server_browser`, `ui/server_browser_surface`).
+and needing a restart (`ui/server_browser`, `ui/server_browser_surface`); it has no tabs, lists
+the chosen master's lobbies and names that master at the head of its status line.
 
 Hosting is two windows. The first chooses the world (a save, or a new game through the game's
 own save creation) and how the session is reachable, direct or brokered through the master

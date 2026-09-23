@@ -414,13 +414,14 @@ void UpdateHover() {
 // The single writer of both the children's text and g_rowIds, which is what makes the positional
 // pairing safe.
 void Sync() {
-    g_lastRowsGen = sm::CopyRows(g_rows);
+    std::string listMaster;
+    g_lastRowsGen = sm::CopyRows(g_rows, &listMaster);
     // One master's list at a time (lobby_client.h): a switch replaces the list whole, and the new
     // list's ids are its master's, so a selection made on the old one is dropped rather than
-    // resolved against a different lobby that happens to share its id.
-    const std::string listMaster = g_rows.empty() ? std::string() : g_rows.front().master;
+    // resolved against a different lobby that happens to share its id. The same master's list
+    // coming back empty is no switch: the selection waits, by id, for its lobby.
     if (listMaster != g_rowsMaster) {
-        g_rowsMaster = listMaster;
+        g_rowsMaster = std::move(listMaster);
         g_selectedId.clear();
     }
     // A successful fetch resets the age clock; a repaint or a failed fetch does not. Keyed on the
@@ -600,12 +601,16 @@ int HoveredRow() { return g_hoverRow; }
 
 const char* SelectedId() { return g_selectedId.c_str(); }
 
-bool Selected(coop::net::lobby::LobbyRow& out) {
+bool Selected(coop::net::lobby::LobbyRow& out, std::string* master) {
     if (g_selectedId.empty()) return false;
     // By id, never by index: g_rows is refreshed on a timer and its membership changes, so the
     // position that was selected need not hold the same server now.
     for (const Row& r : g_rows) {
-        if (r.lobbyId == g_selectedId) { out = r; return true; }
+        if (r.lobbyId == g_selectedId) {
+            out = r;
+            if (master) *master = g_rowsMaster;
+            return true;
+        }
     }
     // Selected, but the lobby is gone from the latest list (the host quit while the screen was
     // open): false, and the selection dropped so the highlight stops pointing at nothing.

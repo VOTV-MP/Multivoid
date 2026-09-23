@@ -19,6 +19,7 @@
 #include "coop/net/lobby_client.h"   // LobbyRow -- what SelectedRow hands back
 
 #include <cstdint>
+#include <string>
 
 namespace ui::server_browser_native {
 
@@ -63,8 +64,8 @@ const char* SelectedRowId();
 // given set, but the set churns and one host leaving shifts every row after it, and an index
 // would silently connect a player to a different server than the one they clicked; the full
 // invariant lives with the code that keeps it, in ui/server_browser_rows.h. A selection whose
-// lobby has since vanished answers false.
-bool SelectedRow(coop::net::lobby::LobbyRow& out);
+// lobby has since vanished answers false. `master` is the master the row was listed on.
+bool SelectedRow(coop::net::lobby::LobbyRow& out, std::string* master = nullptr);
 
 // A sentence for the footer, shown now and held against the next list sync. The footer
 // normally mirrors the session manager's status, which the periodic sync rewrites, so a

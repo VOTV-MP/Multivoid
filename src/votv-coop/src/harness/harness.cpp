@@ -110,10 +110,6 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 
     UE_LOGI("harness: timeline start, scenario='%s'", scenario.c_str());
 
-    // The master list and the chosen slot settle first (every master contact reads them), then
-    // the host fallback Config goes into session_manager before any browser action can fire.
-    coop::net::master_slots::Init();
-    coop::session_manager::Configure(cfg::ReadP2PHostFallback());
     // A fresh install seeds the multivoid.ini skeleton before anything reads or writes the file
     // this launch: absent-only, atomic.
     cfg::EnsureIniSkeleton();
@@ -127,6 +123,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // after the skeleton, the catalog and the retirement above, so it reports the file those left
     // behind; a drill waits on it to prove the run is measuring the configuration it asked for.
     cfg::ReportEffectiveConfig();
+    // The master list and the chosen slot, read from the file the steps above left (every master
+    // contact reads them), then the host fallback Config into session_manager, before any browser
+    // action can fire.
+    coop::net::master_slots::Init();
+    coop::session_manager::Configure(cfg::ReadP2PHostFallback());
     // The local nickname from config (the env twin, the ini, the registry default), so the browser
     // shows the current name; the browser value wins at session start.
     {

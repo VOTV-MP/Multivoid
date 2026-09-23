@@ -68,14 +68,15 @@ CFG_INT(net_fakelink_kbs, "net.fakelink_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NE
     "Simulated OUTBOUND link capacity, KB/s (GNS FakeRateLimit_Send: a process-global policer "
     "that silently DROPS packets beyond the budget -- worst-case thin-uplink physics). 0 = off. "
     "Testing knob for the overdrive drill; pair with net.sendrate_kbs above this value.")
-// The env twin keeps the name every lab tool already sets: a bare address is a list of one, so
-// VOTVCOOP_MASTER_URL=http://127.0.0.1:5555 means exactly what it meant before the list existed.
-CFG_STRING(net_masters, "net.masters", "net", ::coop::net::kOfficialMasterSlots,
-    "VOTVCOOP_MASTER_URL", false,
-    "The master servers the server browser can list, comma-separated as Label=host:port, the "
-    "first being the default. A label is what the browser's tab says (up to 16 plain characters). "
-    "To use a master of your own, add it as another entry, e.g. ...,Home=my.host:10443 -- "
-    "host:port means TLS, http://host:port a master without a certificate.")
+// The default is the token rather than the list it stands for (protocol.h kOfficialMasterSlots):
+// a player who adds a master of their own keeps the official ones a later build ships instead
+// of freezing the ones they copied.
+CFG_STRING(net_masters, "net.masters", "net", "default", "VOTVCOOP_NET_MASTERS", false,
+    "The master servers the server browser can list, comma-separated; the first is the one it "
+    "opens on. default stands for this build's official masters (USA, then EU). Add your own as "
+    "Label=host:port after it, e.g. default,Home=my.host:10443 (host:port means TLS, "
+    "http://host:port a master without a certificate); a list without default replaces the "
+    "official ones. A label is what the browser's tab says, up to 16 plain characters.")
 CFG_STRING(net_master, "net.master", "net", "", nullptr, false,
     "Which master the server browser lists and where a game you host is listed: a label from "
     "net.masters. Written when you pick a tab in the browser; empty means the first one.")

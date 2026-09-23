@@ -302,13 +302,21 @@ void Refresh() {
     Client().RefreshAsync(slots::Selected().url, /*versionFilter=*/std::string());  // show all
 }
 
-uint64_t CopyRows(std::vector<lobby::LobbyRow>& out) { return Client().CopyRows(out); }
+uint64_t CopyRows(std::vector<lobby::LobbyRow>& out, std::string* master) {
+    return Client().CopyRows(out, master);
+}
 uint64_t RowsGeneration() { return Client().Generation(); }
-std::string Status() { return Client().Status(); }
+std::string Status() {
+    std::string view;
+    const std::string st = Client().Status(&view);
+    return view.empty() ? st : slots::DisplayName(view) + ": " + st;
+}
 
 int FetchFailures() { return Client().ConsecutiveFailures(); }
 
 uint64_t RowsDataGeneration() { return Client().DataGeneration(); }
+
+bool RowsHaveData() { return Client().HasData(); }
 
 void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Host ignored"); return; }
@@ -378,7 +386,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
 }
 
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
-                  const std::string& password, int playersMax,
+                  const std::string& password, int playersMax, const std::string& masterUrl,
                   coop::session::HostMode mode) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
     // The secret this session will require, resolved once and carried into whichever host path
@@ -428,8 +436,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         }
         g_listedState.store(false, std::memory_order_relaxed);
         g_hostIsDirect.store(true, std::memory_order_relaxed);
-        ArmDeferredAnnounce(slots::Selected().url, name,
-                            choice.newGame ? choice.newName : choice.slot,
+        ArmDeferredAnnounce(masterUrl, name, choice.newGame ? choice.newName : choice.slot,
                             locked, playersMax, static_cast<int>(directPort));
         // Through the same builder as the two fallback lines, so the deliberately unlisted
         // configuration gets the same password wording.
@@ -441,7 +448,6 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_actionBusy.store(false);
         return true;
     }
-    const std::string masterUrl = slots::Selected().url;
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
     // `hideFromBrowser` is not captured: the only branch that reads it returned above, before this
@@ -610,12 +616,6 @@ bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
             return false;
         }
     }
-    // The lobby's own master, from its row: a lobby id means nothing on another master, and the
-    // signaling relay and TURN the join is answered with are that master's.
-    if (masterUrl.empty()) {
-        UE_LOGW("session_manager: JoinLobby '%s' has no master to ask -- refused", lobbyId.c_str());
-        return false;
-    }
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Join ignored"); return false; }
     // Raise the browser-only loading state before the master round trip, so "Connecting to <name>"
     // shows at once; on a master failure the worker Fails it (drops the cover, reopens the
@@ -735,8 +735,11 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
     bool ok = false;
     if (hostIdentity.empty()) {
         UE_LOGW("session_manager: P2P connect needs a host identity (`gen:<64 hex>`)");
-    } else if (fallback.signalingUrl.empty()) {
-        UE_LOGW("session_manager: P2P connect needs a signaling server");
+    } else if (fallback.signalingUrl.empty() && slots::DefaultSignalingUrl().empty()) {
+        // An empty relay is the chosen master's (the P2P entry resolves it); with no master
+        // either, there is nowhere to rendezvous.
+        UE_LOGW("session_manager: P2P connect needs a signaling server (net.signaling is empty "
+                "and no master is chosen)");
     } else {
         net::Config cfg = fallback;
         cfg.role = net::Role::Client;
@@ -746,8 +749,8 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
         coop::join_progress::BeginConnect(hostIdentity, coop::join_progress::Stage::Dialing);
         QueueStart(cfg);
         UE_LOGI("session_manager: P2P connect queued -> host '%s' via signaling %s "
-                "(session boot = harness Tier 2)",
-                hostIdentity.c_str(), cfg.signalingUrl.c_str());
+                "(session boot = harness Tier 2)", hostIdentity.c_str(),
+                cfg.signalingUrl.empty() ? "(the chosen master's)" : cfg.signalingUrl.c_str());
         ok = true;
     }
     g_actionBusy.store(false);

@@ -45,7 +45,8 @@ const char* g_lastOutcome = "";
 // style clones of the game's own, so their disabled look is whatever the donor carries.
 void DoConnect() {
     coop::net::lobby::LobbyRow row;
-    if (!SB::SelectedRow(row)) {
+    std::string master;   // the master the row was listed on: the lobby id is its
+    if (!SB::SelectedRow(row, &master)) {
         g_lastOutcome = "connect:none";
         SB::SetNotice("Pick a server from the list first.");
         return;
@@ -66,7 +67,7 @@ void DoConnect() {
     if (row.locked) {
         g_lastOutcome = "connect:password";
         SB::CloseNow();   // sibling hand-over, exactly as HOST does
-        ui::browser_input_screens::OpenPasswordPrompt(row.master, row.lobbyId, row.name,
+        ui::browser_input_screens::OpenPasswordPrompt(master, row.lobbyId, row.name,
                                                       row.proto, row.game);
         return;
     }
@@ -76,7 +77,7 @@ void DoConnect() {
     // The version pair rides along so the equality gate can refuse here, with the connect-failed
     // popup, rather than letting the wire gate drop the player later (rows show normally and are
     // rejected on join).
-    if (sm::JoinLobby(row.master, row.lobbyId, row.name, row.proto, row.game)) {
+    if (sm::JoinLobby(master, row.lobbyId, row.name, row.proto, row.game)) {
         g_lastOutcome = "connect:started";
         SB::Close();   // accepted: the loading screen owns the player from here
     } else {

@@ -8,9 +8,10 @@
 //
 // Two copies are weighed: the build's, and what the master last said. The higher `revision` wins
 // and the master takes a tie, so a master holding an old file cannot take names away from a newer
-// build. The cache is only a memo of the master's last word: it names the master it came from, a
-// new answer replaces it whatever its revision, and "no list" erases it, so a copy a master once
-// served never outlives that master's say. The format is in the data file's header.
+// build. The cache is only a memo of one master's last word, and names that master: a new answer
+// from the chosen master replaces it whatever its revision, and that master's "no list" erases it
+// (another master having none says nothing about it), so a copy a master once served never
+// outlives that master's say. The format is in the data file's header.
 
 #pragma once
 
@@ -41,12 +42,13 @@ struct List {
 // untouched. Pure.
 bool Parse(const char* text, size_t size, List& out);
 
-// Loads the build's copy and this master's cached word and settles what is shown. Once, at
-// boot, after the master's address is configured; any thread.
+// Loads the build's copy and the chosen master's cached word and settles what is shown. Once, at
+// boot; any thread.
 void Init();
 
-// Asks the master on a worker, records its answer as the cache, and settles again. Coalesced and
-// rate-floored like the version check it rides with; an unreachable master changes nothing.
+// Asks the chosen master on a worker, records its answer as the cache, and settles again.
+// Coalesced and rate-floored like the version check it rides with; an unreachable master changes
+// nothing.
 void RefreshFromMaster();
 
 // The current list, and a counter that moves when it is replaced, so a consumer rebuilds on a

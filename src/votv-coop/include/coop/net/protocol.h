@@ -43,12 +43,13 @@ static_assert(kDefaultPort == 47621,
               "kDefaultDirectAddr spells kDefaultPort out -- update both, or the "
               "direct-connect box teaches a port nothing listens on");
 
-// The official master servers: the default of the net.masters row, comma-separated `label=address`
-// slots, the first being the default (coop/net/master_slots.h). Public connection endpoints, not
-// secrets: each master hands out its own signaling token and TURN credentials, never compiled in.
-// A label is only what the browser's tab says. The URL grammar is schemeless = secure: a bare
-// host:port means TLS, and only an explicit http:// opts a self-hoster down to cleartext. The root
-// domain is proxied and must never be used here; the proxy does not pass custom ports.
+// The official master servers, what the net.masters entry `default` stands for: comma-separated
+// `label=address` slots, the first being the default (coop/net/master_slots.h). Public connection
+// endpoints, not secrets: each master hands out its own signaling token and TURN credentials,
+// never compiled in. A label is only what the browser's tab says. The URL grammar is schemeless =
+// secure: a bare host:port means TLS, and only an explicit http:// opts a self-hoster down to
+// cleartext. The root domain is proxied and must never be used here; the proxy does not pass
+// custom ports.
 inline constexpr const char* kOfficialMasterSlots =
     "USA=master.multivoid.dev:10443,EU=master2.multivoid.dev:10443";
 

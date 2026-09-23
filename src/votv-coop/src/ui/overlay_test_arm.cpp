@@ -91,7 +91,8 @@ void ArmFromEnv() {
         coop::session_manager::SaveChoice c;
         c.newGame = false;
         c.slot = hsEnv;
-        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4);
+        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4,
+            coop::net::master_slots::Selected().url);
         UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_SAVE=%s -- fired a picker HOST-WITH-SAVE (load existing, test)", hsEnv);
     }
     char hnEnv[64] = {};
@@ -100,7 +101,8 @@ void ArmFromEnv() {
         c.newGame = true;
         c.newName = hnEnv;
         c.mode = 0;  // story
-        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4);
+        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4,
+            coop::net::master_slots::Selected().url);
         UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_NEW=%s -- fired a picker HOST-WITH-SAVE (new story game, test)", hnEnv);
     }
     // VOTVCOOP_TEST_LOADING=1 forces the CLIENT connecting/loading state up (no real connect)

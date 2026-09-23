@@ -8,8 +8,7 @@
 #include "coop/config/config_registry.h"
 
 #include "coop/net/connect_history.h"  // History::kMaxStamps, the cap row's upper bound
-#include "coop/net/protocol.h"  // kDefaultPort / kOfficialMasterUrl / kOfficialSignalingUrl
-                                // (row defaults ALIAS the one owning constant)
+#include "coop/net/protocol.h"  // kDefaultPort (row defaults ALIAS the one owning constant)
 
 #include <cstring>
 #include <string>

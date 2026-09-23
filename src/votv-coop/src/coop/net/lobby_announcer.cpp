@@ -53,7 +53,8 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
         b["direct_port"] = directPort;
     }
     const http::Response resp = http::Post(masterUrl, "/v1/host", J::Dump(b), timeoutMs);
-    // No raw master URL (console-visible line; the official server shows as "DEFAULT").
+    // No master address in these lines: they reach the console, and which master was asked is the
+    // caller's to name (master_slots::DisplayName).
     if (!resp.ok) { UE_LOGW("lobby: host announce -- master unreachable"); return info; }
     if (resp.status != 200) { UE_LOGW("lobby: host announce -- master returned %d", resp.status); return info; }
 

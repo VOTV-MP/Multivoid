@@ -9,7 +9,6 @@
 #include "coop/session/player_handshake.h"  // kNickMaxChars
 #include "coop/text/utf8_codec.h"
 #include "coop/config/config_registry.h"
-#include "coop/net/master_slots.h"  // the chosen master, whose relay a master-less P2P dial uses
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/skin_registry.h"  // IsValidSkinName and PickRandomStarterSkin
@@ -299,12 +298,11 @@ std::string ReadIniValue(const char* key, const char* def) {
 // the master-unreachable host fallback, so the key set lives once. c.role picks the identity
 // default.
 static void FillP2PFields(coop::net::Config& c) {
-    // The signaling rendezvous server; both peers connect outbound, no port forward. The row if it
-    // is set, else the relay on the chosen master's host. Only a session dialled with no master
-    // reads this: a lobby's rendezvous and token come from its master's own answer.
-    std::string sig = ResolveString(config_registry::rows::net_signaling);
-    if (sig.empty()) sig = coop::net::master_slots::DefaultSignalingUrl();
-    c.signalingUrl = sig;
+    // The signaling rendezvous server; both peers connect outbound, no port forward. Only a session
+    // dialled with no master reads this (a lobby's rendezvous and token come from its master's own
+    // answer), and empty means the relay on the chosen master's host, which the P2P entry resolves
+    // (coop/net/session_start.cpp): which master is chosen is the net layer's to say, not config's.
+    c.signalingUrl = ResolveString(config_registry::rows::net_signaling);
     c.signalingToken = ResolveString(config_registry::rows::net_signaling_token);
 
     // This peer's own signaling identity is not configured: it is the install's durable public key
@@ -330,12 +328,11 @@ static void FillP2PFields(coop::net::Config& c) {
     // Session::StartP2P. An enum row: an unknown token is garbage, the default plus a sweep row.
     c.iceMode = ResolveEnum(config_registry::rows::net_ice);
 
-    // The console line names an endpoint on a master's host by the master's label: the connect
-    // console must not advertise an address the player did not type.
-    namespace slots = coop::net::master_slots;
+    // Both as the player wrote them: an empty relay prints as the master's it will be.
     UE_LOGI("config: P2P fields -- identity=<durable key> host='%s' signaling='%s' stun='%s'",
-            c.hostIdentity.c_str(), slots::DisplayName(c.signalingUrl).c_str(),
-            slots::DisplayName(c.stunList).c_str());
+            c.hostIdentity.c_str(),
+            c.signalingUrl.empty() ? "(the chosen master's)" : c.signalingUrl.c_str(),
+            c.stunList.c_str());
 }
 
 coop::net::Config ReadNetConfig(bool& enabled) {

@@ -56,9 +56,10 @@ void SetJoinPassword(const std::string& password);
 // Browser actions: call from the render or game thread; each dispatches its blocking HTTP onto
 // a worker.
 
-// Async fetch of the lobby list into the row snapshot, read via CopyRows.
+// Async fetch of the lobby list into the row snapshot, read via CopyRows, which also names the
+// master the rows were listed on: the one a join from them goes through.
 void Refresh();
-uint64_t CopyRows(std::vector<coop::net::lobby::LobbyRow>& out);
+uint64_t CopyRows(std::vector<coop::net::lobby::LobbyRow>& out, std::string* master = nullptr);
 
 // The fetch generation alone, for a screen that repaints only when new rows landed; asking
 // every tick must not cost a copy of up to 64 rows of strings.
@@ -67,6 +68,13 @@ uint64_t RowsGeneration();
 // The generation of the rows themselves, which moves only when a fetch succeeded: "how old is
 // this data" keys on this, "should I repaint" on RowsGeneration.
 uint64_t RowsDataGeneration();
+
+// Whether the list shown has answered since it became the list shown (a switch to another master
+// resets it): a pane says the list is awaited rather than dating one nothing fetched.
+bool RowsHaveData();
+
+// The list's status line, led by the label of the master it describes ("EU: 3 servers"): the
+// fallback browser has no tabs, so its footer is where the player learns whose list it shows.
 std::string Status();
 
 // How many list fetches in a row failed, 0 once one succeeds; the browser's cannot-reach-the-
@@ -105,12 +113,12 @@ struct SaveChoice {
 // on net.port on every interface, reached as-is on the same network or through a forwarded
 // port, and when unlisted nothing leaves the machine (IsMasterFree). There is no LAN-only
 // choice: an accept filter refusing non-private remotes did the router's job, and the password
-// and the admission challenge are the controls on every lane. `password` is the secret this
-// session requires, passed rather than re-read from the ini: a round trip through the ini can
-// come back different (a read-only file, an env var that outranks it, trimmed whitespace), and
-// an empty read-back would silently downgrade the session to open behind a lit padlock.
+// and the admission challenge are the controls on every lane. `password` and `masterUrl` are what
+// the window showed, passed rather than re-read: an ini round trip can come back different (a
+// read-only file, an overriding env var, trimmed whitespace) and open the session behind a lit
+// padlock, and the announce, whose master is then the lobby's relay, must go where it said.
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
-                  const std::string& password, int playersMax,
+                  const std::string& password, int playersMax, const std::string& masterUrl,
                   coop::session::HostMode mode = {});
 
 // Join a master lobby by its opaque id (the join request on a worker), building a client

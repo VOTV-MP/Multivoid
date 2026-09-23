@@ -198,6 +198,8 @@ bool g_lockWasLockedBefore = false;
 uint64_t g_windowWaitStartMs = 0;
 uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
+// The ini's net.master before a tab click, which a list from the environment must leave as it was.
+std::string g_tabIniBefore;
 // The session phase has seen the version warning in THIS run. A gate, unlike the other per-run
 // values here, which their own phase overwrites before reading: so Arm resets it.
 bool     g_sessWarned        = false;
@@ -354,8 +356,8 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                             "the list still has rows=%d (want %d) and overflow=%.1f (want "
                             "%.0f). With nothing past the viewport there is nowhere to "
                             "scroll and the wheel question is not askable. Seed rows "
-                            "first: point VOTVCOOP_MASTER_URL at a "
-                            "fake master with rows on it, which the browser scenario can seed.",
+                            "first: put a master with rows on it in net.masters (the env "
+                            "twin is VOTVCOOP_NET_MASTERS).",
                             static_cast<unsigned long long>(kRowWaitMs), rows, kMinRows,
                             static_cast<double>(end), static_cast<double>(kMinOverflow));
                     g_selfCheckStep = kScrimMoveOut;
@@ -606,7 +608,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             const bool toB = (g_selfCheckStep == kTabAimB);
             if (ui::server_browser_tabs::Count() < 2) {
                 UE_LOGW("server_browser_tabs: TABS SKIP -- the list holds %d master(s); a switch "
-                        "needs two (the lab run serves two fake masters)",
+                        "needs two (net.masters with a second entry)",
                         ui::server_browser_tabs::Count());
                 g_selfCheckStep = kRowMove - 1;
                 return;
@@ -620,6 +622,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 g_selfCheckStep = kRowMove - 1;
                 return;
             }
+            g_tabIniBefore = coop::config::ResolveString(::coop::config_registry::rows::net_master);
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
             break;
         }
@@ -635,30 +638,36 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         case kTabVerifyB:
         case kTabVerifyA: {
             // The whole path, not the handler: the choice, the ini line a restart reads it back
-            // from, and rows that came from THAT master (each row names its master).
+            // from, and rows that came from THAT master.
             const bool toB = (g_selfCheckStep == kTabVerifyB);
             const int want = toB ? 1 : 0;
             const auto masters = coop::net::master_slots::List();
             const std::string label = masters[static_cast<size_t>(want)].label;
             std::vector<coop::net::lobby::LobbyRow> rows;
-            coop::session_manager::CopyRows(rows);
+            std::string listMaster;
+            coop::session_manager::CopyRows(rows, &listMaster);
             const bool chosen = coop::net::master_slots::SelectedIndex() == want;
-            const bool fromIt = !rows.empty() && rows.front().master ==
-                                                     masters[static_cast<size_t>(want)].url;
+            const bool fromIt = !rows.empty() && listMaster == masters[static_cast<size_t>(want)].url;
             if ((!chosen || !fromIt) && nowMs < g_holdUntilMs) return;   // the fetch is out
             const std::string saved =
                 coop::config::ResolveString(::coop::config_registry::rows::net_master);
-            const bool remembered = (saved == label);
+            // The ini keeps the choice only when the list is the player's own; one from the
+            // environment (a test's) must leave the player's saved choice as it was.
+            const bool remembers = coop::net::master_slots::ChoiceIsRemembered();
+            const bool iniRight = remembers ? (saved == label) : (saved == g_tabIniBefore);
             const char* verdict = toB ? "TABS" : "TABS BACK";
-            if (chosen && fromIt && remembered)
+            if (chosen && fromIt && iniRight)
                 UE_LOGW("server_browser_tabs: %s PASS -- a real click on the '%s' tab chose it, "
-                        "wrote net.master=%s, and the list now holds %zu server(s) from that "
-                        "master", verdict, label.c_str(), saved.c_str(), rows.size());
+                        "net.master='%s' (%s), and the list now holds %zu server(s) from that "
+                        "master", verdict, label.c_str(), saved.c_str(),
+                        remembers ? "written" : "untouched: the list is the environment's",
+                        rows.size());
             else
                 UE_LOGE("server_browser_tabs: %s FAIL -- after a real click on '%s': chosen=%d, "
-                        "rows from it=%d (%zu rows), net.master='%s'. All three must hold.",
-                        verdict, label.c_str(), chosen ? 1 : 0, fromIt ? 1 : 0, rows.size(),
-                        saved.c_str());
+                        "rows from it=%d (%zu rows), net.master='%s', expected '%s'. All three "
+                        "must hold.", verdict, label.c_str(), chosen ? 1 : 0, fromIt ? 1 : 0,
+                        rows.size(), saved.c_str(),
+                        remembers ? label.c_str() : g_tabIniBefore.c_str());
             break;
         }
         case kRowMove: {

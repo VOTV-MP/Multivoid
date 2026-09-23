@@ -38,6 +38,7 @@ std::atomic<bool> g_justOpened{false};   // Open() -> Render triggers one auto-r
 
 // Render-thread-only UI state.
 std::vector<Row> g_rows;
+std::string g_rowsMaster;   // the master g_rows were listed on; kept, so a frame's copy reuses it
 // THE SELECTION IS A LOBBY ID, NOT A ROW INDEX.
 //
 // A row index is read positionally by the footer's Connect, so a lobby appearing or leaving between
@@ -80,8 +81,9 @@ void Render() {
         std::snprintf(g_directIp, sizeof(g_directIp), "%s",
                       coop::config::ResolveString(coop::config_registry::rows::browser_lastdirect).c_str());
     }
-    // Pull the latest fetched rows (cheap copy of a small list; render thread only).
-    sm::CopyRows(g_rows);
+    // Pull the latest fetched rows (cheap copy of a small list; render thread only), and the
+    // master they came from, which a join from them goes through.
+    sm::CopyRows(g_rows, &g_rowsMaster);
     // Drop a selection whose lobby has left the list: the host quit while the browser
     // was open and there is nothing to connect to. No index clamp is needed or correct.
     if (!g_selectedId.empty()) {
@@ -211,7 +213,7 @@ void Render() {
                     g_selectedId = r.lobbyId;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
-                        else if (sm::JoinLobby(r.master, r.lobbyId, r.name, r.proto, r.game))
+                        else if (sm::JoinLobby(g_rowsMaster, r.lobbyId, r.name, r.proto, r.game))
                             Close();
                     }
                 }
@@ -260,7 +262,7 @@ void Render() {
         const bool canConnect = sel && !selOwn;
         if (!canConnect) ImGui::BeginDisabled();
         if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
-            if (sm::JoinLobby(sel->master, sel->lobbyId, sel->name, sel->proto, sel->game))
+            if (sm::JoinLobby(g_rowsMaster, sel->lobbyId, sel->name, sel->proto, sel->game))
                 Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();

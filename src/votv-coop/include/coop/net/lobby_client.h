@@ -36,9 +36,6 @@ struct LobbyRow {
     // is at the host's own admission, not at the listing.
     bool locked = false;
     bool direct = false;    // a port-forwarded UDP host (a browser badge; join returns ip:port, not relay credentials)
-    // The master this lobby was listed on. A join goes through it and no other: the lobby id is
-    // that master's, and so are the relay and the rendezvous the join is answered with.
-    std::string master;
 };
 
 // Everything a joining client needs to dial the host, returned by the join POST. ok=false on
@@ -84,8 +81,9 @@ public:
     // Kick off an async lobby-list GET against `masterUrl` ("host:port"), optionally filtered to
     // `versionFilter` (empty: all). Non-blocking; a refresh already in flight is coalesced
     // (returns immediately). Results are readable via CopyRows. One master's list is held at a
-    // time: a different master than the one shown drops the rows and the failure count at once,
-    // and a fetch still out to the old master is discarded when it lands, the new one fetched.
+    // time: a different master than the one shown drops the rows and the failure count at once and
+    // is fetched at once; a fetch still out to the old master does not hold it up, and its answer
+    // is dropped when it lands. Coalesced per master.
     void RefreshAsync(const std::string& masterUrl, const std::string& versionFilter);
 
     // Blocking GET of the latest record (the launch check). Call on a worker thread.
@@ -96,10 +94,13 @@ public:
     // answers 404. The text is untrusted; the list's parser bounds it. Worker thread.
     static ThanksFetch FetchThanks(const std::string& masterUrl, int timeoutMs, std::string& outText);
 
-    // Render or game thread: copy the latest fetched rows into `out`. Returns the fetch
-    // generation (increments on each completed refresh) so the caller can tell new data from a
-    // re-read.
-    uint64_t CopyRows(std::vector<LobbyRow>& out) const;
+    // Render or game thread: copy the latest fetched rows into `out`, and into `master`, when
+    // asked, the master they were listed on. That is the list's fact, not each row's: the rows
+    // held are one master's (RefreshAsync), and a join goes through that master and no other,
+    // since the lobby id is its, and so are the relay and the rendezvous the join is answered
+    // with. Returns the fetch generation (increments on each completed refresh) so the caller can
+    // tell new data from a re-read.
+    uint64_t CopyRows(std::vector<LobbyRow>& out, std::string* master = nullptr) const;
 
     // The same generation without copying the rows. A screen that repaints only on new data has
     // to ask this every tick, and CopyRows is a full vector copy of up to 64 rows of strings;
@@ -116,9 +117,15 @@ public:
     // keys on the other.
     uint64_t DataGeneration() const;
 
+    // Whether the list shown has answered at least once since it became the list shown: false right
+    // after a switch to another master and before the first fetch, so a pane says the list is
+    // awaited instead of dating one nothing fetched.
+    bool HasData() const;
+
     // A short human status for the browser footer ("Refreshing...", "4 servers", "master
-    // unreachable").
-    std::string Status() const;
+    // unreachable"), and in `viewUrl`, when asked, the master whose list it describes: one lock for
+    // both, so the pair cannot straddle a switch.
+    std::string Status(std::string* viewUrl = nullptr) const;
 
     // How many fetches in a row have failed; 0 the moment one succeeds. The browser's
     // cannot-reach alarm keys on this and never on elapsed time since the last success, because
@@ -134,6 +141,9 @@ public:
                          int timeoutMs);
 
 private:
+    // One fetch of `url`'s list, published only if `url` is still the list shown. A worker's body.
+    void Fetch(const std::string& url, const std::string& versionFilter);
+
     mutable std::mutex mu_;
     std::vector<LobbyRow> rows_;
     uint64_t generation_ = 0;      // completed attempts -- "repaint"
@@ -141,7 +151,8 @@ private:
     std::string status_ = "Not refreshed yet.";
     int consecutiveFailures_ = 0;
     std::string viewUrl_;          // the master whose list rows_ holds, or is being fetched
-    bool inFlight_ = false;        // a refresh worker is running; under mu_ with viewUrl_
+    bool hasData_ = false;         // viewUrl_'s list has answered since it became the view
+    std::vector<std::string> inFlight_;  // the masters a worker is fetching right now
 };
 
 }  // namespace coop::net::lobby

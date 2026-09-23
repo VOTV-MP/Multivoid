@@ -64,7 +64,6 @@ bool FetchList(const std::string& masterUrl, const std::string& versionFilter,
         r.proto      = J::IntClamped(e, "proto", 0, 65535);  // the join gate; 0 means a host older than the field
         r.locked     = J::Bool(e, "locked");
         r.direct     = (J::Str(e, "conn") == "direct");  // direct lobbies
-        r.master     = masterUrl;
         if (!r.lobbyId.empty()) out.push_back(std::move(r));
     }
     // A total order, imposed here, because the list arrives with none: the master stores lobbies
@@ -101,6 +100,11 @@ bool FetchList(const std::string& masterUrl, const std::string& versionFilter,
     return true;
 }
 
+void EraseUrl(std::vector<std::string>& v, const std::string& url) {
+    for (auto it = v.begin(); it != v.end(); ++it)
+        if (*it == url) { v.erase(it); return; }
+}
+
 }  // namespace
 
 void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& versionFilter) {
@@ -108,84 +112,94 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
         std::lock_guard<std::mutex> lk(mu_);
         // One master's list at a time. A different master than the one shown switches the view at
         // once: the rows belong to the old master (a lobby id means nothing on another one), and so
-        // does the failure count behind the cannot-reach alarm, so both restart. Both generations
-        // move, because the rows on screen were replaced -- by nothing, until the fetch lands.
+        // does the failure count behind the cannot-reach alarm, so both restart. The repaint
+        // generation moves, since the rows on screen were replaced by nothing; the data generation
+        // does not, since nothing was fetched -- HasData says the new list has not answered yet.
         if (masterUrl != viewUrl_) {
             viewUrl_ = masterUrl;
             rows_.clear();
             consecutiveFailures_ = 0;
+            hasData_ = false;
             ++generation_;
-            ++dataGeneration_;
             status_ = "Refreshing...";
         }
-        // Coalesced: a worker already running re-reads the view before it publishes, so a switch
-        // made while it waits on the old master is fetched next instead of being dropped.
-        if (inFlight_) return;
-        inFlight_ = true;
+        // Coalesced per master: a fetch already out to THIS master answers this request too. One
+        // still out to a master the player has left does not hold this one up; its answer is
+        // dropped when it lands. MTA refreshes per source for the same reason
+        // (CServerBrowser.cpp OnTabChanged -> EnsureRefreshFor).
+        for (const std::string& u : inFlight_)
+            if (u == masterUrl) return;
+        inFlight_.push_back(masterUrl);
         status_ = "Refreshing...";
     }
-    // A detached worker. The client is a process-lifetime singleton (the session manager owns it as
-    // a never-destroyed static), so `this` outlives the thread.
-    std::thread([this, versionFilter] {
-        std::string url;
-        {
-            std::lock_guard<std::mutex> lk(mu_);
-            url = viewUrl_;
+    // A detached worker per master asked. The client is a process-lifetime singleton (the session
+    // manager owns it as a never-destroyed static), so `this` outlives the thread.
+    try {
+        std::thread([this, masterUrl, versionFilter] { Fetch(masterUrl, versionFilter); }).detach();
+    } catch (...) {
+        // No thread: the in-flight mark must not outlive the attempt, or every later refresh of this
+        // master would coalesce into one that never runs.
+        std::lock_guard<std::mutex> lk(mu_);
+        EraseUrl(inFlight_, masterUrl);
+        if (masterUrl == viewUrl_) {
+            status_ = "refresh error";
+            ++generation_;
         }
-        std::string done;   // the status published, logged once the lock is released
-        for (;;) {
-            std::vector<LobbyRow> parsed;
-            std::string st;
-            bool ok = false;
-            // A bad allocation from the parse must not escape a detached thread (a terminate) nor
-            // leave the in-flight latch set, which would coalesce every future refresh into a no-op
-            // and freeze the browser at refreshing. A thrown attempt is a completed, failed one.
-            try {
-                ok = FetchList(url, versionFilter, parsed, st);
-            } catch (...) {
-                parsed.clear();
-                st = "refresh error";
-                ok = false;
-            }
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                // The player switched lists while this fetch waited: its answer is the old
-                // master's, and the rows now on screen are the new one's (empty until it answers).
-                if (url != viewUrl_) {
-                    url = viewUrl_;
-                    continue;
-                }
-                if (ok) {
-                    rows_ = std::move(parsed);
-                    consecutiveFailures_ = 0;
-                    // Only here: the rows-are-new signal the age clock keys on; see DataGeneration.
-                    ++dataGeneration_;
-                } else if (consecutiveFailures_ < 1000000) {
-                    ++consecutiveFailures_;
-                }
-                // The generation moves on every completed attempt, success or not: it is the
-                // something-happened, repaint signal the browser polls, and after a failure there
-                // is something to repaint, the status line changed and the rows on screen got
-                // older. Bumping it only on success would freeze the screen's clock at the last
-                // good fetch. It is not the age clock; that distinction is the data generation
-                // above. Answering both questions with one counter meant a failed fetch
-                // re-stamped last-fetched, which pinned every row's age and made the stale dimming
-                // unreachable.
-                ++generation_;
-                status_ = st;
-                // Under the lock, so a switch cannot land between the view check and the clear.
-                inFlight_ = false;
-            }
-            done = std::move(st);
-            break;
-        }
-        UE_LOGI("lobby: refresh done [%s]", done.c_str());
-    }).detach();
+    }
 }
 
-uint64_t LobbyClient::CopyRows(std::vector<LobbyRow>& out) const {
+void LobbyClient::Fetch(const std::string& url, const std::string& versionFilter) {
+    std::string done;   // the status published, logged once the lock is released
+    // The whole body: an allocation failing anywhere must not escape a detached thread (a
+    // terminate), nor leave this master's in-flight mark set, which would coalesce every later
+    // refresh of it into one that never runs. A thrown attempt is a completed, failed one.
+    try {
+        std::vector<LobbyRow> parsed;
+        std::string st;
+        bool ok = false;
+        try {
+            ok = FetchList(url, versionFilter, parsed, st);
+        } catch (...) {
+            parsed.clear();
+            st = "refresh error";
+            ok = false;
+        }
+        std::lock_guard<std::mutex> lk(mu_);
+        EraseUrl(inFlight_, url);
+        // The player moved on to another list while this fetch waited: its answer is for a list no
+        // longer shown.
+        if (url != viewUrl_) return;
+        if (ok) {
+            rows_ = std::move(parsed);
+            consecutiveFailures_ = 0;
+            hasData_ = true;
+            // Only here: the rows-are-new signal the age clock keys on; see DataGeneration.
+            ++dataGeneration_;
+        } else if (consecutiveFailures_ < 1000000) {
+            ++consecutiveFailures_;
+        }
+        // The generation moves on every completed attempt, success or not: it is the
+        // something-happened, repaint signal the browser polls, and after a failure there is
+        // something to repaint, the status line changed and the rows on screen got older. Bumping it
+        // only on success would freeze the screen's clock at the last good fetch. It is not the age
+        // clock; that distinction is the data generation above. Answering both questions with one
+        // counter meant a failed fetch re-stamped last-fetched, which pinned every row's age and
+        // made the stale dimming unreachable.
+        ++generation_;
+        status_ = st;
+        done = std::move(st);
+    } catch (...) {
+        std::lock_guard<std::mutex> lk(mu_);
+        EraseUrl(inFlight_, url);
+        return;
+    }
+    if (!done.empty()) UE_LOGI("lobby: refresh done [%s]", done.c_str());
+}
+
+uint64_t LobbyClient::CopyRows(std::vector<LobbyRow>& out, std::string* master) const {
     std::lock_guard<std::mutex> lk(mu_);
     out = rows_;
+    if (master) *master = viewUrl_;
     return generation_;
 }
 
@@ -194,14 +208,20 @@ uint64_t LobbyClient::Generation() const {
     return generation_;
 }
 
-std::string LobbyClient::Status() const {
+std::string LobbyClient::Status(std::string* viewUrl) const {
     std::lock_guard<std::mutex> lk(mu_);
+    if (viewUrl) *viewUrl = viewUrl_;
     return status_;
 }
 
 uint64_t LobbyClient::DataGeneration() const {
     std::lock_guard<std::mutex> lk(mu_);
     return dataGeneration_;
+}
+
+bool LobbyClient::HasData() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return hasData_;
 }
 
 int LobbyClient::ConsecutiveFailures() const {

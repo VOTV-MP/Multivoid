@@ -370,7 +370,9 @@ bool IsOpen() { return g_shown; }
 // header need not learn a second one.
 int HoveredRow() { return rows::HoveredRow(); }
 const char* SelectedRowId() { return rows::SelectedId(); }
-bool SelectedRow(coop::net::lobby::LobbyRow& out) { return rows::Selected(out); }
+bool SelectedRow(coop::net::lobby::LobbyRow& out, std::string* master) {
+    return rows::Selected(out, master);
+}
 
 // The status pane owns the notice line; this stays as the entry point the actions call.
 void SetNotice(const char* text) { panels::SetNotice(text); }

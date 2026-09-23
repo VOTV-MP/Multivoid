@@ -48,17 +48,19 @@ per request.
 
 There is more than one master, and they do not know about each other: each box has its own lobby
 list, its own signaling relay and TURN server, its own secrets and its own certificate. The
-client's list of them is one ini row, `net.masters`, whose default names the official ones (USA
-first, then EU); the browser shows one master's lobbies at a time, chosen with a tab above the
+client's list of them is one ini row, `net.masters`, whose default is the word `default`: it
+stands for the official masters compiled into the build (USA first, then EU), so a player who
+adds one of their own after it (`default,Home=host:port`) still gets whatever official masters a
+later build ships. The browser shows one master's lobbies at a time, chosen with a tab above the
 list, and the choice is the `net.master` row, written on the click and read back on the next
 launch (`coop/net/master_slots`, `ui/server_browser_tabs`). A lobby lives on the master it was
 announced to, and everything a session needs follows from that one fact: a host announces to the
-chosen master, which is then also its rendezvous and relay; a row remembers the master it came
-from, and a join goes through that master whichever tab is shown later; switching tabs drops the
-old list at once, since a lobby id means nothing on another master. The update check and the thanks
-list come from the chosen master too, so only the master the player picked learns their address.
-Every build before the list existed knows only the first master's address, which is why the default
-slot keeps it.
+chosen master, which is then also its rendezvous and relay; the list on screen knows which master
+it came from, and a join goes through that master, the password prompt included; switching tabs
+drops the old list at once, since a lobby id means nothing on another master. The update check and
+the thanks list come from the chosen master too, so only the master the player picked learns
+their address. Every release before the list existed knows only the first master's address, which
+is why the default slot keeps it.
 
 The master never sees game traffic. Its posture is the ordinary one for a public endpoint:
 per-address and per-class rate limits, a global and a per-address lobby cap, an opaque lobby id
@@ -131,8 +133,8 @@ most until its heartbeats lapse.
 | Limit | Evidence |
 |---|---|
 | The signaling leg is plaintext, so an on-path attacker can relay the registration challenge and hold a victim's name; encrypting it is the next transport item | `[V]` `coop/net/signaling_client.h` |
-| The masters do not share lobbies: a game is found only on the master it was announced to, and a player sees one master's list at a time | `[RD]` `coop/net/master_slots`, `coop/net/lobby_client` |
-| The list of official masters is compiled into each build, so a master added later reaches only the builds after it | `[RD]` `coop/net/protocol.h` |
+| The masters do not share lobbies: a game is found only on the master it was announced to, and a player sees one master's list at a time | `[V]` `coop/net/master_slots.h`, `coop/net/lobby_client.h` (`RefreshAsync`) |
+| The list of official masters is compiled into each build, so a master added later reaches only the builds after it | `[V]` `coop/net/protocol.h` (`kOfficialMasterSlots`) |
 | The `http://` downgrade grammar still ships and is queued for removal | `[V]` `coop/net/http_client` |
 
 ## Code map
