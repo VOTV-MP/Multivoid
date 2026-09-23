@@ -185,10 +185,12 @@ int32_t SafePriorIndex(int32_t live, int32_t ourIndex, int32_t previous);
 
 // The switcher's active index, read once per menu tick: umg::SwitcherIndex is a ParamFrame
 // allocation plus a ProcessEvent dispatch, and four screens compare the live index against
-// their own in both directions at the menu's ~117 Hz. BeginMenuTick is called once by the menu
-// observer that drives all four; ActiveIndex is valid only inside that tick and answers -1
-// before the first call or on a failed read, which every consumer treats as "not ours".
+// their own in both directions at the menu's ~117 Hz. BeginMenuTick and EndMenuTick bracket the
+// four screens' ticks in the menu observer that drives them; ActiveIndex answers -1 outside that
+// bracket or on a failed read, which every consumer treats as "not ours", and the cursor
+// conversion below is kept only inside it.
 void    BeginMenuTick(void* switcher);
+void    EndMenuTick();
 int32_t ActiveIndex();
 
 // Where the cursor is, in the space WidgetScreenRect reports in: the one conversion both hit

@@ -15,7 +15,7 @@
 #include "coop/thanks/thanks_list.h"
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
-#include "ui/native_screen.h"   // BeginMenuTick -- one index read per menu tick
+#include "ui/native_screen.h"   // Begin/EndMenuTick -- one index read per menu tick
 #include "ui/browser_input_screens.h"
 #include "ui/host_session_settings.h"
 #include "ui/host_window_native.h"
@@ -225,6 +225,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // game's Language-window shape); the same observer. They build unconditionally and are only
     // shown by the browser's action grid.
     ui::browser_input_screens::OnMenuTick(self, ReadPtr(self, g_switcherOff));
+    ui::native_screen::EndMenuTick();
 
     // Inject once per menu instance, self-healing if the game tore the button out, throttled to
     // one attempt a second so a persistent failure never hammers the spawn.

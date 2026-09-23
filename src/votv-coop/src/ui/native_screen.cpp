@@ -461,11 +461,21 @@ bool Probe(void* panel, int32_t i, long cx, long cy,
 }  // namespace
 
 namespace {
-int32_t g_activeIndex = -1;   // game thread only, rewritten at the top of every menu tick
+int32_t g_activeIndex = -1;   // game thread only; read inside a menu tick, -1 outside one
+// Moves once per menu tick: the cursor conversion below is kept for the rest of that tick only.
+uint64_t g_menuTickSeq = 0;
+bool g_inMenuTick = false;    // between BeginMenuTick and EndMenuTick
 }
 
 void BeginMenuTick(void* switcher) {
+    ++g_menuTickSeq;
+    g_inMenuTick = true;
     g_activeIndex = switcher ? ue_wrap::umg::SwitcherIndex(switcher) : -1;
+}
+
+void EndMenuTick() {
+    g_inMenuTick = false;
+    g_activeIndex = -1;
 }
 
 int32_t ActiveIndex() { return g_activeIndex; }
@@ -502,6 +512,22 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
 bool CursorInWidgetSpace(long& outX, long& outY) {
     POINT c{};
     if (!::GetCursorPos(&c)) return false;
+    // One conversion per menu tick per pointer position: every hand-built hit target on a screen
+    // asks in the same tick (the list's hover, the master tabs, a click), and each conversion
+    // reaches GetWorldContext's object-array walk. The mapping cannot change within one tick at
+    // one position; outside a menu tick nothing is kept, since a resize or a UI-scale change
+    // between ticks moves it.
+    static uint64_t sSeq = 0;     // 0 never matches: the first tick is 1
+    static POINT sAt{};
+    static bool sOk = false;
+    static long sX = 0, sY = 0;
+    if (g_inMenuTick && sSeq == g_menuTickSeq && sAt.x == c.x && sAt.y == c.y) {
+        if (sOk) { outX = sX; outY = sY; }
+        return sOk;
+    }
+    sSeq = g_inMenuTick ? g_menuTickSeq : 0;
+    sAt = c;
+    sOk = false;
     // The client origin is half the transform; the other half is the viewport's UI scale, and
     // Slate's own inverse (CursorToWidgetAbsolute) is the only source that has both.
     POINT cli = c;
@@ -522,8 +548,9 @@ bool CursorInWidgetSpace(long& outX, long& outY) {
         }
         return false;
     }
-    outX = static_cast<long>(abs.X);
-    outY = static_cast<long>(abs.Y);
+    outX = sX = static_cast<long>(abs.X);
+    outY = sY = static_cast<long>(abs.Y);
+    sOk = true;
     return true;
 }
 
