@@ -389,6 +389,13 @@ CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|j
     "every receiver must drop. client: the client carries it and the host watches. join: the host "
     "takes it off while a joiner is still loading. Both peers print every extinguisher they have and "
     "every move of one.")
+CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
+    "VOTVCOOP_PRY_DRILL",
+    "Drill (BOTH peers): a stuck sign pried off its wall by its own crowbarOpen, with no crowbar. host: "
+    "the host pries once a client's join is over, after the client runs its copy's hand unstick, which "
+    "a pryable refuses with its 'Tool required' hint. client: the client pries and the host watches. "
+    "join: the host pries while a joiner is still loading. Both peers print every pryable they have "
+    "and every change of one.")
 CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "
