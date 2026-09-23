@@ -55,15 +55,25 @@ bool HandleEntityEvent(net::Session& session,
         }
         net::PropStickStatePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // NaN and Inf rejected before any engine write.
+        // NaN, Inf and an absurd place or velocity rejected before any engine write, with the
+        // release's bounds (below): a client's unstick is relayed, and every peer lets its copy go
+        // from that pose with that velocity.
         const float vals[12] = {p.locX, p.locY, p.locZ, p.rotPitch, p.rotYaw, p.rotRoll,
                                 p.linVelX, p.linVelY, p.linVelZ, p.angVelX, p.angVelY, p.angVelZ};
         bool bad = false;
         for (float v : vals) {
             if (!std::isfinite(v)) { bad = true; break; }
         }
+        constexpr float kMaxStickCoord = 1.0e6f;
+        constexpr float kMaxStickVel = 1.0e6f;
+        if (std::fabs(p.locX) > kMaxStickCoord || std::fabs(p.locY) > kMaxStickCoord ||
+            std::fabs(p.locZ) > kMaxStickCoord)
+            bad = true;
+        for (int i = 6; i < 12; ++i) {
+            if (std::fabs(vals[i]) > kMaxStickVel) bad = true;
+        }
         if (bad) {
-            UE_LOGW("event_feed: PropStickState non-finite pose or velocity -- dropping");
+            UE_LOGW("event_feed: PropStickState pose or velocity non-finite or out of bounds -- dropping");
             break;
         }
         const uint8_t senderSlot =
