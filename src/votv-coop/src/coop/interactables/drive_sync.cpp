@@ -387,7 +387,9 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             }
             coop::desk_snd_fx::ScopedWireApply guard;
             DC::CallDrivePulledOut(slot);
-            ue_wrap::prop::CallAwakeUnfreeze(cur);  // or it stays frozen in the port beside the new one
+            // Or it stays frozen in the port beside the new one; a drive a stream already freed is left
+            // alone, for the reason the eject below gives.
+            if (ue_wrap::prop::IsFrozen(cur)) ue_wrap::prop::CallAwakeUnfreeze(cur);
             DC::CompleteEjectLatch(slot, cur);
             ++g_cLatchCompleted;
         }

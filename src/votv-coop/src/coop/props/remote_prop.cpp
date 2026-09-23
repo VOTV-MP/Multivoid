@@ -365,7 +365,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         return;
     }
     // The releasing peer is the envelope's sender slot, not a key scan: first-match-wins over
-    // lastKey would clear the wrong slot when two slots briefly held the same key.
+    // lastKey would clear the wrong slot when two slots briefly held the same key. Its hold is over,
+    // so an unstick streak it was growing ends here too: poses that land after the release are the
+    // stale tail of that hold and must count from nothing.
+    if (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers)) {
+        g_pendingUnstick[senderSlot] = {};
+        g_staticRefused[senderSlot] = nullptr;
+    }
     void* propActor = nullptr;
     void* meshToActOn = nullptr;
     int releasedSlot = -1;
@@ -544,6 +550,8 @@ void ForceRelease() {
     // Every slot's drive clears, on disconnect (from Tick) and on aggregate teardown; a single slot
     // goes through OnDisconnectForSlot.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ForceRelease)");
+    g_pendingUnstick.fill({});
+    g_staticRefused.fill(nullptr);
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;
@@ -580,6 +588,8 @@ void OnDisconnectForSlot(int peerSlot) {
     // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    g_pendingUnstick[peerSlot] = {};
+    g_staticRefused[peerSlot] = nullptr;
     // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
     // reach the next occupant; cleared before the early return, since a slot can have rows without
     // a drive.
