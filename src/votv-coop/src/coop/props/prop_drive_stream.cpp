@@ -7,7 +7,7 @@
 #include "coop/props/active_drive.h"
 #include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the index only, never the cold walk
 #include "coop/props/prop_wire_parity.h"      // the join converge's own physics restore
-#include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive, DriveSimulate
+#include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -71,7 +71,7 @@ void* Resolve(uint32_t eid, const coop::net::WireKey& key) {
 
 void GiveBackPhysics(Drive& dr, void* actor) {
     if (!dr.physicsParked || !actor || PhysicsStaysOff(actor)) return;
-    coop::remote_prop::DriveSimulate(dr.d.mesh, true);
+    ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, true);
     dr.physicsParked = false;
 }
 
@@ -87,8 +87,8 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
     const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
     if (parkedHere && coop::prop_wire_parity::SpParitySimulate(p.physFlags) && lin2 > 0.f) {
         void* mesh = PR::GetStaticMesh(actor);
-        coop::remote_prop::DriveSetLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
-        coop::remote_prop::DriveSetAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
+        ue_wrap::engine::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
+        ue_wrap::engine::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
     }
 }
 
@@ -148,7 +148,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
             dr.gen        = e.ctx;
             dr.physicsParked = false;
             if (dr.d.mesh && !PhysicsStaysOff(actor)) {
-                coop::remote_prop::DriveSimulate(dr.d.mesh, false);
+                ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
                 dr.physicsParked = true;
             }
             if (ended != g_endedGen.end()) g_endedGen.erase(ended);

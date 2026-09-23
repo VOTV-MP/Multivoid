@@ -166,7 +166,7 @@ void Install(coop::net::Session* session) {
         // offset OR a PropertiesSize past it means the signature changed
         // (game update) -- refuse rather than over-write (the offset) or let
         // ProcessEvent memcpy past our buffer (the frame size; the
-        // DrivePropThrown house pattern).
+        // house pattern of ue_wrap/engine/engine_physics).
         UE_LOGE("prop_stick_sync: forceStick signature drift (skipHoldingOff=%d frameSize=%d vs 16-byte frame) -- module DISABLED (re-RE comp_wallAttachable)",
                 g_skipHoldingOff, forceFrame);
         g_disabled.store(true, std::memory_order_release);

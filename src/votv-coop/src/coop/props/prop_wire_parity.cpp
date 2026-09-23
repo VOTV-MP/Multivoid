@@ -6,7 +6,6 @@
 #include "coop/props/prop_wire_parity.h"
 
 #include "coop/net/protocol.h"
-#include "coop/props/remote_prop.h"  // DriveSimulate
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
@@ -52,7 +51,7 @@ void ReconcileToHostPhysics(void* actor, uint8_t physFlags) {
     if (!actor || !R::IsLive(actor)) return;
     void* mesh = ue_wrap::prop::GetStaticMesh(actor);  // Aprop_C only; null for non-Aprop_C
     if (!mesh) return;
-    coop::remote_prop::DriveSimulate(mesh, /*simulate=*/false);
+    ue_wrap::engine::SetComponentSimulatePhysics(mesh, /*simulate=*/false);
 }
 
 uint8_t PhysFlagsOf(void* actor) {
@@ -100,7 +99,7 @@ void RestoreSpParityPhysicsAfterConverge(void* actor, uint8_t physFlags) {
     if (!actor || !R::IsLive(actor)) return;
     void* mesh = ue_wrap::prop::GetStaticMesh(actor);
     if (!mesh) return;
-    coop::remote_prop::DriveSimulate(mesh, SpParitySimulate(physFlags));
+    ue_wrap::engine::SetComponentSimulatePhysics(mesh, SpParitySimulate(physFlags));
 }
 
 }  // namespace coop::prop_wire_parity

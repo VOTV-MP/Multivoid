@@ -20,6 +20,7 @@
 #include "ue_wrap/engine/engine_mainplayer.h"    // the local player: grab, flashlight, ragdoll, damage
 #include "ue_wrap/engine/engine_nav.h"           // nav paths and movement input
 #include "ue_wrap/engine/engine_pawn.h"          // controller, control rotation, view target, camera
+#include "ue_wrap/engine/engine_physics.h"       // a primitive component's rigid body
 #include "ue_wrap/engine/engine_playerragdoll.h" // the plushie ragdoll body
 #include "ue_wrap/engine/engine_save.h"          // save slots and travel
 #include "ue_wrap/engine/engine_widget.h"        // runtime UMG

@@ -1,0 +1,98 @@
+// ue_wrap/engine/engine_physics.cpp -- see ue_wrap/engine/engine_physics.h.
+
+#include "ue_wrap/engine/engine_physics.h"
+
+#include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/types.h"
+
+#include <cstdint>
+
+namespace ue_wrap::engine {
+namespace {
+
+namespace P = profile;
+namespace R = reflection;
+
+// Every frame here fits 64 bytes: SetSimulatePhysics takes 1, the two velocity setters 24,
+// IsSimulatingPhysics 12. A UFunction whose frame outgrows it is refused at the resolve, so a
+// recooked signature can never make ProcessEvent write past the buffer.
+constexpr int32_t kFrameBytes = 64;
+
+// One UFunction and the offsets of the two parameters its call writes or reads.
+struct Thunk {
+    const wchar_t* name;
+    const wchar_t* param0;
+    const wchar_t* param1;  // nullptr for a one-parameter call
+    void*   fn = nullptr;
+    int32_t off0 = -1;
+    int32_t off1 = -1;
+    bool    missed = false;  // said once; the call is a no-op from then on
+};
+
+Thunk g_setSimulate{P::name::SetSimulatePhysicsFn, L"bSimulate", nullptr};
+Thunk g_setLinVel{P::name::SetPhysicsLinearVelocityFn, L"NewVel", L"BoneName"};
+Thunk g_setAngVel{P::name::SetPhysicsAngularVelocityInDegreesFn, L"NewAngVel", L"BoneName"};
+Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"};
+
+// The class they are found on. A native class outlives every world, but the reference is checked
+// and a freed one re-resolves every thunk.
+ue_wrap::CachedObjRef g_primitiveClass;
+
+// Found up the class chain: IsSimulatingPhysics is declared on USceneComponent.
+bool Resolve(Thunk& t) {
+    if (t.fn && g_primitiveClass.Alive()) return true;
+    if (t.missed) return false;
+    if (!g_primitiveClass.Alive()) g_primitiveClass.Set(R::FindClass(P::name::PrimitiveComponentClass));
+    void* cls = g_primitiveClass.Raw();
+    t.fn = cls ? R::FindDispatchFunction(cls, t.name, nullptr) : nullptr;
+    const int32_t frame = t.fn ? R::FunctionFrameSize(t.fn) : 0;
+    t.off0 = t.fn ? R::FindParamOffset(t.fn, t.param0) : -1;
+    t.off1 = (t.fn && t.param1) ? R::FindParamOffset(t.fn, t.param1) : -1;
+    if (!t.fn || frame > kFrameBytes || t.off0 < 0 || (t.param1 && t.off1 < 0)) {
+        UE_LOGW("engine_physics: %ls did not resolve (class=%p fn=%p frame=%d %ls@%d) -- its call is a "
+                "no-op", t.name, cls, t.fn, frame, t.param0, t.off0);
+        t.fn = nullptr;
+        t.missed = true;
+        return false;
+    }
+    UE_LOGI("engine_physics: resolved %ls (frame=%d %ls@%d)", t.name, frame, t.param0, t.off0);
+    return true;
+}
+
+void SetVelocity(Thunk& t, void* component, float x, float y, float z) {
+    if (!component || !Resolve(t)) return;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<FVector*>(frame + t.off0) = FVector{x, y, z};
+    *reinterpret_cast<R::FName*>(frame + t.off1) = R::FName{0, 0};  // None: the whole body
+    R::CallFunction(component, t.fn, frame);
+}
+
+}  // namespace
+
+void SetComponentSimulatePhysics(void* component, bool simulate) {
+    if (!component || !Resolve(g_setSimulate)) return;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<bool*>(frame + g_setSimulate.off0) = simulate;
+    R::CallFunction(component, g_setSimulate.fn, frame);
+}
+
+void SetComponentLinearVelocity(void* component, float vx, float vy, float vz) {
+    SetVelocity(g_setLinVel, component, vx, vy, vz);
+}
+
+void SetComponentAngularVelocity(void* component, float wx, float wy, float wz) {
+    SetVelocity(g_setAngVel, component, wx, wy, wz);
+}
+
+bool IsComponentSimulatingPhysics(void* component) {
+    if (!component || !Resolve(g_isSimulating)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
+    R::CallFunction(component, g_isSimulating.fn, frame);
+    return *reinterpret_cast<bool*>(frame + g_isSimulating.off1);
+}
+
+}  // namespace ue_wrap::engine

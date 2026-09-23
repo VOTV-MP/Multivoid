@@ -10,7 +10,7 @@
 #include "coop/props/prop_element_tracker.h"  // IndexActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/prop_save_data.h"
-#include "coop/props/remote_prop.h"           // RegisterPropMirror / DriveSimulate / DriveSet*Velocity
+#include "coop/props/remote_prop.h"           // RegisterPropMirror
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
@@ -279,13 +279,13 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // the mirror kinematic made it ungrabbable on this peer. A live-awake host body implies
         // simulation; static, frozen and sleep stay disabled.
         const bool sim = coop::prop_wire_parity::SpParitySimulate(payload.physFlags);
-        coop::remote_prop::DriveSimulate(mesh, sim);
+        ue_wrap::engine::SetComponentSimulatePhysics(mesh, sim);
         const bool hasLinVel =
             payload.initLinVelX != 0.f || payload.initLinVelY != 0.f || payload.initLinVelZ != 0.f;
         const bool hasAngVel =
             payload.initAngVelX != 0.f || payload.initAngVelY != 0.f || payload.initAngVelZ != 0.f;
-        if (hasLinVel) coop::remote_prop::DriveSetLinearVelocity(mesh, payload.initLinVelX, payload.initLinVelY, payload.initLinVelZ);
-        if (hasAngVel) coop::remote_prop::DriveSetAngularVelocity(mesh, payload.initAngVelX, payload.initAngVelY, payload.initAngVelZ);
+        if (hasLinVel) ue_wrap::engine::SetComponentLinearVelocity(mesh, payload.initLinVelX, payload.initLinVelY, payload.initLinVelZ);
+        if (hasAngVel) ue_wrap::engine::SetComponentAngularVelocity(mesh, payload.initAngVelX, payload.initAngVelY, payload.initAngVelZ);
         UE_LOGI("remote_prop::OnSpawn: physics applied (sim=%d hasLinVel=%d hasAngVel=%d)",
                 sim ? 1 : 0, hasLinVel ? 1 : 0, hasAngVel ? 1 : 0);
     }

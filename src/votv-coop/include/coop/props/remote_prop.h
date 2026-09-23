@@ -94,18 +94,6 @@ std::wstring KeyToWString(const coop::net::WireKey& k);
 // Game thread.
 void* ResolveLiveActorByEid(uint32_t eid);
 
-// The drive's UFunction wrappers (simulate physics, linear and angular velocity on a
-// primitive component), used by the drive tick and by the spawn receiver's initial physics;
-// public so the spawn receiver does not duplicate the cached resolution state. Game thread
-// only.
-void DriveSimulate(void* mesh, bool simulate);
-void DriveSetLinearVelocity(void* mesh, float vx, float vy, float vz);
-void DriveSetAngularVelocity(void* mesh, float wx, float wy, float wz);
-
-// True while `mesh` simulates physics (IsSimulatingPhysics); false for null or on a failed
-// resolve. The drive's re-latch reads it once per tick per driven prop. Game thread.
-bool DriveIsSimulating(void* mesh);
-
 // Force-release: called at disconnect or a level unload to put any cached prop back into its
 // normal physics state. Safe when not holding.
 void ForceRelease();

@@ -14,6 +14,7 @@
 #include "ue_wrap/engine/engine.h"      // FVector
 #include "ue_wrap/core/reflection.h"  // FName
 #include "ue_wrap/actors/prop_flags.h"  // the physics-state flags and their verbs
+#include "ue_wrap/actors/prop_events.h"  // the base class's grab prelude and throw
 
 namespace ue_wrap::prop {
 

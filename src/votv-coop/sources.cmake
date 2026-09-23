@@ -100,6 +100,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/fire_extinguisher.cpp
     src/ue_wrap/actors/chip_pile.cpp
     src/ue_wrap/engine/engine_pawn.cpp
+    src/ue_wrap/engine/engine_physics.cpp
     src/ue_wrap/engine/world_identity.cpp
     src/ue_wrap/engine/engine_nav.cpp
     src/ue_wrap/engine/engine_widget.cpp
@@ -124,6 +125,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/prop_flags.cpp
+    src/ue_wrap/actors/prop_events.cpp
     src/ue_wrap/actors/garbage_bag.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_mode.cpp
@@ -142,7 +144,6 @@ set(VOTVCOOP_SOURCES
     src/coop/props/unresolved_pose_ledger.cpp
     src/coop/props/remote_prop_convert.cpp
     src/coop/props/remote_prop_destroy.cpp
-    src/coop/props/remote_prop_physics.cpp
     src/coop/save/save_guard.cpp
     src/coop/world/balance_sync.cpp
     src/coop/world/daily_task_sync.cpp

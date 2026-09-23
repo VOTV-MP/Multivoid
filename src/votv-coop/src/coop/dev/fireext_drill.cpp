@@ -8,7 +8,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
 #include "coop/props/prop_snapshot.h"
-#include "coop/props/remote_prop.h"  // IsActorUnderAnyDrive, DriveIsSimulating: the re-latch probe
+#include "coop/props/remote_prop.h"  // IsActorUnderAnyDrive: the re-latch probe
 #include "coop/save/join_window_baseline.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
@@ -206,7 +206,7 @@ void TickRelatchProbe() {
             if (!o || !coop::remote_prop::IsActorUnderAnyDrive(o)) continue;
             if (Dist(E::GetActorLocation(o), w.start) < kProbeOffCm) continue;
             const bool ok = PR::CallSetPropProps(o, false, false, false);
-            const bool sim = coop::remote_prop::DriveIsSimulating(PR::GetStaticMesh(o));
+            const bool sim = ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o));
             UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' setPropProps(F,F,F,F) on the driven copy (%s) "
                     "-- simulating=%d", w.key.c_str(), ok ? "dispatched" : "did not dispatch", sim ? 1 : 0);
             g_probed.Set(o);
@@ -220,7 +220,7 @@ void TickRelatchProbe() {
     void* o = g_probed.Get();
     UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' %d ticks later -- simulating=%d underDrive=%d",
             g_probedKey.c_str(), kProbeReadTicks,
-            o ? (coop::remote_prop::DriveIsSimulating(PR::GetStaticMesh(o)) ? 1 : 0) : -1,
+            o ? (ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o)) ? 1 : 0) : -1,
             o ? (coop::remote_prop::IsActorUnderAnyDrive(o) ? 1 : 0) : -1);
 }
 

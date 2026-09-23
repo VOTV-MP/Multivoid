@@ -1,10 +1,9 @@
 // coop/props/remote_prop.cpp -- the PropPose drive (one kinematic drive per peer slot), OnRelease,
 // ForceRelease and the per-slot disconnect. The receivers live beside it: PropSpawn in
 // remote_prop_spawn.cpp, PropDestroy in remote_prop_destroy.cpp, PropConvert in
-// remote_prop_convert.cpp, the reflected physics thunks in remote_prop_physics.cpp.
+// remote_prop_convert.cpp; the physics calls are ue_wrap/engine/engine_physics.
 
 #include "coop/props/remote_prop.h"
-#include "remote_prop_internal.h"  // ResolveLiveActorByEid and DrivePropThrown, shared with the destroy TU
 
 #include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
 #include "coop/props/prop_sound.h"
@@ -125,7 +124,7 @@ int FindSlotByKey(const coop::net::WireKey& k) {
 // through the generic root component. `actor` arrives validated (a fresh resolve or
 // drive.LiveActor()); null is a no-op.
 void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
-    if (mesh) DriveSimulate(mesh, simulate);
+    if (mesh) ue_wrap::engine::SetComponentSimulatePhysics(mesh, simulate);
     else if (actor) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
 }
 
@@ -362,8 +361,8 @@ void Tick(coop::net::Session& session) {
         // kinematic when the game here turns its simulation back on. A flag verb's init() recomputes
         // it from the flags, as this peer's own laptop exit does to a chair another peer carries. The
         // prop drive only: the clump has no such verb.
-        if (drive.mesh && drive.LiveActor() && DriveIsSimulating(drive.mesh)) {
-            DriveSimulate(drive.mesh, false);
+        if (drive.mesh && drive.LiveActor() && ue_wrap::engine::IsComponentSimulatingPhysics(drive.mesh)) {
+            ue_wrap::engine::SetComponentSimulatePhysics(drive.mesh, false);
             if (!hold.relatchSaid) {
                 hold.relatchSaid = true;
                 UE_LOGI("remote_prop: slot %d hold %u -- the game turned simulation back on under the drive; "
@@ -480,14 +479,14 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 payload.elementId, linSpeed);
     } else if (meshToActOn) {
         // Simulate first, then the velocities: a kinematic body ignores a velocity write.
-        DriveSimulate(meshToActOn, true);
-        DriveSetLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
-        DriveSetAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
+        ue_wrap::engine::SetComponentSimulatePhysics(meshToActOn, true);
+        ue_wrap::engine::SetComponentLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
+        ue_wrap::engine::SetComponentAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
         // The throw fires above kThrownLinVelThreshold so a passive drop stays silent: the prop's
         // own thrown event (subclass hooks) and the receiver-side swing, since the native swing
         // plays only in the thrower's input chain.
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
-            DrivePropThrown(propActor, localPlayer);
+            ue_wrap::prop::CallPropThrown(propActor, localPlayer);
             coop::prop_sound::PlayThrowWhoosh(propActor);
             UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- launch speed %.1f cm/s > threshold %.1f",
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
@@ -625,7 +624,7 @@ void ForceRelease() {
         // holder's death-watch is gone). IsLiveByIndex: on the quit-to-menu path the world is dying
         // and a recycled slot passes plain IsLive, landing the physics call on a foreign occupant.
         if (R::IsLiveByIndex(d.actor, d.actorIdx)) {
-            if (d.mesh) DriveSimulate(d.mesh, true);
+            if (d.mesh) ue_wrap::engine::SetComponentSimulatePhysics(d.mesh, true);
             else        ConsumeLocalActor(d.actor);
         }
         ResetDriveState(d);
@@ -675,7 +674,7 @@ void OnDisconnectForSlot(int peerSlot) {
     if (d.mesh && R::IsLiveByIndex(d.actor, d.actorIdx)) {
         // A world prop goes back to physics and persists; by-index, for the recycled-slot hazard
         // above.
-        DriveSimulate(d.mesh, true);
+        ue_wrap::engine::SetComponentSimulatePhysics(d.mesh, true);
         UE_LOGI("remote_prop: peer slot %d disconnected -- releasing held prop (key='%s')",
                 peerSlot, d.lastKey.c_str());
     } else if (d.mesh) {
