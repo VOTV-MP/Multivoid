@@ -49,7 +49,7 @@
 #include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
 #include "coop/dev/lookat_aim_drill.h"  // hold a peer's aim on a resting prop, so the churn probe has a reading
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
-#include "coop/dev/pry_drill.h"  // [dev] a stuck sign pried off its wall, watched on both peers
+#include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
 #include "coop/dev/lookat_churn_probe.h"  // how often the interaction UI's look-at set is rebuilt under a held aim
 #include "coop/dev/prop_birth_key_probe.h"  // the place/birth seam's key timing and drain exits
 #include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch

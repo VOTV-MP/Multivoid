@@ -53,7 +53,7 @@ char Who() { return coop::roster::LocalIsHost() ? 'H' : 'C'; }
 constexpr int   kWatchEveryTicks = 15;
 constexpr float kWatchMoveCm     = 3.f;
 constexpr int   kRestMinTicks    = 30;
-constexpr int   kRestMaxTicks    = 600;   // ~10 s for a pried sign to come to rest
+constexpr int   kRestMaxTicks    = 600;   // ~10 s for a pried prop to come to rest
 constexpr int   kTagHint         = 0x48494E54;  // 'HINT'
 
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -93,7 +93,7 @@ bool g_watchArmed = false;
 int  g_watchTick = 0;
 
 // The first key, in order, among the pryables stuck at the watch's arm: both peers load one world,
-// so both pick the same sign without a message between them.
+// so both pick the same prop without a message between them.
 std::wstring PickKey() {
     std::vector<std::wstring> keys;
     for (const auto& w : g_watched)
@@ -158,7 +158,7 @@ void TickWatch(char who) {
 }
 
 // The hand's unstick on this peer's copy -- the component's unstick without the tool, which the
-// receiver of a grab ran before -- on the sign the acting peer will pry. A pryable refuses it.
+// receiver of a grab ran before -- on the prop the acting peer will pry. A pryable refuses it.
 void RunHandUnstick(char who) {
     const std::wstring key = PickKey();
     void* o = key.empty() ? nullptr : FindWatched(key);
@@ -234,7 +234,7 @@ void Pry() {
     }
     UE_LOGI("[PRY-DRILL] [%c] PRIED key='%ls' crowbarOpen=%d -- static=%d frozen=%d after", Who(),
             g_targetKey.c_str(), ok ? 1 : 0, PR::IsStatic(t) ? 1 : 0, PR::IsFrozen(t) ? 1 : 0);
-    if (!ok || Stuck(t)) { Invalid("the pry did not free the sign here"); return; }
+    if (!ok || Stuck(t)) { Invalid("the pry did not free the prop here"); return; }
     Go(Step::Rest);
 }
 

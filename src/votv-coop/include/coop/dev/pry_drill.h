@@ -1,4 +1,4 @@
-// coop/dev/pry_drill.h -- [dev] a crowbar's pry of a stuck sign, watched on both peers.
+// coop/dev/pry_drill.h -- [dev] a crowbar's pry of a stuck pryable, watched on both peers.
 //
 // The acting peer calls a stuck pryable's own crowbarOpen, the verb a crowbar's hit runs: the
 // component's unstick with the tool, then a kick along the crowbar's axis, which with no crowbar
