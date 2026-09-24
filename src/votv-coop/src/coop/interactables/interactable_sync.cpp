@@ -48,11 +48,10 @@ const Adapter g_doorAdapter = {
     // The receiver apply is the door's own swing wherever this peer ticks the door, and a
     // force-snap where the swing froze out of tick range (SmartApply and its verify).
     [](void* a, bool on) -> bool { ue_wrap::door::SmartApply(a, on); return true; },
-    // The HostAuth hooks, doors only: a client's copy is render-only, and the apply is a swing that
-    // needs finishing.
-    &ue_wrap::door::SuppressClientAutonomy,
-    &ue_wrap::door::RestoreClientAutonomy,
+    // The apply is a swing that needs finishing.
     &ue_wrap::door::TickSmartApply,
+    // The host sends a door at its state verbs (coop/interactables/door_state_verbs).
+    /*edgeFed*/ true,
 };
 const Adapter g_lightAdapter = {
     // Keyed on the switch, so the receiver replays use() and the switch flips visibly with its
@@ -76,7 +75,6 @@ const Adapter g_lightAdapter = {
     // order inside a game-thread batch. On the host the full use() runs: replaying the client's
     // switch edge is how its press becomes an authoritative group change.
     [](void* a, bool /*on*/) -> bool { return ApplySwitchPresentation(a); },
-    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The light group (Atrigger_lightRoot_C), the state a player sees. The switch adapter syncs the
 // switch's `a`, this one the group's isActive: the game keeps them decoupled (use() toggles `a`
@@ -103,10 +101,9 @@ const Adapter g_lightGroupAdapter = {
         if (ue_wrap::lightswitch::TryReadActive(a, cur) && cur == on) return true;
         return ue_wrap::lightswitch::ApplyGroupState(a, on);
     },
-    // No autonomy-suppression hooks: a client's native press is neutralised for one input dispatch
-    // by the E-press PRE and POST pair below, never by a gate left standing (a gate left shut is a
-    // player whose switches quietly stopped working). No TickApply.
-    nullptr, nullptr,
+    // A client's native press is neutralised for one input dispatch by the E-press PRE and POST pair
+    // below, never by a gate left standing (a gate left shut is a player whose switches quietly
+    // stopped working). No TickApply; the poll is the sender.
 };
 const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
@@ -115,7 +112,6 @@ const Adapter g_containerAdapter = {
     &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
-    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The garage door (Agarage_C), symmetric: no sensor and no autoclose, so a symmetric poll never
 // oscillates. Its identity is the level-export FName, not the save key: a garage that misses
@@ -130,7 +126,6 @@ const Adapter g_garageAdapter = {
     &ue_wrap::garage::GetNameKey,
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
-    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
@@ -144,7 +139,6 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
-    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
@@ -158,7 +152,6 @@ const Adapter g_doorBoxAdapter = {
     &ue_wrap::door_box::GetNameKey,
     &ue_wrap::door_box::TryReadOpened,
     [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
-    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
@@ -322,6 +315,8 @@ void* ResolveDoor(const std::wstring& key) {
     if (key.empty() || !ue_wrap::door::EnsureResolved()) return nullptr;
     return g_door.ActorForKey(key);
 }
+
+void OnDoorStateVerb(void* door) { g_door.OnLocalEdge(door); }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
     g_door.QueueConnectBroadcastForSlot(peerSlot);

@@ -20,11 +20,15 @@ family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines e
 switches, light groups, container lids, the garage, the appliances, the lockers.
 
 The owner polls each indexed instance's state field once a tick -- every peer on a symmetric
-channel, the host alone on a host-authoritative one -- which catches every writer at once (a press,
-an NPC's proximity, a keypad unlock, a script) without watching each. On a change it broadcasts the
-new state with the instance's key, the host relays a client's symmetric edge to the other clients,
-and a receiver resolves the instance by key and applies it, moving its own poll baseline so
-nothing echoes.
+channel, the host alone on a light group -- which catches every writer at once (a press, an NPC's
+proximity, a keypad unlock, a script) without watching each. On a change it broadcasts the new
+state with the instance's key, the host relays a client's symmetric edge to the other clients, and
+a receiver resolves the instance by key and applies it, moving its own poll baseline so nothing
+echoes. Doors are sent at the door's own verbs instead: every writer of a door's open state goes
+through `doorOpen` or `doorClose`, and the script-body gate watches both
+(`coop/interactables/door_state_verbs`). After either body on the host the lane sends the state it
+left; a send no peer can take yet (every client still loading) is retried each tick. While that is
+measured, the door poll runs beside it as a probe that logs and sends any change no verb reported.
 
 The key is the game's own for the save-persisted instances and a portable identity computed
 by both peers for the rest (`coop/element/portable_identity`): the game mints a random key per
@@ -34,10 +38,16 @@ and containers in a world were addressable only by the peer that loaded them.
 
 Two modes. A device that reverts on its own, a door that auto-closes or a light group the game
 re-derives, is host-authoritative: the host's copy is the one that moves, and a client renders it.
-A client's own press, hit or pry of a door never runs on its copy: the script-body gate refuses the
-door's entry verb there and sends it to the host (`coop/interactables/door_verb_intent`), which
+A client's copy of a door moves only by the host's state: its own `doorOpen` and `doorClose` are
+refused unless our apply is running them, so its autoclose, a creature or a trigger on that machine
+cannot move it alone. A client's own press, hit or pry of a door never runs on its copy either: the
+script-body gate refuses the door's entry verb there and sends it to the host
+(`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
-the blackout clause, a swing already moving, the pry. The host's door then closes by its own
+the blackout clause, a swing already moving, the pry. The cut is at those entry verbs rather than
+at `doorOpen`/`doorClose`: every in-door caller reaches those two through the door's own event
+graph, where a press cannot be told from a hit or a trigger, and a hit moves both leaves before it
+ever reaches `doorOpen`. The host's door then closes by its own
 autoclose, at the first of its five-second checks that finds its sensor list empty, and a client's
 puppet counts in that list exactly when the client's own player counts in the client's own copy of
 it. A device with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any
@@ -348,7 +358,7 @@ an error line.
 
 | Concept | Files |
 |---|---|
-| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone` |

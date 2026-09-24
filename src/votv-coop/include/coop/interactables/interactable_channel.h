@@ -1,7 +1,8 @@
 // coop/interactables/interactable_channel.h -- the keyed-interactable replication engine shared by
 // every keyed channel (doors, lights, light groups, containers, the garage, appliances, door
 // boxes): the key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a
-// throttled retry, echo suppression and the connect snapshot. A
+// throttled retry, echo suppression, the connect snapshot, and for an edge-fed channel the send at
+// the device's own verbs. A
 // feature is an Adapter (a vtable over its ue_wrap wrapper) plus a Channel instance in
 // interactable_sync.cpp, this header's one includer. Nothing per-class lives here.
 
@@ -67,20 +68,23 @@ struct Adapter {
     std::wstring (*GetKey)(void* actor);       // cross-peer-stable Key string
     bool (*ReadState)(void* actor, bool& on);  // current open/on state
     bool (*ApplyState)(void* actor, bool on);  // drive to target (channel echo-suppresses)
-    // HostAuth channels only; null for symmetric ones.
-    void (*SuppressAutonomy)(void* actor);     // CLIENT: mute local auto-revert so applied state sticks
-    void (*RestoreAutonomy)(void* actor);      // restore authored autonomy at disconnect
     void (*TickApply)();                       // per-tick completion of an async apply (doors); null = none
+    // The sender is the device's own verbs rather than the poll: a watch on the verbs that change the
+    // state calls OnLocalEdge on the authority. While the migration is measured, the poll runs beside
+    // it as a probe that says every change no verb reported (a SHADOW MISS) and sends it.
+    bool edgeFed;
 };
 
 // The engine.
 class Channel {
 public:
     // Symmetric: every peer is authoritative over the changes it causes (no local auto-revert, so
-    // no fight). HostAuth: only the host broadcasts state, and the client renders it with autonomy
-    // suppressed (a door's autoclose re-drives its state, so a symmetric poll would oscillate). A
-    // client's own use of a HostAuth device reaches the host outside the channel: a door's as a
-    // door verb intent (coop/interactables/door_verb_intent), a switch's through the light lane.
+    // no fight). HostAuth: only the host broadcasts state, and a client renders it (a door's
+    // autoclose re-drives its state, so a symmetric poll would oscillate). A client's own use of a
+    // HostAuth device reaches the host outside the channel -- a door's as a door verb intent
+    // (coop/interactables/door_verb_intent), a switch's through the light lane -- and its own world
+    // is kept off it outside the channel too: a door's state verbs refuse a client's local calls
+    // (coop/interactables/door_state_verbs), a light group's gate is shut for a switch's press.
     enum class Mode { Symmetric, HostAuth };
 
     explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {}
@@ -99,10 +103,6 @@ public:
 
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
-    // Prime the poll baseline for `key`.
-    void PreUpdateLastKnown(const std::wstring& key, bool val) {
-        std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = val;
-    }
 
     // The sender: polls every indexed instance for a state change and broadcasts deltas. The poll
     // catches every writer of the state (a press, an NPC's open, a keypad unlock, a script) without
@@ -146,6 +146,11 @@ public:
                     continue;
                 }
             }
+            // An edge-fed channel's verbs sent every change they saw; one the poll finds first was
+            // made by a writer no watched verb covers -- the migration's measurement, said and sent.
+            if (a_.edgeFed && !resend_.count(r.first))
+                UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it",
+                        a_.name, r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF");
             coop::net::KeyedTogglePayload p{};
             WireKeyFromString(r.first, p.key);
             p.action = cur ? 1 : 0;
@@ -184,16 +189,19 @@ public:
                     a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
     }
 
-    // Broadcasts the authoritative state for the key and primes lastKnown_ to it, so the next poll
-    // sees no delta and does not send the same edge twice. Host only.
-    void BroadcastAndPrime(const std::wstring& key, bool val, coop::net::Session* s) {
-        coop::net::KeyedTogglePayload bp{};
-        WireKeyFromString(key, bp.key);
-        bp.action = val ? 1 : 0;
-        if (s->SendReliable(a_.kind, &bp, sizeof(bp))) {
-            std::lock_guard<std::mutex> lk(stateMutex_);
-            lastKnown_[key] = val;
-        }
+    // The authority's edge on an edge-fed channel: a watched verb just ran on `actor`, so the state
+    // it left is read and sent when it differs from what the peers last got. A send no peer could
+    // take -- every client still loading, whose snapshot at its ready edge carries the state anyway
+    // -- is kept and tried again each tick until one can. Game thread.
+    void OnLocalEdge(void* actor) {
+        if (!a_.edgeFed || !actor) return;
+        auto* s = session_.load(std::memory_order_acquire);
+        if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+        const std::wstring key = KeyForActor(actor);
+        if (key.empty()) return;  // not indexed: no peer could name it
+        bool cur = false;
+        if (!a_.ReadState(actor, cur)) return;
+        SendEdge(key, cur, s);
     }
 
     void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -276,24 +284,16 @@ public:
                             "%d still pending", a_.name, applied, expired, backstopped, still);
             }
         }
+        // An edge-fed channel's refused sends, retried with the state as it is now.
+        if (a_.edgeFed && !resend_.empty()) RetryEdgeSends();
         // The poll, every tick: bool reads over the current index.
         PollAndBroadcast();
     }
 
     void OnDisconnect() {
-        // HostAuth: each door's authored autonomy restored (the client suppressed autoclose).
-        // RestoreAutonomy is a no-op for a door never suppressed.
-        if (mode_ == Mode::HostAuth && a_.RestoreAutonomy && IndexCurrent()) {
-            // The IndexCurrent gate: on a quit-to-menu disconnect the index holds a dead world's
-            // doors, which slot-and-serial liveness cannot see, and a dead world needs no restore.
-            std::vector<Ref> live;
-            { std::lock_guard<std::mutex> lk(indexMutex_); live.reserve(byKey_.size());
-              for (auto& kv : byKey_) live.push_back(kv.second); }
-            for (auto& r : live)
-                if (R::IsLiveByIndex(r.actor, r.idx)) a_.RestoreAutonomy(r.actor);
-        }
         size_t nP = pending_.size();
         pending_.clear();
+        resend_.clear();
         std::lock_guard<std::mutex> lk(stateMutex_);
         const size_t n = lastKnown_.size();
         lastKnown_.clear();
@@ -447,16 +447,13 @@ private:
 
     void ApplyResolved(void* actor, const std::wstring& key, bool want, unsigned fromSlot) {
         // The idempotent skip is symmetric-only, where the local field is moved only by us or by
-        // the peer being echoed. On a HostAuth channel a client-local writer the lane does not
-        // refuse (a creature's open, the local blackout, a keypad's latent open) can move the field
-        // without the host, so a match is not proof the copy holds the host's state; each HostAuth
-        // adapter's apply is idempotent itself (a door already at or swinging toward the state is
-        // left alone, a light group already there is skipped), and it always runs.
+        // the peer being echoed. On a HostAuth channel the apply always runs, and each HostAuth
+        // adapter's apply is idempotent itself: a door already at or swinging toward the state is
+        // left alone, a light group already there is skipped.
         if (mode_ == Mode::Symmetric) {
             bool cur = false;
             if (a_.ReadState(actor, cur) && cur == want) {
                 { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = want; }
-                MaybeSuppressClientAutonomy(actor);
                 if (ProbeLog()) UE_LOGI("%s: apply key='%ls' already %s -- idempotent skip", a_.name, key.c_str(), want ? "ON" : "OFF");
                 return;
             }
@@ -465,17 +462,46 @@ private:
         const bool ok = a_.ApplyState(actor, want);
         echo_.store(false, std::memory_order_release);
         { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = want; }
-        MaybeSuppressClientAutonomy(actor);  // HostAuth client: mute auto-revert so the applied state holds
         UE_LOGI("%s: applied %s key='%ls' ok=%d (from slot %u)",
                 a_.name, want ? "ON" : "OFF", key.c_str(), ok ? 1 : 0, fromSlot);
     }
 
-    // HostAuth client only: a render-only door must not auto-revert the host's state. No-op on the
-    // host and on symmetric channels.
-    void MaybeSuppressClientAutonomy(void* actor) {
-        if (mode_ != Mode::HostAuth || !a_.SuppressAutonomy) return;
+    // Sends the key's state when it differs from what the peers last got, and primes lastKnown_ to
+    // it; a refusal leaves the key for RetryEdgeSends, said once per streak. Host, game thread.
+    void SendEdge(const std::wstring& key, bool cur, coop::net::Session* s) {
+        {
+            std::lock_guard<std::mutex> lk(stateMutex_);
+            auto it = lastKnown_.find(key);
+            if (it != lastKnown_.end() && it->second == cur) { resend_.erase(key); return; }
+        }
+        coop::net::KeyedTogglePayload p{};
+        WireKeyFromString(key, p.key);
+        p.action = cur ? 1 : 0;
+        if (s->SendReliable(a_.kind, &p, sizeof(p))) {
+            { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = cur; }
+            resend_.erase(key);
+            sendRefused_.erase(key);
+            UE_LOGI("%s: sent %s key='%ls' at the verb", a_.name, cur ? "ON" : "OFF", key.c_str());
+        } else {
+            resend_.insert(key);
+            if (sendRefused_.insert(key).second)
+                UE_LOGW("%s: SendReliable refused key='%ls' at the verb -- no peer can take it yet; "
+                        "retried each tick until one can", a_.name, key.c_str());
+        }
+    }
+
+    // The refused edges again, with each door's state as it is now; a key whose door left the
+    // index is dropped (the joiner's snapshot carries what is there). Host, game thread.
+    void RetryEdgeSends() {
         auto* s = session_.load(std::memory_order_acquire);
-        if (s && s->role() != coop::net::Role::Host) a_.SuppressAutonomy(actor);
+        if (!s || !s->connected() || s->role() != coop::net::Role::Host) { resend_.clear(); return; }
+        resendScratch_.assign(resend_.begin(), resend_.end());
+        for (const std::wstring& key : resendScratch_) {
+            void* actor = ResolveFast(key);
+            bool cur = false;
+            if (!actor || !a_.ReadState(actor, cur)) { resend_.erase(key); continue; }
+            SendEdge(key, cur, s);
+        }
     }
 
     const Adapter& a_;
@@ -502,6 +528,8 @@ private:
     std::unordered_set<std::wstring> sendRefused_;               // GT-only: keys whose refused send is already logged
 
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
+    std::unordered_set<std::wstring> resend_;                     // GT-only: an edge-fed channel's refused sends
+    std::vector<std::wstring> resendScratch_;                     // GT-only: RetryEdgeSends' snapshot of resend_
     std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: reused poll snapshot buffer
     std::chrono::steady_clock::time_point lastRetry_{};           // GT-only
     size_t lastLogCount_ = SIZE_MAX;                              // GT-only: dedup the rebuilt log

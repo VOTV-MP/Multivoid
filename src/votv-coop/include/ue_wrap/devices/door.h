@@ -91,16 +91,6 @@ int ReadSensorOverlaps(void* door, void** out, int maxOut);
 // resolve. Game thread.
 bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 
-// The host-authoritative client suppression. A door re-drives its own state: when a swing ends
-// open it checks its sensor every five seconds and closes at the first check that finds the
-// sensor empty. On a client that is a second authority beside the host's, closing on its own
-// clock a door the host keeps open, so the MTA single-syncer shape applies: the non-authority
-// disables its local simulation and its doors are render-only. The suppression writes autoclose
-// off, the flag the check reads before it arms, and caches the original so the restore puts it
-// back at disconnect. Idempotent per door. Game thread.
-void SuppressClientAutonomy(void* door);
-void RestoreClientAutonomy(void* door);
-
 // Force-snap to a state, independent of proximity. A door's open and close is a timeline
 // animation that advances only while the door actor ticks, and the engine throttles ticks for
 // actors far from a player, so an open on a door whose local player is far freezes

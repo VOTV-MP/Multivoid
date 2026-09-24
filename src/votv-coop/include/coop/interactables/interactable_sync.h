@@ -7,14 +7,11 @@
 //   - ApplianceState (35):   the save-actor appliance family
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
-//
-// Gameplay/network layer (principle 7): it owns the wire protocol, the sender polls, the receiver
-// apply, the per-channel key index, the deferred-apply retry and the connect snapshot, and reaches
-// the engine only through ue_wrap. A channel's sender POLLS every indexed instance once per tick and
-// broadcasts a delta under its cross-peer-stable key; a poll catches every writer without watching
-// each. Symmetric channels poll on every peer. The two host-authoritative ones, doors and light
-// groups, poll on the host alone, and a client renders them: its own player's use of a door reaches
-// the host as a door verb intent (coop/interactables/door_verb_intent).
+// Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key
+// index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. A
+// sender polls every indexed instance each tick -- on every peer for a symmetric channel, on the
+// host for light groups -- except doors, which the host sends at their state verbs
+// (coop/interactables/door_state_verbs). The model: docs/devices.md.
 
 #pragma once
 
@@ -45,6 +42,10 @@ std::wstring DoorKey(void* door);
 
 // The live door the door lane indexes under `key` in the current world, or null. Game thread.
 void* ResolveDoor(const std::wstring& key);
+
+// Host: a door's state verb just ran on `door` (coop/interactables/door_state_verbs); the door lane
+// sends the state it left when that changed. Game thread.
+void OnDoorStateVerb(void* door);
 
 // HOST-only: snapshot the FULL current state (open AND closed / on AND off) of
 // every indexed instance (all channels) to a freshly connected client `peerSlot`.

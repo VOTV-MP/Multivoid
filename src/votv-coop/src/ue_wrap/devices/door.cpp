@@ -14,7 +14,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <mutex>
 #include <unordered_map>
 
 namespace ue_wrap::door {
@@ -46,7 +45,6 @@ void*   g_moveUpdateFn = nullptr;  // Adoor_C::move__UpdateFunc()  -- lerps the 
 // direction is the timeline's own and updates on its next tick, so no reader uses it.
 constexpr int32_t kMoveAlphaOff = 0x0340;  // float  move_a_<guid>        (0=closed .. 1=open)
 constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=Forward/open, 1=Backward/close)
-int32_t g_autocloseOff = -1;       // Adoor_C::autoclose
 int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*); no fallback
 int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>); no fallback
 // The door's power flag, which a press gates on first. The gamemode's power trigger, the keypad's
@@ -57,14 +55,7 @@ int32_t g_activeOff      = -1;     // Adoor_C::Active (power)
 constexpr int32_t kKeyOffFallback         = 0x0260;
 constexpr int32_t kIsOpenedOffFallback    = 0x0350;
 constexpr int32_t kIsMovingOffFallback    = 0x0351;
-constexpr int32_t kAutocloseOffFallback   = 0x0353;
 constexpr int32_t kActiveOffFallback      = 0x0352;
-
-// A per-door cache so the restore can undo the client's suppression. Game thread in practice,
-// guarded anyway.
-struct SavedAutonomy { bool autoclose; };
-std::mutex g_autoMtx;
-std::unordered_map<void*, SavedAutonomy> g_saved;
 
 // The smart-apply verify list: a door we just tried to animate; if it has not reached the
 // target by the deadline (the swing froze, beyond tick range) it is force-snapped. Game
@@ -112,11 +103,6 @@ bool EnsureResolved() {
         UE_LOGW("door: reflected isMoving offset not found -- using fallback 0x%04X", kIsMovingOffFallback);
         isMovingOff = kIsMovingOffFallback;
     }
-    int32_t autocloseOff = R::FindPropertyOffset(doorCls, L"autoclose");
-    if (autocloseOff < 0) {
-        UE_LOGW("door: reflected autoclose offset not found -- using fallback 0x%04X", kAutocloseOffFallback);
-        autocloseOff = kAutocloseOffFallback;
-    }
     // The sensor and its contents: read by name or not at all, since a guessed offset would hand a
     // reader a pointer from the wrong field.
     const int32_t sensorOff = R::FindPropertyOffset(doorCls, L"sensor");
@@ -150,7 +136,6 @@ bool EnsureResolved() {
     g_isMovingOff  = isMovingOff;
     g_dirOff       = dirOff;
     g_jammedOff    = jammedOff;
-    g_autocloseOff = autocloseOff;
     g_sensorOff    = sensorOff;
     g_sensorOverlapsOff = sensorOverlapsOff;
     g_activeOff      = activeOff;
@@ -158,9 +143,9 @@ bool EnsureResolved() {
     g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X jammed@0x%04X "
-            "autoclose@0x%04X sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls,
-            keyOff, isOpenedOff, dirOff < 0 ? 0xFFFF : dirOff, jammedOff < 0 ? 0xFFFF : jammedOff,
-            autocloseOff, sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff, openFn, closeFn);
+            "sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls, keyOff,
+            isOpenedOff, dirOff < 0 ? 0xFFFF : dirOff, jammedOff < 0 ? 0xFFFF : jammedOff,
+            sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff, openFn, closeFn);
     return true;
 }
 
@@ -350,38 +335,6 @@ void TickSmartApply() {
             ++it;
         }
     }
-}
-
-void SuppressClientAutonomy(void* door) {
-    if (!door) return;
-    bool* autoclose = (g_autocloseOff >= 0) ? reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_autocloseOff) : nullptr;
-    bool firstTime = false;
-    {
-        std::lock_guard<std::mutex> lk(g_autoMtx);
-        if (g_saved.find(door) == g_saved.end()) {
-            g_saved[door] = SavedAutonomy{ autoclose ? *autoclose : true };
-            firstTime = true;
-        }
-    }
-    // A client door is render-only: with autoclose off its sensor check never arms, so an applied
-    // host state stands. The player's own press, hit and pry do not run on this copy; the host runs
-    // them (coop/interactables/door_verb_intent).
-    if (autoclose) *autoclose = false;
-    if (firstTime) UE_LOGI("door: client autonomy suppressed (autoclose=0) for %p", door);
-}
-
-void RestoreClientAutonomy(void* door) {
-    if (!door) return;
-    SavedAutonomy saved;
-    {
-        std::lock_guard<std::mutex> lk(g_autoMtx);
-        auto it = g_saved.find(door);
-        if (it == g_saved.end()) return;  // never suppressed
-        saved = it->second;
-        g_saved.erase(it);
-    }
-    if (g_autocloseOff >= 0)
-        *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_autocloseOff) = saved.autoclose;
 }
 
 }  // namespace ue_wrap::door
