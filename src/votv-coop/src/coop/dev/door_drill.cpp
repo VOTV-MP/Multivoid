@@ -50,9 +50,9 @@ constexpr float kClearCm     = 60.f;    // a start this far past the sensor box'
 constexpr float kSameFloorCm = 120.f;   // a route point this near the door's height stands on the door's floor
 constexpr int   kOpenWaitMs  = 5000;    // the host's answer and the swing's start; a door that has not
                                         // started opening by then was refused
-// A stay ends on the door's own next sensor check: checkSensor called again (its list held something,
-// so it re-armed) or the door closing (it held nothing). The check runs five seconds after the swing
-// ends; a stay with neither by this bound says so.
+// A stay ends on the door's own next check, five seconds after the swing ends: re-armed (its list held
+// something, or the grid is off: an empty list closes the door only under gamemode's usesp_light) or
+// the door closing; a stay with neither by this bound says so, and the list itself is read then.
 constexpr int   kCheckWaitMs = 12000;
 // After the walk away the host's door closes at its first five-second check that finds the sensor
 // empty, then this copy follows its broadcast. Three checks' worth is the bound: a door still open
@@ -525,8 +525,8 @@ DWORD WINAPI WalkerThread(LPVOID) {
                 "it", Side(), name, pick->door.c_str(), r.inside ? 1 : 0, DistToGoal(inDoor->targetPos),
                 box->ok ? me.Z - box->centre.Z : 0.f);
         // The stay ends on the door's own next check, counted from once the swing has ended (that end
-        // calls checkSensor itself, to arm the check): re-armed means its list held something, a close
-        // means it held nothing.
+        // calls checkSensor itself, to arm the check); whether the walker is in the list is read from
+        // the list, since the check also re-arms on an empty one with the grid off.
         WaitForOpen(door, 1, kOpenWaitMs, /*settled*/ true);
         const int checks0 = g_checks.load(std::memory_order_relaxed);
         int checkMs = -1;
