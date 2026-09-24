@@ -42,20 +42,24 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ApplianceState:
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
     case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape
-        // LightGroupState is the one host-authored kind in this otherwise symmetric family, so it
-        // does not get the family's any-peer-may-send treatment: a client that authored it would
-        // drive the host's and every other client's lights, the pollution host authority prevents.
-        // The channel's receive performs no role or sender check of its own, so the drop is here,
-        // at the family boundary; refused on a receiving client too, since the host relays nothing
-        // on this kind, so a packet from a non-host slot is not ours either way.
-        if (msg.kind == net::ReliableKind::LightGroupState && msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: LightGroupState from slot %d refused -- this kind is host-authored",
+        // DoorState and LightGroupState are the host-authored kinds in this otherwise symmetric
+        // family, so they do not get the family's any-peer-may-send treatment: a client that
+        // authored one would drive the host's and every other client's doors or lights, the
+        // pollution host authority prevents. The channel's receive performs no role or sender check
+        // of its own, so the drop is here, at the family boundary; refused on a receiving client
+        // too, since the host relays neither kind, so a packet from a non-host slot is not ours
+        // either way.
+        if ((msg.kind == net::ReliableKind::DoorState || msg.kind == net::ReliableKind::LightGroupState) &&
+            msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: %s from slot %d refused -- this kind is host-authored",
+                    msg.kind == net::ReliableKind::DoorState ? "DoorState" : "LightGroupState",
                     msg.senderPeerSlot);
             return true;  // claimed by this family, deliberately not applied
         }
-        // A peer toggled a keyed interactable (a base door, a light group, a container lid, a
-        // garage, an appliance). Symmetric: any peer can send, and the host relays a
-        // client-originated edge to the other clients before this drain runs. interactable_sync
+        // A peer toggled a keyed interactable (a light switch, a container lid, a garage, an
+        // appliance, a locker), or the host moved a door or a light group. On a symmetric kind any
+        // peer can send, and the host relays a client-originated edge to the other clients before
+        // this drain runs. interactable_sync
         // routes by kind to the right channel, resolves the instance by key and applies
         // idempotently on the game thread, echo-suppressed. The keypad is not here; it carries a
         // richer payload.

@@ -165,7 +165,8 @@ enum class ReliableKind : uint8_t {
     // Host to all: a base door's open state, keyed by the door lane's key. A door re-drives its own
     // state (its autoclose), so the host is the single syncer: it polls, broadcasts changes and
     // sends a full snapshot to a joiner; a client renders the state with autoclose suppressed, and
-    // its own press, hit and pry reach the host as DoorVerbIntent. KeyedTogglePayload.
+    // its own press, hit and pry reach the host as DoorVerbIntent. Trust: host-authored, so refused
+    // from a client and never relayed. KeyedTogglePayload.
     DoorState = 9,
 
     // Any peer, relayed by the host: a light switch's own toggle bit, keyed by the switch. The

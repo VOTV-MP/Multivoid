@@ -199,7 +199,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::PropConvert:       // a client's clump-to-pile convert
     case ReliableKind::PropRelease:
     case ReliableKind::PropStickState:    // a client's wall-attachable stick
-    case ReliableKind::DoorState:
+    // DoorState is not relayable: the host authors it, and a client's own door verbs reach the host
+    // as DoorVerbIntent, an intent addressed to the host alone.
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
     case ReliableKind::GarageDoorState:   // symmetric
