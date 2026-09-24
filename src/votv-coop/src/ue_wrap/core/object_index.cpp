@@ -263,4 +263,34 @@ Parity DebugCompareWithWalk() {
     return p;
 }
 
+void DebugUnlinkSlot(int32_t index) {
+    UE_ASSERT_GAME_THREAD("object_index::DebugUnlinkSlot");
+    if (index < 0 || index >= static_cast<int32_t>(g_slots.size())) return;
+    const Slot& s = g_slots[static_cast<size_t>(index)];
+    if (!s.obj) return;
+    void* const gone = s.cls;
+    if (Unlink(index) && g_observer.OnClassGone) g_observer.OnClassGone(g_observer.ctx, gone);
+}
+
+void DebugApplyCreate(void* obj, void* cls, int32_t index) {
+    UE_ASSERT_GAME_THREAD("object_index::DebugApplyCreate");
+    ApplyCreated(Event{obj, cls, index, true});
+}
+
+bool DebugSlotListing(int32_t index, void** obj, void** cls) {
+    UE_ASSERT_GAME_THREAD("object_index::DebugSlotListing");
+    if (index < 0 || index >= static_cast<int32_t>(g_slots.size())) return false;
+    const Slot& s = g_slots[static_cast<size_t>(index)];
+    if (!s.obj) return false;
+    *obj = s.obj;
+    *cls = s.cls;
+    return true;
+}
+
+void DebugListUnchecked(void* obj, void* cls, int32_t index) {
+    UE_ASSERT_GAME_THREAD("object_index::DebugListUnchecked");
+    DebugUnlinkSlot(index);
+    Link(index, obj, cls);
+}
+
 }  // namespace ue_wrap::object_index

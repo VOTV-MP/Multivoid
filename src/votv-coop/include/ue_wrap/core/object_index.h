@@ -63,4 +63,15 @@ struct Parity {
 };
 Parity DebugCompareWithWalk();
 
+// Test hooks: coop/dev/recycled_slot_drill stages a recycled slot through them. Game thread.
+// Unlink whatever the slot lists; nothing when it lists nothing.
+void DebugUnlinkSlot(int32_t index);
+// Apply a birth as a drain applies one, through the same checks.
+void DebugApplyCreate(void* obj, void* cls, int32_t index);
+// What the slot lists, read raw with no hand-out check; false when it lists nothing.
+bool DebugSlotListing(int32_t index, void** obj, void** cls);
+// List `obj` under `cls` with no check at all: the state a queued death leaves when the slot's next
+// tenant took the same address before the drain.
+void DebugListUnchecked(void* obj, void* cls, int32_t index);
+
 }  // namespace ue_wrap::object_index

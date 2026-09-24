@@ -59,6 +59,10 @@ unsigned long long TasksRun();
 // drain as an earlier one: every task posted while a drain runs is run by that drain. Game thread.
 uint64_t DrainSerial();
 
+// The faults the detour's outer firewall has absorbed on the calling thread, for a drill that makes
+// one dispatch fault and reads the delta around it.
+uint32_t AbsorbedFaultsOnThisThread();
+
 // The pre-dispatch interceptor: when ProcessEvent fires for `targetUFunction` the detour calls
 // `cb(self, params)`, and a true return skips the original for this dispatch, replacing the
 // UFunction's body; false runs it normally. A fixed-size table keyed on the (target, cb) pair,

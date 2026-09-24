@@ -417,6 +417,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
     src/coop/dev/pry_drill.cpp
+    src/coop/dev/recycled_slot_drill.cpp
     src/coop/dev/rehost_rejoin.cpp
     src/coop/dev/puppet_head_probe.cpp
     src/coop/dev/wire_census.cpp

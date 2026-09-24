@@ -396,6 +396,11 @@ CFG_ENUM(pry_drill, "pry_drill", "dev", "off", "off|host|client|join",
     "runs its copy's hand unstick, which a pryable refuses with its 'Tool required' hint. client: the "
     "client pries and the host watches. join: the host pries while a joiner is still loading. Both peers "
     "print every pryable they have and every change of one.")
+CFG_FLAG(recycled_slot_drill, "recycled_slot_drill", "dev", false, "VOTVCOOP_RECYCLED_SLOT_DRILL",
+    "Drill (either peer): once the local pawn and the object index are up, stage an object slot the "
+    "engine recycled on the pawn's root component -- a queued birth naming the slot's old class, and a "
+    "stale listing -- then dispatch the actor location read on the component, whose read faults inside "
+    "the engine. One verdict line per half, then DONE.")
 CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_MENU_DRILL",
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "

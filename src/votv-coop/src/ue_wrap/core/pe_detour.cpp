@@ -159,6 +159,10 @@ struct AvSite { void* fn; void* ip; unsigned long long count; unsigned long long
 AvSite g_avSites[kAvSiteSlots]{};
 int    g_avSiteNext = 0;
 
+// Absorbed faults on this thread, every one the outer firewall took: the recycled-slot drill reads a
+// delta of it around the one dispatch it makes fault.
+thread_local uint32_t t_absorbedFaults = 0;
+
 void LogObserverAv(void* function, void* self, const char* phase) {
     // Find or claim a slot; linear over 16, on a fault only.
     AvSite* site = nullptr;
@@ -392,6 +396,7 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     if (RunDetourSEH(self, function, params) != 0) {
         // Impl crashed: logged, and the call returns without forwarding, since the engine's caller
         // expects ProcessEvent to return.
+        ++t_absorbedFaults;
         LogObserverAv(function, self, "detour-outer");
     }
 
@@ -605,5 +610,7 @@ unsigned long long PeTopLevelCountTotal()   { return g_peWholeOrd.load(std::memo
 unsigned long long PeObserverBodyNsTotal()  { return g_obsBodyNs.load(std::memory_order_relaxed); }
 unsigned long long PeObserverWorstNs()      { return g_obsWorstNs.load(std::memory_order_relaxed); }
 void*              PeObserverWorstFn()      { return g_obsWorstFn.load(std::memory_order_relaxed); }
+
+uint32_t AbsorbedFaultsOnThisThread() { return t_absorbedFaults; }
 
 }  // namespace ue_wrap::game_thread
