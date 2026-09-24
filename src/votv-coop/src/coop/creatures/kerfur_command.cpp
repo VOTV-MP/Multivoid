@@ -140,8 +140,9 @@ void RunFollowLoop() {
         if (!kerfur || !R::IsLiveByIndex(kerfur, el->GetInternalIdx())) { dead.push_back(eid); continue; }
         void* body = ResolveOwnerBody(ownerSlot);
         if (!body) continue;  // owner momentarily gone -- keep the binding, skip this tick
-        const auto loc = E::GetActorLocation(body);
         K::SetCommandState(kerfur, kKerfurStateIdle);  // re-assert (defensive vs any BP write)
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(body, loc)) continue;  // the owner's position unread: no move this tick
         K::IssueFollowMoveTo(kerfur, body, loc.X, loc.Y, loc.Z, kFollowAcceptCm);
     }
     for (ElementId eid : dead) g_followOwner.erase(eid);

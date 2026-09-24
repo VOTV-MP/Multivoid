@@ -233,8 +233,8 @@ void DischargePendingDestroys() {
                 const uint64_t last = g_pendingDestroy[i].lastLiftMs;
                 float dz = kLiftCmPerSec * static_cast<float>(now - last) * 0.001f;
                 if (dz > kLiftMaxStepCm) dz = kLiftMaxStepCm;
-                if (dz > 0.f) {
-                    ue_wrap::FVector loc = E::GetActorLocation(actor);
+                ue_wrap::FVector loc{};
+                if (dz > 0.f && E::TryGetActorLocation(actor, loc)) {   // unread: no lift this tick
                     loc.Z += dz;
                     E::SetActorLocation(actor, loc);
                 }

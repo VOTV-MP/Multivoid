@@ -240,17 +240,20 @@ void Tick() {
             g_owned.erase(g_owned.begin() + i);
             continue;
         }
-        const ue_wrap::FVector loc = E::GetActorLocation(o.actor);
-        const float yaw = E::GetActorRotation(o.actor).Yaw;
+        ue_wrap::FVector loc{};
+        const bool locRead = E::TryGetActorLocation(o.actor, loc);
+        const float yaw = locRead ? E::GetActorRotation(o.actor).Yaw : o.yaw;
         // Keepalive FIRST: a continuously-moving entity must not
         // starve the Spawn re-announce -- it IS the late-joiner delivery, and
         // it carries the pose anyway.
+        // An unread tick announces the stored pose, the last real one.
         if (now - o.lastAnnounceMs >= kKeepaliveMs) {
-            o.x = loc.X; o.y = loc.Y; o.z = loc.Z; o.yaw = yaw;
+            if (locRead) { o.x = loc.X; o.y = loc.Y; o.z = loc.Z; o.yaw = yaw; }
             AnnounceOwned(s, o, now);
             ++i;
             continue;
         }
+        if (!locRead) { ++i; continue; }   // no pose update this tick
         const float dx = loc.X - o.x, dy = loc.Y - o.y, dz = loc.Z - o.z;
         float dyaw = yaw - o.yaw;
         while (dyaw > 180.f) dyaw -= 360.f;

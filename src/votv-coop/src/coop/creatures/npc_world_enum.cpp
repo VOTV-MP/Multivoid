@@ -44,9 +44,20 @@ using coop::element::NpcMirrors;   // canonical accessor (coop/element/mirror_ma
 // interceptor and POST reach for a fresh spawn. Returns the eid, or the invalid id on failure
 // (logged). The caller has verified live, allowlisted and untracked. Game thread.
 coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& clsName,
-                                                 bool savePersisted, const char* logTag) {
+                                                 bool savePersisted, const char* logTag,
+                                                 ue_wrap::FVector* outLoc = nullptr) {
     auto* s = coop::npc_sync::GetSession();
     if (!s) return coop::element::kInvalidId;
+    // An NPC whose position cannot be read is not enrolled, before any element is made for it: the
+    // read failing is a dispatch that faulted, so no broadcast or snapshot row could ever place it,
+    // and the pose stream would fault on it every tick.
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) {
+        UE_LOGW("npc-sync[%s]: '%ls' actor %p not enrolled -- its location could not be read",
+                logTag, clsName.c_str(), obj);
+        return coop::element::kInvalidId;
+    }
+    if (outLoc) *outLoc = loc;
     auto npc = std::make_unique<coop::element::Npc>();
     std::string typeName8;
     for (size_t k = 0; k < clsName.size() && k < 63; ++k)
@@ -89,7 +100,6 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         for (size_t k = 0; k < tn.size() && k < 63; ++k)
             p.className.data[p.className.len++] = tn[k];
         p.elementId = static_cast<uint32_t>(eid);
-        const auto loc = ue_wrap::engine::GetActorLocation(obj);
         const auto rot = ue_wrap::engine::GetActorRotation(obj);
         const auto scl = ue_wrap::engine::GetActorScale3D(obj);  // mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
@@ -235,10 +245,10 @@ void DrainPendingExSpawns() {
         const std::wstring clsName = R::ToString(R::NameOf(cls));
         // Not save-persisted: an event-swarm spawn happens after any join, so no peer has a local
         // twin.
+        ue_wrap::FVector loc{};
         const coop::element::ElementId eid =
-            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn");
+            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn", &loc);
         if (eid != coop::element::kInvalidId) {
-            const auto loc = ue_wrap::engine::GetActorLocation(obj);
             UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
                     "(EX_CallMath BeginDeferred, source-gated catch)",
                     clsName.c_str(), eid, loc.X, loc.Y, loc.Z);

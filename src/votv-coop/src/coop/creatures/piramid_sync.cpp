@@ -321,8 +321,8 @@ void TryReplayPendingGather() {
         g_pending.active = false;
         return;
     }
-    const auto pl = E::GetActorLocation(pyr);
-    const auto wl = E::GetActorLocation(wisp);
+    ue_wrap::FVector pl{}, wl{};
+    if (!E::TryGetActorLocation(pyr, pl) || !E::TryGetActorLocation(wisp, wl)) return;  // unread: wait a tick, as while converging
     const float dx = pl.X - wl.X, dy = pl.Y - wl.Y;
     g_pending.lastDist = std::sqrt(dx * dx + dy * dy);
     if (g_pending.lastDist > kReplayAttemptRadius) return;  // interp still converging

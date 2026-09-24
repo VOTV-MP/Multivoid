@@ -202,7 +202,8 @@ void ClaimConversionGhosts(uint32_t srcEid, bool wantNpc, float x, float y, floa
         for (size_t bi = 0; bi < nBases; ++bi)
             if (R::IsDescendantOfAny(cls, &bases[bi], 1)) { b = static_cast<int>(bi); break; }
         if (b < 0) continue;
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;  // unplaceable: never the nearest
         const float dx = loc.X - x, dy = loc.Y - y, dz = loc.Z - z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < bestD2[b]) { bestD2[b] = d2; bestObj[b] = obj; }

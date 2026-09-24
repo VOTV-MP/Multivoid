@@ -10,6 +10,8 @@
 
 #include "coop/creatures/kerfur_convert_host.h"
 
+#include "coop/creatures/kerfur_convert.h"  // LastLivePose, the request's fallback pose
+
 #include "coop/creatures/kerfur_form_assembler.h"
 #include "coop/creatures/kerfur_entity.h"
 #include "coop/creatures/npc_sync.h"
@@ -78,7 +80,8 @@ void* FindNewFormKerfurActor(bool wantNpc, float x, float y, float z) {
             ? (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId)
             : (PT::GetPropElementIdForActor(obj) != coop::element::kInvalidId);
         if (tracked) continue;
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;  // unplaceable: never the nearest
         const float dx = loc.X - x, dy = loc.Y - y, dz = loc.Z - z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < bestD2) { bestD2 = d2; best = obj; }
@@ -153,7 +156,8 @@ void ExpressConversionFloppies(float x, float y, float z) {
         if (!R::IsLive(obj)) continue;
         if (PT::GetPropElementIdForActor(obj) != coop::element::kInvalidId) continue;  // tracked
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;  // unplaceable: not within the radius
         const float dx = loc.X - x, dy = loc.Y - y, dz = loc.Z - z;
         if (dx * dx + dy * dy + dz * dz > kR2) continue;
         coop::prop_lifecycle::ExpressSpawnedProp(obj);  // normal keyed PropSpawn (floppy is a plain prop)
@@ -190,7 +194,13 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
         // turn_off: NPC -> prop. The NPC should have died; a kerfur prop (+ maybe floppy) spawned at
         // its position. A SENTIENT kerfur refused -> the NPC is still live -> echo a reject.
         if (oldActor && R::IsLiveByIndex(oldActor, oldIdx)) {
-            const auto loc = ue_wrap::engine::GetActorLocation(oldActor);
+            // The reject still goes out: unread, at the pose this converge was given.
+            ue_wrap::FVector loc{};
+            if (!ue_wrap::engine::TryGetActorLocation(oldActor, loc)) {
+                UE_LOGW("kerfur_convert: turn_off reject eid=%u -- the NPC's location could not be read; "
+                        "sent at the converge's pose", static_cast<unsigned>(oldEid));
+                loc = ue_wrap::FVector{px, py, pz};
+            }
             const auto rot = ue_wrap::engine::GetActorRotation(oldActor);
             void* cls = R::ClassOf(oldActor);
             KE::BroadcastConvertRejected(oldEid, KE::Form::Npc, loc.X, loc.Y, loc.Z,
@@ -206,7 +216,14 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             KE::ReleaseKerfurForEid(oldEid);  // no successor: the kerfur is gone, not converted
             return;
         }
-        const auto loc = ue_wrap::engine::GetActorLocation(newProp);
+        // The new form spawns at the old one's transform: unread, it is bound at the pose this
+        // converge was given.
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(newProp, loc)) {
+            UE_LOGW("kerfur_convert: turn_off converge eid=%u -- the new prop's location could not be read; "
+                    "bound at the converge's pose", static_cast<unsigned>(oldEid));
+            loc = ue_wrap::FVector{px, py, pz};
+        }
         const auto rot = ue_wrap::engine::GetActorRotation(newProp);
         void* ncls = R::ClassOf(newProp);
         const std::wstring cls = ncls ? R::ToString(R::NameOf(ncls)) : std::wstring();
@@ -226,7 +243,12 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
         // turn on: prop -> NPC. The prop should have died; a kerfur NPC spawned. Spawn failure (the BP
         // hint path) leaves the prop alive -> echo a reject.
         if (oldActor && R::IsLiveByIndex(oldActor, oldIdx)) {
-            const auto loc = ue_wrap::engine::GetActorLocation(oldActor);
+            ue_wrap::FVector loc{};   // the reject still goes out, as above
+            if (!ue_wrap::engine::TryGetActorLocation(oldActor, loc)) {
+                UE_LOGW("kerfur_convert: turn-on reject eid=%u -- the prop's location could not be read; "
+                        "sent at the converge's pose", static_cast<unsigned>(oldEid));
+                loc = ue_wrap::FVector{px, py, pz};
+            }
             const auto rot = ue_wrap::engine::GetActorRotation(oldActor);
             void* cls = R::ClassOf(oldActor);
             KE::BroadcastConvertRejected(oldEid, KE::Form::Prop, loc.X, loc.Y, loc.Z,
@@ -242,7 +264,12 @@ void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::Elem
             KE::ReleaseKerfurForEid(oldEid);  // no successor: the kerfur is gone, not converted
             return;
         }
-        const auto loc = ue_wrap::engine::GetActorLocation(newNpc);
+        ue_wrap::FVector loc{};   // unread, bound at the converge's pose, as above
+        if (!ue_wrap::engine::TryGetActorLocation(newNpc, loc)) {
+            UE_LOGW("kerfur_convert: turn-on converge eid=%u -- the new NPC's location could not be read; "
+                    "bound at the converge's pose", static_cast<unsigned>(oldEid));
+            loc = ue_wrap::FVector{px, py, pz};
+        }
         const auto rot = ue_wrap::engine::GetActorRotation(newNpc);
         void* ncls = R::ClassOf(newNpc);
         const std::wstring cls = ncls ? R::ToString(R::NameOf(ncls)) : std::wstring();
@@ -304,7 +331,15 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         UE_LOGI("kerfur_convert: HOST executing turn_off eid=%u (slot %u)", payload.elementId, senderPeerSlot);
         // Capture the kerfur's pose BEFORE the verb -- it K2_DestroyActor's the NPC, so the converge
         // can no longer read it; the new-form prop spawns at this position (position continuity).
-        const ue_wrap::FVector pos0 = ue_wrap::engine::GetActorLocation(actor);
+        // It is the converge's fallback for its own reads: an unreadable kerfur falls back to the
+        // death-watch's last live pose of it, and a kerfur never placed while alive is refused.
+        ue_wrap::FVector pos0{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, pos0) &&
+            !coop::kerfur_convert::LastLivePose(payload.elementId, pos0.X, pos0.Y, pos0.Z)) {
+            UE_LOGW("kerfur_convert: turn_off request eid=%u from slot %u refused -- the kerfur has no readable or "
+                    "last live pose for the converge", payload.elementId, senderPeerSlot);
+            return;
+        }
         uint8_t frame[16] = {};  // verbs take no params (install-guarded); zeroed frame for safety
         R::CallFunction(actor, PickDropPropFn(cls), frame);
         ConvergeAfterConversion(actor, idx, eid, /*toProp=*/1, pos0.X, pos0.Y, pos0.Z);
@@ -325,7 +360,13 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         UE_LOGI("kerfur_convert: HOST executing turn-on eid=%u (slot %u)", payload.elementId, senderPeerSlot);
         // Capture the prop's pose BEFORE the verb -- it spawns the NPC at this position then
         // K2_DestroyActor's the prop (position continuity for the converge).
-        const ue_wrap::FVector pos0 = ue_wrap::engine::GetActorLocation(actor);
+        ue_wrap::FVector pos0{};   // the converge's fallback, as above
+        if (!ue_wrap::engine::TryGetActorLocation(actor, pos0) &&
+            !coop::kerfur_convert::LastLivePose(payload.elementId, pos0.X, pos0.Y, pos0.Z)) {
+            UE_LOGW("kerfur_convert: turn-on request eid=%u from slot %u refused -- the prop has no readable or "
+                    "last live pose for the converge", payload.elementId, senderPeerSlot);
+            return;
+        }
         uint8_t frame[16] = {};  // spawnKerfuro takes no params (install-guarded)
         // Bracket the verb: the prop's K2_DestroyActor INSIDE it hits the destroy seam,
         // whose kerfur first refusal converges inline and records the eid -- consumed just below

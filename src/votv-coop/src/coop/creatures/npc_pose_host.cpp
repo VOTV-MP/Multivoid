@@ -55,20 +55,29 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
     std::vector<coop::element::Npc*> elems;  // connect edge (cold) -- a per-call vector is fine
     NpcMirrors().Snapshot(elems);
-    int sent = 0, unbound = 0;
+    int sent = 0, unbound = 0, unread = 0;
     for (coop::element::Npc* el : elems) {
         if (!el) continue;
         void* actor = el->GetActor();
         // Skip elements with no bound actor / a GC-purged actor; a real game-spawned NPC binds in
         // POST.
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
+        // A row at the origin would place the joiner's mirror there: an NPC whose position cannot be
+        // read is left out, named and counted. The read failing is a dispatch that faulted, which
+        // the pose stream repeats every tick, so no later row could place it either.
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) {
+            UE_LOGW("npc-sync: connect-snapshot -- NPC eid=%u left out for slot %d, its location could not be read",
+                    static_cast<unsigned>(el->GetId()), peerSlot);
+            ++unread;
+            continue;
+        }
         coop::net::EntitySpawnPayload p{};
         const std::string& tn = el->GetTypeName();
         p.className.len = 0;
         for (size_t i = 0; i < tn.size() && i < 63; ++i)
             p.className.data[p.className.len++] = tn[i];
         p.elementId = static_cast<uint32_t>(el->GetId());
-        const auto loc = ue_wrap::engine::GetActorLocation(actor);
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
         const auto scl = ue_wrap::engine::GetActorScale3D(actor);  // mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
@@ -92,8 +101,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
             ++sent;
     }
-    UE_LOGI("npc-sync: connect-snapshot -- sent %d existing NPC(s) to slot %d (%zu Npc Element(s), %d unbound-skipped)",
-            sent, peerSlot, elems.size(), unbound);
+    UE_LOGI("npc-sync: connect-snapshot -- sent %d existing NPC(s) to slot %d (%zu Npc Element(s), %d unbound-skipped, "
+            "%d unread-skipped)", sent, peerSlot, elems.size(), unbound, unread);
 }
 
 void TickPoseStream() {
@@ -155,7 +164,8 @@ void TickPoseStream() {
         if (static_cast<int>(batch.size()) >= coop::net::kMaxNpcBatchEntries) { ++truncated; continue; }
         coop::net::EntityPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
-        const auto loc = ue_wrap::engine::GetActorLocation(actor);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) continue;  // no pose this tick; the next one reads again
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
         const auto vel = ue_wrap::engine::GetActorVelocity(actor);
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;
