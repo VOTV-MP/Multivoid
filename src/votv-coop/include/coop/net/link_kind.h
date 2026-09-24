@@ -36,6 +36,18 @@ inline LinkKind LinkKindFromWire(uint8_t v) {
                                                           : LinkKind::Unknown;
 }
 
+// The kind's name for a log line; the words the player list shows are ui/link_format's.
+inline const char* LinkKindName(LinkKind k) {
+    switch (k) {
+        case LinkKind::Local:   return "Local";
+        case LinkKind::Lan:     return "Lan";
+        case LinkKind::Direct:  return "Direct";
+        case LinkKind::Relayed: return "Relayed";
+        case LinkKind::Unknown: break;
+    }
+    return "Unknown";
+}
+
 // Machine-assert the address classifier over SYNTHETIC addresses, once at boot.
 //
 // WHY IT EXISTS: two of the four kinds are UNREACHABLE by any drill we can run.

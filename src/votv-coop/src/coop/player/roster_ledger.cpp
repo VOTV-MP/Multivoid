@@ -231,6 +231,13 @@ LinkFacts DisplayLink(int slot) {
 void SetLinkFacts(int slot, coop::net::LinkKind kind, int16_t pingMs) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::SetLinkFacts)");
     if (!ValidSlot(slot) || !g_rows[slot].occupied()) return;
+    // A change of route is logged and the steady state is not: outside the player list nothing
+    // else says whether a player's path went through the TURN relay or left it.
+    if (g_rows[slot].linkKind != kind) {
+        UE_LOGI("ledger: slot %d (#%u) link %s -> %s", slot,
+                static_cast<unsigned>(g_rows[slot].playerNo),
+                coop::net::LinkKindName(g_rows[slot].linkKind), coop::net::LinkKindName(kind));
+    }
     g_rows[slot].linkKind = kind;
     g_rows[slot].pingMs = pingMs;
 }
