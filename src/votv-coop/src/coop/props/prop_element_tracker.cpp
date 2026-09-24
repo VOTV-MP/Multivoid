@@ -373,7 +373,9 @@ static void CollectTrackedTrashTransforms_(
                 continue;  // mint declined (registry full) -> live-pose fallback for this one
             ++minted;
         }
-        out[eid] = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector at{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, at)) continue;   // no read, no save-time position
+        out[eid] = at;
         coop::dev::eid_lifetime_trace::RecordCaptureEid(obj, static_cast<uint32_t>(eid));  // the capture trace
     }
     if (minted > 0)
@@ -420,7 +422,9 @@ void CollectTrackedKerfurTransforms(
                 continue;  // mint declined (registry full) -> no save-time key for this kerfur (live-pose fallback)
             ++minted;
         }
-        out[eid] = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector at{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, at)) continue;   // no read, no save-time position
+        out[eid] = at;
         coop::dev::eid_lifetime_trace::RecordCaptureEid(obj, static_cast<uint32_t>(eid));  // the capture trace
     }
     if (minted > 0)

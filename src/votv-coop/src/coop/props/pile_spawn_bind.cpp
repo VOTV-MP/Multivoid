@@ -99,7 +99,8 @@ void EnsureIndex(const std::unordered_set<void*>& claimed) {
         // a candidate for a second eid, so a co-located UNBOUND pile's expression can never bind
         // over it.
         if (coop::prop_element_tracker::IsBoundMirrorNative(obj)) continue;
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;   // no read, no bind candidate
         // chipType read once at build time: save-loaded piles carry it from the
         // save (both peers loaded the SAME save, so host==client). If a pile
         // class ever set it lazily post-load, the equality gate would miss --

@@ -186,7 +186,8 @@ void EnsurePerInstanceDevice(size_t i) {
 // impossible anyway.
 constexpr double kPosGrid = 10.0;  // cm
 std::wstring PosKey(const wchar_t* prefix, void* actor) {
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(actor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) return {};   // no read, no key
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
     std::wstring k = prefix;
     k += std::to_wstring(q(loc.X)); k += L'_';

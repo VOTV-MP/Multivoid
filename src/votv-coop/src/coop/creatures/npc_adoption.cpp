@@ -114,7 +114,8 @@ void ResolvePending() {
         if (tracked.count(obj) > 0) continue;                            // already a mirror
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;    // CDO (alloc-free prefix test)
-        const auto loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) continue;   // no read, no adoption candidate
         cands.push_back(Cand{obj, cls, loc.X, loc.Y, loc.Z});
     }
 

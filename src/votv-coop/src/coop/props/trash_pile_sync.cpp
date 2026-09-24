@@ -111,7 +111,8 @@ void HubMatch(void*, void* obj) {
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
     std::wstring key = UP::GetInteractableKeyString(obj);
     if (key.empty() || key == L"None") return;
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) return;   // no read, no last position
     g_scanFound.push_back({ std::move(key), obj, R::InternalIndexOf(obj), loc });
 }
 

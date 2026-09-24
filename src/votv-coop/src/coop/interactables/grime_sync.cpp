@@ -113,9 +113,11 @@ std::vector<std::pair<std::wstring, float>> g_sendScratch;  // GT-only: reused b
 
 // The cross-peer identity of a static grime decal: its quantised world position and type.
 // The same save gives the identical saved transform, so the identical key on both peers.
-// Fits the wire key for any in-base coordinate.
+// Fits the wire key for any in-base coordinate. Empty when the location read fails: a key is
+// never made from the origin a failed read leaves.
 std::wstring PosKey(void* grime) {
-    const ue_wrap::FVector loc = E::GetActorLocation(grime);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(grime, loc)) return std::wstring();
     int32_t type = 0; G::ReadType(grime, type);
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
     std::wstring k = L"g_";
@@ -159,9 +161,16 @@ void* ResolveFast(const std::wstring& key) {
 // arrivals heal within the hub's backstop. The key cache: a decal is static, so its key never
 // changes, yet computing it dispatches a location UFunction, and doing that for a thousand
 // unchanged decals on every rebuild was a recurring frame hitch; only a new decal computes
-// it, and a full pass rebuilds the cache from the live set.
-std::unordered_map<void*, std::wstring> g_posKeyByActor;   // actor -> cached PosKey (GT-only)
-std::unordered_map<void*, std::wstring> g_scanNextCache;   // pass scratch: full-pass cache rebuild
+// it, and a full pass rebuilds the cache from the live set. An entry carries the slot and its
+// engine serial (reflection::AllocateSlotSerial, the weak-pointer rule), so a new decal the
+// allocator put at a dead one's address in the same slot never inherits the dead one's key.
+struct CachedKey {
+    std::wstring key;
+    int32_t      idx;
+    int32_t      serial;
+};
+std::unordered_map<void*, CachedKey> g_posKeyByActor;   // actor -> cached PosKey (GT-only)
+std::unordered_map<void*, CachedKey> g_scanNextCache;   // pass scratch: full-pass cache rebuild
 std::vector<std::pair<std::wstring, Ref>> g_scanFound;     // pass scratch (GT-only)
 bool g_scanIsFull = false;                                  // pass context
 
@@ -174,11 +183,21 @@ void HubPassBegin(void*, bool isFull) {
 void HubMatch(void*, void* obj) {
     if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;  // skip the CDO (alloc-free)
     if (!R::IsLive(obj)) return;
+    const int32_t idx = R::InternalIndexOf(obj);
     auto cit = g_posKeyByActor.find(obj);
-    std::wstring key = (cit != g_posKeyByActor.end()) ? cit->second : PosKey(obj);
-    if (g_scanIsFull) g_scanNextCache.emplace(obj, key);   // full pass rebuilds the cache from the live set
-    else              g_posKeyByActor.emplace(obj, key);   // tail pass: cache the NEW actor's key
-    g_scanFound.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
+    CachedKey ck;
+    if (cit != g_posKeyByActor.end() && cit->second.idx == idx &&
+        R::SlotSerial(idx) == cit->second.serial) {
+        ck = cit->second;
+    } else {
+        ck.key = PosKey(obj);
+        if (ck.key.empty()) return;   // no location read, so no identity to index it under
+        ck.idx = idx;
+        ck.serial = R::AllocateSlotSerial(idx);
+    }
+    if (g_scanIsFull) g_scanNextCache.insert_or_assign(obj, ck);   // full pass rebuilds the cache
+    else              g_posKeyByActor.insert_or_assign(obj, ck);   // tail pass: cache the NEW actor's key
+    g_scanFound.emplace_back(std::move(ck.key), Ref{ obj, idx });
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
@@ -302,7 +321,14 @@ void PollAndBroadcast() {
         }
         std::lock_guard<std::mutex> lkI(g_indexMutex);
         std::lock_guard<std::mutex> lkS(g_stateMutex);
-        for (const auto& key : vanished) { g_byKey.erase(key); g_lastKnown.erase(key); }
+        for (const auto& key : vanished) {
+            const auto it = g_byKey.find(key);
+            if (it != g_byKey.end()) {
+                g_posKeyByActor.erase(it->second.actor);   // its cached key goes with it
+                g_byKey.erase(it);
+            }
+            g_lastKnown.erase(key);
+        }
     }
     for (auto& t : toSend) {
         coop::net::KeyedScalarPayload p{};

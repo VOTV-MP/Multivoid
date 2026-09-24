@@ -113,7 +113,8 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
                               std::unordered_map<coop::element::ElementId, FlushedAt>& lastSent,
                               const char* kind, int capturedBits) -> bool {
         namespace pf = coop::net::propspawn_flags;
-        const ue_wrap::FVector cur = ue_wrap::engine::GetActorLocation(actor);
+        ue_wrap::FVector cur{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, cur)) return false;   // no read, no correction
         const float dx = cur.X - savePos.X, dy = cur.Y - savePos.Y, dz = cur.Z - savePos.Z;
         // The full state is read only for a prop that moved, changed its frozen or sleep bits (two raw
         // reads, `capturedBits` -1 for a pile) or was corrected already, never across the whole keyed

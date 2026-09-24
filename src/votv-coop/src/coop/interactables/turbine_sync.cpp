@@ -60,9 +60,11 @@ size_t g_lastLogCount = SIZE_MAX;
 std::vector<std::pair<std::wstring, Ref>> g_scratch;  // GT-only reused snapshot
 
 // The cross-peer identity of a STATIC turbine: its quantized world position
-// (the grime PosKey shape). Fits the 31-char WireKey for any map coordinate.
+// (the grime PosKey shape). Fits the 31-char WireKey for any map coordinate. Empty when the
+// location read fails, as the grime key is.
 std::wstring PosKey(void* turbine) {
-    const ue_wrap::FVector loc = E::GetActorLocation(turbine);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(turbine, loc)) return std::wstring();
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
     std::wstring k = L"t_";
     k += std::to_wstring(q(loc.X)); k += L'_';
@@ -123,7 +125,9 @@ void HubPassBegin(void*, bool) { g_scanFound.clear(); }
 
 void HubMatch(void*, void* obj) {
     if (!R::IsLive(obj)) return;
-    g_scanFound.emplace_back(PosKey(obj), Ref{ obj, R::InternalIndexOf(obj) });
+    std::wstring key = PosKey(obj);
+    if (key.empty()) return;   // no location read, so no identity to index it under
+    g_scanFound.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {

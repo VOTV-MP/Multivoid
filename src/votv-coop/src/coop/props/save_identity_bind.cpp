@@ -313,7 +313,8 @@ int BindUnboundReCreates(bool* ghostRetireDrained) {
         if (!isChip && !isKerfur) continue;                                // the cheap class filter
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;       // CDO
         if (PT::IsBoundMirrorNative(o)) { if (isChip) ++chipBound; continue; }  // bound: the ghost valve's denominator
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(o, loc)) continue;   // no read, no rebind candidate
         (isChip ? chipN : kerfurN).push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z});
     }
     if (chipN.empty() && kerfurN.empty()) return 0;  // no unbound natives -> nothing to do (the common case)
@@ -406,7 +407,8 @@ int BindUnboundReCreates(bool* ghostRetireDrained) {
                 continue;
             }
             // (b) E bound elsewhere: retire the stale twin at the save position if E moved.
-            const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(bound);
+            ue_wrap::FVector bl{};
+            if (!ue_wrap::engine::TryGetActorLocation(bound, bl)) continue;   // no read, no retire
             const float ddx = bl.X - e.savePosX, ddy = bl.Y - e.savePosY, ddz = bl.Z - e.savePosZ;
             if (ddx * ddx + ddy * ddy + ddz * ddz <= kMovedCm2) continue;  // E still @save-pos -> not moved
             const int idx = coop::save_time_retire_util::FindExactMatch(
@@ -616,8 +618,8 @@ bool RunReseedOrphanSelfTest() {
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
         if (!ue_wrap::prop::IsChipPile(o)) continue;
         if (PT::IsBoundMirrorNative(o)) continue;  // never disturb an already-bound native
+        if (!ue_wrap::engine::TryGetActorLocation(o, pos)) continue;   // no read, not the subject
         native = o; nativeIdx = R::InternalIndexOf(o);
-        pos = ue_wrap::engine::GetActorLocation(o);
         break;
     }
     if (!native) return false;  // piles not loaded yet -> retry next tick
