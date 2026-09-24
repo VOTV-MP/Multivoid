@@ -237,15 +237,22 @@ void PollAndBroadcast() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
-    auto& refs = g_pollScratch;  // reused buffer (GT-serial) -- no per-tick heap alloc
-    refs.clear();
+    // The buffer is reused (GT-serial) and its strings are assigned in place, so the per-tick path
+    // allocates only when a key outgrows the slot it lands in.
+    auto& refs = g_pollScratch;
+    size_t count = 0;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         if (g_index.empty()) return;
-        refs.reserve(g_index.size());
-        for (auto& kv : g_index) refs.emplace_back(kv.first, kv.second);
+        if (refs.size() < g_index.size()) refs.resize(g_index.size());
+        for (auto& kv : g_index) {
+            refs[count].first = kv.first;
+            refs[count].second = kv.second;
+            ++count;
+        }
     }
-    for (auto& r : refs) {
+    for (size_t i = 0; i < count; ++i) {
+        auto& r = refs[i];
         if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) {
             // A dead or streamed-out keypad can never land its chain, so its settling entry is
             // dropped; lastKnown keeps the endpoint, and a re-streamed actor converges through the
