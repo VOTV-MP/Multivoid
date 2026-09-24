@@ -68,8 +68,7 @@ void OnSlotReplaced_LeaveLine(int slot, const coop::roster_ledger::Row& outgoing
                               const coop::roster_ledger::Row& /*incoming*/) {
     if (!outgoing.occupied()) return;
     if (slot == 0) return;  // the host slot is not a "peer who left"
-    // The flag suppresses the narration only; the last-seen stamp and the door release run either
-    // way.
+    // The flag suppresses the narration only; the last-seen stamp runs either way.
     if (!g_suppressLeaveLines) {
         coop::chat_feed::Push(
             (outgoing.nick.empty() ? std::wstring(L"Remote player") : outgoing.nick) +
@@ -77,8 +76,6 @@ void OnSlotReplaced_LeaveLine(int slot, const coop::roster_ledger::Row& outgoing
             coop::chat_feed::Keep::History);  // a departure is part of the lobby's record
     }
     coop::seen_players::OnSlotDisconnected(slot);  // stamp last-seen (host registry)
-    // Doors this peer held open are released (one still held by another peer stays open).
-    coop::interactable_sync::OnPeerLeft(slot);
 }
 
 void InstallLeaveLineSubscriber() {

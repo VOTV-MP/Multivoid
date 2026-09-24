@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 179;
+inline constexpr uint16_t kProtocolVersion = 180;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -122,7 +122,7 @@ enum class MsgType : uint8_t {
 };
 
 // Payload kinds carried inside a Reliable message. A retired value is never reused: 16, 17, 21,
-// 22, 24, 29 and 138 stay unassigned; 32 and 128 are reserved.
+// 22, 24, 26, 29 and 138 stay unassigned; 32 and 128 are reserved.
 enum class ReliableKind : uint8_t {
     // Each peer to the other, once after admission: the sender's Player element id, then the nick,
     // the skin, the display flags, the nick colour and the game target, parsed field by field. The
@@ -162,10 +162,10 @@ enum class ReliableKind : uint8_t {
     // TeleportClientPayload.
     TeleportClient = 8,
 
-    // Host to all: a base door's open state, keyed by the door's Key. Doors auto-revert through
-    // their own sensors, so the host is the single syncer: it polls, broadcasts changes and sends a
-    // full snapshot to a joiner; a client renders the state with autoclose suppressed and sends
-    // DoorOpenRequest for its own presses. KeyedTogglePayload.
+    // Host to all: a base door's open state, keyed by the door lane's key. A door re-drives its own
+    // state (its autoclose), so the host is the single syncer: it polls, broadcasts changes and
+    // sends a full snapshot to a joiner; a client renders the state with autoclose suppressed, and
+    // its own press, hit and pry reach the host as DoorVerbIntent. KeyedTogglePayload.
     DoorState = 9,
 
     // Any peer, relayed by the host: a light switch's own toggle bit, keyed by the switch. The
@@ -220,11 +220,6 @@ enum class ReliableKind : uint8_t {
     // keyed by the keypad's Key. The sender polls; the receiver replays inputNumber per digit and
     // runs the keypad's own Open chain for a stamped event. KeypadSyncPayload.
     KeypadState = 25,
-
-    // Client to host: my player opened or closed this door. The host applies it with its own lock
-    // and jam guards, and its poll broadcasts the result as DoorState. KeyedTogglePayload; never
-    // relayed.
-    DoorOpenRequest = 26,
 
     // Host to one client: the connect snapshot starts, with the prop count as the progress
     // denominator. Rides the Bulk lane ahead of every PropSpawn it introduces. SnapshotBeginPayload.
@@ -801,6 +796,19 @@ enum class ReliableKind : uint8_t {
     // transferred save, which stores the render target as an image.
     // WindowStrokePayload.
     WindowStroke = 148,
+
+    // Client to host: my player pressed, hit or pried this base door. A client's copy of a door is
+    // render-only, so the client refuses the door's entry verb at the script-body gate --
+    // actionOptionIndex, addDamage, door_pryable_C::crowbarOpen -- and asks here; the host runs the
+    // same verb on its own copy, where the door's body decides the press (its power gate and the
+    // blackout clause, a swing already moving, the alienated branch) and the pry, and the result
+    // reaches every peer as DoorState. A damage the client's player did not author is refused at
+    // the client and never sent: the host's own world runs that event. Trust: the door must be one
+    // the host's door lane indexes and within the sender's reach, the verb and the damage are
+    // range-checked, and a sender's verbs run no faster than a bounded rate from a bounded queue.
+    // Never relayed. Late join: nothing to replay, since a verb the host has not run changed
+    // nothing and one it ran is in the door's state. DoorVerbIntentPayload.
+    DoorVerbIntent = 149,
 };
 
 #pragma pack(push, 1)
@@ -1377,6 +1385,22 @@ struct KeyedTogglePayload {
 static_assert(sizeof(KeyedTogglePayload) == 40, "KeyedTogglePayload must be 40 bytes");
 static_assert(sizeof(KeyedTogglePayload) <= 256 - 20 - 8,
               "KeyedTogglePayload must fit in one reliable datagram");
+
+// A door verb intent (DoorVerbIntent): the door by the door lane's key, which entry verb, and the
+// one argument of it a door's body reads. The press carries its action back as the client's own
+// verb had it; a hit's damage is the only addDamage argument any door body reads (door_C and
+// door_pryable_C), so the hit record, the impact and skipSetting are not carried.
+namespace door_verb { constexpr uint8_t kPress = 0; constexpr uint8_t kHit = 1; constexpr uint8_t kPry = 2; }
+struct DoorVerbIntentPayload {
+    WireKey  key;        // 32 -- the door lane's key for the door
+    uint8_t  verb;       // 1  -- door_verb::kPress (actionOptionIndex), kHit (addDamage), kPry (crowbarOpen)
+    uint8_t  action;     // 1  -- kPress: the press's action; zero otherwise
+    uint8_t  _pad[2];    // 2  -- zero
+    float    damage;     // 4  -- kHit: the hit's damage; zero otherwise
+};
+static_assert(sizeof(DoorVerbIntentPayload) == 40, "DoorVerbIntentPayload must be 40 bytes");
+static_assert(sizeof(DoorVerbIntentPayload) <= 256 - 20 - 8,
+              "DoorVerbIntentPayload must fit one datagram");
 
 // A device claim or release (DeviceClaim): the claim key, the holding slot (on a host reply the
 // winner) and busy. A losing claimant sees busy = 1 with another slot while still inside.

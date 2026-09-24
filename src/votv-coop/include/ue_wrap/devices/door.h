@@ -3,12 +3,16 @@
 // no network or coop state, which the interactable sync owns and drives through here. A door
 // is a trigger-base descendant: its open state is the inherited isOpened bool, its
 // cross-peer-stable identity the inherited Key name (assigned by the gamemode's key pass and
-// save-persistent), and its canonical entry points doorOpen and doorClose, each taking a
-// bypass flag. The pryable door inherits all of these unchanged, so resolving against door_C
-// covers both classes.
+// save-persistent), and its canonical state verbs doorOpen and doorClose, each taking a bypass
+// flag. A player reaches those through the door's entry verbs: the press, the hit and, on the
+// pryable door, the crowbar's pry. The pryable door inherits the rest unchanged, so resolving
+// against door_C covers both classes.
 
 #pragma once
 
+#include "ue_wrap/core/types.h"
+
+#include <cstdint>
 #include <string>
 
 namespace ue_wrap::door {
@@ -41,15 +45,24 @@ bool TryReadOpen(void* door, bool& open);
 // the host while the host's own lagged behind the poll waiting for the swing to complete.
 bool TryReadOpenIntent(void* door, bool& open);
 
-// True if a player's manual press would open or toggle this door right now, per the door's
-// own logic: the press path gates on the door's power flag before toggling, and the toggle
-// itself needs the door neither jammed nor super-closed, so the answer is the power flag and
-// not jammed and not super-closed. This replaced a check that read the keypad's accept flag,
-// which is a crosshair-hover flag rather than accept state, so a powered door read as locked
-// and the host denied the client's open. Reads struct fields only, no dispatch; cheap, once
-// per open request. Game thread. True (fail open) if the door is null or the offsets are
-// unresolved, so a resolution failure never silently locks every door.
-bool CanOpen(void* door);
+// The door's own entry verbs, the ones a player's press, a melee hit and a crowbar's pry run.
+// The host runs them on its copy for a client (coop/interactables/door_verb_intent), so the
+// door's own body decides the whole press or hit once, on the authority. Each dispatches the
+// instance's own override. False on a null door, an unresolved UFunction or a failed dispatch.
+// Game thread.
+//
+// actionOptionIndex(player, hit, action, lookAtComponent), the press: the door's body reads none
+// of its parameters (it goes to the power gate and its blackout clause, the moving check, the
+// alienated branch and the toggle), so `player` is passed as the presser and the rest stay empty.
+bool CallPress(void* door, void* player, uint8_t action);
+// The one action a door offers a player (door_C::getActionOptions answers [4]): a press's `action`.
+constexpr uint8_t kUseAction = 4;
+// addDamage(actor, damage, hit, impact, skipSetting), a hit: the body reads only `damage`, which
+// moves both panels toward open, and past the pry threshold the door opens.
+bool CallHit(void* door, void* instigator, float damage);
+// door_pryable_C::crowbarOpen(pryingCrowbar), a crowbar's pry: a hit of 100 on itself. False on a
+// door that is not pryable.
+bool CallCrowbarOpen(void* door);
 
 // The canonical open and close. `bypass` is the blueprint's bypass-check parameter (skip the
 // keycard, password and jam guards), always true on the receiver, since the sender already
@@ -66,25 +79,25 @@ void SetActive(void* door, bool on);
 
 // The actors the door's own sensor holds now: sensorOverlaps, which the sensor's begin- and
 // end-overlap handlers fill with every Pawn and prop that enters and leaves it; the autoclose
-// reads its length and closes the door 5 s after it empties. Copies up to `maxOut` pointers into
+// reads its length every five seconds and closes the door at the first reading that finds it
+// empty. Copies up to `maxOut` pointers into
 // `out` and returns the array's length, or -1 when the field did not resolve by name, the door is
 // null, or the array's header does not read as one. A field read, no dispatch. Game thread.
 int ReadSensorOverlaps(void* door, void** out, int maxOut);
 
-// Read the door's power flag. True on null or unresolved, failing open like the gate. Callers
-// save the flag before a temporary clear so the restore puts back the real value: a locked
-// door's false must survive the press dispatch, since restoring a hard-coded true silently
-// unlocked locked doors on the client.
-bool GetActive(void* door);
+// Where that sensor is: the box component's world centre and its scaled half-extent, through the
+// box's own GetScaledBoxExtent. The sensor is not the doorway: a player can stand in an open
+// doorway outside it, and the autoclose then closes the door on them as it does in single player.
+// False when the component or the call does not resolve. Game thread.
+bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 
-// The host-authoritative client suppression. A door's open state is re-driven every tick by
-// its local sensor and autoclose logic (an empty sensor with autoclose closes the door). On a
-// client this fights the host's authoritative state: the host's real player holds a door open,
-// the client's door, whose sensor the host's puppet does not trigger, autocloses, and the two
-// oscillate forever. The MTA single-syncer fix, the non-authority disabling its local
-// simulation, makes client doors render-only: the suppression writes autoclose off so the
-// client door cannot auto-revert an applied host state, and the original value is cached so
-// the restore can put it back at disconnect. Idempotent per door. Game thread.
+// The host-authoritative client suppression. A door re-drives its own state: when a swing ends
+// open it checks its sensor every five seconds and closes at the first check that finds the
+// sensor empty. On a client that is a second authority beside the host's, closing on its own
+// clock a door the host keeps open, so the MTA single-syncer shape applies: the non-authority
+// disables its local simulation and its doors are render-only. The suppression writes autoclose
+// off, the flag the check reads before it arms, and caches the original so the restore puts it
+// back at disconnect. Idempotent per door. Game thread.
 void SuppressClientAutonomy(void* door);
 void RestoreClientAutonomy(void* door);
 
@@ -111,21 +124,5 @@ void SmartApply(void* door, bool open);
 // state is still correct. A cheap no-op with nothing mid-apply. Once per pump tick. Game
 // thread.
 void TickSmartApply();
-
-// The host-side held-door suppression, the cycle's deeper half: when a client opens a door
-// the host opens its copy too, but the host has no local player at that door, only the
-// client's puppet, which does not hold the host's sensor. The host's native sensor check then
-// finds an empty sensor with autoclose and closes the door it just opened, broadcasts the
-// close, the client re-requests the open, and the door cycles about once a second; the close
-// arrives through the sensor check, so disabling the sensor is the load-bearing lever and
-// autoclose alone is not enough. The fix, again the single-syncer shape, makes the host treat
-// a door a remote client holds open as render-only too, the same recipe as the client:
-// autoclose off and the sensor's overlap events off. The suppression runs once per door when
-// the host applies a remote open, lazily, never per tick or in bulk; the release restores the
-// authored autoclose, re-enables the sensor and closes the door (the client released its
-// hold), so native autonomy resumes. Cached in a host-side map distinct from the client one.
-// Game thread.
-void SuppressHostHeldDoor(void* door);
-void ReleaseHostHeldDoor(void* door);
 
 }  // namespace ue_wrap::door

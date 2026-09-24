@@ -16,8 +16,8 @@
 #include "coop/creatures/kerfur_command.h"
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
+#include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
-#include "coop/interactables/interactable_sync.h"
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/props/pack_trash_intent.h"  // CLIENT->HOST bagging of a pile or clump
@@ -124,36 +124,45 @@ bool HandleIntentEvent(net::Session& session,
         coop::order_sync::OnReliableRefused(msg.payload, static_cast<int>(msg.payloadLen));
         break;
     }
-    case net::ReliableKind::DoorOpenRequest: {
-        // Client->host door open/close REQUEST. Doors are HOST-
-        // authoritative; only the host honors this. The host applies it (real lock/
-        // jam guards) and its poll broadcasts the authoritative DoorState back to all.
+    case net::ReliableKind::DoorVerbIntent: {
+        // CLIENT->HOST: a client pressed, hit or pried a base door, and the host runs the same entry
+        // verb on its own copy. The door's resolve, the reach and the rate live in the module; the
+        // format lives here. coop::door_verb_intent::OnDoorVerbIntent.
         if (session.role() != net::Role::Host) {
-            UE_LOGW("event_feed: DoorOpenRequest received on a client -- dropping");
+            UE_LOGW("event_feed: DoorVerbIntent received on a client -- dropping");
             break;
         }
-        if (msg.payloadLen < sizeof(net::KeyedTogglePayload)) {
-            UE_LOGW("event_feed: DoorOpenRequest payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedTogglePayload));
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: DoorVerbIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
             break;
         }
-        net::KeyedTogglePayload p{};
+        if (msg.payloadLen < sizeof(net::DoorVerbIntentPayload)) {
+            UE_LOGW("event_feed: DoorVerbIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DoorVerbIntentPayload));
+            break;
+        }
+        net::DoorVerbIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        if (p.action != 0 && p.action != 1) {
-            UE_LOGW("event_feed: DoorOpenRequest action=%u out of range -- dropping",
-                    static_cast<unsigned>(p.action));
+        // The trust boundary: one of the three verbs, and a damage a door's body can take -- finite
+        // and not negative, since it becomes the panels' interpolation speed.
+        if (p.verb > net::door_verb::kPry) {
+            UE_LOGW("event_feed: DoorVerbIntent verb=%u out of range -- dropping",
+                    static_cast<unsigned>(p.verb));
             break;
         }
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
-        coop::interactable_sync::OnDoorOpenRequest(p, senderSlot);
+        if (!std::isfinite(p.damage) || p.damage < 0.f) {
+            UE_LOGW("event_feed: DoorVerbIntent damage=%f unusable -- dropping",
+                    static_cast<double>(p.damage));
+            break;
+        }
+        coop::door_verb_intent::OnDoorVerbIntent(session, p,
+                                                 static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::KerfurConvertRequest: {
-        // client->host kerfur on/off conversion request. Host-authoritative (the DoorOpenRequest
-        // shape); the handler validates the element + class + the BP kill-guard, runs the real
+        // client->host kerfur on/off conversion request. Host-authoritative (the client asks and
+        // the host runs the verb); the handler validates the element + class + the BP kill-guard, runs the real
         // verb, and converges the BP-internal spawn/destroy side effects onto the wire
         // (coop::kerfur_convert).
         if (session.role() != net::Role::Host) {
@@ -257,7 +266,8 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::GrabIntent: {
-        // CLIENT->HOST chipPile grab REQUEST. Host-authoritative (the DoorOpenRequest shape).
+        // CLIENT->HOST chipPile grab REQUEST. Host-authoritative (the client asks and the host runs
+        // the verb).
         // The host validates the eid is a tracked PILED pile and that the sender is not already
         // holding one, executes playerGrabbed on puppet-N, and broadcasts the authoritative
         // PropConvert{kToClump}. coop::trash_channel::OnGrabIntent.

@@ -129,6 +129,7 @@
 #include "coop/props/trash_collect_sync.h"
 #include "coop/items/broom_stroke.h"
 #include "coop/props/pack_trash_intent.h"
+#include "coop/interactables/door_verb_intent.h"
 #include "coop/interactables/drone_call_intent.h"
 #include "coop/items/broom_push.h"
 #include "coop/props/trash_pile_sync.h"
@@ -261,6 +262,7 @@ void Install(coop::net::Session& session) {
     coop::broom_stroke::Install(&session);  // a client's broom stroke is run by the host, with what the client's stroke read
     coop::pack_trash_intent::Install(&session);  // a client's bagging of a pile is run by the host
     coop::drone_call_intent::Install(&session);  // a client's press of the drone console is run by the host
+    coop::door_verb_intent::Install(&session);  // a client's press, hit or pry of a base door is run by the host
     coop::broom_push::Install(&session);  // a host's broom push streams what it moves
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
     coop::garbage_sync::SetSession(&session);
@@ -431,6 +433,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::broom_stroke::OnPeerLeft(static_cast<uint8_t>(slot));  // the leaver's stroke rate goes with it
     coop::pack_trash_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and so does its pack queue
     coop::drone_call_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and its console presses
+    coop::door_verb_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and its door verbs
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -565,6 +568,7 @@ DisconnectStats DisconnectAll() {
     coop::broom_stroke::OnDisconnect();  // with no session the game's broom sweeps as written
     coop::pack_trash_intent::OnDisconnect();  // with no session the game's own bagging stands
     coop::drone_call_intent::OnDisconnect();  // and its own console button stands
+    coop::door_verb_intent::OnDisconnect();  // and a door's own verbs run where they are used
     coop::broom_push::OnDisconnect();  // forget pushes not yet handed on
     coop::trash_collect_sync::OnDisconnect();
     coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
@@ -718,6 +722,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_stroke::Tick(session); }  // HOST: run the clients' queued broom strokes, one a tick a client (last: what a stroke spawns, sweeps and pushes is picked up next tick, as for the host's own)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pack_trash"}; coop::pack_trash_intent::Tick(session); }  // client: spend the tools its presses sent; HOST: run one queued pack a tick a client
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone_call"}; coop::drone_call_intent::Tick(session); }  // HOST: run one queued drone-console press a tick a client
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:door_verb"}; coop::door_verb_intent::Tick(session); }  // HOST: run one queued door verb a tick a client
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)

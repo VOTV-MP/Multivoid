@@ -4,7 +4,6 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
-#include "coop/interactables/interactable_sync.h"  // the press, sent as a player's is
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
@@ -43,12 +42,24 @@ constexpr float kApproachCm  = 90.f;    // in front of or behind the leaf: a clo
 constexpr float kRouteEndCm  = 100.f;   // a route that ends farther from its point never gets there
 constexpr int   kCandidates  = 12;      // the nearest doors by straight distance; each costs two routes
 constexpr float kAwayCm      = 1500.f;  // the walk away: this far back along the route, out of any sensor
-constexpr float kDoorwayCm   = 40.f;    // in the doorway: the sensor covers the opening, not its approach
+constexpr float kInSensorCm  = 30.f;    // at the sensor box's centre: where the autoclose counts a player
 constexpr int   kOpenWaitMs  = 5000;    // the host's answer and the swing's start; a door that has not
                                         // started opening by then was refused
-// The stay in the doorway, and the wait after walking away: each longer than the door's own
-// five-second autoclose delay, so the reading covers what the game does with the sensor.
+// The stay in the doorway: longer than the door's own five-second sensor check, so the reading
+// covers what the game does with the sensor while a player stands in it.
 constexpr DWORD kDwellMs     = 8000;
+// After the walk away the host's door closes at its first five-second check that finds the sensor
+// empty, then this copy follows its broadcast. Three checks' worth is the bound: a door still open
+// by then was not closed by its autoclose.
+constexpr int   kCloseWaitMs = 15000;
+// The HIT phase: a held weapon's damage, a hit a player's swing apart, until the host's pry opens
+// the door or the hits run out. A hit moves the leaves toward open at an interpolation speed of
+// (damage / 25)^1.5 * 5 over a 0.01 s step, and the door opens once the right leaf is more than 90
+// from its open offset of 70 (door_C::addDamage, tools/bp_cpp.py): a fist's 10 needs about 27 hits,
+// 50 needs three.
+constexpr float kHitDamage   = 50.f;
+constexpr int   kHitMax      = 8;
+constexpr DWORD kHitEveryMs  = 700;
 constexpr int   kReadMax     = 16;
 
 const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
@@ -203,6 +214,26 @@ float DistToGoal(const ue_wrap::FVector& target) {
     return *dist;
 }
 
+// This copy's intent: open or opening. -1 when the read failed.
+int ReadOpenIntent(void* door) {
+    auto open = std::make_shared<int>(-1);
+    RunGT([door, open](std::atomic<int>& done) {
+        bool o = false;
+        if (D::TryReadOpenIntent(door, o)) *open = o ? 1 : 0;
+        done.store(1);
+    });
+    return *open;
+}
+
+// Waits until this copy reads `want`, up to `boundMs`; the milliseconds it took, or -1 at the bound.
+int WaitForOpen(void* door, int want, int boundMs) {
+    for (int waited = 0; waited <= boundMs; waited += 100) {
+        if (ReadOpenIntent(door) == want) return waited;
+        ::Sleep(100);
+    }
+    return -1;
+}
+
 // The point this far back along the route from its end, out of the door's sensor on the ground the
 // route already walked; the start when the route is shorter.
 ue_wrap::FVector PointBackAlong(const std::vector<ue_wrap::FVector>& route, float backCm) {
@@ -239,7 +270,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     });
     if (picked != 1) {
         UE_LOGW("[DOOR-DRILL] client: no door this navmesh reaches from here -- INCONCLUSIVE");
-        UE_LOGI("[DOOR-DRILL] client DONE at=0 opened=0 inside=0 away=0");
+        UE_LOGI("[DOOR-DRILL] client DONE at=0 opened=0 inside=0 away=0 closedMs=-1 hitOpenedAt=-1");
         return 0;
     }
     UE_LOGI("[DOOR-DRILL] client walks to door=%ls at (%.0f,%.0f,%.0f), a %.0fcm route, %d s budget",
@@ -251,32 +282,48 @@ DWORD WINAPI WalkerThread(LPVOID) {
     UE_LOGI("[DOOR-DRILL] client AT the approach of door=%ls: reached=%d, %.0fcm off", pick->door.c_str(),
             at ? 1 : 0, DistToGoal(toDoor->targetPos));
 
-    // Into the doorway the way a player goes: press, wait until this copy opens, step in. The sensor
-    // covers the opening itself, so a player is inside it only while passing an open door (measured:
-    // standing 90 cm before the closed leaf, this peer's own sensor never held its own player).
+    // PRESS, then PRESENCE: wait until this copy opens, then stand in the door's sensor, the box its
+    // autoclose counts players in. The box is not the doorway -- a player in the middle of an open
+    // doorway can be outside it -- so the stand is at the box's centre, read from this copy. The press
+    // is the door's own verb, dispatched here as a player's E dispatches it, so the script gate is
+    // what turns it into the host's.
     void* const door = toDoor->targetActor;
-    const int pressed = RunGT([door](std::atomic<int>& done) {
-        done.store(coop::interactable_sync::RequestDoorPressAsClient(door) ? 1 : 2);
+    struct Box { bool ok = false; ue_wrap::FVector centre{}, half{}, origin{}, fwd{}; };
+    auto box = std::make_shared<Box>();
+    RunGT([door, box](std::atomic<int>& done) {
+        box->ok = D::ReadSensorBox(door, box->centre, box->half) && E::TryGetActorLocation(door, box->origin);
+        box->fwd = E::GetActorForwardVector(door);
+        done.store(1);
     });
-    bool opened = false;
-    for (int waited = 0; pressed == 1 && waited < kOpenWaitMs; waited += 100) {
-        auto open = std::make_shared<bool>(false);
-        RunGT([door, open](std::atomic<int>& done) { D::TryReadOpenIntent(door, *open); done.store(1); });
-        if (*open) { opened = true; break; }
-        ::Sleep(100);
+    if (box->ok) {
+        const float dx = box->centre.X - box->origin.X, dy = box->centre.Y - box->origin.Y;
+        UE_LOGI("[DOOR-DRILL] client SENSOR of door=%ls: centre %.0fcm along the door's forward and %.0fcm "
+                "across, half-extent (%.0f,%.0f,%.0f); the approach point is %.0fcm along", pick->door.c_str(),
+                dx * box->fwd.X + dy * box->fwd.Y, dx * -box->fwd.Y + dy * box->fwd.X, box->half.X,
+                box->half.Y, box->half.Z, (toDoor->targetPos.X - box->origin.X) * box->fwd.X +
+                (toDoor->targetPos.Y - box->origin.Y) * box->fwd.Y);
+    } else {
+        UE_LOGW("[DOOR-DRILL] client SENSOR of door=%ls did not read -- PRESENCE stands at the door's origin",
+                pick->door.c_str());
     }
-    UE_LOGI("[DOOR-DRILL] client pressed door=%ls: request sent=%d, this copy opening=%d", pick->door.c_str(),
-            pressed == 1 ? 1 : 0, opened ? 1 : 0);
-    auto origin = std::make_shared<ue_wrap::FVector>();
-    RunGT([door, origin](std::atomic<int>& done) { E::TryGetActorLocation(door, *origin); done.store(1); });
+    const int openBefore = ReadOpenIntent(door);
+    const int pressed = RunGT([door](std::atomic<int>& done) {
+        void* p = coop::players::Registry::Get().Local();
+        done.store(p && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
+    });
+    const int openedMs = pressed == 1 ? WaitForOpen(door, 1, kOpenWaitMs) : -1;
+    const bool opened = openedMs >= 0;
+    UE_LOGI("[DOOR-DRILL] client PRESS door=%ls: open before=%d, dispatched=%d, this copy opening=%d "
+            "after %d ms", pick->door.c_str(), openBefore, pressed == 1 ? 1 : 0, opened ? 1 : 0, openedMs);
     auto inDoor = std::make_shared<DR::DirectorGoal>();
-    inDoor->targetPos = *origin;
-    inDoor->reachCm = kDoorwayCm;
+    inDoor->targetPos = box->ok ? ue_wrap::FVector{box->centre.X, box->centre.Y, box->origin.Z} : box->origin;
+    inDoor->reachCm = kInSensorCm;
+    inDoor->straight = true;  // a step in plain view, before the door's own five seconds run out
     DR::ControlManager inMgr;
     DR::AddWalkToProcesses(inMgr, *inDoor);
     const bool inside = opened && inMgr.Run(*inDoor, WalkSeconds(kAwayCm)) && inDoor->reached;
-    UE_LOGI("[DOOR-DRILL] client IN the doorway of door=%ls: reached=%d, %.0fcm from its origin; staying %lu ms",
-            pick->door.c_str(), inside ? 1 : 0, DistToGoal(*origin), kDwellMs);
+    UE_LOGI("[DOOR-DRILL] client IN the sensor of door=%ls: reached=%d, %.0fcm from its centre; staying %lu ms",
+            pick->door.c_str(), inside ? 1 : 0, DistToGoal(inDoor->targetPos), kDwellMs);
     ::Sleep(kDwellMs);
 
     auto back = std::make_shared<DR::DirectorGoal>();
@@ -285,11 +332,36 @@ DWORD WINAPI WalkerThread(LPVOID) {
     DR::ControlManager backMgr;
     DR::AddWalkToProcesses(backMgr, *back);
     const bool away = backMgr.Run(*back, WalkSeconds(kAwayCm)) && back->reached;
-    UE_LOGI("[DOOR-DRILL] client AWAY from door=%ls: reached=%d, %.0fcm from the door; waiting %lu ms",
-            pick->door.c_str(), away ? 1 : 0, DistToGoal(toDoor->targetPos), kDwellMs);
-    ::Sleep(kDwellMs);
-    UE_LOGI("[DOOR-DRILL] client DONE at=%d opened=%d inside=%d away=%d", at ? 1 : 0, opened ? 1 : 0,
-            inside ? 1 : 0, away ? 1 : 0);
+    UE_LOGI("[DOOR-DRILL] client AWAY from door=%ls: reached=%d, %.0fcm from the door", pick->door.c_str(),
+            away ? 1 : 0, DistToGoal(toDoor->targetPos));
+    // CLOSE: 0 ms means the copy had already closed by the time the walk ended.
+    const int closedMs = WaitForOpen(door, 0, kCloseWaitMs);
+    UE_LOGI("[DOOR-DRILL] client CLOSE door=%ls: this copy closed=%d, %d ms after the walk away ended",
+            pick->door.c_str(), closedMs >= 0 ? 1 : 0, closedMs);
+
+    // HIT: back at the approach point, a fist's hits until the host's pry opens the door. This copy
+    // must not move under its own hits: each one is refused here and run on the host.
+    auto again = std::make_shared<DR::DirectorGoal>();
+    again->targetPos = toDoor->targetPos;
+    again->reachCm = kReachCm;
+    DR::ControlManager againMgr;
+    DR::AddWalkToProcesses(againMgr, *again);
+    const bool back2 = againMgr.Run(*again, WalkSeconds(kAwayCm)) && again->reached;
+    int hitOpenedAt = -1;
+    if (back2 && closedMs >= 0) {
+        for (int hit = 1; hit <= kHitMax && hitOpenedAt < 0; ++hit) {
+            RunGT([door](std::atomic<int>& done) {
+                void* p = coop::players::Registry::Get().Local();
+                done.store(p && D::CallHit(door, p, kHitDamage) ? 1 : 2);
+            });
+            if (WaitForOpen(door, 1, static_cast<int>(kHitEveryMs)) >= 0) hitOpenedAt = hit;
+        }
+    }
+    UE_LOGI("[DOOR-DRILL] client HIT door=%ls: back at the approach=%d, this copy opened at hit %d "
+            "(damage %.0f each, %d at most)", pick->door.c_str(), back2 ? 1 : 0, hitOpenedAt,
+            kHitDamage, kHitMax);
+    UE_LOGI("[DOOR-DRILL] client DONE at=%d opened=%d inside=%d away=%d closedMs=%d hitOpenedAt=%d",
+            at ? 1 : 0, opened ? 1 : 0, inside ? 1 : 0, away ? 1 : 0, closedMs, hitOpenedAt);
     return 0;
 }
 

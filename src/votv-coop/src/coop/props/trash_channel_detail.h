@@ -5,7 +5,7 @@
 // Sibling-internal header (the prop_element_tracker_detail.h precedent) -- NOT
 // part of the public coop/ include surface; only the two TUs above include it.
 //
-// The HELD_BY registry (eid -> holder peer slot, the door holdOpen_ analog) is
+// The HELD_BY registry (eid -> holder peer slot) is
 // OWNED by trash_grab_intent.cpp; the core never touches the map directly --
 // TickCarry / the birth prune / the takeover / OnDisconnect go through these ops.
 // All game-thread-only, like every trash_channel entry point.

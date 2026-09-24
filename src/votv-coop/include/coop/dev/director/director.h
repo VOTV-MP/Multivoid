@@ -50,6 +50,9 @@ struct DirectorGoal {
     float             reachCm     = 170.f;    // the interaction verb's OWN reach, not a nav constant
     bool              grabbed     = false;    // set by GrabProcess on success -> terminates the run
     bool              reached     = false;    // set by ReachProcess (walk-to, no grab) -> terminates the run
+    // Walk the straight line instead of a NavMesh route: a target in plain view through an opening
+    // the baked NavMesh does not know is open, as a door's doorway once the door has swung open.
+    bool              straight    = false;
     bool              failed      = false;    // set by any process on a hard failure
     const char*       failReason  = "";
 };

@@ -19,11 +19,12 @@ an instance that has not streamed in yet, echo suppression, and the connect snap
 family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines each: doors, light
 switches, light groups, container lids, the garage, the appliances, the lockers.
 
-The verbs are Blueprint-internal, so no observer can see a press; every peer polls each indexed
-instance's state field once a tick, which catches every writer at once (a press, an NPC's
-proximity, a keypad unlock, a script). On a change it broadcasts the new state with the
-instance's key, the host relays a client's edge to the other clients, and a receiver resolves the
-instance by key and applies idempotently, moving its own poll baseline so nothing echoes.
+The owner polls each indexed instance's state field once a tick -- every peer on a symmetric
+channel, the host alone on a host-authoritative one -- which catches every writer at once (a press,
+an NPC's proximity, a keypad unlock, a script) without watching each. On a change it broadcasts the
+new state with the instance's key, the host relays a client's symmetric edge to the other clients,
+and a receiver resolves the instance by key and applies it, moving its own poll baseline so
+nothing echoes.
 
 The key is the game's own for the save-persisted instances and a portable identity computed
 by both peers for the rest (`coop/element/portable_identity`): the game mints a random key per
@@ -32,11 +33,14 @@ component name and a level-baked actor by its object name. Before that, half the
 and containers in a world were addressable only by the peer that loaded them.
 
 Two modes. A device that reverts on its own, a door that auto-closes or a light group the game
-re-derives, is host-authoritative: a client sends an open request, the host applies it under the
-real lock and jam guards and its poll broadcasts the authoritative state back, and a hold register
-keeps a door open while any peer holds it and closes it when the last holder leaves. A device
-with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any peer's edge is
-the state.
+re-derives, is host-authoritative: the host's copy is the one that moves, and a client renders it.
+A client's own press, hit or pry of a door never runs on its copy: the script-body gate refuses the
+door's entry verb there and sends it to the host (`coop/interactables/door_verb_intent`), which
+runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
+the blackout clause, a swing already moving, the pry. The host's door then closes as a
+single-player door does, at the first of its five-second sensor checks that finds the doorway
+empty: the sensor holds every player in it, a client's puppet included. A device with no
+auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any peer's edge is the state.
 
 ### What is inside a container
 
@@ -96,7 +100,7 @@ edge, an accept or a deny (`coop/interactables/keypad_sync`). A receiver replays
 delta through the keypad's own input function (display, beep, auto-submit at five digits) and,
 on an accept or deny, runs the keypad's own open chain: the sound, the LED, the buffer clear and
 the lock propagation to its pair and its gated door. An accept unlocks a door; opening it is an
-ordinary press on the door channel.
+ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
@@ -279,7 +283,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 
 | State | Owner | Shape |
 |---|---|---|
-| a door, a light group | the host | a client sends a request; the host's poll answers; a hold register |
+| a door, a light group | the host | the host's poll answers; a client's own door verb is an intent the host runs |
 | a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
 | a keypad's buffer and its accept | the presser | the input mirrored; the native chain replayed |
 | the turbine | the host | six floats a second |
@@ -295,7 +299,9 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 
 | Kind | Direction | Carries |
 |---|---|---|
-| `DoorState`, `DoorOpenRequest`, `LightState`, `LightGroupState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed; the request to the host | a key and a state |
+| `DoorState`, `LightGroupState` | the host to all | a key and a state |
+| `LightState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed | a key and a state |
+| `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
 | `KeypadState` | each peer, relayed | the buffer, the active flag, an accept or deny event |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
@@ -341,7 +347,7 @@ an error line.
 
 | Concept | Files |
 |---|---|
-| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
+| the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone` |

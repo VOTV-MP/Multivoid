@@ -10,13 +10,16 @@
 //
 // Gameplay/network layer (principle 7): it owns the wire protocol, the sender polls, the receiver
 // apply, the per-channel key index, the deferred-apply retry and the connect snapshot, and reaches
-// the engine only through ue_wrap. The model is SYMMETRIC: each peer POLLS every indexed instance
-// once per tick and broadcasts a delta under its cross-peer-stable key. Polling, not a UFunction
-// observer, because the verbs are BP-internal and a poll catches EVERY writer.
+// the engine only through ue_wrap. A channel's sender POLLS every indexed instance once per tick and
+// broadcasts a delta under its cross-peer-stable key; a poll catches every writer without watching
+// each. Symmetric channels poll on every peer. The two host-authoritative ones, doors and light
+// groups, poll on the host alone, and a client renders them: its own player's use of a door reaches
+// the host as a door verb intent (coop/interactables/door_verb_intent).
 
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -30,29 +33,18 @@ namespace coop::interactable_sync {
 // session pointer (tracks reconnects). Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a DoorState / LightState / ContainerState packet arrived. Resolves the live
-// instance by Key -- a self-healing index, deferred and retried when the instance has not streamed
-// in yet -- and applies idempotently, updating the poll baseline so the apply never echoes. On the
-// host this also RELAYS a client-originated edge to the other clients.
+// Receiver entry: a keyed state packet arrived. Resolves the live instance by key -- a
+// self-healing index, deferred and retried when the instance has not streamed in yet -- and
+// applies it, updating the poll baseline so the apply never echoes. The host's relay of a client's
+// symmetric edge happens in the session, before this runs.
 void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
 
-// HOST receiver entry for a client's DoorOpenRequest (doors are host-authoritative).
-// The host applies the requested open/close honoring the real lock/jam guards; its poll
-// then broadcasts the authoritative DoorState back. Trust-gated on senderPeerSlot != 0
-// (a client). Called from event_feed's reliable drain loop.
-void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
+// The door lane's key for `door`, or "" when the lane does not index it in the current world: the
+// name a door verb intent carries. Game thread.
+std::wstring DoorKey(void* door);
 
-// A connected client's press on `door`, sent exactly as the E-press observer sends one: a toggle
-// request the host resolves against its hold record. False when this peer is not a connected
-// client, or when the door lane does not index the door. For a dev driver that must press like a
-// player -- the bot director, whose direct open would move this client's copy alone. Game thread.
-bool RequestDoorPressAsClient(void* door);
-
-// HOST-only: a single peer disconnected -- drop its hold on every door it was keeping
-// open (doors still held by OTHER peers stay open; a door whose last holder just left
-// closes). Robust per-peer cleanup for N-peer sessions, distinct from OnDisconnect's
-// all-peers-gone full clear. Called from event_feed's per-slot disconnect edge. Game thread.
-void OnPeerLeft(int peerSlot);
+// The live door the door lane indexes under `key` in the current world, or null. Game thread.
+void* ResolveDoor(const std::wstring& key);
 
 // HOST-only: snapshot the FULL current state (open AND closed / on AND off) of
 // every indexed instance (all channels) to a freshly connected client `peerSlot`.

@@ -1,7 +1,7 @@
 // coop/interactables/interactable_channel.h -- the keyed-interactable replication engine shared by
 // every keyed channel (doors, lights, light groups, containers, the garage, appliances, door
 // boxes): the key-to-actor index fed by the shared scan hub, per-key dedup, deferred apply with a
-// throttled retry, echo suppression, the connect snapshot and the hold register for doors. A
+// throttled retry, echo suppression and the connect snapshot. A
 // feature is an Adapter (a vtable over its ue_wrap wrapper) plus a Channel instance in
 // interactable_sync.cpp, this header's one includer. Nothing per-class lives here.
 
@@ -52,10 +52,6 @@ inline constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
 // lab), so kPendingTTL is the outer backstop against a map leak, and it logs a different line.
 inline constexpr auto kPendingTTL = std::chrono::minutes(10);
 inline constexpr int  kSettlePassesForExpiry = 5;
-// After a commanded close the door animates and isOpened flips about 0.5 s later; the poll skips
-// the door for this window so the transient is not re-broadcast, then resumes on the settled
-// state.
-inline constexpr auto kDoorSettleBridge = std::chrono::milliseconds(1500);
 
 inline bool ProbeLog() {
     static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::interactable_log);
@@ -74,14 +70,6 @@ struct Adapter {
     // HostAuth channels only; null for symmetric ones.
     void (*SuppressAutonomy)(void* actor);     // CLIENT: mute local auto-revert so applied state sticks
     void (*RestoreAutonomy)(void* actor);      // restore authored autonomy at disconnect
-    bool (*RequestApply)(void* actor, bool on);// HOST applies a client REQUEST honoring real guards (no bypass)
-    void (*SuppressHeld)(void* actor);         // HOST: mute its OWN autoclose while a client holds this door open
-    void (*ReleaseHeld)(void* actor);          // HOST: restore autoclose + close when the client releases the hold
-    bool (*CanOpen)(void* actor);              // true if an E-press would open it now; null = always
-    // Two facets the authority direction does not imply. The poll skips every key in the hold
-    // register, so a HostAuth feature without holds leaves holdRegister off, or its first client
-    // request would silently stop it being polled. Doors set both.
-    bool holdRegister;                         // client requests are holds (doors); off = a request is an apply
     void (*TickApply)();                       // per-tick completion of an async apply (doors); null = none
 };
 
@@ -89,9 +77,10 @@ struct Adapter {
 class Channel {
 public:
     // Symmetric: every peer is authoritative over the changes it causes (no local auto-revert, so
-    // no fight). HostAuth: only the host broadcasts state; the client renders it with autonomy
-    // suppressed and sends its own interactions to the host as requests (a door's sensor and
-    // autoclose re-drive the state each tick, so a symmetric poll would oscillate).
+    // no fight). HostAuth: only the host broadcasts state, and the client renders it with autonomy
+    // suppressed (a door's autoclose re-drives its state, so a symmetric poll would oscillate). A
+    // client's own use of a HostAuth device reaches the host outside the channel: a door's as a
+    // door verb intent (coop/interactables/door_verb_intent), a switch's through the light lane.
     enum class Mode { Symmetric, HostAuth };
 
     explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {}
@@ -115,10 +104,9 @@ public:
         std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = val;
     }
 
-    // The sender: polls every indexed instance for a state change and broadcasts deltas. Polling
-    // catches every writer of the state (E-press, NPC auto-open, keypad unlock, scripts), where a
-    // ProcessEvent observer misses BP-internal calls (doorOpen, SetActive and Open dispatch through
-    // ProcessInternal). The first sighting of a key primes the baseline silently, since initial
+    // The sender: polls every indexed instance for a state change and broadcasts deltas. The poll
+    // catches every writer of the state (a press, an NPC's open, a keypad unlock, a script) without
+    // watching each one. The first sighting of a key primes the baseline silently, since initial
     // divergence is the connect snapshot's job; ApplyResolved primes lastKnown_ to the applied
     // value, so an echo never shows as a delta. Game thread.
     void PollAndBroadcast() {
@@ -131,8 +119,8 @@ public:
         if (!s || !s->connected()) return;
         // A HostAuth client never poll-broadcasts: its door is render-only, its isOpened moves only
         // when a host state is applied, and a client poll would report the host's own commands back
-        // as requests, the feedback storm that oscillated doors. The non-authority sends input
-        // edges only, the E-press observer's DoorOpenRequest.
+        // as its own, the feedback storm that oscillated doors. The non-authority sends its player's
+        // verbs only (coop/interactables/door_verb_intent).
         if (mode_ == Mode::HostAuth && s->role() != coop::net::Role::Host) return;
         // The index refs are snapshotted so indexMutex_ is not held across ReadState and Send; the
         // buffer is a member (game-thread serial) so the per-tick path does not allocate.
@@ -146,21 +134,8 @@ public:
         }
         for (auto& r : refs) {
             if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
-            // A door under a client hold is not polled: its state is the hold's, not the engine's
-            // async isOpened.
-            if (!holdOpen_.empty() && holdOpen_.count(r.first)) continue;
             bool cur = false;
             if (!a_.ReadState(r.second.actor, cur)) continue;
-            // A settling door (a commanded close, still animating) is skipped until the bridge
-            // expires; then the poll broadcasts whatever it settled to, so a re-open inside the
-            // window still propagates.
-            if (!settling_.empty()) {
-                auto sit = settling_.find(r.first);
-                if (sit != settling_.end()) {
-                    if (std::chrono::steady_clock::now() < sit->second) continue;  // still bridging -- skip
-                    settling_.erase(sit);                                          // expired -> resume normal poll
-                }
-            }
             {
                 std::lock_guard<std::mutex> lk(stateMutex_);
                 auto it = lastKnown_.find(r.first);
@@ -207,127 +182,6 @@ public:
         if (ProbeLog())
             UE_LOGI("%s: '%ls' not present yet -- deferring %s (slot %u)",
                     a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
-    }
-
-    // Host only: a client asked to toggle this door. The host opens its copy for a client, but no
-    // host player stands at that door (the puppet does not hold the sensor), so the host's own
-    // checkSensor would autoclose it, broadcast OFF, and the client would re-request: a 1 Hz fight.
-    // Hence a per-door hold register: on a client open the host opens the door under its real
-    // guards, mutes its own autoclose for that door and records the holding slot; on the client's
-    // close or disconnect the hold clears, autoclose returns and the door closes once. One
-    // authority edge per state change.
-    void OnRequest(const coop::net::KeyedTogglePayload& p, unsigned senderSlot) {
-        if (mode_ != Mode::HostAuth || !a_.RequestApply) return;
-        auto* s = session_.load(std::memory_order_acquire);
-        if (!s || s->role() != coop::net::Role::Host) return;  // host applies requests
-        std::wstring key = StringFromWireKey(p.key);
-        if (key.empty() || !a_.EnsureResolved()) return;
-        void* actor = ResolveFast(key);
-        if (!actor) return;  // the door must exist host-side (it is authoritative there)
-        // No hold register: the request is the host performing the action under its own guards, and
-        // the result goes out on the next poll.
-        if (!a_.holdRegister) {
-            if (a_.CanOpen && p.action && !a_.CanOpen(actor)) {
-                if (ProbeLog()) UE_LOGI("%s: request '%ls' DENIED by CanOpen (slot %u)", a_.name, key.c_str(), senderSlot);
-                return;
-            }
-            a_.RequestApply(actor, p.action != 0);
-            return;
-        }
-        // holdOpen_[key] is a bitmask of the peer slots holding this door open; it closes only when
-        // the last holder releases, so one peer closing never shuts it on another.
-        const uint8_t bit = (senderSlot < 8) ? static_cast<uint8_t>(1u << senderSlot) : 0;
-        // A request is a toggle, not a state: isOpened is the animation-completed flag and reads
-        // the pre-toggle value at E-press time, so the client cannot name the intent. The host
-        // derives it from its own hold record: a sender already holding the door wants it closed,
-        // otherwise open.
-        const auto holdIt = holdOpen_.find(key);
-        const uint8_t curMask = (holdIt != holdOpen_.end()) ? holdIt->second : uint8_t{0};
-        const bool want = ((curMask & bit) == 0);  // toggle: not-yet-held -> open; held -> close
-
-        if (want) {
-            // The power and lock gate. The request path force-opens past the door's own gate, so
-            // CanOpen applies the door's real E-press condition first: Active (powered), not
-            // jammed, not superClosed. A keypad-locked door is held inactive or superClosed and is
-            // refused until the keypad powers it.
-            if (a_.CanOpen && !a_.CanOpen(actor)) {
-                UE_LOGI("%s: client open DENIED key='%ls' slot=%u -- not openable (unpowered/jammed/superClosed)",
-                        a_.name, key.c_str(), senderSlot);
-                BroadcastAndPrime(key, false, s);  // correct the requester's optimistic local open
-                return;
-            }
-            // Open. The client's validated open is trusted; isOpened is async (it flips about 0.5 s
-            // after doorOpen), so it is not re-read to verify: a re-read once saw the stale closed
-            // value and bailed without muting the autoclose, and the door opened then closed. The
-            // door is driven open past its guards (the host has no local player to satisfy them),
-            // the host's own autoclose is muted for the hold, the holder recorded and ON broadcast.
-            // The poll skips a held door.
-            a_.RequestApply(actor, true);
-            if (a_.SuppressHeld) a_.SuppressHeld(actor);
-            holdOpen_[key] |= bit;
-            settling_.erase(key);                 // a fresh open supersedes any pending close-settle
-            BroadcastAndPrime(key, true, s);
-            UE_LOGI("%s: host opened+held key='%ls' slot=%u holders=0x%02X",
-                    a_.name, key.c_str(), senderSlot, holdOpen_[key]);
-        } else {
-            // Close, or a release.
-            auto it = holdOpen_.find(key);
-            if (it != holdOpen_.end() && (it->second & bit)) {
-                it->second &= static_cast<uint8_t>(~bit);      // this peer releases its hold
-                if (it->second == 0) {
-                    // Last holder released: ReleaseHeld restores autoclose and the sensor and
-                    // closes (async); OFF is broadcast now and the door marked settling so the poll
-                    // skips the animation transient.
-                    holdOpen_.erase(it);
-                    if (a_.ReleaseHeld) a_.ReleaseHeld(actor);
-                    BroadcastAndPrime(key, false, s);
-                    settling_[key] = std::chrono::steady_clock::now() + kDoorSettleBridge;
-                    UE_LOGI("%s: host closed key='%ls' (last holder slot=%u released)",
-                            a_.name, key.c_str(), senderSlot);
-                } else {
-                    // Others still hold it: it stays open and ON is re-asserted, correcting the
-                    // releasing peer's optimistic local close.
-                    BroadcastAndPrime(key, true, s);
-                    UE_LOGI("%s: held key='%ls' stays open (slot=%u released, remaining=0x%02X)",
-                            a_.name, key.c_str(), senderSlot, it->second);
-                }
-            } else if (it != holdOpen_.end() && it->second != 0) {
-                // The sender holds nothing but others do: stays open, ON re-asserted.
-                BroadcastAndPrime(key, true, s);
-                UE_LOGI("%s: held key='%ls' stays open (non-holder slot=%u close ignored, holders=0x%02X)",
-                        a_.name, key.c_str(), senderSlot, it->second);
-            } else {
-                // Nobody holds it: a plain client close of an unheld door (async).
-                a_.RequestApply(actor, false);
-                BroadcastAndPrime(key, false, s);
-                settling_[key] = std::chrono::steady_clock::now() + kDoorSettleBridge;
-                UE_LOGI("%s: host closed key='%ls' (unheld, slot=%u)", a_.name, key.c_str(), senderSlot);
-            }
-        }
-    }
-
-    // Host: one peer left. Its bit is dropped from every door it held; a door whose holder set hits
-    // zero closes (autoclose restored, OFF broadcast), the rest stay open. Game thread.
-    void OnPeerLeft(uint8_t slot) {
-        if (mode_ != Mode::HostAuth) return;
-        auto* s = session_.load(std::memory_order_acquire);
-        if (!s || s->role() != coop::net::Role::Host) return;
-        const uint8_t bit = (slot < 8) ? static_cast<uint8_t>(1u << slot) : 0;
-        if (!bit) return;
-        for (auto it = holdOpen_.begin(); it != holdOpen_.end();) {
-            if (!(it->second & bit)) { ++it; continue; }
-            it->second &= static_cast<uint8_t>(~bit);
-            if (it->second != 0) { ++it; continue; }            // still held by others
-            std::wstring key = it->first;
-            it = holdOpen_.erase(it);
-            if (void* actor = ResolveFast(key)) {
-                if (a_.ReleaseHeld) a_.ReleaseHeld(actor);
-                BroadcastAndPrime(key, false, s);
-                settling_[key] = std::chrono::steady_clock::now() + kDoorSettleBridge;  // async close: bridge the animation
-                UE_LOGI("%s: peer slot=%u left -- released held door key='%ls'",
-                        a_.name, slot, key.c_str());
-            }
-        }
     }
 
     // Broadcasts the authoritative state for the key and primes lastKnown_ to it, so the next poll
@@ -438,14 +292,6 @@ public:
             for (auto& r : live)
                 if (R::IsLiveByIndex(r.actor, r.idx)) a_.RestoreAutonomy(r.actor);
         }
-        // Host: autoclose restored on every door a departed client held (ReleaseHeld also closes
-        // it). holdOpen_ is empty on a client.
-        if (mode_ == Mode::HostAuth && a_.ReleaseHeld && !holdOpen_.empty()) {
-            for (auto& kv : holdOpen_)
-                if (void* actor = ResolveFast(kv.first)) a_.ReleaseHeld(actor);
-            holdOpen_.clear();
-        }
-        settling_.clear();
         size_t nP = pending_.size();
         pending_.clear();
         std::lock_guard<std::mutex> lk(stateMutex_);
@@ -474,6 +320,9 @@ public:
             if (kv.second.actor == actor) return kv.first;
         return std::wstring();
     }
+
+    // The live actor this channel indexes under `key` in the current world, or null. Game thread.
+    void* ActorForKey(const std::wstring& key) { return ResolveFast(key); }
 
     void HubPassBegin(bool /*isFull*/) { scanFound_.clear(); }
 
@@ -518,8 +367,6 @@ public:
         // signal only through a Debug accessor, and a count delta is all this needs.
         if (liveCount == lastCount_) { if (stablePasses_ < 1000000) ++stablePasses_; }
         else                         { stablePasses_ = 0; lastCount_ = liveCount; }
-        {
-        }
         scanFound_.clear();
         // Logged only when the count or the hash changes. The hash is the cross-peer key-stability
         // signal (compare host and client), and it is also what says whether this census differs
@@ -599,11 +446,12 @@ private:
     }
 
     void ApplyResolved(void* actor, const std::wstring& key, bool want, unsigned fromSlot) {
-        // The idempotent skip is symmetric-only. On a HostAuth channel the client's native press
-        // may have moved the live field to the wanted value before this echo arrived; a match is
-        // then the race, not an idempotent apply, and skipping it left the client one toggle behind
-        // under rapid presses. HostAuth always applies the authoritative value; on a symmetric
-        // channel the local field is moved only by us or by the peer being echoed.
+        // The idempotent skip is symmetric-only, where the local field is moved only by us or by
+        // the peer being echoed. On a HostAuth channel a client-local writer the lane does not
+        // refuse (a creature's open, the local blackout, a keypad's latent open) can move the field
+        // without the host, so a match is not proof the copy holds the host's state; each HostAuth
+        // adapter's apply is idempotent itself (a door already at or swinging toward the state is
+        // left alone, a light group already there is skipped), and it always runs.
         if (mode_ == Mode::Symmetric) {
             bool cur = false;
             if (a_.ReadState(actor, cur) && cur == want) {
@@ -654,8 +502,6 @@ private:
     std::unordered_set<std::wstring> sendRefused_;               // GT-only: keys whose refused send is already logged
 
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
-    std::unordered_map<std::wstring, uint8_t> holdOpen_;          // host: door key -> bitmask of holding slots
-    std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> settling_;  // host: door key -> deadline until which the poll skips it
     std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: reused poll snapshot buffer
     std::chrono::steady_clock::time_point lastRetry_{};           // GT-only
     size_t lastLogCount_ = SIZE_MAX;                              // GT-only: dedup the rebuilt log

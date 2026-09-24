@@ -1,9 +1,9 @@
 // coop/interactables/interactable_sync.cpp -- see coop/interactables/interactable_sync.h. The
 // per-feature adapters and the facade for the keyed-interactable sync (doors, light switches, light
 // groups, container lids, the garage, appliances, lockers). The generic engine (the Adapter vtable
-// and the Channel with its key index, deferred apply, echo suppression, connect snapshot and hold
-// register) is coop/interactables/interactable_channel.h; this TU holds one adapter per feature,
-// the kind-to-channel router, the client E-press observers and the Install, Tick and event facade.
+// and the Channel with its key index, deferred apply, echo suppression and connect snapshot) is
+// coop/interactables/interactable_channel.h; this TU holds one adapter per feature, the
+// kind-to-channel router, a client's switch-press observers and the Install, Tick and event facade.
 
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter and Channel
@@ -45,29 +45,14 @@ const Adapter g_doorAdapter = {
     // The intent reader, not isOpened: the host broadcasts a door at swing start, so a host-opened
     // door mirrors at once instead of lagging the swing.
     &ue_wrap::door::TryReadOpenIntent,
-    // The receiver apply force-snaps rather than calling doorOpen or doorClose: the open is a
-    // tick-gated animation that freezes when this peer's player is far from the door (isOpened
-    // never sets), and the force verbs complete the state through the timeline regardless of
-    // proximity. Near the player it snaps rather than animates.
+    // The receiver apply is the door's own swing wherever this peer ticks the door, and a
+    // force-snap where the swing froze out of tick range (SmartApply and its verify).
     [](void* a, bool on) -> bool { ue_wrap::door::SmartApply(a, on); return true; },
-    // The HostAuth hooks, doors only.
+    // The HostAuth hooks, doors only: a client's copy is render-only, and the apply is a swing that
+    // needs finishing.
     &ue_wrap::door::SuppressClientAutonomy,
     &ue_wrap::door::RestoreClientAutonomy,
-    // The host applies a client request by force-snap too: with only the client's puppet at the
-    // door, doorOpen is denied without a local interactor and freezes with the host player far. The
-    // client enforced the lock locally, so its validated edge is trusted.
-    [](void* a, bool on) -> bool { ue_wrap::door::SmartApply(a, on); return true; },
-    // The host's own autoclose is muted while a client holds the door open; restored and closed on
-    // release.
-    &ue_wrap::door::SuppressHostHeldDoor,
-    &ue_wrap::door::ReleaseHostHeldDoor,
-    // The open gate: the host applies a client's open only if the door's own logic would (power on,
-    // not jammed, not superClosed), so coop never opens a door single-player keeps shut.
-    &ue_wrap::door::CanOpen,
-    // The two facets only doors want: their autoclose fights an applied state, so a client open is
-    // a hold; and their apply is an animation that needs finishing.
-    /*holdRegister*/ true,
-    /*TickApply*/    &ue_wrap::door::TickSmartApply,
+    &ue_wrap::door::TickSmartApply,
 };
 const Adapter g_lightAdapter = {
     // Keyed on the switch, so the receiver replays use() and the switch flips visibly with its
@@ -91,7 +76,7 @@ const Adapter g_lightAdapter = {
     // order inside a game-thread batch. On the host the full use() runs: replaying the client's
     // switch edge is how its press becomes an authoritative group change.
     [](void* a, bool /*on*/) -> bool { return ApplySwitchPresentation(a); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
+    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The light group (Atrigger_lightRoot_C), the state a player sees. The switch adapter syncs the
 // switch's `a`, this one the group's isActive: the game keeps them decoupled (use() toggles `a`
@@ -111,19 +96,17 @@ const Adapter g_lightGroupAdapter = {
     &ue_wrap::lightswitch::GetKeyString,
     &ue_wrap::lightswitch::TryReadActive,
     [](void* a, bool on) -> bool {
-        // A no-op apply is skipped. HostAuth applies unconditionally in general, since on a door a
-        // live-field match is evidence of the client's own native press racing the echo; here the
-        // client's own writers of isActive are gate-suppressed, so a match is a match, and one
-        // connect snapshot was otherwise 42 runTrigger calls in one frame, each repainting a whole
-        // group, for no state change.
+        // A no-op apply is skipped: the client's own writers of isActive are gate-suppressed, so a
+        // match is a match, and one connect snapshot was otherwise 42 runTrigger calls in one frame,
+        // each repainting a whole group, for no state change.
         bool cur = false;
         if (ue_wrap::lightswitch::TryReadActive(a, cur) && cur == on) return true;
         return ue_wrap::lightswitch::ApplyGroupState(a, on);
     },
     // No autonomy-suppression hooks: a client's native press is neutralised for one input dispatch
     // by the E-press PRE and POST pair below, never by a gate left standing (a gate left shut is a
-    // player whose switches quietly stopped working). No request, no hold register, no TickApply.
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    // player whose switches quietly stopped working). No TickApply.
+    nullptr, nullptr,
 };
 const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
@@ -132,7 +115,7 @@ const Adapter g_containerAdapter = {
     &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
+    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The garage door (Agarage_C), symmetric: no sensor and no autoclose, so a symmetric poll never
 // oscillates. Its identity is the level-export FName, not the save key: a garage that misses
@@ -147,7 +130,7 @@ const Adapter g_garageAdapter = {
     &ue_wrap::garage::GetNameKey,
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
+    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
@@ -161,7 +144,7 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
+    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
@@ -175,7 +158,7 @@ const Adapter g_doorBoxAdapter = {
     &ue_wrap::door_box::GetNameKey,
     &ue_wrap::door_box::TryReadOpened,
     [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // symmetric: no HostAuth hooks
+    nullptr, nullptr,  // symmetric: no HostAuth hooks
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
@@ -234,33 +217,14 @@ bool ApplySwitchPresentation(void* sw) {
     return ue_wrap::lightswitch::CallUse(sw);
 }
 
-// The sender is per-tick state polling (Channel::PollAndBroadcast), not a UFunction observer: the
-// per-verb edges (doorOpen, the root's SetActive, the swinger's Open, the switch's use) dispatch
-// through ProcessInternal and bypass the ProcessEvent detour, so a POST observer never fires.
-// Polling the state field catches every writer (a press, an NPC auto-open, a keypad unlock, a
-// script) uniformly.
+// The sender is a per-tick poll of each state field (Channel::PollAndBroadcast): it catches every
+// writer (a press, an NPC's open, a keypad unlock, a script) without watching each one.
 
-// The client's door request on an E-press: the door's own verbs are BP-internal, so the one
-// observable use edge is AmainPlayer_C::InpActEvt_use on the local player. The POST observer
-// reads the actor the player aimed at and, for a door the lane indexes, sends a toggle request;
-// the host applies it with its real guards and broadcasts the authoritative state. Client only;
-// puppets process no input.
+// A client's light-switch press. The native use() ends in runTrigger(root, 0), which would move a
+// group the host owns, so the PRE observer on AmainPlayer_C::InpActEvt_use shuts the group's
+// `active` for the body of the dispatch and the press stays presentation-only; the lights move when
+// the host's LightGroupState lands. Client only; puppets process no input.
 bool g_useInputObserverInstalled = false;
-
-// The door whose Active gate the PRE observer cleared for the current dispatch, with the real
-// prior value the POST observer restores (one slot: PRE and POST are one game-thread dispatch
-// apart). The client's native press chain is BP-internal and toggled the local door in parallel
-// with the host request, and the host's echo was then swallowed as "already in that state";
-// clearing Active, the BP's own CanOpen gate, for the body of the dispatch makes the native chain
-// a no-op, so the client door moves only on host echoes (MTA's non-authority never advances state
-// from its own simulation). The restore writes the saved value, never true: a keypad-locked door
-// has Active false, and restoring true re-powered the lock client-side.
-void* g_useInputActiveCleared = nullptr;
-bool  g_useInputActivePrior  = true;
-
-// The same lever for a light switch: the native use() ends in runTrigger(root, 0), which would
-// move a group the host owns, so the group's `active` is shut for the body of the dispatch and
-// the press stays presentation-only; the lights move when the host's LightGroupState lands.
 void* g_useInputGateCleared = nullptr;
 bool  g_useInputGatePrior   = true;
 
@@ -274,110 +238,27 @@ void RestoreLightGateIfCleared() {
 }
 
 void OnUseInputPre(void* self, void*, void*) {
-    // A leaked door first: if the prior dispatch's BP body faulted, the POST never ran and the door
-    // would stay Active false forever.
-    if (g_useInputActiveCleared) {
-        ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
-        g_useInputActiveCleared = nullptr;
-    }
     RestoreLightGateIfCleared();
     if (!self) return;
-    auto* s = g_door.GetSession();
+    auto* s = g_light.GetSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
     void* const aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!aimed) return;
-
-    // A light switch: the group's gate shut, so the native use() is presentation-only.
-    if (ue_wrap::lightswitch::EnsureSwitchResolved() && ue_wrap::lightswitch::IsLightSwitch(aimed)) {
-        void* const root = ue_wrap::lightswitch::ResolveSwitchRoot(aimed);
-        if (!root) return;                                   // no group reachable: native behaviour stays
-        const std::wstring gk = ue_wrap::lightswitch::GetKeyString(root);
-        if (gk.empty() || gk == L"None") return;             // unkeyed group: no lane owns it, leave it alone
-        if (!ue_wrap::lightswitch::GroupGateAvailable()) return;  // cannot gate -> do not pretend we did
-        g_useInputGatePrior   = ue_wrap::lightswitch::GetGroupGate(root);
-        ue_wrap::lightswitch::SetGroupGate(root, false);
-        if (ue_wrap::lightswitch::GetGroupGate(root)) return;     // the write did not take; record nothing
-        g_useInputGateCleared = root;
-        return;
-    }
-
-    if (!ue_wrap::door::EnsureResolved()) return;
-    void* door = aimed;
-    if (!ue_wrap::door::IsDoor(door)) return;
-    // The gate decision asks whether a lane owns this door, answered by whether the channel indexes
-    // it, not by whether the game gave it a Key: a door indexed under a portable identity has a
-    // game Key that names nothing cross-peer, and a keyed door not yet indexed has no lane to wait
-    // for. Gating on the index makes "the native open was suppressed" and "the host will echo" the
-    // same condition; gating on the raw Key shut a door's own opening for a request that could
-    // never resolve.
-    const std::wstring key = g_door.KeyForActor(door);
-    if (key.empty()) return;  // not indexed by this lane: native behaviour stays
-    g_useInputActivePrior = ue_wrap::door::GetActive(door);  // the REAL gate value to restore
-    ue_wrap::door::SetActive(door, false);  // close the BP CanOpen gate for THIS dispatch
-    g_useInputActiveCleared = door;
+    if (!ue_wrap::lightswitch::EnsureSwitchResolved() || !ue_wrap::lightswitch::IsLightSwitch(aimed)) return;
+    void* const root = ue_wrap::lightswitch::ResolveSwitchRoot(aimed);
+    if (!root) return;                                   // no group reachable: native behaviour stays
+    const std::wstring gk = ue_wrap::lightswitch::GetKeyString(root);
+    if (gk.empty() || gk == L"None") return;             // unkeyed group: no lane owns it, leave it alone
+    if (!ue_wrap::lightswitch::GroupGateAvailable()) return;  // cannot gate -> do not pretend we did
+    g_useInputGatePrior   = ue_wrap::lightswitch::GetGroupGate(root);
+    ue_wrap::lightswitch::SetGroupGate(root, false);
+    if (ue_wrap::lightswitch::GetGroupGate(root)) return;     // the write did not take; record nothing
+    g_useInputGateCleared = root;
 }
 
-void OnUseInput(void* self, void*, void*) {
-    // The Active gate the PRE observer cleared is restored first, before any early return: the
-    // native chain already ran, gated shut, and the host echo is the only thing that moves this
-    // door now.
-    if (g_useInputActiveCleared) {
-        ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
-        g_useInputActiveCleared = nullptr;
-    }
+void OnUseInput(void*, void*, void*) {
+    // The native chain already ran, gated shut; the gate goes back.
     RestoreLightGateIfCleared();
-    if (!self) return;
-    auto* s = g_door.GetSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
-    if (!ue_wrap::door::EnsureResolved()) return;
-    void* door = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the actor under the cursor at press
-    const bool isDoor = (door && ue_wrap::door::IsDoor(door));
-    // The diagnostic behind interactable_log (every E-press, door or not, so never unconditional):
-    // no line means the observer did not fire; a null actor means the aim trace had not populated;
-    // a non-door means the aim was elsewhere. The request and the host's verdict log
-    // unconditionally.
-    if (ProbeLog())
-        UE_LOGI("door: use-input fired -- lookAtActor=%p isDoor=%d (role=client, connected)", door, isDoor ? 1 : 0);
-    if (!isDoor) return;             // not aiming at a door -> not ours
-    // The same key the channel indexes (Channel::KeyForActor): the index and the request must name
-    // the same thing.
-    std::wstring key = g_door.KeyForActor(door);
-    if (key.empty()) {
-        // A press the lane cannot name, and not silent: to the player it is the defect itself
-        // (press E, nothing happens), and a press that emits nothing enqueues nothing for the
-        // receive-side retry to cover. Two causes: the index belongs to another world generation
-        // (it refills on the hub's next pass), or the door is genuinely unindexed. WARN,
-        // rate-limited against a key-masher.
-        static std::chrono::steady_clock::time_point s_lastGripe{};
-        const auto nowG = std::chrono::steady_clock::now();
-        if (nowG - s_lastGripe > std::chrono::seconds(3)) {
-            s_lastGripe = nowG;
-            UE_LOGW("door: E-press on %p is NOT INDEXED by the door lane -- no request sent "
-                    "(indexCurrent=%d, raw game key='%ls'). The door will not open on either "
-                    "peer; this is the visible symptom of an unindexed instance, not silence.",
-                    door, g_door.IndexCurrent() ? 1 : 0,
-                    ue_wrap::door::GetKeyString(door).c_str());
-        }
-        return;
-    }
-    // The debounce: InpActEvt_use dispatches on both the press and the release of one tap, so one
-    // use fired two toggles (the host opened then closed, and the release's force-close left the
-    // client's swing ajar). Repeats within 300 ms for the same door collapse into one.
-    static std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> s_lastUse;  // GT-only
-    const auto nowTs = std::chrono::steady_clock::now();
-    if (auto it = s_lastUse.find(key); it != s_lastUse.end() && nowTs - it->second < std::chrono::milliseconds(300)) {
-        UE_LOGI("door: use-input hook -> debounced repeat (press+release) key='%ls'", key.c_str());
-        return;
-    }
-    s_lastUse[key] = nowTs;
-    // A pure toggle, without reading isOpened: that flag marks the completed animation and lags the
-    // swing, so at this point it holds the pre-toggle value and reports the wrong intent. The host
-    // derives open versus close from its own hold record; the action field is unused.
-    coop::net::KeyedTogglePayload p{};
-    WireKeyFromString(key, p.key);
-    p.action = 0;
-    if (s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p)))
-        UE_LOGI("door: use-input hook -> toggle request key='%ls'", key.c_str());
 }
 
 void InstallUseInputObserver() {
@@ -386,20 +267,22 @@ void InstallUseInputObserver() {
     if (!playerCls) return;  // retry until mainPlayer_C loads
     void* fn = R::FindFunction(playerCls, P::name::MainPlayerUseInputEventFn);
     if (!fn) {
-        UE_LOGW("door: InpActEvt_use UFunction not found -- client door opens cannot be signalled");
+        UE_LOGW("light: InpActEvt_use UFunction not found -- a client's switch press will move the "
+                "group locally too");
         g_useInputObserverInstalled = true;  // no retry
         return;
     }
     if (!GT::RegisterPreObserver(fn, &OnUseInputPre)) {
-        UE_LOGW("door: InpActEvt_use PRE observer register failed");
+        UE_LOGW("light: InpActEvt_use PRE observer register failed");
         return;
     }
     if (!GT::RegisterPostObserver(fn, &OnUseInput)) {
-        UE_LOGW("door: InpActEvt_use observer register failed");
+        UE_LOGW("light: InpActEvt_use observer register failed");
         return;
     }
     g_useInputObserverInstalled = true;
-    UE_LOGI("door: InpActEvt_use PRE+POST observers installed (PRE gates the native toggle; POST restores + sends DoorOpenRequest)");
+    UE_LOGI("light: InpActEvt_use PRE+POST observers installed (PRE shuts a pressed switch's group gate; "
+            "POST restores it)");
 }
 
 // The receiver index: the channels register as scan-hub consumers, and the hub builds every index
@@ -425,7 +308,7 @@ void Install(coop::net::Session* session) {
     g_appliance.SetSession(session);
     g_doorBox.SetSession(session);
     IndexChannels();              // build the key->actor index (sender polls it; receiver resolves by it)
-    InstallUseInputObserver();   // client E-press (InpActEvt_use + lookAtActor) -> DoorOpenRequest
+    InstallUseInputObserver();   // a client's switch press: its group's gate shut for the press
 }
 
 void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
@@ -433,32 +316,11 @@ void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint
         ch->OnReliable(payload, senderPeerSlot);
 }
 
-bool RequestDoorPressAsClient(void* door) {
-    auto* s = g_door.GetSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return false;
-    if (!door || !ue_wrap::door::EnsureResolved() || !ue_wrap::door::IsDoor(door)) return false;
-    // The key the channel indexes, as OnUseInput sends it: the host names the door by it.
-    const std::wstring key = g_door.KeyForActor(door);
-    if (key.empty()) return false;
-    coop::net::KeyedTogglePayload p{};
-    WireKeyFromString(key, p.key);
-    p.action = 0;  // a toggle; the host derives open or close from its hold record
-    if (!s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p))) return false;
-    UE_LOGI("door: press request key='%ls' (driven like a player's E-press)", key.c_str());
-    return true;
-}
+std::wstring DoorKey(void* door) { return g_door.KeyForActor(door); }
 
-void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
-    // Host only: a client asked to toggle a door. event_feed gates the sender slot, OnRequest
-    // re-checks the role; the host applies with its real guards and its poll broadcasts the
-    // authoritative state.
-    if (senderPeerSlot == 0) return;  // the host never sends this to itself
-    g_door.OnRequest(payload, senderPeerSlot);
-}
-
-void OnPeerLeft(int peerSlot) {
-    if (peerSlot <= 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    g_door.OnPeerLeft(static_cast<uint8_t>(peerSlot));  // doors are the one channel with a hold register
+void* ResolveDoor(const std::wstring& key) {
+    if (key.empty() || !ue_wrap::door::EnsureResolved()) return nullptr;
+    return g_door.ActorForKey(key);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
