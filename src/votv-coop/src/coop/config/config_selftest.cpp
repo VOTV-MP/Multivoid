@@ -25,12 +25,14 @@ using IniScan = internal::IniScan;
 
 IniSelftestRead SelftestReadValue(const std::wstring& path, const char* key) {
     IniScan st = IniScan::Ok;
+    IniFault fault = IniFault::None;
     IniSelftestRead r;
     const std::string sentinel = "\x01<absent>";
-    r.value = internal::ReadIniValueAtPath(path, key, sentinel.c_str(), &st);
+    r.value = internal::ReadIniValueAtPath(path, key, sentinel.c_str(), &st, &fault);
     r.found = (r.value != sentinel);
     if (!r.found) r.value.clear();
     r.scan = static_cast<int>(st);
+    r.fault = fault;
     return r;
 }
 
@@ -90,6 +92,17 @@ std::string SelftestResolveStringAt(const std::wstring& path, const config_regis
     std::string raw;
     if (!PickIniAt(path, h.row, raw)) return h.row->defS;
     return raw;
+}
+FailClosedRead SelftestResolveFailClosedAt(const std::wstring& path,
+                                           const config_registry::FailClosedEnumRow& h,
+                                           std::string& out, IniFault* faultOut) {
+    static const char* kAbsent = "\x01<absent>";
+    IniScan st = IniScan::Ok;
+    IniFault fault = IniFault::None;
+    const std::string v = internal::ReadIniValueAtPath(path, h.row->key, kAbsent, &st, &fault);
+    const bool have = v != kAbsent;
+    return internal::FailClosedFromPick(h.row, have, have ? v : std::string(), /*fromEnv*/ false,
+                                        st, fault, out, nullptr, nullptr, faultOut);
 }
 
 }  // namespace coop::config

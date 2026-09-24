@@ -268,7 +268,7 @@ sentence on its status line.
 | `MV-J25` | The world arrived damaged: its CRC failed, or the slot could not be written |
 | `MV-J26` | The host never sent this player's inventory |
 | `MV-J27` | The world loaded and this machine never got ready to announce it (the gate is named in the detail) |
-| `MV-J28` | The player's `net.ice` is neither `all` nor `relay`, or `multivoid.ini` could not be read; nothing the policy governs starts until it is fixed |
+| `MV-J28` | The player's `net.ice` is neither `all` nor `relay`, or `multivoid.ini` could not be read whole: locked or failing, or holding a zero byte or a UTF-16 mark (a file saved as UTF-16), the detail saying which of the two; nothing the policy governs starts until it is fixed |
 | `MV-J29` | `net.ice=relay`, and the session has no TURN server to relay through |
 | `MV-J30` | `net.ice=relay`, and the join is a direct one, which would show the host the player's address |
 | `MV-H01` | Wrong password |

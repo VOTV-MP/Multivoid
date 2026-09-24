@@ -2,6 +2,7 @@
 
 #include "ui/config_review_panel.h"
 
+#include "coop/config/config.h"           // why multivoid.ini could not be read
 #include "coop/config/config_registry.h"  // which settings refuse instead of falling back
 #include "coop/config/config_review.h"
 #include "ui/menu_sfx.h"
@@ -49,7 +50,7 @@ const char* TypeHeading(CR::Row::Type t) {
         case CR::Row::Type::Rejected:          return "Values that could not be used";
         case CR::Row::Type::Unknown:           return "Unknown settings (nothing reads these)";
         case CR::Row::Type::DuplicateDormant:  return "Duplicate settings with different values";
-        case CR::Row::Type::IdentityNotDurable: return "Player identity not saved";
+        case CR::Row::Type::IdentityNotDurable: return "Body skin not saved";
         case CR::Row::Type::IniUnreadable:     return "multivoid.ini could not be read";
     }
     return "?";
@@ -102,7 +103,7 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                                    r.key.c_str(), static_cast<int>(r.dupLines.size()),
                                    r.dupLines.empty() ? 0 : r.dupLines[0].lineNo);
                 if (r.identityKey)
-                    ImGui::TextWrapped("   This key IS your player identity -- if the winning "
+                    ImGui::TextWrapped("   This key holds your body skin -- if the winning "
                                        "value is not the one you expect, keep the other line.");
                 for (const auto& dl : r.dupLines) {
                     char btn[192];
@@ -118,19 +119,37 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
             }
             case CR::Row::Type::IdentityNotDurable:
                 ImGui::Bullet();
-                ImGui::TextWrapped("Your player identity (player_guid / player_skin) could not "
-                                   "be saved to multivoid.ini this launch -- it is temporary "
-                                   "for this session. Fix whatever locks the file (editor, "
-                                   "antivirus, permissions); nothing is lost once a launch can "
-                                   "save again.");
+                ImGui::TextWrapped("Your body skin (player_skin) could not be saved to "
+                                   "multivoid.ini this launch -- it is temporary for this "
+                                   "session. Fix whatever keeps the file from being read or "
+                                   "saved (a lock from an editor or antivirus, permissions, or "
+                                   "a file saved as UTF-16); nothing is lost once a "
+                                   "launch can save again.");
                 break;
             case CR::Row::Type::IniUnreadable:
                 ImGui::Bullet();
-                ImGui::TextWrapped("multivoid.ini exists but could not be read (locked or "
-                                   "failing). This launch runs on environment overrides and "
-                                   "built-in defaults; the settings that refuse instead of "
-                                   "falling back (%s) refuse what they govern until the file "
-                                   "can be read.", FailClosedNames().c_str());
+                // From the row, not the live fault: the row says what the sweep saw, and a later
+                // read, clean or locked, must not rewrite why it was raised.
+                if (!r.unreadableNow) {
+                    ImGui::TextWrapped("multivoid.ini could not be read earlier this launch (%s) "
+                                       "and reads now. Settings read while it could not used "
+                                       "their defaults; restart so every setting reads the file.",
+                                       r.fault == coop::config::IniFault::NotText
+                                           ? "a zero byte or a UTF-16 byte-order mark"
+                                           : "locked or failing");
+                    break;
+                }
+                if (r.fault == coop::config::IniFault::NotText)
+                    ImGui::TextWrapped("multivoid.ini holds a zero byte or starts with a UTF-16 "
+                                       "byte-order mark, as a file saved as UTF-16 (\"Unicode\") "
+                                       "does. Save it again as UTF-8.");
+                else
+                    ImGui::TextWrapped("multivoid.ini exists but could not be read (locked or "
+                                       "failing).");
+                ImGui::TextWrapped("This launch runs on environment overrides and built-in "
+                                   "defaults; the settings that refuse instead of falling back "
+                                   "(%s) refuse what they govern until the file can be read.",
+                                   FailClosedNames().c_str());
                 break;
         }
     }
@@ -210,9 +229,17 @@ void Render() {
             ImGui::Spacing();
             if (!g_tidyOutcome.ok) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
-                ImGui::TextWrapped("Could not rewrite multivoid.ini (locked or unreadable) -- "
-                                   "nothing was changed. Close whatever holds the file and "
-                                   "press Tidy up again.");
+                if (g_tidyOutcome.fault == coop::config::IniFault::NotText)
+                    ImGui::TextWrapped("Could not rewrite multivoid.ini: it holds a zero byte or a "
+                                       "UTF-16 byte-order mark -- nothing was changed. Save it "
+                                       "again as UTF-8 and press Tidy up again.");
+                else if (g_tidyOutcome.fault == coop::config::IniFault::ReadFailed)
+                    ImGui::TextWrapped("Could not rewrite multivoid.ini (locked or failing) -- "
+                                       "nothing was changed. Close whatever holds the file and "
+                                       "press Tidy up again.");
+                else
+                    ImGui::TextWrapped("Could not rewrite multivoid.ini (it is missing, or the "
+                                       "write failed) -- nothing was changed.");
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.9f, 0.55f, 1.0f));

@@ -24,7 +24,7 @@ std::string Printable(const std::string& raw) {
 
 // What an unreadable policy's refusal names: the file, or the value and where it came from.
 std::string UnreadableDetail(const IcePolicy& p) {
-    if (p.fileUnreadable) return p.origin + " could not be read";
+    if (p.fileUnreadable) return p.origin + " " + p.fileFault;
     return "net.ice=" + Printable(p.refused) + " from " + p.origin;
 }
 
@@ -35,10 +35,12 @@ IcePolicy ResolveIcePolicy() {
     (void)kSelftestOk;
     IcePolicy p;
     std::string token;
+    coop::config::IniFault fault = coop::config::IniFault::None;
     const coop::config::FailClosedRead read = coop::config::ResolveFailClosed(
-        coop::config_registry::rows::net_ice, token, &p.refused, &p.origin);
+        coop::config_registry::rows::net_ice, token, &p.refused, &p.origin, &fault);
     p.readable = read == coop::config::FailClosedRead::Value;
     p.fileUnreadable = read == coop::config::FailClosedRead::Unreadable;
+    if (p.fileUnreadable) p.fileFault = coop::config::IniFaultWords(fault);
     p.relayOnly = p.readable && token == "relay";
     return p;
 }
@@ -109,13 +111,23 @@ bool RunIcePolicySelftest() {
     }
     // The detail says what was refused and where it came from, as a dialog can show it: bytes
     // outside printable ASCII replaced and the length capped, whatever the ini held; an empty
-    // value named as one; an unreadable file named as such rather than as a value.
-    struct Detail { const char* what; bool fileUnreadable; std::string refused, origin, want; };
+    // value named as one; an unreadable file named as such rather than as a value, with why, in
+    // the words the config layer gives each fault.
+    struct Detail {
+        const char* what;
+        bool fileUnreadable;
+        std::string refused, origin, fault, want;
+    };
+    using coop::config::IniFault;
+    using coop::config::IniFaultWords;
     const Detail kDetails[] = {
         {"a refused value, capped", false, std::string("re\xC3lay") + std::string(40, 'x'),
-         "multivoid.ini", "net.ice=re?lay" + std::string(26, 'x') + "... from multivoid.ini"},
-        {"an empty value", false, "", "multivoid.ini", "net.ice= from multivoid.ini"},
-        {"an unreadable ini", true, "", "multivoid.ini", "multivoid.ini could not be read"},
+         "multivoid.ini", "", "net.ice=re?lay" + std::string(26, 'x') + "... from multivoid.ini"},
+        {"an empty value", false, "", "multivoid.ini", "", "net.ice= from multivoid.ini"},
+        {"an unreadable ini", true, "", "multivoid.ini", IniFaultWords(IniFault::ReadFailed),
+         "multivoid.ini could not be read"},
+        {"an ini that is not text", true, "", "multivoid.ini", IniFaultWords(IniFault::NotText),
+         "multivoid.ini is not UTF-8 text (saved as UTF-16?)"},
     };
     for (const Detail& d : kDetails) {
         ++total;
@@ -124,6 +136,7 @@ bool RunIcePolicySelftest() {
         p.fileUnreadable = d.fileUnreadable;
         p.refused = d.refused;
         p.origin = d.origin;
+        p.fileFault = d.fault;
         Config cfg;
         cfg.topology = Topology::P2P;
         const Refusal got = IcePolicyRefusal(p, cfg);

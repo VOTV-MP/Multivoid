@@ -91,15 +91,21 @@ void ReportEffectiveConfig() {
         const Row& r = rows[i];
         std::string raw;
         bool fromEnv = false;
+        internal::IniScan scan = internal::IniScan::Ok;
+        IniFault fault = IniFault::None;
         // Nobody configured it: the row default stands, and saying so for every untouched row
         // would bury the handful that were.
-        if (!internal::PickRawLayered(&r, raw, &fromEnv)) continue;
+        if (!internal::PickRawLayered(&r, raw, &fromEnv, &scan, &fault)) continue;
         ++configured;
         // A raw value the reader refuses leaves the row at its default. That is the failure a rig
         // has to see stated rather than infer from a value that merely looks wrong, and it is the
-        // same validator the writer and the boot sweep use, so there is one verdict per value.
+        // same validator the writer and the boot sweep use, so there is one verdict per value. A
+        // fail-closed row read from an ini that could not be read whole is refused whatever its
+        // line said (ResolveFailClosed), so it prints as refused, with the file's fault.
         std::string why;
-        const bool valid = ValueValidForKey(r.key, raw, &why);
+        const bool unread = r.failClosed && scan == internal::IniScan::Unreadable;
+        const bool valid = !unread && ValueValidForKey(r.key, raw, &why);
+        if (unread) why = std::string("multivoid.ini ") + IniFaultWords(fault);
         const bool refused = !valid && r.failClosed;
         const std::string value = Redacted(r) ? "<set>" : refused ? Printable(raw) : Resolved(r, raw);
         if (valid)
@@ -111,13 +117,15 @@ void ReportEffectiveConfig() {
                     refused ? "; fail-closed, so what it governs is refused" : "");
     }
     // The end line carries the ini's verdict, because an absent row is only evidence of a default
-    // when the file was READABLE. A locked or failing ini reads as absent for every key, so a
-    // census that said nothing about it would report `0 row(s) configured` and a drill would take
-    // that as proof the peer took every default. It is the one way this instrument can be
-    // confidently wrong, so it is stated on the line a reader greps.
-    if (IniUnreadableSeen())
+    // when the file was READABLE. An ini that could not be read whole reads as absent for every key
+    // past its fault, so a census that said nothing about it would report fewer rows configured and
+    // a drill would take that as proof the peer took those defaults. It is the one way this
+    // instrument can be confidently wrong, so it is stated on the line a reader greps.
+    const IniFault fault = LastIniFault();
+    if (fault != IniFault::None)
         UE_LOGW("config: EFFECTIVE end -- %d row(s) configured, but the ini unreadable this "
-                "launch: an absent row below proves nothing, only env was readable", configured);
+                "launch (multivoid.ini %s): an absent row proves nothing", configured,
+                IniFaultWords(fault));
     else
         UE_LOGI("config: EFFECTIVE end -- %d row(s) configured", configured);
 }

@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+namespace coop::config { enum class IniFault : unsigned char; }
+
 namespace coop::config_review {
 
 struct DupLine {
@@ -26,8 +28,8 @@ struct Row {
         Rejected,            // garbage value -> the default, or on a fail-closed row a refusal
         Unknown,             // key not in the registry (dead ui.font=..., typos)
         DuplicateDormant,    // N>1 differing values; winner = the first line
-        IdentityNotDurable,  // guid/skin is session-only this launch
-        IniUnreadable,       // some live-ini access hit UNREADABLE this launch
+        IdentityNotDurable,  // the skin is session-only this launch
+        IniUnreadable,       // this sweep's read, or an earlier read this launch, hit UNREADABLE
     };
     Type type = Type::Rejected;
     std::string key;         // Rejected/Unknown/DuplicateDormant
@@ -36,12 +38,14 @@ struct Row {
     std::string reason;      // Rejected: why it was rejected
     bool failClosed = false; // Rejected: the row refuses what it governs, no default stands in
     std::string overriddenBy;  // Rejected, an ini line: the set env twin that shadows it
-    bool identityKey = false;  // DuplicateDormant on player_guid/player_skin
+    bool identityKey = false;  // DuplicateDormant on an identity key (player_skin)
     std::vector<DupLine> dupLines;  // DuplicateDormant: every line, first = winner
+    coop::config::IniFault fault{};  // IniUnreadable: why, as the read that raised it found it
+    bool unreadableNow = false;      // IniUnreadable: this sweep's own read failed
 };
 
 // Run the file-vs-schema sweep and (re)fill the row store. Boot thread at
-// launch (harness, after the guid/skin mints so the post-mint file state is
+// launch (harness, after the skin mint so the post-mint file state is
 // what gets reviewed); re-run by the panel after an owner action.
 void RunBootSweep();
 
@@ -55,7 +59,12 @@ void Dismiss();         // session-local; a fresh launch re-arms by re-sweeping
 // show fresh state). Correlated by VALUE, never line number: a position goes
 // stale the moment anything rewrites the file between snapshot and click.
 bool KeepDuplicateLine(const std::string& key, const std::string& keepValue);
-struct ReformatOutcome { bool ok = false; int collapsed = 0, placed = 0, frozen = 0, retired = 0; };
+// `fault` says why an unreadable file refused the reformat.
+struct ReformatOutcome {
+    bool ok = false;
+    int collapsed = 0, placed = 0, frozen = 0, retired = 0;
+    coop::config::IniFault fault{};
+};
 ReformatOutcome ReformatNow();
 
 }  // namespace coop::config_review

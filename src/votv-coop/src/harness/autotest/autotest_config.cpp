@@ -393,6 +393,106 @@ void RunConfigSelftest() {
             expect("a byte-order mark does not hide the first key",
                    bom.found && bom.value == "relay");
         }
+        // Bytes that are not text end the scan as Unreadable; the reader never reads past them.
+        // Text mode ended the stream at a Ctrl+Z byte and fgets could not see a zero byte, so a
+        // file saved as UTF-16 read as lines holding no key and net.ice fell to its default. A
+        // fixture that did not land fails its case rather than reading the previous one.
+        auto writeBytes = [&](const std::string& bytes) {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"wb") != 0 || !f) return false;
+            const bool whole = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+            return std::fclose(f) == 0 && whole;
+        };
+        auto notText = [](const cfg::IniSelftestRead& r) {
+            return !r.found && r.scan == 2 && r.fault == cfg::IniFault::NotText;
+        };
+        {
+            // net.ice=relay as Notepad's "Unicode" saves it: UTF-16LE behind its byte-order mark.
+            std::string u16 = "\xFF\xFE";
+            for (const char c : std::string("net.ice=relay\r\n")) {
+                u16 += c;
+                u16 += '\0';
+            }
+            const bool w = writeBytes(u16);
+            expect("a UTF-16 ini is unreadable, never absent",
+                   w && notText(cfg::SelftestReadValue(wrk, "net.ice")));
+        }
+        {
+            // The mark alone refuses it, where no zero byte comes before the first newline.
+            const bool w = writeBytes("\xFF\xFE\nnet.ice=relay\n");
+            expect("a UTF-16 byte-order mark alone refuses the file",
+                   w && notText(cfg::SelftestReadValue(wrk, "net.ice")));
+        }
+        {
+            const bool w = writeBytes(std::string("devkeys=1\n") + std::string("x=\0\n", 4) +
+                                      "net.ice=relay\n");
+            expect("a zero byte before the key refuses the file",
+                   w && notText(cfg::SelftestReadValue(wrk, "net.ice")));
+        }
+        {
+            // The reader delivers a key read whole before the zero byte, as it does before a
+            // mid-stream read error, and still reports the file unreadable...
+            const bool w = writeBytes(std::string("net.ice=relay\n") + std::string("x=\0\n", 4));
+            const cfg::IniSelftestRead r = cfg::SelftestReadValue(wrk, "net.ice");
+            expect("the reader delivers a key read whole before a zero byte",
+                   w && r.found && r.value == "relay" && r.scan == 2 &&
+                   r.fault == cfg::IniFault::NotText);
+            // ...and a fail-closed row refuses it anyway: the part never read may hold a second
+            // line of the key, so the file's answer is unknown.
+            std::string tok;
+            cfg::IniFault why = cfg::IniFault::None;
+            expect("a fail-closed row refuses a key read before a zero byte",
+                   w && cfg::SelftestResolveFailClosedAt(
+                            wrk, coop::config_registry::rows::net_ice, tok, &why) ==
+                            cfg::FailClosedRead::Unreadable &&
+                       why == cfg::IniFault::NotText);
+        }
+        {
+            const bool w = writeBytes("devkeys=1\n\x1A\nnet.ice=relay\r\n");
+            const cfg::IniSelftestRead r = cfg::SelftestReadValue(wrk, "net.ice");
+            expect("a Ctrl+Z byte does not end the file",
+                   w && r.found && r.value == "relay" && r.scan == 0);
+        }
+        {
+            // Text mode's one translation stays: a CRLF line reaches every consumer, the writer's
+            // rebuild included, with an LF ending.
+            const bool w = writeBytes("net.ice=relay\r\n[dev]\r\n");
+            std::vector<std::string> lines;
+            const int scan = cfg::SelftestListLines(wrk, lines);
+            expect("a CRLF line is delivered with an LF ending",
+                   w && scan == 0 && lines.size() == 2 && lines[0] == "net.ice=relay\n");
+        }
+        {
+            // The reader fills 4096 bytes at a time: a CRLF split across two reads still arrives
+            // as LF, and a line longer than a read arrives whole.
+            const std::string edge = "k=" + std::string(4093, 'a');  // its CR is byte 4095
+            const std::string big = "big=" + std::string(10000, 'b');
+            const bool w = writeBytes(edge + "\r\n" + big + "\n" + "net.ice=relay\n");
+            std::vector<std::string> lines;
+            const int scan = cfg::SelftestListLines(wrk, lines);
+            expect("a CRLF split across two reads arrives as LF, a long line whole",
+                   w && scan == 0 && lines.size() == 3 && lines[0] == edge + "\n" &&
+                       lines[1] == big + "\n" && lines[2] == "net.ice=relay\n");
+        }
+        {
+            // A Ctrl+Z inside a value is part of it now, as the file holds it: the fail-closed row
+            // refuses the value rather than read the token text mode cut it to.
+            const bool w = writeBytes("net.ice=relay\x1A");
+            std::string tok;
+            expect("a Ctrl+Z inside a value refuses the fail-closed row",
+                   w && cfg::SelftestResolveFailClosedAt(
+                            wrk, coop::config_registry::rows::net_ice, tok, nullptr) ==
+                            cfg::FailClosedRead::Refused);
+        }
+        {
+            const bool w = writeBytes("[net]\r\nnet.ice=relay\r\n");
+            std::string tok;
+            expect("a readable relay line resolves to relay",
+                   w && cfg::SelftestResolveFailClosedAt(
+                            wrk, coop::config_registry::rows::net_ice, tok, nullptr) ==
+                            cfg::FailClosedRead::Value &&
+                       tok == "relay");
+        }
         ::DeleteFileW(wrk.c_str());
     }
 

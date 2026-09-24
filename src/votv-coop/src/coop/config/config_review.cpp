@@ -47,10 +47,13 @@ std::string DisplayValue(const std::string& v) {
 
 void SweepInto(std::vector<Row>& rows) {
     std::vector<std::string> lines;
-    const int scan = coop::config::ListLiveIniLines(lines);
+    coop::config::IniFault fault{};
+    const int scan = coop::config::ListLiveIniLines(lines, &fault);
     if (scan == 2) {  // Unreadable: the ini layer dropped out for this launch
         Row r;
         r.type = Row::Type::IniUnreadable;
+        r.fault = fault;
+        r.unreadableNow = true;
         rows.push_back(r);
     } else if (scan == 0) {
         // Parse key lines; group ci.
@@ -166,9 +169,12 @@ void SweepInto(std::vector<Row>& rows) {
         r.type = Row::Type::IdentityNotDurable;
         rows.push_back(r);
     }
-    if (scan != 2 && coop::config::IniUnreadableSeen()) {
+    // An earlier read this launch failed though this one did not: what was read then used its
+    // defaults, so the row stays, in the past tense, with the fault that read found.
+    if (scan != 2 && coop::config::LastIniFault() != coop::config::IniFault::None) {
         Row r;
         r.type = Row::Type::IniUnreadable;
+        r.fault = coop::config::LastIniFault();
         rows.push_back(r);
     }
 }
@@ -213,11 +219,13 @@ void RunBootSweep() {
                             r.key.c_str(), r.dupLines.size());
                     break;
                 case Row::Type::IdentityNotDurable:
-                    UE_LOGI("config_review:   IDENTITY NOT DURABLE -- guid/skin are "
+                    UE_LOGI("config_review:   IDENTITY NOT DURABLE -- the skin is "
                             "session-only this launch");
                     break;
                 case Row::Type::IniUnreadable:
-                    UE_LOGI("config_review:   INI UNREADABLE at least once this launch");
+                    UE_LOGI("config_review:   INI UNREADABLE %s (multivoid.ini %s)",
+                            r.unreadableNow ? "now" : "earlier this launch",
+                            coop::config::IniFaultWords(r.fault));
                     break;
             }
         }
@@ -252,6 +260,7 @@ ReformatOutcome ReformatNow() {
     o.placed = st.placed;
     o.frozen = st.frozen;
     o.retired = st.retired;
+    o.fault = st.fault;
     if (o.ok) RunBootSweep();
     return o;
 }

@@ -27,6 +27,7 @@ struct IcePolicy {
     bool        relayOnly = false;      // net.ice=relay
     std::string refused;                // the refused value, possibly empty
     std::string origin;                 // where it came from: multivoid.ini, or the env var's name
+    std::string fileFault;              // why the ini could not be read: the words after its name
 };
 
 // The policy as configured now: env, then ini, then `all`. Reads the ini, so once per session

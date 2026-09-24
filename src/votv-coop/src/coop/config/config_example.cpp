@@ -348,11 +348,11 @@ void MigrateRetiredIniValues() {
     // READ RAW, not Resolve*: Resolve falls back to the row's (now corrected) default when the key
     // is absent, so comparing a resolved value would rewrite nothing on the installs that need it
     // and would match on the ones that do not.
+    // The live read, under the ini lock like every other one, so an unreadable file is recorded
+    // for the census and the panel; it has nothing to migrate.
     static const char* kAbsent = "\x01<absent>";
-    IniScan st = IniScan::Ok;
-    const std::string cur = internal::ReadIniValueAtPath(
-        internal::LiveIniPath(), config_registry::rows::browser_lastdirect.row->key,
-        kAbsent, &st);
+    const std::string cur = internal::ReadLiveIniValue(
+        config_registry::rows::browser_lastdirect.row->key, kAbsent, nullptr, nullptr);
     if (cur == "127.0.0.1:7777") {
         if (WriteIniValue(config_registry::rows::browser_lastdirect,
                           ::coop::net::kDefaultDirectAddr)) {
@@ -362,8 +362,8 @@ void MigrateRetiredIniValues() {
         } else {
             // Non-fatal: the box simply keeps offering the dead port this launch. Louder
             // than DarkGray because it is the one thing that makes the fix reach a player.
-            UE_LOGW("config: could not migrate browser.lastdirect (ini not writable?) -- the "
-                    "direct-connect box will still offer the retired port");
+            UE_LOGW("config: could not migrate browser.lastdirect (the writer's line above says "
+                    "why) -- the direct-connect box will still offer the retired port");
         }
     }
 }

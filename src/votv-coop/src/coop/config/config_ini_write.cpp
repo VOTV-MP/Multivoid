@@ -2,8 +2,9 @@
 // seeder, the single-key writer, the owner reformat and the keep-line dedup. Shares the reader
 // core's primitives through config_internal.h; every public entry holds the one ini mutex.
 // The destruction guards: never rebuild from a file that exists but cannot be read cleanly (a
-// lock, or a mid-stream error), and every rebuild goes .new, checked writes, then an atomic
-// move; a locked-file write once rebuilt the host's ini from an empty line list.
+// lock, a mid-stream error, bytes that are not text), and every rebuild goes .new, checked
+// writes, then an atomic move; a locked-file write once rebuilt the host's ini from an empty line
+// list, and a file saved as UTF-16 was once cut to the one line a mint appended.
 
 #include "coop/config/config.h"
 
@@ -122,6 +123,7 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
     bool foundInSection = false;  // authoritative line already under its header
     int sectionEndIdx = -1;       // last content line of the key's section (-1 = no header)
     IniScan st = IniScan::Absent;
+    IniFault fault = IniFault::None;
     for (int attempt = 0; attempt < 5; ++attempt) {  // transient sharing locks
         lines.clear();
         found = false;
@@ -152,15 +154,16 @@ bool WriteIniValueAt(const std::wstring& path, const char* key, const char* valu
                 }
             }
             lines.push_back(s);
-        });
-        if (st != IniScan::Unreadable) break;
+        }, &fault);
+        // A lock passes; bytes that are not text stay, so only a failed read is tried again.
+        if (st != IniScan::Unreadable || fault != IniFault::ReadFailed) break;
         ::Sleep(20);
     }
     if (st == IniScan::Unreadable) {
-        // Exists but locked, or a mid-stream read error: either way the collected line list is not
-        // the whole file, and rebuilding from it is the loss shape. Refuse.
-        UE_LOGW("config: WriteIniValue('%s') SKIPPED -- multivoid.ini locked or failing "
-                "mid-read; refusing to rebuild the file from a partial view", key);
+        // Locked, failing mid-read, or not text: whichever, the collected line list is not the
+        // whole file, and rebuilding from it is the loss shape. Refuse.
+        UE_LOGW("config: WriteIniValue('%s') SKIPPED -- multivoid.ini %s; refusing to rebuild "
+                "the file from a partial view", key, IniFaultWords(fault));
         return false;
     }
     // Only the file's last line can lack a trailing newline, and every insertion below lands after
@@ -298,9 +301,11 @@ bool WriteIniValue(const config_registry::IdentityRow& row, const char* value) {
 static bool RemoveDuplicateKeyLinesAt(const std::wstring& path, const char* key,
                                       const char* keepValue) {
     std::vector<std::string> lines;
-    if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); }) !=
+    IniFault fault = IniFault::None;
+    if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); }, &fault) !=
         IniScan::Ok) {
-        UE_LOGW("config: keep-line for '%s' SKIPPED -- ini unreadable; nothing deleted", key);
+        UE_LOGW("config: keep-line for '%s' SKIPPED -- multivoid.ini %s; nothing deleted", key,
+                fault == IniFault::None ? "is missing" : IniFaultWords(fault));
         return false;
     }
     auto displayValue = [](const std::string& v) {
@@ -358,9 +363,10 @@ bool SelftestRemoveDuplicates(const std::wstring& path, const char* key, const c
 
 static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
     std::vector<std::string> lines;
-    if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); }) !=
-        IniScan::Ok) {
-        UE_LOGW("config: reformat SKIPPED -- ini unreadable; file untouched");
+    if (internal::ScanIniFile(path, [&](const std::string& l) { lines.push_back(l); },
+                              &stats.fault) != IniScan::Ok) {
+        UE_LOGW("config: reformat SKIPPED -- multivoid.ini %s; file untouched",
+                stats.fault == IniFault::None ? "is missing" : IniFaultWords(stats.fault));
         return false;
     }
     const size_t n = lines.size();

@@ -59,15 +59,27 @@ bool        ResolveFlag(const config_registry::FlagRow& row);
 long        ResolveInt(const config_registry::IntRow& row);
 float       ResolveFloat(const config_registry::FloatRow& row);
 std::string ResolveEnum(const config_registry::EnumRow& row);
+// Why a read of multivoid.ini failed. ReadFailed: the file exists but could not be opened or read
+// whole (a lock, permissions, a mid-stream error). NotText: it holds a zero byte, or starts with a
+// UTF-16 byte-order mark, as a file saved as UTF-16 does; no other encoding is detected. Either
+// way the scan stops at the fault as Unreadable instead of reading past it: a default-taking row
+// keeps a key read whole before the fault, as before a read error, and a fail-closed row refuses
+// whatever was read (ResolveFailClosed).
+enum class IniFault : unsigned char { None, ReadFailed, NotText };
+// The words that follow "multivoid.ini" for a fault, for the texts that name it.
+const char* IniFaultWords(IniFault fault);
+
 // The fail-closed read (a CFG_ENUM_FAILCLOSED row; its handle type takes no other reader). Value:
 // `out` holds the canonical token or the row default, exactly as ResolveEnum would give. Refused:
 // a layer supplied a value the reader refuses; `refusedOut` holds it (possibly empty) and
 // `originOut` the env var's name or multivoid.ini. Unreadable: no env value is set and
-// multivoid.ini could not be read, so the ini's answer is unknown; `originOut` is multivoid.ini.
+// multivoid.ini could not be read whole, so its answer is unknown even where a line was read before
+// the fault; `originOut` is multivoid.ini and `faultOut` says why.
 enum class FailClosedRead : unsigned char { Value, Refused, Unreadable };
 FailClosedRead ResolveFailClosed(const config_registry::FailClosedEnumRow& row, std::string& out,
                                  std::string* refusedOut = nullptr,
-                                 std::string* originOut = nullptr);
+                                 std::string* originOut = nullptr,
+                                 IniFault* faultOut = nullptr);
 // Free strings: env, ini, row default, no validation.
 std::string ResolveString(const config_registry::StringRow& row);
 
@@ -85,8 +97,8 @@ std::string ReadPlayerSkin();
 // The file operations behind the review panel and the boot sweep.
 
 // All lines of the live ini, with trailing newlines kept. The scan code: 0 ok, 1 absent, 2
-// unreadable.
-int ListLiveIniLines(std::vector<std::string>& out);
+// unreadable, with `faultOut` saying why.
+int ListLiveIniLines(std::vector<std::string>& out, IniFault* faultOut = nullptr);
 
 // Reader-equivalent validation of a raw ini value for `key` against its registry row,
 // comment-stripped exactly as the readers do. True for string and identity rows and for
@@ -110,7 +122,14 @@ bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 // validation to a comment, so the panel's complaint resolves while the data stays readable in
 // the file -- except a fail-closed row's (config_registry::Row::failClosed), which stays, since
 // disabling it would hand the row the default its refusal withholds.
-struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; int retired = 0; };
+// `fault` says why, when an unreadable file refused the reformat.
+struct ReformatStats {
+    int collapsed = 0;
+    int placed = 0;
+    int frozen = 0;
+    int retired = 0;
+    IniFault fault = IniFault::None;
+};
 bool ReformatLiveIni(ReformatStats& out);
 
 // The catalog: multivoid.ini.example.
@@ -158,12 +177,12 @@ ExampleGen ExampleGenStatus(int* keyCountOut);
 // defaults). Returns the failure count; each failure logs one catalog FAIL line.
 int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& scratchPath);
 
-// Identity and durability state, set during the boot mints: whether this launch's guid or skin
-// is session-only (the ini was unreadable at the mint, or the persist failed), and whether any
-// live-ini access hit an unreadable file this launch, in which case that read ran on env and
-// defaults. Both feed the config review panel.
+// Identity and durability state, set during the boot mints: whether this launch's skin is
+// session-only (the ini was unreadable at the mint, or the persist failed), and the fault of
+// the last live-ini read that failed this launch (None while none did), in which case that read
+// ran on env and defaults. Both feed the config review panel; the fault also the census.
 bool IdentityNotDurable();
-bool IniUnreadableSeen();
+IniFault LastIniFault();
 
 // Boolean flags.
 
@@ -174,9 +193,11 @@ bool MasterEnabled();
 // The dev selftest seams: path-parameterised twins of the readers, the raw line list and a
 // failing-source scan, so the env-gated autotest runs the real lexer over corpus ini files and
 // proves the tri-state branches. Not for product use. `scan` codes: 0 ok, 1 absent, 2
-// unreadable (an open failure other than absence, or a mid-stream read error).
+// unreadable (an open failure other than absence, a mid-stream read error, or bytes that are not
+// text), with `fault` saying which.
 struct IniSelftestRead {
     int scan = 0;
+    IniFault fault = IniFault::None;
     bool found = false;
     std::string value;
 };
@@ -191,6 +212,9 @@ long        SelftestResolveIntAt(const std::wstring& path, const config_registry
 float       SelftestResolveFloatAt(const std::wstring& path, const config_registry::FloatRow& row);
 std::string SelftestResolveEnumAt(const std::wstring& path, const config_registry::EnumRow& row);
 std::string SelftestResolveStringAt(const std::wstring& path, const config_registry::StringRow& row);
+FailClosedRead SelftestResolveFailClosedAt(const std::wstring& path,
+                                           const config_registry::FailClosedEnumRow& row,
+                                           std::string& out, IniFault* faultOut);
 int SelftestListLines(const std::wstring& path, std::vector<std::string>& out);
 int SelftestScanWithFailure(int failAfterLines);
 bool SelftestWriteValue(const std::wstring& path, const char* key, const char* value);
