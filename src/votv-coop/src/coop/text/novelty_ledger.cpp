@@ -53,12 +53,17 @@ bool WouldBeSeen(uint32_t cp) {
     return (g_seen[cp >> 6] & (1ull << (cp & 63))) != 0;
 }
 
+// Read once. Every inbound chat and speaker field asks, at a rate the sending peer chooses, and
+// each uncached read opened and scanned multivoid.ini on the game thread.
 int Budget() {
-    return static_cast<int>(coop::config::ResolveInt(coop::config_registry::rows::net_novelty_budget));
+    static const int s_budget = static_cast<int>(
+        coop::config::ResolveInt(coop::config_registry::rows::net_novelty_budget));
+    return s_budget;
 }
 uint64_t WindowMs() {
-    return static_cast<uint64_t>(
+    static const uint64_t s_windowMs = static_cast<uint64_t>(
         coop::config::ResolveInt(coop::config_registry::rows::net_novelty_window_ms));
+    return s_windowMs;
 }
 
 }  // namespace

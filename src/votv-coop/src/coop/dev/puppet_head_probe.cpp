@@ -38,17 +38,16 @@ std::unordered_map<void*, ActorState> g_state;
 
 void Tick(void* puppetActor, float bodyYawDeg, float desiredLookYawDeg, float desiredPitchDeg) {
     UE_ASSERT_GAME_THREAD("puppet_head_probe::Tick");
+    // The flag is read once, like every dev flag: a disabled probe costs one bool test per tick,
+    // where it once opened multivoid.ini every 2 s for each puppet on the game thread.
+    static const bool s_enabled =
+        coop::config::ResolveFlag(::coop::config_registry::rows::puppet_head_probe);
+    if (!s_enabled) return;
     if (!puppetActor || !R::IsLive(puppetActor)) return;
 
-    // Cheap per-tick gate: throttle FIRST (map lookup + compare); only touch the ini at
-    // the ~1 Hz boundary so steady-state cost is one map probe per tick.
     const auto now = SteadyClock::now();
     ActorState& st = g_state[puppetActor];
     if (st.nextLog != SteadyClock::time_point{} && now < st.nextLog) return;
-    if (!coop::config::ResolveFlag(::coop::config_registry::rows::puppet_head_probe)) {
-        st.nextLog = now + std::chrono::seconds(2);  // back off while disabled
-        return;
-    }
     st.nextLog = now + std::chrono::milliseconds(1000);
 
     Pup::PuppetHeadLookProbe p{};

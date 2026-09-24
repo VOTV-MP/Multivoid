@@ -130,8 +130,10 @@ const ImWchar* ExcludeList() {
     // The drill (dev.atlas_no_exclude_drill): null lets every source bake its entire cmap, the
     // superset the invariant in ui/atlas_watch.cpp exists to catch, so that detector can be shown
     // red without a source edit. It breaks name folding while set.
-    if (coop::config::ResolveFlag(coop::config_registry::rows::atlas_no_exclude_drill))
-        return nullptr;
+    // Read once: this runs for every font source on each atlas rebuild, on the render thread.
+    static const bool s_noExclude =
+        coop::config::ResolveFlag(coop::config_registry::rows::atlas_no_exclude_drill);
+    if (s_noExclude) return nullptr;
     static std::vector<ImWchar> v;
     if (v.empty()) {
         size_t n = 0;
@@ -253,8 +255,9 @@ void Load() {
     io.Fonts->TexMaxHeight = 2048;
     // The drill (dev.atlas_texmax_drill, 0 off): 256 starves the packer, which is how the
     // pack-failure detector is shown red.
-    if (const long drill =
-            coop::config::ResolveInt(coop::config_registry::rows::atlas_texmax_drill)) {
+    static const long s_texmaxDrill =
+        coop::config::ResolveInt(coop::config_registry::rows::atlas_texmax_drill);
+    if (const long drill = s_texmaxDrill) {
         io.Fonts->TexMaxWidth = io.Fonts->TexMaxHeight = static_cast<int>(drill);
         // The minimum defaults to 512, so a ceiling below it would never reach the starved state.
         if (io.Fonts->TexMinWidth > io.Fonts->TexMaxWidth)
