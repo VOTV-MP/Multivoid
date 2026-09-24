@@ -12,6 +12,7 @@
 #include "coop/props/remote_prop.h"            // ResolveMirrorEidByActor
 #include "coop/props/prop_element_tracker.h"   // the thrown clump's eid, for the verdict
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -20,6 +21,7 @@
 #include "ue_wrap/engine/engine_attach.h"      // SetActorRootPhysicsVelocity
 #include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerGrabState, ReleaseMainPlayerGrabIfHolding
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -105,27 +107,40 @@ void RunClient() {
     // land, and IsLive on a freed pointer can read true.
     struct Seen { void* actor; int32_t idx; };
     auto clumps = std::make_shared<std::vector<Seen>>();
+    // A clump whose read failed: its unread sample is logged once, and since a failed read of a live
+    // actor faults again it is not read again. Serial-checked, so a new clump in the same slot is read;
+    // a dead one leaves the list at the next walk.
+    auto unreadable = std::make_shared<std::vector<ue_wrap::CachedObjRef>>();
     int pass = 0;
     while (::GetTickCount64() < tEnd) {
         const bool refresh = (pass++ % 5) == 0;   // the object-array walk at 4 Hz, the samples at 20
-        RunGT([clumps, refresh, t0](std::atomic<int>& d) {
+        RunGT([clumps, unreadable, refresh, t0](std::atomic<int>& d) {
             if (refresh) {
                 clumps->clear();
                 for (void* o : R::FindObjectsByClass(L"prop_garbageClump_C"))
                     if (o) clumps->push_back(Seen{o, R::InternalIndexOf(o)});
+                unreadable->erase(std::remove_if(unreadable->begin(), unreadable->end(),
+                                                 [](const ue_wrap::CachedObjRef& u) { return !u.Get(); }),
+                                  unreadable->end());
             }
             for (const Seen& c : *clumps) {
                 void* o = c.actor;
                 if (!R::IsLiveByIndex(o, c.idx) || !ue_wrap::prop::IsGarbageClump(o)) continue;
+                bool skip = false;
+                for (const ue_wrap::CachedObjRef& u : *unreadable) if (u.Is(o)) { skip = true; break; }
+                if (skip) continue;
                 const coop::element::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(o);
                 if (eid == coop::element::kInvalidId || eid == 0) continue;
                 ue_wrap::FVector at{};
-                if (E::TryGetActorLocation(o, at))
+                if (E::TryGetActorLocation(o, at)) {
                     UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms eid=%u mirror=%p pos=(%.1f,%.1f,%.1f)",
                             ::GetTickCount64() - t0, static_cast<unsigned>(eid), o, at.X, at.Y, at.Z);
-                else   // no numbers: the judge reads a sample's coordinates as a place
+                } else {   // no numbers: the judge reads a sample's coordinates as a place
                     UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms eid=%u mirror=%p pos=(unread)",
                             ::GetTickCount64() - t0, static_cast<unsigned>(eid), o);
+                    unreadable->emplace_back();
+                    unreadable->back().Set(o);
+                }
             }
             d.store(1);
         });

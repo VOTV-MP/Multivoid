@@ -59,7 +59,8 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
         // the walk works from the start point as well as from the base.
         void* player = coop::players::Registry::Get().Local();
         ue_wrap::FVector me{};
-        if (!player || !E::TryGetActorLocation(player, me)) { picked->store(player ? -2 : -1); return; }
+        if (!player) { picked->store(-1); return; }
+        if (!E::TryGetActorLocation(player, me)) { picked->store(-2); return; }
         for (int k = 0; k < 8; ++k) {
             const float a = static_cast<float>(k) * 0.785398f;
             const ue_wrap::FVector want{me.X + 1500.f * std::cos(a), me.Y + 1500.f * std::sin(a), me.Z};
@@ -72,14 +73,16 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
             picked->store(1);
             return;
         }
-        picked->store(-1);
+        picked->store(-3);
     });
     for (int waited = 0; picked->load() == 0 && waited < 4000; waited += 5) ::Sleep(5);
-    if (picked->load() != 1) {
-        if (picked->load() == -2)
-            UE_LOGW("[INV-PICKUP-DRILL] the player's location could not be read -- the player stays put");
-        else
-            UE_LOGW("[INV-PICKUP-DRILL] no route of 8 m or more from here -- the player stays put");
+    const int pick = picked->load();
+    if (pick != 1) {
+        UE_LOGW("[INV-PICKUP-DRILL] %s -- the player stays put",
+                pick == -1   ? "no local player"
+                : pick == -2 ? "the player's location could not be read"
+                : pick == -3 ? "no route of 8 m or more from here"
+                             : "the game thread did not answer the pick within 4 s");
         UE_LOGI("[INV-PICKUP-DRILL] CLIENT LIFE DONE (no walk)");
         return 0;
     }

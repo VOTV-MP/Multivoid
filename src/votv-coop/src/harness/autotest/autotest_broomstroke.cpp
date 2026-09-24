@@ -72,10 +72,12 @@ struct RestSite {
     float yaw = 0.f;
 };
 
-// One thing the striker does, at `ms`, while the tracker follows the ids.
+// One thing the striker does, at `ms`, while the tracker follows the ids; it is handed the tracker's
+// states as they stand.
+using Tracked = std::vector<BW::TrackState>;
 struct Beat {
     DWORD ms;
-    std::function<void()> act;
+    std::function<void(const Tracked&)> act;
 };
 
 // Follow the ids near `center` until `endMs`, doing each beat when it falls due: a beat blocks the
@@ -83,31 +85,44 @@ struct Beat {
 // moment it returns.
 void TrackThrough(const std::vector<uint32_t>& ids, const ue_wrap::FVector& center, float radiusCm,
                   const std::vector<Beat>& beats, DWORD endMs, DWORD t0, const char* who, const char* phase) {
-    std::vector<BW::TrackState> states;
+    Tracked states;
     for (uint32_t id : ids) states.push_back(BW::TrackState{id, -1, ue_wrap::FVector{}});
-    int unnamed = -1;
+    BW::UnnamedState unnamed;
     size_t next = 0;
     for (;;) {
         const DWORD elapsed = ::GetTickCount() - t0;
         if (elapsed >= endMs) break;
-        if (next < beats.size() && elapsed >= beats[next].ms) beats[next++].act();
+        if (next < beats.size() && elapsed >= beats[next].ms) beats[next++].act(states);
         BW::TrackStep(states, center, radiusCm, unnamed, who, phase);
         ::Sleep(50);
     }
     BW::TrackFinal(states, who, phase);
 }
 
-// The clump among `ids` nearest `at`, if one is within `withinCm` of it.
-uint32_t ClumpNear(const std::vector<uint32_t>& ids, const ue_wrap::FVector& at, float withinCm,
-                   ue_wrap::FVector& outPos) {
+// The clump among the tracked ids nearest `at`, if one is within `withinCm` of it, at the place the
+// tracker read last (within its 5 cm, 50 ms before). `unreadOut`: how many of the clumps the tracker
+// could not read, which are at no distance and so are no candidate.
+uint32_t ClumpNear(const Tracked& states, const ue_wrap::FVector& at, float withinCm, ue_wrap::FVector& outPos,
+                   int& unreadOut) {
     uint32_t best = 0;
     float bestCm = withinCm;
-    for (const BW::TrackState& s : BW::FormsOf(ids)) {
-        if (s.form != 2 || !s.known) continue;   // an unread clump is at no distance
+    unreadOut = 0;
+    for (const BW::TrackState& s : states) {
+        if (s.form != 2) continue;
+        if (!s.known) { ++unreadOut; continue; }
         const float d = BW::Dist(s.pos, at);
         if (d <= bestCm) { bestCm = d; best = s.eid; outPos = s.pos; }
     }
     return best;
+}
+
+// A rest phase's SUBJECT row: the clump found, or none, and apart from none the clumps it could not read.
+void LogSubject(const char* who, const char* phase, uint32_t eid, int unread) {
+    if (unread > 0)
+        UE_LOGI("broom_drill: %s %s SUBJECT clump eid=%u -- %d clump(s) among the ids could not be read", who, phase,
+                eid, unread);
+    else
+        UE_LOGI("broom_drill: %s %s SUBJECT clump eid=%u", who, phase, eid);
 }
 
 // Wait on this thread until `ms` after `t0`.
@@ -124,11 +139,10 @@ void At(DWORD t0, DWORD ms) {
 void DispenserPhases(bool isClient, const char* who, DWORD t0) {
     auto sb = std::make_shared<BW::Dispenser>();
     At(t0, 54000);
-    int trashBefore = 0;
-    if (!BW::PickDispenser(sb, who, trashBefore)) return;
+    int trashBefore = 0, unreadBefore = 0;
+    if (!BW::PickDispenser(sb, who, trashBefore, unreadBefore)) return;
     const bool aliveBefore = BW::DispenserAlive(sb);
-    if (isClient) {
-        BW::AimAt(sb->pos, 0.f, who, "C");
+    if (isClient && BW::AimAt(sb->pos, 0.f, who, "C")) {
         for (int i = 0; i < 4; ++i) {
             At(t0, 59000 + static_cast<DWORD>(i) * 2000);
             if (!BW::DispenserAlive(sb)) break;
@@ -137,12 +151,18 @@ void DispenserPhases(bool isClient, const char* who, DWORD t0) {
     }
     At(t0, 70000);
     const bool aliveAfter = BW::DispenserAlive(sb);
-    auto trashAfter = std::make_shared<int>(0);
-    BW::RunGT([sb, trashAfter](std::atomic<int>& d) { *trashAfter = BW::CountTrashNear(sb->pos, kTrashRadiusCm); d.store(1); });
-    const int gained = *trashAfter - trashBefore;
-    UE_LOGI("broom_drill: VERDICT role=%s phase=C key='%ls' trash %d->%d (gained %d) pileAlive %d->%d -- %s",
-            who, sb->key.c_str(), trashBefore, *trashAfter, gained, aliveBefore ? 1 : 0, aliveAfter ? 1 : 0,
-            (gained > 0 && aliveBefore && !aliveAfter) ? "PASS: the client's strokes put trash here and took the pile"
+    auto trashAfter = std::make_shared<std::pair<int, int>>(0, 0);   // trash near, unread anywhere
+    BW::RunGT([sb, trashAfter](std::atomic<int>& d) {
+        trashAfter->first = BW::CountTrashNear(sb->pos, kTrashRadiusCm, trashAfter->second);
+        d.store(1);
+    });
+    const int gained = trashAfter->first - trashBefore;
+    const int unread = unreadBefore + trashAfter->second;
+    UE_LOGI("broom_drill: VERDICT role=%s phase=C key='%ls' trash %d->%d (gained %d) unreadAnywhere=%d pileAlive "
+            "%d->%d -- %s", who, sb->key.c_str(), trashBefore, trashAfter->first, gained, unread, aliveBefore ? 1 : 0,
+            aliveAfter ? 1 : 0,
+            unread > 0 ? "INCONCLUSIVE: props that could not be placed leave both counts short by an unknown number"
+            : (gained > 0 && aliveBefore && !aliveAfter) ? "PASS: the client's strokes put trash here and took the pile"
             : gained > 0 ? "PARTIAL: trash arrived but the pile still stands"
                          : "FAIL: nothing came out of the pile on this peer");
 
@@ -151,10 +171,9 @@ void DispenserPhases(bool isClient, const char* who, DWORD t0) {
     for (const PushPhase& ph : push) {
         const bool striking = (ph.hostStrikes != isClient);
         ue_wrap::FVector prop{};
-        bool haveProp = false;
         At(t0, ph.aimMs);
-        if (striking && (haveProp = BW::PickProp(sb->pos, kPropRadiusCm, who, ph.name, prop)))
-            BW::AimAt(prop, 0.f, who, ph.name);
+        const bool haveProp = striking && BW::PickProp(sb->pos, kPropRadiusCm, who, ph.name, prop) &&
+                              BW::AimAt(prop, 0.f, who, ph.name);
         At(t0, ph.strokeMs - 1000);
         BW::CensusProps(sb->pos, kPropRadiusCm, who, ph.name, "before");
         At(t0, ph.strokeMs);
@@ -179,9 +198,16 @@ void RestPhases(bool isClient, const char* who, DWORD t0, const RestSite& site) 
         const std::vector<ue_wrap::FVector> piles{g0, g1};
         BW::SpawnPilesAt(piles, who, "G");
         // The adoption scan names them; a pile with no id is neither tracked nor swept under one.
-        for (DWORD waited = 0; waited < 8000 && (BW::ChipPilesNear(g0, 10.f) < 1 || BW::ChipPilesNear(g1, 10.f) < 1);
-             waited += 250)
+        int named0 = 0, named1 = 0, unread = 0;
+        DWORD waited = 0;
+        for (;; waited += 250) {
+            named0 = BW::ChipPilesNear(g0, 10.f, unread);
+            named1 = BW::ChipPilesNear(g1, 10.f, unread);
+            if ((named0 >= 1 && named1 >= 1) || waited >= 8000) break;
             ::Sleep(250);
+        }
+        UE_LOGI("broom_drill: %s G piles named %d and %d after %lums unreadAnywhere=%d", who, named0, named1,
+                static_cast<unsigned long>(waited), unread);
     }
     At(t0, 106000);
     ue_wrap::FVector center{};
@@ -195,25 +221,33 @@ void RestPhases(bool isClient, const char* who, DWORD t0, const RestSite& site) 
 
     std::vector<Beat> beatsG, beatsH, beatsI;
     if (striking) {
-        beatsG.push_back(Beat{106500, [who, g0] { BW::LookAt(g0, who, "G"); }});
-        beatsG.push_back(Beat{108000, [who, &ids] { BW::FreezeNextStroke(ids); BW::Swing(who, "G", 1, 2500); }});
-        beatsG.push_back(Beat{110000, [who, g1] { BW::LookAt(g1, who, "G"); }});
-        beatsG.push_back(Beat{111500, [who, &ids] { BW::FreezeNextStroke(ids); BW::Swing(who, "G", 1, 2500); }});
-        beatsH.push_back(Beat{118000, [who, &ids, g0] {
+        beatsG.push_back(Beat{106500, [who, g0](const Tracked&) { BW::LookAt(g0, who, "G"); }});
+        beatsG.push_back(Beat{108000, [who, &ids](const Tracked&) {
+            BW::FreezeNextStroke(ids);
+            BW::Swing(who, "G", 1, 2500);
+        }});
+        beatsG.push_back(Beat{110000, [who, g1](const Tracked&) { BW::LookAt(g1, who, "G"); }});
+        beatsG.push_back(Beat{111500, [who, &ids](const Tracked&) {
+            BW::FreezeNextStroke(ids);
+            BW::Swing(who, "G", 1, 2500);
+        }});
+        beatsH.push_back(Beat{118000, [who, g0](const Tracked& states) {
             ue_wrap::FVector at{};
-            const uint32_t eid = ClumpNear(ids, g0, kSubjectNearCm, at);
-            UE_LOGI("broom_drill: %s H SUBJECT clump eid=%u", who, eid);
+            int unread = 0;
+            const uint32_t eid = ClumpNear(states, g0, kSubjectNearCm, at, unread);
+            LogSubject(who, "H", eid, unread);
             if (!eid) return;
             BW::Thaw(eid, who);
             BW::Knock(eid, ue_wrap::FVector{0.f, 0.f, kKnockUpCmS}, who, "H");
         }});
-        beatsI.push_back(Beat{126000, [who, &ids, g1] {
+        beatsI.push_back(Beat{126000, [who, g1](const Tracked& states) {
             ue_wrap::FVector at{};
-            const uint32_t eid = ClumpNear(ids, g1, kSubjectNearCm, at);
-            UE_LOGI("broom_drill: %s I SUBJECT clump eid=%u", who, eid);
+            int unread = 0;
+            const uint32_t eid = ClumpNear(states, g1, kSubjectNearCm, at, unread);
+            LogSubject(who, "I", eid, unread);
             if (eid) BW::LookAt(at, who, "I");
         }});
-        beatsI.push_back(Beat{128000, [who] { BW::Swing(who, "I", 1, 2500); }});
+        beatsI.push_back(Beat{128000, [who](const Tracked&) { BW::Swing(who, "I", 1, 2500); }});
     }
     TrackThrough(ids, center, radius, beatsG, 117000, t0, who, "G");
     TrackThrough(ids, center, radius, beatsH, 125000, t0, who, "H");
@@ -236,7 +270,11 @@ void RunBroomStrokeProbe() {
         ready = isClient ? coop::net_pump::HasAnnouncedWorldReady() : s.IsSlotWorldReady(1);
         if (!ready) ::Sleep(100);
     }
-    if (!ready) { UE_LOGW("broom_drill: %s never saw the client's world -- aborting", who); return; }
+    if (!ready) {
+        UE_LOGW("broom_drill: %s never saw the client's world -- aborting", who);
+        UE_LOGI("broom_drill: done (INVALID)");
+        return;
+    }
     UE_LOGI("broom_drill: %s ANCHOR tick=%lu -- settling 20s for the pile index and the save binds", who,
             static_cast<unsigned long>(::GetTickCount()));
     ::Sleep(20000);
@@ -256,16 +294,26 @@ void RunBroomStrokeProbe() {
     ue_wrap::FVector seed{};
     RestSite rest;
     const bool haveHeap = !isClient && BW::PickChipPile(who, "A", seed);
+    bool aimedA = false;
     if (haveHeap) {
         BW::SpawnHeap(seed, kHeapExtra, kHeapRingCm, who);
         // The adoption scan names the new piles, and a pile with no id is neither tracked nor swept
         // under one; wait for the heap to be whole.
-        for (DWORD waited = 0; waited < 14000 && BW::ChipPilesNear(seed, kHeapRingCm + 10.f) < kHeapExtra + 1;
-             waited += 500)
+        int named = 0, unread = 0;
+        DWORD waited = 0;
+        for (;; waited += 500) {
+            named = BW::ChipPilesNear(seed, kHeapRingCm + 10.f, unread);
+            if (named >= kHeapExtra + 1 || waited >= 14000) break;
             ::Sleep(500);
-        BW::AimAt(seed, 0.f, who, "A");
+        }
+        UE_LOGI("broom_drill: %s A heap named %d of %d after %lums unreadAnywhere=%d", who, named, kHeapExtra + 1,
+                static_cast<unsigned long>(waited), unread);
+        aimedA = BW::AimAt(seed, 0.f, who, "A");
         rest.seed = seed;
-        rest.valid = BW::LocalBody(rest.stand, rest.yaw);
+        rest.valid = aimedA && BW::LocalBody(rest.stand, rest.yaw);
+        if (aimedA && !rest.valid)
+            UE_LOGW("broom_drill: %s A -- the body could not be placed after the aim, so the rest phases have no "
+                    "place to stand", who);
     }
     at(31000);
     // Both peers census around the striker's body, which stands beside the heap, so they follow the
@@ -279,7 +327,7 @@ void RunBroomStrokeProbe() {
     std::vector<uint32_t> heapIds;
     BW::CensusPiles(centerA, kHeapCensusCm, who, "A", "before", &heapIds);
     std::vector<Beat> strikeA;
-    if (haveHeap) strikeA.push_back(Beat{32000, [who] { BW::Swing(who, "A", 1, 2500); }});
+    if (aimedA) strikeA.push_back(Beat{32000, [who](const Tracked&) { BW::Swing(who, "A", 1, 2500); }});
     TrackThrough(heapIds, centerA, kHeapCensusCm, strikeA, 39000, t0, who, "A");
     BW::CensusPiles(centerA, kHeapCensusCm, who, "A", "late", nullptr);
 
@@ -288,7 +336,7 @@ void RunBroomStrokeProbe() {
     ue_wrap::FVector subject{};
     const bool haveSubject =
         isClient && BW::PickChipPile(who, "B", subject, kSubjectAloneCm, &centerA, kSubjectFromStrikerCm);
-    if (haveSubject) BW::AimAt(subject, kBodyTurnDeg, who, "B");
+    const bool aimedB = haveSubject && BW::AimAt(subject, kBodyTurnDeg, who, "B");
     at(44000);
     ue_wrap::FVector centerB = subject;
     if (!isClient && !BW::StrikerBody(false, 1, centerB)) {
@@ -296,14 +344,14 @@ void RunBroomStrokeProbe() {
         UE_LOGI("broom_drill: done (INVALID)");
         return;
     }
-    // A client with no subject has no place to census around; the world origin is not one.
+    // A client with no subject has no place to census or track around; the world origin is not one.
     const bool censusB = !isClient || haveSubject;
     if (!censusB) UE_LOGW("broom_drill: %s B -- no subject pile, so this peer takes no phase B census", who);
     std::vector<uint32_t> idsB;
     if (censusB) BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "before", &idsB);
     std::vector<Beat> strikeB;
-    if (haveSubject) strikeB.push_back(Beat{45000, [who] { BW::Swing(who, "B", 1, 2500); }});
-    TrackThrough(idsB, centerB, kPileRadiusCm, strikeB, 52000, t0, who, "B");
+    if (aimedB) strikeB.push_back(Beat{45000, [who](const Tracked&) { BW::Swing(who, "B", 1, 2500); }});
+    if (censusB) TrackThrough(idsB, centerB, kPileRadiusCm, strikeB, 52000, t0, who, "B");
     if (censusB) BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "late", nullptr);
 
     DispenserPhases(isClient, who, t0);

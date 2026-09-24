@@ -10,6 +10,7 @@
 #include "coop/player/puppet_drive.h"
 #include "coop/player/remote_player.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
@@ -38,12 +39,14 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     return d->load() != 0;
 }
 
-bool g_frameUnreadSaid = false;   // game thread; the read repeats, so it is said once
+// The puppet and the player whose location read failed, each for itself: a failed read of a live actor
+// faults again, so that actor is not read again, while a respawned puppet or a new player is. Game thread.
+ue_wrap::CachedObjRef g_unreadPuppet, g_unreadLocal;
 
 // Puppet-frame nameplate shot: a proper, non-ragdoll capture. Frame the slot-1 STANDING puppet --
 // stand the host a few metres back and aim the camera at the puppet's HEAD, so the whole body AND
-// the ImGui nameplate sit IN frame. `reposition` is true only on the FIRST call (move the host back
-// once); later calls re-aim only, so the host is not teleported every tick. True when it framed.
+// the ImGui nameplate sit IN frame. `reposition` stands the host back from the puppet before the aim;
+// the drill passes it on every call, so the host follows a puppet that moves. True when it framed.
 bool FramePuppetForNameplate(bool reposition) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done, reposition] {
@@ -52,15 +55,20 @@ bool FramePuppetForNameplate(bool reposition) {
         if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(2); return; }
         void* ctrl = E::GetController(local);
         if (!ctrl || !R::IsLive(ctrl)) { done->store(2); return; }
+        if (g_unreadPuppet.Is(puppet) || g_unreadLocal.Is(local)) { done->store(2); return; }
         // Aim/position against the VISIBLE MESH (mirrors AimHostAtPuppet) -- the
         // mainPlayer_C ACTOR pivot sits up high (pose-drive alignment), so using the
         // actor Z would float the host at head height + aim over the body.
         ue_wrap::FVector pa{}, eye{};
-        if (!E::TryGetActorLocation(puppet, pa) || !E::TryGetActorLocation(local, eye)) {
-            if (!g_frameUnreadSaid) {
-                g_frameUnreadSaid = true;
-                UE_LOGW("puppet-frame[host]: not framed -- a location could not be read");
-            }
+        if (!E::TryGetActorLocation(puppet, pa)) {
+            g_unreadPuppet.Set(puppet);
+            UE_LOGW("puppet-frame[host]: not framed -- the puppet's location could not be read; it is not read again");
+            done->store(2);
+            return;
+        }
+        if (!E::TryGetActorLocation(local, eye)) {
+            g_unreadLocal.Set(local);
+            UE_LOGW("puppet-frame[host]: not framed -- the host's location could not be read; it is not read again");
             done->store(2);
             return;
         }

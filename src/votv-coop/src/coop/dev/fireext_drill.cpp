@@ -98,7 +98,7 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool frozen = false, mounted = false, gone = false;
-    bool unreadSaid = false;          // its location stopped reading: said once, the watch has no sighting of it
+    bool unread = false;              // its location could not be read: said once, and no reader reads it again
     int thrusting = 0, spraying = 0;  // a drop hard enough starts the runaway thrust; -1 = unread
 };
 std::vector<Watched> g_watched;
@@ -120,6 +120,14 @@ bool IsMounted(void* ext) {
     return std::find(g_held.begin(), g_held.end(), ext) != g_held.end();
 }
 
+// Silence reads as "did not move", so the first reader that cannot place an extinguisher says so, and
+// no reader reads it again: a failed read of a live actor is a faulted dispatch, which faults again.
+void MarkUnread(Watched& w, char who, const char* reader) {
+    w.unread = true;
+    UE_LOGW("[FIREEXT-DRILL] [%c] UNREAD key='%ls' -- %s could not read its location; the watch cannot say "
+            "whether it moved, and nothing reads it again", who, w.key.c_str(), reader);
+}
+
 // One walk of the object array, when the watch arms, never again.
 void ArmWatch(char who) {
     g_watched.clear();
@@ -139,7 +147,11 @@ void ArmWatch(char who) {
             Watched w;
             w.ref.Set(o);
             w.key = PR::GetInteractableKeyString(o);
-            if (!E::TryGetActorLocation(o, w.start)) continue;   // unreadable: not watched
+            if (!E::TryGetActorLocation(o, w.start)) {
+                UE_LOGW("[FIREEXT-DRILL] [%c] NOT WATCHED key='%ls' -- its location could not be read at the arm",
+                        who, w.key.c_str());
+                continue;
+            }
             w.printed = w.start;
             w.frozen = PR::IsFrozen(o);
             g_watched.push_back(std::move(w));
@@ -165,7 +177,7 @@ void TickWatch(char who) {
     g_watchTick = 0;
     ReadMounts();
     for (auto& w : g_watched) {
-        if (w.gone) continue;
+        if (w.gone || w.unread) continue;
         void* o = w.ref.Get();
         if (!o) {
             w.gone = true;
@@ -174,12 +186,7 @@ void TickWatch(char who) {
         }
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(o, at)) {
-            // Silence here reads as "did not move", so the watch says once that it cannot see it.
-            if (!w.unreadSaid) {
-                w.unreadSaid = true;
-                UE_LOGW("[FIREEXT-DRILL] [%c] UNREAD key='%ls' -- its location could not be read; the watch "
-                        "cannot say whether it moved", who, w.key.c_str());
-            }
+            MarkUnread(w, who, "the watch");
             continue;
         }
         const bool frozen = PR::IsFrozen(o);
@@ -215,10 +222,15 @@ int g_probeTicks = -1;  // -1 = not yet run
 void TickRelatchProbe() {
     if (g_probeTicks < 0) {
         for (auto& w : g_watched) {
+            if (w.gone || w.unread) continue;
             void* o = w.ref.Get();
             if (!o || !coop::remote_prop::IsActorUnderAnyDrive(o)) continue;
             ue_wrap::FVector at{};
-            if (!E::TryGetActorLocation(o, at) || Dist(at, w.start) < kProbeOffCm) continue;
+            if (!E::TryGetActorLocation(o, at)) {
+                MarkUnread(w, 'C', "the re-latch probe");
+                continue;
+            }
+            if (Dist(at, w.start) < kProbeOffCm) continue;
             const bool ok = PR::CallSetPropProps(o, false, false, false);
             const bool sim = ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o));
             UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' setPropProps(F,F,F,F) on the driven copy (%s) "
@@ -284,7 +296,7 @@ int g_aimPose = 0;
 // tail clears it: its end, a target that died, a tick on which the drill does not act.
 uint16_t g_staleGen = 0;
 bool g_tailSet = false;
-bool g_tailInvalid = false;   // the tail's pose could not be read: this arm's second measurement has no stimulus
+bool g_tailEnded = false;   // the tail stopped early and said why: no later tick sends
 
 void ClearStaleTail(coop::net::Session& s) {
     if (!g_tailSet) return;
@@ -293,19 +305,25 @@ void ClearStaleTail(coop::net::Session& s) {
 }
 
 void SendStaleTail(coop::net::Session& s, void* t, int tick) {
-    if (tick > kStaleTailTicks + 1 || g_tailInvalid) return;
-    if (tick > kStaleTailTicks || !t) {
+    if (tick > kStaleTailTicks + 1 || g_tailEnded) return;
+    if (tick > kStaleTailTicks) {
         ClearStaleTail(s);
         return;
     }
     // Read before the tail is announced: a tail that sends nothing would make the receivers' "not
-    // pulled back" pass by default.
+    // pulled back" pass by default. The pose stays set between ticks, so a cut tail held it for the
+    // ticks before the cut; how many packets carried it is the net thread's cadence, not this count.
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(t, loc)) {
-        g_tailInvalid = true;
+    const char* lost = !t ? " is gone" : (!E::TryGetActorLocation(t, loc) ? "'s location could not be read" : nullptr);
+    if (lost) {
+        g_tailEnded = true;
         ClearStaleTail(s);
-        UE_LOGW("[FIREEXT-DRILL] [%c] STALE TAIL INVALID -- the extinguisher's location could not be read, so "
-                "no stale pose is sent and this arm's second measurement has no stimulus", Who());
+        if (tick == 1)
+            UE_LOGW("[FIREEXT-DRILL] [%c] STALE TAIL INVALID -- the extinguisher%s before the tail began, so no "
+                    "stale pose is sent and this arm's second measurement has no stimulus", Who(), lost);
+        else
+            UE_LOGW("[FIREEXT-DRILL] [%c] STALE TAIL CUT at tick %d of %d -- the extinguisher%s; the stale pose "
+                    "was held for %d tick(s)", Who(), tick, kStaleTailTicks, lost, tick - 1);
         return;
     }
     if (tick == 1) {
@@ -371,6 +389,8 @@ void StartWalk(const ue_wrap::FVector& to, float reachCm, bool carry) {
 // 0 walking, 1 reached, 2 failed.
 int WalkState() { return g_walk ? g_walk->state.load() : 2; }
 
+// The run's dead marker: a run passes --dead-marker "[FIREEXT-DRILL] INVALID", which ends it
+// INCONCLUSIVE, so a drill that measured nothing never ends on the done marker a measurement prints.
 void Invalid(const char* why) {
     UE_LOGW("[FIREEXT-DRILL] INVALID %s", why);
     g_step = Step::Invalid;
@@ -409,11 +429,17 @@ bool PickTarget(void* player, const char*& why) {
     why = "no mounted, frozen extinguisher a route reaches";
     float best = 1e30f;
     ue_wrap::FVector bestAt{};
-    for (const auto& w : g_watched) {
+    int unread = 0;
+    for (auto& w : g_watched) {
+        if (w.unread) { ++unread; continue; }   // no place: never the target
         void* o = w.ref.Get();
         if (!o || !w.mounted || !PR::IsFrozen(o)) continue;
         ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(o, at)) continue;   // unreadable: never the target
+        if (!E::TryGetActorLocation(o, at)) {
+            MarkUnread(w, Who(), "the target pick");
+            ++unread;
+            continue;
+        }
         std::vector<ue_wrap::FVector> route;
         if (!E::FindNavPath(player, me, at, route) || route.empty()) continue;
         const ue_wrap::FVector& end = route.back();
@@ -422,6 +448,9 @@ bool PickTarget(void* player, const char*& why) {
         for (size_t i = 1; i < route.size(); ++i) len += Dist(route[i - 1], route[i]);
         if (len < best) { best = len; g_target.Set(o); g_targetKey = w.key; bestAt = at; }
     }
+    if (unread > 0)
+        UE_LOGW("[FIREEXT-DRILL] [%c] PICK -- %d extinguisher(s) could not be placed, so none of them is a candidate",
+                Who(), unread);
     if (!g_target.Raw()) return false;
     g_mountPos = bestAt;   // read in the pick above
     UE_LOGI("[FIREEXT-DRILL] [%c] target key='%ls' at (%.1f, %.1f, %.1f), a %.0f cm route (%.0f cm straight)",
@@ -447,15 +476,28 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out, const char*& why) {
     return false;
 }
 
+// The target's row in the watch, whose latch every reader honours; null when the watch has none.
+Watched* TargetRow() {
+    for (auto& w : g_watched)
+        if (w.key == g_targetKey) return &w;
+    return nullptr;
+}
+
 void LogTarget(const char* what) {
     ReadMounts();
     void* t = g_target.Get();
     if (!t) { UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' -- the extinguisher is gone", Who(), what, g_targetKey.c_str()); return; }
+    Watched* row = TargetRow();
     ue_wrap::FVector at{};
-    const bool atRead = E::TryGetActorLocation(t, at);
-    UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f)%s fromMount=%.1fcm frozen=%d mounted=%d",
-            Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, atRead ? "" : " (unread)",
-            atRead ? Dist(at, g_mountPos) : -1.f, PR::IsFrozen(t) ? 1 : 0, IsMounted(t) ? 1 : 0);
+    const bool atRead = !(row && row->unread) && E::TryGetActorLocation(t, at);
+    if (!atRead && row && !row->unread) MarkUnread(*row, Who(), "the target log");
+    if (atRead)
+        UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
+                Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
+                IsMounted(t) ? 1 : 0);
+    else   // no numbers: an unread place is no place
+        UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (unread) frozen=%d mounted=%d", Who(), what,
+                g_targetKey.c_str(), PR::IsFrozen(t) ? 1 : 0, IsMounted(t) ? 1 : 0);
 }
 
 // When the acting peer may start. carry and short: a client's join and its join window are over,
@@ -645,7 +687,7 @@ void OnDisconnect() {
     g_probedKey.clear();
     g_probeTicks = -1;
     g_afterTicks = -1;
-    g_tailInvalid = false;
+    g_tailEnded = false;
     if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
         g_walk->goal.failed = true;
         g_walk->goal.failReason = "session ended";

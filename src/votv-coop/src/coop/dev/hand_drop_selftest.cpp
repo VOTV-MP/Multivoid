@@ -10,6 +10,7 @@
 #include "coop/session/net_pump.h"        // HasAnnouncedWorldReady
 
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -70,8 +71,12 @@ struct PropRow {
 // real actor of the held item's class sitting at that peer's hands, so counting it would hide
 // exactly the loss this driver measures -- the census would read "still one prop here" while the
 // only thing there is the mirror that is about to be destroyed.
-// `unreadKeys`: keyed props whose location could not be read -- anywhere, since an unread prop has no distance.
-std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std::vector<std::wstring>& unreadKeys) {
+// Keyed props whose location could not be read: each read once, since a failed read of a live actor faults
+// again, and reported by every census while it lives.
+std::vector<ue_wrap::CachedObjRef> g_unreadable;
+
+// `unread`: keyed props whose location could not be read -- anywhere, since an unread prop has no distance.
+std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std::vector<PropRow>& unread) {
     std::vector<PropRow> out;
     void* handAxis[1 + coop::players::kMaxPeers];
     const size_t handAxisN =
@@ -90,8 +95,22 @@ std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std:
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
         std::wstring key = PR::GetKeyString(obj);
         if (key.empty() || key == L"None") continue;  // keyless props ride other lanes
+        bool latched = false;
+        for (const ue_wrap::CachedObjRef& u : g_unreadable)
+            if (u.Is(obj)) { latched = true; break; }
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(obj, loc)) { unreadKeys.push_back(std::move(key)); continue; }
+        if (latched || !E::TryGetActorLocation(obj, loc)) {
+            if (!latched) {
+                g_unreadable.emplace_back();
+                g_unreadable.back().Set(obj);
+            }
+            PropRow row;
+            row.actor = obj;
+            row.key   = std::move(key);
+            row.cls   = R::ClassNameOf(obj);
+            unread.push_back(std::move(row));
+            continue;
+        }
         const float dx = loc.X - centre.X, dy = loc.Y - centre.Y, dz = loc.Z - centre.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > r2) continue;
@@ -191,6 +210,15 @@ struct EpisodeResult {
     // -- and a prop that leaves under one key and comes back under another reads as a count that
     // balances while the identity did not survive.
     std::vector<std::wstring> beforeKeys;
+    // The actor each before key named, so an unread row later counts as that prop only when it is
+    // that actor, never another under the same key.
+    std::vector<std::pair<std::wstring, ue_wrap::CachedObjRef>> beforeActors;
+
+    bool BeforeActorIs(const std::wstring& key, void* actor) const {
+        for (const auto& b : beforeActors)
+            if (b.first == key) return b.second.Is(actor);
+        return false;
+    }
 };
 EpisodeResult g_ep[5];   // 1-based
 
@@ -313,12 +341,12 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
                           : "the holder's puppet is not up here, or its location unread");
         return;
     }
-    std::vector<std::wstring> unreadKeys;
-    const std::vector<PropRow> rows = Census(centre, kCensusRadiusCm, unreadKeys);
-    if (!unreadKeys.empty())
+    std::vector<PropRow> unread;
+    const std::vector<PropRow> rows = Census(centre, kCensusRadiusCm, unread);
+    if (!unread.empty())
         UE_LOGW("hand_drop_selftest: ep%d %s -- %zu keyed prop(s) could not be read (first key='%ls'); this "
-                "census cannot say where they are", st.episode, ActName(st.act), unreadKeys.size(),
-                unreadKeys[0].c_str());
+                "census cannot say where they are", st.episode, ActName(st.act), unread.size(),
+                unread[0].key.c_str());
     EpisodeResult& ep = g_ep[st.episode];
     const int count = static_cast<int>(rows.size());
 
@@ -326,7 +354,12 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
         case Act::CensusBefore:
             ep.before = count;
             ep.beforeKeys.clear();
-            for (const PropRow& r : rows) ep.beforeKeys.push_back(r.key);
+            ep.beforeActors.clear();
+            for (const PropRow& r : rows) {
+                ep.beforeKeys.push_back(r.key);
+                ep.beforeActors.emplace_back(r.key, ue_wrap::CachedObjRef{});
+                ep.beforeActors.back().second.Set(r.actor);
+            }
             break;
         case Act::CensusHeld:   ep.held  = count; break;   // the watcher's inference follows below
         case Act::CensusAfter:  ep.after = count; break;
@@ -343,17 +376,18 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
         // The watcher is told nothing: it works out which prop the holder took by watching one
         // leave its own world. A pickup destroys the world actor on every peer, so exactly one key
         // should be missing here; none means the pickup never crossed, and more than one means
-        // something else moved at the same time and the episode cannot name a subject.
+        // something else moved at the same time and the episode cannot name a subject. A row the
+        // census could not read is still that prop in this world, and so did not leave, when it is
+        // the very actor the before census saw under the key.
         std::vector<std::wstring> gone;
         for (const std::wstring& k : ep.beforeKeys) {
             bool present = false;
             for (const PropRow& r : rows) if (r.key == k) { present = true; break; }
+            for (const PropRow& u : unread)
+                if (!present && u.key == k && ep.BeforeActorIs(k, u.actor)) { present = true; break; }
             if (!present) gone.push_back(k);
         }
-        if (!unreadKeys.empty()) {
-            UE_LOGW("hand_drop_selftest: ep%d WATCHER cannot name a subject -- %zu keyed prop(s) could not be "
-                    "read, and an unread prop cannot be told from one that left", st.episode, unreadKeys.size());
-        } else if (gone.size() == 1) {
+        if (gone.size() == 1) {
             ep.targetKey = gone[0];
             UE_LOGI("hand_drop_selftest: ep%d WATCHER subject inferred -- key='%ls' left this world "
                     "when the holder picked it up", st.episode, ep.targetKey.c_str());
@@ -374,10 +408,10 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
             // verdict is about that key and not about a count that two unrelated changes can
             // balance. A key that is gone from this peer after the drop is the loss: the holder
             // has the prop and this peer has nothing bound to it.
-            bool stillHere = false, unread = false;
+            bool stillHere = false, targetUnread = false;
             for (const PropRow& r : rows) if (r.key == ep.targetKey) { stillHere = true; break; }
-            for (const std::wstring& k : unreadKeys) if (k == ep.targetKey) { unread = true; break; }
-            if (unread)
+            for (const PropRow& u : unread) if (u.key == ep.targetKey) { targetUnread = true; break; }
+            if (targetUnread)
                 UE_LOGW("hand_drop_selftest: ep%d WATCHER cannot judge -- key='%ls' could not be read after the "
                         "drop", st.episode, ep.targetKey.c_str());
             else if (ep.targetKey.empty())
@@ -512,6 +546,7 @@ void OnDisconnect() {
     g_next = 0;
     g_verdictPrinted = false;
     for (auto& ep : g_ep) ep = EpisodeResult{};
+    g_unreadable.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
 

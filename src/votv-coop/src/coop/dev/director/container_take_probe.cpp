@@ -45,12 +45,14 @@ namespace INV = ue_wrap::inventory;
 namespace PR  = ue_wrap::prop;
 namespace PT  = coop::prop_element_tracker;
 
+// Waits until the task has run, however long the game thread stalls. A bounded wait returned while the
+// task could still run later and write the probe's shared state under a caller that had moved on; a
+// probe waiting on a stalled game thread only waits, on its own thread.
 template <class Fn>
-int RunGT(Fn&& body) {   // bounded: a stalled game thread returns 0 instead of hanging forever
+int RunGT(Fn&& body) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done, body]() mutable { body(*done); });
-    int waited = 0;
-    while (done->load() == 0) { ::Sleep(5); waited += 5; if (waited >= 4000) return 0; }
+    while (done->load() == 0) ::Sleep(5);
     return done->load();
 }
 
@@ -170,6 +172,10 @@ struct Probe {
     int32_t  phaseA = -1;
     int32_t  phaseB = -1;
     std::wstring targetKey;   // the shared container's stable SAVE KEY (the by-construction race key)
+    // The pick, written by a game-thread task: the task holds only this shared state, since a bounded
+    // wait that gives up leaves it to run after the caller's frame is gone.
+    ue_wrap::FVector targetPos{};
+    bool     playerUnread = false;   // the race pick: the route start could not be read, which a retry does not change
 };
 
 }  // namespace
@@ -226,12 +232,13 @@ void RunContainerTakeProbe() {
     DirectorGoal goal;
     goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
-    const int pick = RunGT([rsv, &goal, pb](std::atomic<int>& d) {
+    const int pick = RunGT([rsv, pb](std::atomic<int>& d) {
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(rsv->player, at)) {
             UE_LOGW("director/ctake: the player's location could not be read"); d.store(2); return; }
         struct Cand { void* c; ue_wrap::FVector pos; int32_t count; };
         std::vector<Cand> cands;
+        int unread = 0;
         const int32_t n = R::NumObjects();
         for (int32_t i = 0; i < n; ++i) {
             void* o = R::ObjectAt(i);
@@ -239,11 +246,14 @@ void RunContainerTakeProbe() {
             const int32_t cnt = ContainerItemCount(o);
             if (cnt <= 0) continue;                       // need a NON-EMPTY container to take from
             ue_wrap::FVector p{};
-            if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: no candidate
+            if (!E::TryGetActorLocation(o, p)) { ++unread; continue; }   // no distance: no candidate
             const float dist = HorizDist(p, at);
             if (dist < kMinCm || dist > kMaxCm) continue;
             cands.push_back({ o, p, cnt });
         }
+        if (unread > 0)
+            UE_LOGW("director/ctake: %d non-empty container(s) could not be placed, so none of them is a candidate",
+                    unread);
         if (cands.empty()) {
             UE_LOGW("director/ctake: NO placed non-empty world container in the %.0f-%.0fcm band -- "
                     "put an item in a world container near the player (or spawn one)", kMinCm, kMaxCm);
@@ -256,23 +266,24 @@ void RunContainerTakeProbe() {
         for (const Cand& c : cands) {
             std::vector<ue_wrap::FVector> path;
             if (!E::FindNavPath(rsv->player, at, c.pos, path)) continue;   // unreachable
-            if (HorizDist(path.back(), c.pos) > goal.reachCm) continue;    // route ends short of reach
+            if (HorizDist(path.back(), c.pos) > kReachCm) continue;         // route ends short of reach
             float len = 0.f;
             for (size_t i = 1; i < path.size(); ++i) len += HorizDist(path[i - 1], path[i]);
-            if (len < bestLen) { bestLen = len; goal.targetActor = c.c; goal.targetPos = c.pos;
-                                 pb->container = c.c; pb->countBefore = c.count; }
+            if (len < bestLen) { bestLen = len; pb->container = c.c; pb->targetPos = c.pos; pb->countBefore = c.count; }
         }
-        if (!goal.targetActor) {
+        if (!pb->container) {
             UE_LOGW("director/ctake: no nav-reachable non-empty container (all off-mesh / behind locked doors) -- ABORT");
             d.store(2); return;
         }
-        pb->fname = R::ToString(R::NameOf(goal.targetActor));
+        pb->fname = R::ToString(R::NameOf(pb->container));
         UE_LOGI("director/ctake: target container=%p fname=%ls items=%d pos=(%.0f,%.0f,%.0f) routeLen=%.0fcm",
-                goal.targetActor, pb->fname.c_str(), pb->countBefore,
-                goal.targetPos.X, goal.targetPos.Y, goal.targetPos.Z, bestLen);
+                pb->container, pb->fname.c_str(), pb->countBefore,
+                pb->targetPos.X, pb->targetPos.Y, pb->targetPos.Z, bestLen);
         d.store(1);
     });
     if (pick != 1) { UE_LOGW("director/ctake: VERDICT could not pick a container -- ABORT"); return; }
+    goal.targetActor = pb->container;
+    goal.targetPos = pb->targetPos;
 
     // Walk to it with the director (clear the hand, go to, reach).
     {
@@ -288,7 +299,7 @@ void RunContainerTakeProbe() {
 
     // The take ladder: each rung verified at runtime, the highest reached and the count delta
     // reported.
-    RunGT([rsv, &goal, pb](std::atomic<int>& d) {
+    RunGT([rsv, pb](std::atomic<int>& d) {
         // openContainer and extract are declared on the base container class, and the target is a
         // subclass; FindFunction is exact-owner, so the verbs are resolved on the declaring class
         // and dispatched on the instance.
@@ -430,9 +441,11 @@ uint64_t NowUnixMs() {   // system wall-clock (shared across peers on one box) a
 }
 
 // The deterministic shared target, identical on both peers. `playerUnread`: the route start could not be read,
-// which a retry does not change.
+// which a retry does not change. `unreadOut`: keyed non-empty containers that could not be placed; one the other
+// peer could place makes the two picks differ, so the count is printed with the pick.
 void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& outPos, std::wstring& outKey,
-                          bool& playerUnread) {
+                          bool& playerUnread, int& unreadOut) {
+    unreadOut = 0;
     ue_wrap::FVector at{};
     playerUnread = !E::TryGetActorLocation(player, at);
     if (playerUnread) return nullptr;
@@ -452,7 +465,7 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
         const int32_t cnt = ContainerItemCount(ke.actor);
         if (cnt <= 0) continue;
         ue_wrap::FVector p{};
-        if (!E::TryGetActorLocation(ke.actor, p)) continue;   // unreadable: no candidate
+        if (!E::TryGetActorLocation(ke.actor, p)) { ++unreadOut; continue; }   // no route to judge: no candidate
         cs.push_back({ ke.actor, p, cnt, ke.key });
     }
     std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
@@ -521,29 +534,36 @@ void RunContainerRace() {
     // contents sync lands after the player is possessed.
     DirectorGoal goal; goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
-    bool picked = false, playerUnread = false;
-    for (int tries = 0; tries < 40 && !picked && !playerUnread; ++tries) {
-        const int r = RunGT([rsv, &goal, pb, &playerUnread](std::atomic<int>& d) {
+    auto unread = std::make_shared<int>(0);   // the last try's unplaceable candidates
+    bool picked = false;
+    for (int tries = 0; tries < 40 && !picked && !pb->playerUnread; ++tries) {
+        const int r = RunGT([rsv, pb, unread](std::atomic<int>& d) {
             ue_wrap::FVector pos{}; int32_t cnt = 0; std::wstring key;
-            void* c = PickSharedContainer(*rsv, cnt, pos, key, playerUnread);
+            void* c = PickSharedContainer(*rsv, cnt, pos, key, pb->playerUnread, *unread);
             if (!c) { d.store(2); return; }
-            goal.targetActor = c; goal.targetPos = pos; pb->container = c; pb->countBefore = cnt;
+            pb->container = c; pb->targetPos = pos; pb->countBefore = cnt;
             pb->fname = R::ToString(R::NameOf(c)); pb->targetKey = key; pb->slotId = 0;
             pb->xSig = CaptureContainerSlotSig(c, pb->slotId);
             UE_LOGI("director/ctake-race: SHARED target key=%ls pos=(%.0f,%.0f,%.0f) items=%d slotID=%d "
-                    "X(cls=%ls key=%ls) -- both peers must pick the SAME save-key (by construction)",
+                    "X(cls=%ls key=%ls) unreadAnywhere=%d -- both peers must pick the SAME save-key (by construction)",
                     key.c_str(), pos.X, pos.Y, pos.Z, cnt, pb->slotId,
-                    pb->xSig.className.c_str(), pb->xSig.key.c_str());
+                    pb->xSig.className.c_str(), pb->xSig.key.c_str(), *unread);
             d.store(1);
         });
-        if (r == 1) picked = true; else if (!playerUnread) ::Sleep(2000);   // world/contents not ready yet -- wait + retry
+        if (r == 1) picked = true; else if (!pb->playerUnread) ::Sleep(2000);   // world/contents not ready yet -- wait + retry
     }
-    if (playerUnread) {
+    if (pb->playerUnread) {
         UE_LOGW("director/ctake-race: VERDICT the player's location could not be read, so no route starts -- ABORT "
                 "(role=%s)", role.c_str());
         return;
     }
-    if (!picked) { UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none reachable) -- ABORT (role=%s)", role.c_str()); return; }
+    if (!picked) {
+        UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none reachable; "
+                "unreadAnywhere=%d on the last try) -- ABORT (role=%s)", *unread, role.c_str());
+        return;
+    }
+    goal.targetActor = pb->container;
+    goal.targetPos = pb->targetPos;
 
     // The item counted before, per peer.
     RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });

@@ -203,13 +203,14 @@ bool EquipBroom(const char* who) {
     return ok->load() == 1;
 }
 
-void AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase) {
-    RunGT([target, bodyTurnDeg](std::atomic<int>& d) {
+bool AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase) {
+    const bool stood = RunGT([target, bodyTurnDeg, who, phase](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector from{};
         if (!player || !E::TryGetActorLocation(player, from)) {
-            UE_LOGW("broom_drill: no stand -- %s", player ? "the player's location could not be read" : "no player");
-            d.store(1);
+            UE_LOGW("broom_drill: %s %s AIM -- no stand: %s; the stroke is skipped", who, phase,
+                    player ? "the player's location could not be read" : "no player");
+            d.store(2);
             return;
         }
         float ax = from.X - target.X, ay = from.Y - target.Y;
@@ -222,9 +223,11 @@ void AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, c
         coop::teleport_client::ApplyLocally(coop::teleport_client::ApplyArgs{
             stand.X, stand.Y, stand.Z, facing.Pitch, facing.Yaw, facing.Roll});
         d.store(1);
-    });
+    }) == 1;
+    if (!stood) return false;
     ::Sleep(600);   // the body settles and the teleport's facing reaches the other peers
     LookAt(target, who, phase);
+    return true;
 }
 
 void StandAt(const ue_wrap::FVector& at, float yawDeg) {
@@ -369,9 +372,10 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
         // Every pile counts as a neighbour, owned or not; the candidates are the owned ones, nearest first.
         struct Pile { void* obj; ue_wrap::FVector loc; float d2; };
         std::vector<Pile> piles;
+        int unread = 0;
         ForEachInstanceWhere(&IsChipPileClass, [&](void* obj) {
             ue_wrap::FVector loc{};
-            if (!E::TryGetActorLocation(obj, loc)) return;   // unreadable: no neighbour at any distance
+            if (!E::TryGetActorLocation(obj, loc)) { ++unread; return; }   // no distance: no neighbour, no candidate
             piles.push_back(Pile{obj, loc, Within2(loc, me)});
         });
         std::sort(piles.begin(), piles.end(), [](const Pile& a, const Pile& b) { return a.d2 < b.d2; });
@@ -390,10 +394,15 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
             best = p.d2;
             break;
         }
-        UE_LOGI("broom_drill: %s %s SUBJECT chip pile %s at(%.0f,%.0f,%.0f), %.0fcm from the body, no other pile "
-                "within %.0fcm%s", who, phase, found->first ? "found" : "NOT found", found->second.X,
-                found->second.Y, found->second.Z, found->first ? std::sqrt(best) : -1.f, aloneCm,
-                bounded ? ", on the floor the drill stands on" : "");
+        if (found->first)
+            UE_LOGI("broom_drill: %s %s SUBJECT chip pile found at(%.0f,%.0f,%.0f), %.0fcm from the body, no other "
+                    "pile within %.0fcm%s unreadAnywhere=%d", who, phase, found->second.X, found->second.Y,
+                    found->second.Z, std::sqrt(best), aloneCm, bounded ? ", on the floor the drill stands on" : "",
+                    unread);
+        else   // no place: the origin is not one
+            UE_LOGI("broom_drill: %s %s SUBJECT chip pile NOT found with no other pile within %.0fcm%s "
+                    "unreadAnywhere=%d", who, phase, aloneCm, bounded ? ", on the floor the drill stands on" : "",
+                    unread);
         d.store(1);
     });
     outPos = found->second;
@@ -425,52 +434,60 @@ int SpawnHeap(const ue_wrap::FVector& center, int count, float radiusCm, const c
     return SpawnPilesAt(ring, who, "HEAP");
 }
 
-int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm) {
-    auto n = std::make_shared<std::atomic<int>>(0);
+int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm, int& unreadAnywhere) {
+    auto n = std::make_shared<std::pair<int, int>>(0, 0);   // named near, unread anywhere
     RunGT([center, radiusCm, n](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         ForEachInstanceWhere(&IsChipPileClass, [&](void* obj) {
+            if (EidOf(obj) == 0) return;
             ue_wrap::FVector loc{};
-            if (EidOf(obj) != 0 && E::TryGetActorLocation(obj, loc) && Within2(loc, center) <= r2) n->fetch_add(1);
+            if (!E::TryGetActorLocation(obj, loc)) ++n->second;
+            else if (Within2(loc, center) <= r2) ++n->first;
         });
         d.store(1);
     });
-    return n->load();
+    unreadAnywhere = n->second;
+    return n->first;
 }
 
 void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,
                  const char* tag, std::vector<uint32_t>* outIds) {
     RunGT([center, radiusCm, who, phase, tag, outIds](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
-        int piles = 0, clumps = 0, unnamedClumps = 0;
+        int piles = 0, clumps = 0, unnamedClumps = 0, unread = 0;
         ForEachInstanceWhere([](void* cls) { return IsChipPileClass(cls) || IsClumpClass(cls); }, [&](void* obj) {
             ue_wrap::FVector loc{};
-            if (!E::TryGetActorLocation(obj, loc) || Within2(loc, center) > r2) return;
+            if (!E::TryGetActorLocation(obj, loc)) { ++unread; return; }   // anywhere: counted, never placed
+            if (Within2(loc, center) > r2) return;
             const bool clump = UP::IsGarbageClump(obj);
             const uint32_t eid = EidOf(obj);
             (clump ? clumps : piles)++;
             if (clump && eid == 0) ++unnamedClumps;
             if (outIds && !clump && eid != 0) outIds->push_back(eid);
         });
-        UE_LOGI("broom_drill: CENSUS role=%s phase=%s tag=%s tick=%lu piles=%d clumps=%d unnamedClumps=%d", who,
-                phase, tag, static_cast<unsigned long>(::GetTickCount()), piles, clumps, unnamedClumps);
+        UE_LOGI("broom_drill: CENSUS role=%s phase=%s tag=%s tick=%lu piles=%d clumps=%d unnamedClumps=%d "
+                "unreadAnywhere=%d",
+                who, phase, tag, static_cast<unsigned long>(::GetTickCount()), piles, clumps, unnamedClumps, unread);
         d.store(1);
     });
 }
 
 void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, float radiusCm,
-               int& unnamedLast, const char* who, const char* phase) {
-    RunGT([&states, &unnamedLast, center, radiusCm, who, phase](std::atomic<int>& d) {
+               UnnamedState& unnamed, const char* who, const char* phase) {
+    RunGT([&states, &unnamed, center, radiusCm, who, phase](std::atomic<int>& d) {
         const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
         for (TrackState& s : states) {
             coop::element::Element* e = coop::element::Registry::Get().Get(
                 static_cast<coop::element::ElementId>(s.eid));
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
+            if (live && s.unreadable.Is(a)) continue;   // its one unread row is out; this actor is not read again
             const int form = !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1);
             ue_wrap::FVector got{};
             const bool read = live && E::TryGetActorLocation(a, got);
-            const bool known = read || (!live && s.known);   // gone: the last place read, if there was one
+            if (live && !read) s.unreadable.Set(a);
+            // Gone keeps the last place this tracker read, if it read one.
+            const bool known = read || (!live && s.known);
             const ue_wrap::FVector pos = read ? got : s.pos;
             if (form == s.form && known == s.known && (!known || Dist(pos, s.pos) <= 5.f)) continue;
             s.form = form;
@@ -485,14 +502,29 @@ void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, 
                         s.eid, formName);
         }
         const float r2 = radiusCm * radiusCm;
-        int unnamed = 0;
+        auto& latched = unnamed.unreadable;
+        latched.erase(std::remove_if(latched.begin(), latched.end(),
+                                     [](const ue_wrap::CachedObjRef& u) { return !u.Get(); }),
+                      latched.end());
+        int inRadius = 0, unread = 0;
         ForEachInstanceWhere(&IsClumpClass, [&](void* obj) {
+            if (EidOf(obj) != 0) return;
+            for (const ue_wrap::CachedObjRef& u : latched)
+                if (u.Is(obj)) { ++unread; return; }
             ue_wrap::FVector loc{};
-            if (EidOf(obj) == 0 && E::TryGetActorLocation(obj, loc) && Within2(loc, center) <= r2) ++unnamed;
+            if (!E::TryGetActorLocation(obj, loc)) {
+                ++unread;
+                latched.emplace_back();
+                latched.back().Set(obj);
+                return;
+            }
+            if (Within2(loc, center) <= r2) ++inRadius;
         });
-        if (unnamed != unnamedLast) {
-            unnamedLast = unnamed;
-            UE_LOGI("broom_drill: UNNAMED role=%s phase=%s tick=%lu clumps=%d", who, phase, tick, unnamed);
+        if (inRadius != unnamed.last || unread != unnamed.unreadLast) {
+            unnamed.last = inRadius;
+            unnamed.unreadLast = unread;
+            UE_LOGI("broom_drill: UNNAMED role=%s phase=%s tick=%lu clumps=%d unreadAnywhere=%d", who, phase, tick,
+                    inRadius, unread);
         }
         d.store(1);
     });
@@ -507,10 +539,10 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
             ue_wrap::FVector got{};
-            const bool read = live && E::TryGetActorLocation(a, got);
+            const bool read = live && !s.unreadable.Is(a) && E::TryGetActorLocation(a, got);
             const char* formName = !live ? "gone" : (UP::IsGarbageClump(a) ? "clump" : "pile");
             if (read || (!live && s.known)) {
-                const ue_wrap::FVector pos = read ? got : s.pos;   // gone: the last place read
+                const ue_wrap::FVector pos = read ? got : s.pos;   // gone: the last place the tracker read
                 UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)", who, phase,
                         tick, s.eid, formName, pos.X, pos.Y, pos.Z);
             } else {
@@ -520,22 +552,6 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
         }
         d.store(1);
     });
-}
-
-std::vector<TrackState> FormsOf(const std::vector<uint32_t>& ids) {
-    auto out = std::make_shared<std::vector<TrackState>>();
-    RunGT([&ids, out](std::atomic<int>& d) {
-        for (uint32_t id : ids) {
-            coop::element::Element* e = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(id));
-            void* a = e ? e->GetActor() : nullptr;
-            const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
-            ue_wrap::FVector pos{};
-            const bool known = live && E::TryGetActorLocation(a, pos);   // gone or unread: no place
-            out->push_back(TrackState{id, !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1), pos, known});
-        }
-        d.store(1);
-    });
-    return *out;
 }
 
 bool StrikerBody(bool striking, uint8_t strikerSlot, ue_wrap::FVector& at) {
@@ -554,19 +570,21 @@ bool StrikerBody(bool striking, uint8_t strikerSlot, ue_wrap::FVector& at) {
     return placed;
 }
 
-int CountTrashNear(const ue_wrap::FVector& at, float radiusCm) {
+int CountTrashNear(const ue_wrap::FVector& at, float radiusCm, int& unreadAnywhere) {
     const float r2 = radiusCm * radiusCm;
     int n = 0;
+    unreadAnywhere = 0;
     ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
         if (coop::hand_item::IsHandAxisActor(obj)) return;   // a held broom, or its mirror, is no trash
         ue_wrap::FVector loc{};
-        if (E::TryGetActorLocation(obj, loc) && Within2(loc, at) <= r2) ++n;
+        if (!E::TryGetActorLocation(obj, loc)) ++unreadAnywhere;
+        else if (Within2(loc, at) <= r2) ++n;
     });
     return n;
 }
 
-bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& trashOut) {
-    auto trash = std::make_shared<int>(0);
+bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& trashOut, int& unreadOut) {
+    auto trash = std::make_shared<std::pair<int, int>>(0, 0);   // trash near, unread anywhere
     const bool ok = RunGT([out, who, trash](std::atomic<int>& d) {
         struct Found { std::wstring key; void* obj; float d2; };
         std::vector<Found> piles;
@@ -576,7 +594,7 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
             std::wstring k = UP::GetInteractableKeyString(obj);
             if (k.empty() || k == L"None") return;
             ue_wrap::FVector loc{};
-            if (!E::TryGetActorLocation(obj, loc)) return;   // unreadable: no distance to sort by
+            if (!E::TryGetActorLocation(obj, loc)) { ++trash->second; return; }   // no distance to sort by
             piles.push_back(Found{std::move(k), obj, Within2(loc, anchor)});
         });
         std::sort(piles.begin(), piles.end(), [](const Found& x, const Found& y) {
@@ -584,18 +602,25 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
         });
         if (piles.size() > 20) piles.resize(20);
         std::sort(piles.begin(), piles.end(), [](const Found& x, const Found& y) { return x.key < y.key; });
-        if (piles.empty()) { UE_LOGW("broom_drill: %s C -- no keyed dispenser pile", who); d.store(2); return; }
+        if (piles.empty()) {
+            UE_LOGW("broom_drill: %s C -- no keyed dispenser pile unreadAnywhere=%d", who, trash->second);
+            d.store(2);
+            return;
+        }
         out->key = piles[0].key;
         out->pile = piles[0].obj;
         out->idx = R::InternalIndexOf(out->pile);
         if (!E::TryGetActorLocation(out->pile, out->pos)) {
             UE_LOGW("broom_drill: %s C -- the dispenser pile's location could not be read", who); d.store(2); return; }
-        *trash = CountTrashNear(out->pos, 300.f);
-        UE_LOGI("broom_drill: %s C SUBJECT key='%ls' at(%.0f,%.0f,%.0f) trashNear=%d", who, out->key.c_str(),
-                out->pos.X, out->pos.Y, out->pos.Z, *trash);
+        int trashUnread = 0;
+        trash->first = CountTrashNear(out->pos, 300.f, trashUnread);
+        trash->second += trashUnread;
+        UE_LOGI("broom_drill: %s C SUBJECT key='%ls' at(%.0f,%.0f,%.0f) trashNear=%d unreadAnywhere=%d", who,
+                out->key.c_str(), out->pos.X, out->pos.Y, out->pos.Z, trash->first, trash->second);
         d.store(1);
     }) == 1;
-    trashOut = *trash;
+    trashOut = trash->first;
+    unreadOut = trash->second;
     return ok;
 }
 
@@ -613,18 +638,20 @@ void CensusProps(const ue_wrap::FVector& center, float radiusCm, const char* who
     RunGT([center, radiusCm, who, phase, tag](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
-        int n = 0;
+        int n = 0, unread = 0;
         ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
             if (coop::hand_item::IsHandAxisActor(obj)) return;
             const uint32_t eid = EidOf(obj);
             if (eid == 0) return;
             ue_wrap::FVector loc{};
-            if (!E::TryGetActorLocation(obj, loc) || Within2(loc, center) > r2) return;
+            if (!E::TryGetActorLocation(obj, loc)) { ++unread; return; }
+            if (Within2(loc, center) > r2) return;
             ++n;
             UE_LOGI("broom_drill: PROP role=%s phase=%s tag=%s tick=%lu eid=%u at(%.1f,%.1f,%.1f)", who, phase,
                     tag, tick, eid, loc.X, loc.Y, loc.Z);
         });
-        UE_LOGI("broom_drill: CENSUS role=%s phase=%s tag=%s tick=%lu props=%d", who, phase, tag, tick, n);
+        UE_LOGI("broom_drill: CENSUS role=%s phase=%s tag=%s tick=%lu props=%d unreadAnywhere=%d", who, phase, tag,
+                tick, n, unread);
         d.store(1);
     });
 }
@@ -634,16 +661,20 @@ bool PickProp(const ue_wrap::FVector& center, float radiusCm, const char* who, c
     auto found = std::make_shared<std::pair<bool, ue_wrap::FVector>>(false, ue_wrap::FVector{});
     RunGT([center, radiusCm, who, phase, found](std::atomic<int>& d) {
         float best = radiusCm * radiusCm;
+        int unread = 0;
         ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
             if (EidOf(obj) == 0 || coop::hand_item::IsHandAxisActor(obj) || UP::IsStatic(obj) || UP::IsFrozen(obj))
                 return;
             ue_wrap::FVector loc{};
-            if (!E::TryGetActorLocation(obj, loc)) return;
+            if (!E::TryGetActorLocation(obj, loc)) { ++unread; return; }   // no distance: no candidate
             const float d2 = Within2(loc, center);
             if (d2 < best) { best = d2; found->first = true; found->second = loc; }
         });
-        UE_LOGI("broom_drill: %s %s SUBJECT prop %s at(%.0f,%.0f,%.0f)", who, phase,
-                found->first ? "found" : "NOT found", found->second.X, found->second.Y, found->second.Z);
+        if (found->first)
+            UE_LOGI("broom_drill: %s %s SUBJECT prop found at(%.0f,%.0f,%.0f) unreadAnywhere=%d", who, phase,
+                    found->second.X, found->second.Y, found->second.Z, unread);
+        else   // no place: the origin is not one
+            UE_LOGI("broom_drill: %s %s SUBJECT prop NOT found unreadAnywhere=%d", who, phase, unread);
         d.store(1);
     });
     outPos = found->second;

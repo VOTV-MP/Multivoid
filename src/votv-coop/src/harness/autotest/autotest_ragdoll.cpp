@@ -19,6 +19,7 @@
 #include "coop/player/remote_player.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
@@ -74,7 +75,9 @@ bool PuppetHasFloppingRagdollBody() {
     return *ok != 0;
 }
 
-bool g_shotUnreadSaid = false;   // game thread; the read repeats, so it is said once
+// The player and the puppet whose location read failed, each for itself: a failed read of a live actor
+// faults again, so that actor is not read again, while a respawned puppet or a new player is. Game thread.
+ue_wrap::CachedObjRef g_unreadPuppet, g_unreadLocal;
 
 // Aim the host player's camera at the slot-1 puppet's body, so an autonomous screenshot
 // frames the falling puppet. The puppet converges next to the host but often off to the side
@@ -89,16 +92,26 @@ bool AimHostAtPuppet() {
         if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(2); return; }
         void* ctrl = E::GetController(local);
         if (!ctrl || !R::IsLive(ctrl)) { done->store(2); return; }
+        // Each actor whose read failed is latched for itself: a failed read of a live actor faults again.
+        if (g_unreadLocal.Is(local)) { done->store(2); return; }
         ue_wrap::FVector h{};
+        if (!E::TryGetActorLocation(local, h)) {
+            g_unreadLocal.Set(local);
+            UE_LOGW("ragdoll_test[host]: not aimed -- the host's location could not be read; it is not read again");
+            done->store(2);
+            return;
+        }
         void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
         ue_wrap::FVector p{};
-        const bool meshLive = mesh && R::IsLive(mesh);
-        if (meshLive) p = E::GetComponentLocation(mesh);
-        if (!E::TryGetActorLocation(local, h) || (!meshLive && !E::TryGetActorLocation(puppet, p))) {
-            if (!g_shotUnreadSaid) {
-                g_shotUnreadSaid = true;
-                UE_LOGW("ragdoll_test[host]: not aimed -- a location could not be read");
-            }
+        if (mesh && R::IsLive(mesh)) {
+            p = E::GetComponentLocation(mesh);   // the limp body: no read of the puppet's actor
+        } else if (g_unreadPuppet.Is(puppet)) {
+            done->store(2);
+            return;
+        } else if (!E::TryGetActorLocation(puppet, p)) {
+            g_unreadPuppet.Set(puppet);
+            UE_LOGW("ragdoll_test[host]: not aimed -- the puppet's location could not be read; it is not read again "
+                    "while it has no live mesh");
             done->store(2);
             return;
         }
@@ -118,7 +131,7 @@ bool AimHostAtPuppet() {
 // Move the host back from the puppet (the same Z, so it stays on the floor) so the fallen
 // body is ahead in the frame, not directly under the host's own first-person legs (the host
 // and client spawn overlapping, so a straight-down view is just the host's own feet occluding
-// the body). One shot at the rising edge.
+// the body). Called once, when the standing puppet has settled, for the before shot.
 // True when the host was moved.
 bool PositionHostForShot() {
     auto done = std::make_shared<std::atomic<int>>(0);

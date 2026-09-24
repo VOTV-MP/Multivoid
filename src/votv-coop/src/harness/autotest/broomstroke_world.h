@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/types.h"
 
@@ -38,8 +39,9 @@ bool EquipBroom(const char* who);
 // Stand beside `target` with the game's own teleport, facing it turned by `bodyTurnDeg`, then turn
 // the camera onto it. A body turned less than a puppet's turn-in-place threshold keeps its facing
 // on the other peers while this one's camera, and so its heading, turns onto the target. Logs the
-// segment the stroke will trace and the heading it will push along.
-void AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase);
+// segment the stroke will trace and the heading it will push along. False when this peer has no
+// stand (no player, or its location unread): nothing moved, and the caller skips the stroke.
+bool AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase);
 
 // Stand at `at` facing `yawDeg`, with the game's own teleport; `at` is a body location this peer
 // stood at before, so the teleport's trace accepts it.
@@ -48,7 +50,7 @@ void StandAt(const ue_wrap::FVector& at, float yawDeg);
 // Turn the camera onto `target` where the body stands, and log the AIM row.
 void LookAt(const ue_wrap::FVector& target, const char* who, const char* phase);
 
-// This peer's body location and facing. False when there is no local player.
+// This peer's body location and facing. False when there is no local player or its location cannot be read.
 bool LocalBody(ue_wrap::FVector& at, float& yawDeg);
 
 // Watch the broom's stroke notify on this peer: every "clean" notify on any broom is logged at its
@@ -90,8 +92,9 @@ int SpawnPilesAt(const std::vector<ue_wrap::FVector>& at, const char* who, const
 // Spawn `count` chip piles on a ring of `radiusCm` around `center`, which is a pile on the floor.
 int SpawnHeap(const ue_wrap::FVector& center, int count, float radiusCm, const char* who);
 
-// How many element-owned chip piles are within `radiusCm` of `center`.
-int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm);
+// How many element-owned chip piles are within `radiusCm` of `center`. `unreadAnywhere`: how many could
+// not be read, anywhere, since an unread pile has no distance.
+int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm, int& unreadAnywhere);
 
 // Every element-owned chip pile within `radiusCm` of `center`, by id; and a CENSUS row.
 void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,
@@ -99,16 +102,28 @@ void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who
 
 // One pass of the tracker: each followed id's form and place, logged as a TRACK row when the form
 // changed or it moved more than 5 cm; and the clumps no element owns within `radiusCm`, logged as an
-// UNNAMED row when their count changes.
+// UNNAMED row when their count or the count of those that could not be read changes.
 // form: 0 gone, 1 pile, 2 clump. `known`: pos is a read place; an unread one is never logged as numbers, because the
-// judge reads a row's coordinates as a place.
-struct TrackState { uint32_t eid; int form; ue_wrap::FVector pos; bool known = false; };
+// judge reads a row's coordinates as a place. `unreadable`: the actor whose read failed, logged once and not read again
+// while it is the id's actor, since a failed read of a live actor faults again; the stroke re-skins an id onto the
+// clump its pile became, and that actor is read.
+struct TrackState {
+    uint32_t eid;
+    int form;
+    ue_wrap::FVector pos;
+    bool known = false;
+    ue_wrap::CachedObjRef unreadable;
+};
+// The tracker's unnamed clumps: the counts last logged, and the clumps whose read failed, each read once and counted,
+// anywhere, while it lives.
+struct UnnamedState {
+    int last = -1, unreadLast = -1;
+    std::vector<ue_wrap::CachedObjRef> unreadable;
+};
 void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, float radiusCm,
-               int& unnamedLast, const char* who, const char* phase);
+               UnnamedState& unnamed, const char* who, const char* phase);
 // Each followed id's form and place at the end of the tracker, as a FINAL row whether or not it moved.
 void TrackFinal(const std::vector<TrackState>& states, const char* who, const char* phase);
-// Each of `ids`' form and place now, unlogged.
-std::vector<TrackState> FormsOf(const std::vector<uint32_t>& ids);
 
 // Where the striker is as this peer sees it: its own body, or its puppet. False when there is no body
 // or its location cannot be read.
@@ -122,9 +137,12 @@ struct Dispenser {
     std::wstring     key;
     ue_wrap::FVector pos{};
 };
-bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& trashOut);
+// `unreadOut`: the keyed piles and trash props that could not be read, anywhere, which the pick and the
+// count cannot place.
+bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& trashOut, int& unreadOut);
 bool DispenserAlive(const std::shared_ptr<Dispenser>& d);
-int CountTrashNear(const ue_wrap::FVector& at, float radiusCm);   // outside every hand; game thread
+// Outside every hand; game thread. `unreadAnywhere`: the props that could not be read, anywhere.
+int CountTrashNear(const ue_wrap::FVector& at, float radiusCm, int& unreadAnywhere);
 
 // Every element-owned prop near `center`, outside every hand, as PROP rows and a CENSUS row.
 void CensusProps(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,

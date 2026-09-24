@@ -87,7 +87,7 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool statiq = false, frozen = false, gone = false;
-    bool unreadSaid = false;   // its location stopped reading: said once, the watch has no sighting of it
+    bool unread = false;   // its location did not read: said once, and nothing reads it again
 };
 std::vector<Watched> g_watched;
 bool g_watchArmed = false;
@@ -104,10 +104,15 @@ std::wstring PickKey() {
     return keys.front();
 }
 
-void* FindWatched(const std::wstring& key) {
-    for (const auto& w : g_watched)
-        if (w.key == key) return w.ref.Get();
+Watched* FindWatchedRow(const std::wstring& key) {
+    for (auto& w : g_watched)
+        if (w.key == key) return &w;
     return nullptr;
+}
+
+void* FindWatched(const std::wstring& key) {
+    const Watched* w = FindWatchedRow(key);
+    return w ? w->ref.Get() : nullptr;
 }
 
 // One walk of the object array, when the watch arms, never again.
@@ -123,14 +128,21 @@ void ArmWatch(char who) {
         Watched w;
         w.ref.Set(o);
         w.key = PR::GetInteractableKeyString(o);
-        if (!E::TryGetActorLocation(o, w.start)) continue;   // unreadable: not watched
+        // An unreadable pryable stays in the list: both peers pick the first stuck key from it, and a
+        // prop one peer could not read would otherwise make the two lists, and so the picks, differ.
+        w.unread = !E::TryGetActorLocation(o, w.start);
         w.printed = w.start;
         w.statiq = PR::IsStatic(o);
         w.frozen = PR::IsFrozen(o);
         if (w.statiq || w.frozen) ++stuck;
-        UE_LOGI("[PRY-DRILL] [%c] HAS key='%ls' cls='%ls' at (%.1f, %.1f, %.1f) static=%d frozen=%d", who,
-                w.key.c_str(), R::ClassNameOf(o).c_str(), w.start.X, w.start.Y, w.start.Z, w.statiq ? 1 : 0,
-                w.frozen ? 1 : 0);
+        if (w.unread)
+            UE_LOGW("[PRY-DRILL] [%c] HAS key='%ls' cls='%ls' at (unread) static=%d frozen=%d -- its location could "
+                    "not be read; the watch does not follow it", who, w.key.c_str(), R::ClassNameOf(o).c_str(),
+                    w.statiq ? 1 : 0, w.frozen ? 1 : 0);
+        else
+            UE_LOGI("[PRY-DRILL] [%c] HAS key='%ls' cls='%ls' at (%.1f, %.1f, %.1f) static=%d frozen=%d", who,
+                    w.key.c_str(), R::ClassNameOf(o).c_str(), w.start.X, w.start.Y, w.start.Z, w.statiq ? 1 : 0,
+                    w.frozen ? 1 : 0);
         g_watched.push_back(std::move(w));
     }
     UE_LOGI("[PRY-DRILL] [%c] watching %zu pryables (%d stuck)", who, g_watched.size(), stuck);
@@ -141,7 +153,7 @@ void TickWatch(char who) {
     if (!g_watchArmed || ++g_watchTick < kWatchEveryTicks) return;
     g_watchTick = 0;
     for (auto& w : g_watched) {
-        if (w.gone) continue;
+        if (w.gone || w.unread) continue;
         void* o = w.ref.Get();
         if (!o) {
             w.gone = true;
@@ -151,11 +163,9 @@ void TickWatch(char who) {
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(o, at)) {
             // Silence here reads as "did not move", so the watch says once that it cannot see it.
-            if (!w.unreadSaid) {
-                w.unreadSaid = true;
-                UE_LOGW("[PRY-DRILL] [%c] UNREAD key='%ls' -- its location could not be read; the watch cannot "
-                        "say whether it moved", who, w.key.c_str());
-            }
+            w.unread = true;
+            UE_LOGW("[PRY-DRILL] [%c] UNREAD key='%ls' -- its location could not be read; the watch cannot "
+                    "say whether it moved, and nothing reads it again", who, w.key.c_str());
             continue;
         }
         const bool statiq = PR::IsStatic(o), frozen = PR::IsFrozen(o);
@@ -199,6 +209,8 @@ std::wstring g_targetKey;
 ue_wrap::FVector g_targetStart{};
 int g_stepTicks = 0;
 
+// The run's dead marker: a run passes --dead-marker "[PRY-DRILL] INVALID", which ends it INCONCLUSIVE,
+// so a drill that measured nothing never ends on the done marker a measurement prints.
 void Invalid(const char* why) {
     UE_LOGW("[PRY-DRILL] INVALID %s", why);
     g_step = Step::Invalid;
@@ -230,9 +242,15 @@ bool ActorMayStart(coop::net::Session& s) {
 
 void Pry() {
     g_targetKey = PickKey();
-    void* t = g_targetKey.empty() ? nullptr : FindWatched(g_targetKey);
+    Watched* row = g_targetKey.empty() ? nullptr : FindWatchedRow(g_targetKey);
+    void* t = row ? row->ref.Get() : nullptr;
     if (!t) { Invalid("no stuck pryable with a key"); return; }
-    if (!E::TryGetActorLocation(t, g_targetStart)) { Invalid("the target's location could not be read"); return; }
+    if (row->unread) { Invalid("the target's location could not be read by the watch"); return; }
+    if (!E::TryGetActorLocation(t, g_targetStart)) {
+        row->unread = true;
+        Invalid("the target's location could not be read");
+        return;
+    }
     g_target.Set(t);
     UE_LOGI("[PRY-DRILL] [%c] target key='%ls' cls='%ls' at (%.1f, %.1f, %.1f)", Who(), g_targetKey.c_str(),
             R::ClassNameOf(t).c_str(), g_targetStart.X, g_targetStart.Y, g_targetStart.Z);
