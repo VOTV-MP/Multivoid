@@ -33,15 +33,15 @@ std::wstring GetKeyString(void* door);
 // Read the door's open state into `open`. False if the read could not be made (null, or not
 // resolved), leaving `open` untouched. This is the animation-completed flag, which flips only
 // when the swing reaches the end, about half a second after the press; diagnostics and
-// is-it-actually-open callers want this, and the host poll wants the intent reader below.
+// is-it-actually-open callers want this, and the door lane wants the intent reader below.
 bool TryReadOpen(void* door, bool& open);
 
-// Like TryReadOpen but the swing intent rather than its completion: while the door is moving
-// the destination is the door's own dir, which doorOpen and doorClose write in their own body, so
-// an open or close is reported the instant the verb returns instead of half a second later when
-// the open state settles; a moving jammed door reads closed (it only ever shakes or swings shut),
-// and a settled door reads the open state. The door channel's poll reader, and the host's read
-// around a verb it runs for a client.
+// Like TryReadOpen but the swing intent rather than its completion: while the door's move timeline
+// plays, the destination is the door's own dir, which doorOpen and doorClose write in their own
+// body, so an open or close is reported the instant the verb returns instead of half a second later
+// when the open state settles; any other motion (the jam shake) and a settled door read the open
+// state. One engine call while the door moves, none at rest. The door lane's reader at a verb, in its
+// apply, its snapshot and its shadow poll.
 bool TryReadOpenIntent(void* door, bool& open);
 
 // The door's own entry verbs, the ones a player's press, a melee hit and a crowbar's pry run.

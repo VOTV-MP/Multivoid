@@ -31,10 +31,11 @@ int32_t g_keyOff       = -1;       // AtriggerBase_C::Key
 int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened
 int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
 // The swing's direction, 0 opening and 1 closing: doorOpen and doorClose write it in their own body
-// before starting the move timeline, and the timeline's finish derives isOpened from it. Read by
-// name; unresolved, the intent reader falls back to the settled flag.
+// before starting the move timeline, and the timeline's finish derives isOpened from it. A hit and
+// the jam shake write it too, while the move timeline is still, so the reader takes it only while
+// that timeline plays. Read by name; unresolved, the intent reader falls back to the settled flag.
 int32_t g_dirOff       = -1;       // Adoor_C::dir
-int32_t g_jammedOff    = -1;       // Adoor_C::jammed; unresolved reads as not jammed
+int32_t g_moveOff      = -1;       // Adoor_C::move (UTimelineComponent*), the swing's own timeline
 void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
 void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
@@ -66,6 +67,21 @@ struct VerifyEntry {
     ue_wrap::CachedObjRef ref;  // the slot-validated door (the map key is compare-only)
 };
 std::unordered_map<void*, VerifyEntry> g_verify;
+
+// Whether the door's move timeline -- its swing, not the jam shake's -- is playing, through the
+// timeline component's own IsPlaying. False when it cannot say.
+bool MoveTimelinePlaying(void* door, bool& playing) {
+    if (!door || g_moveOff < 0) return false;
+    void* move = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(door) + g_moveOff);
+    if (!move || !R::IsLive(move)) return false;
+    void* cls = R::ClassOf(move);
+    void* fn = cls ? R::FindDispatchFunctionCached(cls, L"IsPlaying") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !Call(move, f)) return false;
+    playing = f.Get<bool>(L"ReturnValue");
+    return true;
+}
 
 // One of the door's entry verbs on this instance: its class's own override, resolved per class
 // and memoised by the reflection layer.
@@ -110,10 +126,10 @@ bool EnsureResolved() {
     int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
     if (activeOff < 0) activeOff = kActiveOffFallback;
     const int32_t dirOff = R::FindPropertyOffset(doorCls, L"dir");
-    const int32_t jammedOff = R::FindPropertyOffset(doorCls, L"jammed");
-    if (dirOff < 0)
-        UE_LOGW("door: reflected dir offset not found -- a swing's intent reads as its settled state, half "
-                "a second late");
+    const int32_t moveOff = R::FindPropertyOffset(doorCls, L"move");
+    if (dirOff < 0 || moveOff < 0)
+        UE_LOGW("door: reflected dir or move offset not found (dir=%d move=%d) -- a swing's intent reads as "
+                "its settled state, half a second late", dirOff, moveOff);
 
     void* openFn  = R::FindFunction(doorCls, L"doorOpen");
     void* closeFn = R::FindFunction(doorCls, L"doorClose");
@@ -135,16 +151,16 @@ bool EnsureResolved() {
     g_isOpenedOff  = isOpenedOff;
     g_isMovingOff  = isMovingOff;
     g_dirOff       = dirOff;
-    g_jammedOff    = jammedOff;
+    g_moveOff      = moveOff;
     g_sensorOff    = sensorOff;
     g_sensorOverlapsOff = sensorOverlapsOff;
     g_activeOff      = activeOff;
     g_doorOpenFn   = openFn;
     g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X jammed@0x%04X "
+    UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X move@0x%04X "
             "sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls, keyOff,
-            isOpenedOff, dirOff < 0 ? 0xFFFF : dirOff, jammedOff < 0 ? 0xFFFF : jammedOff,
+            isOpenedOff, dirOff < 0 ? 0xFFFF : dirOff, moveOff < 0 ? 0xFFFF : moveOff,
             sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff, openFn, closeFn);
     return true;
 }
@@ -201,20 +217,19 @@ bool TryReadOpenIntent(void* door, bool& open) {
     if (!door || g_isOpenedOff < 0) return false;
     const char* base = reinterpret_cast<const char*>(door);
     const bool isOpened = *reinterpret_cast<const bool*>(base + g_isOpenedOff);
-    // While the door is mid-swing, report the destination instead of the opened flag (set at the
-    // swing's end, half a second later), so the host broadcasts an open or close the instant it
-    // begins. The destination is the door's own dir, which doorOpen and doorClose write in their own
-    // body: a read straight after the verb sees it. A jammed door never swings open -- doorOpen on it
-    // plays the jam shake, moving with dir untouched, and jam's own close swing heads shut -- so a
-    // moving jammed door reads closed. A settled door reads the opened flag.
+    // While the door's move timeline plays, report the swing's destination instead of the opened
+    // flag (set at the swing's end, half a second later), so the host sends an open or close the
+    // instant it begins: the door's own dir, which doorOpen and doorClose write in their own body
+    // before starting that timeline, so a read straight after the verb sees it. Any other motion --
+    // the jam shake sets isMoving and plays its own timeline -- leaves the door where its opened flag
+    // says. The timeline is asked only while isMoving is set, so a settled door costs no call.
     const bool moving = (g_isMovingOff >= 0) &&
         *reinterpret_cast<const bool*>(base + g_isMovingOff);
-    if (moving && g_dirOff >= 0) {
-        const bool jammed = g_jammedOff >= 0 && *reinterpret_cast<const bool*>(base + g_jammedOff);
-        open = !jammed && *reinterpret_cast<const uint8_t*>(base + g_dirOff) == 0;
-    } else {
+    bool swinging = false;
+    if (moving && g_dirOff >= 0 && MoveTimelinePlaying(door, swinging) && swinging)
+        open = *reinterpret_cast<const uint8_t*>(base + g_dirOff) == 0;
+    else
         open = isOpened;
-    }
     return true;
 }
 
