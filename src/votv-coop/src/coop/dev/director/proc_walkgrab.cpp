@@ -62,6 +62,18 @@ constexpr float kDoorReachCm    = 320.f; // a closed door within this of the stu
 constexpr int   kMaxDoorOpens   = 20;    // grind: keep opening doors as needed (never-give-up rule)
 constexpr int   kUnstickTicks   = 70;    // ~0.28 s of sideways juke to slide off a box before re-checking
 constexpr int   kSettleTicks    = 12;    // ~0.25 s braking before the grab
+// A walk-to target is reached on its own level only: the walker's centre within this of the target's
+// height, less than a storey. A route whose end the navmesh put on the floor below counts as
+// horizontally there, 11 m under a door on the dish building's upper floor.
+constexpr float kLevelCm        = 250.f;
+
+bool OnLevel(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::fabs(a.Z - b.Z) <= kLevelCm; }
+
+// A walk-to or carry-to goal is arrived at within its reach on its own level; a grab's reach is the
+// hand's, which reaches up to a shelf, so a grab keeps the horizontal test.
+bool Arrived(const PlayerContext& ctx, const DirectorGoal& goal) {
+    return HorizDist(ctx.pos, goal.targetPos) <= goal.reachCm && OnLevel(ctx.pos, goal.targetPos);
+}
 constexpr int   kVerifyTicks    = 90;    // ~1.8 s polling for the held clump
 constexpr int   kDropMeasureTicks = 20;  // ~0.4 s to MEASURE if the input-seam drop cleared the hand
 
@@ -142,11 +154,13 @@ private:
 // ---- GotoProcess -----------------------------------------------------------------------
 class GotoProcess : public IProcess {
 public:
-    explicit GotoProcess(DirectorGoal& goal) : goal_(goal) {}
+    // `onLevel`: the goal is arrived at on its own level (a walk-to, a carry-to), so a walker the route
+    // left under or over it keeps going -- stuck there, it re-paths from where it stands.
+    GotoProcess(DirectorGoal& goal, bool onLevel) : goal_(goal), onLevel_(onLevel) {}
     const char* Name() const override { return "Goto"; }
     int Priority() const override { return 50; }
     bool IsActive(const PlayerContext& ctx) const override {
-        return HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
+        return onLevel_ ? !Arrived(ctx, goal_) : HorizDist(ctx.pos, goal_.targetPos) > goal_.reachCm;
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
         if (!pathed_) {   // compute the route once (after the hand is clear, so from the real start)
@@ -155,6 +169,8 @@ public:
             const bool ok = !goal_.straight && E::FindNavPath(ctx.player, ctx.pos, goal_.targetPos, path);
             if (ok && path.size() >= 2) for (size_t i = 1; i < path.size(); ++i) waypoints_.push_back(path[i]);
             else waypoints_.push_back(goal_.targetPos);   // the straight line, asked for or the fallback
+            goal_.route.assign(1, ok && !path.empty() ? path.front() : ctx.pos);
+            goal_.route.insert(goal_.route.end(), waypoints_.begin(), waypoints_.end());
             UE_LOGI("director/Goto: route %zu waypoints (%s), dist=%.0fcm", waypoints_.size(),
                     ok ? "NavMesh route" : goal_.straight ? "straight line, as asked" : "straight-line fallback",
                     HorizDist(ctx.pos, goal_.targetPos));
@@ -225,6 +241,7 @@ private:
             if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
             ue_wrap::FVector at{};
             if (!E::TryGetActorLocation(o, at)) continue;   // unreadable: not the blocker
+            if (!OnLevel(at, ctx.pos)) continue;            // a door on another floor blocks nothing here
             const float d = HorizDist(at, ctx.pos);
             if (d < bestDist) { bestDist = d; best = o; }
         }
@@ -238,6 +255,7 @@ private:
     }
 
     DirectorGoal& goal_;
+    const bool onLevel_;
     bool   pathed_ = false;
     std::vector<ue_wrap::FVector> waypoints_;
     size_t wp_ = 0, lastWp_ = 0;
@@ -318,7 +336,7 @@ public:
     const char* Name() const override { return "Reach"; }
     int Priority() const override { return 40; }
     bool IsActive(const PlayerContext& ctx) const override {
-        return !goal_.reached && HorizDist(ctx.pos, goal_.targetPos) <= goal_.reachCm;
+        return !goal_.reached && Arrived(ctx, goal_);
     }
     ProcStatus OnTick(const PlayerContext& ctx) override {
         if (++ticks_ < kSettleTicks) return ProcStatus::Working;   // brake (no input) before yielding
@@ -337,19 +355,19 @@ private:
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
     mgr.Add(std::make_unique<ClearHandProcess>(goal));
-    mgr.Add(std::make_unique<GotoProcess>(goal));
+    mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ false));
     mgr.Add(std::make_unique<GrabProcess>(goal));
 }
 
 void AddWalkToProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
     mgr.Add(std::make_unique<ClearHandProcess>(goal));
-    mgr.Add(std::make_unique<GotoProcess>(goal));
+    mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ true));
     mgr.Add(std::make_unique<ReachProcess>(goal));
 }
 
 void AddCarryToProcesses(ControlManager& mgr, DirectorGoal& goal) {
-    mgr.Add(std::make_unique<GotoProcess>(goal));
+    mgr.Add(std::make_unique<GotoProcess>(goal, /*onLevel*/ true));
     mgr.Add(std::make_unique<ReachProcess>(goal));
 }
 

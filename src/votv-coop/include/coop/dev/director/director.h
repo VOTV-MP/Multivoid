@@ -55,6 +55,9 @@ struct DirectorGoal {
     bool              straight    = false;
     bool              failed      = false;    // set by any process on a hard failure
     const char*       failReason  = "";
+    // The route the Goto last walked, its start first, refilled on each path it takes: ground the
+    // walker has crossed, for a scenario that needs a point it can surely stand on again.
+    std::vector<ue_wrap::FVector> route;
 };
 
 enum class ProcStatus { Idle, Working, Done, Failed };
