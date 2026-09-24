@@ -155,7 +155,7 @@ void SpawnSecondPlayerWhenReady() {
 // "start a coop session", from the env boot and from a browser action; on the TimelineThread,
 // since Start spawns the net thread and the save backup is a blocking copy. Returns Start()'s
 // success, which the browser-join path uses to Fail the join when no connect edge will arrive.
-bool StartCoopSession(const coop::net::Config& netCfg) {
+bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) {
     // Never start once teardown has begun: the net thread would be spawned after the single Stop()
     // and joined at static destruction, the loader-lock hazard the project forbids.
     if (coop::shutdown::IsShuttingDown()) {
@@ -242,7 +242,7 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // The client's connecting state is not raised here but by the browser connect actions, so the
     // loading screen is browser-join only; the env and autotest client boot reaches this function
     // directly and shows nothing.
-    const bool ok = g_session.Start(netCfg);
+    const bool ok = g_session.Start(netCfg, why);
     UE_LOGI("harness: ==== COOP SESSION START (%s / %s)%s ====",
             netCfg.role == coop::net::Role::Host ? "host" : "client",
             netCfg.topology == coop::net::Topology::P2P ? "p2p" : "lan-direct",
@@ -284,6 +284,19 @@ bool InGameplayWorld() {
     if (ue_wrap::world_identity::Degraded()) return true;
     return ue_wrap::world_identity::CurrentWorldKind() ==
            ue_wrap::world_identity::WorldKind::Gameplay;
+}
+
+// A menu-mode join whose session refused to start leaves the player where its sentence tells them
+// to act: the notice for the dialog, the cover dropped (which drains the abort as well), the save
+// transfer armed for this join disarmed, since no session will ever disconnect to do it, and the
+// browser back. The shape is world_boot's failed-world exit, less the session stop.
+void FailRefusedMenuJoin_(const coop::net::Refusal& why) {
+    coop::join_progress::Fail(why.code, why.detail);
+    coop::join_progress::Reset();
+    coop::save_transfer::OnDisconnect();
+    // Opening the browser starts its HTTP workers, which a teardown must not.
+    if (!coop::shutdown::IsShuttingDown()) ui::server_browser_surface::Open();
+    ue_wrap::log::Flush();
 }
 
 }  // namespace
@@ -337,6 +350,7 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                         UE_LOGI("harness: discarding stale browser client start -- join no longer active (cancelled/failed)");
                     } else {
                         UE_LOGI("harness: browser-initiated coop session");
+                        coop::net::Refusal why{coop::net::EndReason::CouldNotStart, {}};
                         // The menu-mode client join: connect at the menu, download the host's save,
                         // load that world, then net_pump announces world-ready and the host
                         // replays; the player never sees a divergent fresh world. ONE fallback
@@ -357,13 +371,16 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                             UE_LOGI("harness: menu-mode client join -- save-transfer bootstrap");
                             coop::save_transfer::ClientArm();
                             // A synchronous Start failure means no connect edge will ever clear the
-                            // cover: Fail drops it and reopens the browser.
-                            if (!StartCoopSession(pending))
-                                coop::join_progress::Fail(coop::net::EndReason::CouldNotStart, "");
+                            // cover, so the refusal is settled here.
+                            if (!StartCoopSession(pending, &why))
+                                FailRefusedMenuJoin_(why);
                             else
                                 harness::world_boot::DriveMenuModeJoinWorldBoot();
-                        } else if (!StartCoopSession(pending)) {
-                            coop::join_progress::Fail(coop::net::EndReason::CouldNotStart, "");
+                        } else if (!StartCoopSession(pending, &why)) {
+                            // A client standing in its own world (the rigs) gets the notice,
+                            // and the abort drain clears the cover: never a browser over
+                            // gameplay. A host start here is only logged, by Start.
+                            coop::join_progress::Fail(why.code, why.detail);
                         }
                     }
                 }

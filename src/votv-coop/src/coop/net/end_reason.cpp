@@ -48,6 +48,9 @@ constexpr Row kRows[] = {
     {EndReason::WorldUnusable,         {"MV-J25", "The host's world arrived damaged and could not be used."}},
     {EndReason::ProfileNotSent,        {"MV-J26", "The host never sent your inventory."}},
     {EndReason::WorldNeverSettled,     {"MV-J27", "Your game loaded the world but never finished settling into it."}},
+    {EndReason::IcePolicyUnreadable,   {"MV-J28", "Your net.ice setting could not be read as all or relay. Set it to one of them in multivoid.ini, or make the file readable."}},
+    {EndReason::RelayWithoutServer,    {"MV-J29", "Your net.ice=relay allows only a relayed connection, and this session has no relay server."}},
+    {EndReason::RelayRefusesDirect,    {"MV-J30", "Your net.ice=relay keeps your address from other players, and a direct connection would show it to the host. Join a lobby that is not direct, or remove net.ice from multivoid.ini."}},
     // H -- the host decided
     {EndReason::WrongPassword,           {"MV-H01", "Wrong password."}},
     {EndReason::PasswordRequired,        {"MV-H02", "This server needs a password."}},

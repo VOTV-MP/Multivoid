@@ -15,6 +15,7 @@
 namespace coop::net {
 class Session;
 struct Config;
+struct Refusal;
 }  // namespace coop::net
 
 namespace harness::session_runtime {
@@ -29,8 +30,9 @@ coop::net::Session& Session();
 // subsystem, (host) back up the save + install the LanDirect ban filter, then
 // Start. ONE code path for "start a coop session" (RULE 2) -- called by the
 // env-configured boot (play scenario) AND the browser drain in RunPlayLoop.
-// TimelineThread only. Returns Start()'s success.
-bool StartCoopSession(const coop::net::Config& netCfg);
+// TimelineThread only. Returns Start()'s success; `why`, when given, gets Start()'s reason on a
+// false return from Start (a start skipped for shutdown leaves it as the caller set it).
+bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why = nullptr);
 
 // Spawn the static 2nd player the instant the local mainPlayer_C exists
 // ([dev] static_2nd_player solo visual aid; the play scenario's non-net arm).

@@ -109,10 +109,13 @@ CFG_STRING(net_turn_user, "net.turn_user", "net", "", "VOTVCOOP_NET_TURN_USER", 
     "Static TURN username (dev / self-hosted relays only).")
 CFG_STRING(net_turn_pass, "net.turn_pass", "net", "", "VOTVCOOP_NET_TURN_PASS", false,
     "Static TURN password (dev / self-hosted relays only).")
-CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay", "VOTVCOOP_NET_ICE",
-    "ICE candidate policy for every internet (p2p) session, lobbies included. Unset/all = every "
-    "path, direct first; relay = only through the master's TURN relay, and peers see the "
-    "relay's address instead of yours.")
+CFG_ENUM_FAILCLOSED(net_ice, "net.ice", "net", "all", "all|relay", "VOTVCOOP_NET_ICE",
+    "What other players see of your address. all = every path, direct first; relay = only "
+    "through a TURN relay (the lobby master's, or net.turn), so peers see the relay's address "
+    "instead of yours, and joining a direct lobby or by address is refused, since that would "
+    "show the host yours (hosting DIRECT still publishes your address). Any other value, or a "
+    "multivoid.ini that cannot be read, refuses automatic sessions and every direct join until "
+    "it is fixed.")
 
 // The receive-boundary novelty cap (coop/text/novelty_ledger.h). Every codepoint in the
 // repertoire is rasterisable on demand from chat text, the one attacker-controlled string in

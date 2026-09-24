@@ -323,6 +323,7 @@ set(VOTVCOOP_SOURCES
     src/coop/net/send_backlog.cpp
     src/coop/net/send_rate_control.cpp
     src/coop/net/ice_config.cpp
+    src/coop/net/ice_policy.cpp
     src/coop/net/signaling_client.cpp
     src/coop/net/signaling_proof.cpp
     src/coop/net/http_client.cpp

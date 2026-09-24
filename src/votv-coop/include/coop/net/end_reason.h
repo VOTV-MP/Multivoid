@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 
@@ -57,7 +58,7 @@ enum class EndReason : uint8_t {
     HostWorldNotPrepared,   // the host never finished capturing the world it owed this joiner
     WorldDownloadStalled,   // no byte of the world blob arrived for the download's budget
     HostWorldNotSent,       // the world bracket never came: the host held it, or stopped answering
-    // The last four are LOCAL: the host did what it owed and this machine could not use it. The
+    // These four are LOCAL: the host did what it owed and this machine could not use it. The
     // first two used to boot a fresh world instead and finish the join in it, telling the player
     // nothing -- a joiner standing in a world that is not the host's; the third loaded anyway with
     // the host's items emptied out; the fourth is a wait that had no watcher at all.
@@ -65,6 +66,11 @@ enum class EndReason : uint8_t {
     WorldUnusable,          // the world arrived damaged: the CRC failed, or it could not be written
     ProfileNotSent,         // the host never sent this player's inventory, so the world would load without it
     WorldNeverSettled,      // the world came up and this machine never got ready to announce it
+    // The player's ICE policy (coop/net/ice_policy.h) refused this machine's session before it
+    // started: a join, or a host's own start, which the hosting window reports under the same code.
+    IcePolicyUnreadable,    // net.ice is neither all nor relay, or multivoid.ini could not be read
+    RelayWithoutServer,     // net.ice=relay and the session has no TURN server
+    RelayRefusesDirect,     // net.ice=relay and the session is a direct dial
 
     // H -- the host decided; rides the transport's application end reason. Values 40..89.
     WrongPassword = 40,
@@ -107,7 +113,7 @@ enum class EndReason : uint8_t {
     // Each family's bounds, for the table's completeness check: a family is contiguous from its
     // first enumerator, so the row count must equal the sum of the three spans.
     kJoinerFirst = MasterUnreachable,
-    kJoinerLast = WorldNeverSettled,
+    kJoinerLast = RelayRefusesDirect,
     kHostFirst = WrongPassword,
     kHostLast = ConnectFlood,
     kTransportFirst = Timeout,
@@ -117,6 +123,13 @@ enum class EndReason : uint8_t {
 struct EndReasonInfo {
     const char* id;    // "MV-H01"; empty for None
     const char* text;  // the player's sentence; empty for None
+};
+
+// A refusal handed back to the caller instead of carried on the wire: the code, and the deciding
+// site's own detail beside it. None is no refusal.
+struct Refusal {
+    EndReason   code = EndReason::None;
+    std::string detail;
 };
 
 // The id and the sentence for a code; None gives two empty strings.

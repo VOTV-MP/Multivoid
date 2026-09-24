@@ -9,8 +9,8 @@
 // producer cannot mint an unregistered key and a wrong-kind read is a compile error. The row
 // list itself lives in config_registry_rows.inc, one list feeding both the table and the
 // handles. ValidateRows (config_registry.cpp) is a constexpr compile gate: numeric defaults
-// in range, enum defaults among the tokens (an empty-sentinel allowlist for net.role and
-// net.ice), font-role rows coherent in key, suffix and default family.
+// in range, enum defaults among the tokens (an empty-sentinel allowlist for net.role), font-role
+// rows coherent in key, suffix and default family.
 
 #pragma once
 
@@ -77,6 +77,10 @@ struct Row {
     const char* defS;     // Enum: the default token, empty meaning unset; String: the default; null otherwise
     // The catalog columns.
     const char* desc;     // catalog text, semantics only; tokens, range and env twin are emitted from the columns
+    // A FAIL-CLOSED enum (CFG_ENUM_FAILCLOSED): a refused value, or an ini that cannot be read,
+    // refuses what the row governs instead of standing in its default. Only its own handle type
+    // reads it, so the default-taking ResolveEnum cannot be called on such a row at all.
+    bool failClosed = false;
 };
 
 // The row list. Completeness against the call-site universe is enforced by the ratchet
@@ -142,6 +146,11 @@ struct EnumRow {
     const Row* row;
     constexpr EnumRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
 };
+// A fail-closed enum's handle (Row::failClosed): read only by coop::config::ResolveFailClosed.
+struct FailClosedEnumRow {
+    const Row* row;
+    constexpr FailClosedEnumRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
+};
 struct StringRow {
     const Row* row;
     constexpr StringRow(const Row* r, detail::RegistryCtorKey) : row(r) {}
@@ -163,6 +172,7 @@ namespace rows {
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) extern const IntRow ident;
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) extern const FloatRow ident;
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) extern const EnumRow ident;
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc) extern const FailClosedEnumRow ident;
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) extern const StringRow ident;
 #define CFG_IDENTITY(ident, key, section, desc) extern const IdentityRow ident;
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) extern const EnumRow ident;
@@ -171,6 +181,7 @@ namespace rows {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
@@ -200,6 +211,7 @@ inline constexpr int kFontRoleDefaultFamily[] = {
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc)
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
 #define CFG_IDENTITY(ident, key, section, desc)
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) defFam,
@@ -208,6 +220,7 @@ inline constexpr int kFontRoleDefaultFamily[] = {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE

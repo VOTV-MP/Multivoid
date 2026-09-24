@@ -58,8 +58,10 @@ std::string EnumFromRaw(const config_registry::Row* row, bool have, const std::s
 // the ini's authoritative line; else absent. True with `raw` when a layer supplied a value, and
 // `fromEnvOut` says which layer won. The census reports the layer, so it asks the precedence
 // rule itself rather than re-reading the environment and risking a second, disagreeing answer.
+// `scanOut` gets the ini scan's verdict (Ok when the env layer answered), because an absent
+// result from an Unreadable scan is not an answer, and a fail-closed read must not take it as one.
 bool PickRawLayered(const config_registry::Row* row, std::string& raw,
-                    bool* fromEnvOut = nullptr);
+                    bool* fromEnvOut = nullptr, IniScan* scanOut = nullptr);
 
 // C-locale numeric emission for a float row's value, so the catalog's default and the census's
 // resolved value are the same string on any machine. Defined in config_example.cpp.

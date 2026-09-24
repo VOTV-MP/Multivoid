@@ -13,7 +13,9 @@
 
 namespace coop::config {
 
-// An environment variable (ASCII); empty if unset.
+// An environment variable, whole and converted losslessly to UTF-8 (a control character kept, a
+// lone surrogate as U+FFFD), so a caller that shows or trusts it sanitises it itself; empty if
+// unset.
 std::string ReadEnv(const char* name);
 
 // The launch scenario: the VOTVCOOP_SCENARIO env var, or menu on a native launch.
@@ -57,6 +59,15 @@ bool        ResolveFlag(const config_registry::FlagRow& row);
 long        ResolveInt(const config_registry::IntRow& row);
 float       ResolveFloat(const config_registry::FloatRow& row);
 std::string ResolveEnum(const config_registry::EnumRow& row);
+// The fail-closed read (a CFG_ENUM_FAILCLOSED row; its handle type takes no other reader). Value:
+// `out` holds the canonical token or the row default, exactly as ResolveEnum would give. Refused:
+// a layer supplied a value the reader refuses; `refusedOut` holds it (possibly empty) and
+// `originOut` the env var's name or multivoid.ini. Unreadable: no env value is set and
+// multivoid.ini could not be read, so the ini's answer is unknown; `originOut` is multivoid.ini.
+enum class FailClosedRead : unsigned char { Value, Refused, Unreadable };
+FailClosedRead ResolveFailClosed(const config_registry::FailClosedEnumRow& row, std::string& out,
+                                 std::string* refusedOut = nullptr,
+                                 std::string* originOut = nullptr);
 // Free strings: env, ini, row default, no validation.
 std::string ResolveString(const config_registry::StringRow& row);
 
@@ -97,7 +108,8 @@ bool RemoveDuplicateKeyLines(const char* key, const char* keepValue);
 // the residue for the keep-line buttons), and unknown keys and loose comments keep their order
 // in the residue tail; and retires an unknown key line or a known key whose value fails
 // validation to a comment, so the panel's complaint resolves while the data stays readable in
-// the file.
+// the file -- except a fail-closed row's (config_registry::Row::failClosed), which stays, since
+// disabling it would hand the row the default its refusal withholds.
 struct ReformatStats { int collapsed = 0; int placed = 0; int frozen = 0; int retired = 0; };
 bool ReformatLiveIni(ReformatStats& out);
 

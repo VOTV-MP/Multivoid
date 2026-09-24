@@ -35,12 +35,28 @@ std::string ReadEnv(const char* name) {
     // the narrow API converts to the process ANSI codepage, so a Cyrillic nickname arrived as
     // cp1251 bytes and every UTF-8 layer above rendered it as a row of U+FFFD. The rest of the
     // config stack speaks UTF-8, so this is the one boundary.
-    wchar_t wbuf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableW(
-        std::wstring(name, name + std::strlen(name)).c_str(), wbuf,
-        static_cast<DWORD>(std::size(wbuf)));
-    if (n == 0 || n >= std::size(wbuf)) return {};
-    return coop::text::ToUtf8(std::wstring(wbuf, wbuf + n));
+    // The value is read whole, whatever its length, and converted losslessly: a validated row must
+    // see exactly what was set, so an over-long value is not an unset one and a control character
+    // is not quietly dropped into a valid token. A consumer that needs text sanitised (the
+    // nickname) does it itself. A lone surrogate becomes U+FFFD.
+    const std::wstring wname(name, name + std::strlen(name));
+    std::wstring w(256, L'\0');
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const DWORD n =
+            ::GetEnvironmentVariableW(wname.c_str(), w.data(), static_cast<DWORD>(w.size()));
+        if (n == 0) return {};
+        if (n < w.size()) { w.resize(n); break; }
+        w.assign(n, L'\0');  // n is the size needed, the terminator included: read again
+        if (attempt == 3) return {};
+    }
+    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
+                                            nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return {};
+    std::string out(static_cast<size_t>(bytes), '\0');
+    if (::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), out.data(), bytes,
+                              nullptr, nullptr) != bytes)
+        return {};
+    return out;
 }
 
 std::string ReadScenario() {
@@ -95,7 +111,8 @@ static std::atomic<bool> g_identityNotDurable{false};
 using IniScan = internal::IniScan;
 
 // One line, unbounded: fgets chunks accumulate until the newline. True when a line is delivered,
-// with its newline when the file carries one.
+// with its newline when the file carries one. A line a read error cut short is not delivered: its
+// prefix could read as a different, valid value.
 static bool ReadOneLine(FILE* f, std::string& out) {
     out.clear();
     char buf[512];
@@ -103,7 +120,7 @@ static bool ReadOneLine(FILE* f, std::string& out) {
         out += buf;
         if (!out.empty() && out.back() == '\n') return true;
     }
-    return !out.empty();  // final line without a trailing newline
+    return !out.empty() && !std::ferror(f);  // final line without a trailing newline
 }
 
 // The line source seam (+1 a line, 0 a clean end, -1 a stream error): production wraps a FILE,
@@ -123,10 +140,15 @@ static int FileLineSourceNext(void* ctx, std::string& out) {
 template <typename Fn>
 static IniScan ScanLineSource(LineSource src, Fn&& cb) {
     std::string line;
+    bool first = true;
     for (;;) {
         const int r = src.next(src.ctx, line);
         if (r < 0) return IniScan::Unreadable;
         if (r == 0) return IniScan::Ok;
+        // An editor's UTF-8 byte-order mark belongs to the file, not to its first key, which it
+        // would otherwise turn into an unknown one.
+        if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);
+        first = false;
         cb(line);
     }
 }
@@ -286,18 +308,19 @@ static std::string ReadIniValueAt(const std::wstring& path, const char* key,
     return result;
 }
 
-std::string ReadIniValue(const char* key, const char* def) {
+std::string ReadIniValue(const char* key, const char* def, IniScan* scanOut) {
     std::lock_guard<std::mutex> lk(g_iniMutex);
     IniScan st = IniScan::Ok;
     std::string v = ReadIniValueAt(IniPath(), key, def, &st);
     if (st == IniScan::Unreadable) g_iniUnreadableSeen.store(true, std::memory_order_relaxed);
+    if (scanOut) *scanOut = st;
     return v;
 }
 
 // The P2P transport fields of `c` from env, then ini, then default, for a session configured
 // with no master (ReadNetConfig's p2p topology); a master lobby takes its rendezvous and ICE
 // servers from the master's answer instead. The candidate policy, net.ice, is not a field: every
-// P2P start reads it (Session::StartP2P).
+// session start reads it (Session::Start, coop/net/ice_policy.h).
 static void FillP2PFields(coop::net::Config& c) {
     // The signaling rendezvous server; both peers connect outbound, no port forward. Only a session
     // dialled with no master reads this (a lobby's rendezvous and token come from its master's own
@@ -501,8 +524,10 @@ namespace internal {
 // The layered raw-value pick (config_internal.h). The row comes from the caller's typed handle,
 // so no lookup and no unregistered key; the census passes a row straight off the table, which is
 // the one caller that has no handle and needs none.
-bool PickRawLayered(const config_registry::Row* row, std::string& raw, bool* fromEnvOut) {
+bool PickRawLayered(const config_registry::Row* row, std::string& raw, bool* fromEnvOut,
+                    IniScan* scanOut) {
     if (fromEnvOut) *fromEnvOut = false;
+    if (scanOut) *scanOut = IniScan::Ok;
     if (row->envVar) {
         const std::string e = ReadEnv(row->envVar);
         if (!e.empty()) {
@@ -512,7 +537,7 @@ bool PickRawLayered(const config_registry::Row* row, std::string& raw, bool* fro
         }
     }
     static const char* kAbsent = "\x01<absent>";
-    const std::string v = ReadIniValue(row->key, kAbsent);
+    const std::string v = ReadIniValue(row->key, kAbsent, scanOut);
     if (v == kAbsent) return false;
     raw = v;
     return true;
@@ -598,6 +623,30 @@ std::string ResolveEnum(const config_registry::EnumRow& h) {
     std::string raw;
     const bool have = internal::PickRawLayered(h.row, raw);
     return internal::EnumFromRaw(h.row, have, raw);
+}
+
+FailClosedRead ResolveFailClosed(const config_registry::FailClosedEnumRow& h, std::string& out,
+                                 std::string* refusedOut, std::string* originOut) {
+    std::string raw;
+    bool fromEnv = false;
+    IniScan scan = IniScan::Ok;
+    const bool have = internal::PickRawLayered(h.row, raw, &fromEnv, &scan);
+    out.clear();
+    // An ini that could not be read has no answer to give, and "absent" is not one: the default
+    // would stand in for a line that may well say otherwise.
+    if (!have && scan == IniScan::Unreadable) {
+        if (originOut) *originOut = "multivoid.ini";
+        return FailClosedRead::Unreadable;
+    }
+    // The one verdict the census, the writer and the boot sweep use, so a value refused here is a
+    // value they report as refused.
+    if (have && !ValueValidForKey(h.row->key, raw, nullptr)) {
+        if (refusedOut) *refusedOut = raw;
+        if (originOut) *originOut = fromEnv ? h.row->envVar : "multivoid.ini";
+        return FailClosedRead::Refused;
+    }
+    out = internal::EnumFromRaw(h.row, have, raw);
+    return FailClosedRead::Value;
 }
 
 std::string ResolveString(const config_registry::StringRow& h) {

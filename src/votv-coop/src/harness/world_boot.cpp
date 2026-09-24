@@ -8,6 +8,7 @@
 #include "coop/config/config.h"
 #include "coop/items/player_inventory_sync.h"
 #include "coop/net/end_reason.h"
+#include "coop/net/ice_policy.h"   // a host's policy refusal, before its world loads
 #include "coop/net/session.h"
 #include "coop/player/player_profile_store.h"
 #include "coop/save/save_transfer.h"
@@ -69,6 +70,23 @@ void ReturnToMenuAfterFailedHost() {
             return;   // a window of ours already owns the retry and is showing the reason
         ui::server_browser_surface::Open();
     });
+}
+
+// A host the player's ICE policy refuses before its world loads leaves through the steps of a save
+// that would not load: the reason, with the refusal's code for a report to quote, where the hosting
+// window or the browser paints it; the lobby it announced withdrawn while the cover still stands,
+// so no second host can start under a withdrawal in flight; the cover dropped. Unlike those exits
+// the status goes first, so the native hosting window paints it during the withdrawal's wait.
+void FailHostBeforeLoad_(const coop::net::Refusal& r) {
+    const auto& info = coop::net::Describe(r.code);
+    UE_LOGW("harness: host-with-save refused before the world load -- [%s] %s", info.id,
+            r.detail.c_str());
+    std::string status = std::string("Host failed [") + info.id + "]: " + info.text;
+    if (!r.detail.empty()) status += " (" + r.detail + ")";
+    coop::session_manager::SetHostStatus(status);
+    if (!coop::shutdown::IsShuttingDown()) coop::session_manager::EndHostedLobby();
+    coop::join_progress::Reset();
+    ReturnToMenuAfterFailedHost();
 }
 
 }  // namespace
@@ -284,6 +302,14 @@ void DriveHostBootIfPending() {
     // per tick, forever, for nothing.
     coop::session_manager::PendingHost pending;
     if (!coop::session_manager::TakePendingHostWithSave(pending)) return;
+    // What Session::Start would refuse after the load is refused before it: the same verdict
+    // (coop/net/ice_policy.h) on the Config the start will take.
+    if (const coop::net::Refusal r =
+            coop::net::IcePolicyRefusal(coop::net::ResolveIcePolicy(), pending.cfg);
+        r.code != coop::net::EndReason::None) {
+        FailHostBeforeLoad_(r);
+        return;
+    }
     auto b = std::make_shared<Boot>();
     b->ph = std::move(pending);
     if (!b->ph.save.newGame) b->slot.assign(b->ph.save.slot.begin(), b->ph.save.slot.end());  // ASCII

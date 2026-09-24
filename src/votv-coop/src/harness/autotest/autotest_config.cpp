@@ -356,14 +356,19 @@ void RunConfigSelftest() {
         {
             FILE* f = nullptr;
             if (_wfopen_s(&f, wrk.c_str(), L"w") == 0 && f) {
-                std::fputs("[net]\nnet.nick=Pelmentor\n\n[dev]\nposinfo=1\nfreecam=banana\n"
-                           "devkeys=1\ndevkeys=1\n", f);
+                std::fputs("[net]\nnet.nick=Pelmentor\nnet.ice=disable\n\n[dev]\nposinfo=1\n"
+                           "freecam=banana\ndevkeys=1\ndevkeys=1\n", f);
                 std::fclose(f);
             }
             cfg::ReformatStats st;
             expect("tidy reformat returns true", cfg::SelftestReformat(wrk, st));
             expect("tidy retired exactly the unknown + the invalid line",
                    st.retired == 2 && st.collapsed == 1);
+            // A fail-closed row's invalid line is not retired: disabling it would hand the row its
+            // default, the value the refusal withholds.
+            const cfg::IniSelftestRead ice = cfg::SelftestReadValue(wrk, "net.ice");
+            expect("tidy keeps a fail-closed row's invalid line live",
+                   ice.found && ice.value == "disable");
             expect("unknown key no longer a live line",
                    !cfg::SelftestReadValue(wrk, "posinfo").found);
             expect("invalid-valued key no longer a live line",
@@ -375,6 +380,18 @@ void RunConfigSelftest() {
             const cfg::IniSelftestRead dk = cfg::SelftestReadValue(wrk, "devkeys");
             expect("healthy keys survive the tidy",
                    nick.found && nick.value == "Pelmentor" && dk.found && dk.value == "1");
+        }
+        // An editor's UTF-8 byte-order mark before the first key belongs to the file, not to the
+        // key: read as part of it, `net.ice` would be an unknown key and the row would take `all`.
+        {
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, wrk.c_str(), L"wb") == 0 && f) {
+                std::fputs("\xEF\xBB\xBFnet.ice=relay\n[dev]\n", f);
+                std::fclose(f);
+            }
+            const cfg::IniSelftestRead bom = cfg::SelftestReadValue(wrk, "net.ice");
+            expect("a byte-order mark does not hide the first key",
+                   bom.found && bom.value == "relay");
         }
         ::DeleteFileW(wrk.c_str());
     }

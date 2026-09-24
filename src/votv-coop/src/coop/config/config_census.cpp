@@ -11,8 +11,8 @@
 //   config: EFFECTIVE end -- <n> row(s) configured
 // An absent row means the peer took that row's default, which holds only if the ini was readable,
 // so the end line carries that verdict too. A credential row -- named by the registry, never
-// guessed from a spelling -- prints as <set>, and a raw value the reader refuses says so beside
-// the default it fell back to.
+// guessed from a spelling -- prints as <set>, and a refused raw value says so beside the default
+// it fell back to, or beside itself on a fail-closed row, where nothing falls back.
 
 #include "coop/config/config.h"
 
@@ -61,6 +61,18 @@ std::string Resolved(const Row& r, const std::string& raw) {
     return raw;  // free strings are unvalidated, and an identity never reaches here
 }
 
+// A refused value printed as itself, which is whatever a file or an environment held: printable
+// ASCII only and capped, so the line stays one line a rig's pattern can read.
+std::string Printable(const std::string& raw) {
+    constexpr size_t kMax = 64;
+    std::string s;
+    for (const char c : raw) {
+        if (s.size() == kMax) { s += "..."; break; }
+        s += (c >= 0x20 && c < 0x7f) ? c : '?';
+    }
+    return s;
+}
+
 }  // namespace
 
 void ReportEffectiveConfig() {
@@ -88,13 +100,15 @@ void ReportEffectiveConfig() {
         // same validator the writer and the boot sweep use, so there is one verdict per value.
         std::string why;
         const bool valid = ValueValidForKey(r.key, raw, &why);
-        const std::string value = Redacted(r) ? "<set>" : Resolved(r, raw);
+        const bool refused = !valid && r.failClosed;
+        const std::string value = Redacted(r) ? "<set>" : refused ? Printable(raw) : Resolved(r, raw);
         if (valid)
             UE_LOGI("config: EFFECTIVE %s=%s (%s)", r.key, value.c_str(),
                     fromEnv ? "env" : "ini");
         else
-            UE_LOGW("config: EFFECTIVE %s=%s (%s, rejected: %s)", r.key, value.c_str(),
-                    fromEnv ? "env" : "ini", why.c_str());
+            UE_LOGW("config: EFFECTIVE %s=%s (%s, rejected: %s%s)", r.key, value.c_str(),
+                    fromEnv ? "env" : "ini", why.c_str(),
+                    refused ? "; fail-closed, so what it governs is refused" : "");
     }
     // The end line carries the ini's verdict, because an absent row is only evidence of a default
     // when the file was READABLE. A locked or failing ini reads as absent for every key, so a

@@ -419,8 +419,13 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
                           ? "; retired setting (tidy): "
                           : "; unknown key (tidy): ";
             } else {
+                // A fail-closed row's invalid line stays: disabling it would hand the row its
+                // default, the very value its refusal withholds, and the player would not be told.
+                const config_registry::Row* row =
+                    config_registry::FindRow(cls[g.second[0]].keySpelling.c_str());
                 std::string reason;
-                if (!ValueValidForKey(cls[g.second[0]].keySpelling.c_str(),
+                if (!(row && row->failClosed) &&
+                    !ValueValidForKey(cls[g.second[0]].keySpelling.c_str(),
                                       cls[g.second[0]].value, &reason))
                     tag = "; invalid value (tidy): ";
             }

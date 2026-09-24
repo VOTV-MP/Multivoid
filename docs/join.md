@@ -235,7 +235,9 @@ A join that cannot be established, and a session that ends after it, both close 
 COULD NOT CONNECT or DISCONNECTED, one sentence, the site's own words, and a stable code to paste
 into a report; a cancel is silent (`coop/net/end_reason`, `ui/end_reason_dialog`). The letter says
 who decided: `J` the joiner; `H` the host, whose refusal travels as the transport's application
-end reason, so both ends log one code; `T` the transport.
+end reason, so both ends log one code; `T` the transport. `MV-J28` and `MV-J29` also refuse a
+host's own start: a host from the hosting window before its world loads, with the code and the
+sentence on its status line.
 
 | Code | Meaning |
 |---|---|
@@ -266,6 +268,9 @@ end reason, so both ends log one code; `T` the transport.
 | `MV-J25` | The world arrived damaged: its CRC failed, or the slot could not be written |
 | `MV-J26` | The host never sent this player's inventory |
 | `MV-J27` | The world loaded and this machine never got ready to announce it (the gate is named in the detail) |
+| `MV-J28` | The player's `net.ice` is neither `all` nor `relay`, or `multivoid.ini` could not be read; nothing the policy governs starts until it is fixed |
+| `MV-J29` | `net.ice=relay`, and the session has no TURN server to relay through |
+| `MV-J30` | `net.ice=relay`, and the join is a direct one, which would show the host the player's address |
 | `MV-H01` | Wrong password |
 | `MV-H02` | This server needs a password |
 | `MV-H03` | Too many password attempts; try again in ten minutes |

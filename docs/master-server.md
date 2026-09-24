@@ -81,6 +81,16 @@ relays the media when no direct path opens. The two are not two transports, and 
 who may connect; the boundary a host wants comes from the password and the admission challenge,
 which apply to every lane.
 
+A player's `net.ice` says what peers see of their address (`coop/net/ice_policy.h`): `all`, the
+default, offers every candidate, and `relay` only the TURN relay's, so a peer sees the relay's
+address instead. A relay-only player is refused a direct join, since a direct dial shows the host
+their address, and a brokered session with no TURN server; hosting direct still publishes the
+host's address, since a direct listen has no candidates to choose. Any other value, and a
+`multivoid.ini` that cannot be read (unless the environment twin `VOTVCOOP_NET_ICE` sets a valid
+value, which answers first), refuse every brokered session and every direct join rather than fall
+back to `all`. Each refusal is decided when the session starts, under its own code
+(`MV-J28`..`MV-J30`); a host from the hosting window is told before its world loads.
+
 ### The signaling relay
 
 A line protocol over TCP, ported from the transport library's own example. A peer greets the
@@ -143,5 +153,5 @@ most until its heartbeats lapse.
 |---|---|
 | the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
 | the mod's master client | `coop/net/master_slots`, `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
-| the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/session/host_mode` |
+| the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/net/ice_policy.h`, `coop/session/host_mode` |
 | the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs` |

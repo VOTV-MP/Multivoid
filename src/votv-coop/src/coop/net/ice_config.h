@@ -25,10 +25,13 @@ struct IceConfig {
     bool        relayOnly = false;
 };
 
-// Apply the ICE configuration to GNS as GLOBAL config values: the candidate policy and all three
-// TURN lists, written every time, empty included, so nothing of a previous session in this process
-// carries into the next. Idempotent. Call after GameNetworkingSockets_Init and before
-// CreateListenSocketP2P / Connect, on a thread where SteamNetworkingUtils() is valid (post-init).
-void ApplyGlobalIceConfig(const IceConfig& ice);
+// Apply the ICE configuration to GNS as GLOBAL config values: the candidate policy, the STUN list
+// and all three TURN lists, written every time, empty included, so after a true return nothing of
+// a previous session in this process carries into the next. Idempotent. False when GNS refused a
+// value: the writes stop there and the ones after it keep the previous session's values, so the
+// caller must end the start, which is what keeps them unused. Call after
+// GameNetworkingSockets_Init and before CreateListenSocketP2P / Connect, on a thread where
+// SteamNetworkingUtils() is valid (post-init).
+bool ApplyGlobalIceConfig(const IceConfig& ice);
 
 }  // namespace coop::net

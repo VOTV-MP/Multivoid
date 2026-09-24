@@ -2,6 +2,7 @@
 
 #include "ui/config_review_panel.h"
 
+#include "coop/config/config_registry.h"  // which settings refuse instead of falling back
 #include "coop/config/config_review.h"
 #include "ui/menu_sfx.h"
 #include "ui/scale.h"
@@ -26,9 +27,26 @@ namespace CR = coop::config_review;
 bool               g_tidyPressed = false;
 CR::ReformatOutcome g_tidyOutcome;
 
+// The settings that refuse instead of falling back (config_registry::Row::failClosed), named in
+// every sentence here that says what an unusable value leads to. From the registry, once.
+const std::string& FailClosedNames() {
+    static const std::string s = [] {
+        std::string names;
+        size_t count = 0;
+        const coop::config_registry::Row* rows = coop::config_registry::Rows(count);
+        for (size_t i = 0; i < count; ++i) {
+            if (!rows[i].failClosed) continue;
+            if (!names.empty()) names += ", ";
+            names += rows[i].key;
+        }
+        return names;
+    }();
+    return s;
+}
+
 const char* TypeHeading(CR::Row::Type t) {
     switch (t) {
-        case CR::Row::Type::Rejected:          return "Ignored values (using the default instead)";
+        case CR::Row::Type::Rejected:          return "Values that could not be used";
         case CR::Row::Type::Unknown:           return "Unknown settings (nothing reads these)";
         case CR::Row::Type::DuplicateDormant:  return "Duplicate settings with different values";
         case CR::Row::Type::IdentityNotDurable: return "Player identity not saved";
@@ -51,9 +69,18 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
         switch (type) {
             case CR::Row::Type::Rejected:
                 ImGui::Bullet();
-                ImGui::TextWrapped("%s = '%s' (%s) -- %s; the built-in default is used.",
-                                   r.key.c_str(), r.value.c_str(), r.origin.c_str(),
-                                   r.reason.c_str());
+                // What the value leads to: a set env twin shadows an ini line whatever it holds; a
+                // fail-closed row has no default standing in, so what it governs is refused.
+                if (!r.overriddenBy.empty())
+                    ImGui::TextWrapped("%s = '%s' (%s) -- %s; not in use, %s overrides it.",
+                                       r.key.c_str(), r.value.c_str(), r.origin.c_str(),
+                                       r.reason.c_str(), r.overriddenBy.c_str());
+                else
+                    ImGui::TextWrapped("%s = '%s' (%s) -- %s; %s", r.key.c_str(), r.value.c_str(),
+                                       r.origin.c_str(), r.reason.c_str(),
+                                       r.failClosed
+                                           ? "nothing it governs starts until it is fixed."
+                                           : "the built-in default is used.");
                 break;
             case CR::Row::Type::Unknown:
                 ImGui::Bullet();
@@ -101,7 +128,9 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                 ImGui::Bullet();
                 ImGui::TextWrapped("multivoid.ini exists but could not be read (locked or "
                                    "failing). This launch runs on environment overrides and "
-                                   "built-in defaults.");
+                                   "built-in defaults; the settings that refuse instead of "
+                                   "falling back (%s) refuse what they govern until the file "
+                                   "can be read.", FailClosedNames().c_str());
                 break;
         }
     }
@@ -140,10 +169,11 @@ void Render() {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
                 "multivoid.ini was checked against the known settings at launch.\n"
-                "Nothing was changed automatically -- broken values just fall back\n"
-                "to their defaults for this session. The buttons below edit the file\n"
-                "only when you click them. This notice returns next launch while\n"
-                "anything is still off.");
+                "Nothing was changed automatically -- broken values fall back to\n"
+                "their defaults for this session, except the settings that refuse\n"
+                "instead (%s). The buttons below edit the file only when you click\n"
+                "them. This notice returns next launch while anything is still off.",
+                FailClosedNames().c_str());
         ImGui::Separator();
 
         RenderRowsOfType(rows, CR::Row::Type::IniUnreadable);
@@ -167,9 +197,12 @@ void Render() {
                 "Rewrites multivoid.ini in the standard layout: [net] first, [dev]\n"
                 "last, each setting under its section, exact-duplicate lines merged.\n"
                 "Unknown settings and invalid values are commented out (kept in the\n"
-                "file, just disabled) -- that resolves their warnings above.\n"
+                "file, just disabled) -- that resolves their warnings above. An\n"
+                "invalid value of a setting that refuses instead (%s) is kept as\n"
+                "it is: disabling it would switch that setting to its default.\n"
                 "Conflicting duplicates are NEVER auto-resolved -- use the keep-line\n"
-                "buttons above. Your comments travel with their settings.");
+                "buttons above. Your comments travel with their settings.",
+                FailClosedNames().c_str());
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Dismiss###cfgrev_dismiss", ImVec2(S(120.f), S(30.f))))
             CR::Dismiss();

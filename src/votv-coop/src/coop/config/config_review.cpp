@@ -130,6 +130,13 @@ void SweepInto(std::vector<Row>& rows) {
                 r.origin = "multivoid.ini";
                 r.value = g.second.lines[0].value;
                 r.reason = reason;
+                // Which consequence the panel states: a set env twin shadows this line whatever it
+                // holds, and a fail-closed row refuses rather than takes its default.
+                if (const auto* reg = coop::config_registry::FindRow(key.c_str())) {
+                    r.failClosed = reg->failClosed;
+                    if (reg->envVar && !coop::config::ReadEnv(reg->envVar).empty())
+                        r.overriddenBy = reg->envVar;
+                }
                 rows.push_back(r);
             }
         }
@@ -150,6 +157,7 @@ void SweepInto(std::vector<Row>& rows) {
             r.origin = std::string(regRows[i].envVar) + " (env)";
             r.value = e;
             r.reason = reason;
+            r.failClosed = regRows[i].failClosed;
             rows.push_back(r);
         }
     }
@@ -189,8 +197,12 @@ void RunBootSweep() {
         for (const Row& r : g_rows) {
             switch (r.type) {
                 case Row::Type::Rejected:
-                    UE_LOGI("config_review:   REJECTED %s='%s' from %s (%s)", r.key.c_str(),
-                            r.value.c_str(), r.origin.c_str(), r.reason.c_str());
+                    UE_LOGI("config_review:   REJECTED %s='%s' from %s (%s)%s%s", r.key.c_str(),
+                            r.value.c_str(), r.origin.c_str(), r.reason.c_str(),
+                            !r.overriddenBy.empty() ? " -- not in use, overridden by "
+                            : r.failClosed          ? " -- fail-closed: what it governs is refused"
+                                                    : "",
+                            r.overriddenBy.c_str());
                     break;
                 case Row::Type::Unknown:
                     UE_LOGI("config_review:   UNKNOWN key '%s'='%s' -- not in the registry",

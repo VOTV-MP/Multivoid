@@ -144,7 +144,8 @@ uint16_t PlayerListenPort() {
 // A master lobby's P2P session Config, for the host and the joiner alike: the master's answer
 // names the rendezvous (its signaling relay and token) and the ICE servers (STUN, the TURN
 // credentials it minted for this peer). lobby::HostInfo and lobby::JoinInfo carry the same six
-// fields. The candidate policy is the player's, read at the P2P start (Session::StartP2P).
+// fields. The candidate policy is the player's, read at every session start
+// (coop/net/ice_policy.h).
 template <typename MasterAnswer>
 net::Config LobbyP2PConfig(net::Role role, const MasterAnswer& info) {
     net::Config cfg;
@@ -492,14 +493,6 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 cfg.topology = net::Topology::LanDirect;
                 cfg.port = directPort;
             }
-            {
-                std::lock_guard<std::mutex> lk(g_pendHostMu);
-                cfg.lobbyPassword = lobbyPw;
-                g_pendingHost.cfg = cfg;
-                g_pendingHost.save = choice;
-                g_pendingHost.listed = listed;
-                g_hasPendingHost = true;
-            }
             // Seed the scoreboard mirror; a hidden DIRECT lobby never reaches this worker.
             g_listedState.store(listed, std::memory_order_relaxed);
             // Derived from the transport actually configured, not from the player's pick: an AUTO
@@ -536,6 +529,18 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
                         "-- fell back to a DIRECT listen on port %u so the session stays joinable",
                         slots::DisplayName(masterUrl).c_str(), static_cast<unsigned>(directPort));
+            }
+            // Published LAST: the harness takes the pending host on its next tick and may refuse
+            // it before the world loads (harness/world_boot.cpp), withdrawing the lobby and
+            // everything written above; a write after the publish could land after that and
+            // outlive it (a refused host told it is hosting, a withdrawn lobby kept as ours).
+            {
+                std::lock_guard<std::mutex> lk(g_pendHostMu);
+                cfg.lobbyPassword = lobbyPw;
+                g_pendingHost.cfg = cfg;
+                g_pendingHost.save = choice;
+                g_pendingHost.listed = listed;
+                g_hasPendingHost = true;
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());

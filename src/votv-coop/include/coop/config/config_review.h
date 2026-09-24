@@ -4,9 +4,10 @@
 // The sweep validates the ini FILE (and the set env twins) against the registry schema --
 // statically, off each row's kind -- so even never-read gated keys (desk_diag_ms behind desk_diag)
 // get their verdicts. It REPORTS, never rewrites; the in-memory default substitution still happens
-// at each read site. The panel re-arms every launch while any row lives; dismissal is in-memory,
-// session-local. The only writes are the OWNER actions (keep-line / reformat), routed through
-// config's guarded file ops.
+// at each read site, except on a fail-closed row, whose reader refuses what the row governs
+// instead (config_registry::Row::failClosed). The panel re-arms every launch while any row
+// lives; dismissal is in-memory, session-local. The only writes are the OWNER actions (keep-line
+// / reformat), routed through config's guarded file ops.
 
 #pragma once
 
@@ -22,7 +23,7 @@ struct DupLine {
 
 struct Row {
     enum class Type {
-        Rejected,            // garbage value -> the default is in effect
+        Rejected,            // garbage value -> the default, or on a fail-closed row a refusal
         Unknown,             // key not in the registry (dead ui.font=..., typos)
         DuplicateDormant,    // N>1 differing values; winner = the first line
         IdentityNotDurable,  // guid/skin is session-only this launch
@@ -33,6 +34,8 @@ struct Row {
     std::string origin;      // Rejected: "multivoid.ini" or the env var name
     std::string value;       // Rejected/Unknown: the offending raw value
     std::string reason;      // Rejected: why it was rejected
+    bool failClosed = false; // Rejected: the row refuses what it governs, no default stands in
+    std::string overriddenBy;  // Rejected, an ini line: the set env twin that shadows it
     bool identityKey = false;  // DuplicateDormant on player_guid/player_skin
     std::vector<DupLine> dupLines;  // DuplicateDormant: every line, first = winner
 };

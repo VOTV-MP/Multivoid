@@ -27,8 +27,9 @@ void DriveMenuModeJoinWorldBoot();
 
 // The host-with-save orchestration: if one was queued (the picker's "Host selected save" or
 // "New Game & Host"), load the chosen world or create the new save first, polling like
-// BootStorySaveBlocking, then start the session. A no-op when nothing is queued; on the
-// TimelineThread, where the blocking load and the start belong.
+// BootStorySaveBlocking, then start the session. A host the player's ICE policy refuses
+// (coop/net/ice_policy.h) is refused before the load, its lobby withdrawn. A no-op when nothing
+// is queued; on the TimelineThread, where the blocking load and the start belong.
 void DriveHostBootIfPending();
 
 }  // namespace harness::world_boot

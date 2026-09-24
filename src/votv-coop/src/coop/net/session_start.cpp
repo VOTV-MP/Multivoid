@@ -7,8 +7,9 @@
 #include "coop/net/session.h"
 
 #include "coop/config/config.h"           // Resolve* for the rows below
-#include "coop/config/config_registry.h"  // rows: net_fakelink_kbs, the connect cap, net_ice
+#include "coop/config/config_registry.h"  // rows: net_fakelink_kbs, the connect cap
 #include "coop/net/connect_history.h"
+#include "coop/net/ice_policy.h"         // what the player's net.ice refuses
 #include "coop/net/master_slots.h"       // an empty relay is the chosen master's
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
@@ -100,9 +101,22 @@ void Session::OnConnStatusChanged(void* info) {
     if (self) self->HandleConnStatusChanged(info);
 }
 
-bool Session::Start(const Config& cfg) {
+bool Session::Start(const Config& cfg, Refusal* why) {
+    if (why) *why = Refusal{EndReason::CouldNotStart, {}};
     if (running_.load()) {
         UE_LOGW("net: Session::Start ignored -- already running");
+        return false;
+    }
+    // The player's ICE policy, read at every start whichever door the session came through (a
+    // lobby, a dial with no master, an address typed in the browser), so what it refuses is
+    // refused here, before anything is set up, under a code the player can read.
+    const IcePolicy icePolicy = ResolveIcePolicy();
+    if (const Refusal refusal = IcePolicyRefusal(icePolicy, cfg);
+        refusal.code != EndReason::None) {
+        UE_LOGW("net: refusing to start -- [%s] %s%s%s", Describe(refusal.code).id,
+                Describe(refusal.code).text, refusal.detail.empty() ? "" : " -- ",
+                refusal.detail.c_str());
+        if (why) *why = refusal;
         return false;
     }
     cfg_ = cfg;
@@ -230,7 +244,8 @@ bool Session::Start(const Config& cfg) {
     // The topology dispatch, the only place the transport differs; the net thread, the poll-group
     // receive, the relay, the lanes, the epoch latch and the inbox drain operate on connection
     // handles regardless of how they were established.
-    const bool ok = (cfg_.topology == Topology::P2P) ? StartP2P() : StartLanDirect();
+    const bool ok = (cfg_.topology == Topology::P2P) ? StartP2P(icePolicy.relayOnly)
+                                                     : StartLanDirect();
     if (!ok) {
         g_session.store(nullptr, std::memory_order_release);
         return false;
@@ -244,6 +259,7 @@ bool Session::Start(const Config& cfg) {
             cfg_.role == Role::Host ? "host" : "client",
             cfg_.topology == Topology::P2P ? "P2P" : "LanDirect",
             cfg_.sendHz);
+    if (why) *why = Refusal{};
     return true;
 }
 
@@ -302,7 +318,7 @@ bool Session::StartLanDirect() {
 // signaling-server transport, then a P2P listen (host) or a custom-signaling connect (client).
 // ICE hole-punches or relays through TURN; once the connection handle exists, everything
 // downstream is as for the direct transport.
-bool Session::StartP2P() {
+bool Session::StartP2P(bool relayOnly) {
     auto* sockets = SteamNetworkingSockets();
 
     // 1. The signaling identity is the durable identity Start installed. One identity serves both
@@ -319,15 +335,16 @@ bool Session::StartP2P() {
     ice.turnList = cfg_.turnList;
     ice.turnUser = cfg_.turnUser;
     ice.turnPass = cfg_.turnPass;
-    // The candidate policy is the player's own setting, read here, at each P2P start, so every door
-    // a session comes through honours it: a lobby host or join, or a dial with no master. The
-    // servers above are the session's (a lobby's come from its master); the policy is no master's
-    // to know. All by default; relay forces the TURN relay, so the peer is shown the relay's
-    // address instead of ours. MTA reads its player's transport setting at each connect the same
-    // way: CConnectManager reads the packet_tag setting at both of its StartNetwork calls.
-    ice.relayOnly =
-        coop::config::ResolveEnum(coop::config_registry::rows::net_ice) == "relay";
-    ApplyGlobalIceConfig(ice);
+    // The candidate policy is the player's own setting, read by Start at each session start, so
+    // every door a session comes through honours it: a lobby host or join, or a dial with no
+    // master. The servers above are the session's (a lobby's come from its master); the policy is
+    // no master's to know. All by default; relay forces the TURN relay, so the peer is shown the
+    // relay's address instead of ours. MTA reads its player's transport setting at each connect
+    // the same way: CConnectManager reads the packet_tag setting at both of its StartNetwork calls.
+    // An ICE value GNS would not take ends the start: the values after it are the previous
+    // session's (ice_config.h).
+    ice.relayOnly = relayOnly;
+    if (!ApplyGlobalIceConfig(ice)) return false;
 
     // 3. The signaling transport, the out-of-band rendezvous for the opaque ICE blobs; constructed
     // after the identity install, so its greeting carries our identity. A session from a lobby

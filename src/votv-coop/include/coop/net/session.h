@@ -86,8 +86,8 @@ struct Config {
     std::string turnList;    // "turn:host:port,..."
     std::string turnUser;    // parallel to turnList
     std::string turnPass;    // parallel to turnList
-    // No candidate policy here: it is the player's net.ice setting, which StartP2P reads for
-    // every P2P session whichever door it came through.
+    // No candidate policy here: it is the player's net.ice setting, which Start reads for every
+    // session whichever door it came through (coop/net/ice_policy.h).
 
     // True when the destination was named locally (a typed address, an ini, an autotest) rather
     // than advertised by the network. peer_admission tells "the player chose this address" from
@@ -117,7 +117,9 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
-    bool Start(const Config& cfg);
+    // False when the session did not start; `why` then holds the reason a player can read, which
+    // is CouldNotStart with no detail when the failing site names nothing of its own.
+    bool Start(const Config& cfg, Refusal* why = nullptr);
     void Stop();
 
     bool running() const { return running_.load(); }
@@ -406,7 +408,7 @@ private:
     // Topology dispatch from Start(), each branching on the role; false on any failure
     // (session_start.cpp).
     bool StartLanDirect();  // rung 0/1: CreateListenSocketIP / ConnectByIPAddress
-    bool StartP2P();        // rungs 1-3: signaling + CreateListenSocketP2P / Connect
+    bool StartP2P(bool relayOnly);  // rungs 1-3: signaling + CreateListenSocketP2P / Connect
 
     void NetThread();
     // Per-peer message dispatch; peerSlot is the sender (from m_nConnUserData on the host, 0 on a

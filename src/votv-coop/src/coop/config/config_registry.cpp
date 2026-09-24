@@ -37,6 +37,7 @@ enum RowIndex : size_t {
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc) RowIndex_##ident,
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc) RowIndex_##ident,
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) RowIndex_##ident,
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc) RowIndex_##ident,
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) RowIndex_##ident,
 #define CFG_IDENTITY(ident, key, section, desc) RowIndex_##ident,
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) RowIndex_##ident,
@@ -45,6 +46,7 @@ enum RowIndex : size_t {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
@@ -61,6 +63,8 @@ constexpr Row kRows[] = {
     Row{key, section, Kind::Float, lo, hi, nullptr, envVar, false, false, 0, defF, nullptr, desc},
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) \
     Row{key, section, Kind::Enum, kNoRange, kNoRange, tokens, envVar, false, false, 0, 0.0f, defS, desc},
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc) \
+    Row{key, section, Kind::Enum, kNoRange, kNoRange, tokens, envVar, false, false, 0, 0.0f, defS, desc, true},
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) \
     Row{key, section, Kind::String, kNoRange, kNoRange, nullptr, envVar, seeded, false, 0, 0.0f, defS, desc},
 #define CFG_IDENTITY(ident, key, section, desc) \
@@ -73,6 +77,7 @@ constexpr Row kRows[] = {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
@@ -117,6 +122,7 @@ constexpr size_t kFontRoleRowIndex[] = {
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc)
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
 #define CFG_IDENTITY(ident, key, section, desc)
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) RowIndex_##ident,
@@ -125,6 +131,7 @@ constexpr size_t kFontRoleRowIndex[] = {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
@@ -167,9 +174,9 @@ constexpr bool ValidateRows() {
                 break;
             case Kind::Enum:
                 if (!r.tokens || !r.defS) return false;
-                // "" = the unset sentinel, allowed ONLY for the allowlisted keys.
+                // "" = the unset sentinel, allowed ONLY for the allowlisted key.
                 if (CEq(r.defS, "")) {
-                    if (!(CEq(r.key, "net.role") || CEq(r.key, "net.ice"))) return false;
+                    if (!CEq(r.key, "net.role")) return false;
                 } else if (!TokenInList(r.tokens, r.defS)) {
                     return false;
                 }
@@ -211,6 +218,8 @@ namespace rows {
     const FloatRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc) \
     const EnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc) \
+    const FailClosedEnumRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc) \
     const StringRow ident{&kRows[RowIndex_##ident], detail::RegistryDef::K()};
 #define CFG_IDENTITY(ident, key, section, desc) \
@@ -222,6 +231,7 @@ namespace rows {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
@@ -234,6 +244,7 @@ const EnumRow* const kFontRoleRows[] = {
 #define CFG_INT(ident, key, section, defI, lo, hi, envVar, desc)
 #define CFG_FLOAT(ident, key, section, defF, lo, hi, envVar, desc)
 #define CFG_ENUM(ident, key, section, defS, tokens, envVar, desc)
+#define CFG_ENUM_FAILCLOSED(ident, key, section, defS, tokens, envVar, desc)
 #define CFG_STRING(ident, key, section, defS, envVar, seeded, desc)
 #define CFG_IDENTITY(ident, key, section, desc)
 #define CFG_FONTROLE(ident, key, suffix, defFam, desc) &rows::ident,
@@ -242,6 +253,7 @@ const EnumRow* const kFontRoleRows[] = {
 #undef CFG_INT
 #undef CFG_FLOAT
 #undef CFG_ENUM
+#undef CFG_ENUM_FAILCLOSED
 #undef CFG_STRING
 #undef CFG_IDENTITY
 #undef CFG_FONTROLE
