@@ -50,11 +50,13 @@ struct Birth {
     int32_t idx;
     void*   cls;
 };
-// One entry of a pass's work list, with the consumer bitmask taken when the list was built.
+// One entry of a pass's work list, with the consumer bitmask taken when the list was built and the
+// class that bitmask is for.
 struct Item {
     void*    obj;
     int32_t  idx;
     uint64_t bits;
+    void*    cls;
 };
 
 std::vector<Row>      g_rows;
@@ -72,6 +74,8 @@ std::vector<Birth>                  g_births;   // since the last pass start
 // Pass state.
 std::vector<Item> g_work;
 size_t            g_cursor    = 0;
+size_t            g_retenanted = 0;   // items this pass skipped for a changed tenant
+bool              g_retenantSaid = false;
 bool              g_passFull  = false;
 uint32_t          g_passGen   = 0;
 steady_clock::time_point g_passStart{};
@@ -198,15 +202,20 @@ bool StartPass() {
     g_passFull = !g_everFull || AnyUnsettled() || (g_sinceFull >= kBackstopEvery) || g_forceFullOnce;
     g_forceFullOnce = false;
 
+    // The pass is timed from before its list is built, so the scan diag's duration carries the
+    // build's cost, one index hand-out per listed instance, with the slices'.
+    g_passStart  = steady_clock::now();
     g_work.clear();
+    g_retenanted = 0;
     if (g_passFull) {
         // Every live instance of every class some active consumer accepted.
-        struct Ctx { uint64_t bits; };
+        struct Ctx { uint64_t bits; void* cls; };
         for (const auto& kv : g_classBits) {
-            Ctx ctx{kv.second & activeMask};
+            Ctx ctx{kv.second & activeMask, kv.first};
             if (!ctx.bits) continue;
             OI::ForEachInstance(kv.first, [](void* c, void* obj, int32_t idx) {
-                g_work.push_back(Item{obj, idx, static_cast<Ctx*>(c)->bits});
+                const Ctx* x = static_cast<Ctx*>(c);
+                g_work.push_back(Item{obj, idx, x->bits, x->cls});
             }, &ctx);
         }
     } else {
@@ -215,7 +224,7 @@ bool StartPass() {
             auto it = g_classBits.find(b.cls);
             if (it == g_classBits.end()) continue;
             const uint64_t bits = it->second & activeMask;
-            if (bits) g_work.push_back(Item{b.obj, b.idx, bits});
+            if (bits) g_work.push_back(Item{b.obj, b.idx, bits, b.cls});
         }
     }
     g_births.clear();
@@ -225,7 +234,6 @@ bool StartPass() {
 
     g_passGen    = ue_wrap::world_identity::Generation();
     g_cursor     = 0;
-    g_passStart  = steady_clock::now();
     g_passSlices = 0;
     g_inPass     = true;
     return true;
@@ -261,9 +269,9 @@ void CompletePass() {
     const auto durUs = std::chrono::duration_cast<std::chrono::microseconds>(
                            steady_clock::now() - g_passStart).count();
     if (ScanDiagOn()) {
-        UE_LOGI("[SCAN-DIAG] hub pass mode=%s items=%zu slices=%d dur=%lldus classes=%zu",
+        UE_LOGI("[SCAN-DIAG] hub pass mode=%s items=%zu slices=%d dur=%lldus classes=%zu retenanted=%zu",
                 g_passFull ? "full" : "tail", g_work.size(), g_passSlices,
-                static_cast<long long>(durUs), g_classBits.size());
+                static_cast<long long>(durUs), g_classBits.size(), g_retenanted);
     }
     g_work.clear();
     // Cadence: the next pass is due 2 s after this one STARTED, but never before it completed --
@@ -291,6 +299,20 @@ bool RunSlice() {
         // indexes ever is.
         if (R::ObjectAt(it.idx) != it.obj) continue;
         if (R::SlotFlags(it.idx) & kUnreadable) continue;
+        // The same pointer in the same slot can be a new object: the allocator reuses a dead one's
+        // address with its slot, and the list outlives the frame that built it. The class tells a
+        // tenant of another class from the listed one (ue_wrap/core/object_index.h), and `bits` are
+        // that class's consumers; a same-class successor is an instance they match anyway.
+        if (R::ClassOf(it.obj) != it.cls) {
+            ++g_retenanted;
+            if (!g_retenantSaid) {
+                g_retenantSaid = true;
+                UE_LOGI("scan_hub: a listed slot now holds a '%ls' at the same address -- skipped, "
+                        "never matched as the class it was listed under (said once)",
+                        R::ClassNameOf(it.obj).c_str());
+            }
+            continue;
+        }
         if (ue_wrap::world_identity::WorldOf(it.obj) != world) continue;
         for (size_t ci = 0; ci < g_rows.size(); ++ci) {
             if (it.bits & RowBit(ci)) g_rows[ci].c.OnMatch(g_rows[ci].c.ctx, it.obj);
