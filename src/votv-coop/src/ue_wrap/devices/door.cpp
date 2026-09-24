@@ -31,13 +31,19 @@ void*   g_doorCls      = nullptr;  // door_C UClass
 int32_t g_keyOff       = -1;       // AtriggerBase_C::Key
 int32_t g_isOpenedOff  = -1;       // Adoor_C::isOpened
 int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
+// The swing's direction, 0 opening and 1 closing: doorOpen and doorClose write it in their own body
+// before starting the move timeline, and the timeline's finish derives isOpened from it. Read by
+// name; unresolved, the intent reader falls back to the settled flag.
+int32_t g_dirOff       = -1;       // Adoor_C::dir
+int32_t g_jammedOff    = -1;       // Adoor_C::jammed; unresolved reads as not jammed
 void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
 void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
 void*   g_moveUpdateFn = nullptr;  // Adoor_C::move__UpdateFunc()  -- lerps the door MESH from move_a (the visual)
-// The move timeline's output value and direction live at fixed offsets (the reflected
-// property names carry a per-asset GUID suffix, so they are not name-resolvable; the layout
-// is stable for this build, verified by the door probe).
+// The move timeline's output value and direction, which only the force-snap writes: the timeline's
+// finish copies the direction into dir and derives isOpened from it. Their reflected names carry a
+// per-asset GUID suffix, so they are this build's fixed offsets, from the header dump. The
+// direction is the timeline's own and updates on its next tick, so no reader uses it.
 constexpr int32_t kMoveAlphaOff = 0x0340;  // float  move_a_<guid>        (0=closed .. 1=open)
 constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=Forward/open, 1=Backward/close)
 int32_t g_autocloseOff = -1;       // Adoor_C::autoclose
@@ -117,6 +123,11 @@ bool EnsureResolved() {
     const int32_t sensorOverlapsOff = R::FindPropertyOffset(doorCls, L"sensorOverlaps");
     int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
     if (activeOff < 0) activeOff = kActiveOffFallback;
+    const int32_t dirOff = R::FindPropertyOffset(doorCls, L"dir");
+    const int32_t jammedOff = R::FindPropertyOffset(doorCls, L"jammed");
+    if (dirOff < 0)
+        UE_LOGW("door: reflected dir offset not found -- a swing's intent reads as its settled state, half "
+                "a second late");
 
     void* openFn  = R::FindFunction(doorCls, L"doorOpen");
     void* closeFn = R::FindFunction(doorCls, L"doorClose");
@@ -137,6 +148,8 @@ bool EnsureResolved() {
     g_keyOff       = keyOff;
     g_isOpenedOff  = isOpenedOff;
     g_isMovingOff  = isMovingOff;
+    g_dirOff       = dirOff;
+    g_jammedOff    = jammedOff;
     g_autocloseOff = autocloseOff;
     g_sensorOff    = sensorOff;
     g_sensorOverlapsOff = sensorOverlapsOff;
@@ -144,10 +157,10 @@ bool EnsureResolved() {
     g_doorOpenFn   = openFn;
     g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X autoclose@0x%04X "
-            "sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls, keyOff,
-            isOpenedOff, autocloseOff, sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff,
-            openFn, closeFn);
+    UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X dir@0x%04X jammed@0x%04X "
+            "autoclose@0x%04X sensorOverlaps@0x%04X Active@0x%04X doorOpen=%p doorClose=%p", doorCls,
+            keyOff, isOpenedOff, dirOff < 0 ? 0xFFFF : dirOff, jammedOff < 0 ? 0xFFFF : jammedOff,
+            autocloseOff, sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff, openFn, closeFn);
     return true;
 }
 
@@ -203,17 +216,17 @@ bool TryReadOpenIntent(void* door, bool& open) {
     if (!door || g_isOpenedOff < 0) return false;
     const char* base = reinterpret_cast<const char*>(door);
     const bool isOpened = *reinterpret_cast<const bool*>(base + g_isOpenedOff);
-    // While the door is mid-swing, report the destination (the direction, set at swing start;
-    // forward is opening) instead of the opened flag (set at swing end, half a second later), so
-    // the host poll broadcasts an open or close the instant it begins, frame-symmetric with the
-    // client's input-edge request. A settled door reads the opened flag, the authoritative
-    // settled state. The open and close verbs set moving and the direction synchronously within
-    // the press dispatch, so the very next poll tick catches the intent.
+    // While the door is mid-swing, report the destination instead of the opened flag (set at the
+    // swing's end, half a second later), so the host broadcasts an open or close the instant it
+    // begins. The destination is the door's own dir, which doorOpen and doorClose write in their own
+    // body: a read straight after the verb sees it. A jammed door never swings open -- doorOpen on it
+    // plays the jam shake, moving with dir untouched, and jam's own close swing heads shut -- so a
+    // moving jammed door reads closed. A settled door reads the opened flag.
     const bool moving = (g_isMovingOff >= 0) &&
         *reinterpret_cast<const bool*>(base + g_isMovingOff);
-    if (moving) {
-        const uint8_t dir = *reinterpret_cast<const uint8_t*>(base + kMoveDirOff);
-        open = (dir == 0);  // 0 = Forward = opening
+    if (moving && g_dirOff >= 0) {
+        const bool jammed = g_jammedOff >= 0 && *reinterpret_cast<const bool*>(base + g_jammedOff);
+        open = !jammed && *reinterpret_cast<const uint8_t*>(base + g_dirOff) == 0;
     } else {
         open = isOpened;
     }
@@ -293,13 +306,13 @@ void ForceClose(void* door) { if (door) ForceTo(door, false); }
 
 void SmartApply(void* door, bool open) {
     if (!door) return;
-    // If the door is already swinging toward this target, do nothing: this is the opener's own
-    // use animation (its sound already played) receiving the echo of its own request, and
-    // re-triggering it, or registering a verify that later force-snaps it, plays the sound a
-    // second time. Let the swing finish.
-    const bool moving = *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + 0x0351);  // isMoving
-    const uint8_t dir = *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + kMoveDirOff);  // 0=Forward/open
-    if (moving && ((open && dir == 0) || (!open && dir == 1))) return;  // already going the right way -> no re-trigger, no double sound
+    // If the door is already swinging toward this target, do nothing: re-triggering the swing, or
+    // registering a verify that later force-snaps it, plays its sound a second time. Let the swing
+    // finish.
+    const bool moving = g_isMovingOff >= 0 &&
+        *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isMovingOff);
+    bool heading = false;
+    if (moving && TryReadOpenIntent(door, heading) && heading == open) return;
     // Idempotent: a settled door already at the target is left alone. Re-running the blueprint
     // chain on a matching door is destructive, not just wasteful: the open swing is additive
     // (the target is the current pose plus a delta), so re-opening an already-open door drives

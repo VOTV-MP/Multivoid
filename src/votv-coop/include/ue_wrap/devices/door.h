@@ -37,12 +37,11 @@ std::wstring GetKeyString(void* door);
 bool TryReadOpen(void* door, bool& open);
 
 // Like TryReadOpen but the swing intent rather than its completion: while the door is moving
-// the destination is the move direction, set at swing start, so an open or close is reported
-// the instant it begins instead of half a second later when the open state settles; a settled
-// door reads the open state (the direction holds the last swing's value, which agrees). The
-// door channel's poll reader: it makes the host broadcast a door it opens at swing start,
-// matching the client's input-edge request, since a client's opens mirrored frame-perfect on
-// the host while the host's own lagged behind the poll waiting for the swing to complete.
+// the destination is the door's own dir, which doorOpen and doorClose write in their own body, so
+// an open or close is reported the instant the verb returns instead of half a second later when
+// the open state settles; a moving jammed door reads closed (it only ever shakes or swings shut),
+// and a settled door reads the open state. The door channel's poll reader, and the host's read
+// around a verb it runs for a client.
 bool TryReadOpenIntent(void* door, bool& open);
 
 // The door's own entry verbs, the ones a player's press, a melee hit and a crowbar's pry run.
