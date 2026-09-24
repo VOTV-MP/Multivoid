@@ -42,6 +42,12 @@ void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint
 // (a client). Called from event_feed's reliable drain loop.
 void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot);
 
+// A connected client's press on `door`, sent exactly as the E-press observer sends one: a toggle
+// request the host resolves against its hold record. False when this peer is not a connected
+// client, or when the door lane does not index the door. For a dev driver that must press like a
+// player -- the bot director, whose direct open would move this client's copy alone. Game thread.
+bool RequestDoorPressAsClient(void* door);
+
 // HOST-only: a single peer disconnected -- drop its hold on every door it was keeping
 // open (doors still held by OTHER peers stay open; a door whose last holder just left
 // closes). Robust per-peer cleanup for N-peer sessions, distinct from OnDisconnect's

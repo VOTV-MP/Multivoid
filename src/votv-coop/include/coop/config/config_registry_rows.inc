@@ -414,6 +414,11 @@ CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_
     "Drill (HOST): once a client's join is over, spawn a kerfur, turn it off "
     "by its verb, then turn the prop back on through the menu event a press dispatches, where the "
     "verb runs nested inside a watched body. Prints the kerfur form assembler's order counters.")
+CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
+    "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
+    "reaches, stays at it, and walks away along its route; each peer logs every change in what each "
+    "door's own sensor holds, puppets and local players apart. Answers whether a remote player "
+    "counts in a door's sensor. Lines tagged [DOOR-DRILL].")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "

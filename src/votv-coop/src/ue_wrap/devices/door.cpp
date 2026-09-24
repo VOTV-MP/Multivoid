@@ -41,6 +41,7 @@ constexpr int32_t kMoveAlphaOff = 0x0340;  // float  move_a_<guid>        (0=clo
 constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=Forward/open, 1=Backward/close)
 int32_t g_autocloseOff = -1;       // Adoor_C::autoclose
 int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*)
+int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>); no fallback
 void*   g_setGenOverlapFn = nullptr; // UPrimitiveComponent::SetGenerateOverlapEvents(bool) (lazy)
 // The manual-open gate, byte-exact from the door blueprint: a player's use press reaches the
 // toggle only past the door's own power check, and the toggle's open needs neither jammed
@@ -145,6 +146,9 @@ bool EnsureResolved() {
         UE_LOGW("door: reflected sensor offset not found -- using fallback 0x%04X", kSensorOffFallback);
         sensorOff = kSensorOffFallback;
     }
+    // The sensor's contents: read by name or not at all, since a guessed array offset would hand a
+    // reader a pointer and a length from the wrong field.
+    const int32_t sensorOverlapsOff = R::FindPropertyOffset(doorCls, L"sensorOverlaps");
     // The open-gate fields: the door's own power, jam and super-closed flags.
     int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
     if (activeOff < 0) activeOff = kActiveOffFallback;
@@ -174,6 +178,7 @@ bool EnsureResolved() {
     g_isMovingOff  = isMovingOff;
     g_autocloseOff = autocloseOff;
     g_sensorOff    = sensorOff;
+    g_sensorOverlapsOff = sensorOverlapsOff;
     g_activeOff      = activeOff;
     g_superClosedOff = superClosedOff;
     g_jammedOff      = jammedOff;
@@ -181,10 +186,23 @@ bool EnsureResolved() {
     g_doorCloseFn  = closeFn;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("door: resolved door_C=%p Key@0x%04X isOpened@0x%04X autoclose@0x%04X sensor@0x%04X "
-            "Active@0x%04X superClosed@0x%04X jammed@0x%04X doorOpen=%p doorClose=%p",
-            doorCls, keyOff, isOpenedOff, autocloseOff, sensorOff, activeOff, superClosedOff,
-            jammedOff, openFn, closeFn);
+            "sensorOverlaps@0x%04X Active@0x%04X superClosed@0x%04X jammed@0x%04X doorOpen=%p "
+            "doorClose=%p", doorCls, keyOff, isOpenedOff, autocloseOff, sensorOff,
+            sensorOverlapsOff < 0 ? 0xFFFF : sensorOverlapsOff, activeOff, superClosedOff, jammedOff,
+            openFn, closeFn);
     return true;
+}
+
+int ReadSensorOverlaps(void* door, void** out, int maxOut) {
+    if (!door || g_sensorOverlapsOff < 0) return -1;
+    // TArray<AActor*>: the element pointer, then the count and the capacity.
+    const std::uint8_t* base = reinterpret_cast<const std::uint8_t*>(door) + g_sensorOverlapsOff;
+    void* const* data = *reinterpret_cast<void* const* const*>(base);
+    const std::int32_t num = *reinterpret_cast<const std::int32_t*>(base + sizeof(void*));
+    const std::int32_t max = *reinterpret_cast<const std::int32_t*>(base + sizeof(void*) + 4);
+    if (num < 0 || num > max || (num > 0 && !data)) return -1;  // not an array this build can read
+    for (int i = 0; i < num && i < maxOut; ++i) out[i] = data[i];
+    return num;
 }
 
 bool IsDoor(void* obj) {

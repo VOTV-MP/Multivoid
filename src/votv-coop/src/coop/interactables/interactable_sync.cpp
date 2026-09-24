@@ -433,6 +433,21 @@ void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint
         ch->OnReliable(payload, senderPeerSlot);
 }
 
+bool RequestDoorPressAsClient(void* door) {
+    auto* s = g_door.GetSession();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return false;
+    if (!door || !ue_wrap::door::EnsureResolved() || !ue_wrap::door::IsDoor(door)) return false;
+    // The key the channel indexes, as OnUseInput sends it: the host names the door by it.
+    const std::wstring key = g_door.KeyForActor(door);
+    if (key.empty()) return false;
+    coop::net::KeyedTogglePayload p{};
+    WireKeyFromString(key, p.key);
+    p.action = 0;  // a toggle; the host derives open or close from its hold record
+    if (!s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p))) return false;
+    UE_LOGI("door: press request key='%ls' (driven like a player's E-press)", key.c_str());
+    return true;
+}
+
 void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
     // Host only: a client asked to toggle a door. event_feed gates the sender slot, OnRequest
     // re-checks the role; the host applies with its real guards and its poll broadcasts the

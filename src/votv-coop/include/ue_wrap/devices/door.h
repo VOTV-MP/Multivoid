@@ -64,6 +64,13 @@ bool CallDoorClose(void* door, bool bypass);
 // native keypad chain completed. A plain field write, no UFunction. Game thread.
 void SetActive(void* door, bool on);
 
+// The actors the door's own sensor holds now: sensorOverlaps, which the sensor's begin- and
+// end-overlap handlers fill with every Pawn and prop that enters and leaves it; the autoclose
+// reads its length and closes the door 5 s after it empties. Copies up to `maxOut` pointers into
+// `out` and returns the array's length, or -1 when the field did not resolve by name, the door is
+// null, or the array's header does not read as one. A field read, no dispatch. Game thread.
+int ReadSensorOverlaps(void* door, void** out, int maxOut);
+
 // Read the door's power flag. True on null or unresolved, failing open like the gate. Callers
 // save the flag before a temporary clear so the restore puts back the real value: a locked
 // door's false must survive the press dispatch, since restoring a hard-coded true silently

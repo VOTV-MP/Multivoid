@@ -21,6 +21,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/interactables/interactable_sync.h"  // a client's press, the way a player sends one
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -169,8 +170,7 @@ public:
         if (progressed) sinceProgress_ = 0;
         else if (++sinceProgress_ >= kStuckTicks) {
             sinceProgress_ = 0;
-            // FIRST: a CLOSED door? Open it like a player pressing E (the door's own verb -- InpActEvt_use
-            // is inert via reflection) and keep walking through.
+            // FIRST: a CLOSED door? Open it as a player's press would and keep walking through.
             if (doorOpens_ < kMaxDoorOpens && TryOpenBlockingDoor(ctx)) { ++doorOpens_; return ProcStatus::Working; }
             // NEVER GIVE UP: grind past physics boxes and clutter. Alternate a sideways JUKE to
             // slide off the obstacle, and RE-PATH periodically. Goto returns Failed ONLY on a hard
@@ -208,9 +208,12 @@ public:
         return ProcStatus::Working;
     }
 private:
-    // Find the nearest CLOSED, openable door within reach of the stuck bot and open it (the native swing,
-    // bypass=true -- the same thing the door's own use does when a player presses E; InpActEvt_use's body
-    // is inert via reflection). One-shot GUObjectArray scan, only on STUCK (not per frame -- perf rule).
+    // Find the nearest CLOSED, openable door within reach of the stuck bot and open it as a player's press
+    // would: on a coop client the press is a request the host performs, since a direct open there moves this
+    // client's copy alone; as the host or in solo this copy is the authority, so its own open (bypass=true,
+    // what the door's use does on a press; InpActEvt_use's body is inert via reflection). The open is read as
+    // the swing's intent, which the host's answer sets at once, so a stuck check during the swing does not
+    // press again -- a second press toggles it shut. One-shot GUObjectArray scan, only on STUCK (perf rule).
     bool TryOpenBlockingDoor(const PlayerContext& ctx) {
         if (!D::EnsureResolved()) return false;
         void* best = nullptr; float bestDist = 1e9f;
@@ -226,10 +229,15 @@ private:
         }
         if (!best || bestDist > kDoorReachCm) return false;
         bool open = false;
-        if (D::TryReadOpen(best, open) && open) return false;   // already open -> not the blocker
+        if (D::TryReadOpenIntent(best, open) && open) return false;   // open or opening -> not the blocker
         if (!D::CanOpen(best)) {
             UE_LOGW("director/Goto: blocking door %p (%.0fcm) is LOCKED/jammed (CanOpen=false)", best, bestDist);
             return false;
+        }
+        if (coop::interactable_sync::RequestDoorPressAsClient(best)) {
+            UE_LOGI("director/Goto: pressed a closed door %p at %.0fcm (a client's request, as a player's "
+                    "press) -- walking through", best, bestDist);
+            return true;
         }
         D::CallDoorOpen(best, /*bypass=*/true);
         UE_LOGI("director/Goto: opened a closed door %p at %.0fcm (native swing, like pressing E) -- walking through",
