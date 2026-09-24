@@ -20,15 +20,16 @@
 #include <cstdint>
 
 namespace coop::net { class Session; }
-namespace ue_wrap { struct FVector; }
+namespace ue_wrap { struct FVector; struct FRotator; }
 
 namespace coop::puppet_carry_drive {
 
 // HOST: puppet at peer `slot` just grabbed `clump` (the garbageClump in its grabbing_actor) for trash
 // entity `eid`, via trash_channel::OnGrabIntent. Register it for the per-tick hand-follow drive. The
-// clump's GUObjectArray index is captured here for cross-tick liveness (IsLiveByIndex). Idempotent: a
-// re-register for the same eid updates the clump/slot in place. Game thread.
-void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump);
+// clump's GUObjectArray index is captured here for cross-tick liveness (IsLiveByIndex). `clumpRot` is
+// the rotation the grab's convert placed the clump at for every peer; the hold keeps it, turned with the
+// puppet's view. Idempotent: a re-register for the same eid updates the clump/slot in place. Game thread.
+void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump, const ue_wrap::FRotator& clumpRot);
 
 // HOST: entity `eid` left its holder's hand and lives on -- a throw, or a holder that is gone
 // (trash_channel has released the puppet's handle). Stop feeding the handle but KEEP streaming the

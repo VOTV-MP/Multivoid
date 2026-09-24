@@ -72,9 +72,9 @@ void ApplyPendingPosCorrections();
 // The arm-if-absent variant, the save-position re-bind assist: the identity bind re-bound a
 // purge re-create at its save position for an eid the host says is elsewhere, so ensure a
 // correction exists and the drain snaps it to the host position. An already-armed
-// correction (a fresher host-sent rotation) is kept.
-void EnsurePosCorrection(coop::element::ElementId eid,
-                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
+// correction (a fresher host-sent rotation) is kept; one armed here moves the position alone
+// and leaves the actor its own facing.
+void EnsurePosCorrection(coop::element::ElementId eid, const ue_wrap::FVector& loc);
 
 // The save-position re-bind claimed the native at the twin's key as E's own re-create: there
 // is no stale copy, so the pending twin's premise is dead. Cancel it (idempotent) instead of

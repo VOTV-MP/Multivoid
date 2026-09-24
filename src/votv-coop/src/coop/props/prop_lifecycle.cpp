@@ -213,9 +213,8 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 self, cls.c_str(), keyStr.c_str());
         return;
     }
-    // A spawn with no readable location has nothing to place its mirror by: left unexpressed, like an
-    // unkeyed one, before an element exists for it.
-    // Both reads before the Prop Element is created below.
+    // A spawn with no readable location or rotation has nothing to place its mirror by: left
+    // unexpressed, like an unkeyed one, both reads before the Prop Element is created below.
     ue_wrap::FVector loc{};
     ue_wrap::FRotator rot{};
     if (!ue_wrap::engine::TryGetActorLocation(self, loc) || !ue_wrap::engine::TryGetActorRotation(self, rot)) {

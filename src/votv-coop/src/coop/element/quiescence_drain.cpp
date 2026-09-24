@@ -82,6 +82,7 @@ struct PendingPosCorrection {
     float x, y, z, pitch, yaw, roll;
     uint8_t physFlags = 0;
     int unresolvedPasses = 0;
+    bool hasRot = true;   // false: a position alone, and the actor keeps its own facing
 };
 std::unordered_map<uint32_t, PendingPosCorrection> g_pendingPosCorrection;
 constexpr int kMaxPosCorrectionPasses = 40;  // about 10 s at the 250 ms debounce
@@ -424,7 +425,7 @@ void ApplyPendingPosCorrections() {
         // Movable first. Kerfurs never needed this, since an NPC is Movable.
         ue_wrap::engine::SetActorRootMovable(actor);
         ue_wrap::engine::SetActorLocation(actor, loc);
-        ue_wrap::engine::SetActorRotation(actor, rot);
+        if (c.hasRot) ue_wrap::engine::SetActorRotation(actor, rot);
         // Then the host's stuck state, frozen and sleep, where it moved a keyed prop through a verb
         // that changed them: the extinguisher it took off a mount is not frozen at its new place, and
         // a sign it pried off its wall is not stuck there.
@@ -447,16 +448,20 @@ void ApplyPendingPosCorrections() {
     }
 }
 
-void EnsurePosCorrection(coop::element::ElementId eid,
-                         const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+void EnsurePosCorrection(coop::element::ElementId eid, const ue_wrap::FVector& loc) {
     // Arm if absent: when the identity re-bind claims a purge re-create at the save position for an
     // eid whose host position is elsewhere, the actor must still be snapped. Usually the original
     // PropSnapPos correction is still pending; when it already applied before the churn, re-arm
     // from the identity map's host position. An armed correction keeps its fresher, host-sent
-    // rotation.
+    // rotation; a re-armed one is a position alone, so the actor keeps its facing and its state.
     const auto key = static_cast<uint32_t>(eid);
     if (g_pendingPosCorrection.count(key) > 0) return;
-    ArmPendingPosCorrection(eid, loc, rot, /*physFlags=*/0);  // a position alone: the state stays
+    PendingPosCorrection c{loc.X, loc.Y, loc.Z, 0.f, 0.f, 0.f, /*physFlags=*/0};
+    c.hasRot = false;
+    g_pendingPosCorrection[key] = c;
+    UE_LOGI("[PILE-B3] CLIENT armed pos-correction eid=%u host=(%.1f,%.1f,%.1f) position only -- the identity "
+            "re-bind's save-position re-create, snapped at quiescence with its own facing kept",
+            static_cast<unsigned>(eid), loc.X, loc.Y, loc.Z);
 }
 
 void CancelPendingSaveTimeTwin(coop::element::ElementId eid) {

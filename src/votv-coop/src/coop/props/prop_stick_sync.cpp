@@ -196,7 +196,7 @@ sg::Verdict OnUnstickPre(const sg::Call& c) {
 
 // The prop by key, its eid as the fallback, and its pose, for either edge; the result says what it
 // lacked when it could not be filled.
-enum class Fill { Ok, NoIdentity, NoPosition };
+enum class Fill { Ok, NoIdentity, NoPose };
 
 Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW) {
     keyW = ue_wrap::prop::GetInteractableKeyString(prop);
@@ -210,7 +210,7 @@ Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::w
     if (p.key.len == 0 && p.elementId == 0) return Fill::NoIdentity;
     ue_wrap::FVector loc{};
     ue_wrap::FRotator rot{};
-    if (!E::TryGetActorLocation(prop, loc) || !E::TryGetActorRotation(prop, rot)) return Fill::NoPosition;
+    if (!E::TryGetActorLocation(prop, loc) || !E::TryGetActorRotation(prop, rot)) return Fill::NoPose;
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     return Fill::Ok;

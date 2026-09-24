@@ -7,7 +7,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/trash_channel.h"     // IsCarrying / HasPendingSettle / CtxForEid / OnHolderGone
-#include "ue_wrap/engine/engine.h"          // TryGetActorLocation / GetActorRotation
+#include "ue_wrap/engine/engine.h"          // TryGetActorLocation / TryGetActorRotation
 #include "ue_wrap/engine/engine_component.h"   // SetComponentTickEnabled (the handle's own tick)
 #include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerGrabHandle / SetPhysicsHandleTarget / camera
 #include "ue_wrap/core/log.h"
@@ -68,17 +68,11 @@ struct PuppetHeld {
     Quat     inView;
 };
 
-// The clump's rotation in the frame of the puppet's view, both as they are now (the grab). With no
-// puppet, or no readable clump rotation, the identity: the clump is carried at the view's orientation.
-Quat GrabOrientationInView(uint8_t slot, void* clump) {
+// The clump's rotation at the grab, the one its convert placed it at, in the frame of the puppet's
+// view as it is now. With no puppet, the identity: the clump is carried at the view's orientation.
+Quat GrabOrientationInView(uint8_t slot, const ue_wrap::FRotator& clumpRot) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     if (!rp || !rp->valid()) return Quat{};
-    ue_wrap::FRotator clumpRot{};
-    if (!E::TryGetActorRotation(clump, clumpRot)) {
-        UE_LOGW("puppet_carry_drive: slot %u clump %p -- its rotation could not be read at the grab; carried at "
-                "the view's orientation", static_cast<unsigned>(slot), clump);
-        return Quat{};
-    }
     Quat view = FromRotator(rp->GetSyncedAimRotation());
     view.x = -view.x; view.y = -view.y; view.z = -view.z;   // the inverse of a unit quaternion
     return Mul(view, FromRotator(clumpRot));
@@ -88,19 +82,19 @@ std::vector<PuppetHeld> g_held;  // GT-only; per peer at most one carry, and any
 
 }  // namespace
 
-void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump) {
+void NotePuppetHeld(coop::element::ElementId eid, uint8_t slot, void* clump, const ue_wrap::FRotator& clumpRot) {
     if (eid == 0u || eid == coop::element::kInvalidId || !clump) return;
     const uint32_t e = static_cast<uint32_t>(eid);
     for (auto& h : g_held) {                       // idempotent: a re-register updates in place
         if (h.eid == e) {
             h.slot = slot; h.clump = clump; h.clumpIdx = R::InternalIndexOf(clump); h.flying = false;
-            h.inView = GrabOrientationInView(slot, clump);
+            h.inView = GrabOrientationInView(slot, clumpRot);
             UE_LOGI("[PUPPET-DRIVE] re-note eid=%u slot=%u clump=%p", e, slot, clump);
             return;
         }
     }
     PuppetHeld held{e, slot, clump, R::InternalIndexOf(clump), false};
-    held.inView = GrabOrientationInView(slot, clump);
+    held.inView = GrabOrientationInView(slot, clumpRot);
     g_held.push_back(held);
     // The handle moves its hold toward the target in its own component tick; a puppet's actor tick
     // is off, and nothing says its components' are on.

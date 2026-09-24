@@ -486,8 +486,8 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid) {
     // Enqueue a no-op.
     coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
     // A silent release is safe only if a KerfurConvert carrying this eid as oldEid follows; without
-    // one the client's mirror orphans invisibly. The sole-express converge always fires, so the
-    // release is always paired.
+    // one the client's mirror orphans invisibly. Each caller binds the new form right after it, and a
+    // converge that cannot bind retires the NPC through kerfur_convert_host::RetireNpcFormAsDeath.
     UE_LOGI("npc-sync[silent release]: Npc eid=%u released (no EntityDestroy broadcast -- MUST be paired "
             "with a KerfurConvert or the client mirror orphans)", static_cast<uint32_t>(eid));
 }

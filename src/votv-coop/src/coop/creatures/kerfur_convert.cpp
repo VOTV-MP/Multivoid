@@ -32,6 +32,7 @@
 #include <chrono>
 #include <cmath>     // sqrt
 #include <cstdint>
+#include <cstdio>    // snprintf, the destroy edge's distance text
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -120,38 +121,57 @@ bool OnKerfurActionNamePre(void* self, void* params) {
 // `actor` records which actor was live when the entry was cached; the death path fires only if
 // the dead actor is that one, so an eid freed and reallocated to a new mirror that died before a
 // poll confirmed it live does not fire on the old generation's entry. A null actor still fires.
-// posKnown: x/y/z and rot hold a pose the watch read, both halves in one sighting, for this
-// generation; never the origin by default. A conversion spawns the new form at the old one's
-// transform, so this pose stands in for a new form whose own cannot be read.
-struct KerfurWatch { float x, y, z; ue_wrap::FRotator rot; bool handled; void* actor; bool posKnown; };
+// posKnown: x/y/z hold a location the watch read for this generation; rotKnown: rot holds a
+// rotation it read for it. Each half is its own: the place-only questions (placed, the distance
+// match, the ghost claim) ask for the location alone, and the rotation serves only a request's
+// reject, which restores the surviving form at its last pose. Never the origin or the zero facing
+// by default.
+struct KerfurWatch {
+    float x, y, z;
+    ue_wrap::FRotator rot;
+    bool handled;
+    void* actor;
+    bool posKnown;
+    bool rotKnown;
+};
 std::unordered_map<uint32_t, KerfurWatch> g_kerfurWatch;  // eid -> last-live pose, handled flag, generation actor; GT-only
 std::chrono::steady_clock::time_point g_lastConvPoll{};
 
-// One sighting of a live kerfur form. A new generation's pose is not the old one's, so an unread
-// sighting of a new actor forgets it. A sighting with either half unread keeps the last pose.
+// One sighting of a live kerfur form, each half on its own: a read half replaces the last one, an
+// unread half keeps it for the same actor, and a new generation's unread half forgets the old one's.
 void RefreshWatch(uint32_t eid, void* actor) {
     KerfurWatch& w = g_kerfurWatch[eid];
+    const bool sameGeneration = w.actor == actor;
     ue_wrap::FVector loc{};
-    ue_wrap::FRotator rot{};
-    if (ue_wrap::engine::TryGetActorLocation(actor, loc) && ue_wrap::engine::TryGetActorRotation(actor, rot)) {
+    if (ue_wrap::engine::TryGetActorLocation(actor, loc)) {
         w.x = loc.X; w.y = loc.Y; w.z = loc.Z;
-        w.rot = rot;
         w.posKnown = true;
-    } else if (w.actor != actor) {
+    } else if (!sameGeneration) {
         w.posKnown = false;
+    }
+    ue_wrap::FRotator rot{};
+    if (ue_wrap::engine::TryGetActorRotation(actor, rot)) {
+        w.rot = rot;
+        w.rotKnown = true;
+    } else if (!sameGeneration) {
+        w.rotKnown = false;
     }
     w.handled = false;
     w.actor   = actor;
 }
 
-// Host: a kerfur NPC that died with no pose read while it lived. Its death is retired as a plain NPC
-// death (the element released, EntityDestroy to every peer), since a conversion could not be placed.
-// A failed read is a dispatch that faulted, so the watch never read a pose for this kerfur.
-void RetireUnplacedKerfurNpc(coop::element::ElementId eid, void* actor) {
-    UE_LOGW("kerfur_convert: host NPC eid=%u had no readable pose alive -- retired as a plain death",
-            static_cast<unsigned>(eid));
-    coop::npc_sync::SyncDestroyedNpcByEid(eid, actor);
-    coop::kerfur_entity::ReleaseKerfurForEid(eid);
+// The log text for how far `npcLoc` stands from `prop`'s last live location in the watch, found by
+// actor since a client's destroy seam has no eid for a mirror. No number without both places.
+void DistanceFromLastLive(void* prop, const ue_wrap::FVector* npcLoc, char* out, size_t n) {
+    std::snprintf(out, n, "distance unread");
+    if (!npcLoc) return;
+    for (const auto& entry : g_kerfurWatch) {
+        const KerfurWatch& w = entry.second;
+        if (w.actor != prop || !w.posKnown) continue;
+        const float dx = npcLoc->X - w.x, dy = npcLoc->Y - w.y, dz = npcLoc->Z - w.z;
+        std::snprintf(out, n, "%.0f cm from the prop's last live place", std::sqrt(dx * dx + dy * dy + dz * dz));
+        return;
+    }
 }
 
 void SendConvertRequestDirect(uint32_t eid, uint8_t toProp) {
@@ -220,7 +240,6 @@ void PollKerfurConversions() {
         // reused by a newer mirror.
         if (it->second.actor && it->second.actor != actor) { it->second.handled = true; continue; }
         const float lx = it->second.x, ly = it->second.y, lz = it->second.z;
-        const ue_wrap::FRotator lrot = it->second.rot;
         const bool placed = it->second.posKnown;
         UE_LOGI("kerfur_convert: POLL turn_off (kerfur NPC eid=%u died invisibly) -> %s",
                 eid, isClient ? "client requests host" : "host broadcasts destroy+prop");
@@ -234,12 +253,16 @@ void PollKerfurConversions() {
             if (placed) coop::kerfur_convert_client::ClaimConversionGhosts(eid, /*wantNpc=*/false, lx, ly, lz);
             else UE_LOGW("kerfur_convert: eid=%u had no readable pose alive -- its local ghost is not claimed", eid);
         } else if (isHost) {
-            if (placed)
+            // The old form is dead here, so no reject can need its rotation. A kerfur never placed
+            // alive has no pose to converge at: its death is retired as a plain one.
+            if (placed) {
                 coop::kerfur_convert_host::ConvergeAfterConversion(actor, el->GetInternalIdx(),
                                         static_cast<coop::element::ElementId>(eid), /*toProp=*/1,
-                                        lx, ly, lz, lrot);
-            else
-                RetireUnplacedKerfurNpc(el->GetId(), actor);
+                                        lx, ly, lz, /*rot0=*/nullptr);
+            } else {
+                UE_LOGW("kerfur_convert: host NPC eid=%u had no readable pose alive -- retired as a plain death", eid);
+                coop::kerfur_convert_host::RetireNpcFormAsDeath(el->GetId(), actor);
+            }
         }
         it->second.handled = true;
     }
@@ -262,7 +285,6 @@ void PollKerfurConversions() {
         // The stale-generation guard, as above.
         if (it->second.actor && it->second.actor != actor) { it->second.handled = true; continue; }
         const float lx = it->second.x, ly = it->second.y, lz = it->second.z;
-        const ue_wrap::FRotator lrot = it->second.rot;
         const bool placed = it->second.posKnown;
         UE_LOGI("kerfur_convert: POLL turn-on (kerfur prop eid=%u died invisibly) -> %s",
                 eid, isClient ? "client requests host" : "host broadcasts destroy+npc");
@@ -281,7 +303,7 @@ void PollKerfurConversions() {
             if (placed) {
                 coop::kerfur_convert_host::ConvergeAfterConversion(actor, el->GetInternalIdx(),
                                         static_cast<coop::element::ElementId>(eid), /*toProp=*/0,
-                                        lx, ly, lz, lrot);
+                                        lx, ly, lz, /*rot0=*/nullptr);   // dead here, as above
             } else {
                 UE_LOGW("kerfur_convert: host prop eid=%u had no readable pose alive -- released as a plain death", eid);
                 coop::kerfur_entity::ReleaseKerfurForEid(el->GetId());
@@ -422,7 +444,6 @@ bool TryAdoptFreshKerfurProp(void* actor) {
     int32_t deadIdx   = -1;
     float   bestD2    = kR2;
     float   wx = 0, wy = 0, wz = 0;
-    ue_wrap::FRotator wrot{};
     std::vector<coop::element::Npc*> npcs;
     coop::element::MirrorManager<coop::element::Npc>::Instance().Snapshot(npcs);
     for (auto* el : npcs) {
@@ -443,18 +464,17 @@ bool TryAdoptFreshKerfurProp(void* actor) {
             deadActor = a;
             deadIdx = el->GetInternalIdx();
             wx = it->second.x; wy = it->second.y; wz = it->second.z;
-            wrot = it->second.rot;
         }
     }
     if (oldEid == coop::element::kInvalidId) return false;  // no dead kerfur nearby -> ordinary spawn
 
-    // The bind places the prop for every peer. It spawned at the dead kerfur's transform, so an
-    // unread rotation is bound at the kerfur's last live one.
+    // The bind places the prop for every peer, at its own pose: unread, the first refusal is declined
+    // before anything is registered, as for an unread location above.
     ue_wrap::FRotator rot{};
     if (!ue_wrap::engine::TryGetActorRotation(actor, rot)) {
-        UE_LOGW("kerfur_convert: first-refusal converge -- fresh prop %p's rotation could not be read; bound at "
-                "dead kerfur NPC eid=%u's last live rotation", actor, static_cast<unsigned>(oldEid));
-        rot = wrot;
+        UE_LOGW("kerfur_convert: first refusal declined for fresh kerfur prop %p -- its rotation could not be "
+                "read; left to the generic path", actor);
+        return false;
     }
     // Converge with the given actor (untracked by the entry gate, so minted silently).
     const coop::element::ElementId newEid = coop::prop_lifecycle::RegisterHostPropSilent(actor);
@@ -494,23 +514,15 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     if (!cls || !R::IsDescendantOfAny(cls, &g_kerfurPropClass, 1)) return false;
 
     const bool isHost = s->role() == coop::net::Role::Host;
-    ue_wrap::FVector ploc{};   // read for the logs' distance only; nothing below decides on it
-    const bool plocRead = ue_wrap::engine::TryGetActorLocation(actor, ploc);
     // The form assembler's captured in-bracket successor, captured at its FinishSpawningActor and
     // consumed here at the paired destroy edge (spawn before destroy, measured). The only
     // which-successor path: the dying prop's location reads near the origin, so a
     // proximity walk from it rejected the real successor.
     void* freshNpc = nullptr;
-    float bestD2 = 0.f;  // real dist filled in on a capture HIT below; read for the logs only
-    bool distRead = false;
     {
         auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/true);
         if (cap.actor) {
             freshNpc = cap.actor;
-            ue_wrap::FVector floc{};
-            distRead = plocRead && ue_wrap::engine::TryGetActorLocation(freshNpc, floc);
-            const float dx = floc.X - ploc.X, dy = floc.Y - ploc.Y, dz = floc.Z - ploc.Z;
-            if (distRead) bestD2 = dx * dx + dy * dy + dz * dz;  // honest distance; the anchor may be stale, NOT gated on kR2
             UE_LOGI("kerfur_convert: 2a-capture HIT (%s) -- dying kerfur prop %p paired to captured successor "
                     "NPC %p (deterministic, bracket-paired; proximity anchor bypassed)",
                     isHost ? "HOST" : "CLIENT", actor, freshNpc);
@@ -546,6 +558,12 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         if (!inOurVerb) KE::ReleaseKerfurForEid(dyingEid);
         return false;  // no captured conversion successor -> genuine destroy -> generic relay
     }
+    // The successor's place, read once: the host binds at it, and both logs measure it from the prop's
+    // last live place, since the prop's own read at this seam is no place (it reads near the origin).
+    ue_wrap::FVector nloc{};
+    const bool nlocRead = ue_wrap::engine::TryGetActorLocation(freshNpc, nloc);
+    char dist[64];
+    DistanceFromLastLive(actor, nlocRead ? &nloc : nullptr, dist, sizeof dist);
 
     if (!isHost) {
         // Client: a capture suppresses the keyed-destroy relay only. The poll owns the conversion
@@ -553,8 +571,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         // reverse maps never learn mirror actors, so the poll's premise holds and fires within 200
         // ms.
         UE_LOGI("kerfur_convert: CLIENT destroy-edge first refusal -- dying kerfur prop %p is conversion "
-                "churn (fresh NPC %.0f cm away%s); keyed-destroy relay SUPPRESSED (the poll owns the request)",
-                actor, std::sqrt(bestD2), distRead ? "" : ", unread");
+                "churn (fresh NPC %s); keyed-destroy relay SUPPRESSED (the poll owns the request)", actor, dist);
         return true;
     }
 
@@ -567,25 +584,15 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
                 "(never enrolled); generic destroy relay proceeds", actor);
         return false;
     }
-    // The bind below places the kerfur for every peer. The NPC spawns at the dying prop's transform,
-    // so an unreadable NPC is bound at the prop's last live pose (the prop's own read at this seam is
-    // no pose: it reads near the origin); with neither, the converge is declined before anything is
-    // registered, the end state of a failed register below.
-    ue_wrap::FVector nloc{};
+    // The bind below places the kerfur for every peer, at the NPC's own pose: the verb stands it
+    // upright 50 cm above the prop's spawn point, so no pose of the prop's stands in for it. Unread,
+    // the converge is declined before anything is registered, the end state of a failed register below.
     ue_wrap::FRotator nrot{};
-    if (!ue_wrap::engine::TryGetActorLocation(freshNpc, nloc) ||
-        !ue_wrap::engine::TryGetActorRotation(freshNpc, nrot)) {
-        const auto w = g_kerfurWatch.find(static_cast<uint32_t>(dyingEid));
-        if (w == g_kerfurWatch.end() || !w->second.posKnown || w->second.actor != actor) {
-            UE_LOGW("kerfur_convert: destroy-edge converge -- the captured NPC %p's pose could not be read and "
-                    "the prop has no last live pose; generic destroy relay proceeds for prop eid=%u",
-                    freshNpc, static_cast<unsigned>(dyingEid));
-            return false;
-        }
-        UE_LOGW("kerfur_convert: destroy-edge converge -- the captured NPC %p's pose could not be read; bound at "
-                "the dying prop's last live pose", freshNpc);
-        nloc = ue_wrap::FVector{w->second.x, w->second.y, w->second.z};
-        nrot = w->second.rot;
+    if (!nlocRead || !ue_wrap::engine::TryGetActorRotation(freshNpc, nrot)) {
+        UE_LOGW("kerfur_convert: destroy-edge converge -- the captured NPC %p's %s could not be read; generic "
+                "destroy relay proceeds for prop eid=%u", freshNpc, nlocRead ? "rotation" : "location",
+                static_cast<unsigned>(dyingEid));
+        return false;
     }
     const std::wstring ncls = R::ClassNameOf(freshNpc);
     const coop::element::ElementId newEid = coop::npc_sync::RegisterHostNpcSilent(freshNpc, ncls);
@@ -600,22 +607,27 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     if (wit != g_kerfurWatch.end()) wit->second.handled = true;      // the poll skips this death
     coop::kerfur_convert_host::RecordSeamConvergedInBracket(dyingEid);  // bracket-conditional
     UE_LOGI("kerfur_convert: FIRST-REFUSAL turn-on converge -- dying kerfur prop eid=%u converged to fresh "
-            "NPC %p eid=%u (%.0f cm%s; KerfurConvert broadcast, NO generic PropDestroy)",
-            static_cast<unsigned>(dyingEid), freshNpc, static_cast<unsigned>(newEid), std::sqrt(bestD2),
-            distRead ? "" : ", unread");
+            "NPC %p eid=%u (%s; KerfurConvert broadcast, NO generic PropDestroy)",
+            static_cast<unsigned>(dyingEid), freshNpc, static_cast<unsigned>(newEid), dist);
     return true;
 }
 
-bool LastLivePose(uint32_t eid, void* actor, ue_wrap::FVector& loc, ue_wrap::FRotator& rot) {
+bool LastLiveLocation(uint32_t eid, void* actor, ue_wrap::FVector& loc) {
     const auto it = g_kerfurWatch.find(eid);
     if (it == g_kerfurWatch.end() || !it->second.posKnown || it->second.actor != actor) return false;
     loc = ue_wrap::FVector{it->second.x, it->second.y, it->second.z};
+    return true;
+}
+
+bool LastLiveRotation(uint32_t eid, void* actor, ue_wrap::FRotator& rot) {
+    const auto it = g_kerfurWatch.find(eid);
+    if (it == g_kerfurWatch.end() || !it->second.rotKnown || it->second.actor != actor) return false;
     rot = it->second.rot;
     return true;
 }
 
 void OnDisconnect() {
-    g_kerfurWatch.clear();   // GT-only; Tick is the sole toucher
+    g_kerfurWatch.clear();   // game thread, as the poll, the two seams and LastLive* that read it
     coop::kerfur_convert_client::OnDisconnect();  // the parked ghosts
     coop::kerfur_convert_host::OnDisconnect();  // the bracket pair
     g_lastConvPoll = {};

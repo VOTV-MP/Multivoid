@@ -388,7 +388,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
     const uint8_t chipType = ue_wrap::prop::GetChipType(clump);
     OnHostConvert(s, static_cast<coop::element::ElementId>(eid), coop::net::propconvert_kind::kToClump,
                   clump, clumpLoc, clumpRot, chipType);
-    coop::puppet_carry_drive::NotePuppetHeld(static_cast<coop::element::ElementId>(eid), senderSlot, clump);
+    coop::puppet_carry_drive::NotePuppetHeld(static_cast<coop::element::ElementId>(eid), senderSlot, clump, clumpRot);
     UE_LOGI("[GRAB-INTENT] SUCCESS eid=%u clump=%p slot=%u -- ToClump broadcast + hand-drive armed",
             eid, clump, senderSlot);
 }

@@ -349,17 +349,20 @@ void SampleOne(void* atv, size_t idx) {
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
     } else {
         ue_wrap::FVector loc{}; ue_wrap::FRotator rot{};
-        const bool rootRead = ue_wrap::atv::GetRootTransform(atv, loc, rot);
-        UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
-                "body=(%.1f,%.1f,%.1f)%s rot=(%.1f,%.1f,%.1f) "
-                "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) NOPARTS "
-                "wos=0x%X airtime=%.2f tirescnt=%d mass=%.1f "
-                "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
-                g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
-                loc.X, loc.Y, loc.Z, rootRead ? "" : " (unread)", rot.Pitch, rot.Yaw, rot.Roll,
-                velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
-                wos, airtime, tirescnt, mass,
-                fuel, battery, dirt, dirtVel, health);
+        if (ue_wrap::atv::GetRootTransform(atv, loc, rot))
+            UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
+                    "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
+                    "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) NOPARTS "
+                    "wos=0x%X airtime=%.2f tirescnt=%d mass=%.1f "
+                    "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
+                    g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
+                    loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
+                    velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
+                    wos, airtime, tirescnt, mass,
+                    fuel, battery, dirt, dirtVel, health);
+        else   // no numbers: an unread root is no place, and atv_probe_report counts these apart
+            UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p body=(unread) rot=(unread) NOPARTS",
+                    g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ);
     }
 }
 

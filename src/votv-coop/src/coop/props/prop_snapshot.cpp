@@ -62,7 +62,8 @@ std::vector<int32_t> g_snapshotInternalIdxs;
 size_t g_snapshotCandidateIdx = 0;
 // PropSpawns actually sent this drain (skips excluded); reported in SnapshotComplete.
 uint32_t g_snapshotSentTotal = 0;
-// Rows left out this drain because the prop's location could not be read; reported at completion.
+// Rows left out this drain because the prop's location or rotation could not be read; reported at
+// completion.
 uint32_t g_snapshotUnreadTotal = 0;
 // The slot being drained (-1 = none) and the slots waiting their turn.
 int g_currentTargetSlot = -1;
@@ -520,7 +521,7 @@ void DrainChunk() {
             // named here and counted in the completion line.
             if (unread) {
                 ++g_snapshotUnreadTotal;
-                UE_LOGW("snapshot: row for eid=%u (%p) left out for slot %d -- its location could not be read",
+                UE_LOGW("snapshot: row for eid=%u (%p) left out for slot %d -- its location or rotation could not be read",
                         static_cast<unsigned>(eid), obj, g_currentTargetSlot);
             }
             continue;
@@ -560,7 +561,8 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
     bool unread = false;
     if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1, &unread)) {   // not expressible
         if (unread)
-            UE_LOGW("snapshot: incremental PropSpawn for %sprop %p (eid=%u) not sent -- its location could not be read",
+            UE_LOGW("snapshot: incremental PropSpawn for %sprop %p (eid=%u) not sent -- its location or rotation "
+                    "could not be read",
                     kindTag, actor, static_cast<unsigned>(eid));
         return;
     }

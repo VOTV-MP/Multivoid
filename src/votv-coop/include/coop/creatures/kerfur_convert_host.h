@@ -45,19 +45,27 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
 
 // The post-verb converge: find/adopt the new-form actor, silently register it,
 // release the dying form, BindFormActor -> ONE KerfurConvert broadcast (or the
-// rejected echo when the old form survived). (px,py,pz) and rot0 are the old form's
-// pose, read before the verb or the death-watch's last live one: the new form spawns
-// at that transform, so it stands in whole for a form whose own pose cannot be read.
-// Called by OnConvertRequest (both verbs) and by the residual death-watch poll's host
-// branches. Game thread.
+// rejected echo when the old form survived). The new form is bound at its own pose;
+// unread, the converge fails as a failed register does. (px,py,pz) and rot0 are the
+// old form's location and rotation, read before the verb or the death-watch's last
+// live ones: the location centres the successor search, and a reject falls back to
+// each half when the surviving form's own read fails. rot0 is null when neither read
+// one. Called by OnConvertRequest (both verbs) and by the residual death-watch poll's
+// host branches. Game thread.
 void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid,
-                             uint8_t toProp, float px, float py, float pz, const ue_wrap::FRotator& rot0,
+                             uint8_t toProp, float px, float py, float pz, const ue_wrap::FRotator* rot0,
                              void* capturedForm = nullptr, int32_t capturedIdx = -1);
 
 // Express the conversion's dropped floppy prop(s) the normal keyed way (they
 // spawn BP-internally). Called by the converge and by the residual spawn-edge
 // first refusal (TryAdoptFreshKerfurProp). Game thread.
 void ExpressConversionFloppies(float x, float y, float z);
+
+// A kerfur NPC form's death with no KerfurConvert to follow, retired as a plain one: its element
+// released with an EntityDestroy to every peer, and its kerfur record released. The turn-off
+// destroys the NPC inside a blueprint by name, which no hook sees, so this is that NPC's only wire
+// death when its conversion cannot be bound. Host, game thread.
+void RetireNpcFormAsDeath(coop::element::ElementId eid, void* actor);
 
 // One-way owner API for the residual destroy seam: record the seam's inline converge for
 // OnConvertRequest ONLY when the seam fired inside ITS verb bracket. A host-own toggle has no
