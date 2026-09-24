@@ -149,10 +149,12 @@ DWORD WINAPI ScanParityThread(LPVOID /*arg*/) {
         // only be as complete as the index, so a miss here names the substrate, not a consumer.
         // VOTVCOOP_LISTENER_DROP_CREATES=<n> is its mutate control.
         const auto parity = ue_wrap::object_index::DebugCompareWithWalk();
-        const bool indexOk = parity.liveNotIndexed == 0 && parity.indexedNotLive == 0;
-        UE_LOGI("[SCANPARITY] C(index)   live-not-indexed=%zu indexed-not-live=%zu objects=%zu classes=%zu -> %s",
-                parity.liveNotIndexed, parity.indexedNotLive, parity.objects, parity.classes,
-                indexOk ? "OK" : "FAIL");
+        const bool indexOk = parity.liveNotIndexed == 0 && parity.indexedNotLive == 0 &&
+                             parity.misclassed == 0;
+        UE_LOGI("[SCANPARITY] C(index)   live-not-indexed=%zu indexed-not-live=%zu misclassed=%zu "
+                "objects=%zu classes=%zu -> %s",
+                parity.liveNotIndexed, parity.indexedNotLive, parity.misclassed, parity.objects,
+                parity.classes, indexOk ? "OK" : "FAIL");
         const uint32_t failB = CompareOnce("B(sliced)", /*skipUnsettled*/ true);
         coop::element::scan_hub::ForceSyncFullPass();
         const uint32_t failA = CompareOnce("A(forced)", /*skipUnsettled*/ false);

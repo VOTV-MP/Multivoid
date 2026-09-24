@@ -1,17 +1,17 @@
 // ue_wrap/core/object_index.h -- which objects of each class exist, kept current by the engine's
 // own create and delete notifications rather than by walking the object array.
 //
-// The index is seeded once from the live array on the game thread and then maintained by the
-// events uobject_listeners drains: a birth links the slot into its class's list, a death unlinks
-// it. Every applied event is checked against the slot it names, so an object that died before its
-// birth was drained, or a slot the engine recycled, never leaves a stale entry. Membership means
-// "allocated in the array": a member may still be under construction, on the loading thread, or
-// marked for death; the slot's flags (reflection::slot_flags) say which, and every reader checks
-// them before touching the object. An unreachable object is never seeded and never handed out as
-// a class's instance: only unreachable objects are freed, by a purge thread that runs beside the
-// game thread, so a pointer to one is unsafe from the moment the bit is set.
-// The notifications are the engine's own; uobject_listeners.h names where UE4SS registers on the
-// same lists.
+// Seeded once from the live array on the game thread, then maintained by the events
+// uobject_listeners drains: a birth links the slot into its class's list, a death unlinks it. The
+// drain runs a tick or more behind the engine, which meanwhile hands a dead object's slot, and often
+// its address, to its next allocation, so a pointer cannot tell the object an event named from a new
+// tenant: a birth is linked, and an entry handed out, only while the slot holds the pointer, the
+// object is not unreachable and its class is still the listed one. Membership means "allocated in
+// the array": a member may be under construction, on the loading thread, or marked for death; the
+// slot's flags (reflection::slot_flags) say which, and every reader checks them. An unreachable
+// object is unsafe the moment its bit is set, since a purge thread beside the game thread frees
+// exactly those. The notifications are the engine's own; uobject_listeners.h names where UE4SS
+// registers on the same lists.
 
 #pragma once
 
@@ -33,12 +33,12 @@ bool IsSeeded();
 using InstanceFn = void (*)(void* ctx, void* obj, int32_t index);
 using ClassFn    = void (*)(void* ctx, void* cls, void* anyInstance);
 
-// Every live instance of exactly `cls` (not its subclasses), in no particular order. Returns the
-// count visited. Game thread; the callback must not create or destroy objects.
+// Every live instance of exactly `cls` (not its subclasses), in no particular order: each entry's
+// slot still holds it, it is not unreachable, and its class is `cls`. Returns the count handed out.
+// Game thread; the callback must not create or destroy objects.
 size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx);
 
-// Every class with at least one readable instance, with one of them (slot still held, not
-// unreachable). Same contract.
+// Every class with at least one such instance, with one of them. Same contract.
 size_t ForEachClass(ClassFn fn, void* ctx);
 
 // The one observer of the class set and of births (the scan hub): a class's first instance
@@ -58,8 +58,9 @@ void SetObserver(const Observer& o);
 struct Parity {
     size_t liveNotIndexed;
     size_t indexedNotLive;
-    size_t objects;   // entries in the index
-    size_t classes;   // classes with at least one entry
+    size_t misclassed;   // entries whose live object is of another class than the one listed
+    size_t objects;      // entries in the index
+    size_t classes;      // classes with at least one entry
 };
 Parity DebugCompareWithWalk();
 

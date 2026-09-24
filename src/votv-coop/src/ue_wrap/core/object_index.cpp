@@ -40,8 +40,10 @@ bool                                     g_installed = false;
 bool                                     g_seeded = false;
 Observer                                 g_observer{};
 size_t                                   g_linked = 0;
-// The 60 s summary's counters.
+// The 60 s summary's counters. `recycled`: births whose slot and pointer a new object of another
+// class had taken by the drain; `refused`: entries ForEachInstance skipped, gone or recycled.
 uint64_t g_applied = 0, g_births = 0, g_deaths = 0, g_stale = 0, g_relinked = 0, g_seedOverlap = 0;
+uint64_t g_recycled = 0, g_refusedGone = 0, g_refusedRecycled = 0;
 std::chrono::steady_clock::time_point g_summarySince{};
 
 // Events applied per Drain, so a level load's backlog (a few hundred thousand) spreads over a few
@@ -84,16 +86,33 @@ bool Unlink(int32_t index) {
     return false;
 }
 
+// Whether a slot's tenant is the object an event or an entry names: the slot still holds the
+// pointer, the object is not unreachable (the purge thread may free it from that bit on), and its
+// class is the named class, which tells a new object of another class, put by the allocator in the
+// same slot at the same address, from the one named. A successor of the same class passes and is
+// what a class's list promises, a live instance of it. RE-UE4SS applies a death inside its
+// listener (reference/RE-UE4SS/UE4SS/src/GUI/LiveView.cpp:294), so its lists never hold a
+// recycled slot; this index drains a queue a tick or more later, so it checks.
+enum class Tenant { Named, Gone, Recycled };
+Tenant TenantOf(int32_t index, void* obj, void* cls) {
+    if (R::ObjectAt(index) != obj) return Tenant::Gone;
+    if (R::SlotFlags(index) & R::slot_flags::Unreachable) return Tenant::Gone;
+    return R::ClassOf(obj) == cls ? Tenant::Named : Tenant::Recycled;
+}
+
 void ApplyCreated(const Event& ev) {
-    // The slot must still hold the object: a birth whose object died and was freed before this
-    // drain, or whose slot was recycled since, is skipped; the successor's own event follows.
-    if (R::ObjectAt(ev.index) != ev.obj) { ++g_stale; return; }
+    // A birth whose object died before this drain is skipped, and so is one whose slot and address
+    // a new object of another class has taken since; the successor's own event follows.
+    const Tenant t = TenantOf(ev.index, ev.obj, ev.cls);
+    if (t == Tenant::Gone) { ++g_stale; return; }
+    if (t == Tenant::Recycled) { ++g_recycled; return; }
     EnsureSlot(ev.index);
     Slot& s = g_slots[static_cast<size_t>(ev.index)];
-    if (s.obj == ev.obj) { ++g_seedOverlap; return; }   // the seed walk already linked it
+    if (s.obj == ev.obj && s.cls == ev.cls) { ++g_seedOverlap; return; }   // the seed walk linked it
     if (s.obj) {
-        // A tenant this queue never saw die: unlink it before the slot's new owner goes in. The
-        // class is read first, since Unlink clears the slot `s` refers to.
+        // A tenant this queue never saw die, or this pointer listed under a class it no longer has:
+        // unlink it before the slot's new owner goes in. The class is read first, since Unlink
+        // clears the slot `s` refers to.
         ++g_relinked;
         void* const gone = s.cls;
         if (Unlink(ev.index) && g_observer.OnClassGone) g_observer.OnClassGone(g_observer.ctx, gone);
@@ -115,17 +134,15 @@ void ApplyDeleted(const Event& ev) {
     if (Unlink(ev.index) && g_observer.OnClassGone) g_observer.OnClassGone(g_observer.ctx, cls);
 }
 
-// The first instance of a class whose memory may be read: its slot still holds it (the destructor
-// nulls the slot before the memory is freed) and it is not unreachable (only unreachable objects
-// are freed, and only the game thread marks them, so a clear bit read here holds until the next
-// collection). An entry between its FinishDestroy and the drain of its delete event fails one of
-// the two, and is skipped. Null when the class has no readable instance right now.
-void* ReadableInstance(const ClassEntry& e) {
+// The first instance of `cls` whose memory may be read and which is still of `cls` (TenantOf). The
+// destructor nulls the slot before the memory is freed, and only the game thread marks an object
+// unreachable, so a clear bit read here holds until the next collection. An entry between its
+// FinishDestroy and the drain of its delete event, or whose slot a new object took, is skipped:
+// the hub classifies the whole class by the object this returns. Null when there is none now.
+void* ReadableInstance(void* cls, const ClassEntry& e) {
     for (int32_t i = e.head; i >= 0; i = g_slots[static_cast<size_t>(i)].next) {
         void* obj = g_slots[static_cast<size_t>(i)].obj;
-        if (R::ObjectAt(i) != obj) continue;
-        if (R::SlotFlags(i) & R::slot_flags::Unreachable) continue;
-        return obj;
+        if (TenantOf(i, obj, cls) == Tenant::Named) return obj;
     }
     return nullptr;
 }
@@ -162,12 +179,16 @@ void SummaryIfDue() {
     g_summarySince = now;
     const auto st = uobject_listeners::GetStats();
     UE_LOGI("object_index: steady summary (60s): objects=%zu classes=%zu applied=%llu births=%llu "
-            "deaths=%llu stale=%llu relinked=%llu backlog=%zu queue-high-water=%zu",
+            "deaths=%llu stale=%llu relinked=%llu backlog=%zu queue-high-water=%zu recycled=%llu "
+            "refused=%llu gone/%llu recycled",
             g_linked, g_classes.size(), static_cast<unsigned long long>(g_applied),
             static_cast<unsigned long long>(g_births), static_cast<unsigned long long>(g_deaths),
             static_cast<unsigned long long>(g_stale), static_cast<unsigned long long>(g_relinked),
-            g_pending.size() - g_pendingHead, st.highWater);
+            g_pending.size() - g_pendingHead, st.highWater, static_cast<unsigned long long>(g_recycled),
+            static_cast<unsigned long long>(g_refusedGone),
+            static_cast<unsigned long long>(g_refusedRecycled));
     g_applied = g_births = g_deaths = g_stale = g_relinked = 0;
+    g_recycled = g_refusedGone = g_refusedRecycled = 0;
 }
 
 }  // namespace
@@ -215,8 +236,15 @@ size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx) {
     for (int32_t i = it->second.head; i >= 0;) {
         const Slot& s = g_slots[static_cast<size_t>(i)];
         const int32_t next = s.next;   // read before the callback, which may not unlink but may look
-        fn(ctx, s.obj, i);
-        ++n;
+        const Tenant t = TenantOf(i, s.obj, cls);
+        if (t == Tenant::Named) {
+            fn(ctx, s.obj, i);
+            ++n;
+        } else if (t == Tenant::Gone) {
+            ++g_refusedGone;
+        } else {
+            ++g_refusedRecycled;
+        }
         i = next;
     }
     return n;
@@ -225,7 +253,7 @@ size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx) {
 size_t ForEachClass(ClassFn fn, void* ctx) {
     size_t n = 0;
     for (const auto& kv : g_classes) {
-        void* inst = ReadableInstance(kv.second);
+        void* inst = ReadableInstance(kv.first, kv.second);
         if (!inst) continue;
         fn(ctx, kv.first, inst);
         ++n;
@@ -250,7 +278,10 @@ Parity DebugCompareWithWalk() {
     }
     for (size_t i = 0; i < g_slots.size(); ++i) {
         const Slot& s = g_slots[i];
-        if (s.obj && R::ObjectAt(static_cast<int32_t>(i)) != s.obj) ++p.indexedNotLive;
+        if (!s.obj) continue;
+        const int32_t idx = static_cast<int32_t>(i);
+        if (R::ObjectAt(idx) != s.obj) { ++p.indexedNotLive; continue; }
+        if (TenantOf(idx, s.obj, s.cls) == Tenant::Recycled) ++p.misclassed;
     }
     // A birth in flight during the walk above has its event queued by now: apply, then re-judge.
     Drain();
