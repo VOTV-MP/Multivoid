@@ -245,9 +245,9 @@ void Tick() {
         // Listener = the local player (actor pos ~ head at voice ranges; yaw =
         // actor yaw -- VOTV is first-person, the body follows the camera).
         void* local = reg.Local();
-        ue_wrap::FVector p{};   // unread: the listener keeps its last position
-        if (local && ue_wrap::engine::TryGetActorLocation(local, p)) {
-            const ue_wrap::FRotator r = ue_wrap::engine::GetActorRotation(local);
+        ue_wrap::FVector p{};   // unread: the listener keeps its last position and yaw
+        ue_wrap::FRotator r{};
+        if (local && ue_wrap::engine::TryGetActorLocation(local, p) && ue_wrap::engine::TryGetActorRotation(local, r)) {
             g_playback.SetListener(p.X, p.Y, p.Z, r.Yaw);
             if (g_loopback && localSlot != coop::players::kPeerIdUnknown)
                 g_playback.SetSpeaker(localSlot, p.X, p.Y, p.Z, true);

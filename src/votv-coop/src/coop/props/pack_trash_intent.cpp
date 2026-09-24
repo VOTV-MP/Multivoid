@@ -128,11 +128,11 @@ bool PerformPack(void* target, uint8_t slot, coop::element::ElementId eid) {
     }
     const uint8_t chipType = ue_wrap::prop::GetChipType(target);
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(target, loc)) {
-        UE_LOGW("[PACK-TRASH] the pile's location could not be read for eid=%u -- not packed", eid);
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorLocation(target, loc) || !E::TryGetActorRotation(target, rot)) {
+        UE_LOGW("[PACK-TRASH] the pile's location or rotation could not be read for eid=%u -- not packed", eid);
         return false;
     }
-    const ue_wrap::FRotator rot = E::GetActorRotation(target);
     void* bag = E::BeginDeferredSpawn(bagCls, loc, rot);
     if (!bag) {
         UE_LOGW("[PACK-TRASH] BeginDeferredSpawn(prop_garbageBag_C) failed for eid=%u", eid);

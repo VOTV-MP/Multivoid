@@ -32,7 +32,7 @@ bool IsAtv(void* obj);
 std::wstring GetKeyString(void* atv);
 
 // Root body world transform (loc + FULL rotation -- the ATV tips/flips). The pose-stream read.
-// False on null/unresolved or an unreadable location.
+// False on null/unresolved or an unreadable location or rotation.
 bool GetRootTransform(void* atv, FVector& loc, FRotator& rot);
 
 // The current driver AmainPlayer_C* (the Player field), or nullptr if unoccupied. The COOP layer

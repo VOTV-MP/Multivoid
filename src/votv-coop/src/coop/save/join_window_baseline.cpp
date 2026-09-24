@@ -134,7 +134,8 @@ void FlushDivergedPositions_(int peerSlot, bool firstRun) {
             if (sx * sx + sy * sy + sz * sz <= kResendCm2 && sameState)
                 return false;  // already delivered at this position and state
         }
-        const ue_wrap::FRotator rot = ue_wrap::engine::GetActorRotation(actor);
+        ue_wrap::FRotator rot{};
+        if (!ue_wrap::engine::TryGetActorRotation(actor, rot)) return false;   // no read, no correction
         coop::net::PropSnapPosPayload p{};
         p.eid = static_cast<uint32_t>(eid);
         p.locX = cur.X; p.locY = cur.Y; p.locZ = cur.Z;

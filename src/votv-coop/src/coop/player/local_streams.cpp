@@ -68,8 +68,10 @@ coop::element::ElementId g_gapLoggedEid = coop::element::kInvalidId;
 // The local player's pose, on the game thread at the send rate.
 bool ReadLocalPose(void* local, void* controller, coop::net::PoseSnapshot& out) {
     ue_wrap::FVector loc{};
-    if (!local || !ue_wrap::engine::TryGetActorLocation(local, loc)) return false;
-    const ue_wrap::FRotator actorRot = ue_wrap::engine::GetActorRotation(local);
+    ue_wrap::FRotator actorRot{};
+    if (!local || !ue_wrap::engine::TryGetActorLocation(local, loc) ||
+        !ue_wrap::engine::TryGetActorRotation(local, actorRot))
+        return false;
     const ue_wrap::FVector vel = ue_wrap::engine::GetActorVelocity(local);
     // Body yaw from the actor (sending the controller yaw made the puppet body face the camera
     // while moving); on foot the actor yaw follows the camera almost immediately, so the receiver
@@ -295,10 +297,12 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             const bool hostClump =
                 session.role() == coop::net::Role::Host && ue_wrap::prop::IsGarbageClump(heldActor);
             ue_wrap::FVector cloc{};
-            if (hostClump && !ue_wrap::engine::TryGetActorLocation(heldActor, cloc)) {
-                UE_LOGW("local_streams: host clump %p not adopted -- its location could not be read", heldActor);
+            ue_wrap::FRotator crot{};
+            if (hostClump && (!ue_wrap::engine::TryGetActorLocation(heldActor, cloc) ||
+                              !ue_wrap::engine::TryGetActorRotation(heldActor, crot))) {
+                UE_LOGW("local_streams: host clump %p not adopted -- its location or rotation could not be read",
+                        heldActor);
             } else if (hostClump) {
-                const auto crot = ue_wrap::engine::GetActorRotation(heldActor);
                 coop::element::ElementId bornE = coop::element::kInvalidId;
                 uint8_t bornChip = 0;
                 if (!coop::trash_channel::TakeClumpBorn(heldActor, &bornE, &bornChip)) {
@@ -375,8 +379,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         pp.ctx = coop::trash_channel::CtxForEid(g_lastHeldEid);
         pp.holdGen = g_holdGen;
         ue_wrap::FVector loc{};
-        const bool locRead = ue_wrap::engine::TryGetActorLocation(heldActor, loc);
-        const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
+        ue_wrap::FRotator rot{};
+        const bool poseRead = ue_wrap::engine::TryGetActorLocation(heldActor, loc) &&
+                              ue_wrap::engine::TryGetActorRotation(heldActor, rot);
         pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
         // Normalised at the wire boundary: a physics prop's rotation accumulates through quaternion
         // conversions to values like Yaw 359.8 that the receiver's guard rejects.
@@ -388,7 +393,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // peer with unresolved-pose warnings for an actor it will never have. The stream resumes
         // the instant the item is expressed; g_lastHeldProp is still tracked so the release edge
         // works, and a PropRelease for a never-expressed prop is harmless.
-        if (!locRead) {
+        if (!poseRead) {
             // An unreadable held prop streams no pose this tick; its identity is kept below.
         } else if (pp.key.len > 0 || pp.elementId != 0) {
             session.SetLocalPropPose(true, pp);
@@ -455,8 +460,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 pp.ctx       = coop::trash_channel::CtxForEid(g_lastHeldEid);
                 pp.holdGen   = g_holdGen;  // one continuous stream: the carry's own hold
                 ue_wrap::FVector loc{};
-                if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc)) {   // unread: no pose this tick
-                    const auto rot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
+                ue_wrap::FRotator rot{};
+                if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc) &&
+                    ue_wrap::engine::TryGetActorRotation(g_lastHeldProp.Raw(), rot)) {   // unread: no pose this tick
                     pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
                     pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
                     pp.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
@@ -532,8 +538,9 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                 // Where the hold let go, so a receiver whose last poses were lost lets go from here;
                 // unread, the release carries no pose and the receiver lets go from its own.
                 ue_wrap::FVector loc{};
-                if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc)) {
-                    const auto rot = ue_wrap::engine::GetActorRotation(g_lastHeldProp.Raw());
+                ue_wrap::FRotator rot{};
+                if (ue_wrap::engine::TryGetActorLocation(g_lastHeldProp.Raw(), loc) &&
+                    ue_wrap::engine::TryGetActorRotation(g_lastHeldProp.Raw(), rot)) {
                     rel.locX = loc.X; rel.locY = loc.Y; rel.locZ = loc.Z;
                     rel.rotPitch = rot.Pitch; rel.rotYaw = rot.Yaw; rel.rotRoll = rot.Roll;
                     rel.hasPose = 1;

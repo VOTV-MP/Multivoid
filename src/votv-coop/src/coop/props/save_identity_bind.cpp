@@ -398,10 +398,16 @@ int BindUnboundReCreates(bool* ghostRetireDrained) {
                     if (hdx * hdx + hdy * hdy + hdz * hdz > kMovedCm2) {
                         coop::element::quiescence_drain::CancelPendingSaveTimeTwin(
                             static_cast<coop::element::ElementId>(e.eid));
-                        coop::element::quiescence_drain::EnsurePosCorrection(
-                            static_cast<coop::element::ElementId>(e.eid),
-                            ue_wrap::FVector{e.hostPosX, e.hostPosY, e.hostPosZ},
-                            ue_wrap::engine::GetActorRotation(chipN[idx].actor));
+                        // The correction moves the position and keeps this pile's own facing; an
+                        // unread facing would snap it to a zero one, so no correction is armed.
+                        ue_wrap::FRotator keepRot{};
+                        if (ue_wrap::engine::TryGetActorRotation(chipN[idx].actor, keepRot))
+                            coop::element::quiescence_drain::EnsurePosCorrection(
+                                static_cast<coop::element::ElementId>(e.eid),
+                                ue_wrap::FVector{e.hostPosX, e.hostPosY, e.hostPosZ}, keepRot);
+                        else
+                            UE_LOGW("save_identity_bind: RE-BIND chipPile host eid=%u -- its rotation could not be "
+                                    "read, so it is not moved to the host position", e.eid);
                     }
                 }
                 continue;

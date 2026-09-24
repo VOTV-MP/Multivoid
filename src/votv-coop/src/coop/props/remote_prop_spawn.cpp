@@ -309,8 +309,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // A failed read is not known to be aligned: the host's transform, which is authoritative,
         // converges it like a divergence.
         ue_wrap::FVector curLoc{};
+        ue_wrap::FRotator curRot{};
         const bool curRead = ue_wrap::engine::TryGetActorLocation(existing, curLoc);
-        const ue_wrap::FRotator curRot = ue_wrap::engine::GetActorRotation(existing);
+        const bool rotRead = ue_wrap::engine::TryGetActorRotation(existing, curRot);
         const float dx = curLoc.X - payload.locX;
         const float dy = curLoc.Y - payload.locY;
         const float dz = curLoc.Z - payload.locZ;
@@ -323,7 +324,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             if (d > 180.0f) d = 360.0f - d;
             return d <= kAlignedAngDeg;
         };
-        const bool rotAligned = angAligned(curRot.Pitch, payload.rotPitch)
+        const bool rotAligned = rotRead
+                             && angAligned(curRot.Pitch, payload.rotPitch)
                              && angAligned(curRot.Yaw,   payload.rotYaw)
                              && angAligned(curRot.Roll,  payload.rotRoll);
         if (locAligned && rotAligned) {
@@ -341,7 +343,8 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         } else {
             UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm%s), converging transform to host (loc=(%.1f,%.1f,%.1f))",
                     keyW.c_str(), existing, std::sqrt(dx * dx + dy * dy + dz * dz),
-                    curRead ? "" : ", location unread", payload.locX, payload.locY, payload.locZ);
+                    curRead ? (rotRead ? "" : ", rotation unread") : ", location unread", payload.locX, payload.locY,
+                    payload.locZ);
             // The kinematic converge: kinematic before the teleport so the move neither wakes nor
             // ejects the body, then the single-player physics state restored at the host's rest
             // pose, where the body re-settles instead of storming.

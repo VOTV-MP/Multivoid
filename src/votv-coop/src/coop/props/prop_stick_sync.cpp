@@ -209,8 +209,8 @@ Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::w
     p.elementId = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
     if (p.key.len == 0 && p.elementId == 0) return Fill::NoIdentity;
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(prop, loc)) return Fill::NoPosition;
-    const auto rot = E::GetActorRotation(prop);
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorLocation(prop, loc) || !E::TryGetActorRotation(prop, rot)) return Fill::NoPosition;
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     return Fill::Ok;
@@ -324,10 +324,10 @@ void InstallOnDemand() {
 // holds the copy), and the raw fallback when this peer's re-trace finds no surface there. True when
 // the replay stuck it. Game thread.
 bool ReplayStick(void* prop, void* comp, uint8_t flags, const std::wstring& keyW) {
-    // The pose before the replay, which only the raw fallback below restores.
+    // The pose before the replay, which only the raw fallback below restores, and only if read whole.
     ue_wrap::FVector loc{};
-    const bool locRead = E::TryGetActorLocation(prop, loc);
-    const ue_wrap::FRotator rot = E::GetActorRotation(prop);
+    ue_wrap::FRotator rot{};
+    const bool poseRead = E::TryGetActorLocation(prop, loc) && E::TryGetActorRotation(prop, rot);
     // Simulate on first: the Blueprint's canStick precondition, which a drive or a park took away.
     E::SetActorSimulatePhysics(prop, true);
     uint8_t frame[16] = {};
@@ -341,12 +341,12 @@ bool ReplayStick(void* prop, void* comp, uint8_t flags, const std::wstring& keyW
     if (flags & 2u) ue_wrap::prop::WriteStatic(prop, true);
     else            ue_wrap::prop::WriteFrozen(prop, true);
     E::SetActorSimulatePhysics(prop, false);
-    if (locRead) {   // unread: frozen where the replay left it, never re-posed at the origin
+    if (poseRead) {   // unread: frozen where the replay left it, never re-posed at the origin or a zero facing
         E::SetActorLocation(prop, loc);
         E::SetActorRotation(prop, rot);
     }
     UE_LOGW("prop_stick_sync: forceStick replay diverged for key='%ls' -- raw frozen-write fallback applied%s",
-            keyW.c_str(), locRead ? "" : " (the pose before the replay unread: not re-posed)");
+            keyW.c_str(), poseRead ? "" : " (the pose before the replay unread: not re-posed)");
     return false;
 }
 
@@ -355,7 +355,7 @@ void BroadcastStick(coop::net::Session* s, void* prop, bool frozen, bool statiq)
     std::wstring keyW;
     if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
         UE_LOGW("prop_stick_sync: stuck prop %p %s -- not broadcast", prop,
-                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location");
+                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location or rotation");
         return;
     }
     p.flags = (frozen ? 1u : 0u) | (statiq ? 2u : 0u);
@@ -373,7 +373,7 @@ void BroadcastUnstick(coop::net::Session* s, void* prop) {
     std::wstring keyW;
     if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
         UE_LOGW("prop_stick_sync: unstuck prop %p %s -- not broadcast", prop,
-                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location");
+                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location or rotation");
         return;
     }
     p.flags = 0;

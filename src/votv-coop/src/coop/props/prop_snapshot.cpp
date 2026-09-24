@@ -316,15 +316,16 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // Read-only trace: the wire eid against the eid recorded at save capture; a no-op unless
     // enabled.
     coop::dev::eid_lifetime_trace::CheckWireEid(obj, static_cast<uint32_t>(eid));
+    // The actor's rotation. A chip pile shows a child mesh the game turns and scales at random on
+    // every construction; that draw rides beside it as the pile's look (coop/props/pile_look.h),
+    // absent for everything else. An unread transform is no row: a row at the origin or facing
+    // nowhere would move the joiner's copy there.
     ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) {   // a row at the origin would move the joiner's copy there
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc) || !ue_wrap::engine::TryGetActorRotation(obj, rot)) {
         if (unread) *unread = true;
         return false;
     }
-    // The actor's rotation. A chip pile shows a child mesh the game turns and scales at random on
-    // every construction; that draw rides beside it as the pile's look (coop/props/pile_look.h),
-    // absent for everything else.
-    const auto rot = ue_wrap::engine::GetActorRotation(obj);
     p.look = coop::pile_look::Capture(obj);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);

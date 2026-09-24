@@ -467,13 +467,15 @@ FVector GetActorForwardVector(void* actor) {
     return fwd;
 }
 
-FRotator GetActorRotation(void* actor) {
-    FRotator rot;
-    if (!actor || !ResolveActorFns() || !g_getRotFn) return rot;
+bool TryGetActorRotation(void* actor, FRotator& out) {
+    // A zero rotator is an ordinary facing: a read that could not report its failure would turn the
+    // actor that way, so the read reports failure.
+    out = FRotator{};
+    if (!actor || !ResolveActorFns() || !g_getRotFn) return false;
     ParamFrame f(g_getRotFn);
-    if (!Call(actor, f)) return rot;
-    f.GetRaw(L"ReturnValue", &rot, sizeof(rot));
-    return rot;
+    if (!Call(actor, f)) return false;
+    if (!f.GetRaw(L"ReturnValue", &out, static_cast<int32_t>(sizeof(out)))) { out = FRotator{}; return false; }
+    return true;
 }
 
 void* ActorForwardVectorFunction() { return ResolveActorFns() ? g_getFwdFn : nullptr; }

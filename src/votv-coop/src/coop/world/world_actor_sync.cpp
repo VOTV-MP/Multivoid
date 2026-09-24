@@ -472,8 +472,8 @@ void TickPoseStream() {
         // creates, since coins never despawn.
         if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(actor, loc)) continue;   // no pose this tick
-        const auto rot = E::GetActorRotation(actor);
+        ue_wrap::FRotator rot{};
+        if (!E::TryGetActorLocation(actor, loc) || !E::TryGetActorRotation(actor, rot)) continue;   // no pose this tick
         // The delta gate saves wire bytes, not slots: a resting actor is not re-sent. It runs after
         // the cap, so the sent pose is only recorded for a pose about to be batched; recorded
         // before truncation, an actor whose final resting tick was the truncated one would latch
@@ -562,12 +562,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (!el) continue;
         void* actor = el->GetActor();
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
-        // A row at the origin would place the joiner's mirror there: an actor whose position cannot
-        // be read is left out, named and counted.
+        // A row at the origin or at a zero facing would misplace the joiner's mirror: an actor whose
+        // location or rotation cannot be read is left out, named and counted.
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(actor, loc)) {
-            UE_LOGW("world-actor: connect-snapshot -- WA eid=%u left out for slot %d, its location could not be read",
-                    static_cast<unsigned>(el->GetId()), peerSlot);
+        ue_wrap::FRotator rot{};
+        if (!E::TryGetActorLocation(actor, loc) || !E::TryGetActorRotation(actor, rot)) {
+            UE_LOGW("world-actor: connect-snapshot -- WA eid=%u left out for slot %d, its location or rotation "
+                    "could not be read", static_cast<unsigned>(el->GetId()), peerSlot);
             ++unread;
             continue;
         }
@@ -577,7 +578,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         for (size_t i = 0; i < tn.size() && i < 63; ++i)
             p.className.data[p.className.len++] = tn[i];
         p.elementId = static_cast<uint32_t>(el->GetId());
-        const auto rot = E::GetActorRotation(actor);
         const auto scl = E::GetActorScale3D(actor);  // the piramid is scale 2
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
@@ -672,11 +672,13 @@ unsigned int HostEnrollExSpawn(void* actor) {
         auto it = g_actorToWaId.find(actor);
         if (it != g_actorToWaId.end()) return static_cast<unsigned int>(it->second);
     }
-    // An actor whose position cannot be read is not enrolled, before any element is made for it: no
-    // spawn or snapshot row could place it. Post-Finish: the drain runs next pump tick.
+    // An actor whose location or rotation cannot be read is not enrolled, before any element is made
+    // for it: no spawn or snapshot row could place it. Post-Finish: the drain runs next pump tick.
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(actor, loc)) {
-        UE_LOGW("world-actor[host ex-enroll]: actor %p not enrolled -- its location could not be read", actor);
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorLocation(actor, loc) || !E::TryGetActorRotation(actor, rot)) {
+        UE_LOGW("world-actor[host ex-enroll]: actor %p not enrolled -- its location or rotation could not be read",
+                actor);
         return 0;
     }
     const std::wstring clsW = R::ToString(R::NameOf(cls));
@@ -705,7 +707,6 @@ unsigned int HostEnrollExSpawn(void* actor) {
     p.className.len = 0;
     for (size_t i = 0; i < clsW.size() && i < 63; ++i)
         p.className.data[p.className.len++] = static_cast<char>(clsW[i]);
-    const auto rot = E::GetActorRotation(actor);
     const auto scl = E::GetActorScale3D(actor);    // the deferred actor carries the spawner's scale
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;

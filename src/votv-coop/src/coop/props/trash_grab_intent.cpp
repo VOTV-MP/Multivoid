@@ -313,9 +313,11 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
     // so it is read on return. The log line carries the host's resolved position and chip type for
     // this eid, to compare against the requester's press line for the same eid: differing
     // positions mean the client aimed at a different pile than the host resolves. Read-only, once
-    // per grab. The position is also the clump's birthplace, its fallback below.
+    // per grab. The pose is also the clump's birthplace, its fallback below.
     ue_wrap::FVector hloc{};
+    ue_wrap::FRotator hrot{};
     const bool hlocRead = ue_wrap::engine::TryGetActorLocation(pile, hloc);
+    const bool hposeRead = hlocRead && ue_wrap::engine::TryGetActorRotation(pile, hrot);
     UE_LOGI("[GRAB-INTENT] EXEC puppet=%p pile=%p eid=%u slot=%u at(%.1f,%.1f,%.1f)%s chipType=%u",
             puppet, pile, eid, senderSlot, hloc.X, hloc.Y, hloc.Z, hlocRead ? "" : " (unread)",
             static_cast<unsigned>(ue_wrap::prop::GetChipType(pile)));
@@ -345,20 +347,22 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
         return;
     }
     // The convert below places the clump for every peer. The verb has run -- the pile is gone and
-    // the clump is in the puppet's handle -- so an unreadable clump is placed where it was born, the
-    // pile's position before the verb; with neither, the handle lets go before the refusal.
+    // the clump is in the puppet's handle -- so an unreadable clump is placed as it was born, at the
+    // pile's pose before the verb; with neither, the handle lets go before the refusal.
     ue_wrap::FVector clumpLoc{};
-    if (!ue_wrap::engine::TryGetActorLocation(clump, clumpLoc)) {
-        if (!hlocRead) {
+    ue_wrap::FRotator clumpRot{};
+    if (!ue_wrap::engine::TryGetActorLocation(clump, clumpLoc) || !ue_wrap::engine::TryGetActorRotation(clump, clumpRot)) {
+        if (!hposeRead) {
             UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- neither the clump nor the pile before it could be read; "
                     "the puppet's handle lets go", eid, senderSlot);
             LetGo(eid, puppet, clump);
             Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::NoClump);
             return;
         }
-        UE_LOGW("[GRAB-INTENT] eid=%u slot=%u -- the clump's location could not be read; converted at its birthplace",
-                eid, senderSlot);
+        UE_LOGW("[GRAB-INTENT] eid=%u slot=%u -- the clump's location or rotation could not be read; converted at "
+                "its birthplace", eid, senderSlot);
         clumpLoc = hloc;
+        clumpRot = hrot;
     }
     // Consume the birth certificate: the puppet's hand is this clump's hand edge (the owner-side
     // held edge never fires for a puppet grab). Without the consume the certificate expires
@@ -381,7 +385,6 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
     // and register the per-tick hand drive, since the puppet's own tick will not position the
     // clump.
     g_heldBy[eid] = senderSlot;
-    const ue_wrap::FRotator clumpRot = ue_wrap::engine::GetActorRotation(clump);
     const uint8_t chipType = ue_wrap::prop::GetChipType(clump);
     OnHostConvert(s, static_cast<coop::element::ElementId>(eid), coop::net::propconvert_kind::kToClump,
                   clump, clumpLoc, clumpRot, chipType);

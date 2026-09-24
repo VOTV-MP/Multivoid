@@ -477,11 +477,13 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                 if (void* lp = coop::players::Registry::Get().Local()) {
                     ue_wrap::FVector loc{};
                     const bool locRead = ue_wrap::engine::TryGetActorLocation(lp, loc);
-                    const auto rot = ue_wrap::engine::GetActorRotation(lp);
+                    ue_wrap::FRotator rot{};
+                    const bool rotRead = ue_wrap::engine::TryGetActorRotation(lp, rot);
                     ue_wrap::FRotator cRot{};
                     if (void* c = ue_wrap::engine::GetController(lp)) cRot = ue_wrap::engine::GetControlRotation(c);
-                    UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f)%s actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
-                            loc.X, loc.Y, loc.Z, locRead ? "" : " (unread)", rot.Yaw, cRot.Pitch, cRot.Yaw);
+                    UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f)%s actorYaw=%.1f%s ctrl(P=%.1f Y=%.1f)",
+                            loc.X, loc.Y, loc.Z, locRead ? "" : " (unread)", rot.Yaw, rotRead ? "" : " (unread)",
+                            cRot.Pitch, cRot.Yaw);
                 }
                 if (coop::puppet_drive::Puppet(1).valid()) {
                     ue_wrap::FVector p{};

@@ -50,7 +50,8 @@ void StandAt(const ue_wrap::FVector& at, float yawDeg);
 // Turn the camera onto `target` where the body stands, and log the AIM row.
 void LookAt(const ue_wrap::FVector& target, const char* who, const char* phase);
 
-// This peer's body location and facing. False when there is no local player or its location cannot be read.
+// This peer's body location and facing. False when there is no local player or its location or rotation cannot be
+// read.
 bool LocalBody(ue_wrap::FVector& at, float& yawDeg);
 
 // Watch the broom's stroke notify on this peer: every "clean" notify on any broom is logged at its

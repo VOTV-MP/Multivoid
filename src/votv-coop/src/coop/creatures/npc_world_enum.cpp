@@ -48,12 +48,13 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
                                                  ue_wrap::FVector* outLoc = nullptr) {
     auto* s = coop::npc_sync::GetSession();
     if (!s) return coop::element::kInvalidId;
-    // An NPC whose position cannot be read is not enrolled, before any element is made for it: the
-    // read failing is a dispatch that faulted, so no broadcast or snapshot row could ever place it,
-    // and the pose stream would fault on it every tick.
+    // An NPC whose location or rotation cannot be read is not enrolled, before any element is made
+    // for it: the read failing is a dispatch that faulted, so no broadcast or snapshot row could
+    // ever place it, and the pose stream would fault on it every tick.
     ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) {
-        UE_LOGW("npc-sync[%s]: '%ls' actor %p not enrolled -- its location could not be read",
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc) || !ue_wrap::engine::TryGetActorRotation(obj, rot)) {
+        UE_LOGW("npc-sync[%s]: '%ls' actor %p not enrolled -- its location or rotation could not be read",
                 logTag, clsName.c_str(), obj);
         return coop::element::kInvalidId;
     }
@@ -100,7 +101,6 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         for (size_t k = 0; k < tn.size() && k < 63; ++k)
             p.className.data[p.className.len++] = tn[k];
         p.elementId = static_cast<uint32_t>(eid);
-        const auto rot = ue_wrap::engine::GetActorRotation(obj);
         const auto scl = ue_wrap::engine::GetActorScale3D(obj);  // mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;

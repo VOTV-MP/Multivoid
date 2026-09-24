@@ -215,9 +215,11 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     }
     // A spawn with no readable location has nothing to place its mirror by: left unexpressed, like an
     // unkeyed one, before an element exists for it.
+    // Both reads before the Prop Element is created below.
     ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(self, loc)) {
-        UE_LOGW("grab_hook[Aprop.Init POST]: actor %p (class '%ls') has no readable location -- skip",
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(self, loc) || !ue_wrap::engine::TryGetActorRotation(self, rot)) {
+        UE_LOGW("grab_hook[Aprop.Init POST]: actor %p (class '%ls') has no readable location or rotation -- skip",
                 self, cls.c_str());
         return;
     }
@@ -229,7 +231,6 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);
     }
-    const auto rot = ue_wrap::engine::GetActorRotation(self);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);

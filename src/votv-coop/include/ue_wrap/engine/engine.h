@@ -94,8 +94,10 @@ bool ForceGarbageCollection();
 // AActor::GetActorForwardVector; (0,0,0) on failure.
 FVector GetActorForwardVector(void* actor);
 
-// AActor::K2_GetActorRotation (world); zero on failure. Game thread.
-FRotator GetActorRotation(void* actor);
+// AActor::K2_GetActorRotation (world), the one rotation read: false when the rotation could not be
+// obtained, a read that faulted inside the engine and was absorbed included. `out` is then the zero
+// rotator, an ordinary facing, so every caller decides what an unread rotation means. Game thread.
+bool TryGetActorRotation(void* actor, FRotator& out);
 
 // AActor::GetVelocity (world, cm/s); zero on failure. Its horizontal magnitude is the remote
 // locomotion blend's walk speed. Game thread.

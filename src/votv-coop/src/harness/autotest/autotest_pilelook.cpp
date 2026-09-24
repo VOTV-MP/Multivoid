@@ -89,9 +89,14 @@ void RunPileLookScenario() {
                 continue;
             }
             if (eid == coop::element::kInvalidId || eid == 0) { ++unnamed; continue; }
-            const ue_wrap::FRotator m = ue_wrap::chip_pile::VisibleMeshWorldRotation(o);
-            const ue_wrap::FRotator a = E::GetActorRotation(o);
+            ue_wrap::FRotator m{}, a{};
+            const bool rotRead = ue_wrap::chip_pile::VisibleMeshWorldRotation(o, m) && E::TryGetActorRotation(o, a);
             const char* kind = !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save");
+            if (!rotRead) {   // no numbers: the judge compares a row's angles across the peers
+                UE_LOGI("pilelook: PILE eid=%u kind=%s rotation=(unread)", static_cast<unsigned>(eid), kind);
+                ++named;
+                continue;
+            }
             ue_wrap::chip_pile::Look look{};
             ue_wrap::chip_pile::ReadLook(o, look);
             UE_LOGI("pilelook: PILE eid=%u kind=%s mesh=(%.1f,%.1f,%.1f) actor=(%.1f,%.1f,%.1f) scale=(%.3f,%.3f,%.3f)",

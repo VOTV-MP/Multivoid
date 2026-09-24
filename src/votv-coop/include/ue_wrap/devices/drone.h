@@ -31,7 +31,7 @@ void* Find();
 bool IsActive(void* drone);
 
 // Root actor world transform (loc + full rotation -- the drone leans/pitches in flight). False on
-// null or an unreadable location.
+// null or an unreadable location or rotation.
 bool GetTransform(void* drone, FVector& loc, FRotator& rot);
 
 // CLIENT mirror: snap the drone to the streamed transform. SetActorLocation + SetActorRotation.

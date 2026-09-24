@@ -78,9 +78,7 @@ std::wstring GetKeyString(void* atv) {
 }
 
 bool GetRootTransform(void* atv, FVector& loc, FRotator& rot) {
-    if (!atv || !engine::TryGetActorLocation(atv, loc)) return false;
-    rot = engine::GetActorRotation(atv);
-    return true;
+    return atv && engine::TryGetActorLocation(atv, loc) && engine::TryGetActorRotation(atv, rot);
 }
 
 void* GetOccupantPlayer(void* atv) {

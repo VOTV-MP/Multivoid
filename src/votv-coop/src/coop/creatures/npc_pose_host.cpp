@@ -62,13 +62,15 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // Skip elements with no bound actor / a GC-purged actor; a real game-spawned NPC binds in
         // POST.
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
-        // A row at the origin would place the joiner's mirror there: an NPC whose position cannot be
-        // read is left out, named and counted. The read failing is a dispatch that faulted, which
-        // the pose stream repeats every tick, so no later row could place it either.
+        // A row at the origin or at a zero facing would misplace the joiner's mirror: an NPC whose
+        // location or rotation cannot be read is left out, named and counted. The read failing is a
+        // dispatch that faulted, which the pose stream repeats every tick, so no later row could
+        // place it either.
         ue_wrap::FVector loc{};
-        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) {
-            UE_LOGW("npc-sync: connect-snapshot -- NPC eid=%u left out for slot %d, its location could not be read",
-                    static_cast<unsigned>(el->GetId()), peerSlot);
+        ue_wrap::FRotator rot{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, loc) || !ue_wrap::engine::TryGetActorRotation(actor, rot)) {
+            UE_LOGW("npc-sync: connect-snapshot -- NPC eid=%u left out for slot %d, its location or rotation could "
+                    "not be read", static_cast<unsigned>(el->GetId()), peerSlot);
             ++unread;
             continue;
         }
@@ -78,7 +80,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         for (size_t i = 0; i < tn.size() && i < 63; ++i)
             p.className.data[p.className.len++] = tn[i];
         p.elementId = static_cast<uint32_t>(el->GetId());
-        const auto rot = ue_wrap::engine::GetActorRotation(actor);
         const auto scl = ue_wrap::engine::GetActorScale3D(actor);  // mirror at true size
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
@@ -165,8 +166,9 @@ void TickPoseStream() {
         coop::net::EntityPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
         ue_wrap::FVector loc{};
-        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) continue;  // no pose this tick
-        const auto rot = ue_wrap::engine::GetActorRotation(actor);
+        ue_wrap::FRotator rot{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, loc) || !ue_wrap::engine::TryGetActorRotation(actor, rot))
+            continue;  // no pose this tick
         const auto vel = ue_wrap::engine::GetActorVelocity(actor);
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;
         snap.yaw = ue_wrap::NormalizeAxis(rot.Yaw);

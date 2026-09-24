@@ -242,7 +242,8 @@ void Tick() {
         }
         ue_wrap::FVector loc{};
         const bool locRead = E::TryGetActorLocation(o.actor, loc);
-        const float yaw = locRead ? E::GetActorRotation(o.actor).Yaw : o.yaw;
+        ue_wrap::FRotator rot{};   // unread: the stored yaw, the last real one
+        const float yaw = locRead && E::TryGetActorRotation(o.actor, rot) ? rot.Yaw : o.yaw;
         // Keepalive FIRST: a continuously-moving entity must not
         // starve the Spawn re-announce -- it IS the late-joiner delivery, and
         // it carries the pose anyway.

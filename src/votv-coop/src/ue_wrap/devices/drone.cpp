@@ -189,9 +189,7 @@ bool IsActive(void* drone) {
 }
 
 bool GetTransform(void* drone, FVector& loc, FRotator& rot) {
-    if (!drone || !E::TryGetActorLocation(drone, loc)) return false;
-    rot = E::GetActorRotation(drone);
-    return true;
+    return drone && E::TryGetActorLocation(drone, loc) && E::TryGetActorRotation(drone, rot);
 }
 
 bool DriveMirror(void* drone, const FVector& loc, const FRotator& rot) {

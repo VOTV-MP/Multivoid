@@ -468,7 +468,9 @@ void RunPuppetGrabProbe() {
             ue_wrap::FVector pl{};
             if (!E::TryGetActorLocation(pup->actor, pl)) {
                 UE_LOGW("puppet_grab_probe: the puppet's location could not be read"); d.store(2); return; }
-            const ue_wrap::FRotator pr = E::GetActorRotation(pup->actor);
+            ue_wrap::FRotator pr{};
+            if (!E::TryGetActorRotation(pup->actor, pr)) {
+                UE_LOGW("puppet_grab_probe: the puppet's rotation could not be read"); d.store(2); return; }
             float dist = -1.f;
             void* pile = ue_wrap::prop::FindNearestChipPile(pl, /*radiusCm=*/200000.f, &dist);
             if (!pile) { UE_LOGW("puppet_grab_probe: NO chipPile in the world -- the save has none to grab"); d.store(2); return; }

@@ -16,11 +16,11 @@ namespace coop::trash_channel {
 
 // Host: E re-skinned. `kind` is to-clump or to-pile, `newActor` the new rendering already
 // positioned. Bumps E's context, rebinds E onto the new actor and broadcasts the convert. A to-pile's
-// `loc` is only its land's fallback and may be unknown (`locKnown` false); a to-clump's goes out at
-// once and must be known.
+// `loc` and `rot` are only its land's fallback and may be unknown (`transformKnown` false); a
+// to-clump's go out at once and must be known.
 void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind, void* newActor,
                    const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType,
-                   bool locKnown = true);
+                   bool transformKnown = true);
 
 // Grab adoption. Every clump is born from a chipPile's deferred spawn, whose source object is
 // the pile; the Func thunk records that link here so the held edge consumes a certificate

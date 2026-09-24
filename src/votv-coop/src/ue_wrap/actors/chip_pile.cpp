@@ -6,7 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
-#include "ue_wrap/engine/engine.h"             // GetActorRotation, GetComponentWorldRotation
+#include "ue_wrap/engine/engine.h"             // TryGetActorRotation, GetComponentWorldRotation
 #include "ue_wrap/engine/engine_component.h"   // SetComponentMobility
 
 #include <cstdint>
@@ -47,9 +47,12 @@ void* VisibleMesh(void* actor) {
     return (comp && R::IsLive(comp)) ? comp : nullptr;
 }
 
-FRotator VisibleMeshWorldRotation(void* actor) {
-    if (void* comp = VisibleMesh(actor)) return E::GetComponentWorldRotation(comp);
-    return E::GetActorRotation(actor);
+bool VisibleMeshWorldRotation(void* actor, FRotator& out) {
+    if (void* comp = VisibleMesh(actor)) {
+        out = E::GetComponentWorldRotation(comp);
+        return true;
+    }
+    return E::TryGetActorRotation(actor, out);
 }
 
 bool ReadLook(void* actor, Look& out) {

@@ -150,10 +150,16 @@ sg::Verdict OnNotify(const sg::Call& call) {
     if (!g_bodiesRunHere) g_strokesDone.fetch_add(1);
     void* holder = ue_wrap::broom::ReadHolder(call.object);
     const bool own = call.object == Holding(LocalPlayer());
-    const float yaw = holder ? E::GetActorRotation(holder).Yaw : 0.f;
+    ue_wrap::FRotator hr{};
+    const bool yawRead = holder && E::TryGetActorRotation(holder, hr);
     const ue_wrap::FVector v = holder ? E::GetActorVelocity(holder) : ue_wrap::FVector{};
-    UE_LOGI("broom_drill: NOTIFY role=%s tick=%lu own=%d holderYaw=%.1f holderVel=(%.0f,%.0f,%.0f)", g_who,
-            static_cast<unsigned long>(::GetTickCount()), own ? 1 : 0, yaw, v.X, v.Y, v.Z);
+    const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
+    if (yawRead)
+        UE_LOGI("broom_drill: NOTIFY role=%s tick=%lu own=%d holderYaw=%.1f holderVel=(%.0f,%.0f,%.0f)", g_who, tick,
+                own ? 1 : 0, hr.Yaw, v.X, v.Y, v.Z);
+    else   // no number: the judge reads the yaw as the stroke's heading
+        UE_LOGI("broom_drill: NOTIFY role=%s tick=%lu own=%d holderYaw=(%s) holderVel=(%.0f,%.0f,%.0f)", g_who, tick,
+                own ? 1 : 0, holder ? "unread" : "none", v.X, v.Y, v.Z);
     return sg::Verdict::Run;
 }
 
@@ -242,8 +248,9 @@ bool LocalBody(ue_wrap::FVector& at, float& yawDeg) {
     auto out = std::make_shared<std::pair<ue_wrap::FVector, float>>(ue_wrap::FVector{}, 0.f);
     const bool found = RunGT([out](std::atomic<int>& d) {
         void* player = LocalPlayer();
-        const bool placed = player && E::TryGetActorLocation(player, out->first);
-        if (placed) out->second = E::GetActorRotation(player).Yaw;
+        ue_wrap::FRotator rot{};
+        const bool placed = player && E::TryGetActorLocation(player, out->first) && E::TryGetActorRotation(player, rot);
+        out->second = rot.Yaw;
         d.store(placed ? 1 : 2);
     }) == 1;
     at = out->first;
@@ -261,10 +268,12 @@ void LookAt(const ue_wrap::FVector& target, const char* who, const char* phase) 
     RunGT([target, who, phase](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector start{}, end{};
+        ue_wrap::FRotator rot{};
+        const bool rotRead = player && E::TryGetActorRotation(player, rot);
         if (player && E::ReadMainPlayerArm(player, start, end))
             UE_LOGI("broom_drill: %s %s AIM segment (%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f), end %.0fcm from the "
-                    "subject, heading yaw %.1f", who, phase, start.X, start.Y, start.Z, end.X, end.Y, end.Z,
-                    Dist(end, target), E::GetActorRotation(player).Yaw);
+                    "subject, heading yaw %.1f%s", who, phase, start.X, start.Y, start.Z, end.X, end.Y, end.Z,
+                    Dist(end, target), rot.Yaw, rotRead ? "" : " (unread)");
         else
             UE_LOGW("broom_drill: %s %s AIM -- no segment to report", who, phase);
         d.store(1);

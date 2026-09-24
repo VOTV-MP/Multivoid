@@ -154,8 +154,9 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
         return false;
     head.Z += kHeadAnchorLiftCm;
     void* ctl = E::GetController(local);
-    const ue_wrap::FRotator view =
-        ctl ? E::GetControlRotation(ctl) : E::GetActorRotation(local);
+    ue_wrap::FRotator view{};
+    if (ctl) view = E::GetControlRotation(ctl);
+    else if (!E::TryGetActorRotation(local, view)) return false;
     float V[3][3];
     RotMatrixRows(ue_wrap::NormalizeAxis(view.Pitch), ue_wrap::NormalizeAxis(view.Yaw), 0.f, V);
     ue_wrap::FVector iloc{};
@@ -168,7 +169,8 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
         if (!(outPos[i] > -300.f && outPos[i] < 300.f)) return false;
     }
     float I[3][3], Q[3][3];
-    const ue_wrap::FRotator irot = E::GetActorRotation(held);
+    ue_wrap::FRotator irot{};
+    if (!E::TryGetActorRotation(held, irot)) return false;
     RotMatrixRows(irot.Pitch, irot.Yaw, irot.Roll, I);
     for (int r = 0; r < 3; ++r)      // item axis r expressed in the view frame
         for (int c = 0; c < 3; ++c)

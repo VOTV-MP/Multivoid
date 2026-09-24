@@ -193,7 +193,9 @@ void* SpawnManualRagdoll(void* local) {
         if (!E::TryGetActorLocation(local, pl)) {
             UE_LOGW("ragdollspawn[manual]: the player's location could not be read"); done->store(1); return; }
         const ue_wrap::FVector fwd = E::GetActorForwardVector(local);
-        const ue_wrap::FRotator rot = E::GetActorRotation(local);
+        ue_wrap::FRotator rot{};
+        if (!E::TryGetActorRotation(local, rot)) {
+            UE_LOGW("ragdollspawn[manual]: the player's rotation could not be read"); done->store(1); return; }
         // About 120 units in front of the player at the same height (framable; not inside the
         // body).
         const ue_wrap::FVector loc{ pl.X + fwd.X * 120.f, pl.Y + fwd.Y * 120.f, pl.Z };

@@ -314,7 +314,11 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     // pulled back" pass by default. The pose stays set between ticks, so a cut tail held it for the
     // ticks before the cut; how many packets carried it is the net thread's cadence, not this count.
     ue_wrap::FVector loc{};
-    const char* lost = !t ? " is gone" : (!E::TryGetActorLocation(t, loc) ? "'s location could not be read" : nullptr);
+    ue_wrap::FRotator rot{};
+    const char* lost = !t ? " is gone"
+                     : (!E::TryGetActorLocation(t, loc) || !E::TryGetActorRotation(t, rot))
+                           ? "'s location or rotation could not be read"
+                           : nullptr;
     if (lost) {
         g_tailEnded = true;
         ClearStaleTail(s);
@@ -335,7 +339,6 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     for (size_t i = 0; i < g_targetKey.size() && pp.key.len < 31; ++i)
         pp.key.data[pp.key.len++] = static_cast<char>(g_targetKey[i]);
     pp.holdGen = g_staleGen;
-    const ue_wrap::FRotator rot = E::GetActorRotation(t);
     pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
     pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
     s.SetLocalPropPose(true, pp);

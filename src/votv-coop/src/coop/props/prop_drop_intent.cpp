@@ -430,10 +430,15 @@ void Tick(coop::net::Session* session) {
             continue;
         }
         // No position to place it by: a failed read is a dispatch that faulted, which a later tick
-        // repeats, so the entry goes.
+        // repeats, so the entry goes. Both reads come before the birth notes below.
         ue_wrap::FVector loc{};
         if (!ue_wrap::engine::TryGetActorLocation(e.actor, loc)) {
             probe::NoteDrainExit(e.actor, "location-unread", e.tries, key);
+            continue;
+        }
+        ue_wrap::FRotator rot{};
+        if (!ue_wrap::engine::TryGetActorRotation(e.actor, rot)) {
+            probe::NoteDrainExit(e.actor, "rotation-unread", e.tries, key);
             continue;
         }
         // Author the host-authoritative spawn intent (a place, or a fresh birth).
@@ -463,7 +468,6 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
                 coop::drive_sync::NoteLocalDriveBirth(e.actor);
         }
-        const auto rot = ue_wrap::engine::GetActorRotation(e.actor);
         const auto scl = ue_wrap::engine::GetActorScale3D(e.actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);

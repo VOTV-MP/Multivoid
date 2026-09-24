@@ -18,9 +18,10 @@ namespace ue_wrap::chip_pile {
 // The component a player sees, or null when `actor` is not a live pile. Game thread.
 void* VisibleMesh(void* actor);
 
-// The visible mesh's world rotation; the actor's rotation when `actor` has no such mesh.
+// The visible mesh's world rotation; the actor's rotation when `actor` has no such mesh. False
+// when that actor rotation could not be read (the mesh's own read has no failure to report yet).
 // Game thread.
-FRotator VisibleMeshWorldRotation(void* actor);
+bool VisibleMeshWorldRotation(void* actor, FRotator& out);
 
 // The visible mesh's transform relative to the root: what init() draws at random.
 struct Look {

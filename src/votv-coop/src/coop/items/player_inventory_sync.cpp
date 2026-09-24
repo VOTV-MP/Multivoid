@@ -104,8 +104,9 @@ void SampleStandingPose() {
     if (!ue_wrap::engine::ReadMainPlayerSittingOn(pawn, seat) || seat) return;
     if (ue_wrap::puppet::ReadCharacterIsFalling(pawn)) return;
     ue_wrap::FVector at{};
-    if (!ue_wrap::engine::TryGetActorLocation(pawn, at)) return;
-    g_standingPose = {at.X, at.Y, at.Z, ue_wrap::engine::GetActorRotation(pawn).Yaw, true};
+    ue_wrap::FRotator rot{};   // unread: the last standing pose stays
+    if (!ue_wrap::engine::TryGetActorLocation(pawn, at) || !ue_wrap::engine::TryGetActorRotation(pawn, rot)) return;
+    g_standingPose = {at.X, at.Y, at.Z, rot.Yaw, true};
 }
 
 // Client: poll the carried, worn and held items at 1 Hz and stream the profile to the host. A

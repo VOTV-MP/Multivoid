@@ -92,11 +92,12 @@ void RagdollDisplay::Start(void* puppetActor, int32_t puppetIdx) {
     // If it fails, leave the puppet UPRIGHT and pose-driving (active_ stays false) -- graceful. The
     // body's Player field points at this puppet, and the spawn is DEATH-FREE: no ragdollMode.
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(puppetActor, loc)) {
-        UE_LOGW("RagdollDisplay::Start: the puppet's location could not be read -- puppet stays upright (graceful)");
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorLocation(puppetActor, loc) || !E::TryGetActorRotation(puppetActor, rot)) {
+        UE_LOGW("RagdollDisplay::Start: the puppet's location or rotation could not be read -- puppet stays upright "
+                "(graceful)");
         return;
     }
-    const ue_wrap::FRotator rot = E::GetActorRotation(puppetActor);
     void* body = E::SpawnPlayerRagdollBody(puppetActor, loc, rot);
     if (!body) {
         UE_LOGW("RagdollDisplay::Start: playerRagdoll_C spawn failed -- puppet stays upright (graceful)");

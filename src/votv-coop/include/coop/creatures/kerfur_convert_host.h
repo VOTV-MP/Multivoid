@@ -10,6 +10,7 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "ue_wrap/core/types.h"  // FRotator (ConvergeAfterConversion)
 
 #include <cstdint>
 
@@ -44,10 +45,13 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
 
 // The post-verb converge: find/adopt the new-form actor, silently register it,
 // release the dying form, BindFormActor -> ONE KerfurConvert broadcast (or the
-// rejected echo when the old form survived). Called by OnConvertRequest (both
-// verbs) and by the residual death-watch poll's host branches. Game thread.
+// rejected echo when the old form survived). (px,py,pz) and rot0 are the old form's
+// pose, read before the verb or the death-watch's last live one: the new form spawns
+// at that transform, so it stands in whole for a form whose own pose cannot be read.
+// Called by OnConvertRequest (both verbs) and by the residual death-watch poll's host
+// branches. Game thread.
 void ConvergeAfterConversion(void* oldActor, int32_t oldIdx, coop::element::ElementId oldEid,
-                             uint8_t toProp, float px, float py, float pz,
+                             uint8_t toProp, float px, float py, float pz, const ue_wrap::FRotator& rot0,
                              void* capturedForm = nullptr, int32_t capturedIdx = -1);
 
 // Express the conversion's dropped floppy prop(s) the normal keyed way (they

@@ -16,6 +16,7 @@
 #pragma once
 
 #include "coop/element/element.h"  // ElementId (TryCaptureKerfurPropDestroy dyingEid)
+#include "ue_wrap/core/types.h"    // FVector, FRotator (LastLivePose)
 
 #include <cstdint>
 
@@ -72,9 +73,9 @@ bool TryAdoptFreshKerfurProp(void* actor);
 // host declines (no wire identity to converge). Game thread, the destroy seam.
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
-// The last position the death-watch read for kerfur form `eid` while `actor` was its live form; false
-// when it never read one for that generation. Game thread.
-bool LastLivePose(uint32_t eid, void* actor, float& x, float& y, float& z);
+// The last pose the death-watch read for kerfur form `eid` while `actor` was its live form, location
+// and rotation from one sighting; false when it never read one for that generation. Game thread.
+bool LastLivePose(uint32_t eid, void* actor, ue_wrap::FVector& loc, ue_wrap::FRotator& rot);
 
 // Clear per-session state (the poll watch and its throttle) and fan the disconnect to the
 // client and host halves (parked ghosts; the request bracket).

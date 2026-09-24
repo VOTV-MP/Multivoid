@@ -68,13 +68,20 @@ struct PuppetHeld {
     Quat     inView;
 };
 
-// The clump's rotation in the frame of the puppet's view, both as they are now (the grab).
+// The clump's rotation in the frame of the puppet's view, both as they are now (the grab). With no
+// puppet, or no readable clump rotation, the identity: the clump is carried at the view's orientation.
 Quat GrabOrientationInView(uint8_t slot, void* clump) {
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     if (!rp || !rp->valid()) return Quat{};
+    ue_wrap::FRotator clumpRot{};
+    if (!E::TryGetActorRotation(clump, clumpRot)) {
+        UE_LOGW("puppet_carry_drive: slot %u clump %p -- its rotation could not be read at the grab; carried at "
+                "the view's orientation", static_cast<unsigned>(slot), clump);
+        return Quat{};
+    }
     Quat view = FromRotator(rp->GetSyncedAimRotation());
     view.x = -view.x; view.y = -view.y; view.z = -view.z;   // the inverse of a unit quaternion
-    return Mul(view, FromRotator(E::GetActorRotation(clump)));
+    return Mul(view, FromRotator(clumpRot));
 }
 
 std::vector<PuppetHeld> g_held;  // GT-only; per peer at most one carry, and any flights it let go before
@@ -203,8 +210,8 @@ void Tick(coop::net::Session& s) {
         // can't echo to the grabber; a client drives only slot 0). eid+ctx keyed -> the receiver's per-eid
         // ActiveDrive interp; ctx is the carry generation (stale-pose guard on the client). A clump a
         // player moved, carried or thrown, goes ahead of the ones a broom set rolling.
-        if (publish && locRead) {
-            const ue_wrap::FRotator rot = E::GetActorRotation(it->clump);
+        ue_wrap::FRotator rot{};
+        if (publish && locRead && E::TryGetActorRotation(it->clump, rot)) {   // unread: no pose this tick
             coop::net::TrashClumpPoseSnapshot snap{};
             snap.eid   = it->eid;
             snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;

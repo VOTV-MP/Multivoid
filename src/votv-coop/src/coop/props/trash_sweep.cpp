@@ -113,8 +113,8 @@ void Tick(coop::net::Session& s, void* localPlayer) {
         const coop::net::PoseTurn turn = s.TrashCarryPoseTurn(r.eid, /*ahead=*/false);
         if (turn == coop::net::PoseTurn::Wait) continue;
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(r.clump, loc)) continue;   // no pose this tick
-        const ue_wrap::FRotator rot = E::GetActorRotation(r.clump);
+        ue_wrap::FRotator rot{};
+        if (!E::TryGetActorLocation(r.clump, loc) || !E::TryGetActorRotation(r.clump, rot)) continue;   // no pose this tick
         coop::net::TrashClumpPoseSnapshot snap{};
         snap.eid   = r.eid;
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;

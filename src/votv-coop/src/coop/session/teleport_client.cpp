@@ -117,11 +117,11 @@ bool SnapshotHostPose(coop::net::TeleportClientPayload& p) {
         return false;
     }
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(local, loc)) {
-        UE_LOGW("teleport_client: the host's location could not be read -- nothing to send");
+    ue_wrap::FRotator rot{};
+    if (!E::TryGetActorLocation(local, loc) || !E::TryGetActorRotation(local, rot)) {
+        UE_LOGW("teleport_client: the host's location or rotation could not be read -- nothing to send");
         return false;
     }
-    const ue_wrap::FRotator rot = E::GetActorRotation(local);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     return true;

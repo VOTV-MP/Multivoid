@@ -244,8 +244,9 @@ void Tick(coop::net::Session& s) {
             // prop's turn in the queue.
             // A failed read ends at the last pose the receivers have; with none sent there is nothing to end.
             ue_wrap::FVector endLoc{};
-            if (E::TryGetActorLocation(actor, endLoc))
-                SendEnd(s, d, actor, endLoc, E::GetActorRotation(actor), "taken by a hand");
+            ue_wrap::FRotator endRot{};
+            if (E::TryGetActorLocation(actor, endLoc) && E::TryGetActorRotation(actor, endRot))
+                SendEnd(s, d, actor, endLoc, endRot, "taken by a hand");
             else if (d.everSent)
                 SendEnd(s, d, actor, d.sentLoc, d.sentRot, "taken by a hand");
             d.dead = true;
@@ -260,13 +261,14 @@ void Tick(coop::net::Session& s) {
         // and a coasting one ends at the last pose it sent. Ending a claimed row here would not hold:
         // the claim lane's next pass re-opens it.
         ue_wrap::FVector loc{};
-        const bool locRead = E::TryGetActorLocation(actor, loc);
-        if (!locRead && !d.unreadSaid) {
+        ue_wrap::FRotator rot{};
+        const bool poseRead = E::TryGetActorLocation(actor, loc) && E::TryGetActorRotation(actor, rot);
+        if (!poseRead && !d.unreadSaid) {
             d.unreadSaid = true;
-            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location could not be read; it streams nothing and rests", d.eid);
+            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location or rotation could not be read; it streams nothing and "
+                    "rests", d.eid);
         }
-        const ue_wrap::FRotator rot = locRead ? E::GetActorRotation(actor) : ue_wrap::FRotator{};
-        if (locRead && Moved(d, loc, rot)) {
+        if (poseRead && Moved(d, loc, rot)) {
             coop::net::PropPoseSnapshot pp{};
             pp.key       = d.key;
             pp.elementId = d.eid;
@@ -291,7 +293,7 @@ void Tick(coop::net::Session& s) {
         }
         if (now - d.lastMoveMs >= kRestMs) {
             if (!d.claimed) {
-                if (locRead)         SendEnd(s, d, actor, loc, rot, "rested");
+                if (poseRead)        SendEnd(s, d, actor, loc, rot, "rested");
                 else if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "rested");
                 d.dead = true;
                 continue;

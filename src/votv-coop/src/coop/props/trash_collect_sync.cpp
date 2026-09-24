@@ -191,19 +191,20 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
     // transform is passed as the fallback (a fully spawned actor), and the pile's real transform is
     // re-read at the land-settle commit in trash_channel, after FinishSpawning. The clump's
     // location is a radius high and its rotation the tumble, so it is only the fallback.
-    // E follows its live actor whatever the read says; an unread clump leaves the land with no
+    // E follows its live actor whatever the reads say; an unread clump leaves the land with no
     // fallback, and the settle's commit decides without one.
     ue_wrap::FVector loc{};
-    const bool locRead = ue_wrap::engine::TryGetActorLocation(srcObj, loc);
-    if (!locRead)
-        UE_LOGW("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -- the clump's location could not be read; the land "
-                "has no fallback", static_cast<unsigned>(E), srcObj);
-    const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(srcObj);
-    const uint8_t           chipType = ue_wrap::prop::GetChipType(srcObj);
+    ue_wrap::FRotator rot{};
+    const bool poseRead = ue_wrap::engine::TryGetActorLocation(srcObj, loc) &&
+                          ue_wrap::engine::TryGetActorRotation(srcObj, rot);
+    if (!poseRead)
+        UE_LOGW("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -- the clump's location or rotation could not be read; "
+                "the land has no fallback", static_cast<unsigned>(E), srcObj);
+    const uint8_t chipType = ue_wrap::prop::GetChipType(srcObj);
     UE_LOGI("[PILE] HOST RE-PILE(thunk) eid=%u clump=%p -> chipPile=%p convert IN PLACE (deterministic, same "
             "tick as the spawn -- no death-watch, no proximity)", static_cast<unsigned>(E), srcObj, newActor);
     coop::trash_channel::OnHostConvert(*s, E, coop::net::propconvert_kind::kToPile, newActor, loc, rot, chipType,
-                                       /*locKnown=*/locRead);
+                                       /*transformKnown=*/poseRead);
 }
 
 }  // namespace
@@ -298,10 +299,12 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         }
         keyStr.clear();  // clump: wire key stays None; the eid is the cross-peer identity
     }
-    // No position to express the item at: left unmirrored, before anything is marked for it.
+    // No transform to express the item at: left unmirrored, before anything is marked for it.
     ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(heldActor, loc)) {
-        UE_LOGW("trash_collect: item %p cls='%ls' has no readable location -- cannot mirror", heldActor, cls.c_str());
+    ue_wrap::FRotator rot{};
+    if (!ue_wrap::engine::TryGetActorLocation(heldActor, loc) || !ue_wrap::engine::TryGetActorRotation(heldActor, rot)) {
+        UE_LOGW("trash_collect: item %p cls='%ls' has no readable location or rotation -- cannot mirror", heldActor,
+                cls.c_str());
         return false;
     }
     // The Prop Element shadow and the dedupe latch, so the item's eventual destroy unwinds through
@@ -317,7 +320,6 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i)
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);
 
-    const ue_wrap::FRotator rot = ue_wrap::engine::GetActorRotation(heldActor);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
