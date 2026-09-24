@@ -225,6 +225,14 @@ only writes the original prologue back: new callers stop arriving, while a threa
 the detour returns through live memory. The process is exiting anyway and the OS reclaims every
 trampoline, so there is nothing to buy by freeing.
 
+An enable or disable that changes a hook also freezes the other threads, enumerating them through
+a Toolhelp snapshot that maps a section per step, so the facade holds the process loader lock
+across each one and no freeze runs inside a DLL's `DllMain`. The embedded browser's `chrome_elf.dll`
+patches `ntdll!NtMapViewOfSection` in its `DllMain` before it stores the pointer the patch forwards
+through (in 59.0.3071.15, the `+0x241D8` call, then the `+0x241E0` store), so a section mapped in
+between calls a null pointer: the crash at game start that the dumps show in the boot thread's hook
+installs `[V]`. That the lock ends it is `[RD]` until enough boots have run without it.
+
 One target needs more. `ProcessEvent` is detoured by UE4SS as well, whose PolyHook follows jump
 chains, and MinHook's classic relay is an indirect jump through an absolute pointer slot — a
 follower resolves it onto that slot and clobbers it. The relay for a shared target is therefore

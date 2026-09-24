@@ -31,6 +31,60 @@ std::atomic<bool> g_retired{false};
 
 const char* StatusName(MH_STATUS s) { return MH_StatusToString(s); }
 
+// The process loader lock, held around every MinHook enable and disable. One that changes a hook
+// freezes the other threads, first enumerating them through Toolhelp, which maps a section per
+// step; holding the lock keeps every freeze out of every DLL's DllMain. The embedded browser's
+// chrome_elf.dll patches ntdll!NtMapViewOfSection inside its DllMain before it stores the pointer
+// the patch forwards through, so a mapping in between calls a null pointer (docs/architecture.md).
+// UE4SS walks threads through Toolhelp inside its own DllMain, under this lock, on every boot of
+// this process, so the walk is safe under it; a walk without Toolhelp would avoid the mapping too,
+// but means patching the vendored MinHook, and the lock also covers the freeze's other calls.
+using LdrLockFn   = LONG(NTAPI*)(ULONG flags, ULONG* disposition, ULONG_PTR* cookie);
+using LdrUnlockFn = LONG(NTAPI*)(ULONG flags, ULONG_PTR cookie);
+struct LoaderLockApi {
+    LdrLockFn   lock   = nullptr;
+    LdrUnlockFn unlock = nullptr;
+};
+const LoaderLockApi& Api() {
+    static const LoaderLockApi api = [] {
+        LoaderLockApi a{};
+        if (HMODULE nt = ::GetModuleHandleW(L"ntdll.dll")) {
+            a.lock   = reinterpret_cast<LdrLockFn>(::GetProcAddress(nt, "LdrLockLoaderLock"));
+            a.unlock = reinterpret_cast<LdrUnlockFn>(::GetProcAddress(nt, "LdrUnlockLoaderLock"));
+        }
+        if (!a.lock || !a.unlock) {
+            a = LoaderLockApi{};   // both or neither: a lock without its unlock would never release
+            UE_LOGE("hook: ntdll exports no loader-lock pair -- enables and disables run unlocked");
+        }
+        return a;
+    }();
+    return api;
+}
+class LoaderLockScope {
+public:
+    LoaderLockScope() {
+        const LoaderLockApi& a = Api();
+        held_ = a.lock && a.lock(0, nullptr, &cookie_) >= 0;
+    }
+    ~LoaderLockScope() {
+        if (held_) Api().unlock(0, cookie_);
+    }
+    LoaderLockScope(const LoaderLockScope&) = delete;
+    LoaderLockScope& operator=(const LoaderLockScope&) = delete;
+
+private:
+    ULONG_PTR cookie_ = 0;
+    bool      held_   = false;
+};
+MH_STATUS EnableLocked(void* target) {
+    const LoaderLockScope lock;
+    return MH_EnableHook(target);
+}
+MH_STATUS DisableLocked(void* target) {
+    const LoaderLockScope lock;
+    return MH_DisableHook(target);
+}
+
 // The follow-jmp-immune relay rewrite. On x64 MinHook always routes a patched target through
 // a relay (an indirect jump through an absolute pointer) inside the 64-byte trampoline slot.
 // A co-resident inline-hook engine that follows jmp chains (UE4SS ships one) hooking the
@@ -123,7 +177,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
     if (followJmpImmune) {
         MakeRelayFollowJmpImmune(*trampoline, detour);
     }
-    s = MH_EnableHook(target);
+    s = EnableLocked(target);
     if (s != MH_OK) {
         UE_LOGE("hook: MH_EnableHook(%p) failed (%s)", target, StatusName(s));
         // The one legitimate hook removal in this process, and the gate
@@ -139,7 +193,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
     // synchronise with the game thread, and an arm that lands after Shutdown's blanket disable
     // would survive with no second teardown to lift it. Teardown wins in every interleaving.
     if (g_retired) {
-        MH_DisableHook(target);
+        DisableLocked(target);
         UE_LOGW("hook: install of %p raced Shutdown -- lifted again (teardown wins)", target);
         return false;
     }
@@ -149,7 +203,7 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
 
 bool Disable(void* target) {
     if (!g_live || !target) return false;
-    const MH_STATUS s = MH_DisableHook(target);
+    const MH_STATUS s = DisableLocked(target);
     if (s != MH_OK) {
         UE_LOGW("hook: MH_DisableHook(%p) (%s)", target, StatusName(s));
         return false;
@@ -160,7 +214,7 @@ bool Disable(void* target) {
 
 bool Enable(void* target) {
     if (!g_live || !target) return false;
-    const MH_STATUS s = MH_EnableHook(target);
+    const MH_STATUS s = EnableLocked(target);
     if (s != MH_OK) {
         UE_LOGW("hook: MH_EnableHook(%p) re-arm (%s)", target, StatusName(s));
         return false;
@@ -171,10 +225,10 @@ bool Enable(void* target) {
     // had just lifted. Shutdown sets the latch before its blanket disable, so re-reading it here
     // catches every interleaving: either we see the latch and lift our own patch, or Shutdown's
     // blanket runs after our enable and lifts it; both orders end disabled, as they do in
-    // Install. Lock-free on purpose: Shutdown is reachable from process detach under the loader
-    // lock, where a mutex owned by a thread Windows already killed never unlocks.
+    // Install. The latch re-read settles the race without a mutex of the facade's own; only the
+    // MinHook call holds the loader lock.
     if (g_retired) {
-        MH_DisableHook(target);
+        DisableLocked(target);
         UE_LOGW("hook: re-arm of %p raced Shutdown -- lifted again (teardown wins)", target);
         return false;
     }
@@ -194,12 +248,11 @@ void Shutdown() {
     // trampoline slots, and MinHook writes a free-list pointer over a slot's first bytes as it
     // does so, over the stolen prologue a thread may be about to return through; measured, this
     // runs seconds before process detach, so a dying process does not close that window, and
-    // the OS reclaims the slots at exit. A known residual, pre-existing: the blanket disable
-    // reaches MinHook's thread freeze, a toolhelp snapshot plus thread suspends, which on the
-    // process-detach path runs under the loader lock, a documented deadlock risk. Never
-    // observed; the graceful-close path does not exercise it, since the window procedure latches
-    // shutdown first and the detach call is the idempotent no-op.
-    MH_DisableHook(MH_ALL_HOOKS);
+    // the OS reclaims the slots at exit. Shutdown runs from the game thread's window procedure
+    // (coop/session/shutdown), and its blanket disable freezes the other threads under the loader
+    // lock like every enable and disable; nothing in a freeze waits on another thread, since
+    // MinHook allocates before it suspends and frees after it resumes.
+    DisableLocked(MH_ALL_HOOKS);
     UE_LOGI("hook: all patches lifted (trampolines retained -- MinHook stays initialized)");
 }
 

@@ -62,9 +62,9 @@ bool Disable(void* target);
 // lifts it again if Shutdown ran in between -- a check before the enable would
 // be check-then-act, and this is reachable from the render thread
 // (overlay_backend_dx12 -> dx12_capture::Rearm) while the game thread is in
-// Shutdown. Deliberately lock-free: Shutdown is reachable from
-// DLL_PROCESS_DETACH under the loader lock, where a mutex held by a thread
-// Windows has already terminated would hang the process forever.
+// Shutdown, which runs from its window procedure. The facade takes no mutex of
+// its own; the enable and the disable each hold the process loader lock around
+// the MinHook call (hook.cpp says why).
 bool Enable(void* target);
 
 // Lift every patch this process installed. Call once at process exit.

@@ -74,7 +74,7 @@ function Get-Violations {
                         if ($lines[$j] -match '^\s*bool\s+Install\s*\(') {
                             # Confirm it really is the failure branch, not a stray call.
                             for ($k = $i; $k -ge $j; $k--) {
-                                if ($lines[$k] -match 'MH_EnableHook\s*\(') { $allowed = $true; break }
+                                if ($lines[$k] -match 'EnableLocked\s*\(') { $allowed = $true; break }
                             }
                             break
                         }
@@ -123,7 +123,7 @@ void SomeFutureTeardown(void* target) {
         # decorative and the gate would be red forever on a legitimate tree.
         $ok = @'
 bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune) {
-    s = MH_EnableHook(target);
+    s = EnableLocked(target);
     if (s != MH_OK) {
         MH_RemoveHook(target);
         return false;
