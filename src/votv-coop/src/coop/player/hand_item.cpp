@@ -158,7 +158,8 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
         ctl ? E::GetControlRotation(ctl) : E::GetActorRotation(local);
     float V[3][3];
     RotMatrixRows(ue_wrap::NormalizeAxis(view.Pitch), ue_wrap::NormalizeAxis(view.Yaw), 0.f, V);
-    const ue_wrap::FVector iloc = E::GetActorLocation(held);
+    ue_wrap::FVector iloc{};
+    if (!E::TryGetActorLocation(held, iloc)) return false;
     const float d[3] = {iloc.X - head.X, iloc.Y - head.Y, iloc.Z - head.Z};
     for (int i = 0; i < 3; ++i) {
         outPos[i] = d[0] * V[i][0] + d[1] * V[i][1] + d[2] * V[i][2];
@@ -268,7 +269,8 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
         }
         return;
     }
-    const ue_wrap::FVector loc = E::GetActorLocation(puppetActor);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(puppetActor, loc)) return;   // retried next tick, as a missing class is
     const ue_wrap::FRotator rot{};
     void* actor = E::BeginDeferredSpawn(cls, loc, rot);
     if (!actor) {
@@ -307,7 +309,8 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
 // view basis from the synced aim and re-compose the owner-measured transform onto it. With
 // the fallback this degrades to the camera-front placement, facing along the look.
 void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup, const SlotHand& hand) {
-    const ue_wrap::FVector eye = pup->GetHeadPosition();
+    ue_wrap::FVector eye{};
+    if (!pup->TryGetHeadPosition(eye)) return;   // no anchor this tick: the last placement stays
     const ue_wrap::FVector fwd = pup->GetSyncedAimDirection();
     // A degenerate near-vertical aim keeps the last tick's placement.
     const float rl = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);

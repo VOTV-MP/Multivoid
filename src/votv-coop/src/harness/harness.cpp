@@ -227,8 +227,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("post-spawn"); });
         Post([] {
             if (coop::puppet_drive::Puppet(1).valid()) {
-                ue_wrap::FVector p = coop::puppet_drive::Puppet(1).GetLocation();
-                UE_LOGI("harness: orphan post-spawn pos=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+                ue_wrap::FVector p{};
+                const bool pRead = coop::puppet_drive::Puppet(1).TryGetLocation(p);
+                UE_LOGI("harness: orphan post-spawn pos=(%.0f,%.0f,%.0f)%s", p.X, p.Y, p.Z, pRead ? "" : " (unread)");
             }
         });
 
@@ -237,12 +238,17 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             ::Sleep(3000);
             Post([i] {
                 if (!coop::puppet_drive::Puppet(1).valid()) { UE_LOGW("harness: drive %d -- no orphan", i); return; }
-                ue_wrap::FVector p = coop::puppet_drive::Puppet(1).GetLocation();
+                ue_wrap::FVector p{};
+                if (!coop::puppet_drive::Puppet(1).TryGetLocation(p)) {
+                    UE_LOGW("harness: drive %d -- the orphan's location could not be read", i);
+                    return;
+                }
                 p.X += 150.f;
                 const bool ok = coop::puppet_drive::Puppet(1).SetLocation(p);
-                ue_wrap::FVector got = coop::puppet_drive::Puppet(1).GetLocation();
-                UE_LOGI("harness: drive step %d set X=%.0f ok=%d -> read (%.0f,%.0f,%.0f)",
-                        i, p.X, ok, got.X, got.Y, got.Z);
+                ue_wrap::FVector got{};
+                const bool gotRead = coop::puppet_drive::Puppet(1).TryGetLocation(got);
+                UE_LOGI("harness: drive step %d set X=%.0f ok=%d -> read (%.0f,%.0f,%.0f)%s",
+                        i, p.X, ok, got.X, got.Y, got.Z, gotRead ? "" : " (unread)");
             });
         }
 
@@ -296,9 +302,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                         void* local = coop::players::Registry::Get().Local();
                         if (!local) { okFlag->store(2); return; }
                         coop::teleport_client::ApplyLocally({ax, ay, az, apitch, ayaw, 0.f});
-                        const auto cur = ue_wrap::engine::GetActorLocation(local);
+                        ue_wrap::FVector cur{};
+                        const bool curRead = ue_wrap::engine::TryGetActorLocation(local, cur);   // unread: not settled
                         const float dx = cur.X - target.X, dy = cur.Y - target.Y, dz = cur.Z - target.Z;
-                        const bool ok = std::fabs(dx) < 200.f && std::fabs(dy) < 200.f && std::fabs(dz) < 200.f;
+                        const bool ok = curRead && std::fabs(dx) < 200.f && std::fabs(dy) < 200.f && std::fabs(dz) < 200.f;
                         okFlag->store(ok ? 1 : 2);
                     });
                     while (okFlag->load() == 0) ::Sleep(2);
@@ -307,10 +314,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 }
                 Post([ax, ay, az, ayaw, apitch, teleported] {
                     void* local = coop::players::Registry::Get().Local();
-                    const auto cur = local ? ue_wrap::engine::GetActorLocation(local) : ue_wrap::FVector{};
+                    ue_wrap::FVector cur{};
+                    const bool curRead = local && ue_wrap::engine::TryGetActorLocation(local, cur);
                     UE_LOGI("autotest teleport: target=(%.0f,%.0f,%.0f) yaw=%.1f pitch=%.1f "
-                            "-> actual=(%.0f,%.0f,%.0f) settled=%d",
-                            ax, ay, az, ayaw, apitch, cur.X, cur.Y, cur.Z, teleported ? 1 : 0);
+                            "-> actual=(%.0f,%.0f,%.0f)%s settled=%d",
+                            ax, ay, az, ayaw, apitch, cur.X, cur.Y, cur.Z, curRead ? "" : " (unread)",
+                            teleported ? 1 : 0);
                 });
                 ::Sleep(100);
             }
@@ -386,7 +395,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         ::Sleep(3000);
         Post([] {
             if (!coop::puppet_drive::Puppet(1).valid()) { UE_LOGW("show: no puppet"); return; }
-            const ue_wrap::FVector at = coop::puppet_drive::Puppet(1).GetLocation();
+            ue_wrap::FVector at{};
+            if (!coop::puppet_drive::Puppet(1).TryGetLocation(at)) { UE_LOGW("show: the puppet's location could not be read"); return; }
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
             // The same location and yaw with the speed bumped: the first SetTargetPose since spawn
             // snaps, then Tick applies.
@@ -396,8 +406,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         });
         ::Sleep(4000);
         Post([] {
-            if (!coop::puppet_drive::Puppet(1).valid()) return;
-            const ue_wrap::FVector at = coop::puppet_drive::Puppet(1).GetLocation();
+            ue_wrap::FVector at{};
+            if (!coop::puppet_drive::Puppet(1).TryGetLocation(at)) return;
             coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/0.f};
             coop::puppet_drive::Puppet(1).SetTargetPose(s);
             coop::puppet_drive::Puppet(1).Tick();

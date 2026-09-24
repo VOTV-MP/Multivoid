@@ -184,14 +184,15 @@ BootWorldView SurveyBootWorld(const char* who) {
         const bool currentWorldPawn =
             pawnLive && (!readerUp || (pawnWorld != nullptr && pawnWorld == v.curWorld));
         if (currentWorldPawn) {
-            const FVector p = GetActorLocation(lp);
-            if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
+            FVector p{};
+            if (TryGetActorLocation(lp, p) && std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
                 UE_LOGI("engine: %s -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)",
                         who, p.X, p.Y, p.Z);
                 v.inGameplay = true;
                 return v;
             }
-            // A live current-world pawn at the origin is pre-placement: fall through to (b).
+            // A live current-world pawn at the origin, or one whose location cannot be read, is not
+            // yet placed: fall through to (b).
         } else {
             // Throttled: the poll re-runs every second or so and hits the same corpse every time,
             // so the first three and then a periodic heartbeat. Keyed on the corpse's identity, not

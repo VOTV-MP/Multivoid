@@ -192,7 +192,13 @@ void DriveTick(coop::net::Session& session, bool worldReadyAnnounced) {
             sNextPoseDiag = pdNow + std::chrono::seconds(1);
             for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
                 if (!g_puppets[slot].valid()) { sPoseFresh[slot] = 0; continue; }
-                const ue_wrap::FVector cur = g_puppets[slot].GetLocation();
+                ue_wrap::FVector cur{};
+                if (!g_puppets[slot].TryGetLocation(cur)) {
+                    UE_LOGI("pose-diag[slot %d]: fresh=%d/s -- the puppet's location could not be read",
+                            slot, sPoseFresh[slot]);
+                    sPoseFresh[slot] = 0;
+                    continue;
+                }
                 const float dx = sPoseTarget[slot].x - cur.X, dy = sPoseTarget[slot].y - cur.Y;
                 const float trail = std::sqrt(dx * dx + dy * dy);
                 UE_LOGI("pose-diag[slot %d]: fresh=%d/s targetSpeed=%.0f target=(%.0f,%.0f) "

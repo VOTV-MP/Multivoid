@@ -251,15 +251,15 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
             }
             void* cls = PM::ClassForByte(p.byte);
             void* desk = CD::Instance();
-            if (cls && desk) {
-                const auto loc = ue_wrap::engine::GetActorLocation(desk);
+            ue_wrap::FVector deskLoc{};
+            if (cls && desk && ue_wrap::engine::TryGetActorLocation(desk, deskLoc)) {
                 void* refunded = ue_wrap::engine::SpawnActor(
-                    cls, {loc.X, loc.Y, loc.Z + 120.f});
+                    cls, {deskLoc.X, deskLoc.Y, deskLoc.Z + 120.f});
                 UE_LOGW("physmods: plug byte=%u DUP from slot %u -- denied + refund %s",
                         p.byte, senderSlot, refunded ? "spawned" : "SPAWN FAILED");
             } else {
-                UE_LOGW("physmods: plug byte=%u DUP from slot %u -- denied, refund class "
-                        "unresolved (item lost)", p.byte, senderSlot);
+                UE_LOGW("physmods: plug byte=%u DUP from slot %u -- denied, refund %s (item lost)", p.byte, senderSlot,
+                        (cls && desk) ? "not placed: the desk's location unread" : "class unresolved");
             }
             return;
         }

@@ -59,7 +59,8 @@ void OnPlaySound2DPost(void* /*self*/, void* /*function*/, void* params) {
     void* local = coop::players::Registry::Get().Local();
     if (!local || wco != local) return;
 
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(local);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(local, loc)) return;   // no blip without a position
     if (!std::isfinite(loc.X) || !std::isfinite(loc.Y) || !std::isfinite(loc.Z)) return;
     coop::net::InventoryPickupPayload payload{loc.X, loc.Y, loc.Z};
     s->SendReliable(coop::net::ReliableKind::InventoryPickup, &payload, sizeof(payload));

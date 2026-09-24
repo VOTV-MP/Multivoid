@@ -326,12 +326,15 @@ bool ClearDeadFlag(void* pawn) {
     return (*p & mask) == 0;  // read BACK: wrote != holds
 }
 
-float DistanceToKpp(void* pawn) {
-    const ue_wrap::FVector at = E::GetActorLocation(pawn);
+// False when the pawn's location cannot be read.
+bool DistanceToKpp(void* pawn, float& out) {
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(pawn, at)) return false;
     const float dx = at.X - P::name::kKPPSpawnX;
     const float dy = at.Y - P::name::kKPPSpawnY;
     const float dz = at.Z - P::name::kKPPSpawnZ;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
+    out = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return true;
 }
 
 // The revive: six writes, then the conjunction, each verified by reading the world back rather
@@ -386,10 +389,11 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
     const bool haveState = E::ReadMainPlayerRagdollState(pawn, isRagdoll, deadNow);
     float hp = -1.f;
     const bool haveHp = V::Read(V::Field::Health, &hp);
-    const float dist = DistanceToKpp(pawn);
+    float dist = -1.f;   // -1: unread, never at the KPP
+    const bool distRead = DistanceToKpp(pawn, dist);
     // The positional term is load-bearing: ApplyLocally has a tiered fallback, so its report says a
     // call succeeded, not that the player moved.
-    const bool atKpp = dist <= kAtKppToleranceCm;
+    const bool atKpp = distRead && dist <= kAtKppToleranceCm;
 
     // The conjunction is about the player, not the screen. With blackCleared as a term, one run in
     // four saw the same-frame IsInViewport read after RemoveFromParent still true, and a living

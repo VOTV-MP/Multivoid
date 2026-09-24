@@ -61,13 +61,14 @@ public:
     // SetTargetPose and Tick.
     bool SetLocation(const ue_wrap::FVector& location);
 
-    // The engine-reported location.
-    ue_wrap::FVector GetLocation() const;
+    // The engine-reported location; false when the puppet is not valid or the read failed.
+    bool TryGetLocation(ue_wrap::FVector& out) const;
 
     // The world point the nameplate and the voice speaker anchor to: the head bone of the mesh the
     // peer is rendered by (the ragdoll body while ragdolled, the skin mesh otherwise), lifted above
-    // the skull, its height low-pass filtered (about 70 ms; teleports snap).
-    ue_wrap::FVector GetHeadPosition() const;
+    // the skull, its height low-pass filtered (about 70 ms; teleports snap). False when the puppet is
+    // not valid or neither its head bone nor its pivot can be read.
+    bool TryGetHeadPosition(ue_wrap::FVector& out) const;
 
     // The unit forward vector of the puppet's synced aim (curYaw_ plus curHeadYawDelta_,
     // curPitch_), the convention DriveHeadLookAtWorld uses, so it points where the puppet looks.

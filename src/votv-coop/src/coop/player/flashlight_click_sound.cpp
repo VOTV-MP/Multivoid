@@ -96,8 +96,9 @@ void PlayIfStateChanged(void* puppetActor, uint8_t peerSlot, bool newState) {
         }
     }
 
-    // 4) Read puppet world location via the existing GetActorLocation wrapper.
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(puppetActor);
+    // 4) Read the puppet's world location; no click without one.
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(puppetActor, loc)) return;
 
     // 5) Fire the click via the shared PlaySoundAtLocation wrapper (resolves +
     //    caches the GameplayStatics CDO + UFunction internally; tolerates a

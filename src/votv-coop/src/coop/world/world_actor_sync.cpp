@@ -471,7 +471,8 @@ void TickPoseStream() {
         // dispatches per live WA per tick, unbounded in exactly the population this feature
         // creates, since coins never despawn.
         if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
-        const auto loc = E::GetActorLocation(actor);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(actor, loc)) continue;   // no pose this tick
         const auto rot = E::GetActorRotation(actor);
         // The delta gate saves wire bytes, not slots: a resting actor is not re-sent. It runs after
         // the cap, so the sent pose is only recorded for a pose about to be batched; recorded
@@ -556,18 +557,26 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
     std::vector<coop::element::WorldActor*> elems;
     WaMirrors().Snapshot(elems);
-    int sent = 0, unbound = 0;
+    int sent = 0, unbound = 0, unread = 0;
     for (coop::element::WorldActor* el : elems) {
         if (!el) continue;
         void* actor = el->GetActor();
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
+        // A row at the origin would place the joiner's mirror there: an actor whose position cannot
+        // be read is left out, named and counted.
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(actor, loc)) {
+            UE_LOGW("world-actor: connect-snapshot -- WA eid=%u left out for slot %d, its location could not be read",
+                    static_cast<unsigned>(el->GetId()), peerSlot);
+            ++unread;
+            continue;
+        }
         coop::net::WorldActorSpawnPayload p{};
         const std::string& tn = el->GetTypeName();
         p.className.len = 0;
         for (size_t i = 0; i < tn.size() && i < 63; ++i)
             p.className.data[p.className.len++] = tn[i];
         p.elementId = static_cast<uint32_t>(el->GetId());
-        const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
         const auto scl = E::GetActorScale3D(actor);  // the piramid is scale 2
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
@@ -587,9 +596,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
             ++sent;
     }
-    if (sent > 0 || unbound > 0)
+    if (sent > 0 || unbound > 0 || unread > 0)
         UE_LOGI("world-actor: connect-snapshot -- sent %d existing WA(s) to slot %d (%zu element(s), "
-                "%d unbound-skipped)", sent, peerSlot, elems.size(), unbound);
+                "%d unbound-skipped, %d unread-skipped)", sent, peerSlot, elems.size(), unbound, unread);
 }
 
 // Mirror identity and the materialisation window (see world_actor_sync.h).
@@ -663,6 +672,13 @@ unsigned int HostEnrollExSpawn(void* actor) {
         auto it = g_actorToWaId.find(actor);
         if (it != g_actorToWaId.end()) return static_cast<unsigned int>(it->second);
     }
+    // An actor whose position cannot be read is not enrolled, before any element is made for it: no
+    // spawn or snapshot row could place it. Post-Finish: the drain runs next pump tick.
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(actor, loc)) {
+        UE_LOGW("world-actor[host ex-enroll]: actor %p not enrolled -- its location could not be read", actor);
+        return 0;
+    }
     const std::wstring clsW = R::ToString(R::NameOf(cls));
     auto wa = std::make_unique<coop::element::WorldActor>();
     std::string typeName8;
@@ -689,7 +705,6 @@ unsigned int HostEnrollExSpawn(void* actor) {
     p.className.len = 0;
     for (size_t i = 0; i < clsW.size() && i < 63; ++i)
         p.className.data[p.className.len++] = static_cast<char>(clsW[i]);
-    const auto loc = E::GetActorLocation(actor);   // post-Finish (the drain runs next pump tick)
     const auto rot = E::GetActorRotation(actor);
     const auto scl = E::GetActorScale3D(actor);    // the deferred actor carries the spawner's scale
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;

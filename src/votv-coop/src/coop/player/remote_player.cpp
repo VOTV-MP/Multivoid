@@ -78,8 +78,14 @@ bool RemotePlayer::Spawn(const std::string& skinName) {
         return false;
     }
 
-    // The wire carries the source's actor pose; the puppet is written as received.
-    ue_wrap::FVector loc = E::GetActorLocation(local);
+    // The wire carries the source's actor pose; the puppet is written as received. Its first
+    // placement is in front of the local player, so an unreadable one defers the spawn as no player
+    // does.
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(local, loc)) {
+        UE_LOGW("RemotePlayer::Spawn: the local mainPlayer_C's location could not be read");
+        return false;
+    }
 
     // Placed a couple of metres in front of the local player and facing them, so it is in view at
     // once; the first real pose snaps away from this placement.
@@ -140,10 +146,12 @@ bool RemotePlayer::Spawn(const std::string& skinName) {
     if (void* puppetMesh = Pup::GetSkeletalMeshComponent(actor_)) {
         const float halfH       = E::GetActorCharacterHalfHeight(local);
         const float puppetMeshZ = E::GetComponentLocation(puppetMesh).Z;
-        const float puppetActorZ= E::GetActorLocation(actor_).Z;
-        UE_LOGI("RemotePlayer::Spawn: chain diag -- halfH=%.2f puppet(meshZ=%.2f actorZ=%.2f "
+        ue_wrap::FVector puppetLoc{};
+        const bool puppetRead   = E::TryGetActorLocation(actor_, puppetLoc);
+        const float puppetActorZ = puppetLoc.Z;
+        UE_LOGI("RemotePlayer::Spawn: chain diag -- halfH=%.2f puppet(meshZ=%.2f actorZ=%.2f%s "
                 "chain=%.2f); offset is ANCHORED 0 (class-identical chains)",
-                halfH, puppetMeshZ, puppetActorZ, puppetMeshZ - puppetActorZ);
+                halfH, puppetMeshZ, puppetActorZ, puppetRead ? "" : " (unread)", puppetMeshZ - puppetActorZ);
     }
 
     // The anim drive: the puppet is a mainPlayer_C, so its AnimBP's update reads the puppet's own
@@ -524,7 +532,8 @@ void RemotePlayer::ApplyToEngine() {
         const float yawRad   = (curYaw_ + curHeadYawDelta_) * kDeg2Rad;
         const float pitchRad = curPitch_ * kDeg2Rad;
         const float cp = std::cos(pitchRad);
-        const ue_wrap::FVector head = GetHeadPosition();  // actor X/Y + head-Z
+        ue_wrap::FVector head{};   // actor X/Y + head-Z
+        if (!TryGetHeadPosition(head)) return;   // no anchor this tick: the head keeps its last look
         constexpr float kLookDist = 500.f;  // any positive distance; LookAt uses the direction
         const ue_wrap::FVector worldLook{
             head.X + cp * std::cos(yawRad) * kLookDist,
@@ -545,9 +554,10 @@ bool RemotePlayer::SetLocation(const ue_wrap::FVector& location) {
     return E::SetActorLocation(actor_, location);
 }
 
-ue_wrap::FVector RemotePlayer::GetLocation() const {
-    if (!valid()) return {};  // never read a dying actor (PendingKill on level change)
-    return E::GetActorLocation(actor_);
+bool RemotePlayer::TryGetLocation(ue_wrap::FVector& out) const {
+    out = {};
+    if (!valid()) return false;  // never read a dying actor (PendingKill on level change)
+    return E::TryGetActorLocation(actor_, out);
 }
 
 ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
@@ -560,8 +570,9 @@ ue_wrap::FVector RemotePlayer::GetSyncedAimDirection() const {
     return { cp * std::cos(yawRad), cp * std::sin(yawRad), std::sin(pitchRad) };
 }
 
-ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
-    if (!valid()) return {};
+bool RemotePlayer::TryGetHeadPosition(ue_wrap::FVector& out) const {
+    out = {};
+    if (!valid()) return false;
     // The anchor is the head bone of whatever mesh renders the peer right now: the visible flop
     // body while ragdolled (the kel meshes are hidden and the actor rides the pelvis attach, which
     // is why a pivot anchor went wild in a flop), else the visible skin mesh (the native kel, the
@@ -585,8 +596,9 @@ ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
     if (haveBone) {
         raw.Z += kPlateLiftCm;
     } else {
-        // The transient fallback (a dying component, the pre-first-anim tick): the actor pivot.
-        raw = GetLocation();
+        // The transient fallback (a dying component, the pre-first-anim tick): the actor pivot. With
+        // neither readable there is no anchor.
+        if (!TryGetLocation(raw)) return false;
         raw.Z += 30.f;
     }
     // Smoothing: X and Y pass through raw (the plate must track walking with zero lag), and only Z,
@@ -606,7 +618,8 @@ ue_wrap::FVector RemotePlayer::GetHeadPosition() const {
         headAnchorZ_ += dz * (1.f - std::exp(-dtMs / 70.f));
     }
     headAnchorAtMs_ = now;
-    return {raw.X, raw.Y, headAnchorZ_};
+    out = {raw.X, raw.Y, headAnchorZ_};
+    return true;
 }
 
 void RemotePlayer::SetNickname(std::wstring name) { nickname_ = std::move(name); }

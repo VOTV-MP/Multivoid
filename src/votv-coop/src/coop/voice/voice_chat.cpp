@@ -245,8 +245,8 @@ void Tick() {
         // Listener = the local player (actor pos ~ head at voice ranges; yaw =
         // actor yaw -- VOTV is first-person, the body follows the camera).
         void* local = reg.Local();
-        if (local) {
-            const ue_wrap::FVector p = ue_wrap::engine::GetActorLocation(local);
+        ue_wrap::FVector p{};   // unread: the listener keeps its last position
+        if (local && ue_wrap::engine::TryGetActorLocation(local, p)) {
             const ue_wrap::FRotator r = ue_wrap::engine::GetActorRotation(local);
             g_playback.SetListener(p.X, p.Y, p.Z, r.Yaw);
             if (g_loopback && localSlot != coop::players::kPeerIdUnknown)
@@ -257,8 +257,8 @@ void Tick() {
             if (slot == localSlot) continue;
             coop::RemotePlayer* rp = reg.Puppet(static_cast<uint8_t>(slot));
             if (rp && rp->GetActor()) {
-                const ue_wrap::FVector hp = rp->GetHeadPosition();
-                g_playback.SetSpeaker(slot, hp.X, hp.Y, hp.Z, true);
+                ue_wrap::FVector hp{};   // unread: the speaker keeps its last position
+                if (rp->TryGetHeadPosition(hp)) g_playback.SetSpeaker(slot, hp.X, hp.Y, hp.Z, true);
             } else {
                 g_playback.SetSpeaker(slot, 0, 0, 0, false);
             }

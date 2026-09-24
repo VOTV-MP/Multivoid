@@ -189,8 +189,7 @@ bool IsActive(void* drone) {
 }
 
 bool GetTransform(void* drone, FVector& loc, FRotator& rot) {
-    if (!drone) return false;
-    loc = E::GetActorLocation(drone);
+    if (!drone || !E::TryGetActorLocation(drone, loc)) return false;
     rot = E::GetActorRotation(drone);
     return true;
 }
@@ -264,8 +263,8 @@ void ApplyDustMirror(void* drone, bool on, const FVector& anchor) {
     if (g_setFloatParamFn) {
         if (g_dustFName.ComparisonIndex == 0 && g_dustFName.Number == 0)
             g_dustFName = ue_wrap::fname_utils::StringToFName(L"dust");
-        if (g_dustFName.ComparisonIndex != 0 || g_dustFName.Number != 0) {
-            const FVector loc = E::GetActorLocation(drone);
+        FVector loc{};   // unread: the dust keeps its last value
+        if ((g_dustFName.ComparisonIndex != 0 || g_dustFName.Number != 0) && E::TryGetActorLocation(drone, loc)) {
             const float dx = loc.X - anchor.X, dy = loc.Y - anchor.Y, dz = loc.Z - anchor.Z;
             float dustVal = 1.f - std::sqrt(dx * dx + dy * dy + dz * dz) / kDustTraceLen;
             if (dustVal < 0.f) dustVal = 0.f;

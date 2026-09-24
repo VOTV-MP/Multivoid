@@ -287,16 +287,19 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
             // it at the rack (host-authored spawn -> the watcher fans it; the
             // payload rides drive_sync's birth-invariant broadcast next sweep).
             deny(0);
-            const auto loc = ue_wrap::engine::GetActorLocation(rack);
-            void* refunded = ue_wrap::engine::SpawnActor(
-                DC::DriveClass(), {loc.X, loc.Y, loc.Z + 120.f});
+            // The refund spawns above the rack; a rack that cannot be read places nothing.
+            ue_wrap::FVector loc{};
+            const bool rackRead = ue_wrap::engine::TryGetActorLocation(rack, loc);
+            void* refunded = rackRead ? ue_wrap::engine::SpawnActor(DC::DriveClass(), {loc.X, loc.Y, loc.Z + 120.f})
+                                      : nullptr;
             if (refunded) {
                 coop::desk_snd_fx::ScopedWireApply guard;
                 DC::WriteDriveRow(refunded, row);
                 DC::CallDriveUpd(refunded);
             }
             UE_LOGW("drive_rack: rack eid=%u set idx=%u from slot %u RACED -- denied + refund %s",
-                    h.rackEid, h.idx, senderSlot, refunded ? "spawned" : "SPAWN FAILED");
+                    h.rackEid, h.idx, senderSlot,
+                    refunded ? "spawned" : (rackRead ? "SPAWN FAILED" : "LOST (the rack's location unread)"));
             return;
         }
         DC::RackRow in;

@@ -155,16 +155,19 @@ bool InGrabRange(void* wisp, void* target) {
     // The BP grab-arm overlap radius (killerwisp.json @5702: SphereOverlapActors radius 550).
     constexpr float kGrabRadius   = 550.0f;
     constexpr float kGrabRadiusSq = kGrabRadius * kGrabRadius;
-    const ue_wrap::FVector w = ue_wrap::engine::GetActorLocation(wisp);
-    const ue_wrap::FVector t = ue_wrap::engine::GetActorLocation(target);
+    // Never in range on an unknown position: this gates the kill's grab.
+    ue_wrap::FVector w{}, t{};
+    if (!ue_wrap::engine::TryGetActorLocation(wisp, w) || !ue_wrap::engine::TryGetActorLocation(target, t))
+        return false;
     const float dx = w.X - t.X, dy = w.Y - t.Y, dz = w.Z - t.Z;
     return (dx * dx + dy * dy + dz * dz) <= kGrabRadiusSq;
 }
 
 float DistanceTo(void* wisp, void* target) {
     if (!wisp || !target) return 3.4e38f;
-    const ue_wrap::FVector w = ue_wrap::engine::GetActorLocation(wisp);
-    const ue_wrap::FVector t = ue_wrap::engine::GetActorLocation(target);
+    ue_wrap::FVector w{}, t{};   // unread: as far as no target
+    if (!ue_wrap::engine::TryGetActorLocation(wisp, w) || !ue_wrap::engine::TryGetActorLocation(target, t))
+        return 3.4e38f;
     const float dx = w.X - t.X, dy = w.Y - t.Y, dz = w.Z - t.Z;
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
@@ -180,8 +183,9 @@ bool CanReach(void* wisp, void* target) {
     // canReach parity: the native gate traces lib_obj.obj_statDyn = {WorldStatic, WorldDynamic} --
     // exactly trace::LineBlockedStatDyn's set, the primitive this shares with nameplate occlusion.
     // Unresolvable (-1) -> blocked, the native default.
-    const ue_wrap::FVector start = ue_wrap::engine::GetActorLocation(wisp);
-    const ue_wrap::FVector end   = ue_wrap::engine::GetActorLocation(target);
+    ue_wrap::FVector start{}, end{};   // unread: blocked, as unresolvable is
+    if (!ue_wrap::engine::TryGetActorLocation(wisp, start) || !ue_wrap::engine::TryGetActorLocation(target, end))
+        return false;
     return ue_wrap::trace::LineBlockedStatDyn(wisp, start, end) == 0;
 }
 

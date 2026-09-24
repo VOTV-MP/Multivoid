@@ -166,7 +166,10 @@ void Tick(coop::net::Session& s) {
         }
         const bool publish = s.TrashCarryPoseTurn(it->eid, /*ahead=*/true) != coop::net::PoseTurn::Wait;
         if (it->flying && !publish) { ++it; continue; }   // a free body between its turns: nothing to read
-        const ue_wrap::FVector loc = E::GetActorLocation(it->clump);
+        // The hold target below needs no clump position; the lag metric and the pose do, and an
+        // unreadable clump gives neither this tick.
+        ue_wrap::FVector loc{};
+        const bool locRead = E::TryGetActorLocation(it->clump, loc);
         if (!it->flying) {
             // The hold point: the puppet's camera + synced aim * grabLen, where the remote player
             // looks, with the grab's orientation carried round by the view. It goes to the puppet's
@@ -179,24 +182,28 @@ void Tick(coop::net::Session& s) {
             // its height: measured 19 cm higher than the camera the game holds from.
             void* puppet = rp->GetActor();
             ue_wrap::FVector eye;
-            if (!E::ReadMainPlayerCameraLocation(puppet, eye)) eye = rp->GetHeadPosition();
-            const ue_wrap::FVector fwd = rp->GetSyncedAimDirection();
-            const ue_wrap::FVector hold{ eye.X + fwd.X * kGrabLenCm,
-                                         eye.Y + fwd.Y * kGrabLenCm,
-                                         eye.Z + fwd.Z * kGrabLenCm };
-            const Quat q = Mul(FromRotator(rp->GetSyncedAimRotation()), it->inView);
-            E::SetPhysicsHandleTarget(E::ReadMainPlayerGrabHandle(puppet), hold,
-                                      E::QuatToRotator(q.x, q.y, q.z, q.w));
-            const float lx = loc.X - hold.X, ly = loc.Y - hold.Y, lz = loc.Z - hold.Z;
-            const float lag = std::sqrt(lx * lx + ly * ly + lz * lz);
-            if (lag > it->maxLagCm) it->maxLagCm = lag;
+            // With neither the camera nor the head readable the handle keeps its last target.
+            if (E::ReadMainPlayerCameraLocation(puppet, eye) || rp->TryGetHeadPosition(eye)) {
+                const ue_wrap::FVector fwd = rp->GetSyncedAimDirection();
+                const ue_wrap::FVector hold{ eye.X + fwd.X * kGrabLenCm,
+                                             eye.Y + fwd.Y * kGrabLenCm,
+                                             eye.Z + fwd.Z * kGrabLenCm };
+                const Quat q = Mul(FromRotator(rp->GetSyncedAimRotation()), it->inView);
+                E::SetPhysicsHandleTarget(E::ReadMainPlayerGrabHandle(puppet), hold,
+                                          E::QuatToRotator(q.x, q.y, q.z, q.w));
+                if (locRead) {
+                    const float lx = loc.X - hold.X, ly = loc.Y - hold.Y, lz = loc.Z - hold.Z;
+                    const float lag = std::sqrt(lx * lx + ly * ly + lz * lz);
+                    if (lag > it->maxLagCm) it->maxLagCm = lag;
+                }
+            }
         }
         // STREAM the clump's CURRENT pose (hand pos when carrying, physics pos when flying) to ALL peers so
         // every client renders the carry + the throw arc. Host-authoritative + host-originated (the relay
         // can't echo to the grabber; a client drives only slot 0). eid+ctx keyed -> the receiver's per-eid
         // ActiveDrive interp; ctx is the carry generation (stale-pose guard on the client). A clump a
         // player moved, carried or thrown, goes ahead of the ones a broom set rolling.
-        if (publish) {
+        if (publish && locRead) {
             const ue_wrap::FRotator rot = E::GetActorRotation(it->clump);
             coop::net::TrashClumpPoseSnapshot snap{};
             snap.eid   = it->eid;

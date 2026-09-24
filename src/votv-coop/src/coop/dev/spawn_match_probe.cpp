@@ -67,9 +67,9 @@ void NoteFuzzyScan(uint32_t wireEid, const std::wstring& wireKey, const std::wst
     if (trace.excludedRejects > 0) ++g_scansExcluded;
     UE_LOGW("spawn_match_probe: SCAN eid=%u key='%ls' cls='%ls' row='%ls' at=(%.1f,%.1f,%.1f) -- "
             "%zu candidate(s) in radius, %d class match(es) scanned, %d rejected on row name, "
-            "%d refused as hand-axis, nearest outside=%.1fcm",
+            "%d unreadable, %d refused as hand-axis, nearest outside=%.1fcm",
             wireEid, wireKey.c_str(), cls.c_str(), propName.c_str(), anchor.X, anchor.Y, anchor.Z,
-            n, trace.classMatches, trace.rowNameRejects, trace.excludedRejects,
+            n, trace.classMatches, trace.rowNameRejects, trace.unreadRejects, trace.excludedRejects,
             trace.nearestOutsideCm);
 
     // The candidate table. The scan takes candidates[0]; anything nearer below it is a choice the

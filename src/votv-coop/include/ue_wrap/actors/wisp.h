@@ -47,13 +47,14 @@ bool ReadState(void* wisp, State& out);
 // True if `target` is within the wisp's grab radius, the graph's 550-unit sphere overlap. The
 // host synthesises the grab trigger against the wisp's actual Target with this, because the
 // graph's own grab flag arms only on player 0 within that radius, so a client puppet the host
-// is far from is chased but never grabbed. A pure distance read. False on null. Game thread.
+// is far from is chased but never grabbed. A pure distance read. False on null or an unreadable
+// position. Game thread.
 bool InGrabRange(void* wisp, void* target);
 
 // The distance from the wisp to the target in cm (FLT_MAX on null or a dead read). The
 // two-stage close uses it against the contact radius before firing the synthetic grab, so the
 // wisp visibly swoops onto its victim first; the native capture fires at move-to acceptance,
-// not at the arm radius. Game thread.
+// not at the arm radius. 3.4e38 (no target) on null or an unreadable position. Game thread.
 float DistanceTo(void* wisp, void* target);
 
 // A raw write of the wisp's Target. The graph has no setter; its scan writes the field inline,
@@ -66,8 +67,8 @@ bool WriteTarget(void* wisp, void* pawnOrNull);
 // against the static-and-dynamic object set; reachable means the trace did not hit. Pawns are
 // not in the set, so neither body self-blocks. The native test hard-codes player 0 as the
 // trace end, so it cannot answer for a puppet; this can. False (blocked) on any resolution
-// failure, since the caller treats unreachable as not attackable, the native default. Game
-// thread.
+// failure or an unreadable position, since the caller treats unreachable as not attackable, the
+// native default. Game thread.
 bool CanReach(void* wisp, void* target);
 
 // The world location of the wisp body mesh's grab socket, the native victim hold point. The

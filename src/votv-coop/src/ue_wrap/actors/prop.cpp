@@ -468,8 +468,10 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outS
         const bool heavy = IsHeavy(obj);
         if (heavy) ++stats.totalHeavy;
         if (wantHeavy && !heavy) continue;
-        // The location through the blueprint-callable getter, which works for any subclass.
-        const FVector loc = engine::GetActorLocation(obj);
+        // The location through the blueprint-callable getter, which works for any subclass; an
+        // unreadable one is never the nearest.
+        FVector loc{};
+        if (!engine::TryGetActorLocation(obj, loc)) continue;
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;
         const float dz = loc.Z - anchor.Z;
@@ -615,7 +617,11 @@ void* FindNearbySameClass(const std::wstring& className,
             if (outTrace) ++outTrace->rowNameRejects;
             continue;
         }
-        const FVector loc = engine::GetActorLocation(obj);
+        FVector loc{};
+        if (!engine::TryGetActorLocation(obj, loc)) {
+            if (outTrace) ++outTrace->unreadRejects;
+            continue;
+        }
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;
         const float dz = loc.Z - anchor.Z;
@@ -663,7 +669,8 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist)
         if (!WalksToBase(R::ClassOf(obj), chipBase)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDOs
-        const FVector loc = engine::GetActorLocation(obj);
+        FVector loc{};
+        if (!engine::TryGetActorLocation(obj, loc)) continue;   // unreadable: never the nearest
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;
         const float dz = loc.Z - anchor.Z;

@@ -280,7 +280,8 @@ bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
     // passed to every dish.
     const auto* la = reinterpret_cast<const float*>(
         reinterpret_cast<uint8_t*>(pick) + g_offLookAt);
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(pick);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(pick, loc)) return false;
     out.X = la[0] - loc.X;
     out.Y = la[1] - loc.Y;
     out.Z = la[2] - loc.Z;

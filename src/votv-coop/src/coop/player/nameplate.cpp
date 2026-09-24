@@ -113,7 +113,7 @@ void Update() {
             if (!lp) break;
             pc = E::GetController(lp);
             if (!pc) break;
-            viewer = E::GetActorLocation(lp);
+            if (!E::TryGetActorLocation(lp, viewer)) break;   // no viewer position: an empty snapshot, as no player
             // The occlusion trace starts at the actual VIEW camera (correct in freecam /
             // vehicle cams too); the actor's eye height is the fallback if no camera
             // manager is live yet (a zeroed read this early is the menu/possess window).
@@ -122,7 +122,8 @@ void Update() {
                 camera = ue_wrap::FVector{viewer.X, viewer.Y, viewer.Z + 60.f};
         }
 
-        const ue_wrap::FVector head = p->GetHeadPosition();
+        ue_wrap::FVector head{};
+        if (!p->TryGetHeadPosition(head)) continue;   // no anchor: no plate this pass
         ue_wrap::FVector2D screen{};
         const bool inFront = E::ProjectWorldToScreen(pc, head, screen, false);
 

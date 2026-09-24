@@ -124,10 +124,11 @@ void SpawnSecondPlayerWhenReady() {
             // A mainPlayer_C also exists at the menu (the preLoad world), at the origin; a puppet
             // spawned against it lands in the menu world, which the level load then destroys. Gate
             // on a non-origin location.
-            const ue_wrap::FVector p = ue_wrap::engine::GetActorLocation(local);
-            if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
-                if (diag) UE_LOGI("play[wait %d]: mainPlayer_C @ORIGIN (%.0f,%.0f,%.0f) -- waiting for real gameplay",
-                                  i, p.X, p.Y, p.Z);
+            ue_wrap::FVector p{};
+            const bool pRead = ue_wrap::engine::TryGetActorLocation(local, p);   // unread proves no gameplay either
+            if (!pRead || std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
+                if (diag) UE_LOGI("play[wait %d]: mainPlayer_C @ORIGIN (%.0f,%.0f,%.0f)%s -- waiting for real gameplay",
+                                  i, p.X, p.Y, p.Z, pRead ? "" : " (unread)");
                 state->store(1);  // still the origin menu player; wait for gameplay
                 return;
             }
@@ -457,16 +458,18 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                     }
                 }
                 if (void* lp = coop::players::Registry::Get().Local()) {
-                    const auto loc = ue_wrap::engine::GetActorLocation(lp);
+                    ue_wrap::FVector loc{};
+                    const bool locRead = ue_wrap::engine::TryGetActorLocation(lp, loc);
                     const auto rot = ue_wrap::engine::GetActorRotation(lp);
                     ue_wrap::FRotator cRot{};
                     if (void* c = ue_wrap::engine::GetController(lp)) cRot = ue_wrap::engine::GetControlRotation(c);
-                    UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f) actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
-                            loc.X, loc.Y, loc.Z, rot.Yaw, cRot.Pitch, cRot.Yaw);
+                    UE_LOGI("pos diag: local actor=(%.0f,%.0f,%.0f)%s actorYaw=%.1f ctrl(P=%.1f Y=%.1f)",
+                            loc.X, loc.Y, loc.Z, locRead ? "" : " (unread)", rot.Yaw, cRot.Pitch, cRot.Yaw);
                 }
                 if (coop::puppet_drive::Puppet(1).valid()) {
-                    const auto p = coop::puppet_drive::Puppet(1).GetLocation();
-                    UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
+                    ue_wrap::FVector p{};
+                    const bool pRead = coop::puppet_drive::Puppet(1).TryGetLocation(p);
+                    UE_LOGI("pos diag: puppet world=(%.0f,%.0f,%.0f)%s", p.X, p.Y, p.Z, pRead ? "" : " (unread)");
                 }
             });
         }

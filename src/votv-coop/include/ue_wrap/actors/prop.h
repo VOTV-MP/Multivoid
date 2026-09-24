@@ -231,6 +231,7 @@ struct NearbyTrace {
     std::vector<NearbyCandidate> candidates;        // accepted, in scan order
     int32_t classMatches       = 0;                 // live, non-CDO actors of the class, any distance
     int32_t rowNameRejects     = 0;                 // ... rejected because the list_props row differed
+    int32_t unreadRejects      = 0;                 // ... skipped because its location could not be read
     int32_t excludedRejects    = 0;                 // ... otherwise acceptable, but named by the caller
     float   nearestOutsideCm   = -1.f;              // nearest row-matching actor outside the radius, -1 if none
 };
