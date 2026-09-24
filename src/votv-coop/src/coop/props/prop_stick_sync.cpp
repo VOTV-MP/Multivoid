@@ -194,9 +194,8 @@ sg::Verdict OnUnstickPre(const sg::Call& c) {
     return sg::Verdict::Run;
 }
 
-// The prop by key, its eid as the fallback, and its pose, for either edge. False when the prop has
-// neither key nor eid.
-// What a stick payload lacked when it could not be filled.
+// The prop by key, its eid as the fallback, and its pose, for either edge; the result says what it
+// lacked when it could not be filled.
 enum class Fill { Ok, NoIdentity, NoPosition };
 
 Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW) {

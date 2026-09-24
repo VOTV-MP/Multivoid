@@ -55,6 +55,7 @@ struct Driven {
     bool                  claimed  = true;   // false: coasting after the verb let go
     bool                  everSent = false;  // a pose of this drive went out; sentLoc/sentRot hold the last
     bool                  resend   = false;  // a joiner needs the pose again, moved or not
+    bool                  unreadSaid = false;  // the unreadable-location line went out for this row
     bool                  dead     = false;  // closed this tick; erased after the pass
     ue_wrap::FVector      sentLoc{};
     ue_wrap::FRotator     sentRot{};
@@ -254,17 +255,18 @@ void Tick(coop::net::Session& s) {
         // A pose read before its turn would be overwritten before any send.
         const coop::net::PoseTurn turn = s.PropDrivePoseTurn(d.eid);
         if (turn == coop::net::PoseTurn::Wait) continue;
-        // A failed read is a dispatch that faulted, which the next tick repeats: the prop cannot be
-        // streamed, so its stream ends as a death's does, at the last pose the receivers have.
+        // A failed read is a dispatch that faulted, which the next tick repeats: nothing is seen to
+        // move, so the rest clock runs as for a prop at rest -- a claimed row drops to the slow cadence
+        // and a coasting one ends at the last pose it sent. Ending a claimed row here would not hold:
+        // the claim lane's next pass re-opens it.
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(actor, loc)) {
-            if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "location unreadable");
-            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location could not be read; the stream ends", d.eid);
-            d.dead = true;
-            continue;
+        const bool locRead = E::TryGetActorLocation(actor, loc);
+        if (!locRead && !d.unreadSaid) {
+            d.unreadSaid = true;
+            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location could not be read; it streams nothing and rests", d.eid);
         }
-        const ue_wrap::FRotator rot = E::GetActorRotation(actor);
-        if (Moved(d, loc, rot)) {
+        const ue_wrap::FRotator rot = locRead ? E::GetActorRotation(actor) : ue_wrap::FRotator{};
+        if (locRead && Moved(d, loc, rot)) {
             coop::net::PropPoseSnapshot pp{};
             pp.key       = d.key;
             pp.elementId = d.eid;
@@ -289,7 +291,8 @@ void Tick(coop::net::Session& s) {
         }
         if (now - d.lastMoveMs >= kRestMs) {
             if (!d.claimed) {
-                SendEnd(s, d, actor, loc, rot, "rested");
+                if (locRead)         SendEnd(s, d, actor, loc, rot, "rested");
+                else if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "rested");
                 d.dead = true;
                 continue;
             }

@@ -473,9 +473,9 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
             const bool settledRead = reread && ue_wrap::engine::TryGetActorLocation(ls.pileActor, settled);
             if (!settledRead && !ls.fallbackKnown) {
                 // Neither the settled pile nor the thunk's clump could be placed: no land convert goes
-                // out, and the carry closes.
+                // out, and the settle closes (with the carry, if one is open).
                 UE_LOGW("[TRASH-CH] HOST LAND COMMIT eid=%u -- no readable transform (the pile %s, the clump "
-                        "unread at the thunk); carry closed with no convert", static_cast<unsigned>(it->first),
+                        "unread at the thunk); settle closed with no convert", static_cast<unsigned>(it->first),
                         reread ? "unread" : "not live");
                 g_carry.erase(it->first);
                 ClearHeldBy(it->first);

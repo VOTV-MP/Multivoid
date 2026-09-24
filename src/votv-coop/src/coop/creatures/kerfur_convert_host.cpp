@@ -335,7 +335,7 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         // death-watch's last live pose of it, and a kerfur never placed while alive is refused.
         ue_wrap::FVector pos0{};
         if (!ue_wrap::engine::TryGetActorLocation(actor, pos0) &&
-            !coop::kerfur_convert::LastLivePose(payload.elementId, pos0.X, pos0.Y, pos0.Z)) {
+            !coop::kerfur_convert::LastLivePose(payload.elementId, actor, pos0.X, pos0.Y, pos0.Z)) {
             UE_LOGW("kerfur_convert: turn_off request eid=%u from slot %u refused -- the kerfur has no readable or "
                     "last live pose for the converge", payload.elementId, senderPeerSlot);
             return;
@@ -362,7 +362,7 @@ void OnConvertRequest(const coop::net::KerfurConvertPayload& payload,
         // K2_DestroyActor's the prop (position continuity for the converge).
         ue_wrap::FVector pos0{};   // the converge's fallback, as above
         if (!ue_wrap::engine::TryGetActorLocation(actor, pos0) &&
-            !coop::kerfur_convert::LastLivePose(payload.elementId, pos0.X, pos0.Y, pos0.Z)) {
+            !coop::kerfur_convert::LastLivePose(payload.elementId, actor, pos0.X, pos0.Y, pos0.Z)) {
             UE_LOGW("kerfur_convert: turn-on request eid=%u from slot %u refused -- the prop has no readable or "
                     "last live pose for the converge", payload.elementId, senderPeerSlot);
             return;

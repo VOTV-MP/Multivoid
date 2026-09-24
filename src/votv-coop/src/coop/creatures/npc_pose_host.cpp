@@ -165,7 +165,7 @@ void TickPoseStream() {
         coop::net::EntityPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
         ue_wrap::FVector loc{};
-        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) continue;  // no pose this tick; the next one reads again
+        if (!ue_wrap::engine::TryGetActorLocation(actor, loc)) continue;  // no pose this tick
         const auto rot = ue_wrap::engine::GetActorRotation(actor);
         const auto vel = ue_wrap::engine::GetActorVelocity(actor);
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;

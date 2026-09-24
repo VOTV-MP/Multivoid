@@ -72,9 +72,9 @@ bool TryAdoptFreshKerfurProp(void* actor);
 // host declines (no wire identity to converge). Game thread, the destroy seam.
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
-// The last position the death-watch read for kerfur form `eid` while it lived; false when it never
-// read one. Game thread.
-bool LastLivePose(uint32_t eid, float& x, float& y, float& z);
+// The last position the death-watch read for kerfur form `eid` while `actor` was its live form; false
+// when it never read one for that generation. Game thread.
+bool LastLivePose(uint32_t eid, void* actor, float& x, float& y, float& z);
 
 // Clear per-session state (the poll watch and its throttle) and fan the disconnect to the
 // client and host halves (parked ghosts; the request bracket).

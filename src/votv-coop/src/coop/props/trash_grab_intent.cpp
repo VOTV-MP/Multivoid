@@ -190,6 +190,8 @@ static void Refuse(coop::net::Session& s, uint8_t slot, uint32_t eid, uint16_t r
     s.SendReliableToSlot(slot, coop::net::ReliableKind::GrabRefused, &p, sizeof(p));
 }
 
+static void LetGo(uint32_t eid, void* puppet, void* clump);   // below: the one release of a puppet-held clump
+
 void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t senderSlot) {
     if (eid == 0u || eid == coop::element::kInvalidId) return;
     // Gate 1, the door can-open analog: already carrying means mid-hold, so deny. Every refusal
@@ -350,7 +352,7 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
         if (!hlocRead) {
             UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- neither the clump nor the pile before it could be read; "
                     "the puppet's handle lets go", eid, senderSlot);
-            ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(puppet, clump);
+            LetGo(eid, puppet, clump);
             Refuse(s, senderSlot, eid, reqId, coop::net::GrabRefusedReason::NoClump);
             return;
         }

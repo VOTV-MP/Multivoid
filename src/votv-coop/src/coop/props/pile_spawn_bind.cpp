@@ -315,7 +315,10 @@ void LogCensus() {
         const bool isBound = coop::prop_element_tracker::IsBoundMirrorNative(o);
         if (isBound) ++bound;
         ue_wrap::FVector loc{};
-        if (!ue_wrap::engine::TryGetActorLocation(o, loc)) { ++unread; continue; }   // counted, in no band
+        if (!ue_wrap::engine::TryGetActorLocation(o, loc)) {   // counted, in no band and no one's nearest
+            if (!isBound) ++unread;
+            continue;
+        }
         seen.push_back({loc.X, loc.Y, loc.Z, isBound});
     }
     const int orphan = totalLive - bound;
@@ -343,7 +346,7 @@ void LogCensus() {
     }
     UE_LOGI("[PILE-CENSUS] %d live native trash actor(s), piles and clumps (of %d indexed at the burst): %d BOUND to a host "
             "eid, %d orphan -- le5=%d (near-miss) 5_30=%d (ambiguous) gt30=%d (moved/true orphan) "
-            "noBound=%d (nothing of the host's nearby) unread=%d (no position, in no band)",
+            "noBound=%d (nothing of the host's nearby) unread=%d (orphans with no position, in no band)",
             totalLive, g_pileIndexBuiltCount, bound, orphan, le5, mid, gt30, none, unread);
 }
 

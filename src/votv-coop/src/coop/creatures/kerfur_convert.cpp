@@ -142,7 +142,7 @@ void RefreshWatch(uint32_t eid, void* actor) {
 
 // Host: a kerfur NPC that died with no pose read while it lived. Its death is retired as a plain NPC
 // death (the element released, EntityDestroy to every peer), since a conversion could not be placed.
-// A failed read is a dispatch that faulted, so the actor was never a kerfur the watch could see.
+// A failed read is a dispatch that faulted, so the watch never read a pose for this kerfur.
 void RetireUnplacedKerfurNpc(coop::element::ElementId eid, void* actor) {
     UE_LOGW("kerfur_convert: host NPC eid=%u had no readable pose alive -- retired as a plain death",
             static_cast<unsigned>(eid));
@@ -270,14 +270,16 @@ void PollKerfurConversions() {
             if (placed) coop::kerfur_convert_client::ClaimConversionGhosts(eid, /*wantNpc=*/true, lx, ly, lz);
             else UE_LOGW("kerfur_convert: eid=%u had no readable pose alive -- its local ghost is not claimed", eid);
         } else if (isHost) {
-            // The host's prop element is drained with its death at the destroy seam, which relays it;
-            // with no pose there is nothing to converge.
-            if (placed)
+            // A prop never placed while alive has no pose to converge at: the reaper drains its element
+            // and relays the destroy, and its kerfur record is released here, a plain death.
+            if (placed) {
                 coop::kerfur_convert_host::ConvergeAfterConversion(actor, el->GetInternalIdx(),
                                         static_cast<coop::element::ElementId>(eid), /*toProp=*/0,
                                         lx, ly, lz);
-            else
-                UE_LOGW("kerfur_convert: host prop eid=%u had no readable pose alive -- not converged", eid);
+            } else {
+                UE_LOGW("kerfur_convert: host prop eid=%u had no readable pose alive -- released as a plain death", eid);
+                coop::kerfur_entity::ReleaseKerfurForEid(el->GetId());
+            }
         }
         it->second.handled = true;
     }
@@ -484,7 +486,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     // which-successor path: GetActorLocation on the dying prop reads near the origin, so a
     // proximity walk from it rejected the real successor.
     void* freshNpc = nullptr;
-    float bestD2 = 0.f;  // real dist filled in on a capture HIT below; only read for the CLIENT log
+    float bestD2 = 0.f;  // real dist filled in on a capture HIT below; read for the logs only
     bool distRead = false;
     {
         auto cap = coop::kerfur_form_assembler::ConsumeCapturedForm(/*wantNpc=*/true);
@@ -557,7 +559,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     ue_wrap::FVector nloc{};
     if (!ue_wrap::engine::TryGetActorLocation(freshNpc, nloc)) {
         const auto w = g_kerfurWatch.find(static_cast<uint32_t>(dyingEid));
-        if (w == g_kerfurWatch.end() || !w->second.posKnown) {
+        if (w == g_kerfurWatch.end() || !w->second.posKnown || w->second.actor != actor) {
             UE_LOGW("kerfur_convert: destroy-edge converge -- the captured NPC %p's location could not be read and "
                     "the prop has no last live pose; generic destroy relay proceeds for prop eid=%u",
                     freshNpc, static_cast<unsigned>(dyingEid));
@@ -587,9 +589,9 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     return true;
 }
 
-bool LastLivePose(uint32_t eid, float& x, float& y, float& z) {
+bool LastLivePose(uint32_t eid, void* actor, float& x, float& y, float& z) {
     const auto it = g_kerfurWatch.find(eid);
-    if (it == g_kerfurWatch.end() || !it->second.posKnown) return false;
+    if (it == g_kerfurWatch.end() || !it->second.posKnown || it->second.actor != actor) return false;
     x = it->second.x; y = it->second.y; z = it->second.z;
     return true;
 }

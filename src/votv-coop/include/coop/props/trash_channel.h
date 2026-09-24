@@ -46,8 +46,8 @@ coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::El
 // churn latch, the land settle and the termination pass -- so the roll ends on the same land as a
 // throw. A pile taken inside its own land settle folds as churn instead, this clump carrying the
 // lane on. NoCertificate when there is none: a hand edge consumed it first, or the clump died.
-// Unplaceable when the clump's location cannot be read: nothing opens, and the certificate stays for
-// the birth-orphan express. Game thread.
+// Unplaceable when the clump's location cannot be read off the re-grab fold (which needs no position):
+// nothing opens, and the certificate stays for the birth-orphan express. Game thread.
 enum class BornCarry { Opened, NoCertificate, Unplaceable };
 BornCarry OpenBornCarry(coop::net::Session& s, void* clump, const char* why);
 
