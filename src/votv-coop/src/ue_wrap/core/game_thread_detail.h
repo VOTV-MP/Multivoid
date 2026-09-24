@@ -5,9 +5,9 @@
 // The two TUs split along one concept boundary. pe_detour.cpp is the INTERPOSITION MECHANISM: the
 // MinHook install, the detour body, the transparent bypass, the SEH crash firewalls and
 // absorbed-fault localization, the re-entrancy depth probe and the self-timing instrumentation.
-// game_thread.cpp is the DISPATCHER SERVICES the detour drives: the observer, interceptor and
-// name-diagnostic registries with their Bloom presence probes, and the posted-task pump with its
-// spawn-refusal drain gate.
+// game_thread.cpp is the DISPATCHER SERVICES the detour drives: the observer and interceptor
+// registries with their Bloom presence probes, and the posted-task pump with its spawn-refusal
+// drain gate.
 //
 // HOT-PATH CONTRACT: the detour fires on EVERY ProcessEvent dispatch, measured at 85-100k a second,
 // so the split must add no per-dispatch cost. The fast REJECTS therefore stay inline in this

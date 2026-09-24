@@ -1,5 +1,5 @@
 // ue_wrap/core/game_thread.cpp -- the dispatcher services the ProcessEvent detour drives: the
-// observer, interceptor and name-diagnostic registries (with their Bloom presence probes) and
+// observer and interceptor registries (with their Bloom presence probes) and
 // the posted-task pump (with the spawn-refusal drain gate). The interposition mechanism itself
 // (the hook install, the detour body, the bypass, the SEH firewalls, the depth probe, the perf
 // instrumentation) lives in pe_detour.cpp; the private seam is game_thread_detail.h, whose
@@ -33,8 +33,6 @@ std::atomic<uint64_t> g_intcBloom[kBloomWords]{};
 std::atomic<int> g_interceptorActive{0};
 std::atomic<int> g_postObserverActive{0};
 std::atomic<int> g_preObserverActive{0};
-// The call-trace flag: when true, the detour logs every UFunction dispatch. A one-shot probe
-// for blueprint call chains.
 // The lock-free emptiness probe. The detour runs on every game-thread ProcessEvent dispatch
 // (about 85k per second, measured) and once took the queue mutex just to test emptiness, a
 // locked read-modify-write on the hottest path in the program, for a queue that is empty

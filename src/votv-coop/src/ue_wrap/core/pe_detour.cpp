@@ -1,8 +1,8 @@
 // ue_wrap/core/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
 // the detour body, the transparent bypass, the SEH crash firewalls with fault localisation,
-// the re-entrancy depth probe and the perf self-timing. What runs on a dispatch (the observer,
-// interceptor and name-diagnostic registries, the posted-task pump) is game_thread.cpp's; the
-// private seam is game_thread_detail.h, whose hot-path rejects stay inline there.
+// the re-entrancy depth probe and the perf self-timing. What runs on a dispatch (the observer and
+// interceptor registries, the posted-task pump) is game_thread.cpp's; the private seam is
+// game_thread_detail.h, whose hot-path rejects stay inline there.
 
 #include "ue_wrap/core/game_thread.h"
 
@@ -13,6 +13,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/pe_diag.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <windows.h>
 
@@ -163,6 +164,31 @@ int    g_avSiteNext = 0;
 // delta of it around the one dispatch it makes fault.
 thread_local uint32_t t_absorbedFaults = 0;
 
+// A stack overflow passes on, as TaskFaultFilter passes it: the guard page is gone for the thread.
+int SuspectReadFilter(unsigned long code) {
+    return code == EXCEPTION_STACK_OVERFLOW ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;
+}
+
+// The receiver's class name, for the fault line: a receiver the engine faulted on is suspect, so
+// every raw read runs under SEH -- its class pointer, that class's slot, whose pointer and flags
+// must still say a live class, and the class's FName, copied out. Rendering an FName taken from a
+// live class is then the engine's own table lookup. False otherwise.
+bool ClassNameOfSuspect(void* self, reflection::FName* out) {
+    __try {
+        const auto* obj = static_cast<const uint8_t*>(self);
+        void* cls = *reinterpret_cast<void* const*>(obj + profile::off::UObject_ClassPrivate);
+        if (!cls) return false;
+        const auto* c = static_cast<const uint8_t*>(cls);
+        const int32_t idx = *reinterpret_cast<const int32_t*>(c + profile::off::UObject_InternalIndex);
+        if (reflection::ObjectAt(idx) != cls) return false;
+        if (reflection::SlotFlags(idx) & reflection::slot_flags::Dying) return false;
+        *out = *reinterpret_cast<const reflection::FName*>(c + profile::off::UObject_NamePrivate);
+        return true;
+    } __except (SuspectReadFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+
 void LogObserverAv(void* function, void* self, const char* phase) {
     // Find or claim a slot; linear over 16, on a fault only.
     AvSite* site = nullptr;
@@ -192,9 +218,15 @@ void LogObserverAv(void* function, void* self, const char* phase) {
 
     const auto fname = reflection::NameOf(function);
     const std::wstring nameStr = reflection::ToString(fname);
-    UE_LOGE("game_thread: PE %s-callback AV caught -- function='%ls' (%p) self=%p; "
+    // The receiver's class names what the dispatch was handed, and `ours` whether one of our own
+    // CallFunction dispatches encloses this one; neither names which of our callers it was.
+    reflection::FName clsName{};
+    const std::wstring clsStr =
+        (self && ClassNameOfSuspect(self, &clsName)) ? reflection::ToString(clsName) : L"<unreadable>";
+    UE_LOGE("game_thread: PE %s-callback AV caught -- function='%ls' (%p) self=%p class='%ls' ours=%d; "
             "fault code=0x%08lX ip=%s access=%p; absorbing, process continues",
-            phase, nameStr.c_str(), function, self,
+            phase, nameStr.c_str(), function, self, clsStr.c_str(),
+            reflection::InCoopDispatch() ? 1 : 0,
             t_lastTaskFault.code, D::FormatModuleRva(t_lastTaskFault.faultingIP),
             t_lastTaskFault.accessAddr);
 }
@@ -252,8 +284,9 @@ void MaybeWarnPeDepth(void* self, void* function) {
 }
 
 // The inner detour body, with every C++ unwind (lock guards, wstrings); the SEH-only outer
-// frame below catches any fault in it (callbacks, pumped tasks, the name diagnostics, the
-// ToString allocations) and logs it instead of crashing the engine.
+// frame below catches any fault in it that no inner guard took (the engine's own dispatch through
+// the trampoline, the depth warning's name reads, the pump's plumbing, the registry walks) and logs
+// it instead of crashing the engine. Callbacks and posted tasks carry guards of their own.
 void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params) {
     const PeDepthScope depthScope;      // trivial ++ (constructed BEFORE the fallible warn)
     MaybeWarnPeDepth(self, function);
@@ -337,11 +370,10 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     }
 }
 
-// The SEH-only outer detour: no C++ destructors, so __try is legal. It catches whatever
-// propagates out of Impl (a pumped task, the name diagnostics, the trace log, an observer that
-// bypassed the inner wrappers, the engine's own dispatch dereferencing a stale object), logs the
-// function and self, and returns normally so the engine continues. The load-bearing crash
-// firewall for everything downstream.
+// The SEH-only outer detour: no C++ destructors, so __try is legal. It catches whatever fault
+// propagates out of Impl, above all the engine's own dispatch reading through a stale or misfiled
+// receiver, and the caller counts and logs it; the call then returns normally so the engine
+// continues. The load-bearing crash firewall for everything downstream.
 int RunDetourSEH(void* self, void* function, void* params) {
     __try {
         ProcessEventDetourImpl(self, function, params);
@@ -394,9 +426,11 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     if (whole) ::QueryPerformanceCounter(&w0);
 
     if (RunDetourSEH(self, function, params) != 0) {
-        // Impl crashed: logged, and the call returns without forwarding, since the engine's caller
-        // expects ProcessEvent to return.
+        // Impl crashed: counted, so a CallFunction it happened under reports failure rather than the
+        // parameters it left untouched, and logged; the call returns without forwarding, since the
+        // engine's caller expects ProcessEvent to return.
         ++t_absorbedFaults;
+        reflection::NoteDispatchFault(self, function);
         LogObserverAv(function, self, "detour-outer");
     }
 

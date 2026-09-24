@@ -1,6 +1,7 @@
 // ue_wrap/core/reflection_call.cpp -- the one path our code calls a UFunction through:
-// CallFunction and what it keeps per call, the coop-origin latch and the call census. Declared in
-// reflection.h; which body an instance would run is reflection_dispatch.cpp's question.
+// CallFunction and what it keeps per call, the coop-origin latch, the call census and the frame
+// that says whether the dispatch it entered faulted. Declared in reflection.h; which body an
+// instance would run is reflection_dispatch.cpp's question.
 
 #include "ue_wrap/core/reflection.h"
 
@@ -73,15 +74,33 @@ bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount) {
     return *outFn != nullptr;
 }
 
+namespace {
+// The innermost CallFunction on this thread and whether the dispatch it entered faulted; the
+// frame lives on CallFunction's stack, and a scope restores the one it hid.
+struct CallFrame { void* object; void* function; bool faulted; };
+thread_local CallFrame* t_call = nullptr;
+struct CallFrameScope {
+    CallFrame* hidden;
+    explicit CallFrameScope(CallFrame* f) : hidden(t_call) { t_call = f; }
+    ~CallFrameScope() { t_call = hidden; }
+};
+}  // namespace
+
+void NoteDispatchFault(void* object, void* function) {
+    if (t_call && t_call->object == object && t_call->function == function) t_call->faulted = true;
+}
+
 bool CallFunction(void* object, void* function, void* params) {
     using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* params);
     const auto processEvent = reinterpret_cast<ProcessEventFn>(ProcessEventAddr());
     if (!processEvent || !object || !function) return false;
     g_coopCalls.fetch_add(1, std::memory_order_relaxed);
     if (g_callCensusOn.load(std::memory_order_relaxed)) NoteCoopCall(function);
+    CallFrame frame{object, function, false};
+    const CallFrameScope frameScope(&frame);
     CoopDispatchScope scope;
     processEvent(object, function, params);
-    return true;
+    return !frame.faulted;
 }
 
 }  // namespace ue_wrap::reflection
