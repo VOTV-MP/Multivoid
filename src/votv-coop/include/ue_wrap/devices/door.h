@@ -85,9 +85,10 @@ void SetActive(void* door, bool on);
 int ReadSensorOverlaps(void* door, void** out, int maxOut);
 
 // Where that sensor is: the box component's world centre and its scaled half-extent, through the
-// box's own GetScaledBoxExtent. The sensor is not the doorway: a player can stand in an open
-// doorway outside it, and the autoclose then closes the door on them as it does in single player.
-// False when the component or the call does not resolve. Game thread.
+// box's own GetScaledBoxExtent. The list and the box do not always agree: a player standing at the
+// box's centre with the door open was in no peer's list in two drill runs and in both in a third,
+// so a reader that needs the list reads the list. False when the component or the call does not
+// resolve. Game thread.
 bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 
 // The host-authoritative client suppression. A door re-drives its own state: when a swing ends

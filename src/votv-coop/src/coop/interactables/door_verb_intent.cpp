@@ -224,7 +224,6 @@ void Install(coop::net::Session* session) {
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
-    RegisterWatches();
     if (!g_announcedLive) {
         bool live = true;
         for (int i = 0; i < kWatchCount && live; ++i)

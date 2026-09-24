@@ -37,10 +37,11 @@ re-derives, is host-authoritative: the host's copy is the one that moves, and a 
 A client's own press, hit or pry of a door never runs on its copy: the script-body gate refuses the
 door's entry verb there and sends it to the host (`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
-the blackout clause, a swing already moving, the pry. The host's door then closes as a
-single-player door does, at the first of its five-second sensor checks that finds the doorway
-empty: the sensor holds every player in it, a client's puppet included. A device with no
-auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any peer's edge is the state.
+the blackout clause, a swing already moving, the pry. The host's door then closes by its own
+autoclose, at the first of its five-second checks that finds its sensor list empty, and a client's
+puppet counts in that list exactly when the client's own player counts in the client's own copy of
+it. A device with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any
+peer's edge is the state.
 
 ### What is inside a container
 

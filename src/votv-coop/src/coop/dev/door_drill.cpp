@@ -55,8 +55,8 @@ constexpr int   kCloseWaitMs = 15000;
 // The HIT phase: a held weapon's damage, a hit a player's swing apart, until the host's pry opens
 // the door or the hits run out. A hit moves the leaves toward open at an interpolation speed of
 // (damage / 25)^1.5 * 5 over a 0.01 s step, and the door opens once the right leaf is more than 90
-// from its open offset of 70 (door_C::addDamage, tools/bp_cpp.py): a fist's 10 needs about 27 hits,
-// 50 needs three.
+// from its open offset of 70 (door_C::addDamage, tools/bp_cpp.py): a 10-damage swing (the crowbar, a
+// mop, a broom; a player with nothing held does not swing) needs about 27 hits, 50 needs three.
 constexpr float kHitDamage   = 50.f;
 constexpr int   kHitMax      = 8;
 constexpr DWORD kHitEveryMs  = 700;
@@ -339,7 +339,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     UE_LOGI("[DOOR-DRILL] client CLOSE door=%ls: this copy closed=%d, %d ms after the walk away ended",
             pick->door.c_str(), closedMs >= 0 ? 1 : 0, closedMs);
 
-    // HIT: back at the approach point, a fist's hits until the host's pry opens the door. This copy
+    // HIT: back at the approach point, a weapon's hits until the host's pry opens the door. This copy
     // must not move under its own hits: each one is refused here and run on the host.
     auto again = std::make_shared<DR::DirectorGoal>();
     again->targetPos = toDoor->targetPos;

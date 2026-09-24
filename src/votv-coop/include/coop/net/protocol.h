@@ -804,7 +804,7 @@ enum class ReliableKind : uint8_t {
     // same verb on its own copy, where the door's body decides the press (its power gate and the
     // blackout clause, a swing already moving, the alienated branch) and the pry, and the result
     // reaches every peer as DoorState. A damage the client's player did not author is refused at
-    // the client and never sent: the host's own world runs that event. Trust: the door must be one
+    // the client and never sent: a world event is the host's to run. Trust: the door must be one
     // the host's door lane indexes and within the sender's reach, the verb and the damage are
     // range-checked, and a sender's verbs run no faster than a bounded rate from a bounded queue.
     // Never relayed. Late join: nothing to replay, since a verb the host has not run changed

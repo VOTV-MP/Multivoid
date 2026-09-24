@@ -3,8 +3,9 @@
 // the door's own entry verbs, which on a client become verbs the host runs
 // (coop/interactables/door_verb_intent):
 //   PRESS    -- presses the closed door; the host opens its copy and this copy follows.
-//   PRESENCE -- stands in the door's sensor box and stays: a remote player's puppet counts in the
-//               host door's own sensor, the list the game's autoclose reads, so the door stays open.
+//   PRESENCE -- stands at the centre of the door's sensor box and stays, while each peer reads
+//               whether its own sensor list -- the one the game's autoclose reads -- holds the
+//               player: the host's copy for the client's puppet, the client's for its own player.
 //   CLOSE    -- walks fifteen metres back along its route; the host's autoclose shuts the door
 //               within five seconds of its sensor emptying, and this copy follows.
 //   HIT      -- walks back to the approach point and hits the closed door with a held weapon's

@@ -13,7 +13,9 @@
 // told from a hit or a trigger, and a hit moves both panels before it ever reaches doorOpen.
 //
 // A damage the client's own player did not author (a creature, an explosion, the cheat menu) is
-// refused on the client without a send, since the host's own world runs that event on its copy.
+// refused on the client without a send: a world event is the host's to run. A client's creatures
+// are mirrors that run no AI; an explosion the client's own graph spawns is a birth the host should
+// author, and until it does, its hit on a door is lost here rather than moving this copy alone.
 // A door the lane does not index keeps its native verbs: the lane has no name for it.
 // MTA precedent: a client's vehicle entry is a request the server checks, its distance included,
 // and runs (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3018, Packet_Vehicle_InOut).
