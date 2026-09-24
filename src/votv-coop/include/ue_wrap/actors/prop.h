@@ -188,7 +188,7 @@ struct NearbyExclusion {
 };
 
 // The nearest Aprop_C derivative to `anchor`, or the nearest heavy one, by a GUObjectArray walk;
-// CDOs skipped, positions read through GetActorLocation. The cost is a ProcessEvent dispatch per
+// CDOs skipped, an unreadable position skipped. The cost is a ProcessEvent dispatch per
 // candidate (about 2,000 in a populated scene) through our own detour, so never per frame or
 // inside an observer; the autotest calls it once per grab routine.
 //

@@ -11,7 +11,7 @@
 
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/phys_mods.h"
-#include "ue_wrap/engine/engine.h"  // SpawnActor (the plug-dup REFUND) + GetActorLocation
+#include "ue_wrap/engine/engine.h"  // SpawnActor (the plug-dup REFUND) + TryGetActorLocation
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 

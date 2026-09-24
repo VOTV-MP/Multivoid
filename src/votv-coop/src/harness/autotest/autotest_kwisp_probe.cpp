@@ -60,9 +60,8 @@ void* FirstLiveKillerWisp() {
 }
 
 float Dist(void* a, void* b) {
-    if (!a || !b) return -1.f;
-    const ue_wrap::FVector va = E::GetActorLocation(a);
-    const ue_wrap::FVector vb = E::GetActorLocation(b);
+    ue_wrap::FVector va{}, vb{};
+    if (!a || !b || !E::TryGetActorLocation(a, va) || !E::TryGetActorLocation(b, vb)) return -1.f;   // no distance
     const float dx = va.X - vb.X, dy = va.Y - vb.Y, dz = va.Z - vb.Z;
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
@@ -82,17 +81,18 @@ void RunAutonomousKwispProbe() {
     // radius. POLL up to ~95 s more (first-launch shader compiles / a loaded machine can
     // push the client's world-up well past the 55 s settle, and a re-run on a fixed
     // sleep aborted at exactly this line).
-    struct Setup { void* host = nullptr; void* puppet = nullptr; bool ok = false; };
+    struct Setup { void* host = nullptr; void* puppet = nullptr; bool ok = false; bool unread = false; };
     auto setup = std::make_shared<Setup>();
     // 64 x 3 s (~3.2 min past the settle): a cold FRESH-client join = world load + 21 MB
     // save transfer + reload, and runs have blown a ~96 s window twice.
-    for (int attempt = 0; attempt < 64 && !setup->ok; ++attempt) {
+    for (int attempt = 0; attempt < 64 && !setup->ok && !setup->unread; ++attempt) {
         RunGT([setup](std::atomic<int>& d) {
             setup->host = LocalPlayerPawn();
             coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
             setup->puppet = rp ? rp->GetActor() : nullptr;
             if (setup->host && setup->puppet && R::IsLive(setup->puppet)) {
-                const ue_wrap::FVector ploc = E::GetActorLocation(setup->puppet);
+                ue_wrap::FVector ploc{};
+                if (!E::TryGetActorLocation(setup->puppet, ploc)) { setup->unread = true; d.store(1); return; }
                 const ue_wrap::FVector away{ploc.X + 8000.f, ploc.Y, ploc.Z + 100.f};
                 const bool tp = E::TeleportTo(setup->host, away, ue_wrap::FRotator{0.f, 180.f, 0.f});
                 UE_LOGI("kwisp_probe: host teleported 8000u from the puppet (ok=%d) -- outside the "
@@ -101,7 +101,11 @@ void RunAutonomousKwispProbe() {
             }
             d.store(1);
         });
-        if (!setup->ok) ::Sleep(3000);
+        if (!setup->ok && !setup->unread) ::Sleep(3000);
+    }
+    if (setup->unread) {
+        UE_LOGW("kwisp_probe: VERDICT ABORT -- the puppet's location could not be read");
+        return;
     }
     if (!setup->ok) {
         UE_LOGW("kwisp_probe: VERDICT ABORT -- host pawn=%p puppet=%p (client never joined "

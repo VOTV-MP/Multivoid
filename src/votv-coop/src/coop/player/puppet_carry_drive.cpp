@@ -7,7 +7,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 #include "coop/props/trash_channel.h"     // IsCarrying / HasPendingSettle / CtxForEid / OnHolderGone
-#include "ue_wrap/engine/engine.h"          // GetActorLocation / GetActorRotation
+#include "ue_wrap/engine/engine.h"          // TryGetActorLocation / GetActorRotation
 #include "ue_wrap/engine/engine_component.h"   // SetComponentTickEnabled (the handle's own tick)
 #include "ue_wrap/engine/engine_mainplayer.h"  // ReadMainPlayerGrabHandle / SetPhysicsHandleTarget / camera
 #include "ue_wrap/core/log.h"

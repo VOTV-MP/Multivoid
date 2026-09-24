@@ -219,7 +219,9 @@ private:
             void* o = R::ObjectAt(i);
             if (!o || !R::IsLive(o) || !D::IsDoor(o)) continue;
             if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-            const float d = HorizDist(E::GetActorLocation(o), ctx.pos);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(o, at)) continue;   // unreadable: not the blocker
+            const float d = HorizDist(at, ctx.pos);
             if (d < bestDist) { bestDist = d; best = o; }
         }
         if (!best || bestDist > kDoorReachCm) return false;

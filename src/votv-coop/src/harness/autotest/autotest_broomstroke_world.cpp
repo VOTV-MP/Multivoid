@@ -174,7 +174,9 @@ bool EquipBroom(const char* who) {
             cls = R::FindClass(P::name::BroomClass);
         }
         if (!cls) { UE_LOGW("broom_drill: %s EQUIP -- the broom class did not load", who); d.store(1); return; }
-        ue_wrap::FVector at = E::GetActorLocation(player);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(player, at)) {
+            UE_LOGW("broom_drill: %s EQUIP -- the player's location could not be read", who); d.store(1); return; }
         at.X += 60.f;
         at.Z += 40.f;
         void* broom = E::BeginDeferredSpawn(cls, at, ue_wrap::FRotator{});
@@ -204,8 +206,8 @@ bool EquipBroom(const char* who) {
 void AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase) {
     RunGT([target, bodyTurnDeg](std::atomic<int>& d) {
         void* player = LocalPlayer();
-        if (!player) { d.store(1); return; }
-        const ue_wrap::FVector from = E::GetActorLocation(player);
+        ue_wrap::FVector from{};
+        if (!player || !E::TryGetActorLocation(player, from)) { d.store(1); return; }
         float ax = from.X - target.X, ay = from.Y - target.Y;
         const float h = std::sqrt(ax * ax + ay * ay);
         if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
@@ -233,11 +235,9 @@ bool LocalBody(ue_wrap::FVector& at, float& yawDeg) {
     auto out = std::make_shared<std::pair<ue_wrap::FVector, float>>(ue_wrap::FVector{}, 0.f);
     const bool found = RunGT([out](std::atomic<int>& d) {
         void* player = LocalPlayer();
-        if (player) {
-            out->first = E::GetActorLocation(player);
-            out->second = E::GetActorRotation(player).Yaw;
-        }
-        d.store(player ? 1 : 2);
+        const bool placed = player && E::TryGetActorLocation(player, out->first);
+        if (placed) out->second = E::GetActorRotation(player).Yaw;
+        d.store(placed ? 1 : 2);
     }) == 1;
     at = out->first;
     yawDeg = out->second;
@@ -337,10 +337,11 @@ bool Knock(uint32_t eid, const ue_wrap::FVector& velocity, const char* who, cons
     RunGT([eid, velocity, who, phase, ok](std::atomic<int>& d) {
         void* clump = ClumpOf(eid);
         const bool set = clump && E::SetActorRootPhysicsVelocity(clump, velocity, ue_wrap::FVector{});
-        const ue_wrap::FVector at = clump ? E::GetActorLocation(clump) : ue_wrap::FVector{};
-        UE_LOGI("broom_drill: %s %s KNOCK tick=%lu eid=%u at(%.1f,%.1f,%.1f) vel=(%.0f,%.0f,%.0f) set=%d", who, phase,
-                static_cast<unsigned long>(::GetTickCount()), eid, at.X, at.Y, at.Z, velocity.X, velocity.Y,
-                velocity.Z, set ? 1 : 0);
+        ue_wrap::FVector at{};
+        const bool atRead = clump && E::TryGetActorLocation(clump, at);
+        UE_LOGI("broom_drill: %s %s KNOCK tick=%lu eid=%u at(%.1f,%.1f,%.1f)%s vel=(%.0f,%.0f,%.0f) set=%d", who, phase,
+                static_cast<unsigned long>(::GetTickCount()), eid, at.X, at.Y, at.Z, atRead ? "" : " (unread)",
+                velocity.X, velocity.Y, velocity.Z, set ? 1 : 0);
         ok->store(set ? 1 : 0);
         d.store(1);
     });
@@ -354,13 +355,14 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
     const ue_wrap::FVector centre = bounded ? *floorAt : ue_wrap::FVector{};
     RunGT([who, phase, aloneCm, bounded, centre, withinCm, found](std::atomic<int>& d) {
         void* player = LocalPlayer();
-        if (!player) { d.store(1); return; }
-        const ue_wrap::FVector me = E::GetActorLocation(player);
+        ue_wrap::FVector me{};
+        if (!player || !E::TryGetActorLocation(player, me)) { d.store(1); return; }
         // Every pile counts as a neighbour, owned or not; the candidates are the owned ones, nearest first.
         struct Pile { void* obj; ue_wrap::FVector loc; float d2; };
         std::vector<Pile> piles;
         ForEachInstanceWhere(&IsChipPileClass, [&](void* obj) {
-            const ue_wrap::FVector loc = E::GetActorLocation(obj);
+            ue_wrap::FVector loc{};
+            if (!E::TryGetActorLocation(obj, loc)) return;   // unreadable: no neighbour at any distance
             piles.push_back(Pile{obj, loc, Within2(loc, me)});
         });
         std::sort(piles.begin(), piles.end(), [](const Pile& a, const Pile& b) { return a.d2 < b.d2; });
@@ -419,7 +421,8 @@ int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm) {
     RunGT([center, radiusCm, n](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         ForEachInstanceWhere(&IsChipPileClass, [&](void* obj) {
-            if (EidOf(obj) != 0 && Within2(E::GetActorLocation(obj), center) <= r2) n->fetch_add(1);
+            ue_wrap::FVector loc{};
+            if (EidOf(obj) != 0 && E::TryGetActorLocation(obj, loc) && Within2(loc, center) <= r2) n->fetch_add(1);
         });
         d.store(1);
     });
@@ -432,7 +435,8 @@ void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who
         const float r2 = radiusCm * radiusCm;
         int piles = 0, clumps = 0, unnamedClumps = 0;
         ForEachInstanceWhere([](void* cls) { return IsChipPileClass(cls) || IsClumpClass(cls); }, [&](void* obj) {
-            if (Within2(E::GetActorLocation(obj), center) > r2) return;
+            ue_wrap::FVector loc{};
+            if (!E::TryGetActorLocation(obj, loc) || Within2(loc, center) > r2) return;
             const bool clump = UP::IsGarbageClump(obj);
             const uint32_t eid = EidOf(obj);
             (clump ? clumps : piles)++;
@@ -455,7 +459,8 @@ void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, 
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
             const int form = !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1);
-            const ue_wrap::FVector pos = live ? E::GetActorLocation(a) : s.pos;
+            ue_wrap::FVector got{};
+            const ue_wrap::FVector pos = (live && E::TryGetActorLocation(a, got)) ? got : s.pos;   // unread: the last tracked
             if (form == s.form && Dist(pos, s.pos) <= 5.f) continue;
             s.form = form;
             s.pos = pos;
@@ -465,7 +470,8 @@ void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, 
         const float r2 = radiusCm * radiusCm;
         int unnamed = 0;
         ForEachInstanceWhere(&IsClumpClass, [&](void* obj) {
-            if (EidOf(obj) == 0 && Within2(E::GetActorLocation(obj), center) <= r2) ++unnamed;
+            ue_wrap::FVector loc{};
+            if (EidOf(obj) == 0 && E::TryGetActorLocation(obj, loc) && Within2(loc, center) <= r2) ++unnamed;
         });
         if (unnamed != unnamedLast) {
             unnamedLast = unnamed;
@@ -483,9 +489,12 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
                 static_cast<coop::element::ElementId>(s.eid));
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
-            const ue_wrap::FVector pos = live ? E::GetActorLocation(a) : s.pos;
-            UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)", who, phase,
-                    tick, s.eid, !live ? "gone" : (UP::IsGarbageClump(a) ? "clump" : "pile"), pos.X, pos.Y, pos.Z);
+            ue_wrap::FVector got{};
+            const bool posRead = live && E::TryGetActorLocation(a, got);
+            const ue_wrap::FVector pos = posRead ? got : s.pos;
+            UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)%s", who, phase,
+                    tick, s.eid, !live ? "gone" : (UP::IsGarbageClump(a) ? "clump" : "pile"), pos.X, pos.Y, pos.Z,
+                    (live && !posRead) ? " (unread, last tracked)" : "");
         }
         d.store(1);
     });
@@ -498,17 +507,18 @@ std::vector<TrackState> FormsOf(const std::vector<uint32_t>& ids) {
             coop::element::Element* e = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(id));
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
-            out->push_back(TrackState{id, !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1),
-                                      live ? E::GetActorLocation(a) : ue_wrap::FVector{}});
+            ue_wrap::FVector pos{};   // gone or unread: no place yet; the track fills it on its first read
+            if (live) E::TryGetActorLocation(a, pos);
+            out->push_back(TrackState{id, !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1), pos});
         }
         d.store(1);
     });
     return *out;
 }
 
-ue_wrap::FVector StrikerBody(bool striking, uint8_t strikerSlot) {
+bool StrikerBody(bool striking, uint8_t strikerSlot, ue_wrap::FVector& at) {
     auto out = std::make_shared<ue_wrap::FVector>();
-    RunGT([striking, strikerSlot, out](std::atomic<int>& d) {
+    const bool placed = RunGT([striking, strikerSlot, out](std::atomic<int>& d) {
         void* body = nullptr;
         if (striking) {
             body = LocalPlayer();
@@ -516,10 +526,10 @@ ue_wrap::FVector StrikerBody(bool striking, uint8_t strikerSlot) {
                    rp && rp->valid()) {
             body = rp->GetActor();
         }
-        if (body) *out = E::GetActorLocation(body);
-        d.store(1);
-    });
-    return *out;
+        d.store(body && E::TryGetActorLocation(body, *out) ? 1 : 2);
+    }) == 1;
+    at = *out;
+    return placed;
 }
 
 int CountTrashNear(const ue_wrap::FVector& at, float radiusCm) {
@@ -527,7 +537,8 @@ int CountTrashNear(const ue_wrap::FVector& at, float radiusCm) {
     int n = 0;
     ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
         if (coop::hand_item::IsHandAxisActor(obj)) return;   // a held broom, or its mirror, is no trash
-        if (Within2(E::GetActorLocation(obj), at) <= r2) ++n;
+        ue_wrap::FVector loc{};
+        if (E::TryGetActorLocation(obj, loc) && Within2(loc, at) <= r2) ++n;
     });
     return n;
 }
@@ -542,7 +553,9 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
                              [&](void* obj) {
             std::wstring k = UP::GetInteractableKeyString(obj);
             if (k.empty() || k == L"None") return;
-            piles.push_back(Found{std::move(k), obj, Within2(E::GetActorLocation(obj), anchor)});
+            ue_wrap::FVector loc{};
+            if (!E::TryGetActorLocation(obj, loc)) return;   // unreadable: no distance to sort by
+            piles.push_back(Found{std::move(k), obj, Within2(loc, anchor)});
         });
         std::sort(piles.begin(), piles.end(), [](const Found& x, const Found& y) {
             return x.d2 != y.d2 ? x.d2 < y.d2 : x.key < y.key;
@@ -553,7 +566,8 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
         out->key = piles[0].key;
         out->pile = piles[0].obj;
         out->idx = R::InternalIndexOf(out->pile);
-        out->pos = E::GetActorLocation(out->pile);
+        if (!E::TryGetActorLocation(out->pile, out->pos)) {
+            UE_LOGW("broom_drill: %s C -- the dispenser pile's location could not be read", who); d.store(2); return; }
         *trash = CountTrashNear(out->pos, 300.f);
         UE_LOGI("broom_drill: %s C SUBJECT key='%ls' at(%.0f,%.0f,%.0f) trashNear=%d", who, out->key.c_str(),
                 out->pos.X, out->pos.Y, out->pos.Z, *trash);
@@ -582,8 +596,8 @@ void CensusProps(const ue_wrap::FVector& center, float radiusCm, const char* who
             if (coop::hand_item::IsHandAxisActor(obj)) return;
             const uint32_t eid = EidOf(obj);
             if (eid == 0) return;
-            const ue_wrap::FVector loc = E::GetActorLocation(obj);
-            if (Within2(loc, center) > r2) return;
+            ue_wrap::FVector loc{};
+            if (!E::TryGetActorLocation(obj, loc) || Within2(loc, center) > r2) return;
             ++n;
             UE_LOGI("broom_drill: PROP role=%s phase=%s tag=%s tick=%lu eid=%u at(%.1f,%.1f,%.1f)", who, phase,
                     tag, tick, eid, loc.X, loc.Y, loc.Z);
@@ -601,7 +615,8 @@ bool PickProp(const ue_wrap::FVector& center, float radiusCm, const char* who, c
         ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
             if (EidOf(obj) == 0 || coop::hand_item::IsHandAxisActor(obj) || UP::IsStatic(obj) || UP::IsFrozen(obj))
                 return;
-            const ue_wrap::FVector loc = E::GetActorLocation(obj);
+            ue_wrap::FVector loc{};
+            if (!E::TryGetActorLocation(obj, loc)) return;
             const float d2 = Within2(loc, center);
             if (d2 < best) { best = d2; found->first = true; found->second = loc; }
         });

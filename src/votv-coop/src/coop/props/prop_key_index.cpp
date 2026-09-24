@@ -8,7 +8,7 @@
 
 #include "prop_element_tracker_detail.h"  // co-located private header (src tree, not include/)
 
-#include "ue_wrap/engine/engine.h"  // GetActorLocation
+#include "ue_wrap/engine/engine.h"  // TryGetActorLocation
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"

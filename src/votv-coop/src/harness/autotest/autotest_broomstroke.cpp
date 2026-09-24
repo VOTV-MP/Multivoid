@@ -184,7 +184,11 @@ void RestPhases(bool isClient, const char* who, DWORD t0, const RestSite& site) 
             ::Sleep(250);
     }
     At(t0, 106000);
-    const ue_wrap::FVector center = BW::StrikerBody(!isClient, 0);
+    ue_wrap::FVector center{};
+    if (!BW::StrikerBody(!isClient, 0, center)) {
+        UE_LOGW("broom_drill: %s INVALID -- the striker's body could not be placed", who);
+        return;
+    }
     const float radius = isClient ? kRestCensusClientCm : kRestCensusHostCm;
     std::vector<uint32_t> ids;
     BW::CensusPiles(center, radius, who, "G", "before", &ids);
@@ -266,7 +270,11 @@ void RunBroomStrokeProbe() {
     at(31000);
     // Both peers census around the striker's body, which stands beside the heap, so they follow the
     // same ids.
-    const ue_wrap::FVector centerA = BW::StrikerBody(!isClient, 0);
+    ue_wrap::FVector centerA{};
+    if (!BW::StrikerBody(!isClient, 0, centerA)) {
+        UE_LOGW("broom_drill: %s INVALID -- the striker's body could not be placed", who);
+        return;
+    }
     std::vector<uint32_t> heapIds;
     BW::CensusPiles(centerA, kHeapCensusCm, who, "A", "before", &heapIds);
     std::vector<Beat> strikeA;
@@ -281,7 +289,11 @@ void RunBroomStrokeProbe() {
         isClient && BW::PickChipPile(who, "B", subject, kSubjectAloneCm, &centerA, kSubjectFromStrikerCm);
     if (haveSubject) BW::AimAt(subject, kBodyTurnDeg, who, "B");
     at(44000);
-    const ue_wrap::FVector centerB = isClient ? subject : BW::StrikerBody(false, 1);
+    ue_wrap::FVector centerB = subject;
+    if (!isClient && !BW::StrikerBody(false, 1, centerB)) {
+        UE_LOGW("broom_drill: %s INVALID -- the striker's puppet could not be placed", who);
+        return;
+    }
     std::vector<uint32_t> idsB;
     BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "before", &idsB);
     std::vector<Beat> strikeB;

@@ -76,6 +76,7 @@ uint32_t g_fireEid     = 0;
 // each working one way if both fired at the same container).
 uint32_t g_eidHostTarget   = 0;
 uint32_t g_eidClientTarget = 0;
+bool     g_anchorUnread    = false;   // the player's location could not be read: no pick this session
 
 
 // Pick only containers that actually HOLD something. An empty container cannot be extracted
@@ -92,8 +93,17 @@ constexpr size_t kScan = 64;
 // can be told apart from a run where the lane broke.
 bool ResolveTargets() {
     if (g_eidHostTarget && g_eidClientTarget) return true;
+    if (g_anchorUnread) return false;
     coop::director::PlayerContext ctx;
-    if (!ctx.Refresh()) return false;   // no possessed body yet: the pick has no anchor
+    if (!ctx.Refresh()) {   // no possessed body yet: the pick has no anchor
+        // An unread location is a faulted read, which repeats: the pick ends here, said once.
+        if (ctx.posUnread) {
+            g_anchorUnread = true;
+            UE_LOGW("container_selftest: no targets -- the player's location could not be read, so the "
+                    "pick has no anchor");
+        }
+        return false;
+    }
     CC::WorldContainer picks[kScan]{};
     const size_t n = CC::SnapshotWorldContainers(picks, kScan);
     struct Cand { uint32_t eid; float dist; };
@@ -248,6 +258,7 @@ void OnDisconnect() {
     g_fireBefore = g_fireAfter = -1;
     g_fireEid = 0;
     g_eidHostTarget = g_eidClientTarget = 0;
+    g_anchorUnread = false;
 }
 
 }  // namespace coop::dev::container_selftest

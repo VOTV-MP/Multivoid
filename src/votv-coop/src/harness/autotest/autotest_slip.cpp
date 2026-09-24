@@ -294,7 +294,11 @@ void RunSlipDrill() {
             void* pawn = coop::players::Registry::Get().Local();
             void* cls = R::FindClass(kPeelClass);
             if (!pawn || !cls) return;
-            ue_wrap::FVector at = E::GetActorLocation(pawn);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(pawn, at)) {
+                UE_LOGW("[SLIP] no peel -- the player's location could not be read");
+                return;
+            }
             at.Z += 40.f;
             *spawned = E::SpawnActor(cls, at);
         });

@@ -204,9 +204,10 @@ bool ResolveBoxes() {
         return false;
     }
     for (int t = 0; t < kTargets; ++t) {
-        const auto loc = E::GetActorLocation(g_box[t].Get());
-        UE_LOGI("floppy_selftest: TARGET box %d = servers[%d] '%ls' at (%.0f,%.0f,%.0f) of %zu",
-                t, g_boxSlot[t], g_boxName[t].c_str(), loc.X, loc.Y, loc.Z, n);
+        ue_wrap::FVector loc{};
+        const bool locRead = E::TryGetActorLocation(g_box[t].Get(), loc);
+        UE_LOGI("floppy_selftest: TARGET box %d = servers[%d] '%ls' at (%.0f,%.0f,%.0f)%s of %zu",
+                t, g_boxSlot[t], g_boxName[t].c_str(), loc.X, loc.Y, loc.Z, locRead ? "" : " (unread)", n);
     }
     return true;
 }
@@ -227,7 +228,11 @@ void SeedAndStamp() {
                     dc.name, cls, anchor);
             continue;
         }
-        const auto base = E::GetActorLocation(anchor);
+        ue_wrap::FVector base{};
+        if (!E::TryGetActorLocation(anchor, base)) {
+            UE_LOGW("floppy_selftest: disc seed %d NOT spawned (the anchor box's location could not be read)", i);
+            continue;
+        }
         void* disc = E::SpawnActor(cls, { base.X, base.Y + static_cast<float>(30 * i),
                                           base.Z + 80.f });
         if (!disc) { UE_LOGW("floppy_selftest: disc seed %d SPAWN FAILED", i); continue; }

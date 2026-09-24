@@ -53,7 +53,11 @@ void* ForceSpawnAt(const wchar_t* className, float zOffset, const char* watchHin
     void* worldCtx = E::GetWorldContext();
     if (!worldCtx) { UE_LOGW("pinecone_probe: no world context"); return nullptr; }
 
-    const ue_wrap::FVector loc = E::GetActorLocation(local);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(local, loc)) {
+        UE_LOGW("pinecone_probe: the local player's location could not be read");
+        return nullptr;
+    }
     float yaw = 0.f;
     if (void* ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
     constexpr float kDist = 250.f, kDeg2Rad = 0.0174532925f;

@@ -108,7 +108,11 @@ void SpawnNpcInFront(const wchar_t* className) {
         UE_LOGW("spawn_npc: no local player resolved yet -- ignoring (world loaded?)");
         return;
     }
-    const ue_wrap::FVector loc = E::GetActorLocation(local);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(local, loc)) {
+        UE_LOGW("spawn_npc: the local player's location could not be read -- ignoring");
+        return;
+    }
     float yaw = 0.f;
     if (void* ctrl = E::GetController(local)) yaw = E::GetControlRotation(ctrl).Yaw;
     constexpr float kDist = 250.f;
@@ -138,7 +142,11 @@ void SpawnNpcOnFirstClient(const wchar_t* className) {
         UE_LOGW("spawn_npc: no connected client puppet -- cannot spawn '%ls' on a client", className);
         return;
     }
-    const ue_wrap::FVector loc = E::GetActorLocation(puppetActor);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(puppetActor, loc)) {
+        UE_LOGW("spawn_npc: the client puppet's location could not be read -- cannot spawn '%ls' on it", className);
+        return;
+    }
     ue_wrap::FTransform xform{};
     E::RotatorToQuat(0.f, 0.f, 0.f, xform.RotX, xform.RotY, xform.RotZ, xform.RotW);
     xform.TX = loc.X;

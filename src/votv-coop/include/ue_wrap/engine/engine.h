@@ -59,13 +59,10 @@ bool  FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& 
 // thread.
 bool DebugCheckWorldContextRecovery();
 
-// AActor::K2_GetActorLocation; (0,0,0) if it cannot be called.
-FVector GetActorLocation(void* actor);
-
-// The checked read: false when the location could not be obtained, a read that faulted inside the
-// engine and was absorbed included (reflection::CallFunction reports it). Use this wherever a wrong
-// answer grants or names something: GetActorLocation returns (0,0,0), the world origin, on every
-// failure. Game thread.
+// AActor::K2_GetActorLocation, the one location read: false when the location could not be
+// obtained, a read that faulted inside the engine and was absorbed included
+// (reflection::CallFunction reports it). `out` is then the world origin, an ordinary position, so
+// every caller decides what an unread location means. Game thread.
 bool TryGetActorLocation(void* actor, FVector& out);
 
 // AActor::GetActorScale3D (root world scale); unit scale on failure, since callers stamp it into

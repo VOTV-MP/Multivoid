@@ -5,7 +5,7 @@
 #include "coop/element/registry.h"     // Registry::Get (resolve the final bound actor by eid)
 #include "coop/element/element.h"      // Element::GetActor / GetInternalIdx
 #include "coop/config/config.h"
-#include "ue_wrap/engine/engine.h"            // GetActorLocation, FVector
+#include "ue_wrap/engine/engine.h"            // TryGetActorLocation, FVector
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"        // IsLiveByIndex
 
@@ -26,6 +26,7 @@ struct Rec {
     ue_wrap::FVector hostPos{};   // snapshot-carried host pos
     ue_wrap::FVector snapCurPos{}; // actor pos at snapshot time
     ue_wrap::FVector recreatePos{}; // recreate actor pos at re-bind (candidate save-pos)
+    bool recreatePosRead = false; // false: recreatePos is not a position and compares with nothing
     bool hostHeld = false;      // drive-skip / local-grab-skip fired at snapshot (host held at snap)
     bool sawSnapshot = false;
     bool sawRecreate = false;
@@ -66,15 +67,16 @@ void NoteSnapshotExpression(const std::wstring& key, uint32_t eid, void* actor,
     Rec& r = g_rec[key];
     r.eid = eid;
     r.hostPos = hostPos;
-    r.snapCurPos = actor ? ue_wrap::engine::GetActorLocation(actor) : ue_wrap::FVector{};
+    r.snapCurPos = ue_wrap::FVector{};
+    const bool curRead = actor && ue_wrap::engine::TryGetActorLocation(actor, r.snapCurPos);
     r.hostHeld = hostHeld;
     r.snapshotSeq = ++g_seq;
     r.sawSnapshot = true;
     UE_LOGI("join_window_pos_trace: A snapshot key='%ls' eid=%u seq=%u host=(%.1f,%.1f,%.1f) "
-            "cur=(%.1f,%.1f,%.1f) hostHeld=%d (host-carried pos vs the actor's pos right now; hostHeld=1 "
+            "cur=(%.1f,%.1f,%.1f)%s hostHeld=%d (host-carried pos vs the actor's pos right now; hostHeld=1 "
             "means the snapshot DRIVE-SKIPPED placing it)",
             key.c_str(), eid, r.snapshotSeq, hostPos.X, hostPos.Y, hostPos.Z,
-            r.snapCurPos.X, r.snapCurPos.Y, r.snapCurPos.Z, hostHeld ? 1 : 0);
+            r.snapCurPos.X, r.snapCurPos.Y, r.snapCurPos.Z, curRead ? "" : " (unread)", hostHeld ? 1 : 0);
 }
 
 void NoteRecreateRebind(const std::wstring& key, uint32_t eid, void* actor) {
@@ -83,20 +85,22 @@ void NoteRecreateRebind(const std::wstring& key, uint32_t eid, void* actor) {
     if (g_rec.size() >= kCap && g_rec.find(key) == g_rec.end()) return;  // backstop
     Rec& r = g_rec[key];
     r.eid = eid;  // the re-bind's eid is authoritative (it is the expressed identity's eid)
-    r.recreatePos = actor ? ue_wrap::engine::GetActorLocation(actor) : ue_wrap::FVector{};
+    r.recreatePos = ue_wrap::FVector{};
+    r.recreatePosRead = actor && ue_wrap::engine::TryGetActorLocation(actor, r.recreatePos);
     r.recreateSeq = ++g_seq;
     r.sawRecreate = true;
-    UE_LOGI("join_window_pos_trace: B recreate-rebind key='%ls' eid=%u seq=%u recreatePos=(%.1f,%.1f,%.1f) "
+    UE_LOGI("join_window_pos_trace: B recreate-rebind key='%ls' eid=%u seq=%u recreatePos=(%.1f,%.1f,%.1f)%s "
             "(the loadObjects-recreate the churn re-bind claimed; its pos is the candidate SAVE pos -- "
             "recreateSeq>snapshotSeq proves the recreate landed AFTER the snapshot)",
-            key.c_str(), eid, r.recreateSeq, r.recreatePos.X, r.recreatePos.Y, r.recreatePos.Z);
+            key.c_str(), eid, r.recreateSeq, r.recreatePos.X, r.recreatePos.Y, r.recreatePos.Z,
+            r.recreatePosRead ? "" : " (unread)");
 }
 
 void EmitVerdictAtQuiescence() {
     if (!IsEnabled() || !g_verdictPending) return;
     g_verdictPending = false;  // one verdict per join
 
-    int nClobber = 0, nSnapshotWon = 0, nHostHeld = 0, nDead = 0, nUnresolved = 0, nNoSnapshot = 0;
+    int nClobber = 0, nSnapshotWon = 0, nHostHeld = 0, nDead = 0, nUnresolved = 0, nNoSnapshot = 0, nUnread = 0;
     auto& reg = coop::element::Registry::Get();
 
     for (auto& [key, r] : g_rec) {
@@ -107,7 +111,7 @@ void EmitVerdictAtQuiescence() {
         void* finalActor = el ? el->GetActor() : nullptr;
         const bool finalLive = finalActor && el && R::IsLiveByIndex(finalActor, el->GetInternalIdx());
         ue_wrap::FVector finalPos{};
-        if (finalLive) finalPos = ue_wrap::engine::GetActorLocation(finalActor);
+        const bool finalRead = finalLive && ue_wrap::engine::TryGetActorLocation(finalActor, finalPos);
 
         if (!r.sawSnapshot) {
             ++nNoSnapshot;
@@ -123,6 +127,12 @@ void EmitVerdictAtQuiescence() {
                     "so this is the expected grab-during-window signature)", key.c_str(), r.eid);
             continue;
         }
+        if (!finalRead) {
+            ++nUnread;
+            UE_LOGW("join_window_pos_trace: VERDICT key='%ls' eid=%u :: UNREAD-AT-VERDICT (the final actor's "
+                    "location could not be read; no position verdict for this key)", key.c_str(), r.eid);
+            continue;
+        }
         if (r.hostHeld) {
             ++nHostHeld;
             UE_LOGW("join_window_pos_trace: VERDICT key='%ls' eid=%u :: HOST-HELD-AT-SNAPSHOT -- the snapshot "
@@ -135,8 +145,9 @@ void EmitVerdictAtQuiescence() {
 
         const float dHostToFinal = Dist(finalPos, r.hostPos);
         const bool orderedAfter = r.sawRecreate && r.recreateSeq > r.snapshotSeq;
-        const float dSaveToFinal = r.sawRecreate ? Dist(finalPos, r.recreatePos) : -1.0f;
-        const float dHostToSave  = r.sawRecreate ? Dist(r.recreatePos, r.hostPos) : -1.0f;
+        const bool haveSave = r.sawRecreate && r.recreatePosRead;   // an unread save pos compares with nothing
+        const float dSaveToFinal = haveSave ? Dist(finalPos, r.recreatePos) : -1.0f;
+        const float dHostToSave  = haveSave ? Dist(r.recreatePos, r.hostPos) : -1.0f;
 
         if (orderedAfter && dHostToSave > kEpsCm && dHostToFinal > kEpsCm && dSaveToFinal <= kEpsCm) {
             ++nClobber;
@@ -161,26 +172,28 @@ void EmitVerdictAtQuiescence() {
                 "matches neither host pos (d=%.1fcm) nor%s save/recreate pos (d=%.1fcm); sawRecreate=%d "
                 "orderedAfter=%d. Investigate (a third mover, or a recreate that skipped the churn re-bind).",
                 key.c_str(), r.eid, finalPos.X, finalPos.Y, finalPos.Z, dHostToFinal,
-                r.sawRecreate ? "" : " (none)", dSaveToFinal, r.sawRecreate ? 1 : 0, orderedAfter ? 1 : 0);
+                !r.sawRecreate ? " (none)" : (r.recreatePosRead ? "" : " (unread)"), dSaveToFinal, r.sawRecreate ? 1 : 0, orderedAfter ? 1 : 0);
     }
 
     const char* verdict =
         (nClobber > 0)      ? "F1 ROOT (1) CONFIRMED -> loadObjects clobbers the host-moved pos; the host-auth "
                               "live-pos reconcile (generalize b3) is the right fix"
-        : (nHostHeld > 0 && nSnapshotWon == 0 && nUnresolved == 0)
+        : (nHostHeld > 0 && nSnapshotWon == 0 && nUnresolved == 0 && nUnread == 0)
                             ? "ROOT (2) ONLY -> every diverged key was host-HELD at snapshot; the fix must read "
                               "host pos AFTER release, not just reconcile at quiescence"
-        : (nSnapshotWon > 0 && nClobber == 0 && nUnresolved == 0)
+        : (nSnapshotWon > 0 && nClobber == 0 && nUnresolved == 0 && nUnread == 0)
                             ? "NO F1 OBSERVED -> every key ended at the host pos (snapshot won); the reported "
                               "bug did not reproduce in this run -- re-run the exact repro (host moves the rock "
                               "mid-window)"
         : (nUnresolved > 0) ? "UNRESOLVED -> at least one key ended at neither pos; the two-root model is "
                               "incomplete, do NOT build the reconcile yet"
+        : (nUnread > 0)     ? "UNREAD -> a key's final position could not be read, so it has no verdict; "
+                              "re-run the repro"
                             : "INCONCLUSIVE -> no diverged keyed prop observed this join (host moved nothing "
                               "in-window, or the moved prop was not keyed); re-run the repro";
     UE_LOGW("join_window_pos_trace: VERDICT keys=%zu clobber=%d snapshot-won=%d host-held=%d dead=%d "
-            "unresolved=%d no-snapshot=%d :: %s",
-            g_rec.size(), nClobber, nSnapshotWon, nHostHeld, nDead, nUnresolved, nNoSnapshot, verdict);
+            "unresolved=%d no-snapshot=%d unread=%d :: %s",
+            g_rec.size(), nClobber, nSnapshotWon, nHostHeld, nDead, nUnresolved, nNoSnapshot, nUnread, verdict);
     g_rec.clear();
 }
 

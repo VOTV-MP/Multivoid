@@ -62,7 +62,11 @@ void RepinWispsAroundPyramid() {
         UE_LOGW("piramidforce_test: repin -- no live host pyramid element (yet?)");
         return;
     }
-    const auto pl = E::GetActorLocation(pyramid);
+    ue_wrap::FVector pl{};
+    if (!E::TryGetActorLocation(pyramid, pl)) {
+        UE_LOGW("piramidforce_test: repin -- the pyramid's location could not be read");
+        return;
+    }
     std::vector<coop::element::Npc*> wisps;
     coop::element::NpcMirrors().Snapshot(wisps);
     constexpr float kRingRadius = 15000.0f;  // 150 m: > arrive(10000), a ~2 s march

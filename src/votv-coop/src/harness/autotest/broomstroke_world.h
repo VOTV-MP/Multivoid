@@ -108,8 +108,9 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
 // Each of `ids`' form and place now, unlogged.
 std::vector<TrackState> FormsOf(const std::vector<uint32_t>& ids);
 
-// Where the striker is as this peer sees it: its own body, or its puppet.
-ue_wrap::FVector StrikerBody(bool striking, uint8_t strikerSlot);
+// Where the striker is as this peer sees it: its own body, or its puppet. False when there is no body
+// or its location cannot be read.
+bool StrikerBody(bool striking, uint8_t strikerSlot, ue_wrap::FVector& at);
 
 // The dispenser phase's subject: the keyed dispenser pile nearest the base, the key breaking ties,
 // so both peers name the same one; its trash count read at the pick.

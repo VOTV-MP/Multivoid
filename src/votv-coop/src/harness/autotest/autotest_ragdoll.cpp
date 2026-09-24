@@ -87,10 +87,14 @@ void AimHostAtPuppet() {
         if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(1); return; }
         void* ctrl = E::GetController(local);
         if (!ctrl || !R::IsLive(ctrl)) { done->store(1); return; }
-        const ue_wrap::FVector h = E::GetActorLocation(local);
+        ue_wrap::FVector h{};
+        if (!E::TryGetActorLocation(local, h)) {
+            UE_LOGW("ragdoll_test[host]: not aimed -- the host's location could not be read"); done->store(1); return; }
         void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
-        const ue_wrap::FVector p = (mesh && R::IsLive(mesh)) ? E::GetComponentLocation(mesh)
-                                                             : E::GetActorLocation(puppet);
+        ue_wrap::FVector p{};
+        if (mesh && R::IsLive(mesh)) p = E::GetComponentLocation(mesh);
+        else if (!E::TryGetActorLocation(puppet, p)) {
+            UE_LOGW("ragdoll_test[host]: not aimed -- the puppet's location could not be read"); done->store(1); return; }
         const float dx = p.X - h.X, dy = p.Y - h.Y, dz = p.Z - (h.Z + 60.f);
         const float horiz = std::sqrt(dx * dx + dy * dy);
         const float yaw = std::atan2(dy, dx) * 57.29578f;
@@ -113,8 +117,9 @@ void PositionHostForShot() {
         void* local = coop::players::Registry::Get().Local();
         void* puppet = coop::puppet_drive::Puppet(1).GetActor();
         if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(1); return; }
-        const ue_wrap::FVector h = E::GetActorLocation(local);
-        const ue_wrap::FVector p = E::GetActorLocation(puppet);
+        ue_wrap::FVector h{}, p{};
+        if (!E::TryGetActorLocation(local, h) || !E::TryGetActorLocation(puppet, p)) {
+            UE_LOGW("ragdoll_test[host]: not moved for the shot -- a location could not be read"); done->store(1); return; }
         float dx = h.X - p.X, dy = h.Y - p.Y;            // direction AWAY from the puppet
         const float len = std::sqrt(dx * dx + dy * dy);
         if (len < 1.f) { dx = 1.f; dy = 0.f; } else { dx /= len; dy /= len; }
@@ -144,12 +149,14 @@ void ProbePuppetRagdollGeometry(const char* tag) {
         const float compZ = (mesh && R::IsLive(mesh)) ? E::GetComponentLocation(mesh).Z : 0.f;
         float lowBoneZ = 0.f;
         const bool okBone = (mesh && R::IsLive(mesh)) ? E::GetLowestBoneWorldZ(mesh, lowBoneZ) : false;
-        const float hostZ = (local && R::IsLive(local)) ? E::GetActorLocation(local).Z : 0.f;
+        ue_wrap::FVector hostAt{};
+        const bool hostRead = local && R::IsLive(local) && E::TryGetActorLocation(local, hostAt);
+        const float hostZ = hostAt.Z;
         UE_LOGI("[probe ragdoll-geom %s]: bounds origin.Z=%.0f bottom=%.0f(ok=%d) compZ=%.0f "
-                "lowestBoneZ=%.0f(ok=%d) hostActorZ=%.0f -> floor~%.0f (body FALLS if bottom/bone "
+                "lowestBoneZ=%.0f(ok=%d) hostActorZ=%.0f%s -> floor~%.0f (body FALLS if bottom/bone "
                 "approach the floor; WELDED if they stay ~compZ chest height)",
                 tag, origin.Z, bottom, okB ? 1 : 0, compZ, lowBoneZ, okBone ? 1 : 0,
-                hostZ, hostZ - 88.f);
+                hostZ, hostRead ? "" : " (unread)", hostZ - 88.f);
         done->store(1);
     });
     WaitDone(done, 8000);

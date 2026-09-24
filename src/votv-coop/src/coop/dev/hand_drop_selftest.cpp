@@ -87,7 +87,8 @@ std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm) {
         for (size_t h = 0; h < handAxisN; ++h) if (handAxis[h] == obj) { isHandAxis = true; break; }
         if (isHandAxis) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        const ue_wrap::FVector loc = E::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(obj, loc)) continue;   // unreadable: not in this census
         const float dx = loc.X - centre.X, dy = loc.Y - centre.Y, dz = loc.Z - centre.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > r2) continue;
@@ -260,21 +261,17 @@ bool CallDropHolding(void* player) {
 
 // The holder censuses around itself; the watcher censuses around the holder's puppet, so both
 // peers measure the same region of the same world. Returns false when the watcher has no puppet
-// yet, which is a reason printed rather than a census of the wrong place.
+// yet or a location cannot be read, which is a reason printed rather than a census of the wrong place.
 bool CensusCentre(bool iAmHolder, bool holderIsHost, ue_wrap::FVector& out) {
     if (iAmHolder) {
         void* p = MainPlayer();
-        if (!p) return false;
-        out = E::GetActorLocation(p);
-        return true;
+        return p && E::TryGetActorLocation(p, out);
     }
     const uint8_t holderSlot = holderIsHost ? 0u : 1u;
     coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(holderSlot);
     if (!pup || !pup->valid()) return false;
     void* actor = pup->GetActor();
-    if (!actor) return false;
-    out = E::GetActorLocation(actor);
-    return true;
+    return actor && E::TryGetActorLocation(actor, out);
 }
 
 const char* ActName(Act a) {
@@ -310,7 +307,8 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
         UE_LOGW("hand_drop_selftest: ep%d %s (+%llus) -- no census centre on this peer "
                 "(%s); step SKIPPED", st.episode, ActName(st.act),
                 static_cast<unsigned long long>(since / 1000),
-                iAmHolder ? "local player not possessed" : "the holder's puppet is not up here");
+                iAmHolder ? "local player not possessed, or its location unread"
+                          : "the holder's puppet is not up here, or its location unread");
         return;
     }
     const std::vector<PropRow> rows = Census(centre, kCensusRadiusCm);

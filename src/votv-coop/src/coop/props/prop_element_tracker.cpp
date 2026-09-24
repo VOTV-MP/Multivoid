@@ -18,7 +18,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
 #include "coop/props/prop_synth_key.h"  // MintFreshKeyForDuplicate, the host's re-key of a clone
-#include "ue_wrap/engine/engine.h"  // GetActorLocation
+#include "ue_wrap/engine/engine.h"  // TryGetActorLocation
 #include "ue_wrap/core/game_thread.h"  // IsGameThread; setKey is a dispatch, so the re-key is game-thread gated
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"

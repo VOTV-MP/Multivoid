@@ -16,7 +16,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
-#include "ue_wrap/engine/engine.h"            // SpawnActor + GetActorLocation (set-deny refund)
+#include "ue_wrap/engine/engine.h"            // SpawnActor + TryGetActorLocation (set-deny refund)
 
 #include <atomic>
 #include <chrono>

@@ -119,9 +119,11 @@ void RunClient() {
                 if (!R::IsLiveByIndex(o, c.idx) || !ue_wrap::prop::IsGarbageClump(o)) continue;
                 const coop::element::ElementId eid = coop::remote_prop::ResolveMirrorEidByActor(o);
                 if (eid == coop::element::kInvalidId || eid == 0) continue;
-                const ue_wrap::FVector at = E::GetActorLocation(o);
-                UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms eid=%u mirror=%p pos=(%.1f,%.1f,%.1f)",
-                        ::GetTickCount64() - t0, static_cast<unsigned>(eid), o, at.X, at.Y, at.Z);
+                ue_wrap::FVector at{};
+                const bool atRead = E::TryGetActorLocation(o, at);
+                UE_LOGI("hostthrow: WATCH-SAMPLE t=%llu ms eid=%u mirror=%p pos=(%.1f,%.1f,%.1f)%s",
+                        ::GetTickCount64() - t0, static_cast<unsigned>(eid), o, at.X, at.Y, at.Z,
+                        atRead ? "" : " (unread)");
             }
             d.store(1);
         });

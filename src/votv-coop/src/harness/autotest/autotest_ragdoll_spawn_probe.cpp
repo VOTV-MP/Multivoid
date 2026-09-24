@@ -100,11 +100,12 @@ void DumpRagdollActor(void* actor, const char* tag) {
         return;
     }
     const std::wstring cls = R::ClassNameOf(actor);
-    const ue_wrap::FVector aLoc = E::GetActorLocation(actor);
+    ue_wrap::FVector aLoc{};
+    const char* aNote = E::TryGetActorLocation(actor, aLoc) ? "" : " (unread)";
     void* comp = RagdollMeshComp(actor);
     if (!comp) {
-        UE_LOGW("ragdollspawn[%s]: actor '%ls' has NO live SkeletalMesh @0x230 (actorZ=%.0f)",
-                tag, cls.c_str(), aLoc.Z);
+        UE_LOGW("ragdollspawn[%s]: actor '%ls' has NO live SkeletalMesh @0x230 (actorZ=%.0f%s)",
+                tag, cls.c_str(), aLoc.Z, aNote);
         return;
     }
     void* meshAsset = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(comp) + kUSkinnedMesh_SkeletalMesh);
@@ -129,9 +130,9 @@ void DumpRagdollActor(void* actor, const char* tag) {
             if (m && R::IsLive(m)) mat0 = R::ToString(R::NameOf(m)); }
     }
 
-    UE_LOGI("ragdollspawn[%s]: actor='%ls' actorZ=%.0f | comp meshAsset='%ls' IsVisible=%d "
+    UE_LOGI("ragdollspawn[%s]: actor='%ls' actorZ=%.0f%s | comp meshAsset='%ls' IsVisible=%d "
             "IsAnyRigidBodyAwake=%d compZ=%.0f lowestBoneZ=%.0f(ok=%d) numMaterials=%d mat0='%ls'",
-            tag, cls.c_str(), aLoc.Z, meshName.c_str(), vis ? 1 : 0, awake ? 1 : 0,
+            tag, cls.c_str(), aLoc.Z, aNote, meshName.c_str(), vis ? 1 : 0, awake ? 1 : 0,
             cLoc.Z, lowZ, okBone ? 1 : 0, numMat, mat0.c_str());
 }
 
@@ -141,9 +142,14 @@ void AimLocalAt(void* local, void* target) {
     if (!local || !R::IsLive(local) || !target || !R::IsLive(target)) return;
     void* ctrl = E::GetController(local);
     if (!ctrl || !R::IsLive(ctrl)) return;
-    const ue_wrap::FVector h = E::GetActorLocation(local);
+    ue_wrap::FVector h{};
+    if (!E::TryGetActorLocation(local, h)) {
+        UE_LOGW("ragdollspawn: not aimed -- the player's location could not be read"); return; }
     void* comp = RagdollMeshComp(target);
-    const ue_wrap::FVector p = comp ? E::GetComponentLocation(comp) : E::GetActorLocation(target);
+    ue_wrap::FVector p{};
+    if (comp) p = E::GetComponentLocation(comp);
+    else if (!E::TryGetActorLocation(target, p)) {
+        UE_LOGW("ragdollspawn: not aimed -- the body's location could not be read"); return; }
     const float dx = p.X - h.X, dy = p.Y - h.Y, dz = p.Z - (h.Z + 60.f);
     const float horiz = std::sqrt(dx * dx + dy * dy);
     const float yaw = std::atan2(dy, dx) * 57.29578f;
@@ -183,7 +189,9 @@ void* SpawnManualRagdoll(void* local) {
     GT::Post([local, done, out] {
         void* cls = R::FindClass(L"playerRagdoll_C");
         if (!cls) { UE_LOGW("ragdollspawn[manual]: playerRagdoll_C class did not resolve"); done->store(1); return; }
-        const ue_wrap::FVector pl = E::GetActorLocation(local);
+        ue_wrap::FVector pl{};
+        if (!E::TryGetActorLocation(local, pl)) {
+            UE_LOGW("ragdollspawn[manual]: the player's location could not be read"); done->store(1); return; }
         const ue_wrap::FVector fwd = E::GetActorForwardVector(local);
         const ue_wrap::FRotator rot = E::GetActorRotation(local);
         // About 120 units in front of the player at the same height (framable; not inside the

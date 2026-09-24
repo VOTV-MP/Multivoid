@@ -227,7 +227,9 @@ void RunContainerTakeProbe() {
     goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
     const int pick = RunGT([rsv, &goal, pb](std::atomic<int>& d) {
-        const ue_wrap::FVector at = E::GetActorLocation(rsv->player);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(rsv->player, at)) {
+            UE_LOGW("director/ctake: the player's location could not be read"); d.store(2); return; }
         struct Cand { void* c; ue_wrap::FVector pos; int32_t count; };
         std::vector<Cand> cands;
         const int32_t n = R::NumObjects();
@@ -236,7 +238,8 @@ void RunContainerTakeProbe() {
             if (!IsPlacedContainer(o)) continue;
             const int32_t cnt = ContainerItemCount(o);
             if (cnt <= 0) continue;                       // need a NON-EMPTY container to take from
-            const ue_wrap::FVector p = E::GetActorLocation(o);
+            ue_wrap::FVector p{};
+            if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: no candidate
             const float dist = HorizDist(p, at);
             if (dist < kMinCm || dist > kMaxCm) continue;
             cands.push_back({ o, p, cnt });
@@ -443,10 +446,13 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
         if (!IsPlacedContainer(ke.actor)) continue;
         const int32_t cnt = ContainerItemCount(ke.actor);
         if (cnt <= 0) continue;
-        cs.push_back({ ke.actor, E::GetActorLocation(ke.actor), cnt, ke.key });
+        ue_wrap::FVector p{};
+        if (!E::TryGetActorLocation(ke.actor, p)) continue;   // unreadable: no candidate
+        cs.push_back({ ke.actor, p, cnt, ke.key });
     }
     std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
-    const ue_wrap::FVector at = E::GetActorLocation(player);
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(player, at)) return nullptr;   // no route start: no pick
     for (const Cand& c : cs) {
         std::vector<ue_wrap::FVector> path;
         if (!E::FindNavPath(player, at, c.p, path)) continue;                  // feasibility: reachable

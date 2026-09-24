@@ -40,7 +40,11 @@ void ToggleNearestKerfur() {
         UE_LOGW("kerfur_toggle: kerfur classes not loaded yet -- ignoring");
         return;
     }
-    const ue_wrap::FVector ploc = E::GetActorLocation(local);
+    ue_wrap::FVector ploc{};
+    if (!E::TryGetActorLocation(local, ploc)) {
+        UE_LOGW("kerfur_toggle: the player's location could not be read -- ignoring");
+        return;
+    }
     void* best = nullptr;
     bool  bestIsNpc = false;
     float bestD2 = 1e30f;
@@ -55,7 +59,8 @@ void ToggleNearestKerfur() {
         if (!isNpc && !isProp) continue;
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        const ue_wrap::FVector loc = E::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(obj, loc)) continue;   // unreadable: never the nearest
         const float dx = loc.X - ploc.X, dy = loc.Y - ploc.Y, dz = loc.Z - ploc.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < bestD2) { bestD2 = d2; best = obj; bestIsNpc = isNpc; }

@@ -54,7 +54,11 @@ constexpr int   kMaxCandidates = 10;
 bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goal) {
     if (!player || !R::IsLive(player)) return false;
     PT::ReSeedKnownKeyedProps(nullptr);   // eid-bind like chippile
-    const ue_wrap::FVector at = E::GetActorLocation(player);
+    ue_wrap::FVector at{};
+    if (!E::TryGetActorLocation(player, at)) {
+        UE_LOGW("director: the player's location could not be read -- aborting");
+        return false;
+    }
     struct Cand { void* pile; ue_wrap::FVector pos; float dist; };
     std::vector<Cand> cands;
     const int32_t n = R::NumObjects();
@@ -62,7 +66,8 @@ bool PickReachablePile(void* player, float minCm, float maxCm, DirectorGoal& goa
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o) || !ue_wrap::prop::IsChipPile(o)) continue;
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-        const ue_wrap::FVector p = E::GetActorLocation(o);
+        ue_wrap::FVector p{};
+        if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: no candidate
         const float dist = HorizDist(p, at);
         if (dist < minCm || dist > maxCm) continue;
         cands.push_back({ o, p, dist });

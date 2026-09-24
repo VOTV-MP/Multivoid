@@ -23,7 +23,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                      // IsChipPile (the displaced-native ghost-arm class gate)
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/engine.h"                    // GetActorLocation (identity logs carry the location)
+#include "ue_wrap/engine/engine.h"                    // TryGetActorLocation (identity logs carry the location)
 
 namespace coop::element {
 // The friended gateway to the sealed MirrorManager::Install.

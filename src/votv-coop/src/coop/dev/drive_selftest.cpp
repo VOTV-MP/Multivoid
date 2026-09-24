@@ -11,7 +11,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/drive_chain.h"
-#include "ue_wrap/engine/engine.h"  // SpawnActor + GetActorLocation (the host-side rack seed)
+#include "ue_wrap/engine/engine.h"  // SpawnActor + TryGetActorLocation (the host-side rack seed)
 
 #include <atomic>
 #include <chrono>
@@ -127,7 +127,11 @@ void HostSeedRackIfMissing(bool host, uint64_t now) {
         UE_LOGW("drive_selftest: rack seed failed (cls=%p slot=%p)", cls, slot);
         return;
     }
-    const auto loc = ue_wrap::engine::GetActorLocation(slot);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(slot, loc)) {
+        UE_LOGW("drive_selftest: rack seed failed (the desk slot's location could not be read)");
+        return;
+    }
     void* rack = ue_wrap::engine::SpawnActor(cls, {loc.X + 100.f, loc.Y, loc.Z + 60.f});
     UE_LOGI("drive_selftest: rack %s at desk slot (+100,+0,+60)",
             rack ? "SPAWNED" : "SPAWN FAILED");

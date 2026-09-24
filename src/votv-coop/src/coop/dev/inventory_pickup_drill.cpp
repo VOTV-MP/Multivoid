@@ -58,8 +58,8 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
         // is on the mesh by construction, which a computed offset is not. No pile is needed, so
         // the walk works from the start point as well as from the base.
         void* player = coop::players::Registry::Get().Local();
-        if (!player) { picked->store(-1); return; }
-        const ue_wrap::FVector me = E::GetActorLocation(player);
+        ue_wrap::FVector me{};
+        if (!player || !E::TryGetActorLocation(player, me)) { picked->store(-1); return; }
         for (int k = 0; k < 8; ++k) {
             const float a = static_cast<float>(k) * 0.785398f;
             const ue_wrap::FVector want{me.X + 1500.f * std::cos(a), me.Y + 1500.f * std::sin(a), me.Z};
@@ -87,9 +87,10 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
     ue_wrap::game_thread::Post([goal] {
         void* player = coop::players::Registry::Get().Local();
         if (!player) return;
-        const ue_wrap::FVector at = E::GetActorLocation(player);
-        UE_LOGI("[INV-PICKUP-DRILL] walked (%hs) -- the player now stands at (%.0f, %.0f, %.0f) yaw=%.0f",
-                goal->reached ? "reached" : goal->failReason, at.X, at.Y, at.Z,
+        ue_wrap::FVector at{};
+        const bool atRead = E::TryGetActorLocation(player, at);
+        UE_LOGI("[INV-PICKUP-DRILL] walked (%hs) -- the player now stands at (%.0f, %.0f, %.0f)%s yaw=%.0f",
+                goal->reached ? "reached" : goal->failReason, at.X, at.Y, at.Z, atRead ? "" : " (unread)",
                 E::GetActorRotation(player).Yaw);
         // Everything this life set out to do is done; the profile that says so reaches the host on
         // the lane's next poll. A rig waits on this line, not on a number of seconds.
@@ -220,7 +221,11 @@ std::vector<void*> LiveOf(const Want& w) {
 // reaches the client the way any prop's save data does; the client stamps its own copy only when
 // that did not happen, and says so.
 void HostSeedTheWants(void* player) {
-    const ue_wrap::FVector me = E::GetActorLocation(player);
+    ue_wrap::FVector me{};
+    if (!E::TryGetActorLocation(player, me)) {
+        UE_LOGW("[INV-PICKUP-DRILL] HOST: nothing seeded -- the player's location could not be read");
+        return;
+    }
     float step = 0.f;
     for (const Want& w : kWants) {
         if (w.kind == Kind::Plain) continue;
@@ -268,7 +273,8 @@ void PocketTheWants(void* player) {
         for (const auto& r : mine.inventory) if (r.key == key) return true;
         return false;
     };
-    const ue_wrap::FVector me = E::GetActorLocation(player);
+    ue_wrap::FVector me{};
+    const bool meRead = E::TryGetActorLocation(player, me);   // only the duplicate line's distance uses it
 
     for (const Want& w : kWants) {
         // A rejoined life already carries what the first one pocketed: the kind is satisfied, and
@@ -285,12 +291,14 @@ void PocketTheWants(void* player) {
             if (carriedKey(key)) {
                 // Where it sits: at the player's feet it was ejected from an inventory, at a map
                 // location it came with the world.
-                const ue_wrap::FVector at = E::GetActorLocation(prop);
+                ue_wrap::FVector at{};
+                const bool atRead = E::TryGetActorLocation(prop, at);
                 const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
                 UE_LOGW("[INV-PICKUP-DRILL] DUPLICATE IN THE WORLD: '%ls' key='%ls' stands at "
-                        "(%.0f, %.0f, %.0f), %.0f cm away, and that key is already carried -- "
+                        "(%.0f, %.0f, %.0f)%s, %.0f cm away, and that key is already carried -- "
                         "left alone", R::ClassNameOf(prop).c_str(), key.c_str(), at.X, at.Y, at.Z,
-                        std::sqrt(dx * dx + dy * dy + dz * dz));
+                        atRead ? "" : " (unread)",
+                        (atRead && meRead) ? std::sqrt(dx * dx + dy * dy + dz * dz) : -1.f);
                 continue;
             }
             if (HoldsData(w.kind, prop)) order.insert(order.begin(), prop);
@@ -334,14 +342,15 @@ void PocketTheWants(void* player) {
                 UE_LOGI("[INV-PICKUP-DRILL] before the pickup '%ls' key='%ls': %hs", cls.c_str(),
                         key.c_str(), coop::dev::record_digest::ValuesOf(before).c_str());
 
-            const ue_wrap::FVector at = E::GetActorLocation(prop);
+            ue_wrap::FVector at{};
+            const bool atRead = E::TryGetActorLocation(prop, at);   // for the line below only
             ue_wrap::ParamFrame f(fn);
             f.Set(L"InputPin", prop);
             f.Set(L"noNotify", true);
             const bool called = ue_wrap::Call(player, f);
             took = called && f.Get<bool>(L"return");
-            UE_LOGI("[INV-PICKUP-DRILL] putObjectInventory2('%ls' key='%ls' at (%.0f, %.0f, %.0f)) "
-                    "for %hs -> %hs", cls.c_str(), key.c_str(), at.X, at.Y, at.Z, w.label,
+            UE_LOGI("[INV-PICKUP-DRILL] putObjectInventory2('%ls' key='%ls' at (%.0f, %.0f, %.0f)%s) "
+                    "for %hs -> %hs", cls.c_str(), key.c_str(), at.X, at.Y, at.Z, atRead ? "" : " unread", w.label,
                     !called ? "CALL FAILED" : took ? "POCKETED" : "refused");
             if (took) break;
         }

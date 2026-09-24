@@ -138,7 +138,8 @@ void ArmWatch(char who) {
             Watched w;
             w.ref.Set(o);
             w.key = PR::GetInteractableKeyString(o);
-            w.start = w.printed = E::GetActorLocation(o);
+            if (!E::TryGetActorLocation(o, w.start)) continue;   // unreadable: not watched
+            w.printed = w.start;
             w.frozen = PR::IsFrozen(o);
             g_watched.push_back(std::move(w));
         }
@@ -170,7 +171,8 @@ void TickWatch(char who) {
             UE_LOGI("[FIREEXT-DRILL] [%c] GONE key='%ls'", who, w.key.c_str());
             continue;
         }
-        const ue_wrap::FVector at = E::GetActorLocation(o);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(o, at)) continue;   // no sighting this pass
         const bool frozen = PR::IsFrozen(o);
         const bool mounted = IsMounted(o);
         bool th = false, sp = false;
@@ -206,7 +208,8 @@ void TickRelatchProbe() {
         for (auto& w : g_watched) {
             void* o = w.ref.Get();
             if (!o || !coop::remote_prop::IsActorUnderAnyDrive(o)) continue;
-            if (Dist(E::GetActorLocation(o), w.start) < kProbeOffCm) continue;
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(o, at) || Dist(at, w.start) < kProbeOffCm) continue;
             const bool ok = PR::CallSetPropProps(o, false, false, false);
             const bool sim = ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o));
             UE_LOGI("[FIREEXT-DRILL] [C] RELATCH PROBE key='%ls' setPropProps(F,F,F,F) on the driven copy (%s) "
@@ -243,10 +246,12 @@ void TickReleaseReadout() {
     }
     const int t = g_afterTicks;
     if (t != 0 && t != 1 && t != 2 && t != 5 && t != 10 && t != 30 && t != 60) return;
-    const ue_wrap::FVector at = E::GetActorLocation(o);
+    ue_wrap::FVector at{};
+    const bool atRead = E::TryGetActorLocation(o, at);
     const PR::VelocityState v = PR::GetPhysicsVelocity(o);
-    UE_LOGI("[FIREEXT-DRILL] [C] AFTER RELEASE +%d ticks key='%ls' at (%.1f, %.1f, %.1f) simulating=%d atRest=%d "
+    UE_LOGI("[FIREEXT-DRILL] [C] AFTER RELEASE +%d ticks key='%ls' at (%.1f, %.1f, %.1f)%s simulating=%d atRest=%d "
             "frozen=%d sleep=%d vel=(%.1f, %.1f, %.1f)", t, g_probedKey.c_str(), at.X, at.Y, at.Z,
+            atRead ? "" : " (unread)",
             ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o)) ? 1 : 0,
             E::IsActorRootBodyAtRest(o) ? 1 : 0, PR::IsFrozen(o) ? 1 : 0, PR::IsSleeping(o) ? 1 : 0,
             v.linearCmS.X, v.linearCmS.Y, v.linearCmS.Z);
@@ -292,7 +297,8 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     for (size_t i = 0; i < g_targetKey.size() && pp.key.len < 31; ++i)
         pp.key.data[pp.key.len++] = static_cast<char>(g_targetKey[i]);
     pp.holdGen = g_staleGen;
-    const ue_wrap::FVector loc = E::GetActorLocation(t);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(t, loc)) return;   // no stale pose to re-send this tick
     const ue_wrap::FRotator rot = E::GetActorRotation(t);
     pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
     pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
@@ -380,22 +386,25 @@ void* Grabbing(void* player) {
 // watch's own lists: a route must exist and end within reach of the wall, as the director's pile
 // pick asks (director_run.cpp, PickReachablePile).
 bool PickTarget(void* player) {
-    const ue_wrap::FVector me = E::GetActorLocation(player);
+    ue_wrap::FVector me{};
+    if (!E::TryGetActorLocation(player, me)) return false;
     float best = 1e30f;
+    ue_wrap::FVector bestAt{};
     for (const auto& w : g_watched) {
         void* o = w.ref.Get();
         if (!o || !w.mounted || !PR::IsFrozen(o)) continue;
-        const ue_wrap::FVector at = E::GetActorLocation(o);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(o, at)) continue;   // unreadable: never the target
         std::vector<ue_wrap::FVector> route;
         if (!E::FindNavPath(player, me, at, route) || route.empty()) continue;
         const ue_wrap::FVector& end = route.back();
         if (std::hypot(end.X - at.X, end.Y - at.Y) > kRouteEndReachCm) continue;
         float len = 0.f;
         for (size_t i = 1; i < route.size(); ++i) len += Dist(route[i - 1], route[i]);
-        if (len < best) { best = len; g_target.Set(o); g_targetKey = w.key; }
+        if (len < best) { best = len; g_target.Set(o); g_targetKey = w.key; bestAt = at; }
     }
     if (!g_target.Raw()) return false;
-    g_mountPos = E::GetActorLocation(g_target.Get());
+    g_mountPos = bestAt;   // read in the pick above
     UE_LOGI("[FIREEXT-DRILL] [%c] target key='%ls' at (%.1f, %.1f, %.1f), a %.0f cm route (%.0f cm straight)",
             Who(), g_targetKey.c_str(), g_mountPos.X, g_mountPos.Y, g_mountPos.Z, best, Dist(g_mountPos, me));
     return true;
@@ -404,7 +413,8 @@ bool PickTarget(void* player) {
 // A point the NavMesh routes to, some metres from the mount: the route's own last point is on the
 // mesh by construction, which a computed offset is not.
 bool PickCarryEnd(void* player, ue_wrap::FVector& out) {
-    const ue_wrap::FVector me = E::GetActorLocation(player);
+    ue_wrap::FVector me{};
+    if (!E::TryGetActorLocation(player, me)) return false;
     for (int k = 0; k < 8; ++k) {
         const float a = static_cast<float>(k) * 0.785398f;
         const ue_wrap::FVector want{me.X + kCarryCm * std::cos(a), me.Y + kCarryCm * std::sin(a), me.Z};
@@ -421,10 +431,11 @@ void LogTarget(const char* what) {
     ReadMounts();
     void* t = g_target.Get();
     if (!t) { UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' -- the extinguisher is gone", Who(), what, g_targetKey.c_str()); return; }
-    const ue_wrap::FVector at = E::GetActorLocation(t);
-    UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
-            Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
-            IsMounted(t) ? 1 : 0);
+    ue_wrap::FVector at{};
+    const bool atRead = E::TryGetActorLocation(t, at);
+    UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f)%s fromMount=%.1fcm frozen=%d mounted=%d",
+            Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, atRead ? "" : " (unread)",
+            atRead ? Dist(at, g_mountPos) : -1.f, PR::IsFrozen(t) ? 1 : 0, IsMounted(t) ? 1 : 0);
 }
 
 // When the acting peer may start. carry and short: a client's join and its join window are over,
@@ -482,7 +493,10 @@ void ActStep(coop::net::Session& s, void* player) {
         }
         // The bounds' centre: a lying extinguisher's origin can sit at the floor's surface.
         ue_wrap::FVector centre{}, extent{};
-        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent)) centre = E::GetActorLocation(t);
+        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent) && !E::TryGetActorLocation(t, centre)) {
+            Invalid("the extinguisher has neither bounds nor a readable location to aim at");
+            return;
+        }
         ue_wrap::FRotator r = LookAt(E::GetCameraLocation(), centre);
         r.Pitch += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].first);
         r.Yaw   += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].second);

@@ -14,7 +14,7 @@
 #include "coop/props/remote_prop_spawn.h"    // HasLoadTailQuiesced
 #include "coop/props/join_membership_sweep.h"  // the anti-smear claim + sweep
 #include "coop/config/config.h"             // ResolveFlag, for the census gate
-#include "ue_wrap/engine/engine.h"            // GetActorLocation
+#include "ue_wrap/engine/engine.h"            // TryGetActorLocation
 #include "ue_wrap/core/hot_path_guard.h"    // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"              // GetKeyString
@@ -69,7 +69,8 @@ void EmitCensus(bool isHost) {
         if (!R::IsLive(obj)) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;   // CDO
         const bool isProp = coop::kerfur_entity::IsKerfurPropClass(cls);
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        const char* locNote = ue_wrap::engine::TryGetActorLocation(obj, loc) ? "" : " (unread)";
         const std::wstring leaf = R::ClassNameOf(obj);
         if (isProp) {
             ++liveProp;
@@ -84,8 +85,8 @@ void EmitCensus(bool isHost) {
                 status = bound ? (L"BOUND eid=" + std::to_wstring(it->second))
                                : std::wstring(L"*** UNCLAIMED (no host mirror -- stale local off-prop) ***");
             }
-            UE_LOGW("[KERFUR CENSUS][%s]   PROP actor=%p class='%ls' key='%ls' pos=(%.1f, %.1f, %.1f) %ls",
-                    role, obj, leaf.c_str(), key.c_str(), loc.X, loc.Y, loc.Z, status.c_str());
+            UE_LOGW("[KERFUR CENSUS][%s]   PROP actor=%p class='%ls' key='%ls' pos=(%.1f, %.1f, %.1f)%s %ls",
+                    role, obj, leaf.c_str(), key.c_str(), loc.X, loc.Y, loc.Z, locNote, status.c_str());
         } else {
             ++liveNpc;
             std::wstring status;
@@ -98,8 +99,8 @@ void EmitCensus(bool isHost) {
                 status = bound ? (L"BOUND eid=" + std::to_wstring(it->second))
                                : std::wstring(L"*** UNTRACKED (no host mirror -- stale local active twin) ***");
             }
-            UE_LOGW("[KERFUR CENSUS][%s]   NPC  actor=%p class='%ls' pos=(%.1f, %.1f, %.1f) %ls",
-                    role, obj, leaf.c_str(), loc.X, loc.Y, loc.Z, status.c_str());
+            UE_LOGW("[KERFUR CENSUS][%s]   NPC  actor=%p class='%ls' pos=(%.1f, %.1f, %.1f)%s %ls",
+                    role, obj, leaf.c_str(), loc.X, loc.Y, loc.Z, locNote, status.c_str());
         }
     }
     // The REAL measured total for THIS peer (no hardcoded other-peer literal -- diff the two peers' lines).

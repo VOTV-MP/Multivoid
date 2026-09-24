@@ -11,7 +11,7 @@
 #include "coop/creatures/npc_sync.h"          // GetNpcIdForActor (host eid for the host's own menu use)
 #include "coop/player/players_registry.h"  // Local() / Puppet(slot) / kPeerIdHost (the follow target body)
 #include "coop/player/remote_player.h"     // RemotePlayer::GetActor (the puppet body actor)
-#include "ue_wrap/engine/engine.h"         // GetActorLocation
+#include "ue_wrap/engine/engine.h"         // TryGetActorLocation
 #include "ue_wrap/actors/kerfur.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"

@@ -26,7 +26,7 @@ namespace E = ue_wrap::engine;
 // The pose-staleness budget, and the only copy of it. The host copy of a client body trails
 // reality by the one-way
 // latency + `RemotePlayer::kInterpWindowMs` (75 ms) + one send interval, and the game own reach
-// traces start at the player CAMERA, at eye height, not at the actor root that `GetActorLocation`
+// traces start at the player CAMERA, at eye height, not at the actor root that `TryGetActorLocation`
 // reports. 600 uu covers roughly half a second at a sprint plus that eye-height offset.
 //
 // Deliberately generous, and the reason is asymmetric cost: this bound exists to stop WORLD-WIDE
@@ -85,9 +85,8 @@ bool TargetPointAndRadius(void* actor, ue_wrap::FVector& outOrigin, float& outRa
         outRadiusUU = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
         return true;
     }
-    // CHECKED READ ONLY. `E::GetActorLocation` returns a default FVector on failure and (0,0,0) is
-    // the world origin, so a failed read would report the target as standing at the origin and
-    // authorize anything else near it -- a fail-OPEN inside a function whose job is to fail closed.
+    // A failed read answers false: a target placed at the world origin would authorize anything
+    // else near it -- a fail-OPEN inside a function whose job is to fail closed.
     return E::TryGetActorLocation(actor, outOrigin);
 }
 

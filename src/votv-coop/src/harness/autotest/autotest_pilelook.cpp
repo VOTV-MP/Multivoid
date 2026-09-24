@@ -75,12 +75,13 @@ void RunPileLookScenario() {
                 client ? coop::remote_prop::ResolveMirrorEidByActor(o)
                        : coop::prop_element_tracker::GetPropElementIdForActor(o);
             if (isClump) {
-                const ue_wrap::FVector at = E::GetActorLocation(o);
+                ue_wrap::FVector at{};
+                const bool atRead = E::TryGetActorLocation(o, at);
                 const bool none = (eid == coop::element::kInvalidId || eid == 0);
-                UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(%.1f,%.1f,%.1f)",
+                UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(%.1f,%.1f,%.1f)%s",
                         none ? 0u : static_cast<unsigned>(eid),
                         !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save"),
-                        R::ClassNameOf(o).c_str(), at.X, at.Y, at.Z);
+                        R::ClassNameOf(o).c_str(), at.X, at.Y, at.Z, atRead ? "" : " (unread)");
                 ++clumps;
                 if (none) ++clumpsUnnamed;
                 continue;

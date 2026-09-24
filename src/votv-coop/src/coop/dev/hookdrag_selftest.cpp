@@ -95,14 +95,11 @@ void* LocalPlayer() {
 bool Anchor(bool isHost, ue_wrap::FVector& out) {
     if (isHost) {
         void* p = LocalPlayer();
-        if (!p) return false;
-        out = E::GetActorLocation(p);
-        return true;
+        return p && E::TryGetActorLocation(p, out);
     }
     coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(0);
     if (!pup || !pup->valid() || !pup->GetActor()) return false;
-    out = E::GetActorLocation(pup->GetActor());
-    return true;
+    return E::TryGetActorLocation(pup->GetActor(), out);
 }
 
 // The nearest keyed, simulating, light Aprop_C to `anchor` within the radius: one object-array
@@ -113,7 +110,7 @@ bool Anchor(bool isHost, ue_wrap::FVector& out) {
 // index, which is what the census gives a world prop and withholds from a hand actor. Both roles
 // run the same rule over the same world, and the log carries the key so the driver can tell when
 // they disagreed.
-void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut) {
+void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut, ue_wrap::FVector& locOut) {
     void* best = nullptr;
     float bestD2 = kPickRadiusCm * kPickRadiusCm;
     void* handAxis[1 + coop::players::kMaxPeers];
@@ -132,10 +129,11 @@ void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut) {
         const std::wstring key = PR::GetInteractableKeyString(obj);
         if (key.empty() || key == L"None") continue;
         if (coop::prop_element_tracker::FindLiveActorByKey(key) != obj) continue;  // not a tracked world prop
-        const ue_wrap::FVector loc = E::GetActorLocation(obj);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(obj, loc)) continue;   // unreadable: never the target
         const float dx = loc.X - anchor.X, dy = loc.Y - anchor.Y, dz = loc.Z - anchor.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < bestD2) { bestD2 = d2; best = obj; keyOut = key; }
+        if (d2 < bestD2) { bestD2 = d2; best = obj; keyOut = key; locOut = loc; }
     }
     return best;
 }
@@ -151,7 +149,8 @@ void* PickTarget(const ue_wrap::FVector& anchor, std::wstring& keyOut) {
 bool Plant(void* player, void* target) {
     void* mesh = PR::GetStaticMesh(target);
     if (!mesh) { g_plantNote = "no-static-mesh"; return false; }
-    const ue_wrap::FVector loc = E::GetActorLocation(target);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(target, loc)) { g_plantNote = "target-location-unread"; return false; }
     void* hook = H::SpawnMirror(H::Kind::Hook, loc, ue_wrap::FRotator{});
     if (!hook) { g_plantNote = "hook-did-not-spawn"; return false; }
     if (!H::AttachHead(hook, target, mesh, ue_wrap::FVector{loc.X, loc.Y, loc.Z + 20.f},
@@ -183,7 +182,12 @@ void Sample(uint64_t since, bool isHost) {
                 since / 1000.0, g_targetKey.c_str());
         return;
     }
-    const ue_wrap::FVector loc = E::GetActorLocation(t);
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(t, loc)) {
+        UE_LOGW("hookdrag_selftest: POS t=%.2f key='%ls' -- the target's location could not be read; no sample",
+                since / 1000.0, g_targetKey.c_str());
+        return;
+    }
     const float dx = loc.X - g_targetStart.X, dy = loc.Y - g_targetStart.Y, dz = loc.Z - g_targetStart.Z;
     const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (moved > g_maxMovedCm) g_maxMovedCm = moved;
@@ -191,11 +195,12 @@ void Sample(uint64_t since, bool isHost) {
     // player stopping (a wall, or the hook's own pull on the player winning over the walk) rather
     // than guessed. The local player on both peers: on the non-planting peer it is a bystander.
     ue_wrap::FVector me{};
-    if (void* p = LocalPlayer()) me = E::GetActorLocation(p);
+    void* self = LocalPlayer();
+    const bool meRead = self && E::TryGetActorLocation(self, me);
     UE_LOGI("hookdrag_selftest: POS t=%.2f wall=%llu key='%ls' (%.1f,%.1f,%.1f) moved=%.1f role=%s "
-            "me=(%.1f,%.1f,%.1f)",
+            "me=(%.1f,%.1f,%.1f)%s",
             since / 1000.0, static_cast<unsigned long long>(WallMs()), g_targetKey.c_str(),
-            loc.X, loc.Y, loc.Z, moved, isHost ? "HOST" : "CLIENT", me.X, me.Y, me.Z);
+            loc.X, loc.Y, loc.Z, moved, isHost ? "HOST" : "CLIENT", me.X, me.Y, me.Z, meRead ? "" : " (unread)");
 }
 
 // One tick of the host's walk: movement INPUT, re-issued every tick, which the character movement
@@ -252,9 +257,8 @@ void Tick() {
         if (!Anchor(isHost, anchor)) {
             UE_LOGW("hookdrag_selftest: PICK role=%s -- no anchor (the host %s is not here yet)",
                     isHost ? "HOST" : "CLIENT", isHost ? "player" : "puppet");
-        } else if (void* t = PickTarget(anchor, g_targetKey)) {
+        } else if (void* t = PickTarget(anchor, g_targetKey, g_targetStart)) {
             g_target.Set(t);
-            g_targetStart = E::GetActorLocation(t);
             const float dx = g_targetStart.X - anchor.X, dy = g_targetStart.Y - anchor.Y,
                         dz = g_targetStart.Z - anchor.Z;
             // The eid is the cross-peer identity: the host's local element, the client's mirror
@@ -293,21 +297,26 @@ void Tick() {
                 g_walkOutStarted = true;
                 void* p = LocalPlayer();
                 void* t = g_target.Get();
-                if (p) g_walkBase = E::GetActorLocation(p);
-                // Away from the prop in the horizontal plane; straight +X if the two coincide.
-                const ue_wrap::FVector tl = t ? E::GetActorLocation(t) : g_walkBase;
-                float dx = g_walkBase.X - tl.X, dy = g_walkBase.Y - tl.Y;
-                const float n = std::sqrt(dx * dx + dy * dy);
-                if (n > 1.f) { dx /= n; dy /= n; } else { dx = 1.f; dy = 0.f; }
+                const bool baseRead = p && E::TryGetActorLocation(p, g_walkBase);
+                // Away from the prop in the horizontal plane; straight +X if the two coincide, there is
+                // no prop, or either position is unread.
+                ue_wrap::FVector tl{};
+                const bool tlRead = t && E::TryGetActorLocation(t, tl);
+                float dx = 1.f, dy = 0.f;
+                if (baseRead && tlRead) {
+                    dx = g_walkBase.X - tl.X; dy = g_walkBase.Y - tl.Y;
+                    const float n = std::sqrt(dx * dx + dy * dy);
+                    if (n > 1.f) { dx /= n; dy /= n; } else { dx = 1.f; dy = 0.f; }
+                }
                 // With both peers pulling, the client walks at a right angle to the host: two
                 // players standing together would otherwise drag along one line, and a tug in
                 // opposite directions leaves the prop where it was, which a drag verdict cannot
                 // tell from a channel that carried nothing.
                 if (!isHost && Role() == "both") { const float t2 = dx; dx = -dy; dy = t2; }
                 g_walkDir = ue_wrap::FVector{dx, dy, 0.f};
-                UE_LOGI("hookdrag_selftest: WALK OUT %llu ms along (%.2f,%.2f) from (%.1f,%.1f,%.1f)",
+                UE_LOGI("hookdrag_selftest: WALK OUT %llu ms along (%.2f,%.2f) from (%.1f,%.1f,%.1f)%s",
                         static_cast<unsigned long long>(kWalkLegMs), dx, dy, g_walkBase.X,
-                        g_walkBase.Y, g_walkBase.Z);
+                        g_walkBase.Y, g_walkBase.Z, baseRead ? "" : " (unread)");
             }
             WalkStep(/*outward=*/true);
         }

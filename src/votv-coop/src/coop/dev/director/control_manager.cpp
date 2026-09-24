@@ -67,7 +67,12 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
         const int r = RunGT([this, &goal, &lastDriver, alive](std::atomic<int>& d) {
             if (!alive->load()) { d.store(1); return; }   // the run that posted this has gone
             PlayerContext ctx;
-            if (!ctx.Refresh()) { d.store(2); return; }   // no possessed player this tick -- retry
+            if (!ctx.Refresh()) {
+                // A location read that fails is a faulted dispatch, and it repeats: the run ends on it
+                // instead of waiting out its deadline.
+                if (ctx.posUnread) { goal.failed = true; goal.failReason = "player_location_unread"; d.store(1); return; }
+                d.store(2); return;   // no possessed player this tick -- retry
+            }
             // Highest-priority ACTIVE process wins control this tick (the arbiter).
             IProcess* active = nullptr;
             for (auto& up : procs_)

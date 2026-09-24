@@ -514,9 +514,9 @@ DeathSnapshot ReadDeathState() {
         s.haveState = E::ReadMainPlayerRagdollState(mp, s.isRagdoll, s.dead);
         s.haveStartInvinc = ReadBpBool(mp, L"startInvinc", s.startInvinc);
         s.haveGrab = ReadBpObjectValid(mp, L"grabbing_actor", s.grabValid);
-        const ue_wrap::FVector at = E::GetActorLocation(mp);
+        ue_wrap::FVector at{};
+        s.haveLoc = E::TryGetActorLocation(mp, at);
         s.locX = at.X; s.locY = at.Y; s.locZ = at.Z;
-        s.haveLoc = true;
     }
     ReadMenuPrep(s.screenSwiIdx, s.canvasLoadingVis);
     s.dmgRed = ReadDamageRed();

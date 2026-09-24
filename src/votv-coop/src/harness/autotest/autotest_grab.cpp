@@ -122,8 +122,9 @@ void RunAutonomousGrabTest() {
     auto pr = std::make_shared<PropResult>();
     done->store(0);
     GT::Post([rsv, pr, done, haveAnchor, envAnchor] {
-        const ue_wrap::FVector pLoc = haveAnchor ? envAnchor
-                                                : ue_wrap::engine::GetActorLocation(rsv->player);
+        ue_wrap::FVector pLoc = envAnchor;
+        if (!haveAnchor && !ue_wrap::engine::TryGetActorLocation(rsv->player, pLoc)) {
+            UE_LOGW("grab_test: no scan anchor -- the player's location could not be read"); done->store(2); return; }
         UE_LOGI("grab_test: scan anchor = (%.0f, %.0f, %.0f) [%s]",
                 pLoc.X, pLoc.Y, pLoc.Z, haveAnchor ? "env" : "player");
         ue_wrap::prop::ScanStats stats;
@@ -170,7 +171,9 @@ void RunAutonomousGrabTest() {
     auto handPos = std::make_shared<ue_wrap::FVector>();
     done->store(0);
     GT::Post([rsv, pr, handPos, done] {
-        ue_wrap::FVector pLoc = ue_wrap::engine::GetActorLocation(rsv->player);
+        ue_wrap::FVector pLoc{};
+        if (!ue_wrap::engine::TryGetActorLocation(rsv->player, pLoc)) {
+            UE_LOGW("grab_test: no hand position -- the player's location could not be read"); done->store(2); return; }
         ue_wrap::FVector fwd  = ue_wrap::engine::GetActorForwardVector(rsv->player);
         handPos->X = pLoc.X + fwd.X * 60.f;
         handPos->Y = pLoc.Y + fwd.Y * 60.f;
@@ -181,6 +184,7 @@ void RunAutonomousGrabTest() {
         done->store(1);
     });
     while (done->load() == 0) ::Sleep(5);
+    if (done->load() != 1) { UE_LOGW("grab_test: no hand position -- aborting"); return; }
 
     // ---- 4. Call grabHandle.GrabComponentAtLocation + write BP state.
     done->store(0);

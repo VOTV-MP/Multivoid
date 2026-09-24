@@ -21,7 +21,7 @@
 #include "coop/config/config.h"
 #include "ue_wrap/actors/inventory.h"    // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"         // GetInteractableKeyString
-#include "ue_wrap/engine/engine.h"       // GetActorLocation
+#include "ue_wrap/engine/engine.h"       // TryGetActorLocation
 #include "ue_wrap/actors/save_record.h"  // Arr / ReadArr / kMxStride
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -81,6 +81,7 @@ struct Row {
     bool         player = false;
     int32_t      contents = -1;  // GObjStack[index].obj.Num, or -1 if unresolvable
     float        x = 0, y = 0, z = 0;
+    bool         locRead = false;   // false: x/y/z are not a position
     bool         isDroneContainer = false;  // == drone.container (what compileOrder writes through)
     bool         isSackContainer = false;   // == some sack.container
 };
@@ -116,7 +117,8 @@ void FillCommon(Row& r) {
     r.key = ue_wrap::prop::GetInteractableKeyString(r.actor);
     const auto id = coop::element::Registry::Get().EidForActor(r.actor);
     r.eid = (id == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(id);
-    const auto loc = ue_wrap::engine::GetActorLocation(r.actor);
+    ue_wrap::FVector loc{};
+    r.locRead = ue_wrap::engine::TryGetActorLocation(r.actor, loc);
     r.x = loc.X; r.y = loc.Y; r.z = loc.Z;
 }
 
@@ -227,9 +229,9 @@ void Tick(bool isHost) {
             g_sampleNo, isHost ? "HOST" : "CLIENT", rows.size(), sacks.size(), droneContainer);
     for (const auto& r : rows) {
         UE_LOGI("[delivery_census]   actor=%p cls='%ls' key='%ls' eid=%u idx=%d contents=%d "
-                "vol=%.1f player=%d loc=(%.0f,%.0f,%.0f)%s%s",
+                "vol=%.1f player=%d loc=(%.0f,%.0f,%.0f)%s%s%s",
                 r.actor, r.cls.c_str(), r.key.empty() ? L"<none>" : r.key.c_str(), r.eid,
-                r.index, r.contents, r.currVol, r.player ? 1 : 0, r.x, r.y, r.z,
+                r.index, r.contents, r.currVol, r.player ? 1 : 0, r.x, r.y, r.z, r.locRead ? "" : " (unread)",
                 r.isDroneContainer ? "  <== drone.container (compileOrder writes HERE)" : "",
                 r.isSackContainer ? "  <== sack.container" : "");
     }

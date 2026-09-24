@@ -138,7 +138,7 @@ void WorldActor::AdvanceInterp() {
 
 void WorldActor::Tick() {
     // [WA-TRACE client-drive] 1 Hz per-mirror step and state trace, behind [dev] world_actor_trace
-    // because it is not free: `pre` and `post` are two EXTRA GetActorLocation dispatches per mirror
+    // because it is not free: `pre` and `post` are two EXTRA location-read dispatches per mirror
     // per second that exist only to feed the line. `pre` is the engine location that SURVIVED the
     // last frame -- a restored blueprint tick fighting the drive shows up as pre snapping back
     // while cur and tgt advance; `post` is right after our write.

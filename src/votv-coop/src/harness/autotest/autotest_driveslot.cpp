@@ -139,6 +139,12 @@ void RunHost() {
             // is left where it lies.
             void* me = coop::players::Registry::Get().Local();
             if (!me) { UE_LOGW("driveslot: no local player"); d.store(2); return; }
+            ue_wrap::FVector at{};   // read before the slot is cleared: a host it fails on changes nothing
+            if (!E::TryGetActorLocation(me, at)) {
+                UE_LOGW("driveslot: the host's location could not be read, so the drive has nowhere to spawn");
+                d.store(2);
+                return;
+            }
             if (void* sitting = DC::SlotDrive(sb->slot)) {
                 CallWithPlayer(sitting, L"playerTryToGrab", me);
                 CallWithPlayer(sitting, L"playerGrabbed_pre", me);
@@ -150,7 +156,6 @@ void RunHost() {
             }
             // Born at the host's feet, away from the port: a drive born in the port's reach is taken
             // by the slot's own overlap on every peer, before the insert under test.
-            ue_wrap::FVector at = E::GetActorLocation(me);
             at.Z += 100.f;
             void* drive = E::BeginDeferredSpawn(DC::DriveClass(), at, ue_wrap::FRotator{});
             if (!drive || !E::FinishDeferredSpawn(drive, at, ue_wrap::FRotator{})) {
@@ -175,15 +180,20 @@ void RunHost() {
     }
     // Straight into the port: an insert that overtakes its drive's birth broadcast is parked by the
     // receiver (drive_sync's pending list, retried until the eid resolves), so no wait is owed here.
-    RunGT([sb](std::atomic<int>& d) {
+    const bool portRead = RunGT([sb](std::atomic<int>& d) {
         DC::CallPutDriveIn(sb->slot, sb->drive);
         sb->eid = EidOf(sb->drive);
-        sb->port = E::GetActorLocation(sb->drive);
-        UE_LOGI("driveslot: HOST inserted eid=%u in the play slot at (%.0f,%.0f,%.0f) frozen=%d",
-                sb->eid, sb->port.X, sb->port.Y, sb->port.Z,
+        const bool read = E::TryGetActorLocation(sb->drive, sb->port);
+        UE_LOGI("driveslot: HOST inserted eid=%u in the play slot at (%.0f,%.0f,%.0f)%s frozen=%d",
+                sb->eid, sb->port.X, sb->port.Y, sb->port.Z, read ? "" : " (unread)",
                 ue_wrap::prop::IsFrozen(sb->drive) ? 1 : 0);
-        d.store(1);
-    });
+        d.store(read ? 1 : 2);
+    }) == 1;
+    if (!portRead) {
+        UE_LOGW("driveslot: VERDICT host FAIL -- the port's location could not be read, so no carry "
+                "off it can be measured");
+        return;
+    }
 
     const bool out = WaitFor(90000, [sb] { return DC::SlotDrive(sb->slot) == nullptr; });
     if (!out) {
@@ -197,19 +207,21 @@ void RunHost() {
     WaitFor(30000, [sb] {
         if (!R::IsLiveByIndex(sb->drive, sb->driveIdx)) return false;
         if (ue_wrap::prop::IsFrozen(sb->drive)) return false;
-        return Distance(E::GetActorLocation(sb->drive), sb->port) >= kOffPortCm;
+        ue_wrap::FVector at{};
+        return E::TryGetActorLocation(sb->drive, at) && Distance(at, sb->port) >= kOffPortCm;
     });
     RunGT([sb](std::atomic<int>& d) {
         const bool live = R::IsLiveByIndex(sb->drive, sb->driveIdx);
         const bool empty = DC::SlotDrive(sb->slot) == nullptr;
         const bool frozen = live && ue_wrap::prop::IsFrozen(sb->drive);
-        const ue_wrap::FVector at = live ? E::GetActorLocation(sb->drive) : ue_wrap::FVector{};
-        const float moved = live ? Distance(at, sb->port) : 0.f;
-        const bool pass = live && empty && !frozen && moved >= kOffPortCm;
+        ue_wrap::FVector at{};
+        const bool atRead = live && E::TryGetActorLocation(sb->drive, at);
+        const float moved = atRead ? Distance(at, sb->port) : 0.f;
+        const bool pass = atRead && empty && !frozen && moved >= kOffPortCm;
         UE_LOGI("driveslot: VERDICT host %s -- eid=%u live=%d slotEmpty=%d frozen=%d at "
-                "(%.0f,%.0f,%.0f), %.0f cm off the port (needs %.0f)",
+                "(%.0f,%.0f,%.0f)%s, %.0f cm off the port (needs %.0f)",
                 pass ? "PASS" : "FAIL", sb->eid, live ? 1 : 0, empty ? 1 : 0, frozen ? 1 : 0, at.X,
-                at.Y, at.Z, moved, kOffPortCm);
+                at.Y, at.Z, (live && !atRead) ? " (unread)" : "", moved, kOffPortCm);
         d.store(1);
     });
 }
@@ -252,9 +264,15 @@ void RunClient() {
     auto g = std::make_shared<Grab>();
     if (RunGT([sb, g](std::atomic<int>& d) {
             sb->eid = EidOf(sb->drive);
-            sb->port = E::GetActorLocation(sb->drive);
+            if (!E::TryGetActorLocation(sb->drive, sb->port)) {
+                UE_LOGW("driveslot: the drive's location in the port could not be read"); d.store(2); return; }
             g->player = coop::players::Registry::Get().Local();
             if (!g->player) { UE_LOGW("driveslot: no local player"); d.store(2); return; }
+            // Where the hand goes, read before the grab starts: a take that cannot place the drive
+            // leaves it in the slot.
+            ue_wrap::FVector p{};
+            if (!E::TryGetActorLocation(g->player, p)) {
+                UE_LOGW("driveslot: the player's location could not be read"); d.store(2); return; }
             // The game's grab of a slotted drive: the drive ejects itself, then the grab unfreezes it.
             const bool took = CallWithPlayer(sb->drive, L"playerTryToGrab", g->player);
             const bool pre = CallWithPlayer(sb->drive, L"playerGrabbed_pre", g->player);
@@ -267,7 +285,6 @@ void RunClient() {
             if (!g->handle || !g->mesh || !grabFn || !g->setTargetFn || !g->releaseFn) {
                 UE_LOGW("driveslot: the physics handle did not resolve"); d.store(2); return;
             }
-            const ue_wrap::FVector p = E::GetActorLocation(g->player);
             const ue_wrap::FVector fwd = E::GetActorForwardVector(g->player);
             g->hand = {p.X + fwd.X * 60.f, p.Y + fwd.Y * 60.f, p.Z + 80.f};
             g->side = {-fwd.Y, fwd.X, 0.f};
@@ -310,16 +327,19 @@ void RunClient() {
     // within a centimetre of each other is the drop settling. The readout follows either way.
     ue_wrap::FVector last{};
     WaitFor(15000, [sb, &last] {
-        const ue_wrap::FVector at = E::GetActorLocation(sb->drive);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(sb->drive, at)) return false;   // unread: not a settled sample
         const bool still = Distance(at, last) < 1.f;
         last = at;
         return still;
     });
     RunGT([sb](std::atomic<int>& d) {
-        const ue_wrap::FVector at = E::GetActorLocation(sb->drive);
-        UE_LOGI("driveslot: VERDICT client DONE -- eid=%u slotEmpty=%d frozen=%d at (%.0f,%.0f,%.0f), "
+        ue_wrap::FVector at{};
+        const bool atRead = E::TryGetActorLocation(sb->drive, at);
+        UE_LOGI("driveslot: VERDICT client DONE -- eid=%u slotEmpty=%d frozen=%d at (%.0f,%.0f,%.0f)%s, "
                 "%.0f cm off the port", sb->eid, DC::SlotDrive(sb->slot) == nullptr ? 1 : 0,
-                ue_wrap::prop::IsFrozen(sb->drive) ? 1 : 0, at.X, at.Y, at.Z, Distance(at, sb->port));
+                ue_wrap::prop::IsFrozen(sb->drive) ? 1 : 0, at.X, at.Y, at.Z, atRead ? "" : " (unread)",
+                atRead ? Distance(at, sb->port) : -1.f);
         d.store(1);
     });
 }

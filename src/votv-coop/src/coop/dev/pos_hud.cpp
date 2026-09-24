@@ -101,12 +101,19 @@ void Refresh() {
     // actor that has a Controller, and caches it.
     void* local = coop::players::Registry::Get().Local();
     if (local) {
-        const ue_wrap::FVector loc = E::GetActorLocation(local);
+        ue_wrap::FVector loc{};
         const ue_wrap::FRotator cam = E::GetCameraRotation();
-        std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
-                      L"Pos   X %+8.0f   Y %+8.0f   Z %+8.0f\n"
-                      L"Cam   yaw %+7.1f   pitch %+6.1f   roll %+5.1f",
-                      loc.X, loc.Y, loc.Z, cam.Yaw, cam.Pitch, cam.Roll);
+        if (E::TryGetActorLocation(local, loc)) {
+            std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
+                          L"Pos   X %+8.0f   Y %+8.0f   Z %+8.0f\n"
+                          L"Cam   yaw %+7.1f   pitch %+6.1f   roll %+5.1f",
+                          loc.X, loc.Y, loc.Z, cam.Yaw, cam.Pitch, cam.Roll);
+        } else {
+            std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
+                          L"Pos   (unread)\n"
+                          L"Cam   yaw %+7.1f   pitch %+6.1f   roll %+5.1f",
+                          cam.Yaw, cam.Pitch, cam.Roll);
+        }
     } else {
         std::swprintf(buf, sizeof(buf) / sizeof(buf[0]),
                       L"Pos   (no player)\nCam   (no player)");

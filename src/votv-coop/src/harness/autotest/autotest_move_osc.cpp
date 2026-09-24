@@ -54,15 +54,20 @@ void RunAutonomousMoveOsc() {
     // the GT writes base.* THEN flips ready, the worker reads ready THEN base.*) ---
     struct Vec3 { float x, y, z; };
     auto base  = std::make_shared<Vec3>(Vec3{0.f, 0.f, 0.f});
-    auto ready = std::make_shared<std::atomic<int>>(0);  // 0 pending, 1 ok, -1 no-local
+    auto ready = std::make_shared<std::atomic<int>>(0);  // 0 pending, 1 ok, -1 no-local, -2 unread
     GT::Post([base, ready] {
         void* local = coop::players::Registry::Get().Local();
         if (!local) { ready->store(-1, std::memory_order_release); return; }
-        const ue_wrap::FVector loc = E::GetActorLocation(local);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(local, loc)) { ready->store(-2, std::memory_order_release); return; }
         base->x = loc.X; base->y = loc.Y; base->z = loc.Z;
         ready->store(1, std::memory_order_release);
     });
     while (ready->load(std::memory_order_acquire) == 0) ::Sleep(5);
+    if (ready->load(std::memory_order_acquire) == -2) {
+        UE_LOGW("move_osc: the local player's location could not be read -- aborting");
+        return;
+    }
     if (ready->load(std::memory_order_acquire) < 0) {
         UE_LOGW("move_osc: no local mainPlayer_C (not in gameplay yet?) -- aborting");
         return;

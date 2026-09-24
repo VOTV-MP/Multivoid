@@ -24,7 +24,7 @@ bool PlayerContext::Refresh() {
     if (!p || !R::IsLive(p) || !E::GetController(p)) return false;   // GetController()!=null = possessed
     player = p;
     possessed = true;
-    pos = E::GetActorLocation(p);
+    if (!E::TryGetActorLocation(p, pos)) { posUnread = true; return false; }
     E::MainPlayerGrabState gs{};
     if (E::ReadMainPlayerGrabState(p, gs)) { held = gs.grabbingActor; holding = gs.holdingActor; }
     if (g_dropPlaceOff == -2) {

@@ -129,7 +129,10 @@ void RunNavHaltProbe() {
                     "are not where expected -- Gate A CALL-FAILED", navCdo, findFn, randFn);
             d.store(1); return;
         }
-        ga->start = E::GetActorLocation(player);
+        if (!E::TryGetActorLocation(player, ga->start)) {
+            UE_LOGW("nav_probe: GATE A -- the player's location could not be read -- Gate A CALL-FAILED");
+            d.store(1); return;
+        }
 
         // A.1 -- a GUARANTEED-reachable endpoint (removes the unreachable-target confound).
         {
@@ -204,18 +207,24 @@ void RunNavHaltProbe() {
     // permanent no-op. Same reason the static nav UFunctions go to the NavigationSystemV1
     // CDO.
     // =====================================================================
-    struct GateB { void* fn = nullptr; float best = 0.f; float d0 = 0, d1 = 0, d2 = 0, d3 = 0; ue_wrap::FVector home{}; };
+    struct GateB {
+        void* fn = nullptr; float best = 0.f; float d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+        ue_wrap::FVector home{}; bool homeRead = false;
+    };
     auto gb = std::make_shared<GateB>();
     // Resolve AddMovementInput on the DECLARING class (APawn), NOT the leaf.
     RunGT([gb, player](std::atomic<int>& d) {
         void* pawnCls = R::FindClass(kPawnClass);
         gb->fn   = pawnCls ? R::FindFunction(pawnCls, kAddMoveFn) : nullptr;
-        gb->home = E::GetActorLocation(player);
+        gb->homeRead = E::TryGetActorLocation(player, gb->home);
         d.store(1);
     });
     if (!gb->fn) {
         UE_LOGW("nav_probe: GATE B -- AddMovementInput not found on the Pawn class -- CALL-FAILED "
                 "(check the declaring class / SDK name)");
+    } else if (!gb->homeRead) {
+        UE_LOGW("nav_probe: GATE B -- the player's location could not be read, so the sweep has no home "
+                "to return to -- CALL-FAILED");
     } else {
         const ue_wrap::FVector dirs[4] = {
             { 1.f, 0.f, 0.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f, 0.f }, { 0.f, -1.f, 0.f },
@@ -223,7 +232,11 @@ void RunNavHaltProbe() {
         float deltas[4] = { 0, 0, 0, 0 };
         for (int di = 0; di < 4; ++di) {
             ue_wrap::FVector loc0{};
-            RunGT([player, &loc0](std::atomic<int>& dd) { loc0 = E::GetActorLocation(player); dd.store(1); });
+            bool read0 = false;
+            RunGT([player, &loc0, &read0](std::atomic<int>& dd) {
+                read0 = E::TryGetActorLocation(player, loc0);
+                dd.store(1);
+            });
             // ~1 s of per-frame input: AddMovementInput must be re-issued each frame
             // (the pawn consumes + clears ControlInputVector on its movement tick).
             const ue_wrap::FVector dir = dirs[di];
@@ -239,10 +252,15 @@ void RunNavHaltProbe() {
                 ::Sleep(25);
             }
             ue_wrap::FVector loc1{};
-            RunGT([player, &loc1](std::atomic<int>& dd) { loc1 = E::GetActorLocation(player); dd.store(1); });
-            deltas[di] = HorizDist(loc1, loc0);
+            bool read1 = false;
+            RunGT([player, &loc1, &read1](std::atomic<int>& dd) {
+                read1 = E::TryGetActorLocation(player, loc1);
+                dd.store(1);
+            });
+            deltas[di] = (read0 && read1) ? HorizDist(loc1, loc0) : 0.f;   // unread: no movement measured
             if (deltas[di] > gb->best) gb->best = deltas[di];
-            UE_LOGI("nav_probe: GATE B -- dir(%.0f,%.0f) horizontal move = %.0f cm", dir.X, dir.Y, deltas[di]);
+            UE_LOGI("nav_probe: GATE B -- dir(%.0f,%.0f) horizontal move = %.0f cm%s", dir.X, dir.Y, deltas[di],
+                    (read0 && read1) ? "" : " (unread)");
             // Return toward home between directions so the sweep doesn't wander far.
             RunGT([gb, player](std::atomic<int>& dd) { E::SetActorLocation(player, gb->home); dd.store(1); });
             ::Sleep(200);

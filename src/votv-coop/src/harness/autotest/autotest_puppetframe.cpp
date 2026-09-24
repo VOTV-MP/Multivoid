@@ -53,10 +53,11 @@ void FramePuppetForNameplate(bool reposition) {
         // Aim/position against the VISIBLE MESH (mirrors AimHostAtPuppet) -- the
         // mainPlayer_C ACTOR pivot sits up high (pose-drive alignment), so using the
         // actor Z would float the host at head height + aim over the body.
-        const ue_wrap::FVector pa = E::GetActorLocation(puppet);
+        ue_wrap::FVector pa{}, eye{};
+        if (!E::TryGetActorLocation(puppet, pa) || !E::TryGetActorLocation(local, eye)) {
+            UE_LOGW("puppet-frame[host]: not framed -- a location could not be read"); done->store(1); return; }
         void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
         const ue_wrap::FVector pm = (mesh && R::IsLive(mesh)) ? E::GetComponentLocation(mesh) : pa;
-        ue_wrap::FVector eye = E::GetActorLocation(local);
         if (reposition) {
             // Stand ~220 cm back from the puppet, close in, at the HOST's OWN floor Z (eye.Z); the
             // back direction comes from the current horizontal offset.

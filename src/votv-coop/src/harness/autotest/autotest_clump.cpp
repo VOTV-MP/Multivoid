@@ -68,7 +68,9 @@ void RunAutonomousClumpTest() {
         if (!player || !R::IsLive(player)) { UE_LOGW("clump_test: no live local player"); done->store(2); return; }
         void* cls = R::FindClass(L"prop_garbageClump_C");
         if (!cls) { UE_LOGW("clump_test: prop_garbageClump_C class not loaded -- aborting"); done->store(2); return; }
-        const ue_wrap::FVector pLoc = ue_wrap::engine::GetActorLocation(player);
+        ue_wrap::FVector pLoc{};
+        if (!ue_wrap::engine::TryGetActorLocation(player, pLoc)) {
+            UE_LOGW("clump_test: the player's location could not be read"); done->store(2); return; }
         const ue_wrap::FVector fwd  = ue_wrap::engine::GetActorForwardVector(player);
         rsv->base = ue_wrap::FVector{ pLoc.X + fwd.X * 120.f, pLoc.Y + fwd.Y * 120.f, pLoc.Z + 60.f };
         void* clump = ue_wrap::engine::SpawnActor(cls, rsv->base);
@@ -135,7 +137,9 @@ void RunClumpVisProbe() {
         if (!player || !R::IsLive(player)) { UE_LOGW("clumpvis: no live local player"); done->store(2); return; }
         void* cls = R::FindClass(L"prop_garbageClump_C");
         if (!cls) { UE_LOGW("clumpvis: prop_garbageClump_C class not loaded"); done->store(2); return; }
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(player);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(player, loc)) {
+            UE_LOGW("clumpvis: the player's location could not be read"); done->store(2); return; }
         const ue_wrap::FVector fwd = ue_wrap::engine::GetActorForwardVector(player);
         const ue_wrap::FVector at{ loc.X + fwd.X * 150.f, loc.Y + fwd.Y * 150.f, loc.Z + 40.f };
         void* clump = ue_wrap::engine::SpawnActor(cls, at);

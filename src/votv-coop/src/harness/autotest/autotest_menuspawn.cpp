@@ -293,9 +293,10 @@ void RunMenuSpawnDrill() {
             if (void* a = FindNewRowActor(row, before)) {
                 spawned = true;
                 spawnedKey = ue_wrap::prop::GetInteractableKeyString(a);
-                const ue_wrap::FVector l = ue_wrap::engine::GetActorLocation(a);
-                UE_LOGI("menuspawn: CLIENT spawned key='%ls' loc=(%.1f,%.1f,%.1f)",
-                        spawnedKey.c_str(), l.X, l.Y, l.Z);
+                ue_wrap::FVector l{};
+                const bool lRead = ue_wrap::engine::TryGetActorLocation(a, l);
+                UE_LOGI("menuspawn: CLIENT spawned key='%ls' loc=(%.1f,%.1f,%.1f)%s",
+                        spawnedKey.c_str(), l.X, l.Y, l.Z, lRead ? "" : " (unread)");
             }
         });
         if (!spawned) UE_LOGW("menuspawn: CLIENT drove the menu spawn but no new '%ls' appeared "

@@ -106,15 +106,25 @@ void RunAutonomousChipPileTest() {
                 if (!p || !R::IsLive(p) || !E::GetController(p)) {
                     UE_LOGW("chippile_test: CLIENT showcase -- no possessed local player"); d.store(2); return; }
                 float dist = -1.f;
-                void* pile = ue_wrap::prop::FindNearestChipPile(E::GetActorLocation(p), kAnywhereCm, &dist);
+                ue_wrap::FVector pLoc{};
+                if (!E::TryGetActorLocation(p, pLoc)) {
+                    UE_LOGW("chippile_test: CLIENT showcase -- the player's location could not be read"); d.store(2); return; }
+                void* pile = ue_wrap::prop::FindNearestChipPile(pLoc, kAnywhereCm, &dist);
                 if (!pile) { UE_LOGW("chippile_test: CLIENT showcase -- no mirrored pile to face yet"); d.store(2); return; }
-                cs->player = p; cs->pile = pile; cs->pos = E::GetActorLocation(pile); cs->dist = dist;
+                if (!E::TryGetActorLocation(pile, cs->pos)) {
+                    UE_LOGW("chippile_test: CLIENT showcase -- the pile's location could not be read"); d.store(2); return; }
+                cs->player = p; cs->pile = pile; cs->dist = dist;
                 UE_LOGI("chippile_test: CLIENT showcase -- nearest pile=%p pos=(%.0f,%.0f,%.0f) dist=%.0fcm",
                         pile, cs->pos.X, cs->pos.Y, cs->pos.Z, dist);
                 d.store(1);
             }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no player/pile)"); return; }
         RunGT([cs](std::atomic<int>& d) {                       // teleport to a 180 cm standoff facing the pile
-            const ue_wrap::FVector at = E::GetActorLocation(cs->player);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(cs->player, at)) {
+                UE_LOGW("chippile_test: CLIENT showcase -- no standoff, the player's location could not be read");
+                d.store(2);
+                return;
+            }
             float ax = at.X - cs->pos.X, ay = at.Y - cs->pos.Y;
             const float h = std::sqrt(ax * ax + ay * ay);
             if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
@@ -129,7 +139,9 @@ void RunAutonomousChipPileTest() {
         for (int i = 0; i < 60; ++i) {                          // hold 60 s, re-facing the pile each second
             ::Sleep(1000);
             RunGT([cs](std::atomic<int>& d) {
-                E::SetControlRotation(E::GetController(cs->player), LookAt(E::GetActorLocation(cs->player), cs->pos));
+                ue_wrap::FVector at{};   // unread: this second keeps the last facing
+                if (E::TryGetActorLocation(cs->player, at))
+                    E::SetControlRotation(E::GetController(cs->player), LookAt(at, cs->pos));
                 d.store(1);
             });
         }
@@ -189,7 +201,9 @@ void RunAutonomousChipPileTest() {
             // than waiting for the reconcile; ReSeed is idempotent.
             const size_t reseeded = PT::ReSeedKnownKeyedProps(nullptr);
             UE_LOGI("chippile_test: forced ReSeedKnownKeyedProps -> %zu tracked (pile eids now bound)", reseeded);
-            const ue_wrap::FVector at = E::GetActorLocation(rsv->player);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(rsv->player, at)) {
+                UE_LOGW("chippile_test: the player's location could not be read"); d.store(2); return; }
             float dist = -1.f;
             void* nearest = ue_wrap::prop::FindNearestChipPile(at, /*radiusCm=*/200000.f, &dist);
             if (!nearest) { UE_LOGW("chippile_test: NO chipPile in the world -- the save has none to grab"); d.store(2); return; }
@@ -206,14 +220,16 @@ void RunAutonomousChipPileTest() {
                     if (!ue_wrap::prop::IsChipPile(o)) continue;
                     if (R::ToString(R::NameOf(o)).rfind(L"Default__", 0) == 0) continue;
                     if (EidOf(o) == coop::element::kInvalidId) continue;
-                    const ue_wrap::FVector p = E::GetActorLocation(o);
+                    ue_wrap::FVector p{};
+                    if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: never the pick
                     const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
                     const float d2 = dx * dx + dy * dy + dz * dz;
                     if (best2 < 0.f || d2 < best2) { best2 = d2; pick = o; pickDist = std::sqrt(d2); eid = EidOf(o); }
                 }
             }
+            if (!E::TryGetActorLocation(pick, sel->pos)) {
+                UE_LOGW("chippile_test: the selected pile's location could not be read"); d.store(2); return; }
             sel->pile    = pick;
-            sel->pos     = E::GetActorLocation(pick);
             sel->eid     = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
             sel->dist    = pickDist;
             sel->tracked = (eid != coop::element::kInvalidId);
@@ -226,7 +242,9 @@ void RunAutonomousChipPileTest() {
     // 3. Teleport the player to a standoff in front of the pile, approaching from where it stands
     // (open space, not the wall a pile often sits against), then let the character settle.
     if (RunGT([rsv, sel](std::atomic<int>& d) {
-            const ue_wrap::FVector ploc = E::GetActorLocation(rsv->player);
+            ue_wrap::FVector ploc{};
+            if (!E::TryGetActorLocation(rsv->player, ploc)) {
+                UE_LOGW("chippile_test: no standoff, the player's location could not be read"); d.store(2); return; }
             float ax = ploc.X - sel->pos.X, ay = ploc.Y - sel->pos.Y;
             const float h = std::sqrt(ax * ax + ay * ay);
             if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }   // unit horizontal approach dir
@@ -319,13 +337,16 @@ void RunAutonomousChipPileTest() {
     // judged for the carry drive advancing.
     if (heldClump) {
         ue_wrap::FVector base{};
-        RunGT([rsv, &base](std::atomic<int>& d) { base = E::GetActorLocation(rsv->player); d.store(1); });
+        const bool baseRead = RunGT([rsv, &base](std::atomic<int>& d) {
+            d.store(E::TryGetActorLocation(rsv->player, base) ? 1 : 2);
+        }) == 1;
+        if (!baseRead) UE_LOGW("chippile_test: no carry, the player's location could not be read");
         float dx = base.X - sel->pos.X, dy = base.Y - sel->pos.Y;   // carry AWAY from the pile origin (open space)
         const float h = std::sqrt(dx * dx + dy * dy);
         if (h < 1.f) { dx = 1.f; dy = 0.f; } else { dx /= h; dy /= h; }
         // 15 cm per 100 ms, a brisk walk; a 4 m/s step imparted that speed to the held clump and
         // broke the grab mid-carry.
-        const int   kSteps  = 80;         // 80 * 100 ms = 8 s
+        const int   kSteps  = baseRead ? 80 : 0;   // 80 * 100 ms = 8 s; no start, no carry
         const float kStepCm = 15.f;       // 80 * 15 cm = 12 m carry at 1.5 m/s
         int stillHeld = 0, consecMiss = 0;
         for (int s = 0; s < kSteps; ++s) {
@@ -365,11 +386,13 @@ void RunAutonomousChipPileTest() {
             const bool rel = E::ReleaseMainPlayerGrabIfHolding(rsv->player, heldClump);
             // A directional throw rather than a drop, so the flight stream carries a real arc:
             // toward the held clump, about 6 m/s forward and 4 m/s up.
-            const ue_wrap::FVector pp = E::GetActorLocation(rsv->player);
-            const ue_wrap::FVector cp = E::GetActorLocation(heldClump);
-            float fx = cp.X - pp.X, fy = cp.Y - pp.Y;
-            const float hl = std::sqrt(fx * fx + fy * fy);
-            if (hl < 1.f) { fx = 1.f; fy = 0.f; } else { fx /= hl; fy /= hl; }
+            ue_wrap::FVector pp{}, cp{};
+            float fx = 1.f, fy = 0.f;   // unread: a throw along +X, as a degenerate direction takes
+            if (E::TryGetActorLocation(rsv->player, pp) && E::TryGetActorLocation(heldClump, cp)) {
+                fx = cp.X - pp.X; fy = cp.Y - pp.Y;
+                const float hl = std::sqrt(fx * fx + fy * fy);
+                if (hl < 1.f) { fx = 1.f; fy = 0.f; } else { fx /= hl; fy /= hl; }
+            }
             const ue_wrap::FVector lin{ fx * 600.f, fy * 600.f, 400.f };   // cm/s: ~6 m/s fwd + 4 m/s up
             const bool vel = E::SetActorRootPhysicsVelocity(heldClump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
             UE_LOGI("chippile_test: Phase B THROW -- released PHC=%d + threw clump dir=(%.2f,%.2f) up |v|set=%d "
@@ -440,12 +463,16 @@ void RunPuppetGrabProbe() {
     struct Sel { void* pile = nullptr; ue_wrap::FVector pilePos{}; ue_wrap::FVector pupPos0{}; float pupYaw0 = 0.f; float dist0 = 0.f; };
     auto sel = std::make_shared<Sel>();
     if (RunGT([pup, sel](std::atomic<int>& d) {
-            const ue_wrap::FVector pl = E::GetActorLocation(pup->actor);
+            ue_wrap::FVector pl{};
+            if (!E::TryGetActorLocation(pup->actor, pl)) {
+                UE_LOGW("puppet_grab_probe: the puppet's location could not be read"); d.store(2); return; }
             const ue_wrap::FRotator pr = E::GetActorRotation(pup->actor);
             float dist = -1.f;
             void* pile = ue_wrap::prop::FindNearestChipPile(pl, /*radiusCm=*/200000.f, &dist);
             if (!pile) { UE_LOGW("puppet_grab_probe: NO chipPile in the world -- the save has none to grab"); d.store(2); return; }
-            sel->pile = pile; sel->pilePos = E::GetActorLocation(pile);
+            if (!E::TryGetActorLocation(pile, sel->pilePos)) {
+                UE_LOGW("puppet_grab_probe: the pile's location could not be read"); d.store(2); return; }
+            sel->pile = pile;
             sel->pupPos0 = pl; sel->pupYaw0 = pr.Yaw; sel->dist0 = dist;
             UE_LOGI("puppet_grab_probe: puppet@(%.0f,%.0f,%.0f) yaw=%.0f -- nearest chipPile=%p @(%.0f,%.0f,%.0f) dist=%.0fcm",
                     pl.X, pl.Y, pl.Z, pr.Yaw, pile, sel->pilePos.X, sel->pilePos.Y, sel->pilePos.Z, dist);
@@ -486,9 +513,8 @@ void RunPuppetGrabProbe() {
             const bool engaged = (clump != nullptr);
             if (engaged) ++engagedPolls;
             float dist = -1.f, dz = -1e9f;
-            if (clump) {
-                const ue_wrap::FVector pl = E::GetActorLocation(pup->actor);
-                const ue_wrap::FVector cl = E::GetActorLocation(clump);
+            ue_wrap::FVector pl{}, cl{};   // unread: dist and dz keep their unset values
+            if (clump && E::TryGetActorLocation(pup->actor, pl) && E::TryGetActorLocation(clump, cl)) {
                 const float ddx = cl.X - pl.X, ddy = cl.Y - pl.Y;
                 dist = std::sqrt(ddx * ddx + ddy * ddy);
                 dz = cl.Z - pl.Z;
@@ -554,7 +580,8 @@ void RunPileDriftScenario() {
         const int r = RunGT([sel](std::atomic<int>& d) {
             void* player = coop::players::Registry::Get().Local();
             if (!player || !R::IsLive(player) || !E::GetController(player)) { d.store(2); return; }
-            const ue_wrap::FVector at = E::GetActorLocation(player);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(player, at)) { d.store(2); return; }   // as no player
             // The live chipPiles nearest the player, by distance: five to destroy, the next three
             // to move. One cold walk.
             struct Cand { void* a; float d2; };
@@ -565,7 +592,8 @@ void RunPileDriftScenario() {
                 if (!o || !R::IsLive(o)) continue;
                 if (!ue_wrap::prop::IsChipPile(o)) continue;
                 if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-                const ue_wrap::FVector p = E::GetActorLocation(o);
+                ue_wrap::FVector p{};
+                if (!E::TryGetActorLocation(o, p)) continue;   // unreadable: no candidate
                 const float dx = p.X - at.X, dy = p.Y - at.Y, dz = p.Z - at.Z;
                 cands.push_back({o, dx * dx + dy * dy + dz * dz});
             }
@@ -587,15 +615,17 @@ void RunPileDriftScenario() {
         int destroyed = 0, moved = 0;
         for (void* a : sel->destroy) {
             if (!R::IsLive(a)) continue;
-            const ue_wrap::FVector p = E::GetActorLocation(a);
+            ue_wrap::FVector p{};
+            const bool pRead = E::TryGetActorLocation(a, p);
             E::DestroyActor(a);
             ++destroyed;
-            UE_LOGI("[PILE-DRIFT] HOST destroyed pile #%d @(%.1f,%.1f,%.1f) -- collected orphan (the client native "
-                    "there will get NO proxy)", destroyed, p.X, p.Y, p.Z);
+            UE_LOGI("[PILE-DRIFT] HOST destroyed pile #%d @(%.1f,%.1f,%.1f)%s -- collected orphan (the client native "
+                    "there will get NO proxy)", destroyed, p.X, p.Y, p.Z, pRead ? "" : " (unread)");
         }
         for (void* a : sel->move) {
             if (!R::IsLive(a)) continue;
-            const ue_wrap::FVector p = E::GetActorLocation(a);
+            ue_wrap::FVector p{};
+            if (!E::TryGetActorLocation(a, p)) continue;   // no position to move it from
             // Moved 30 m straight up into empty air: a short horizontal move landed the proxy
             // within a centimetre of a neighbour's native, which the twin match consumed instead.
             // In empty air the moved proxy is cleanly unmatched, and the native at the old position

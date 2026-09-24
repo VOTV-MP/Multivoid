@@ -347,21 +347,10 @@ bool FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& r
     return true;
 }
 
-FVector GetActorLocation(void* actor) {
-    FVector loc;
-    if (!actor || !ResolveActorFns()) return loc;
-    ParamFrame f(g_getLocFn);
-    if (!Call(actor, f)) return loc;
-    f.GetRaw(L"ReturnValue", &loc, sizeof(loc));
-    return loc;
-}
-
 bool TryGetActorLocation(void* actor, FVector& out) {
-    // The checked read. GetActorLocation above returns a default vector on every failure path
-    // with no way to say so, and a default vector is the world origin, an ordinary position:
-    // harmless for a display or a log, fail-open for an authorisation gate, where a failed read
-    // reports the actor at the origin and anything near the origin measures as adjacent to it.
-    // The fix belongs here, where every caller that must not guess gets it, not at one call site.
+    // A default vector is the world origin, an ordinary position: a read that could not report its
+    // failure would place the actor there, and anything near the origin would measure as adjacent
+    // to it. So the read reports failure, and there is no unchecked form.
     out = FVector{};
     if (!actor || !ResolveActorFns()) return false;
     ParamFrame f(g_getLocFn);

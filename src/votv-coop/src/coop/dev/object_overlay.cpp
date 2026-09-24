@@ -288,7 +288,9 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
         for (const auto& p : pairs) {
             if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx)) continue;
             if (!seen.insert(p.actor).second) continue;
-            const float d = DistCm_(E::GetActorLocation(p.actor), eye);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(p.actor, at)) continue;   // unreadable: no label
+            const float d = DistCm_(at, eye);
             if (d > radiusCm) continue;
             cands.push_back({p.actor, p.internalIdx, d, p.id, p.mirror, true});
         }
@@ -318,7 +320,9 @@ void Refresh_(const ue_wrap::FVector& eye, void* lp) {
         if (seen.count(obj)) continue;
         if (R::ToString(R::NameOf(obj)).rfind(L"Default__", 0) == 0) continue;
         if (!R::IsLive(obj)) continue;
-        const float d = DistCm_(E::GetActorLocation(obj), eye);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(obj, at)) continue;   // unreadable: no label
+        const float d = DistCm_(at, eye);
         if (d > radiusCm) continue;
         cands.push_back({obj, R::InternalIndexOf(obj), d, 0, false, false});
     }
@@ -357,7 +361,8 @@ void Project_(void* pc, const ue_wrap::FVector& eye) {
     for (const Entry& e : g_entries) {
         if (snap.count >= kMaxLabels) break;
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;  // GC'd since refresh
-        const ue_wrap::FVector loc = E::GetActorLocation(e.actor);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(e.actor, loc)) continue;   // unreadable: no label this frame
         const float d = DistCm_(loc, eye);
         if (d > radiusCm) continue;
         ue_wrap::FVector2D scr{};
@@ -442,7 +447,10 @@ void Update() {
     // The viewer is the camera eye, falling back to the actor when the camera manager is not
     // resolvable (the first frames of a level).
     ue_wrap::FVector eye = E::GetCameraLocation();
-    if (eye.X == 0.f && eye.Y == 0.f && eye.Z == 0.f) eye = E::GetActorLocation(lp);
+    if (eye.X == 0.f && eye.Y == 0.f && eye.Z == 0.f && !E::TryGetActorLocation(lp, eye)) {
+        PublishEmpty_("obj overlay: no viewer position");
+        return;
+    }
 
     ++g_tick;
     if (++g_sinceRefresh >= kRefreshEveryNTicks ||

@@ -34,10 +34,12 @@ struct PlayerContext {
     void*             held      = nullptr;   // grabbing_actor (PHC-held prop) => a full hand
     void*             holding   = nullptr;   // holding_actor (chipPile/clump morph carry)
     bool              placeMode = false;     // drop_place (R-hold placement mode)
+    bool              posUnread = false;     // possessed, but its location read failed
 
     bool HandFull() const { return held != nullptr || holding != nullptr || placeMode; }
 
-    // Populate from the live engine state. Game thread only. False if no possessed player.
+    // Populate from the live engine state. Game thread only. False if no possessed player, or if
+    // its location could not be read (posUnread).
     bool Refresh();
 };
 

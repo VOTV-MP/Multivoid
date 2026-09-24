@@ -93,7 +93,12 @@ void Tick(bool connected, bool isHost) {
         // the pile has no contact-convert gate, but that "should hold" is unverified on the SAME axis as
         // the original confound) AND is reachable for the hands-on preview (aim -> native hover GUI?
         // walk into -> movement-block?).
-        const ue_wrap::FVector pl = E::GetActorLocation(player);
+        ue_wrap::FVector pl{};
+        if (!E::TryGetActorLocation(player, pl)) {
+            UE_LOGW("[INERT-PROBE] the player's location could not be read -- cannot place the spawn; abort.");
+            g_st = St::Done;
+            break;
+        }
         const ue_wrap::FRotator cr = E::GetCameraRotation();
         const float yaw = cr.Yaw * 3.14159265f / 180.f;
         const ue_wrap::FVector loc{ pl.X + std::cos(yaw) * 250.f, pl.Y + std::sin(yaw) * 250.f, pl.Z };

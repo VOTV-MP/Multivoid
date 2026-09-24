@@ -92,10 +92,13 @@ void RunGrabIntentTest() {
             if (eid == coop::element::kInvalidId) {
                 UE_LOGW("grab_intent_test: the picked pile %p has no resolvable eid", pile); d.store(2); return; }
             // The refusal leg's target: the FARTHEST pile with an eid. Nobody moves for it.
-            const ue_wrap::FVector at = E::GetActorLocation(p);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(p, at)) {
+                UE_LOGW("grab_intent_test: the player's location could not be read"); d.store(2); return; }
             for (void* o : R::FindObjectsByClass(L"actorChipPile_C")) {
                 if (!o || !R::IsLive(o) || o == pile) continue;
-                const ue_wrap::FVector op = E::GetActorLocation(o);
+                ue_wrap::FVector op{};
+                if (!E::TryGetActorLocation(o, op)) continue;   // unreadable: never the far target
                 const float dx = op.X - at.X, dy = op.Y - at.Y, dz = op.Z - at.Z;
                 const float cm = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (cm <= pk->farCm) continue;
@@ -186,8 +189,9 @@ void RunGrabIntentTest() {
     for (int i = 0; i < 3; ++i) {
         ::Sleep(1000);
         RunGT([pk](std::atomic<int>& d) {
-            E::SetControlRotation(E::GetController(pk->player),
-                                  LookAt(E::GetActorLocation(pk->player), pk->pilePos));
+            ue_wrap::FVector at{};   // unread: this second keeps the last facing
+            if (E::TryGetActorLocation(pk->player, at))
+                E::SetControlRotation(E::GetController(pk->player), LookAt(at, pk->pilePos));
             d.store(1);
         });
     }
@@ -244,9 +248,11 @@ void RunGrabIntentTest() {
             RunGT([pk, t0](std::atomic<int>& d) {
                 void* m = coop::remote_prop::ResolveLiveActorByEid(static_cast<coop::element::ElementId>(pk->eid));
                 if (m) {
-                    const ue_wrap::FVector at = E::GetActorLocation(m);
-                    UE_LOGI("grab_intent_test: FLIGHT-SAMPLE t=%llu ms eid=%u mirror=%p class='%ls' pos=(%.1f,%.1f,%.1f)",
-                            ::GetTickCount64() - t0, pk->eid, m, R::ClassNameOf(m).c_str(), at.X, at.Y, at.Z);
+                    ue_wrap::FVector at{};
+                    const bool atRead = E::TryGetActorLocation(m, at);
+                    UE_LOGI("grab_intent_test: FLIGHT-SAMPLE t=%llu ms eid=%u mirror=%p class='%ls' pos=(%.1f,%.1f,%.1f)%s",
+                            ::GetTickCount64() - t0, pk->eid, m, R::ClassNameOf(m).c_str(), at.X, at.Y, at.Z,
+                            atRead ? "" : " (unread)");
                 } else {
                     UE_LOGI("grab_intent_test: FLIGHT-SAMPLE t=%llu ms eid=%u mirror=<none>",
                             ::GetTickCount64() - t0, pk->eid);

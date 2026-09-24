@@ -75,7 +75,12 @@ void ObserveDamageOnHost() {
                 GT::Post([d2] {
                     void* puppet = coop::puppet_drive::Puppet(1).GetActor();
                     if (!puppet || !R::IsLive(puppet)) { d2->store(1); return; }
-                    const ue_wrap::FVector P = E::GetActorLocation(puppet);
+                    ue_wrap::FVector P{};
+                    if (!E::TryGetActorLocation(puppet, P)) {
+                        UE_LOGW("damage_test[host]: not framed -- the puppet's location could not be read");
+                        d2->store(1);
+                        return;
+                    }
                     // Frame the puppet DYNAMICALLY: teleport the host 2.8 m along +X from the
                     // puppet, yawed 180 to look back at it, so the swapped body is in the
                     // screenshot wherever the puppet stands (a fixed test-pose teleport desyncs the

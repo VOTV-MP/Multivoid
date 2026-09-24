@@ -79,12 +79,15 @@ void RunTrashParkProbe() {
     if (RunGT([sb](std::atomic<int>& d) {
             void* p = coop::players::Registry::Get().Local();
             if (!p || !R::IsLive(p)) { UE_LOGW("trash_park: no local player"); d.store(2); return; }
-            const ue_wrap::FVector at = E::GetActorLocation(p);
+            ue_wrap::FVector at{};
+            if (!E::TryGetActorLocation(p, at)) {
+                UE_LOGW("trash_park: the player's location could not be read"); d.store(2); return; }
             sb->pile = ue_wrap::prop::FindNearestChipPile(at, kAnywhereCm, nullptr);
             if (!sb->pile) { UE_LOGW("trash_park: no chip pile in the level"); d.store(2); return; }
             sb->pileIdx = R::InternalIndexOf(sb->pile);
             sb->eid = EidOf(sb->pile);
-            sb->pilePos = E::GetActorLocation(sb->pile);
+            if (!E::TryGetActorLocation(sb->pile, sb->pilePos)) {
+                UE_LOGW("trash_park: the pile's location could not be read"); d.store(2); return; }
             // The verb is declared on the pile's own class; resolving it through the dispatch
             // lookup names the declarer, so a variant that inherits it is still covered.
             void* declarer = nullptr;

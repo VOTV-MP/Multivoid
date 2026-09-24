@@ -69,7 +69,12 @@ void Tick(bool connected, bool /*isHost*/) {
 
         // Place the pair ~3 m in front of WHERE THE CAMERA LOOKS (inert-probe shape: camera yaw,
         // not actor-forward), side by side 1.6 m apart, both facing back at the player.
-        const ue_wrap::FVector pl = E::GetActorLocation(local);
+        ue_wrap::FVector pl{};
+        if (!E::TryGetActorLocation(local, pl)) {
+            UE_LOGW("[CLIENTMODEL-PROBE] the player's location could not be read -- abort.");
+            g_st = St::Done;
+            break;
+        }
         const ue_wrap::FRotator cr = E::GetCameraRotation();
         const float yaw = cr.Yaw * 3.14159265f / 180.f;
         const float fx = std::cos(yaw), fy = std::sin(yaw);

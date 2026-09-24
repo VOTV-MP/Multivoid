@@ -122,7 +122,8 @@ void ArmWatch(char who) {
         Watched w;
         w.ref.Set(o);
         w.key = PR::GetInteractableKeyString(o);
-        w.start = w.printed = E::GetActorLocation(o);
+        if (!E::TryGetActorLocation(o, w.start)) continue;   // unreadable: not watched
+        w.printed = w.start;
         w.statiq = PR::IsStatic(o);
         w.frozen = PR::IsFrozen(o);
         if (w.statiq || w.frozen) ++stuck;
@@ -146,7 +147,8 @@ void TickWatch(char who) {
             UE_LOGI("[PRY-DRILL] [%c] GONE key='%ls'", who, w.key.c_str());
             continue;
         }
-        const ue_wrap::FVector at = E::GetActorLocation(o);
+        ue_wrap::FVector at{};
+        if (!E::TryGetActorLocation(o, at)) continue;   // no sighting this pass
         const bool statiq = PR::IsStatic(o), frozen = PR::IsFrozen(o);
         if (Dist(at, w.printed) < kWatchMoveCm && statiq == w.statiq && frozen == w.frozen) continue;
         w.printed = at;
@@ -221,8 +223,8 @@ void Pry() {
     g_targetKey = PickKey();
     void* t = g_targetKey.empty() ? nullptr : FindWatched(g_targetKey);
     if (!t) { Invalid("no stuck pryable with a key"); return; }
+    if (!E::TryGetActorLocation(t, g_targetStart)) { Invalid("the target's location could not be read"); return; }
     g_target.Set(t);
-    g_targetStart = E::GetActorLocation(t);
     UE_LOGI("[PRY-DRILL] [%c] target key='%ls' cls='%ls' at (%.1f, %.1f, %.1f)", Who(), g_targetKey.c_str(),
             R::ClassNameOf(t).c_str(), g_targetStart.X, g_targetStart.Y, g_targetStart.Z);
     // crowbarOpen(pryingCrowbar): no crowbar, so the kick along its axis is zero.
@@ -250,10 +252,11 @@ void ActStep(coop::net::Session& s) {
         void* t = g_target.Get();
         const bool rested = t && g_stepTicks > kRestMinTicks && E::IsActorRootBodyAtRest(t);
         if (!rested && g_stepTicks < kRestMaxTicks) return;
-        const ue_wrap::FVector at = t ? E::GetActorLocation(t) : ue_wrap::FVector{};
-        UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm", Who(),
+        ue_wrap::FVector at{};
+        const bool atRead = t && E::TryGetActorLocation(t, at);
+        UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f)%s fromStart=%.1fcm", Who(),
                 rested ? "RESTED" : "NOT AT REST after the wait", g_targetKey.c_str(), at.X, at.Y, at.Z,
-                Dist(at, g_targetStart));
+                atRead ? "" : " (unread)", atRead ? Dist(at, g_targetStart) : -1.f);
         UE_LOGI("[PRY-DRILL] ACTOR DONE");
         Go(Step::Done);
         return;
