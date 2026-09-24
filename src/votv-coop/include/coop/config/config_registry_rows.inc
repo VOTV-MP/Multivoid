@@ -423,6 +423,9 @@ CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
 CFG_FLAG(door_drill_host, "door_drill_host", "dev", false, "VOTVCOOP_DOOR_DRILL_HOST",
     "With door_drill: the walker runs on the HOST instead of the client, so its own player in its own "
     "door is single player's reading of the same phases -- the control for the client's run.")
+CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
+    "With door_drill: the object name of the one door the walker walks to (e.g. "
+    "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "

@@ -1,14 +1,17 @@
 // coop/dev/door_drill.h -- the door lane's drill, moved by the bot director. The walker (the client,
 // or the host with door_drill_host=1, single player's reading of the same phases) walks to the
-// nearest door its navmesh reaches and uses it as a player does, through the door's own verbs:
+// nearest door its navmesh reaches, or the one door_drill_door names, and uses it as a player does,
+// through the door's own verbs:
 //   PRESS    -- presses the closed door; a client's press runs on the host.
-//   PRESENCE -- stands at the centre of the door's sensor box and stays while each peer reads
-//               whether its own sensor list, the one the autoclose reads, holds the player; twice,
-//               stepped into mid-swing and again after a second press's swing has ended.
+//   PRESENCE -- stands at the centre of the door's sensor box until the door's own next check, and
+//               reads whether its own sensor list, the one the autoclose reads, holds the player;
+//               three passes: from outside the sensor stepping in mid-swing, from outside after the
+//               swing, and from the approach point (usually listed already) after the swing.
 //   CLOSE    -- after each stay, walks fifteen metres away; the autoclose shuts the door within
 //               five seconds of its list emptying.
 //   HIT      -- back at the approach point, a held weapon's hits until the pry opens the door.
-// EACH peer logs every change in each door's sensor list and open flag. Lines are tagged
+// EACH peer logs every change in each door's sensor list and open flag, and every begin and end
+// event of the walked door's own sensor, with the component and the list it left. Lines are tagged
 // [DOOR-DRILL]. Run on both peers of a pair (door_drill=1); the walker's DONE line ends it.
 
 #pragma once
