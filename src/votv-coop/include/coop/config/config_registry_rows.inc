@@ -416,9 +416,13 @@ CFG_FLAG(kerfur_menu_drill, "kerfur_menu_drill", "dev", false, "VOTVCOOP_KERFUR_
     "verb runs nested inside a watched body. Prints the kerfur form assembler's order counters.")
 CFG_FLAG(door_drill, "door_drill", "dev", false, "VOTVCOOP_DOOR_DRILL",
     "Drill (BOTH peers): the client walks with the bot director to the nearest door its navmesh "
-    "reaches, stays at it, and walks away along its route; each peer logs every change in what each "
-    "door's own sensor holds, puppets and local players apart. Answers whether a remote player "
-    "counts in a door's sensor. Lines tagged [DOOR-DRILL].")
+    "reaches and uses it as a player does -- a press, two stays in its sensor (stepped into mid-swing, "
+    "then after the swing), a walk away, a weapon's hits; each peer logs every change in what each "
+    "door's own sensor holds, puppets and local players apart, and its open flag. Lines tagged "
+    "[DOOR-DRILL].")
+CFG_FLAG(door_drill_host, "door_drill_host", "dev", false, "VOTVCOOP_DOOR_DRILL_HOST",
+    "With door_drill: the walker runs on the HOST instead of the client, so its own player in its own "
+    "door is single player's reading of the same phases -- the control for the client's run.")
 CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AIM_DRILL",
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
