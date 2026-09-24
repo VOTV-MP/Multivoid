@@ -21,7 +21,7 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
-#include "ue_wrap/engine/engine.h"          // GetActorLocation (the grime's world position -> posKey)
+#include "ue_wrap/engine/engine.h"          // TryGetActorLocation (the grime's world position -> posKey)
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"

@@ -73,7 +73,7 @@ struct FlushedAt {
 std::unordered_map<coop::element::ElementId, FlushedAt> g_lastFlushedPilePos[coop::net::kMaxPeers];
 // The keyed half's own last-sent dedupe, sharing the arm window.
 std::unordered_map<coop::element::ElementId, FlushedAt> g_lastFlushedKeyedPos[coop::net::kMaxPeers];
-// The keyed scan reads GetActorLocation (a UFunction dispatch) for every keyed prop, about 2,000
+// The keyed scan reads TryGetActorLocation (a UFunction dispatch) for every keyed prop, about 2,000
 // in a mature world, and at the pile cadence it hitched the host's game thread through the join
 // tail. It runs on the first run (every already-moved prop) and then every Nth late-arm tick, a
 // full scan each time, so a late move is still caught within a few seconds.

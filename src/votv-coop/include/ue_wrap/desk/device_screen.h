@@ -53,7 +53,8 @@ std::wstring ClassifyWidgetClaimKey(void* widget);
 // deny-gate side): analogDScreenTest_C -> "desk", panel_SATconsole_C ->
 // "sat", panel_radar_C -> "radar", panel_reactor_C -> "reactor", laptop_C /
 // prop_portablePc_C -> "laptop", transformerMGPanel_C -> "tfm_<posKey>",
-// prop_arcade_C -> "arc_<posKey>". Empty for non-device actors.
+// prop_arcade_C -> "arc_<posKey>". Empty for a non-device actor, and for a transformer or arcade
+// whose location read failed.
 std::wstring ClassifyDeviceActorClaimKey(void* actor);
 
 // Null the local player's aim fields (lookAtActor + HitResult.Actor weakptr) for the CURRENT

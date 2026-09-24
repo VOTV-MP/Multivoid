@@ -26,9 +26,9 @@ using steady_clock = std::chrono::steady_clock;
 constexpr auto    kPassCadence   = std::chrono::seconds(2);
 constexpr int     kBackstopEvery = 10;
 // Slice budget: ~1 ms of game-thread time per frame, with the clock checked every kSliceCheck
-// items. An item costs a slot read, a flags read, a world climb and then the consumers' own
-// match work (a key rendered per hit), five to ten microseconds, so the check is frequent
-// enough that a slice overshoots the budget by a fraction, not by multiples.
+// items. An item costs a slot read, a flags read, a class read, a world climb and then the
+// consumers' own match work (a key rendered per hit), five to ten microseconds, so the check is
+// frequent enough that a slice overshoots the budget by a fraction, not by multiples.
 constexpr int64_t kSliceBudgetUs = 1000;
 constexpr int32_t kSliceCheck    = 32;
 // A slot the game thread may not read: dying, or not yet handed over by the loading thread, or

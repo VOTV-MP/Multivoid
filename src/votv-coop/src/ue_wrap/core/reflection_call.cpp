@@ -75,8 +75,8 @@ bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount) {
 }
 
 namespace {
-// The innermost CallFunction on this thread and whether the dispatch it entered faulted; the
-// frame lives on CallFunction's stack, and a scope restores the one it hid.
+// The innermost CallFunction on this thread and whether a dispatch with its object and function
+// faulted under it; the frame lives on CallFunction's stack, and a scope restores the one it hid.
 struct CallFrame { void* object; void* function; bool faulted; };
 thread_local CallFrame* t_call = nullptr;
 struct CallFrameScope {

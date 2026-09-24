@@ -137,8 +137,9 @@ void ApplyDeleted(const Event& ev) {
 // The first instance of `cls` whose memory may be read and which is still of `cls` (TenantOf). The
 // destructor nulls the slot before the memory is freed, and only the game thread marks an object
 // unreachable, so a clear bit read here holds until the next collection. An entry between its
-// FinishDestroy and the drain of its delete event, or whose slot a new object took, is skipped:
-// the hub classifies the whole class by the object this returns. Null when there is none now.
+// FinishDestroy and the drain of its delete event, or whose slot an object of another class took,
+// is skipped: the hub classifies the whole class by the object this returns. Null when there is
+// none now.
 void* ReadableInstance(void* cls, const ClassEntry& e) {
     for (int32_t i = e.head; i >= 0; i = g_slots[static_cast<size_t>(i)].next) {
         void* obj = g_slots[static_cast<size_t>(i)].obj;

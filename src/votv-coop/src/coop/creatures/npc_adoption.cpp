@@ -103,7 +103,7 @@ void ResolvePending() {
             tracked.insert(m->GetActor());
 
     // ONE GUObjectArray walk -> candidates (the allowlist prefilter eliminates >99% before any
-    // alloc; only a handful of real NPCs reach NameOf/GetActorLocation).
+    // alloc; only a handful of real NPCs reach NameOf/TryGetActorLocation).
     std::vector<Cand> cands;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {

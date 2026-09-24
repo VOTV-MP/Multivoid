@@ -426,9 +426,9 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     if (whole) ::QueryPerformanceCounter(&w0);
 
     if (RunDetourSEH(self, function, params) != 0) {
-        // Impl crashed: counted, so a CallFunction it happened under reports failure rather than the
-        // parameters it left untouched, and logged; the call returns without forwarding, since the
-        // engine's caller expects ProcessEvent to return.
+        // Impl crashed: counted, so the innermost CallFunction, when this dispatch has its object and
+        // function, reports failure rather than the parameters it left untouched, and logged; the
+        // call returns without forwarding, since the engine's caller expects ProcessEvent to return.
         ++t_absorbedFaults;
         reflection::NoteDispatchFault(self, function);
         LogObserverAv(function, self, "detour-outer");

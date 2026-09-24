@@ -34,11 +34,13 @@ uintptr_t ProcessEventAddr();
 
 // Call a UFunction on `object` through UObject::ProcessEvent. `params` points to the function's
 // parameter struct (inputs in, outputs and the return written back), nullptr for a
-// parameterless function. False if ProcessEvent is unresolved, or if the dispatch this call entered
-// faulted and the detour absorbed it; a fault in a nested dispatch fails only that one. Game thread.
+// parameterless function. False if ProcessEvent is unresolved, or if a dispatch with this call's
+// object and function faulted while this was the innermost CallFunction and the detour absorbed it;
+// a nested CallFunction's fault fails only that call. Game thread.
 bool CallFunction(void* object, void* function, void* params);
 
-// The detour's firewall, per fault it absorbs: fails the innermost CallFunction if it is its dispatch.
+// The detour's firewall, per fault it absorbs: fails the innermost CallFunction when the faulted
+// dispatch has its object and function.
 void NoteDispatchFault(void* object, void* function);
 
 // True while the current thread is inside a CallFunction dispatch issued by our own code (a

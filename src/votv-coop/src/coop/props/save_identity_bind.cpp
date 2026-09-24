@@ -18,7 +18,7 @@
 #include "coop/props/save_time_retire_util.h"    // FindExactMatch, the shared 1 cm kernel
 #include "coop/props/trash_mirror.h"             // Unpin (a materialised mirror we displace)
 #include "coop/props/trash_channel.h"            // CtxForEid: was the eid converted in-window
-#include "ue_wrap/engine/engine.h"                // GetActorLocation
+#include "ue_wrap/engine/engine.h"                // TryGetActorLocation
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                  // GetInteractableKeyString, IsChipPile
 #include "ue_wrap/core/reflection.h"            // ClassNameOf, IsLive, ClassOf
