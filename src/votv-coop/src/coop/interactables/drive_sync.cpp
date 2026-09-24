@@ -510,7 +510,6 @@ void Install(coop::net::Session* session) {
         sg::WatchName(L"comp_uploadData", kVerbPayload,    &OnVerbEntry, nullptr);
     if (ok) {
         g_verbsRegistered = true;
-        sg::SetEnabled(true);
         UE_LOGI("drive_sync: 6 verb watches live (dirty-marks armed at the script-body gate)");
     }
 }

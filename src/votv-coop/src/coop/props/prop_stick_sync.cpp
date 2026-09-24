@@ -289,7 +289,6 @@ void InstallUnstickHalf() {
         }
         return;
     }
-    sg::SetEnabled(true);  // each lane asserts its own enable
     g_unstickInstalled.store(true, std::memory_order_release);
     UE_LOGI("prop_stick_sync: unstick half installed (withToolOff=%d, a script-gate watch)", g_withToolOff);
 }

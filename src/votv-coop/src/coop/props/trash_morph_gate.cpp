@@ -100,10 +100,6 @@ bool Register(void* cls, const wchar_t* fnName, int tag, sg::PreFn pre, const ch
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);  // re-cache every call (reconnect)
-    // This lane owns its own enable: the gate's switch is shared, and riding another consumer's
-    // would leave these watches registered and their verdicts silent the moment that consumer
-    // retired. Scoped to a live session, because a refusal is scoped to one too.
-    if (session && session->running()) sg::SetEnabled(true);
     if (g_installed) return;
     // FindClass does not memoise a miss, so an unresolved class walks the whole object array on
     // every attempt; this runs from the per-tick install pump, so the retry is throttled the way

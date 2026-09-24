@@ -93,14 +93,14 @@ void OnRefreshPost(const sg::Call&) {
 }
 
 // Armed from the FIRST tick, before any world exists, because the dispatch this exists to catch
-// happens during the load. The gate is a session-wide switch with several owners; a dev probe
-// holding it on for the process is the cost of seeing inside a load, and save_capture's
-// save-and-restore still returns it to whatever it finds.
+// happens during the load. A dev probe holding the gate for the process is the cost of seeing
+// inside a load; a hold, so no other holder's release turns it off under the probe.
 void EnsureWatch() {
     static bool s_armed = false;
     if (!s_armed) {
         if (!sg::IsInstalled()) return;
-        sg::SetEnabled(true);
+        static bool s_held = false;  // the watch below may retry; the hold is taken once
+        if (!s_held) { sg::Acquire("the hotbar icon probe"); s_held = true; }
         if (!sg::WatchName(kRefreshVerb, kWatchTag, OnRefreshPre, OnRefreshPost)) return;
         s_armed = true;
         UE_LOGI("hotbar_probe: watching %ls at the script loop (registered; name resolve pending)",

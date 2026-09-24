@@ -166,12 +166,24 @@
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"  // the session's hold on the script-body gate
 #include "ue_wrap/core/walk_timer.h"  // per-sync [WALK-TIME] attribution (diagnostic)
 #include "coop/items/hotbar_icon_edge.h"
 
 namespace coop::subsystems {
 
+namespace {
+// Whether the session holds the script gate: taken once in Install, which is a retry pump
+// re-entered every tick, and released by DisconnectAll. Game thread.
+bool g_sessionHoldsGate = false;
+}  // namespace
+
 void Install(coop::net::Session& session) {
+    // The session is the gate's owner for its life; no lane enables or disables it.
+    if (!g_sessionHoldsGate) {
+        ue_wrap::script_gate::Acquire("the coop session");
+        g_sessionHoldsGate = true;
+    }
     coop::grab_observer::Install();
     coop::prop_lifecycle::InstallInventory(&session);
     coop::prop_lifecycle::Install(&session);
@@ -264,7 +276,7 @@ void Install(coop::net::Session& session) {
     coop::kerfur_convert::Install(&session);  // host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
     coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu command relay + ownership-aware Follow
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
-    coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs + open the session gate
+    coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
     coop::prop_stick_sync::Install(&session);  // wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
     coop::sleep_sync::Install(&session);  // the Minecraft sleep gate (isSleep edge poll -> host tally -> accelerate/end phases)
     coop::wisp_attack_sync::Install(&session);  // Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
@@ -466,7 +478,13 @@ DisconnectStats DisconnectAll() {
     coop::prop_spawn_authoring::Reset();  // drop the menu bracket + the resolved spawn verbs
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();  // drop pending host-menu converges
-    coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always) + close the substrate session gate
+    coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always)
+    // The session's hold on the script gate ends with the session's state; a session that lives on
+    // (a host whose last client left) takes it again at the next Install.
+    if (g_sessionHoldsGate) {
+        ue_wrap::script_gate::Release("the coop session");
+        g_sessionHoldsGate = false;
+    }
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands + owned-follow map
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)

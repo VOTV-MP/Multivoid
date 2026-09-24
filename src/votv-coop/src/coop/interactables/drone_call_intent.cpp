@@ -181,7 +181,6 @@ void Tick(coop::net::Session& session) {
         UE_LOGI("[DRONE-CALL] the console action gate is live");
     }
     if (!session.running()) return;
-    sg::SetEnabled(true);  // each lane asserts its own enable
 
     if (session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {

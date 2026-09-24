@@ -634,9 +634,6 @@ void Tick() {
         }
     }
     sg::ResolvePendingNames();
-    // This lane owns its own enable: riding another consumer's SetEnabled, its retirement would
-    // leave the watch green and the callback silent.
-    sg::SetEnabled(true);
 
     if (!g_announced) {
         g_announced = true;

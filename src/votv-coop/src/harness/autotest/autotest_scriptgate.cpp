@@ -222,7 +222,7 @@ void RunScriptGateDrill() {
 
     OnGameThread([&] {
         SB::ReadAggregates(base);
-        SG::SetEnabled(true);
+        SG::Acquire("the script gate drill");
         UE_LOGI("[SCRIPTGATE] boxes A=%p B=%p fix=%p check=%p calc=%p uber=%p (EntryPoint@%d) sendName=%p",
                 g_boxA, g_boxB, g_fnFix, g_fnCheck, g_fnCalc, g_fnUber, g_entryOff, g_fnSendName);
 
@@ -332,7 +332,7 @@ void RunScriptGateDrill() {
     UE_LOGI("[SCRIPTGATE] script bodies over 5 s: %llu (%llu on the game thread) = %.0f/s",
             t1.calls - t0.calls, t1.callsGameThread - t0.callsGameThread,
             static_cast<double>(t1.calls - t0.calls) / 5.0);
-    OnGameThread([] { SG::SetEnabled(false); });
+    OnGameThread([] { SG::Release("the script gate drill"); });
 
     UE_LOGI("script_gate_drill: VERDICT %s (%d checks passed, %d failed)",
             v.fail == 0 ? "PASS" : "FAIL", v.pass, v.fail);

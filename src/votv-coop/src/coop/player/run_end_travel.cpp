@@ -238,9 +238,6 @@ void Tick() {
         coop::death_revive::NoteRunEndSeamReady(false);
         return;
     }
-    // This lane owns its own enable: the gate's switch is shared, and riding another consumer's
-    // would leave this watch green and its callback silent the moment that consumer retired.
-    sg::SetEnabled(true);
     // The revive's arm asks whether this seam can answer a death at all: published from here so
     // `death_revive` never has to name this module back. The readiness itself is settled in
     // Install, which runs before a session exists; this tick only publishes it.

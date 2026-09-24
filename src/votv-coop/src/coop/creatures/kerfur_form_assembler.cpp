@@ -442,7 +442,6 @@ void Install(coop::net::Session* session) {
     g_session = session;
     sg::WatchName(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry, nullptr);
     sg::WatchName(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry, nullptr);
-    sg::SetEnabled(true);  // both roles: the client needs the window to observe its own conversion
 }
 
 void Tick() {
@@ -452,7 +451,6 @@ void Tick() {
 
 void OnDisconnect() {
     DumpSummary("session-end");  // ALWAYS -- the measurement is never behind the log gate
-    sg::SetEnabled(false);
     g_logged.store(0, std::memory_order_relaxed);  // fresh verbose budget next session
 }
 

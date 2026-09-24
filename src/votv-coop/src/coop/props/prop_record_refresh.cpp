@@ -207,7 +207,6 @@ void OnUpdPost(const sg::Call& call) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (session && session->connected()) sg::SetEnabled(true);  // each lane asserts its own enable
     if (!GT::IsGameThread()) return;
     // Throttle the class walks while a class is unresolved, the shape prop_spawn_authoring and
     // prop_drop_intent use: this Install is the per-tick retry pump, a FindClass MISS is not cached

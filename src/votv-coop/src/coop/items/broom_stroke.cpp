@@ -330,8 +330,6 @@ void RunStroke(coop::net::Session& session, const coop::net::BroomStrokePayload&
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);  // re-cache every call (reconnect)
-    // This lane owns its own enable, as the trash morph gate does: the gate's switch is shared.
-    if (session && session->running()) sg::SetEnabled(true);
     if (g_namesAbsent || g_liveAbsent || (g_live && g_regBroomed != Reg::Pending)) return;
     if (!ue_wrap::broom::ResolveNames()) {
         if (++g_nameTries >= kMaxTries) {

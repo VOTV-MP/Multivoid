@@ -116,21 +116,21 @@ void Tick(const coop::net::Session& session) {
     if (!IsEnabled()) return;
     // The role a session was configured with is meaningless until it runs.
     g_role = !session.running() ? '-' : session.role() == coop::net::Role::Host ? 'H' : 'C';
-    // Every tick leaves the switch on, so a tick that finds it OFF means something turned it off
-    // inside the interval since the previous one -- the interval a load between them ran in.
+    // The probe holds the gate for the process, so a tick that finds it OFF means a hold broke,
+    // inside the interval since the previous tick -- the interval a load between them ran in.
+    static bool s_held = false;
+    if (!s_held) { sg::Acquire("the load reroll probe"); s_held = true; }
     const bool found = sg::IsEnabled();
-    if (!found) {
-        if (++g_foundOff <= 16)
-            UE_LOGI("load_reroll_watch: [%c] found the gate switch OFF (#%d); turned back on", RoleChar(), g_foundOff);
-        sg::SetEnabled(true);
-    }
+    if (!found && ++g_foundOff <= 16)
+        UE_LOGW("load_reroll_watch: [%c] found the gate OFF while this probe holds it (#%d)", RoleChar(),
+                g_foundOff);
     EnsureWatches();
     const uint32_t gen = WI::Generation();
     if (gen != g_worldGen) {
         UE_LOGI("load_reroll_watch: [%c] WORLD generation %u -> %u | the gate switch %s, found %s by this tick | "
                 "watches live %d/%d | so far: upgrades reached %llu ran %llu, Scramble Radar Dish reached %llu ran "
                 "%llu | join phase %s",
-                RoleChar(), g_worldGen, gen, g_ticked ? "left on by the previous tick" : "(first tick)",
+                RoleChar(), g_worldGen, gen, g_ticked ? "held since the first tick" : "(first tick)",
                 found ? "on" : "OFF", g_live < 0 ? 0 : g_live, kCount,
                 static_cast<unsigned long long>(g_reached[0]), static_cast<unsigned long long>(g_ran[0]),
                 static_cast<unsigned long long>(g_reached[1]), static_cast<unsigned long long>(g_ran[1]),

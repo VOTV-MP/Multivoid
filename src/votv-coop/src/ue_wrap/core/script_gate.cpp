@@ -357,7 +357,7 @@ bool Install() {
     g_target = target;
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("script_gate: installed on the VM's script loop at exe+0x%llX (both exec handlers name "
-            "it, and it names the exec-handler table at %p); disabled until a session enables it",
+            "it, and it names the exec-handler table at %p); disabled until something holds it",
             static_cast<unsigned long long>(fromVirtual - base), static_cast<void*>(gnatives));
     return true;
 }
@@ -525,9 +525,32 @@ void ResolvePendingNames() {
     }
 }
 
-void SetEnabled(bool on) {
-    const bool was = g_enabled.exchange(on, std::memory_order_release);
-    if (was != on) UE_LOGI("script_gate: %s", on ? "ENABLED (session active)" : "DISABLED (session ended)");
+namespace {
+// The holders: a count under a lock, not a lone atomic, because the edge has to be decided with
+// its store; otherwise a release's disable could land after a racing acquire's enable and leave the
+// gate off with a holder alive. Both edges are rare (a session's start or end, a save).
+std::mutex g_holdMutex;
+int g_holds = 0;
+}  // namespace
+
+void Acquire(const char* who) {
+    std::lock_guard<std::mutex> lk(g_holdMutex);
+    if (g_holds++ == 0) {
+        g_enabled.store(true, std::memory_order_release);
+        UE_LOGI("script_gate: ENABLED (%s holds it)", who);
+    }
+}
+
+void Release(const char* who) {
+    std::lock_guard<std::mutex> lk(g_holdMutex);
+    if (g_holds == 0) {
+        UE_LOGE("script_gate: %s released a hold it never took -- ignored", who);
+        return;
+    }
+    if (--g_holds == 0) {
+        g_enabled.store(false, std::memory_order_release);
+        UE_LOGI("script_gate: DISABLED (%s released the last hold)", who);
+    }
 }
 
 bool IsEnabled() { return g_enabled.load(std::memory_order_acquire); }

@@ -345,7 +345,6 @@ void Tick(coop::net::Session& session) {
         UE_LOGI("[PACK-TRASH] the hand-use gate is live");
     }
     if (!session.running()) return;
-    sg::SetEnabled(true);  // each lane asserts its own enable
 
     if (!g_spent.empty()) ConsumeSpentTools();
     if (session.role() != coop::net::Role::Host) return;

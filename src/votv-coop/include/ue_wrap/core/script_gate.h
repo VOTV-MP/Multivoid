@@ -83,9 +83,24 @@ bool NameWatchLive(const wchar_t* name, int tag);
 // consumer re-counting its own watches can stop there. Any thread.
 int PendingNameCount();
 
-// The session gate: disabled (the default, the solo single-player state) the detour pays one
-// load and a branch per call and never consults the tables. Any thread.
-void SetEnabled(bool on);
+// The gate runs while anything holds it; with no holder (the default, the solo single-player
+// state) the detour pays one load and a branch per call and never consults the tables. The coop
+// session holds it for its life (coop/session/subsystems), a save capture for its one call, a dev
+// probe that must see outside a session for as long as it runs. No holder turns it off under
+// another: the last release does. A switch every consumer set once turned it off in mid-session
+// for the lanes that had not re-asserted it. `who` names the holder on the edge's log line. Any
+// thread.
+void Acquire(const char* who);
+void Release(const char* who);
+class Hold {
+public:
+    explicit Hold(const char* who) : who_(who) { Acquire(who_); }
+    ~Hold() { Release(who_); }
+    Hold(const Hold&) = delete;
+    Hold& operator=(const Hold&) = delete;
+private:
+    const char* who_;
+};
 bool IsEnabled();
 
 // The calling thread's innermost watched body, for a consumer's own downstream seams (a finish

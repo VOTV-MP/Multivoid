@@ -285,7 +285,6 @@ void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
     ArmWatches();
     if (!session.running()) return;
-    sg::SetEnabled(true);  // each lane asserts its own enable
 
     if (!g_saidLive && sg::NameWatchLive(kFnBuy, kTagUpgrade)) {
         g_saidLive = true;

@@ -217,18 +217,18 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         // saveObjects(bool quicksave): the zeroed frame leaves quicksave=false (the
         // full populate, matching a normal save) -- exactly what we want.
         //
-        // The gather must run whatever the game thinks of events (see OnGetEvent). The script
-        // gate is a session-wide switch with several owners, so it is held on for this call and
-        // put back as it was found.
+        // The gather must run whatever the game thinks of events (see OnGetEvent), so this call
+        // holds the script gate for its length, beside the session's own hold if there is one.
         const bool watching = InstallGatherWatch();
-        const bool gateWasOn = script_gate::IsEnabled();
-        script_gate::SetEnabled(true);
-        g_worldGateRefused = 0;
-        g_otherGatesRefused = 0;
-        g_capturing = true;
-        const bool called = ue_wrap::Call(gm, f);
-        g_capturing = false;
-        script_gate::SetEnabled(gateWasOn);
+        bool called = false;
+        {
+            script_gate::Hold gate("the save capture");
+            g_worldGateRefused = 0;
+            g_otherGatesRefused = 0;
+            g_capturing = true;
+            called = ue_wrap::Call(gm, f);
+            g_capturing = false;
+        }
         if (!called) {
             UE_LOGW("save_capture: mainGamemode.saveObjects dispatch failed -- abort");
             return false;
