@@ -85,9 +85,8 @@ void SetActive(void* door, bool on);
 int ReadSensorOverlaps(void* door, void** out, int maxOut);
 
 // Where that sensor is: the box component's world centre and its scaled half-extent, through the
-// box's own GetScaledBoxExtent. The list and the box do not always agree: a player standing at the
-// box's centre with the door open was in no peer's list in two drill runs and in both in a third,
-// so a reader that needs the list reads the list. False when the component or the call does not
+// box's own GetScaledBoxExtent. The autoclose counts the list above, not the box, so a reader that
+// needs what the door counts reads the list. False when the component or the call does not
 // resolve. Game thread.
 bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 

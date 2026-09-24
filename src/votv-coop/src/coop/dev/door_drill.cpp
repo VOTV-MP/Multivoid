@@ -412,8 +412,8 @@ DWORD WINAPI WalkerThread(LPVOID) {
         return 0;
     }
 
-    // The stay is at the centre of the door's sensor box, the box its autoclose counts players in,
-    // read from this copy; the list and the box do not always agree, which is what the stays measure.
+    // The stay is at the centre of the door's sensor box, read from this copy; each stay reads whether
+    // the list the autoclose counts holds the walker there.
     void* const door = toDoor->targetActor;
     struct Box { bool ok = false; ue_wrap::FVector centre{}, half{}, origin{}, fwd{}; };
     auto box = std::make_shared<Box>();
