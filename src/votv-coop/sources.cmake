@@ -528,6 +528,7 @@ set(VOTVCOOP_SOURCES
     src/harness/pump.cpp
     src/harness/world_boot.cpp
     src/harness/harness_diag.cpp
+    src/harness/browser_click_arm.cpp
     src/harness/autotest/autotest_grab.cpp
     src/harness/autotest/autotest_grabintent.cpp
     src/harness/autotest/autotest_hostthrow.cpp

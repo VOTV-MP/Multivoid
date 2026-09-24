@@ -1,24 +1,19 @@
 // ui/overlay_test_arm.cpp -- see ui/overlay_test_arm.h.
 //
-// The ten env blocks below keep their log strings exactly as written, because the probes grep for
-// them. The two writes that reach imgui_overlay go through its publics rather than its TU-locals:
-// SetVisible(true), and ForceScoreboardOpen() for the forced latch, documented at its declaration.
+// The four env blocks below keep their log strings exactly as written, because runs wait on them. The
+// two writes that reach imgui_overlay go through its publics rather than its TU-locals: SetVisible(true),
+// and ForceScoreboardOpen() for the forced latch, documented at its declaration.
 
 #include "ui/overlay_test_arm.h"
 
 #include "ui/dev_menu.h"
 #include "ui/imgui_overlay.h"
-#include "ui/server_browser.h"
-#include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "coop/session/join_progress.h"
-#include "coop/net/master_slots.h"
-#include "coop/session/session_manager.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
 
 #include <cstring>
-#include <string>
 
 namespace ui::overlay_test_arm {
 
@@ -49,61 +44,6 @@ void ArmFromEnv() {
         sbEnv[0] == '1') {
         imgui_overlay::ForceScoreboardOpen();
         UE_LOGI("imgui_overlay: VOTVCOOP_SCOREBOARD_OPEN=1 -- scoreboard starts visible (screenshot test)");
-    }
-    // VOTVCOOP_BROWSER_OPEN=1 starts the MULTIPLAYER server browser visible (the
-    // boot-to-menu screenshot can't click the injected button) -- autonomous proof.
-    char brEnv[8] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_BROWSER_OPEN", brEnv, sizeof(brEnv)) > 0 &&
-        brEnv[0] == '1') {
-        ui::server_browser_surface::Open();
-        UE_LOGI("imgui_overlay: VOTVCOOP_BROWSER_OPEN=1 -- server browser starts visible (screenshot test)");
-    }
-    // VOTVCOOP_TEST_CONNECT_DIRECT=<host:port> autonomously simulates a browser
-    // "Direct connect" click: queues a LanDirect client Config that the harness
-    // RunPlayLoop consumes (TakePendingStart) + boots g_session -- proving the
-    // browser->session boot path without a real click. TEST-ONLY (never set in play).
-    char cdEnv[64] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_CONNECT_DIRECT", cdEnv, sizeof(cdEnv)) > 0 && cdEnv[0]) {
-        coop::session_manager::ConnectDirect(cdEnv);
-        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_CONNECT_DIRECT=%s -- queued a browser-path session start (test)", cdEnv);
-    }
-    // VOTVCOOP_TEST_HOST_LOBBY=1 simulates a browser "Host Game" click: POST /v1/host
-    // to the master -> P2P host session (the exact path DoHost() runs). TEST-ONLY.
-    char hlEnv[8] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_LOBBY", hlEnv, sizeof(hlEnv)) > 0 && hlEnv[0] == '1') {
-        coop::session_manager::HostLobby("Test Host", std::string(), /*locked=*/false, /*playersMax=*/4);
-        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_LOBBY=1 -- fired a browser-path HOST announce (test)");
-    }
-    // VOTVCOOP_TEST_JOIN_LOBBY=<lobbyId> simulates clicking a browser row's Connect:
-    // POST /v1/join -> P2P client session (the exact path JoinLobby() runs). TEST-ONLY.
-    char jlEnv[64] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_JOIN_LOBBY", jlEnv, sizeof(jlEnv)) > 0 && jlEnv[0]) {
-        // The lobby id doubles as the display label; the lobby is on the chosen master.
-        coop::session_manager::JoinLobby(coop::net::master_slots::Selected().url, jlEnv, jlEnv);
-        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_JOIN_LOBBY=%s -- fired a browser-path JOIN (test)", jlEnv);
-    }
-    // VOTVCOOP_TEST_HOST_SAVE=<slot> simulates the Host-Game picker's "Host selected
-    // save": HostWithSave({existing slot}) -> the harness LOADS <slot> then hosts (the
-    // exact path the picker's DoHostExisting runs). VOTVCOOP_TEST_HOST_NEW=<name> is the
-    // "New Game & Host" (story) path. TEST-ONLY (never set in play).
-    char hsEnv[64] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_SAVE", hsEnv, sizeof(hsEnv)) > 0 && hsEnv[0]) {
-        coop::session_manager::SaveChoice c;
-        c.newGame = false;
-        c.slot = hsEnv;
-        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4,
-            coop::net::master_slots::Selected().url);
-        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_SAVE=%s -- fired a picker HOST-WITH-SAVE (load existing, test)", hsEnv);
-    }
-    char hnEnv[64] = {};
-    if (::GetEnvironmentVariableA("VOTVCOOP_TEST_HOST_NEW", hnEnv, sizeof(hnEnv)) > 0 && hnEnv[0]) {
-        coop::session_manager::SaveChoice c;
-        c.newGame = true;
-        c.newName = hnEnv;
-        c.mode = 0;  // story
-        coop::session_manager::HostWithSave(c, "Test Host", /*locked=*/false, /*password=*/"", /*playersMax=*/4,
-            coop::net::master_slots::Selected().url);
-        UE_LOGI("imgui_overlay: VOTVCOOP_TEST_HOST_NEW=%s -- fired a picker HOST-WITH-SAVE (new story game, test)", hnEnv);
     }
     // VOTVCOOP_TEST_LOADING=1 forces the CLIENT connecting/loading state up (no real connect)
     // so the loading screen + the menu fade + the console can be screenshotted determin-

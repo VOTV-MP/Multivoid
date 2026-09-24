@@ -4,6 +4,7 @@
 // or runs an autonomous derisk. The session lifecycle lives in harness/session_runtime.cpp.
 
 #include "harness/harness.h"
+#include "harness/browser_click_arm.h"
 
 #include "harness/pump.h"
 #include "harness/session_runtime.h"
@@ -166,6 +167,9 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // others. Ordered before every announce site, so the heartbeat worker never reads the pointer
     // before it is written.
     session_runtime::InstallLobbyPlayerCountSource();
+    // The test variables that do what a click in the multiplayer menu does fire here, once what a click
+    // finds ready is: the master list, the session manager's configuration and the identity above.
+    browser_click_arm::FireFromEnv();
 
     const bool storyBoot = (scenario == "play");
     const bool menuMode  = (scenario == "menu");

@@ -52,7 +52,8 @@ One folder, one concept, named after it. `src/votv-coop/src/` holds the implemen
 
 `harness` (the scenario runner), `session_runtime`, `autotest` + `autotest_dispatch` and `harness/autotest/`
 (one file per scenario: join churn, grab, ragdoll, weather, events, death, damage, pause guard, save UI,
-scan parity and more), `sdk_check`, `screenshot`, `mod_environment`, `harness_diag`. The launcher drives
+scan parity and more), `sdk_check`, `screenshot`, `mod_environment`, `harness_diag`, `browser_click_arm`
+(the test variables that open the browser, host and join as a player's click does). The launcher drives
 these from outside the game.
 
 ## `ue_wrap/` — the engine wrapper

@@ -1,12 +1,9 @@
-// ui/overlay_test_arm.h -- TEST-ONLY env-var arming of overlay surfaces and browser-path session
-// scenarios: the autonomous harness's entry seam into the UI, off the hot file.
-//
-// Ten VOTVCOOP_* variables, read once from imgui_overlay::Init() right after the present hook is
-// installed. Every block is inert unless its variable is set, so a normal player boot does nothing
-// here: MENU_OPEN, SCOREBOARD_OPEN and BROWSER_OPEN start a surface visible for screenshots the
-// harness cannot key, and MENU_TAB opens the menu on one pane; TEST_CONNECT_DIRECT, TEST_HOST_LOBBY, TEST_JOIN_LOBBY, TEST_HOST_SAVE and
-// TEST_HOST_NEW fire the exact session_manager paths the browser and picker clicks run;
-// TEST_LOADING forces the client connecting state for a deterministic loading-screen shot.
+// ui/overlay_test_arm.h -- TEST-ONLY env-var arming of the overlay's own surfaces, for the screenshots
+// an autonomous run cannot key: VOTVCOOP_MENU_OPEN=1 (the F1 menu), MENU_TAB=<Category>/<Pane> (the menu
+// on one pane), SCOREBOARD_OPEN=1 (the player list) and TEST_LOADING=1 (the client's connecting state
+// with a partial bar, which the session loop reads too). Each is inert unless set, so a normal player
+// boot does nothing here. The variables that do what a click in the multiplayer menu does are
+// harness/browser_click_arm's.
 //
 // WHY IT LIVES HERE AND NOT IN THE OVERLAY: imgui_overlay.cpp owns the DXGI hooks, the WndProc and
 // surface compositing. These blocks are the harness's ACTUATION points about those surfaces --
@@ -17,7 +14,7 @@
 
 namespace ui::overlay_test_arm {
 
-// Read the VOTVCOOP_* test variables once and arm whatever they name.
+// Read the four variables once and arm what they name.
 // Called from imgui_overlay::Init() after g_installed goes true.
 void ArmFromEnv();
 
