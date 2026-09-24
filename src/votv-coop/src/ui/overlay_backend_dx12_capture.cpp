@@ -259,8 +259,12 @@ void FlushSummaryAndDisarm() {
             static_cast<unsigned long long>(g_droppedQueueRegs.load(std::memory_order_relaxed)));
     ue_wrap::log::Flush();
     if (g_eclHookInstalled.exchange(false)) ue_wrap::hook::Disable(g_eclTarget);
+    // The creation probes arm once, and a re-arm restores only the capture hook, so they are
+    // cleared here: the disarm after a re-arm would otherwise disable them a second time.
     if (g_createScTarget)     ue_wrap::hook::Disable(g_createScTarget);
     if (g_createScHwndTarget) ue_wrap::hook::Disable(g_createScHwndTarget);
+    g_createScTarget     = nullptr;
+    g_createScHwndTarget = nullptr;
 }
 
 }  // namespace
