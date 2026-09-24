@@ -16,7 +16,7 @@
 ; sentence is the legend, so write titles the way they read in it. Every other line is one
 ; name, shown as written. A line starting with `;` is a comment.
 
-revision = 3
+revision = 4
 title = Multivoid would like to thank
 
 [testers] #9EEAB3
@@ -80,3 +80,4 @@ Mikietot
 Pixqwe
 Sif
 doctaaaa
+Мама Птица
