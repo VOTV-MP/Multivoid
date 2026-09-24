@@ -91,7 +91,6 @@
 #include "coop/props/prop_stick_sync.h"  // wall-attachable stick mirror (camera-on-wall)
 #include "coop/session/teleport_client.h"  // TeleportSlotToHost: the admin bring-to-host action
 #include "coop/dev/keypad_probe.h"
-#include "coop/dev/door_probe.h"
 #include "coop/dev/light_group_census.h"
 #include "coop/dev/lightswitch_probe.h"
 #include "coop/dev/perf_probe.h"
@@ -741,8 +740,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::light_group_census::Tick();  // dev-only READ-ONLY light-GROUP census (ini lightgroup_census=1); self-installs
     coop::dev::keypad_probe::Install();  // dev-only keypad digit-entry RE probe (ini keypad_probe=1)
     coop::dev::keypad_probe::Tick();  // synthetic inputNumber sequence -> does it append inPassword + flip isAcc
-    coop::dev::door_probe::Install();  // dev-only door state-machine RE probe (ini door_probe=1)
-    coop::dev::door_probe::Tick();  // scripted doorOpen/suppress/settime experiment -> what re-closes a host door?
 }
 
 }  // namespace coop::subsystems

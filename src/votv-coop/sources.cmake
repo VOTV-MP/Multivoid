@@ -446,7 +446,6 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/light_group_census.cpp
     src/coop/dev/lightswitch_probe.cpp
     src/coop/dev/keypad_probe.cpp
-    src/coop/dev/door_probe.cpp
     src/coop/dev/save_probe.cpp
     src/coop/dev/native_ui_probe.cpp
     src/coop/dev/worldless_frames.cpp

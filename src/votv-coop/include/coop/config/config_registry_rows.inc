@@ -476,8 +476,6 @@ CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr,
     "Diagnostic probe: sleep/wake cycle.")
 CFG_FLAG(script_gate_log, "script_gate_log", "dev", false, nullptr,
     "Diagnostic logging for the script-body gate's consumers (the kerfur form assembler's per-verb lines).")
-CFG_FLAG(door_probe, "door_probe", "dev", false, nullptr,
-    "Diagnostic probe: door state and suppression.")
 CFG_FLAG(rng_roll_census, "rng_roll_census", "dev", false, nullptr,
     "Diagnostic census: RNG roll sites.")
 CFG_FLAG(leak_probe, "leak_probe", "dev", false, nullptr,
