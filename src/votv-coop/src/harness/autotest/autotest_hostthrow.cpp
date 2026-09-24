@@ -35,19 +35,12 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    while (done->load() == 0) ::Sleep(5);
-    return done->load();
-}
 
 // The host half: the director's own walked grab, then a throw of what it holds.
 void RunHost() {
     UE_LOGI("hostthrow: HOST -- waiting for the client's puppet to go live, then walking to a pile");
     for (int waited = 0; waited < 180; ++waited) {
-        const int r = RunGT([](std::atomic<int>& d) {
+        const int r = GT::RunAndWait([](std::atomic<int>& d) {
             coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
             d.store(rp && rp->valid() ? 1 : 2);
         });
@@ -58,7 +51,7 @@ void RunHost() {
 
     auto player = std::make_shared<void*>(nullptr);
     auto goal   = std::make_shared<coop::director::DirectorGoal>();
-    if (RunGT([player, goal](std::atomic<int>& d) {
+    if (GT::RunAndWait([player, goal](std::atomic<int>& d) {
             void* p = coop::players::Registry::Get().Local();
             if (!p || !R::IsLive(p) || !E::GetController(p)) { d.store(2); return; }
             *player = p;
@@ -76,7 +69,7 @@ void RunHost() {
     UE_LOGI("hostthrow: grabbed; carrying 3 s so the client's mirror follows the hand");
     ::Sleep(3000);
 
-    RunGT([player](std::atomic<int>& d) {
+    GT::RunAndWait([player](std::atomic<int>& d) {
         ue_wrap::engine::MainPlayerGrabState gs{};
         void* clump = nullptr;
         if (E::ReadMainPlayerGrabState(*player, gs) && gs.grabbingActor &&
@@ -114,7 +107,7 @@ void RunClient() {
     int pass = 0;
     while (::GetTickCount64() < tEnd) {
         const bool refresh = (pass++ % 5) == 0;   // the object-array walk at 4 Hz, the samples at 20
-        RunGT([clumps, unreadable, refresh, t0](std::atomic<int>& d) {
+        GT::RunAndWait([clumps, unreadable, refresh, t0](std::atomic<int>& d) {
             if (refresh) {
                 clumps->clear();
                 for (void* o : R::FindObjectsByClass(L"prop_garbageClump_C"))

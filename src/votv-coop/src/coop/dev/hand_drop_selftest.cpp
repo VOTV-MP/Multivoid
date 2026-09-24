@@ -210,13 +210,13 @@ struct EpisodeResult {
     // -- and a prop that leaves under one key and comes back under another reads as a count that
     // balances while the identity did not survive.
     std::vector<std::wstring> beforeKeys;
-    // The actor each before key named, so an unread row later counts as that prop only when it is
-    // that actor, never another under the same key.
+    // The actors each before key named -- a duplicate key names several -- so an unread row later
+    // counts as that prop only when it is one of them, never another actor under the same key.
     std::vector<std::pair<std::wstring, ue_wrap::CachedObjRef>> beforeActors;
 
     bool BeforeActorIs(const std::wstring& key, void* actor) const {
         for (const auto& b : beforeActors)
-            if (b.first == key) return b.second.Is(actor);
+            if (b.first == key && b.second.Is(actor)) return true;
         return false;
     }
 };
@@ -293,15 +293,23 @@ bool CallDropHolding(void* player) {
 // peers measure the same region of the same world. Returns false when the watcher has no puppet
 // yet or a location cannot be read, which is a reason printed rather than a census of the wrong place.
 bool CensusCentre(bool iAmHolder, bool holderIsHost, ue_wrap::FVector& out) {
+    void* actor = nullptr;
     if (iAmHolder) {
-        void* p = MainPlayer();
-        return p && E::TryGetActorLocation(p, out);
+        actor = MainPlayer();
+    } else {
+        const uint8_t holderSlot = holderIsHost ? 0u : 1u;
+        coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(holderSlot);
+        if (!pup || !pup->valid()) return false;
+        actor = pup->GetActor();
     }
-    const uint8_t holderSlot = holderIsHost ? 0u : 1u;
-    coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(holderSlot);
-    if (!pup || !pup->valid()) return false;
-    void* actor = pup->GetActor();
-    return actor && E::TryGetActorLocation(actor, out);
+    if (!actor) return false;
+    // Like every census read: an actor whose read failed is not read again.
+    for (const ue_wrap::CachedObjRef& u : g_unreadable)
+        if (u.Is(actor)) return false;
+    if (E::TryGetActorLocation(actor, out)) return true;
+    g_unreadable.emplace_back();
+    g_unreadable.back().Set(actor);
+    return false;
 }
 
 const char* ActName(Act a) {

@@ -95,11 +95,11 @@ DWORD WINAPI WalkAwayThread(LPVOID /*arg*/) {
         if (!player) return;
         ue_wrap::FVector at{};
         ue_wrap::FRotator rot{};
-        const bool atRead = E::TryGetActorLocation(player, at);
-        const bool rotRead = E::TryGetActorRotation(player, rot);
-        UE_LOGI("[INV-PICKUP-DRILL] walked (%hs) -- the player now stands at (%.0f, %.0f, %.0f)%s yaw=%.0f%s",
-                goal->reached ? "reached" : goal->failReason, at.X, at.Y, at.Z, atRead ? "" : " (unread)", rot.Yaw,
-                rotRead ? "" : " (unread)");
+        char place[48] = "(unread)", yaw[16] = "(unread)";   // no numbers for what was not read
+        if (E::TryGetActorLocation(player, at)) std::snprintf(place, sizeof(place), "(%.0f, %.0f, %.0f)", at.X, at.Y, at.Z);
+        if (E::TryGetActorRotation(player, rot)) std::snprintf(yaw, sizeof(yaw), "%.0f", rot.Yaw);
+        UE_LOGI("[INV-PICKUP-DRILL] walked (%hs) -- the player now stands at %s yaw=%s",
+                goal->reached ? "reached" : goal->failReason, place, yaw);
         // Everything this life set out to do is done; the profile that says so reaches the host on
         // the lane's next poll. A rig waits on this line, not on a number of seconds.
         UE_LOGI("[INV-PICKUP-DRILL] CLIENT LIFE DONE");

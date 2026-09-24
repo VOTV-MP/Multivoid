@@ -22,15 +22,6 @@
 
 namespace harness::autotest::broom_world {
 
-// Post `body` to the game thread and wait until it stores a non-zero into its argument.
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    ue_wrap::game_thread::Post([done, body]() mutable { body(*done); });
-    while (done->load() == 0) ::Sleep(5);
-    return done->load();
-}
-
 float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b);
 
 // Put a broom in this peer's hand with the game's own pickup. False when the hand holds none.

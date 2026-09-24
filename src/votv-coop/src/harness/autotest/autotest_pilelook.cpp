@@ -35,13 +35,6 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    while (done->load() == 0) ::Sleep(5);
-    return done->load();
-}
 
 }  // namespace
 
@@ -51,7 +44,7 @@ void RunPileLookScenario() {
     UE_LOGI("pilelook: %s -- waiting for the other peer's puppet, then 60 s for the join to settle",
             client ? "CLIENT" : "HOST");
     for (int waited = 0; waited < 180; ++waited) {
-        const int r = RunGT([otherSlot](std::atomic<int>& d) {
+        const int r = GT::RunAndWait([otherSlot](std::atomic<int>& d) {
             coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(otherSlot);
             d.store(rp && rp->valid() ? 1 : 2);
         });
@@ -60,7 +53,7 @@ void RunPileLookScenario() {
     }
     ::Sleep(60000);   // the snapshot burst, the async load tail and the quiescence re-bind
 
-    RunGT([client](std::atomic<int>& d) {
+    GT::RunAndWait([client](std::atomic<int>& d) {
         int named = 0, unnamed = 0, clumps = 0, clumpsUnnamed = 0;
         // Every pile class, the variants included: a walk of the object array with the pile test,
         // where a lookup by one class name would count actorChipPile_C alone.

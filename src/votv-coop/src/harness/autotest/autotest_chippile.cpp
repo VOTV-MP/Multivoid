@@ -66,13 +66,6 @@ ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& t
 
 // Run a game-thread closure and block until it stores into `done` (1 ok, 2 fail); engine state is
 // game-thread only.
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    while (done->load() == 0) ::Sleep(5);
-    return done->load();
-}
 
 // The eid bound to a host pile (the forward map) or a mirror pile (the wire); kInvalidId when
 // untracked.
@@ -101,7 +94,7 @@ void RunAutonomousChipPileTest() {
         ::Sleep(70000);
         struct CShow { void* player = nullptr; void* pile = nullptr; ue_wrap::FVector pos{}; float dist = 0.f; };
         auto cs = std::make_shared<CShow>();
-        if (RunGT([cs](std::atomic<int>& d) {
+        if (GT::RunAndWait([cs](std::atomic<int>& d) {
                 void* p = coop::players::Registry::Get().Local();
                 if (!p || !R::IsLive(p) || !E::GetController(p)) {
                     UE_LOGW("chippile_test: CLIENT showcase -- no possessed local player"); d.store(2); return; }
@@ -118,7 +111,7 @@ void RunAutonomousChipPileTest() {
                         pile, cs->pos.X, cs->pos.Y, cs->pos.Z, dist);
                 d.store(1);
             }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no player/pile)"); return; }
-        if (RunGT([cs](std::atomic<int>& d) {                   // teleport to a 180 cm standoff facing the pile
+        if (GT::RunAndWait([cs](std::atomic<int>& d) {                   // teleport to a 180 cm standoff facing the pile
             ue_wrap::FVector at{};
             if (!E::TryGetActorLocation(cs->player, at)) {
                 UE_LOGW("chippile_test: CLIENT showcase -- no standoff, the player's location could not be read");
@@ -138,7 +131,7 @@ void RunAutonomousChipPileTest() {
         }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no standoff)"); return; }
         for (int i = 0; i < 60; ++i) {                          // hold 60 s, re-facing the pile each second
             ::Sleep(1000);
-            RunGT([cs](std::atomic<int>& d) {
+            GT::RunAndWait([cs](std::atomic<int>& d) {
                 ue_wrap::FVector at{};   // unread: this second keeps the last facing
                 if (E::TryGetActorLocation(cs->player, at))
                     E::SetControlRotation(E::GetController(cs->player), LookAt(at, cs->pos));
@@ -158,7 +151,7 @@ void RunAutonomousChipPileTest() {
         const int kWaitCapS = 150;
         int waitedS = 0; bool inWorld = false;
         while (waitedS < kWaitCapS) {
-            const int r = RunGT([](std::atomic<int>& d) {
+            const int r = GT::RunAndWait([](std::atomic<int>& d) {
                 coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(/*peerSlot=*/1);
                 void* a = pup ? pup->GetActor() : nullptr;
                 d.store((a && R::IsLive(a)) ? 1 : 2);
@@ -177,7 +170,7 @@ void RunAutonomousChipPileTest() {
     // 1. The local player and the E-press UFunction.
     struct Resolved { void* player = nullptr; void* useFn = nullptr; int32_t useFrame = 0; };
     auto rsv = std::make_shared<Resolved>();
-    if (RunGT([rsv](std::atomic<int>& d) {
+    if (GT::RunAndWait([rsv](std::atomic<int>& d) {
             void* player = coop::players::Registry::Get().Local();   // the possessed local player
             if (!player || !R::IsLive(player)) { UE_LOGW("chippile_test: no live local player"); d.store(2); return; }
             if (!E::GetController(player)) {  // GetController()!=null is the definitive local discriminator
@@ -196,7 +189,7 @@ void RunAutonomousChipPileTest() {
     // nearest tracked one.
     struct PileSel { void* pile = nullptr; ue_wrap::FVector pos{}; uint32_t eid = 0; float dist = 0.f; bool tracked = false; };
     auto sel = std::make_shared<PileSel>();
-    if (RunGT([rsv, sel](std::atomic<int>& d) {
+    if (GT::RunAndWait([rsv, sel](std::atomic<int>& d) {
             // Every prop is force-tracked now (eids assigned, the actor-to-eid map filled) rather
             // than waiting for the reconcile; ReSeed is idempotent.
             const size_t reseeded = PT::ReSeedKnownKeyedProps(nullptr);
@@ -241,7 +234,7 @@ void RunAutonomousChipPileTest() {
 
     // 3. Teleport the player to a standoff in front of the pile, approaching from where it stands
     // (open space, not the wall a pile often sits against), then let the character settle.
-    if (RunGT([rsv, sel](std::atomic<int>& d) {
+    if (GT::RunAndWait([rsv, sel](std::atomic<int>& d) {
             ue_wrap::FVector ploc{};
             if (!E::TryGetActorLocation(rsv->player, ploc)) {
                 UE_LOGW("chippile_test: no standoff, the player's location could not be read"); d.store(2); return; }
@@ -259,13 +252,13 @@ void RunAutonomousChipPileTest() {
 
     // 4. Face the pile. Not gated on the trace: the grab below injects lookAtActor for its one
     // dispatch, and the clump spawns at the pile's transform, so the camera need not point at it.
-    RunGT([rsv, sel](std::atomic<int>& d) {
+    GT::RunAndWait([rsv, sel](std::atomic<int>& d) {
         const ue_wrap::FVector cam = E::GetCameraLocation();
         E::SetControlRotation(E::GetController(rsv->player), LookAt(cam, sel->pos));
         d.store(1);
     });
     ::Sleep(400);
-    RunGT([rsv, sel](std::atomic<int>& d) {
+    GT::RunAndWait([rsv, sel](std::atomic<int>& d) {
         void* look = E::ReadMainPlayerLookAtActor(rsv->player);
         UE_LOGI("chippile_test: faced pile; game-trace lookAtActor=%p (%s)", look,
                 look == sel->pile ? "==pile, natural aim resolved" : "trace did not resolve -- will inject");
@@ -278,7 +271,7 @@ void RunAutonomousChipPileTest() {
     // runs the pile's own playerGrabbed, the full body: the clump spawn, pickupObjectDirect, then
     // K2_DestroyActor on the pile itself. The pile is never touched after the call.
     UE_LOGI("chippile_test: >>> GRAB: arm(InpActEvt_use) + run real conversion(playerGrabbed) eid=%u <<<", sel->eid);
-    RunGT([rsv, sel](std::atomic<int>& d) {
+    GT::RunAndWait([rsv, sel](std::atomic<int>& d) {
         // 5a: arm.
         E::WriteMainPlayerLookAtActor(rsv->player, sel->pile);
         std::vector<uint8_t> frame(rsv->useFrame > 0 ? static_cast<size_t>(rsv->useFrame) : 0, 0u);
@@ -304,7 +297,7 @@ void RunAutonomousChipPileTest() {
     void* heldClump = nullptr;   // captured for the Phase B re-pile throw
     for (int i = 0; i < 16; ++i) {
         ::Sleep(100);
-        RunGT([rsv, &sawClumpHolding, &sawClumpGrabbing, &heldClump, i](std::atomic<int>& d) {
+        GT::RunAndWait([rsv, &sawClumpHolding, &sawClumpGrabbing, &heldClump, i](std::atomic<int>& d) {
             E::MainPlayerGrabState gs{};
             if (E::ReadMainPlayerGrabState(rsv->player, gs)) {
                 const bool holdClump = gs.holdingActor && ue_wrap::prop::IsGarbageClump(gs.holdingActor);
@@ -337,7 +330,7 @@ void RunAutonomousChipPileTest() {
     // judged for the carry drive advancing.
     if (heldClump) {
         ue_wrap::FVector base{};
-        const bool baseRead = RunGT([rsv, &base](std::atomic<int>& d) {
+        const bool baseRead = GT::RunAndWait([rsv, &base](std::atomic<int>& d) {
             d.store(E::TryGetActorLocation(rsv->player, base) ? 1 : 2);
         }) == 1;
         if (!baseRead) UE_LOGW("chippile_test: no carry, the player's location could not be read");
@@ -353,7 +346,7 @@ void RunAutonomousChipPileTest() {
             ::Sleep(100);
             const ue_wrap::FVector to{ base.X + dx * kStepCm * (s + 1), base.Y + dy * kStepCm * (s + 1), base.Z };
             int held = 0;
-            RunGT([rsv, to, &held](std::atomic<int>& d) {
+            GT::RunAndWait([rsv, to, &held](std::atomic<int>& d) {
                 E::SetActorLocation(rsv->player, to);             // walk the host one 15 cm step
                 E::MainPlayerGrabState gs{};
                 if (E::ReadMainPlayerGrabState(rsv->player, gs) &&
@@ -382,7 +375,7 @@ void RunAutonomousChipPileTest() {
     // physics-handle grab, so the handle is released cleanly and the freed clump thrown; its impact
     // re-piles it, and the land watch converts the peer's mirror back.
     if (heldClump) {
-        RunGT([rsv, heldClump](std::atomic<int>& d) {
+        GT::RunAndWait([rsv, heldClump](std::atomic<int>& d) {
             // A directional throw rather than a drop, so the flight stream carries a real arc:
             // toward the held clump, about 6 m/s forward and 4 m/s up. Its direction is read while
             // the hand still holds the clump.
@@ -439,7 +432,7 @@ void RunPuppetGrabProbe() {
     {
         const int kWaitCapS = 150; int waitedS = 0; bool live = false;
         while (waitedS < kWaitCapS) {
-            const int r = RunGT([pup](std::atomic<int>& d) {
+            const int r = GT::RunAndWait([pup](std::atomic<int>& d) {
                 coop::RemotePlayer* p = coop::players::Registry::Get().Puppet(/*peerSlot=*/1);
                 void* a = p ? p->GetActor() : nullptr;
                 if (a && R::IsLive(a)) { pup->actor = a; pup->hasController = (E::GetController(a) != nullptr); d.store(1); }
@@ -464,7 +457,7 @@ void RunPuppetGrabProbe() {
     // hold, not the wire.
     struct Sel { void* pile = nullptr; ue_wrap::FVector pilePos{}; ue_wrap::FVector pupPos0{}; float pupYaw0 = 0.f; float dist0 = 0.f; };
     auto sel = std::make_shared<Sel>();
-    if (RunGT([pup, sel](std::atomic<int>& d) {
+    if (GT::RunAndWait([pup, sel](std::atomic<int>& d) {
             ue_wrap::FVector pl{};
             if (!E::TryGetActorLocation(pup->actor, pl)) {
                 UE_LOGW("puppet_grab_probe: the puppet's location could not be read"); d.store(2); return; }
@@ -487,7 +480,7 @@ void RunPuppetGrabProbe() {
     // clump, sets its holder and calls the puppet's pickupObjectDirect; the pile self-destructs. No
     // observer arming, no lookAtActor injection.
     UE_LOGI("puppet_grab_probe: >>> executing playerGrabbed on the PUPPET (the host-side move) <<<");
-    if (RunGT([pup, sel](std::atomic<int>& d) {
+    if (GT::RunAndWait([pup, sel](std::atomic<int>& d) {
             void* pileCls = R::ClassOf(sel->pile);
             void* grabFn  = pileCls ? R::FindFunction(pileCls, L"playerGrabbed") : nullptr;
             bool paramOk = false, callOk = false;
@@ -509,7 +502,7 @@ void RunPuppetGrabProbe() {
     for (int i = 0; i < 40; ++i) {
         ::Sleep(100);
         ++totalPolls;
-        RunGT([pup, &engagedPolls, &readPolls, &distFirst, &distLast, &distMin, &dzFirst, &dzLast, &grabLenLast, i](std::atomic<int>& d) {
+        GT::RunAndWait([pup, &engagedPolls, &readPolls, &distFirst, &distLast, &distMin, &dzFirst, &dzLast, &grabLenLast, i](std::atomic<int>& d) {
             E::MainPlayerGrabState gs{};
             if (!E::ReadMainPlayerGrabState(pup->actor, gs)) { d.store(1); return; }
             void* clump = (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? gs.grabbingActor
@@ -585,7 +578,7 @@ void RunPileDriftScenario() {
     const int kWaitCapS = 90;
     int waitedS = 0; bool ready = false;
     while (waitedS < kWaitCapS) {
-        const int r = RunGT([sel](std::atomic<int>& d) {
+        const int r = GT::RunAndWait([sel](std::atomic<int>& d) {
             void* player = coop::players::Registry::Get().Local();
             if (!player || !R::IsLive(player) || !E::GetController(player)) { d.store(2); return; }
             ue_wrap::FVector at{};
@@ -623,7 +616,7 @@ void RunPileDriftScenario() {
                 kWaitCapS);
         return;
     }
-    RunGT([sel](std::atomic<int>& d) {
+    GT::RunAndWait([sel](std::atomic<int>& d) {
         int destroyed = 0, moved = 0;
         for (void* a : sel->destroy) {
             if (!R::IsLive(a)) continue;

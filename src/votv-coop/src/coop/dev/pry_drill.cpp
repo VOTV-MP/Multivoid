@@ -279,11 +279,21 @@ void ActStep(coop::net::Session& s) {
         void* t = g_target.Get();
         const bool rested = t && g_stepTicks > kRestMinTicks && E::IsActorRootBodyAtRest(t);
         if (!rested && g_stepTicks < kRestMaxTicks) return;
+        // Through the row's latch, like every reader of a watched pryable.
+        Watched* row = FindWatchedRow(g_targetKey);
         ue_wrap::FVector at{};
-        const bool atRead = t && E::TryGetActorLocation(t, at);
-        UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f)%s fromStart=%.1fcm", Who(),
-                rested ? "RESTED" : "NOT AT REST after the wait", g_targetKey.c_str(), at.X, at.Y, at.Z,
-                atRead ? "" : " (unread)", atRead ? Dist(at, g_targetStart) : -1.f);
+        const bool atRead = t && !(row && row->unread) && E::TryGetActorLocation(t, at);
+        if (t && !atRead && row && !row->unread) {
+            row->unread = true;
+            UE_LOGW("[PRY-DRILL] [%c] UNREAD key='%ls' -- the rest read could not read its location; nothing reads "
+                    "it again", Who(), g_targetKey.c_str());
+        }
+        const char* state = rested ? "RESTED" : "NOT AT REST after the wait";
+        if (atRead)
+            UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromStart=%.1fcm", Who(), state,
+                    g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_targetStart));
+        else   // no numbers: an unread place is no place
+            UE_LOGI("[PRY-DRILL] [%c] %s key='%ls' at (unread)", Who(), state, g_targetKey.c_str());
         UE_LOGI("[PRY-DRILL] ACTOR DONE");
         Go(Step::Done);
         return;

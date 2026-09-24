@@ -16,6 +16,7 @@
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
 #include "ue_wrap/actors/prop.h"           // WalksToBase
 #include "ue_wrap/actors/save_record.h"    // ReadArr, kMxStride
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"             // ParamFrame, Call
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -45,15 +46,16 @@ namespace INV = ue_wrap::inventory;
 namespace PR  = ue_wrap::prop;
 namespace PT  = coop::prop_element_tracker;
 
-// Waits until the task has run, however long the game thread stalls. A bounded wait returned while the
-// task could still run later and write the probe's shared state under a caller that had moved on; a
-// probe waiting on a stalled game thread only waits, on its own thread.
+// A step of the probe on the game thread (GT::RunAndWait: it waits out a stall and cannot outlive a
+// task that faulted). The first step whose task faulted is kept, so the probe ends naming it instead of
+// judging values that step never wrote. Reset at each probe's start; the probe thread only.
+const char* g_faultedStep = nullptr;
+
 template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    while (done->load() == 0) ::Sleep(5);
-    return done->load();
+int Step(const char* name, Fn&& body) {
+    const int r = GT::RunAndWait(std::forward<Fn>(body));
+    if (r == GT::kTaskFaulted && !g_faultedStep) g_faultedStep = name;
+    return r;
 }
 
 float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
@@ -172,10 +174,12 @@ struct Probe {
     int32_t  phaseA = -1;
     int32_t  phaseB = -1;
     std::wstring targetKey;   // the shared container's stable SAVE KEY (the by-construction race key)
-    // The pick, written by a game-thread task: the task holds only this shared state, since a bounded
-    // wait that gives up leaves it to run after the caller's frame is gone.
+    // The pick, written by a game-thread task.
     ue_wrap::FVector targetPos{};
     bool     playerUnread = false;   // the race pick: the route start could not be read, which a retry does not change
+    // The race pick's candidates whose read failed: a retry skips them, since a failed read of a live actor
+    // faults again, and still counts them among those it could not place.
+    std::vector<ue_wrap::CachedObjRef> unreadable;
 };
 
 }  // namespace
@@ -194,13 +198,18 @@ void RunVerifierBlindControl() {
     dummy.contentHash = 0;
     dummy.valid       = true;   // valid so the walk RUNS; unmatchable so it can never find a row
     auto ran = std::make_shared<std::atomic<int>>(0);
-    RunGT([ran, dummy](std::atomic<int>& d) {
+    g_faultedStep = nullptr;
+    Step("the blind control", [ran, dummy](std::atomic<int>& d) {
         UE_LOGI("dup_verifier[BLIND-CONTROL]: counting BEFORE world load -- expecting "
                 "'GObjStack count is BLIND' + 'player=BLIND(READ-FAILED)'");
         const int n = CountItemInstances(dummy, /*print=*/true);
         ran->store(n < 0 ? 1 : 2);
         d.store(1);
     });
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake: BLIND-CONTROL INVALID -- the game thread's task faulted at %s", g_faultedStep);
+        return;
+    }
     UE_LOGI("director/ctake: BLIND-CONTROL fired (saveSlot %s at scenario start) -- read the two "
             "dup_verifier lines above; BLIND on both = the instrument's failure branch is OBSERVABLE, "
             "READ-OK = INCONCLUSIVE (world already up, control never got its chance)",
@@ -210,6 +219,7 @@ void RunVerifierBlindControl() {
 void RunContainerTakeProbe() {
     // First, before any settle: the instrument's own known positive.
     RunVerifierBlindControl();
+    g_faultedStep = nullptr;
 
     UE_LOGI("director/ctake: container-take input probe -- +20 s settle for the world to load");
     ::Sleep(20000);
@@ -218,13 +228,17 @@ void RunContainerTakeProbe() {
     struct Rsv { void* player = nullptr; };
     auto rsv = std::make_shared<Rsv>();
     for (int waited = 0; waited < 60 && !rsv->player; ++waited) {
-        const int r = RunGT([rsv](std::atomic<int>& d) {
+        const int r = Step("the player", [rsv](std::atomic<int>& d) {
             void* p = coop::players::Registry::Get().Local();
             if (p && R::IsLive(p) && E::GetController(p)) { rsv->player = p; d.store(1); }
             else d.store(2);
         });
-        if (r == 1) break;
+        if (r == 1 || g_faultedStep) break;
         ::Sleep(1000);
+    }
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake: VERDICT the game thread's task faulted at %s -- ABORT", g_faultedStep);
+        return;
     }
     if (!rsv->player) { UE_LOGW("director/ctake: VERDICT no possessed local player -- ABORT"); return; }
 
@@ -232,7 +246,7 @@ void RunContainerTakeProbe() {
     DirectorGoal goal;
     goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
-    const int pick = RunGT([rsv, pb](std::atomic<int>& d) {
+    const int pick = Step("the pick", [rsv, pb](std::atomic<int>& d) {
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(rsv->player, at)) {
             UE_LOGW("director/ctake: the player's location could not be read"); d.store(2); return; }
@@ -281,6 +295,10 @@ void RunContainerTakeProbe() {
                 pb->targetPos.X, pb->targetPos.Y, pb->targetPos.Z, bestLen);
         d.store(1);
     });
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake: VERDICT the game thread's task faulted at %s -- ABORT", g_faultedStep);
+        return;
+    }
     if (pick != 1) { UE_LOGW("director/ctake: VERDICT could not pick a container -- ABORT"); return; }
     goal.targetActor = pb->container;
     goal.targetPos = pb->targetPos;
@@ -299,7 +317,7 @@ void RunContainerTakeProbe() {
 
     // The take ladder: each rung verified at runtime, the highest reached and the count delta
     // reported.
-    RunGT([rsv, pb](std::atomic<int>& d) {
+    Step("rung 1", [rsv, pb](std::atomic<int>& d) {
         // openContainer and extract are declared on the base container class, and the target is a
         // subclass; FindFunction is exact-owner, so the verbs are resolved on the declaring class
         // and dispatched on the instance.
@@ -316,7 +334,7 @@ void RunContainerTakeProbe() {
     // The UI widget spawns. The container slot is the real "a container UI is open" signal; a bare
     // inventory widget can pre-exist, pooled and closed.
     for (int i = 0; i < kUiWaitTicks && !pb->slotFound; ++i) {
-        RunGT([pb](std::atomic<int>& d) {
+        Step("the UI wait", [pb](std::atomic<int>& d) {
             pb->uiOpened  = (FirstLiveOfClass(L"ui_playerInventory_C") != nullptr);
             pb->slotFound = (FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C") != nullptr);
             d.store(1);
@@ -334,7 +352,7 @@ void RunContainerTakeProbe() {
     // player-side and would confound the attribution. First the bound slot and the item it maps to
     // are resolved and the item's signature captured while it is still in the container; its
     // global count is the control's phase A.
-    RunGT([pb](std::atomic<int>& d) {
+    Step("the bound slot", [pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
         if (ui) {   // ui.slots_prop[0] -- the container slot the UI actually built (bound to the container)
@@ -349,10 +367,10 @@ void RunContainerTakeProbe() {
         pb->xSig = CaptureContainerSlotSig(pb->container, pb->slotId);   // X, before the take
         d.store(1);
     });
-    RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+    Step("phase A", [pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
 
     // The faithful take: the bound slot re-resolved, the hover set, pressButton fired.
-    RunGT([pb](std::atomic<int>& d) {
+    Step("rung 3", [pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
         if (ui) {
@@ -369,11 +387,11 @@ void RunContainerTakeProbe() {
         d.store(1);
     });
     ::Sleep(200);   // let the take + the container_contents watch edge settle
-    RunGT([pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
+    Step("the count after the press", [pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
     // The item counted again after the solo take, phase B: both phases at 1 mean the instrument
     // sees the item in the source and the destination store, counts each once, and the item is
     // unique, so 2 on a race is a duplicate.
-    RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+    Step("phase B", [pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
     const int pressDelta = (pb->countBefore >= 0 && pb->countAfterPress >= 0) ? (pb->countBefore - pb->countAfterPress) : -1;
     UE_LOGI("director/ctake: RUNG3 pressButton delta = %d (before=%d after=%d) -- %s",
             pressDelta, pb->countBefore, pb->countAfterPress,
@@ -385,7 +403,7 @@ void RunContainerTakeProbe() {
     // container, to prove the mechanism can be driven at the effect seam. A multi-item press is not
     // a drivability failure, so extract does not run for it.
     if (pressDelta <= 0) {
-        RunGT([pb](std::atomic<int>& d) {
+        Step("rung 5", [pb](std::atomic<int>& d) {
             // Resolved on the declaring class.
             void* fn = R::FindFunction(ContainerClass(), L"extract");
             if (fn) {
@@ -396,7 +414,12 @@ void RunContainerTakeProbe() {
             d.store(1);
         });
         ::Sleep(200);
-        RunGT([pb](std::atomic<int>& d) { pb->countAfterExtract = ContainerItemCount(pb->container); d.store(1); });
+        Step("the count after the extract", [pb](std::atomic<int>& d) { pb->countAfterExtract = ContainerItemCount(pb->container); d.store(1); });
+    }
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake: VERDICT the game thread's task faulted at %s -- ABORT (the ladder's values are "
+                "not all written)", g_faultedStep);
+        return;
     }
     const bool extractWorked = (pb->extractCalled && pb->countBefore > 0 && pb->countAfterExtract >= 0 &&
                                 pb->countAfterExtract < pb->countBefore);
@@ -444,7 +467,7 @@ uint64_t NowUnixMs() {   // system wall-clock (shared across peers on one box) a
 // which a retry does not change. `unreadOut`: keyed non-empty containers that could not be placed; one the other
 // peer could place makes the two picks differ, so the count is printed with the pick.
 void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& outPos, std::wstring& outKey,
-                          bool& playerUnread, int& unreadOut) {
+                          bool& playerUnread, int& unreadOut, std::vector<ue_wrap::CachedObjRef>& unreadable) {
     unreadOut = 0;
     ue_wrap::FVector at{};
     playerUnread = !E::TryGetActorLocation(player, at);
@@ -464,8 +487,18 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
         if (!IsPlacedContainer(ke.actor)) continue;
         const int32_t cnt = ContainerItemCount(ke.actor);
         if (cnt <= 0) continue;
+        bool latched = false;
+        for (const ue_wrap::CachedObjRef& u : unreadable)
+            if (u.Is(ke.actor)) { latched = true; break; }
         ue_wrap::FVector p{};
-        if (!E::TryGetActorLocation(ke.actor, p)) { ++unreadOut; continue; }   // no route to judge: no candidate
+        if (latched || !E::TryGetActorLocation(ke.actor, p)) {   // no route to judge: no candidate
+            if (!latched) {
+                unreadable.emplace_back();
+                unreadable.back().Set(ke.actor);
+            }
+            ++unreadOut;
+            continue;
+        }
         cs.push_back({ ke.actor, p, cnt, ke.key });
     }
     std::sort(cs.begin(), cs.end(), [](const Cand& a, const Cand& b){ return a.key < b.key; });  // BY CONSTRUCTION
@@ -519,13 +552,20 @@ void RunContainerRace() {
 
     ::Sleep(20000);   // settle for the world to load
 
+    g_faultedStep = nullptr;
     auto rsv = std::make_shared<void*>(nullptr);
     for (int waited = 0; waited < 60 && !*rsv; ++waited) {
-        const int r = RunGT([rsv](std::atomic<int>& d) {
+        const int r = Step("the player", [rsv](std::atomic<int>& d) {
             void* p = coop::players::Registry::Get().Local();
             if (p && R::IsLive(p) && E::GetController(p)) { *rsv = p; d.store(1); } else d.store(2);
         });
-        if (r == 1) break; ::Sleep(1000);
+        if (r == 1 || g_faultedStep) break;
+        ::Sleep(1000);
+    }
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake-race: VERDICT the game thread's task faulted at %s -- ABORT (role=%s)", g_faultedStep,
+                role.c_str());
+        return;
     }
     if (!*rsv) { UE_LOGW("director/ctake-race: VERDICT no possessed local player -- ABORT (role=%s)", role.c_str()); return; }
 
@@ -537,9 +577,9 @@ void RunContainerRace() {
     auto unread = std::make_shared<int>(0);   // the last try's unplaceable candidates
     bool picked = false;
     for (int tries = 0; tries < 40 && !picked && !pb->playerUnread; ++tries) {
-        const int r = RunGT([rsv, pb, unread](std::atomic<int>& d) {
+        const int r = Step("the pick", [rsv, pb, unread](std::atomic<int>& d) {
             ue_wrap::FVector pos{}; int32_t cnt = 0; std::wstring key;
-            void* c = PickSharedContainer(*rsv, cnt, pos, key, pb->playerUnread, *unread);
+            void* c = PickSharedContainer(*rsv, cnt, pos, key, pb->playerUnread, *unread, pb->unreadable);
             if (!c) { d.store(2); return; }
             pb->container = c; pb->targetPos = pos; pb->countBefore = cnt;
             pb->fname = R::ToString(R::NameOf(c)); pb->targetKey = key; pb->slotId = 0;
@@ -550,7 +590,14 @@ void RunContainerRace() {
                     pb->xSig.className.c_str(), pb->xSig.key.c_str(), *unread);
             d.store(1);
         });
-        if (r == 1) picked = true; else if (!pb->playerUnread) ::Sleep(2000);   // world/contents not ready yet -- wait + retry
+        if (r == 1) picked = true;
+        else if (g_faultedStep) break;
+        else if (!pb->playerUnread) ::Sleep(2000);   // world/contents not ready yet -- wait + retry
+    }
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake-race: VERDICT the game thread's task faulted at %s -- ABORT (role=%s)", g_faultedStep,
+                role.c_str());
+        return;
     }
     if (pb->playerUnread) {
         UE_LOGW("director/ctake-race: VERDICT the player's location could not be read, so no route starts -- ABORT "
@@ -566,7 +613,7 @@ void RunContainerRace() {
     goal.targetPos = pb->targetPos;
 
     // The item counted before, per peer.
-    RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });
+    Step("phase A", [pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });
     UE_LOGI("director/ctake-race: PRECOUNT role=%s localCountBefore=%d", role.c_str(), pb->phaseA);
 
     // Walk to the shared container; a generous deadline, since the smallest-key container may be a
@@ -575,13 +622,13 @@ void RunContainerRace() {
       if (!goal.reached) { UE_LOGW("director/ctake-race: VERDICT did NOT reach shared container (role=%s reason=%s) -- ABORT", role.c_str(), goal.failReason); return; } }
 
     // Open, resolve the bound slot, then log ARRIVED; the orchestrator waits for both before GO.
-    RunGT([rsv, pb](std::atomic<int>& d) {
+    Step("the open", [rsv, pb](std::atomic<int>& d) {
         E::WriteMainPlayerLookAtActor(*rsv, pb->container);
         pb->openCalled = CallNoArg(pb->container, ContainerClass(), L"openContainer");
         d.store(1);
     });
     for (int i = 0; i < kUiWaitTicks && !pb->slotFound; ++i) {
-        RunGT([pb](std::atomic<int>& d) { pb->slotFound = (FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C") != nullptr); d.store(1); });
+        Step("the UI wait", [pb](std::atomic<int>& d) { pb->slotFound = (FirstLiveOfClass(L"uicomp_playerInvContainerSlot_C") != nullptr); d.store(1); });
         if (!pb->slotFound) ::Sleep(30);
     }
     UE_LOGI("director/ctake-race: ARRIVED role=%s key=%ls open=%d slot=%d -- waiting for GO",
@@ -590,7 +637,7 @@ void RunContainerRace() {
     // The barrier: wait on the GO instant, then fire the faithful take at it.
     const bool go = goFile.empty() ? true : WaitForGo(goFile, /*timeoutMs=*/60000);
     if (go && shouldTake) {
-        RunGT([pb](std::atomic<int>& d) {
+        Step("the take", [pb](std::atomic<int>& d) {
             void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
             void* slot = nullptr;
             if (ui) { const int32_t off = R::FindPropertyOffset(R::ClassOf(ui), L"slots_prop");
@@ -608,7 +655,12 @@ void RunContainerRace() {
     }
 
     ::Sleep(1500);   // let the take + the host CAS + any re-publish settle across peers
-    RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+    Step("phase B", [pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
+    if (g_faultedStep) {
+        UE_LOGW("director/ctake-race: VERDICT the game thread's task faulted at %s -- ABORT (role=%s)", g_faultedStep,
+                role.c_str());
+        return;
+    }
     // The per-peer result; mp.py sums the after-counts across peers (1 correct, 2 a duplicate, 0
     // vanished). A single peer's count is not the verdict.
     UE_LOGI("director/ctake-race: RESULT role=%s mode=%s took=%d localCountBefore=%d localCountAfter=%d "

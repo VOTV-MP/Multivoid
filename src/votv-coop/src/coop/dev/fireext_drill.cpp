@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -126,6 +127,24 @@ void MarkUnread(Watched& w, char who, const char* reader) {
     w.unread = true;
     UE_LOGW("[FIREEXT-DRILL] [%c] UNREAD key='%ls' -- %s could not read its location; the watch cannot say "
             "whether it moved, and nothing reads it again", who, w.key.c_str(), reader);
+}
+
+// The watch's row for `o`, by the actor itself; null when the watch has none.
+Watched* RowOf(void* o) {
+    if (!o) return nullptr;
+    for (auto& w : g_watched)
+        if (w.ref.Raw() == o) return &w;
+    return nullptr;
+}
+
+// Every reader of a watched extinguisher's place goes through here: a latched row is not read, and a read
+// that fails latches its row. False when there is no place.
+bool ReadWatched(void* o, ue_wrap::FVector& at, char who, const char* reader) {
+    Watched* row = RowOf(o);
+    if (row && row->unread) return false;
+    if (E::TryGetActorLocation(o, at)) return true;
+    if (row) MarkUnread(*row, who, reader);
+    return false;
 }
 
 // One walk of the object array, when the watch arms, never again.
@@ -268,11 +287,12 @@ void TickReleaseReadout() {
     const int t = g_afterTicks;
     if (t != 0 && t != 1 && t != 2 && t != 5 && t != 10 && t != 30 && t != 60) return;
     ue_wrap::FVector at{};
-    const bool atRead = E::TryGetActorLocation(o, at);
+    const bool atRead = ReadWatched(o, at, 'C', "the release readout");
     const PR::VelocityState v = PR::GetPhysicsVelocity(o);
-    UE_LOGI("[FIREEXT-DRILL] [C] AFTER RELEASE +%d ticks key='%ls' at (%.1f, %.1f, %.1f)%s simulating=%d atRest=%d "
-            "frozen=%d sleep=%d vel=(%.1f, %.1f, %.1f)", t, g_probedKey.c_str(), at.X, at.Y, at.Z,
-            atRead ? "" : " (unread)",
+    char place[64] = "(unread)";   // no numbers: an unread place is no place
+    if (atRead) std::snprintf(place, sizeof(place), "(%.1f, %.1f, %.1f)", at.X, at.Y, at.Z);
+    UE_LOGI("[FIREEXT-DRILL] [C] AFTER RELEASE +%d ticks key='%ls' at %s simulating=%d atRest=%d frozen=%d sleep=%d "
+            "vel=(%.1f, %.1f, %.1f)", t, g_probedKey.c_str(), place,
             ue_wrap::engine::IsComponentSimulatingPhysics(PR::GetStaticMesh(o)) ? 1 : 0,
             E::IsActorRootBodyAtRest(o) ? 1 : 0, PR::IsFrozen(o) ? 1 : 0, PR::IsSleeping(o) ? 1 : 0,
             v.linearCmS.X, v.linearCmS.Y, v.linearCmS.Z);
@@ -316,7 +336,7 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     ue_wrap::FVector loc{};
     ue_wrap::FRotator rot{};
     const char* lost = !t ? " is gone"
-                     : (!E::TryGetActorLocation(t, loc) || !E::TryGetActorRotation(t, rot))
+                     : (!ReadWatched(t, loc, Who(), "the stale tail") || !E::TryGetActorRotation(t, rot))
                            ? "'s location or rotation could not be read"
                            : nullptr;
     if (lost) {
@@ -434,9 +454,9 @@ bool PickTarget(void* player, const char*& why) {
     ue_wrap::FVector bestAt{};
     int unread = 0;
     for (auto& w : g_watched) {
-        if (w.unread) { ++unread; continue; }   // no place: never the target
         void* o = w.ref.Get();
         if (!o || !w.mounted || !PR::IsFrozen(o)) continue;
+        if (w.unread) { ++unread; continue; }   // a candidate with no place: never the target
         ue_wrap::FVector at{};
         if (!E::TryGetActorLocation(o, at)) {
             MarkUnread(w, Who(), "the target pick");
@@ -479,21 +499,12 @@ bool PickCarryEnd(void* player, ue_wrap::FVector& out, const char*& why) {
     return false;
 }
 
-// The target's row in the watch, whose latch every reader honours; null when the watch has none.
-Watched* TargetRow() {
-    for (auto& w : g_watched)
-        if (w.key == g_targetKey) return &w;
-    return nullptr;
-}
-
 void LogTarget(const char* what) {
     ReadMounts();
     void* t = g_target.Get();
     if (!t) { UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' -- the extinguisher is gone", Who(), what, g_targetKey.c_str()); return; }
-    Watched* row = TargetRow();
     ue_wrap::FVector at{};
-    const bool atRead = !(row && row->unread) && E::TryGetActorLocation(t, at);
-    if (!atRead && row && !row->unread) MarkUnread(*row, Who(), "the target log");
+    const bool atRead = ReadWatched(t, at, Who(), "the target log");
     if (atRead)
         UE_LOGI("[FIREEXT-DRILL] [%c] %s key='%ls' at (%.1f, %.1f, %.1f) fromMount=%.1fcm frozen=%d mounted=%d",
                 Who(), what, g_targetKey.c_str(), at.X, at.Y, at.Z, Dist(at, g_mountPos), PR::IsFrozen(t) ? 1 : 0,
@@ -559,7 +570,7 @@ void ActStep(coop::net::Session& s, void* player) {
         }
         // The bounds' centre: a lying extinguisher's origin can sit at the floor's surface.
         ue_wrap::FVector centre{}, extent{};
-        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent) && !E::TryGetActorLocation(t, centre)) {
+        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent) && !ReadWatched(t, centre, Who(), "the aim")) {
             Invalid("the extinguisher has neither bounds nor a readable location to aim at");
             return;
         }

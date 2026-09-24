@@ -88,6 +88,7 @@ void TrackThrough(const std::vector<uint32_t>& ids, const ue_wrap::FVector& cent
     Tracked states;
     for (uint32_t id : ids) states.push_back(BW::TrackState{id, -1, ue_wrap::FVector{}});
     BW::UnnamedState unnamed;
+    BW::TrackStep(states, center, radiusCm, unnamed, who, phase);   // a beat reads what this phase has read
     size_t next = 0;
     for (;;) {
         const DWORD elapsed = ::GetTickCount() - t0;
@@ -152,16 +153,16 @@ void DispenserPhases(bool isClient, const char* who, DWORD t0) {
     At(t0, 70000);
     const bool aliveAfter = BW::DispenserAlive(sb);
     auto trashAfter = std::make_shared<std::pair<int, int>>(0, 0);   // trash near, unread anywhere
-    BW::RunGT([sb, trashAfter](std::atomic<int>& d) {
+    ue_wrap::game_thread::RunAndWait([sb, trashAfter](std::atomic<int>& d) {
         trashAfter->first = BW::CountTrashNear(sb->pos, kTrashRadiusCm, trashAfter->second);
         d.store(1);
     });
     const int gained = trashAfter->first - trashBefore;
-    const int unread = unreadBefore + trashAfter->second;
+    const bool blind = unreadBefore > 0 || trashAfter->second > 0;   // the pick's count is on its SUBJECT row
     UE_LOGI("broom_drill: VERDICT role=%s phase=C key='%ls' trash %d->%d (gained %d) unreadAnywhere=%d pileAlive "
-            "%d->%d -- %s", who, sb->key.c_str(), trashBefore, trashAfter->first, gained, unread, aliveBefore ? 1 : 0,
-            aliveAfter ? 1 : 0,
-            unread > 0 ? "INCONCLUSIVE: props that could not be placed leave both counts short by an unknown number"
+            "%d->%d -- %s", who, sb->key.c_str(), trashBefore, trashAfter->first, gained, trashAfter->second,
+            aliveBefore ? 1 : 0, aliveAfter ? 1 : 0,
+            blind ? "INCONCLUSIVE: props that could not be placed leave both counts short by an unknown number"
             : (gained > 0 && aliveBefore && !aliveAfter) ? "PASS: the client's strokes put trash here and took the pile"
             : gained > 0 ? "PARTIAL: trash arrived but the pile still stands"
                          : "FAIL: nothing came out of the pile on this peer");
@@ -220,6 +221,7 @@ void RestPhases(bool isClient, const char* who, DWORD t0, const RestSite& site) 
     BW::CensusPiles(center, radius, who, "G", "before", &ids);
 
     std::vector<Beat> beatsG, beatsH, beatsI;
+    bool subjectI = false;   // the I beats run on this thread, inside TrackThrough, while this frame lives
     if (striking) {
         beatsG.push_back(Beat{106500, [who, g0](const Tracked&) { BW::LookAt(g0, who, "G"); }});
         beatsG.push_back(Beat{108000, [who, &ids](const Tracked&) {
@@ -240,14 +242,17 @@ void RestPhases(bool isClient, const char* who, DWORD t0, const RestSite& site) 
             BW::Thaw(eid, who);
             BW::Knock(eid, ue_wrap::FVector{0.f, 0.f, kKnockUpCmS}, who, "H");
         }});
-        beatsI.push_back(Beat{126000, [who, g1](const Tracked& states) {
+        beatsI.push_back(Beat{126000, [who, g1, &subjectI](const Tracked& states) {
             ue_wrap::FVector at{};
             int unread = 0;
             const uint32_t eid = ClumpNear(states, g1, kSubjectNearCm, at, unread);
             LogSubject(who, "I", eid, unread);
-            if (eid) BW::LookAt(at, who, "I");
+            subjectI = eid != 0;
+            if (subjectI) BW::LookAt(at, who, "I");
         }});
-        beatsI.push_back(Beat{128000, [who](const Tracked&) { BW::Swing(who, "I", 1, 2500); }});
+        beatsI.push_back(Beat{128000, [who, &subjectI](const Tracked&) {
+            if (subjectI) BW::Swing(who, "I", 1, 2500);   // with no subject the stroke would push nothing named
+        }});
     }
     TrackThrough(ids, center, radius, beatsG, 117000, t0, who, "G");
     TrackThrough(ids, center, radius, beatsH, 125000, t0, who, "H");

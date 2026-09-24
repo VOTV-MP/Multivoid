@@ -28,19 +28,6 @@ namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
 
-template <class Fn>
-int RunGT(Fn&& body) {   // bounded: a stalled game thread returns 0 instead of hanging forever
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    int waited = 0;
-    while (done->load() == 0) {
-        ::Sleep(5);
-        waited += 5;
-        if (waited >= 4000) return 0;
-    }
-    return done->load();
-}
-
 float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     const float dx = a.X - b.X, dy = a.Y - b.Y;
     return std::sqrt(dx * dx + dy * dy);
@@ -116,11 +103,12 @@ void RunWalkGrabDirector() {
     {
         int waited = 0;
         while (waited < 60) {
-            const int r = RunGT([rsv](std::atomic<int>& d) {
+            const int r = GT::RunAndWait([rsv](std::atomic<int>& d) {
                 void* p = coop::players::Registry::Get().Local();
                 if (p && R::IsLive(p) && E::GetController(p)) { rsv->player = p; d.store(1); }
                 else d.store(2);
             });
+            if (r == GT::kTaskFaulted) { UE_LOGW("director: the player's game-thread task faulted -- aborting"); return; }
             if (r == 1) break;
             ::Sleep(1000); ++waited;
         }
@@ -128,9 +116,11 @@ void RunWalkGrabDirector() {
     }
 
     DirectorGoal goal;
-    if (RunGT([rsv, &goal](std::atomic<int>& d) {
-            d.store(PickReachablePile(rsv->player, kMinPileCm, kMaxPileCm, goal) ? 1 : 2);
-        }) != 1) { return; }
+    const int picked = GT::RunAndWait([rsv, &goal](std::atomic<int>& d) {
+        d.store(PickReachablePile(rsv->player, kMinPileCm, kMaxPileCm, goal) ? 1 : 2);
+    });
+    if (picked == GT::kTaskFaulted) { UE_LOGW("director: the pile pick's game-thread task faulted -- aborting"); return; }
+    if (picked != 1) return;
 
     // Build the brain + run it.
     ControlManager mgr;

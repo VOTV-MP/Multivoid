@@ -21,25 +21,8 @@ namespace GT = ue_wrap::game_thread;
 constexpr int kTickMs      = 4;     // near frame rate: AddMovementInput must re-land each frame or the
                                     // CharacterMovement (which consumes+clears ControlInputVector per
                                     // frame ~9ms) brakes between inputs -> near-zero net speed (measured
-                                    // -- a 20 ms tick gave ~5 cm/s). The RunGT round-trip paces
+                                    // -- a 20 ms tick gave ~5 cm/s). The game-thread round trip paces
                                     // the real rate; this just removes the extra sleep between frames.
-constexpr int kGtTimeoutMs = 4000;  // bound the GT wait -- a stalled game thread must NOT hang the run
-
-// Returns the body's stored code (1 ok / 2 no-player), or 0 if the game thread did not run the
-// posted closure within kGtTimeoutMs (a GT stall / dropped Post -- the `done` shared_ptr keeps the
-// slot alive if the closure runs late, so no use-after-free).
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    int waited = 0;
-    while (done->load() == 0) {
-        ::Sleep(5);
-        waited += 5;
-        if (waited >= kGtTimeoutMs) return 0;   // timeout
-    }
-    return done->load();
-}
 }  // namespace
 
 void ControlManager::Add(std::unique_ptr<IProcess> proc) { procs_.push_back(std::move(proc)); }
@@ -52,20 +35,10 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
     // own run to be killed while the walk it gave up on was still grinding.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(maxSeconds);
     const char* lastDriver = "";
-    int stall = 0;
-    // The tick closure holds `this` and a reference to `lastDriver`, and the stall path below
-    // returns while up to three of them are still queued on the game thread -- and every caller
-    // builds its manager on the stack of a worker that then unwinds. The flag is the same shape
-    // RunGT's `done` uses: the closure reads it before it touches anything of ours, and Run clears
-    // it before it returns by any route.
-    auto alive = std::make_shared<std::atomic<bool>>(true);
-    struct ClearOnExit {
-        std::shared_ptr<std::atomic<bool>> f;
-        ~ClearOnExit() { f->store(false); }
-    } clearOnExit{alive};
+    // Each tick waits until its closure has run or faulted (GT::RunAndWait), so no closure outlives
+    // this frame, and the references it holds are always live.
     for (int tick = 0; std::chrono::steady_clock::now() < deadline; ++tick) {
-        const int r = RunGT([this, &goal, &lastDriver, alive](std::atomic<int>& d) {
-            if (!alive->load()) { d.store(1); return; }   // the run that posted this has gone
+        const int r = GT::RunAndWait([this, &goal, &lastDriver](std::atomic<int>& d) {
             PlayerContext ctx;
             if (!ctx.Refresh()) {
                 // A location read that fails is a faulted dispatch, and it repeats: the run ends on it
@@ -91,12 +64,11 @@ bool ControlManager::Run(DirectorGoal& goal, int maxSeconds) {
             }
             d.store(1);
         });
-        if (r == 0) {   // GT stall / dropped Post -- do not hang; abort after a few
-            if (++stall >= 3) { UE_LOGW("director: game thread stalled 3x -- aborting run"); goal.failed = true; goal.failReason = "gt_stall"; return false; }
-            UE_LOGW("director: GT tick timeout (%d/3)", stall);
-            continue;
+        if (r == GT::kTaskFaulted) {   // what the tick did is unknown: the run ends on it, named
+            UE_LOGW("director: a tick's game-thread task faulted -- run FAILED (tick=%d)", tick);
+            if (!goal.failed) { goal.failed = true; goal.failReason = "gt_task_faulted"; }
+            return false;
         }
-        stall = 0;
         if (goal.grabbed) { UE_LOGI("director: GOAL REACHED -- run DONE (tick=%d)", tick); return true; }
         if (goal.reached) { UE_LOGI("director: TARGET REACHED (walk-to) -- run DONE (tick=%d)", tick); return true; }
         if (goal.failed)  { UE_LOGW("director: run FAILED reason=%s (tick=%d)", goal.failReason, tick); return false; }

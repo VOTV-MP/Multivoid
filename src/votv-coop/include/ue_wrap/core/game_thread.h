@@ -8,7 +8,11 @@
 
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <functional>
+#include <memory>
+#include <thread>
 
 namespace ue_wrap::game_thread {
 
@@ -43,6 +47,34 @@ void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs);
 // to end, which during a world load is seconds. Thread-safe, returns at once, FIFO; a task may post
 // further tasks, which run in the same drain.
 void Post(Task task);
+
+// What RunAndWait returns for a task that ended without an answer: it faulted or threw, and the pump
+// absorbed that, or it returned without storing one.
+inline constexpr int kTaskFaulted = -1;
+
+// Post `body` to the game thread and wait until it has run, however long the thread stalls. The body
+// stores a non-zero answer into its argument; a body that faults, throws or returns without one ends as
+// kTaskFaulted, set by a guard whose destructor runs on the pump's own unwind (the build's asynchronous
+// exceptions, which the pump's firewall already relies on). So the wait needs no bound: it cannot hang
+// on a task that died, as an unbounded wait did, and it never returns while the task could still write
+// the caller's state, as a bounded one did. Call it from a thread that is not the game thread, which
+// would wait on itself. Returns the body's answer or kTaskFaulted.
+template <class Fn>
+int RunAndWait(Fn&& body) {
+    auto done = std::make_shared<std::atomic<int>>(0);
+    Post([done, body]() mutable {
+        struct Settle {
+            std::atomic<int>& d;
+            ~Settle() {
+                int none = 0;
+                d.compare_exchange_strong(none, kTaskFaulted);
+            }
+        } settle{*done};
+        body(*done);
+    });
+    while (done->load() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return done->load();
+}
 
 // True if the caller is on the game thread (known once the detour has run at least once).
 bool IsGameThread();

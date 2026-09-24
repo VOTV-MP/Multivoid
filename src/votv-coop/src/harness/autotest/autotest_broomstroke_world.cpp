@@ -25,6 +25,8 @@
 #include <utility>
 
 namespace harness::autotest::broom_world {
+
+namespace GT = ue_wrap::game_thread;
 namespace {
 
 namespace R  = ue_wrap::reflection;
@@ -169,7 +171,7 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::s
 
 bool EquipBroom(const char* who) {
     auto ok = std::make_shared<std::atomic<int>>(0);
-    RunGT([who, ok](std::atomic<int>& d) {
+    GT::RunAndWait([who, ok](std::atomic<int>& d) {
         void* player = LocalPlayer();
         if (!player) { UE_LOGW("broom_drill: %s EQUIP -- no local player", who); d.store(1); return; }
         if (!ue_wrap::broom::ResolveNames()) { UE_LOGW("broom_drill: %s EQUIP -- no broom names", who); d.store(1); return; }
@@ -210,7 +212,7 @@ bool EquipBroom(const char* who) {
 }
 
 bool AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, const char* phase) {
-    const bool stood = RunGT([target, bodyTurnDeg, who, phase](std::atomic<int>& d) {
+    const bool stood = GT::RunAndWait([target, bodyTurnDeg, who, phase](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector from{};
         if (!player || !E::TryGetActorLocation(player, from)) {
@@ -237,7 +239,7 @@ bool AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, c
 }
 
 void StandAt(const ue_wrap::FVector& at, float yawDeg) {
-    RunGT([at, yawDeg](std::atomic<int>& d) {
+    GT::RunAndWait([at, yawDeg](std::atomic<int>& d) {
         coop::teleport_client::ApplyLocally(coop::teleport_client::ApplyArgs{at.X, at.Y, at.Z, 0.f, yawDeg, 0.f});
         d.store(1);
     });
@@ -246,7 +248,7 @@ void StandAt(const ue_wrap::FVector& at, float yawDeg) {
 
 bool LocalBody(ue_wrap::FVector& at, float& yawDeg) {
     auto out = std::make_shared<std::pair<ue_wrap::FVector, float>>(ue_wrap::FVector{}, 0.f);
-    const bool found = RunGT([out](std::atomic<int>& d) {
+    const bool found = GT::RunAndWait([out](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FRotator rot{};
         const bool placed = player && E::TryGetActorLocation(player, out->first) && E::TryGetActorRotation(player, rot);
@@ -259,13 +261,13 @@ bool LocalBody(ue_wrap::FVector& at, float& yawDeg) {
 }
 
 void LookAt(const ue_wrap::FVector& target, const char* who, const char* phase) {
-    RunGT([target](std::atomic<int>& d) {
+    GT::RunAndWait([target](std::atomic<int>& d) {
         if (void* player = LocalPlayer())
             E::SetControlRotation(E::GetController(player), RotationTo(E::GetCameraLocation(), target));
         d.store(1);
     });
     ::Sleep(600);
-    RunGT([target, who, phase](std::atomic<int>& d) {
+    GT::RunAndWait([target, who, phase](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector start{}, end{};
         ue_wrap::FRotator rot{};
@@ -291,7 +293,7 @@ bool WatchNotifies(const char* who, bool bodiesRunHere) {
 int Swing(const char* who, const char* phase, int strokes, DWORD holdMs) {
     const uint32_t before = g_strokesDone.load();
     auto pressed = std::make_shared<std::atomic<int>>(0);
-    RunGT([who, phase, pressed](std::atomic<int>& d) {
+    GT::RunAndWait([who, phase, pressed](std::atomic<int>& d) {
         void* player = LocalPlayer();
         void* broom = Holding(player);
         const bool ok = ue_wrap::broom::IsBroom(broom) && ue_wrap::broom::PressUse(broom, player);
@@ -310,7 +312,7 @@ int Swing(const char* who, const char* phase, int strokes, DWORD holdMs) {
     // dispatch, ahead of its body: a held button notifies once a second, a hold that ends at a
     // stroke's end is a second clear of the next, and phase M's timeout fell 800 ms before it in every
     // run.
-    RunGT([who, phase, seen](std::atomic<int>& d) {
+    GT::RunAndWait([who, phase, seen](std::atomic<int>& d) {
         void* player = LocalPlayer();
         void* broom = Holding(player);
         const bool ok = ue_wrap::broom::IsBroom(broom) && ue_wrap::broom::ReleaseUse(broom, player);
@@ -322,7 +324,7 @@ int Swing(const char* who, const char* phase, int strokes, DWORD holdMs) {
 }
 
 void FreezeNextStroke(const std::vector<uint32_t>& ids) {
-    RunGT([ids](std::atomic<int>& d) {
+    GT::RunAndWait([ids](std::atomic<int>& d) {
         g_freezeIds = ids;
         g_freezeArmed = true;
         d.store(1);
@@ -341,23 +343,26 @@ void ThawWhere(const char* who, uint32_t onlyEid) {
 }
 
 void Thaw(uint32_t eid, const char* who) {
-    RunGT([eid, who](std::atomic<int>& d) { ThawWhere(who, eid); d.store(1); });
+    GT::RunAndWait([eid, who](std::atomic<int>& d) { ThawWhere(who, eid); d.store(1); });
 }
 
 void ThawAll(const char* who) {
-    RunGT([who](std::atomic<int>& d) { ThawWhere(who, 0); d.store(1); });
+    GT::RunAndWait([who](std::atomic<int>& d) { ThawWhere(who, 0); d.store(1); });
 }
 
 bool Knock(uint32_t eid, const ue_wrap::FVector& velocity, const char* who, const char* phase) {
     auto ok = std::make_shared<std::atomic<int>>(0);
-    RunGT([eid, velocity, who, phase, ok](std::atomic<int>& d) {
+    GT::RunAndWait([eid, velocity, who, phase, ok](std::atomic<int>& d) {
         void* clump = ClumpOf(eid);
         const bool set = clump && E::SetActorRootPhysicsVelocity(clump, velocity, ue_wrap::FVector{});
         ue_wrap::FVector at{};
-        const bool atRead = clump && E::TryGetActorLocation(clump, at);
-        UE_LOGI("broom_drill: %s %s KNOCK tick=%lu eid=%u at(%.1f,%.1f,%.1f)%s vel=(%.0f,%.0f,%.0f) set=%d", who, phase,
-                static_cast<unsigned long>(::GetTickCount()), eid, at.X, at.Y, at.Z, atRead ? "" : " (unread)",
-                velocity.X, velocity.Y, velocity.Z, set ? 1 : 0);
+        const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
+        if (clump && E::TryGetActorLocation(clump, at))
+            UE_LOGI("broom_drill: %s %s KNOCK tick=%lu eid=%u at(%.1f,%.1f,%.1f) vel=(%.0f,%.0f,%.0f) set=%d", who,
+                    phase, tick, eid, at.X, at.Y, at.Z, velocity.X, velocity.Y, velocity.Z, set ? 1 : 0);
+        else   // no numbers: an unread place is no place
+            UE_LOGI("broom_drill: %s %s KNOCK tick=%lu eid=%u at(unread) vel=(%.0f,%.0f,%.0f) set=%d", who, phase,
+                    tick, eid, velocity.X, velocity.Y, velocity.Z, set ? 1 : 0);
         ok->store(set ? 1 : 0);
         d.store(1);
     });
@@ -369,7 +374,7 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
     auto found = std::make_shared<std::pair<bool, ue_wrap::FVector>>(false, ue_wrap::FVector{});
     const bool bounded = floorAt != nullptr;
     const ue_wrap::FVector centre = bounded ? *floorAt : ue_wrap::FVector{};
-    RunGT([who, phase, aloneCm, bounded, centre, withinCm, found](std::atomic<int>& d) {
+    GT::RunAndWait([who, phase, aloneCm, bounded, centre, withinCm, found](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector me{};
         if (!player || !E::TryGetActorLocation(player, me)) {
@@ -420,7 +425,7 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
 
 int SpawnPilesAt(const std::vector<ue_wrap::FVector>& at, const char* who, const char* tag) {
     auto made = std::make_shared<std::atomic<int>>(0);
-    RunGT([&at, who, tag, made](std::atomic<int>& d) {
+    GT::RunAndWait([&at, who, tag, made](std::atomic<int>& d) {
         void* cls = UP::ChipPileClass();
         for (size_t i = 0; cls && i < at.size(); ++i) {
             void* pile = E::BeginDeferredSpawn(cls, at[i], ue_wrap::FRotator{});
@@ -445,7 +450,7 @@ int SpawnHeap(const ue_wrap::FVector& center, int count, float radiusCm, const c
 
 int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm, int& unreadAnywhere) {
     auto n = std::make_shared<std::pair<int, int>>(0, 0);   // named near, unread anywhere
-    RunGT([center, radiusCm, n](std::atomic<int>& d) {
+    GT::RunAndWait([center, radiusCm, n](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         ForEachInstanceWhere(&IsChipPileClass, [&](void* obj) {
             if (EidOf(obj) == 0) return;
@@ -461,7 +466,7 @@ int ChipPilesNear(const ue_wrap::FVector& center, float radiusCm, int& unreadAny
 
 void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,
                  const char* tag, std::vector<uint32_t>* outIds) {
-    RunGT([center, radiusCm, who, phase, tag, outIds](std::atomic<int>& d) {
+    GT::RunAndWait([center, radiusCm, who, phase, tag, outIds](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         int piles = 0, clumps = 0, unnamedClumps = 0, unread = 0;
         ForEachInstanceWhere([](void* cls) { return IsChipPileClass(cls) || IsClumpClass(cls); }, [&](void* obj) {
@@ -483,7 +488,7 @@ void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who
 
 void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, float radiusCm,
                UnnamedState& unnamed, const char* who, const char* phase) {
-    RunGT([&states, &unnamed, center, radiusCm, who, phase](std::atomic<int>& d) {
+    GT::RunAndWait([&states, &unnamed, center, radiusCm, who, phase](std::atomic<int>& d) {
         const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
         for (TrackState& s : states) {
             coop::element::Element* e = coop::element::Registry::Get().Get(
@@ -540,7 +545,7 @@ void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, 
 }
 
 void TrackFinal(const std::vector<TrackState>& states, const char* who, const char* phase) {
-    RunGT([&states, who, phase](std::atomic<int>& d) {
+    GT::RunAndWait([&states, who, phase](std::atomic<int>& d) {
         const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
         for (const TrackState& s : states) {
             coop::element::Element* e = coop::element::Registry::Get().Get(
@@ -565,7 +570,7 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
 
 bool StrikerBody(bool striking, uint8_t strikerSlot, ue_wrap::FVector& at) {
     auto out = std::make_shared<ue_wrap::FVector>();
-    const bool placed = RunGT([striking, strikerSlot, out](std::atomic<int>& d) {
+    const bool placed = GT::RunAndWait([striking, strikerSlot, out](std::atomic<int>& d) {
         void* body = nullptr;
         if (striking) {
             body = LocalPlayer();
@@ -594,8 +599,8 @@ int CountTrashNear(const ue_wrap::FVector& at, float radiusCm, int& unreadAnywhe
 
 bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& trashOut, int& unreadOut) {
     auto trash = std::make_shared<std::pair<int, int>>(0, 0);   // trash near, unread anywhere
-    const bool ok = RunGT([out, who, trash](std::atomic<int>& d) {
-        struct Found { std::wstring key; void* obj; float d2; };
+    const bool ok = GT::RunAndWait([out, who, trash](std::atomic<int>& d) {
+        struct Found { std::wstring key; void* obj; ue_wrap::FVector loc; float d2; };
         std::vector<Found> piles;
         const ue_wrap::FVector anchor{P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ};
         ForEachInstanceWhere([](void* cls) { return UP::WalksToBase(cls, UP::TrashBitsPileClass()); },
@@ -604,7 +609,7 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
             if (k.empty() || k == L"None") return;
             ue_wrap::FVector loc{};
             if (!E::TryGetActorLocation(obj, loc)) { ++trash->second; return; }   // no distance to sort by
-            piles.push_back(Found{std::move(k), obj, Within2(loc, anchor)});
+            piles.push_back(Found{std::move(k), obj, loc, Within2(loc, anchor)});
         });
         std::sort(piles.begin(), piles.end(), [](const Found& x, const Found& y) {
             return x.d2 != y.d2 ? x.d2 < y.d2 : x.key < y.key;
@@ -619,8 +624,7 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
         out->key = piles[0].key;
         out->pile = piles[0].obj;
         out->idx = R::InternalIndexOf(out->pile);
-        if (!E::TryGetActorLocation(out->pile, out->pos)) {
-            UE_LOGW("broom_drill: %s C -- the dispenser pile's location could not be read", who); d.store(2); return; }
+        out->pos = piles[0].loc;   // read in the census above
         int trashUnread = 0;
         trash->first = CountTrashNear(out->pos, 300.f, trashUnread);
         trash->second += trashUnread;
@@ -635,7 +639,7 @@ bool PickDispenser(const std::shared_ptr<Dispenser>& out, const char* who, int& 
 
 bool DispenserAlive(const std::shared_ptr<Dispenser>& d) {
     auto alive = std::make_shared<std::atomic<int>>(0);
-    RunGT([d, alive](std::atomic<int>& done) {
+    GT::RunAndWait([d, alive](std::atomic<int>& done) {
         alive->store(R::IsLiveByIndex(d->pile, d->idx) ? 1 : 0);
         done.store(1);
     });
@@ -644,7 +648,7 @@ bool DispenserAlive(const std::shared_ptr<Dispenser>& d) {
 
 void CensusProps(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,
                  const char* tag) {
-    RunGT([center, radiusCm, who, phase, tag](std::atomic<int>& d) {
+    GT::RunAndWait([center, radiusCm, who, phase, tag](std::atomic<int>& d) {
         const float r2 = radiusCm * radiusCm;
         const unsigned long tick = static_cast<unsigned long>(::GetTickCount());
         int n = 0, unread = 0;
@@ -668,7 +672,7 @@ void CensusProps(const ue_wrap::FVector& center, float radiusCm, const char* who
 bool PickProp(const ue_wrap::FVector& center, float radiusCm, const char* who, const char* phase,
               ue_wrap::FVector& outPos) {
     auto found = std::make_shared<std::pair<bool, ue_wrap::FVector>>(false, ue_wrap::FVector{});
-    RunGT([center, radiusCm, who, phase, found](std::atomic<int>& d) {
+    GT::RunAndWait([center, radiusCm, who, phase, found](std::atomic<int>& d) {
         float best = radiusCm * radiusCm;
         int unread = 0;
         ForEachInstanceWhere(&UP::IsClassDescendantOfProp, [&](void* obj) {
