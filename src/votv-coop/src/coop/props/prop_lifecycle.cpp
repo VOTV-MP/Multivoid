@@ -155,12 +155,13 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
             // `prop_birth_key_probe` drain exit, for what actually happened to it. Logged with key
             // and eid so a repro correlates with the host log.
             const coop::element::ElementId dropEid = PT::GetPropElementIdForActor(self);
-            const ue_wrap::FVector dloc = ue_wrap::engine::GetActorLocation(self);
+            ue_wrap::FVector dloc{};
+            const bool dlocRead = ue_wrap::engine::TryGetActorLocation(self, dloc);
             UE_LOGI("[ROCK-DROP] CLIENT Aprop spawn not expressed here (host-auth skip): cls='%ls' key='%ls' "
-                    "eid=%u loc=(%.1f,%.1f,%.1f) -- the drop-intent lane decides whether it crosses",
+                    "eid=%u loc=(%.1f,%.1f,%.1f)%s -- the drop-intent lane decides whether it crosses",
                     cls.c_str(), ue_wrap::prop::GetInteractableKeyString(self).c_str(),
                     (dropEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(dropEid),
-                    dloc.X, dloc.Y, dloc.Z);
+                    dloc.X, dloc.Y, dloc.Z, dlocRead ? "" : " (unread)");
             return;  // Aprop_C: host-authoritative world spawn, skip client broadcast
         }
         // Non-Aprop_C interactable: fall through to the broadcast.
@@ -212,6 +213,14 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 self, cls.c_str(), keyStr.c_str());
         return;
     }
+    // A spawn with no readable location has nothing to place its mirror by: left unexpressed, like an
+    // unkeyed one, before an element exists for it.
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(self, loc)) {
+        UE_LOGW("grab_hook[Aprop.Init POST]: actor %p (class '%ls') has no readable location -- skip",
+                self, cls.c_str());
+        return;
+    }
     // Create the Prop Element at the broadcast site, where the Key and class are resolved
     // (idempotent against the seed-scan creation). Mark may re-key a duplicate (the host is the key
     // authority), so the payload carries the enrolled key.
@@ -220,7 +229,6 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);
     }
-    const auto loc = ue_wrap::engine::GetActorLocation(self);
     const auto rot = ue_wrap::engine::GetActorRotation(self);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);

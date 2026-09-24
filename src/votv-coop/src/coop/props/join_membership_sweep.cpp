@@ -211,11 +211,12 @@ static void RunDivergenceSweep_(void* localPlayer) {
                 coop::dev::join_window_pos_trace::NoteRecreateRebind(key, static_cast<uint32_t>(dr->second), a);
                 coop::remote_prop::RegisterPropMirror(dr->second, a, key, acls, /*senderSlot*/ 0,
                                                       /*rebindInPlace*/ true);
-                const ue_wrap::FVector rbLoc = ue_wrap::engine::GetActorLocation(a);
+                ue_wrap::FVector rbLoc{};
+                const bool rbRead = ue_wrap::engine::TryGetActorLocation(a, rbLoc);
                 UE_LOGW("join_membership_sweep: keyed churn RE-BIND -- unclaimed '%ls' key='%ls' "
-                        "loc=(%.1f,%.1f,%.1f) is the re-create of already-expressed eid=%u (mirror row held "
+                        "loc=(%.1f,%.1f,%.1f)%s is the re-create of already-expressed eid=%u (mirror row held "
                         "a dead actor) -> row rebound, actor claimed, NOT doomed",
-                        acls.c_str(), key.c_str(), rbLoc.X, rbLoc.Y, rbLoc.Z,
+                        acls.c_str(), key.c_str(), rbLoc.X, rbLoc.Y, rbLoc.Z, rbRead ? "" : " (unread)",
                         static_cast<unsigned>(dr->second));
                 deadKeyedRows.erase(dr);
                 ++claimedCount;
@@ -400,9 +401,10 @@ static void RunDivergenceSweep_(void* localPlayer) {
         // died, this says which and where. Cold path, once per join.
         {
             const std::wstring dk = ue_wrap::prop::GetInteractableKeyString(a);
-            const ue_wrap::FVector dl = ue_wrap::engine::GetActorLocation(a);
-            UE_LOGI("join_membership_sweep:   dooming '%ls' key='%ls' loc=(%.1f,%.1f,%.1f)",
-                    R::ClassNameOf(a).c_str(), dk.c_str(), dl.X, dl.Y, dl.Z);
+            ue_wrap::FVector dl{};
+            const bool dlRead = ue_wrap::engine::TryGetActorLocation(a, dl);
+            UE_LOGI("join_membership_sweep:   dooming '%ls' key='%ls' loc=(%.1f,%.1f,%.1f)%s",
+                    R::ClassNameOf(a).c_str(), dk.c_str(), dl.X, dl.Y, dl.Z, dlRead ? "" : " (unread)");
         }
         coop::remote_prop::ClearAnyDriveFor(a);
         ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(localPlayer, a);

@@ -53,7 +53,8 @@ struct Driven {
     coop::net::WireKey    key{};
     uint8_t               gen = 0;
     bool                  claimed  = true;   // false: coasting after the verb let go
-    bool                  everSent = false;
+    bool                  everSent = false;  // a pose of this drive went out; sentLoc/sentRot hold the last
+    bool                  resend   = false;  // a joiner needs the pose again, moved or not
     bool                  dead     = false;  // closed this tick; erased after the pass
     ue_wrap::FVector      sentLoc{};
     ue_wrap::FRotator     sentRot{};
@@ -83,7 +84,7 @@ bool HeldBySomeone(void* actor) {
 }
 
 bool Moved(const Driven& d, const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
-    if (!d.everSent) return true;
+    if (!d.everSent || d.resend) return true;
     if (std::fabs(loc.X - d.sentLoc.X) > kSendEpsCm) return true;
     if (std::fabs(loc.Y - d.sentLoc.Y) > kSendEpsCm) return true;
     if (std::fabs(loc.Z - d.sentLoc.Z) > kSendEpsCm) return true;
@@ -212,7 +213,7 @@ void OnPeerWorldReady() {
     // pose they already hold, and a joiner that loses the datagram of a prop at rest does not park it
     // until the prop moves again (docs/props.md, Known limits).
     for (Driven& d : g_driven) {
-        d.everSent    = false;
+        d.resend      = true;
         d.nextProbeMs = 0;
     }
     UE_LOGI("[PROP-DRIVE] HOST world-ready re-send armed for %zu driven prop(s)", g_driven.size());
@@ -240,7 +241,12 @@ void Tick(coop::net::Session& s) {
             // A hand took it: the held-prop lane streams it from here and its release hands the
             // velocity back. The end edge closes this stream's generation first, whatever the
             // prop's turn in the queue.
-            SendEnd(s, d, actor, E::GetActorLocation(actor), E::GetActorRotation(actor), "taken by a hand");
+            // A failed read ends at the last pose the receivers have; with none sent there is nothing to end.
+            ue_wrap::FVector endLoc{};
+            if (E::TryGetActorLocation(actor, endLoc))
+                SendEnd(s, d, actor, endLoc, E::GetActorRotation(actor), "taken by a hand");
+            else if (d.everSent)
+                SendEnd(s, d, actor, d.sentLoc, d.sentRot, "taken by a hand");
             d.dead = true;
             continue;
         }
@@ -248,7 +254,15 @@ void Tick(coop::net::Session& s) {
         // A pose read before its turn would be overwritten before any send.
         const coop::net::PoseTurn turn = s.PropDrivePoseTurn(d.eid);
         if (turn == coop::net::PoseTurn::Wait) continue;
-        const ue_wrap::FVector  loc = E::GetActorLocation(actor);
+        // A failed read is a dispatch that faulted, which the next tick repeats: the prop cannot be
+        // streamed, so its stream ends as a death's does, at the last pose the receivers have.
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(actor, loc)) {
+            if (d.everSent) SendEnd(s, d, actor, d.sentLoc, d.sentRot, "location unreadable");
+            UE_LOGW("[PROP-DRIVE] HOST eid=%u -- its location could not be read; the stream ends", d.eid);
+            d.dead = true;
+            continue;
+        }
         const ue_wrap::FRotator rot = E::GetActorRotation(actor);
         if (Moved(d, loc, rot)) {
             coop::net::PropPoseSnapshot pp{};
@@ -262,6 +276,7 @@ void Tick(coop::net::Session& s) {
             s.PublishPropDrivePose(pp);   // queued: it goes out in its turn, refreshed until then
             if (turn == coop::net::PoseTurn::Join) ++joined;
             d.everSent    = true;
+            d.resend      = false;
             d.sentLoc     = loc;
             d.sentRot     = rot;
             d.lastMoveMs  = now;

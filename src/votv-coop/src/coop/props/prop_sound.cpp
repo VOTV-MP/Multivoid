@@ -108,7 +108,8 @@ void PlayGrabSound(void* propActor) {
         return;
     }
     void* att = ResolveAttenuation();
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(propActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(propActor, loc)) return;   // no place to play it at
     // Native: vol 0.5 / pitch 1.0 at hit.Location + Normal*10; the prop's own
     // location is the faithful receiver-side stand-in for the grab point.
     ue_wrap::engine::PlaySoundAtLocation(propActor, soft, loc, att, 0.5f, 1.0f);
@@ -136,7 +137,8 @@ void PlayUseClick(void* propActor) {
         return;
     }
     void* att = ResolveAttenuation();
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(propActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(propActor, loc)) return;   // no place to play it at
     ue_wrap::engine::PlaySoundAtLocation(propActor, sUse, loc, att, 0.5f, 1.0f);
     UE_LOGI("prop_sound: use click at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }
@@ -156,7 +158,8 @@ void PlayThrowWhoosh(void* propActor) {
         return;
     }
     void* att = ResolveAttenuation();
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(propActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(propActor, loc)) return;   // no place to play it at
     // Native: PlaySound2D(swing, 0.8, 1.05) on the thrower only. Spatializing
     // at the released prop is the receiver-side synthesis (deliberate
     // improvement -- natively NOBODY else hears a throw).
@@ -180,7 +183,8 @@ void PlayLandSound(void* propActor) {
         return;
     }
     void* att = ResolveAttenuation();
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(propActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(propActor, loc)) return;   // no place to play it at
     // Native flesh_impact PlaySoundAtLocation params: vol 1.0 / pitch 1.0 / att_default.
     ue_wrap::engine::PlaySoundAtLocation(propActor, impact, loc, att, 1.0f, 1.0f);
     UE_LOGI("prop_sound: pile land thud at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
@@ -204,7 +208,8 @@ void PlayDenyClick(void* playerActor) {
         return;
     }
     void* att = ResolveAttenuation();
-    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(playerActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(playerActor, loc)) return;   // no place to play it at
     ue_wrap::engine::PlaySoundAtLocation(playerActor, sDeny, loc, att, 0.5f, 1.0f);
     UE_LOGI("prop_sound: deny click at (%.0f, %.0f, %.0f)", loc.X, loc.Y, loc.Z);
 }

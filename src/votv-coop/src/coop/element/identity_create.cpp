@@ -182,11 +182,12 @@ void CreateOrAdoptPropMirror(coop::element::ElementId eid, void* actor,
                     return;
                 }
                 if (senderSlot == 0 && coop::prop_element_tracker::SessionIsClient()) {
-                    const ue_wrap::FVector dl = ue_wrap::engine::GetActorLocation(actor);
+                    ue_wrap::FVector dl{};
+                    const bool dlRead = ue_wrap::engine::TryGetActorLocation(actor, dl);
                     UE_LOGW("sync::CreateOrAdoptPropMirror: HANDBACK -- dissolving provisional local "
-                            "eid=%u -> adopting host eid=%u actor=%p key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)",
+                            "eid=%u -> adopting host eid=%u actor=%p key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)%s",
                             static_cast<unsigned>(prior), eid, actor, key.c_str(), cls.c_str(),
-                            dl.X, dl.Y, dl.Z);
+                            dl.X, dl.Y, dl.Z, dlRead ? "" : " (unread)");
                     if (auto taken = PropMirrors().Take(prior))
                         coop::element::ElementDeleter::Get().Enqueue(std::move(taken));
                     // fall through to Install (the reverse flips to `eid` there; the deferred

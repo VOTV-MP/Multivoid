@@ -196,7 +196,10 @@ sg::Verdict OnUnstickPre(const sg::Call& c) {
 
 // The prop by key, its eid as the fallback, and its pose, for either edge. False when the prop has
 // neither key nor eid.
-bool FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW) {
+// What a stick payload lacked when it could not be filled.
+enum class Fill { Ok, NoIdentity, NoPosition };
+
+Fill FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::wstring& keyW) {
     keyW = ue_wrap::prop::GetInteractableKeyString(prop);
     p.key.len = 0;
     if (!keyW.empty() && keyW != L"None") {
@@ -205,12 +208,13 @@ bool FillIdentityAndPose(coop::net::PropStickStatePayload& p, void* prop, std::w
     }
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(prop);
     p.elementId = (eid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(eid);
-    if (p.key.len == 0 && p.elementId == 0) return false;
-    const auto loc = E::GetActorLocation(prop);
+    if (p.key.len == 0 && p.elementId == 0) return Fill::NoIdentity;
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(prop, loc)) return Fill::NoPosition;
     const auto rot = E::GetActorRotation(prop);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
-    return true;
+    return Fill::Ok;
 }
 
 void InstallStickHalf() {
@@ -321,7 +325,9 @@ void InstallOnDemand() {
 // holds the copy), and the raw fallback when this peer's re-trace finds no surface there. True when
 // the replay stuck it. Game thread.
 bool ReplayStick(void* prop, void* comp, uint8_t flags, const std::wstring& keyW) {
-    const ue_wrap::FVector loc = E::GetActorLocation(prop);
+    // The pose before the replay, which only the raw fallback below restores.
+    ue_wrap::FVector loc{};
+    const bool locRead = E::TryGetActorLocation(prop, loc);
     const ue_wrap::FRotator rot = E::GetActorRotation(prop);
     // Simulate on first: the Blueprint's canStick precondition, which a drive or a park took away.
     E::SetActorSimulatePhysics(prop, true);
@@ -336,18 +342,21 @@ bool ReplayStick(void* prop, void* comp, uint8_t flags, const std::wstring& keyW
     if (flags & 2u) ue_wrap::prop::WriteStatic(prop, true);
     else            ue_wrap::prop::WriteFrozen(prop, true);
     E::SetActorSimulatePhysics(prop, false);
-    E::SetActorLocation(prop, loc);
-    E::SetActorRotation(prop, rot);
-    UE_LOGW("prop_stick_sync: forceStick replay diverged for key='%ls' -- raw frozen-write fallback applied",
-            keyW.c_str());
+    if (locRead) {   // unread: frozen where the replay left it, never re-posed at the origin
+        E::SetActorLocation(prop, loc);
+        E::SetActorRotation(prop, rot);
+    }
+    UE_LOGW("prop_stick_sync: forceStick replay diverged for key='%ls' -- raw frozen-write fallback applied%s",
+            keyW.c_str(), locRead ? "" : " (the pose before the replay unread: not re-posed)");
     return false;
 }
 
 void BroadcastStick(coop::net::Session* s, void* prop, bool frozen, bool statiq) {
     coop::net::PropStickStatePayload p{};
     std::wstring keyW;
-    if (!FillIdentityAndPose(p, prop, keyW)) {
-        UE_LOGW("prop_stick_sync: stuck prop %p has neither key nor eid -- not broadcast", prop);
+    if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
+        UE_LOGW("prop_stick_sync: stuck prop %p %s -- not broadcast", prop,
+                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location");
         return;
     }
     p.flags = (frozen ? 1u : 0u) | (statiq ? 2u : 0u);
@@ -363,8 +372,9 @@ void BroadcastStick(coop::net::Session* s, void* prop, bool frozen, bool statiq)
 void BroadcastUnstick(coop::net::Session* s, void* prop) {
     coop::net::PropStickStatePayload p{};
     std::wstring keyW;
-    if (!FillIdentityAndPose(p, prop, keyW)) {
-        UE_LOGW("prop_stick_sync: unstuck prop %p has neither key nor eid -- not broadcast", prop);
+    if (const Fill f = FillIdentityAndPose(p, prop, keyW); f != Fill::Ok) {
+        UE_LOGW("prop_stick_sync: unstuck prop %p %s -- not broadcast", prop,
+                f == Fill::NoIdentity ? "has neither key nor eid" : "has no readable location");
         return;
     }
     p.flags = 0;

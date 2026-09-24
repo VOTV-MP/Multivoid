@@ -64,7 +64,8 @@ void Tick(coop::net::Session& s, void* localPlayer) {
     if (g_pending.empty() && g_pushed.empty() && g_rolling.empty()) return;
     for (const Swept& p : g_pending) {
         if (!R::IsLiveByIndex(p.clump, p.idx)) continue;   // gone before it was placed; its own destroy spoke
-        if (!coop::trash_channel::OpenBornCarry(s, p.clump, "SWEEP OPEN")) continue;
+        if (coop::trash_channel::OpenBornCarry(s, p.clump, "SWEEP OPEN") != coop::trash_channel::BornCarry::Opened)
+            continue;
         Roll(p.clump, p.idx);
         if (++g_opened <= 3)
             UE_LOGI("[TRASH-SWEEP] HOST swept clump %p opened -- its roll streams until it re-piles",
@@ -76,8 +77,11 @@ void Tick(coop::net::Session& s, void* localPlayer) {
     // anywhere else and opens with its convert, and a tracked one reopens with none.
     for (const Swept& p : g_pushed) {
         if (!R::IsLiveByIndex(p.clump, p.idx)) continue;
-        if (!coop::trash_channel::OpenBornCarry(s, p.clump, "PUSH OPEN") &&
-            !coop::trash_channel::OpenPushedCarry(p.clump))
+        // An unplaceable certificate clump opens neither way: a pushed carry would stream a clump no
+        // peer was ever told of.
+        const coop::trash_channel::BornCarry born = coop::trash_channel::OpenBornCarry(s, p.clump, "PUSH OPEN");
+        if (born == coop::trash_channel::BornCarry::Unplaceable) continue;
+        if (born == coop::trash_channel::BornCarry::NoCertificate && !coop::trash_channel::OpenPushedCarry(p.clump))
             continue;
         Roll(p.clump, p.idx);
         ++g_reopened;
@@ -108,7 +112,8 @@ void Tick(coop::net::Session& s, void* localPlayer) {
         // for nothing.
         const coop::net::PoseTurn turn = s.TrashCarryPoseTurn(r.eid, /*ahead=*/false);
         if (turn == coop::net::PoseTurn::Wait) continue;
-        const ue_wrap::FVector  loc = E::GetActorLocation(r.clump);
+        ue_wrap::FVector loc{};
+        if (!E::TryGetActorLocation(r.clump, loc)) continue;   // no pose this tick; the next one reads again
         const ue_wrap::FRotator rot = E::GetActorRotation(r.clump);
         coop::net::TrashClumpPoseSnapshot snap{};
         snap.eid   = r.eid;

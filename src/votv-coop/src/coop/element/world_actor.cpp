@@ -155,22 +155,25 @@ void WorldActor::Tick() {
     }
     if (!hasPose_) {
         if (trace) { dbgLastLogMs_ = nowMs;
-            const auto pre = E::GetActorLocation(actor);
-            UE_LOGI("[WA-TRACE client-drive] eid=%u NO-POSE-YET engine=(%.0f,%.0f,%.0f)",
-                    static_cast<uint32_t>(GetId()), pre.X, pre.Y, pre.Z); }
+            ue_wrap::FVector pre{};
+            const bool preRead = E::TryGetActorLocation(actor, pre);
+            UE_LOGI("[WA-TRACE client-drive] eid=%u NO-POSE-YET engine=(%.0f,%.0f,%.0f)%s",
+                    static_cast<uint32_t>(GetId()), pre.X, pre.Y, pre.Z, preRead ? "" : " (unread)"); }
         return;  // no pose yet -- leave the mirror at its spawn transform
     }
     ue_wrap::FVector pre{};
-    if (trace) pre = E::GetActorLocation(actor);
+    const bool preRead = trace && E::TryGetActorLocation(actor, pre);
     AdvanceInterp();
     if (dirty_) { ApplyToEngine(); dirty_ = false; }
     if (trace) {
         dbgLastLogMs_ = nowMs;
-        const auto post = E::GetActorLocation(actor);
-        UE_LOGI("[WA-TRACE client-drive] eid=%u pre=(%.0f,%.0f,%.0f) cur=(%.0f,%.0f,%.0f) "
-                "tgt=(%.0f,%.0f,%.0f) post=(%.0f,%.0f,%.0f) window=%d applyLoc=%d applyRot=%d",
-                static_cast<uint32_t>(GetId()), pre.X, pre.Y, pre.Z, curPos_.X, curPos_.Y, curPos_.Z,
-                targetPos_.X, targetPos_.Y, targetPos_.Z, post.X, post.Y, post.Z,
+        ue_wrap::FVector post{};
+        const bool postRead = E::TryGetActorLocation(actor, post);
+        UE_LOGI("[WA-TRACE client-drive] eid=%u pre=(%.0f,%.0f,%.0f)%s cur=(%.0f,%.0f,%.0f) "
+                "tgt=(%.0f,%.0f,%.0f) post=(%.0f,%.0f,%.0f)%s window=%d applyLoc=%d applyRot=%d",
+                static_cast<uint32_t>(GetId()), pre.X, pre.Y, pre.Z, preRead ? "" : " (unread)",
+                curPos_.X, curPos_.Y, curPos_.Z, targetPos_.X, targetPos_.Y, targetPos_.Z,
+                post.X, post.Y, post.Z, postRead ? "" : " (unread)",
                 window_.IsOpen() ? 1 : 0, lastApplyLocOk_ ? 1 : 0, lastApplyRotOk_ ? 1 : 0);
     }
 }

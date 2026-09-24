@@ -329,7 +329,7 @@ void Tick(bool inTransition) {
 
     void* local = coop::players::Registry::Get().Local();
     ue_wrap::FVector cam{};
-    if (local) cam = ue_wrap::engine::GetActorLocation(local);
+    const bool camRead = local && ue_wrap::engine::TryGetActorLocation(local, cam);
 
     for (auto it = g_index.begin(); it != g_index.end();) {
         Entry& e = it->second;
@@ -340,7 +340,7 @@ void Tick(bool inTransition) {
             // Geometry is the fallback for the local writers nothing announces.
             const bool authored = WasAuthoredHere(it->first);
             const float dx = e.x - cam.X, dy = e.y - cam.Y, dz = e.z - cam.Z;
-            const bool nearCam = local &&
+            const bool nearCam = camRead &&
                 (dx * dx + dy * dy + dz * dz) <= (kDeathNearCm * kDeathNearCm);
             if ((authored || nearCam) && !inTransition) {
                 coop::net::PropDestroyPayload dp{};

@@ -246,7 +246,9 @@ void CollectTrackedKeyedPropTransforms(
         if (!ka.actor || !R::IsLiveByIndex(ka.actor, ka.idx)) continue;
         const coop::element::ElementId eid = GetPropElementIdForActor(ka.actor);
         if (eid == coop::element::kInvalidId || eid == 0u) continue;
-        out[eid] = ue_wrap::engine::GetActorLocation(ka.actor);
+        ue_wrap::FVector at{};
+        if (!ue_wrap::engine::TryGetActorLocation(ka.actor, at)) continue;   // no read, no save-time position
+        out[eid] = at;
     }
 }
 

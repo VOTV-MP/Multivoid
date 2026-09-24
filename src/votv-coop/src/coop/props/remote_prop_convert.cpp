@@ -83,12 +83,14 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* /*localPlaye
         // After the re-skin, which re-runs init() and so draws a new look: the host's replaces it.
         coop::pile_look::OnHostLook(E, payload.look, senderSlot);
         coop::pile_look::LogLandLook("CLIENT", E, cur);
-        const ue_wrap::FVector got = E::GetActorLocation(cur);
+        ue_wrap::FVector got{};
+        const bool gotRead = E::TryGetActorLocation(cur, got);
         const float dx = got.X - loc.X, dy = got.Y - loc.Y, dz = got.Z - loc.Z;
+        const float drift = gotRead ? std::sqrt(dx * dx + dy * dy + dz * dz) : -1.f;   // -1: unread
         UE_LOGI("[PILE] CLIENT ToPile LAND eid=%u ctx=%u -> CLAIMED the bound native %p, repositioned to "
-                "(%.1f,%.1f,%.1f) host=(%.1f,%.1f,%.1f) drift=%.2fcm [no parallel spawn, no dup]",
-                E, static_cast<unsigned>(payload.ctx), cur, got.X, got.Y, got.Z,
-                loc.X, loc.Y, loc.Z, std::sqrt(dx * dx + dy * dy + dz * dz));
+                "(%.1f,%.1f,%.1f)%s host=(%.1f,%.1f,%.1f) drift=%.2fcm [no parallel spawn, no dup]",
+                E, static_cast<unsigned>(payload.ctx), cur, got.X, got.Y, got.Z, gotRead ? "" : " (unread)",
+                loc.X, loc.Y, loc.Z, drift);
         coop::prop_sound::PlayLandSound(cur);
         coop::trash_channel::NoteClientConvertObserved(E, false);
         return cur;

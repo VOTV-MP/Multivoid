@@ -155,8 +155,8 @@ int SweepReconcileSaveTimeTwins() {
         if (!isClump && !ue_wrap::prop::IsChipPile(o)) continue;        // a trash entity's two resting forms
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;   // CDO
         if (coop::prop_element_tracker::IsBoundMirrorNative(o)) {
-            if (probe) {
-                const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(o);
+            ue_wrap::FVector bl{};
+            if (probe && ue_wrap::engine::TryGetActorLocation(o, bl)) {   // no read, no probe row
                 // Registry::EidForActor covers mirrors and locals; a locals-only reverse would
                 // label every bound mirror as wrong-eid.
                 boundChip.push_back({o, bl.X, bl.Y, bl.Z,
@@ -164,7 +164,8 @@ int SweepReconcileSaveTimeTwins() {
             }
             continue;  // bound native is the mirror, not a twin
         }
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(o, loc)) continue;   // no read, no twin candidate
         natives.push_back({o, R::InternalIndexOf(o), loc.X, loc.Y, loc.Z, ue_wrap::prop::GetChipType(o), isClump});
     }
 
@@ -191,16 +192,28 @@ int SweepReconcileSaveTimeTwins() {
         // The element's current binding, checked with IsLiveByIndex, never raw IsLive: an
         // element-held pointer may be freed memory after a purge, and IsLive on freed memory
         // misreads.
-        void* bound   = nullptr;
-        float boundD2 = -1.f;
+        void* bound     = nullptr;
+        float boundD2   = -1.f;
+        bool  boundRead = true;
         if (coop::element::Element* el =
                 coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid))) {
             if (void* a = el->GetActor(); a && R::IsLiveByIndex(a, el->GetInternalIdx())) {
                 bound = a;
-                const ue_wrap::FVector bl = ue_wrap::engine::GetActorLocation(a);
-                const float ddx = bl.X - p.x, ddy = bl.Y - p.y, ddz = bl.Z - p.z;
-                boundD2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                ue_wrap::FVector bl{};
+                boundRead = ue_wrap::engine::TryGetActorLocation(a, bl);
+                if (boundRead) {
+                    const float ddx = bl.X - p.x, ddy = bl.Y - p.y, ddz = bl.Z - p.z;
+                    boundD2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                }
             }
+        }
+        // An event twin whose bound actor's location cannot be read has neither the move evidence
+        // its retire needs nor the unbound state a bind needs, so the pass holds the eid, bounded
+        // like any hold. A host-vacate twin retires on the binding alone, read or not.
+        if (!boundRead && !p.hostVacate) {
+            if (++p.unresolvedPasses >= kMaxTwinPasses) { resolvedEids.push_back(eid); NoteGaveUp(eid, p, bound); }
+            ++held;
+            continue;
         }
         // A host-vacate twin retires only while the element is bound to a live actor. Unbound, the
         // native at the old position may be the element's own purge re-create, its only expression
@@ -417,7 +430,13 @@ void ApplyPendingPosCorrections() {
         // a sign it pried off its wall is not stuck there.
         coop::prop_stick_sync::ConvergeStuck(actor, c.physFlags);
         coop::prop_wire_parity::ConvergeFrozenSleep(actor, c.physFlags);
-        const ue_wrap::FVector got = ue_wrap::engine::GetActorLocation(actor);
+        ue_wrap::FVector got{};
+        if (!ue_wrap::engine::TryGetActorLocation(actor, got)) {
+            UE_LOGW("[PILE-B3] CLIENT pos-correction APPLIED eid=%u host=(%.1f,%.1f,%.1f) -- the location "
+                    "read-back failed, so the drift is unknown", static_cast<unsigned>(eid), c.x, c.y, c.z);
+            it = g_pendingPosCorrection.erase(it);
+            continue;
+        }
         const float dx = got.X - c.x, dy = got.Y - c.y, dz = got.Z - c.z;
         UE_LOGI("[PILE-B3] CLIENT pos-correction APPLIED eid=%u applied=(%.1f,%.1f,%.1f) host=(%.1f,%.1f,%.1f) "
                 "drift=%.2fcm -- join-window moved pile snapped to host pos (forced-Movable then teleport; "

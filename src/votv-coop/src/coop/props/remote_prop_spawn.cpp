@@ -106,13 +106,14 @@ static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
     }
     const coop::element::ElementId hostEid =
         coop::prop_element_tracker::GetPropElementIdForActor(actor);
-    const ue_wrap::FVector hl = E::GetActorLocation(actor);
+    ue_wrap::FVector hl{};
+    const bool hlRead = E::TryGetActorLocation(actor, hl);
     UE_LOGW("remote_prop::OnSpawn: HOST-AUTHORITY HANDBACK (%s) -- slot=%d PropSpawn wire-eid names our own "
-            "actor %p (host eid=%u key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)); refusing peer-band rekey/bind, "
+            "actor %p (host eid=%u key='%ls' cls='%ls' loc=(%.1f,%.1f,%.1f)%s); refusing peer-band rekey/bind, "
             "re-expressing under the host identity",
             how, senderSlot, actor,
             (hostEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(hostEid),
-            keyW.c_str(), classW.c_str(), hl.X, hl.Y, hl.Z);
+            keyW.c_str(), classW.c_str(), hl.X, hl.Y, hl.Z, hlRead ? "" : " (unread)");
     if (coop::kerfur_entity::IsKerfurActor(actor)) {
         UE_LOGW("remote_prop::OnSpawn: handback target is a KERFUR -- enroll only; KerfurConvert owns "
                 "kerfur delivery (no generic re-express)");
@@ -305,15 +306,18 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         // converge runs only when the prop actually moved (2 cm / 1 degree; deterministic base
         // spawns are sub-millimetre identical), so undisturbed scenery gets no write, no wake, no
         // spike.
-        const ue_wrap::FVector  curLoc = ue_wrap::engine::GetActorLocation(existing);
+        // A failed read is not known to be aligned: the host's transform, which is authoritative,
+        // converges it like a divergence.
+        ue_wrap::FVector curLoc{};
+        const bool curRead = ue_wrap::engine::TryGetActorLocation(existing, curLoc);
         const ue_wrap::FRotator curRot = ue_wrap::engine::GetActorRotation(existing);
         const float dx = curLoc.X - payload.locX;
         const float dy = curLoc.Y - payload.locY;
         const float dz = curLoc.Z - payload.locZ;
         constexpr float kAlignedDistCm = 2.0f;   // squared-compared below
         constexpr float kAlignedAngDeg = 1.0f;
-        const bool locAligned = (dx * dx + dy * dy + dz * dz)
-                              <= (kAlignedDistCm * kAlignedDistCm);
+        const bool locAligned = curRead && (dx * dx + dy * dy + dz * dz)
+                                               <= (kAlignedDistCm * kAlignedDistCm);
         auto angAligned = [](float a, float b) {
             float d = std::fabs(std::fmod(std::fabs(a - b), 360.0f));
             if (d > 180.0f) d = 360.0f - d;
@@ -335,9 +339,9 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             coop::prop_stick_sync::ConvergeStuck(existing, payload.physFlags);
             ConvergeFrozenSleep(existing, payload.physFlags);
         } else {
-            UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm), converging transform to host (loc=(%.1f,%.1f,%.1f))",
+            UE_LOGI("remote_prop::OnSpawn: key '%ls' resolves to live actor %p -- diverged (d=%.1fcm%s), converging transform to host (loc=(%.1f,%.1f,%.1f))",
                     keyW.c_str(), existing, std::sqrt(dx * dx + dy * dy + dz * dz),
-                    payload.locX, payload.locY, payload.locZ);
+                    curRead ? "" : ", location unread", payload.locX, payload.locY, payload.locZ);
             // The kinematic converge: kinematic before the teleport so the move neither wakes nor
             // ejects the body, then the single-player physics state restored at the host's rest
             // pose, where the body re-settles instead of storming.

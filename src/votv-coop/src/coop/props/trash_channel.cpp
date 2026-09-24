@@ -94,6 +94,7 @@ struct LandSettle {
     ue_wrap::FRotator rot;                    // FALLBACK rot  (the clump's tumble; re-read at COMMIT)
     std::string       cls;        // the pile class to broadcast at COMMIT
     bool              carried = true;  // a carry's land, which a re-grab can still prove churn
+    bool              fallbackKnown = true;  // false: the clump's location was unread at the thunk
 };
 std::unordered_map<uint32_t, LandSettle> g_settle;
 
@@ -187,12 +188,14 @@ void CancelSettle(uint32_t eid, const char* why) {
 // POST, so its transform is read at the commit. `carried` for a carry's land, which a re-grab
 // within the window proves churn; an uncarried land only waits for its pile to be placed.
 void StartSettle(uint32_t eid, void* pile, const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot,
-                 const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls, bool carried) {
+                 const ue_wrap::FVector& scale, uint8_t chipType, const std::string& cls, bool carried,
+                 bool fallbackKnown) {
     LandSettle ls{};
     ls.countdown = kLandSettleTicks; ls.sincePile = 0;
     ls.chipType  = chipType; ls.loc = loc; ls.rot = rot; ls.cls = cls; ls.scale = scale;
     ls.pileActor = pile; ls.pileIdx = R::InternalIndexOf(pile);
     ls.carried = carried;
+    ls.fallbackKnown = fallbackKnown;
     g_settle[eid] = ls;
 }
 
@@ -214,7 +217,8 @@ void OpenCarry(coop::net::Session& s, coop::element::ElementId E, const ue_wrap:
 }  // namespace
 
 void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind, void* newActor,
-                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType) {
+                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType,
+                   bool locKnown) {
     if (E == 0u || E == coop::element::kInvalidId || !newActor) return;
     const uint32_t eid     = static_cast<uint32_t>(E);
     const bool     toClump = (kind == coop::net::propconvert_kind::kToClump);
@@ -246,14 +250,14 @@ void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t ki
             // the captured transform is the clump's, a radius high. The broadcast waits for the
             // settle's commit to read the placed pile, as a carried land's does, or every peer sets
             // its pile down where the clump was.
-            StartSettle(eid, newActor, loc, rot, scale, chipType, cls, /*carried=*/false);
+            StartSettle(eid, newActor, loc, rot, scale, chipType, cls, /*carried=*/false, locKnown);
         } else {
             // Carrying: this re-pile is either a churn re-pile (a re-grab follows within the window
             // and cancels the settle) or the real land (no re-grab, and the tick commits it). Hold
             // the broadcast and the context bump and capture the payload; a later to-pile before
             // the commit refreshes the settle, latest wins.
             g_carry[eid].lastTick = g_tick;
-            StartSettle(eid, newActor, loc, rot, scale, chipType, cls, /*carried=*/true);
+            StartSettle(eid, newActor, loc, rot, scale, chipType, cls, /*carried=*/true, locKnown);
             UE_LOGI("[TRASH-CH] HOST land-settle START eid=%u K=%d -- holding the ToPile (re-grab within K = "
                     "churn; no re-grab = the real land)", eid, kLandSettleTicks);
         }
@@ -280,10 +284,16 @@ void OnHostRegrab(coop::net::Session& s, coop::element::ElementId E, void* newCl
 
 void ExpressClumpGeneration(coop::net::Session& s, coop::element::ElementId E, void* clump, int slot) {
     if (E == 0u || E == coop::element::kInvalidId || !clump) return;
+    ue_wrap::FVector clumpLoc{};
+    if (!ue_wrap::engine::TryGetActorLocation(clump, clumpLoc)) {
+        UE_LOGW("[TRASH-CH] HOST clump generation eid=%u not expressed -- the clump's location could not be read",
+                static_cast<unsigned>(E));
+        return;
+    }
     uint8_t& ctx = g_ctx[static_cast<uint32_t>(E)];
     if (ctx == 0) ctx = 1;   // born here, with the expression below: never a generation nobody was told of
     const coop::net::PropConvertPayload p = BuildConvert(
-        E, coop::net::propconvert_kind::kToClump, ctx, ue_wrap::engine::GetActorLocation(clump),
+        E, coop::net::propconvert_kind::kToClump, ctx, clumpLoc,
         ue_wrap::engine::GetActorRotation(clump), ue_wrap::engine::GetActorScale3D(clump),
         ue_wrap::prop::GetChipType(clump), NarrowAscii(R::ClassNameOf(clump)));
     if (slot >= 0) s.SendReliableToSlot(slot, coop::net::ReliableKind::PropConvert, &p, sizeof(p));
@@ -352,20 +362,30 @@ coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::El
     return E;
 }
 
-bool OpenBornCarry(coop::net::Session& s, void* clump, const char* why) {
+BornCarry OpenBornCarry(coop::net::Session& s, void* clump, const char* why) {
+    const auto cert = g_clumpBirths.find(clump);
+    if (cert == g_clumpBirths.end()) return BornCarry::NoCertificate;   // a hand edge took it first
+    // The pile was taken inside its own land settle: the re-pile folds as the churn a re-grab is,
+    // which needs no position. An open carry expresses the clump where it is, so an unreadable one
+    // opens nothing and keeps its certificate for the birth-orphan express.
+    const bool regrab = IsCarrying(static_cast<coop::element::ElementId>(cert->second.eid));
+    ue_wrap::FVector clumpLoc{};
+    if (!regrab && !ue_wrap::engine::TryGetActorLocation(clump, clumpLoc)) {
+        UE_LOGW("[TRASH-CH] HOST carry for clump %p (pile eid=%u) not opened -- its location could not be read",
+                clump, static_cast<unsigned>(cert->second.eid));
+        return BornCarry::Unplaceable;
+    }
     coop::element::ElementId E = coop::element::kInvalidId;
     uint8_t chipType = 0;
-    if (!TakeClumpBorn(clump, &E, &chipType)) return false;   // a hand edge took it first, or it died
-    if (IsCarrying(E)) {
-        // The pile was taken inside its own land settle: fold the re-pile as the churn a re-grab
-        // is, and this clump carries the lane on.
+    if (!TakeClumpBorn(clump, &E, &chipType)) return BornCarry::NoCertificate;   // stale: the take dropped it
+    if (regrab) {
         OnHostRegrab(s, E, clump);
-        return true;
+        return BornCarry::Opened;
     }
     RebindE(E, clump);   // bound at birth already; the rebind is idempotent and keeps the row current
-    OpenCarry(s, E, ue_wrap::engine::GetActorLocation(clump), ue_wrap::engine::GetActorRotation(clump),
+    OpenCarry(s, E, clumpLoc, ue_wrap::engine::GetActorRotation(clump),
               ue_wrap::engine::GetActorScale3D(clump), chipType, NarrowAscii(R::ClassNameOf(clump)), why);
-    return true;
+    return BornCarry::Opened;
 }
 
 bool OpenPushedCarry(void* clump) {
@@ -402,10 +422,15 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
                             static_cast<coop::element::ElementId>(beid);
             const bool unowned = g_carry.find(beid) == g_carry.end() &&
                                  !HeldByAny(beid);
-            if (stillOwns && unowned) {
+            ue_wrap::FVector orphanLoc{};
+            const bool orphanRead = stillOwns && unowned && ue_wrap::engine::TryGetActorLocation(clump, orphanLoc);
+            if (stillOwns && unowned && !orphanRead) {
+                UE_LOGW("[PILE] HOST birth-orphan express skipped for clump %p (pile eid=%u) -- its location "
+                        "could not be read", clump, static_cast<unsigned>(beid));
+            } else if (stillOwns && unowned) {
                 BroadcastConvert(s, static_cast<coop::element::ElementId>(beid),
                                  coop::net::propconvert_kind::kToClump,
-                                 ue_wrap::engine::GetActorLocation(clump),
+                                 orphanLoc,
                                  ue_wrap::engine::GetActorRotation(clump),
                                  ue_wrap::engine::GetActorScale3D(clump),
                                  it->second.chipType, NarrowAscii(R::ClassNameOf(clump)),
@@ -444,8 +469,21 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
                 it = g_settle.erase(it);
                 continue;
             }
-            if (reread) {
-                cloc   = ue_wrap::engine::GetActorLocation(ls.pileActor);
+            ue_wrap::FVector settled{};
+            const bool settledRead = reread && ue_wrap::engine::TryGetActorLocation(ls.pileActor, settled);
+            if (!settledRead && !ls.fallbackKnown) {
+                // Neither the settled pile nor the thunk's clump could be placed: no land convert goes
+                // out, and the carry closes.
+                UE_LOGW("[TRASH-CH] HOST LAND COMMIT eid=%u -- no readable transform (the pile %s, the clump "
+                        "unread at the thunk); carry closed with no convert", static_cast<unsigned>(it->first),
+                        reread ? "unread" : "not live");
+                g_carry.erase(it->first);
+                ClearHeldBy(it->first);
+                it = g_settle.erase(it);
+                continue;
+            }
+            if (settledRead) {   // unread: the fallback stands
+                cloc   = settled;
                 // The root's rotation. What a player sees is the child mesh's random turn on top
                 // of it, which BroadcastConvert sends as the pile's look.
                 crot   = ue_wrap::engine::GetActorRotation(ls.pileActor);
@@ -456,7 +494,9 @@ void TickCarry(coop::net::Session& s, void* localHeldActor) {
             UE_LOGI("[TRASH-CH] HOST LAND COMMIT eid=%u -- %s (transform %s)", static_cast<unsigned>(E),
                     ls.carried ? "no re-grab within K -> the real land; carry CLOSED"
                                : "an uncarried re-pile, placed",
-                    reread ? "re-read from the settled pile" : "FALLBACK (pile not live -- clump transform)");
+                    settledRead ? "re-read from the settled pile"
+                                : (reread ? "FALLBACK (the settled pile's location unread -- clump transform)"
+                                          : "FALLBACK (pile not live -- clump transform)"));
             g_carry.erase(it->first);                     // CLOSE the carry latch
             ClearHeldBy(it->first);                       // defensive: a hold ends at its let-go, before any land
             it = g_settle.erase(it);

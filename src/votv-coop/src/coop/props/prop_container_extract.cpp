@@ -101,7 +101,11 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
     for (size_t i = 0; i < keyStr.size() && i < 31; ++i) {
         p.key.data[p.key.len++] = static_cast<char>(keyStr[i]);
     }
-    const auto loc = ue_wrap::engine::GetActorLocation(spawnedActor);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(spawnedActor, loc)) {
+        UE_LOGW("prop_container_extract: the extracted item's location could not be read -- not sent");
+        return;
+    }
     const auto rot = ue_wrap::engine::GetActorRotation(spawnedActor);
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);

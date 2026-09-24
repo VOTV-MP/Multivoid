@@ -223,11 +223,13 @@ void* BindOwnSavePile(const coop::net::PropSpawnPayload& payload,
     // not an Aprop_C, so the call was a measured no-op. The pile's own construction sets its mesh
     // Static, and both peers loaded the same save, so a bound pile is already at rest where the
     // host has it. Converge only on real divergence: save-aligned piles are sub-millimetre
-    // identical, so the common case writes and wakes nothing.
-    const ue_wrap::FVector cur = ue_wrap::engine::GetActorLocation(native);
+    // identical, so the common case writes and wakes nothing. A native whose location cannot be read
+    // is not known to be aligned, so the host's transform converges it.
+    ue_wrap::FVector cur{};
+    const bool curRead = ue_wrap::engine::TryGetActorLocation(native, cur);
     const float ddx = cur.X - payload.locX, ddy = cur.Y - payload.locY, ddz = cur.Z - payload.locZ;
     constexpr float kAlignedCm = 2.0f;
-    const bool aligned = (ddx * ddx + ddy * ddy + ddz * ddz) <= (kAlignedCm * kAlignedCm);
+    const bool aligned = curRead && (ddx * ddx + ddy * ddy + ddz * ddz) <= (kAlignedCm * kAlignedCm);
     if (!aligned) {
         ue_wrap::engine::SetActorLocation(native, ue_wrap::FVector{payload.locX, payload.locY, payload.locZ});
         ue_wrap::engine::SetActorRotation(native,
@@ -264,9 +266,10 @@ void AdoptOwnNative(void* native, uint32_t eid, int senderSlot, const char* why)
     if (auto* el = coop::element::Registry::Get().Get(eid)) el->SetSaveNative(true);
     ++g_pileBindCount;
     if (g_pileBindCount <= 8 || (g_pileBindCount % 200) == 0) {
-        const ue_wrap::FVector at = ue_wrap::engine::GetActorLocation(native);
-        UE_LOGI("[PILE] BIND #%d eid=%u -> OWN save-loaded native %p at (%.1f,%.1f,%.1f) [%s]",
-                g_pileBindCount, eid, native, at.X, at.Y, at.Z, why);
+        ue_wrap::FVector at{};
+        const bool atRead = ue_wrap::engine::TryGetActorLocation(native, at);
+        UE_LOGI("[PILE] BIND #%d eid=%u -> OWN save-loaded native %p at (%.1f,%.1f,%.1f)%s [%s]",
+                g_pileBindCount, eid, native, at.X, at.Y, at.Z, atRead ? "" : " (unread)", why);
     }
 }
 
@@ -301,7 +304,7 @@ void LogCensus() {
     if (!g_pileBindIndexBuilt) return;
     struct Seen { float x, y, z; bool bound; };
     std::vector<Seen> seen;
-    int totalLive = 0, bound = 0;
+    int totalLive = 0, bound = 0, unread = 0;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
@@ -311,7 +314,8 @@ void LogCensus() {
         ++totalLive;
         const bool isBound = coop::prop_element_tracker::IsBoundMirrorNative(o);
         if (isBound) ++bound;
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(o);
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(o, loc)) { ++unread; continue; }   // counted, in no band
         seen.push_back({loc.X, loc.Y, loc.Z, isBound});
     }
     const int orphan = totalLive - bound;
@@ -339,8 +343,8 @@ void LogCensus() {
     }
     UE_LOGI("[PILE-CENSUS] %d live native trash actor(s), piles and clumps (of %d indexed at the burst): %d BOUND to a host "
             "eid, %d orphan -- le5=%d (near-miss) 5_30=%d (ambiguous) gt30=%d (moved/true orphan) "
-            "noBound=%d (nothing of the host's nearby)",
-            totalLive, g_pileIndexBuiltCount, bound, orphan, le5, mid, gt30, none);
+            "noBound=%d (nothing of the host's nearby) unread=%d (no position, in no band)",
+            totalLive, g_pileIndexBuiltCount, bound, orphan, le5, mid, gt30, none, unread);
 }
 
 }  // namespace coop::pile_spawn_bind

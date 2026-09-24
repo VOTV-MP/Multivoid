@@ -62,6 +62,8 @@ std::vector<int32_t> g_snapshotInternalIdxs;
 size_t g_snapshotCandidateIdx = 0;
 // PropSpawns actually sent this drain (skips excluded); reported in SnapshotComplete.
 uint32_t g_snapshotSentTotal = 0;
+// Rows left out this drain because the prop's location could not be read; reported at completion.
+uint32_t g_snapshotUnreadTotal = 0;
 // The slot being drained (-1 = none) and the slots waiting their turn.
 int g_currentTargetSlot = -1;
 std::vector<int> g_pendingSlots;
@@ -174,6 +176,7 @@ void StartEnumerationFor(int peerSlot) {
             g_snapshotCandidates.size(), peerSlot, trackedCount, skippedDead, skippedDying, kSnapshotChunkSize);
 
     g_snapshotSentTotal = 0;
+    g_snapshotUnreadTotal = 0;
     // SnapshotBegin carries the candidate count (the progress denominator) on the bulk lane ahead
     // of the first PropSpawn; in-lane ordering keeps it first. Host only.
     if (auto* s = g_session_ptr.load(std::memory_order_acquire)) {
@@ -192,6 +195,7 @@ void ClearDrainState_() {
     g_snapshotCandidateIdx = 0;
     g_currentTargetSlot = -1;
     g_snapshotSentTotal = 0;
+    g_snapshotUnreadTotal = 0;
 }
 
 // Dequeues through TriggerForSlot until a drain starts or the queue empties: a not-ready slot is
@@ -247,8 +251,8 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
                                   buf.data(), static_cast<int>(buf.size())))
             g_bracketClosed[g_currentTargetSlot] = true;
     }
-    UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent)",
-            g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal);
+    UE_LOGI("snapshot: drain complete for slot %d (%zu candidates, %u sent, %u left out unread)",
+            g_currentTargetSlot, g_snapshotCandidates.size(), g_snapshotSentTotal, g_snapshotUnreadTotal);
     coop::dev::eid_lifetime_trace::EmitVerdict();  // read-only: capture-eid vs wire-eid verdict
     ClearDrainState_();
     // The next pending slot re-enumerates: the world may have changed since this drain started.
@@ -261,7 +265,7 @@ void CompleteDrainForCurrentSlot(coop::net::Session* s) {
 // means the caller confirmed it. A keyless chipPile keeps key.len 0, so the receiver takes the
 // eid-only lane.
 bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t internalIdx,
-                            coop::net::PropSpawnPayload& p, int matchSlot) {
+                            coop::net::PropSpawnPayload& p, int matchSlot, bool* unread = nullptr) {
     if (!obj) return false;
     // A child actor (a kerfur's eye cam) is never expressed: without MarkPropElement it would go
     // out as a keyed payload with elementId 0 and re-create a floating mirror the gated destroy
@@ -312,7 +316,11 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // Read-only trace: the wire eid against the eid recorded at save capture; a no-op unless
     // enabled.
     coop::dev::eid_lifetime_trace::CheckWireEid(obj, static_cast<uint32_t>(eid));
-    const auto loc = ue_wrap::engine::GetActorLocation(obj);
+    ue_wrap::FVector loc{};
+    if (!ue_wrap::engine::TryGetActorLocation(obj, loc)) {   // a row at the origin would move the joiner's copy there
+        if (unread) *unread = true;
+        return false;
+    }
     // The actor's rotation. A chip pile shows a child mesh the game turns and scales at random on
     // every construction; that draw rides beside it as the pile's look (coop/props/pile_look.h),
     // absent for everything else.
@@ -505,7 +513,17 @@ void DrainChunk() {
         coop::net::PropSpawnPayload p{};
         // -1: liveness was just re-validated. The target slot makes this the join drain, so a pile
         // gets its save-time match key.
-        if (!BuildPropSpawnPayload_(obj, eid, -1, p, g_currentTargetSlot)) continue;
+        bool unread = false;
+        if (!BuildPropSpawnPayload_(obj, eid, -1, p, g_currentTargetSlot, &unread)) {
+            // A failed read is a dispatch that faulted, which a retry repeats: the row is left out,
+            // named here and counted in the completion line.
+            if (unread) {
+                ++g_snapshotUnreadTotal;
+                UE_LOGW("snapshot: row for eid=%u (%p) left out for slot %d -- its location could not be read",
+                        static_cast<unsigned>(eid), obj, g_currentTargetSlot);
+            }
+            continue;
+        }
         // To the one slot: the other peers got these props from their own drain.
         s->SendReliableToSlot(g_currentTargetSlot,
                               coop::net::ReliableKind::PropSpawn,
@@ -538,7 +556,13 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
     coop::net::PropSpawnPayload p{};
     // -1 and -1: liveness confirmed by the caller, and a mid-game express has no save-loaded twin
     // to stamp a match key for.
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible
+    bool unread = false;
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1, &unread)) {   // not expressible
+        if (unread)
+            UE_LOGW("snapshot: incremental PropSpawn for %sprop %p (eid=%u) not sent -- its location could not be read",
+                    kindTag, actor, static_cast<unsigned>(eid));
+        return;
+    }
     s->SendPropSpawn(p);
     if (ue_wrap::prop::IsGarbageClump(actor))
         coop::trash_channel::ExpressClumpGeneration(*s, eid, actor, /*slot=*/-1);  // every ready peer

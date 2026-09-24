@@ -429,6 +429,13 @@ void Tick(coop::net::Session* session) {
             probe::NoteDrainExit(e.actor, "not-a-place-nor-whitelisted-birth", e.tries, key);
             continue;
         }
+        // No position to place it by: a failed read is a dispatch that faulted, which a later tick
+        // repeats, so the entry goes.
+        ue_wrap::FVector loc{};
+        if (!ue_wrap::engine::TryGetActorLocation(e.actor, loc)) {
+            probe::NoteDrainExit(e.actor, "location-unread", e.tries, key);
+            continue;
+        }
         // Author the host-authoritative spawn intent (a place, or a fresh birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
@@ -456,7 +463,6 @@ void Tick(coop::net::Session* session) {
             if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
                 coop::drive_sync::NoteLocalDriveBirth(e.actor);
         }
-        const auto loc = ue_wrap::engine::GetActorLocation(e.actor);
         const auto rot = ue_wrap::engine::GetActorRotation(e.actor);
         const auto scl = ue_wrap::engine::GetActorScale3D(e.actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;

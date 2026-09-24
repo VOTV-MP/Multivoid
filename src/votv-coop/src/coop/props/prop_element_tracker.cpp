@@ -257,18 +257,21 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
                         "enrolling OFF the game thread (actor=%p incumbent=%p); cannot setKey here -- "
                         "enrolling under the duplicate", enrollKey.c_str(), cls.c_str(), actor, incumbent);
             } else {
-                const ue_wrap::FVector dupLoc = ue_wrap::engine::GetActorLocation(actor);
+                ue_wrap::FVector dupLoc{};
+                const char* const dupUnread =
+                    ue_wrap::engine::TryGetActorLocation(actor, dupLoc) ? "" : " (unread)";
                 const std::wstring fresh = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
                 if (!fresh.empty() && fresh != enrollKey) {
                     UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- second live actor carried Key '%ls': "
-                            "'%ls' loc=(%.1f,%.1f,%.1f) re-keyed -> '%ls' (save-born clone family; host key "
+                            "'%ls' loc=(%.1f,%.1f,%.1f)%s re-keyed -> '%ls' (save-born clone family; host key "
                             "authority -- the new key persists via the game's own save)",
-                            enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, fresh.c_str());
+                            enrollKey.c_str(), cls.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread,
+                            fresh.c_str());
                     enrollKey = fresh;
                 } else {
                     UE_LOGW("prop_element_tracker: KEY-UNIQUENESS -- re-key FAILED for duplicate '%ls' "
-                            "key='%ls' loc=(%.1f,%.1f,%.1f) -- enrolling under the duplicate (pre-fix behavior)",
-                            cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z);
+                            "key='%ls' loc=(%.1f,%.1f,%.1f)%s -- enrolling under the duplicate (pre-fix behavior)",
+                            cls.c_str(), enrollKey.c_str(), dupLoc.X, dupLoc.Y, dupLoc.Z, dupUnread);
                 }
             }
         }

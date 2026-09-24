@@ -15,9 +15,12 @@ namespace ue_wrap { struct FVector; struct FRotator; }
 namespace coop::trash_channel {
 
 // Host: E re-skinned. `kind` is to-clump or to-pile, `newActor` the new rendering already
-// positioned. Bumps E's context, rebinds E onto the new actor and broadcasts the convert.
+// positioned. Bumps E's context, rebinds E onto the new actor and broadcasts the convert. A to-pile's
+// `loc` is only its land's fallback and may be unknown (`locKnown` false); a to-clump's goes out at
+// once and must be known.
 void OnHostConvert(coop::net::Session& s, coop::element::ElementId E, uint8_t kind, void* newActor,
-                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType);
+                   const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot, uint8_t chipType,
+                   bool locKnown = true);
 
 // Grab adoption. Every clump is born from a chipPile's deferred spawn, whose source object is
 // the pile; the Func thunk records that link here so the held edge consumes a certificate
@@ -42,9 +45,11 @@ coop::element::ElementId AdoptBornClump(coop::net::Session& s, coop::element::El
 // certificate and open E's carry as a grab does -- the one to-clump broadcast, tagged `why`, the
 // churn latch, the land settle and the termination pass -- so the roll ends on the same land as a
 // throw. A pile taken inside its own land settle folds as churn instead, this clump carrying the
-// lane on. False when there is no certificate: a hand edge consumed it first, or the clump died.
-// Game thread.
-bool OpenBornCarry(coop::net::Session& s, void* clump, const char* why);
+// lane on. NoCertificate when there is none: a hand edge consumed it first, or the clump died.
+// Unplaceable when the clump's location cannot be read: nothing opens, and the certificate stays for
+// the birth-orphan express. Game thread.
+enum class BornCarry { Opened, NoCertificate, Unplaceable };
+BornCarry OpenBornCarry(coop::net::Session& s, void* clump, const char* why);
 
 // Host: a broom stroke pushed `clump`, a tracked clump whose carry had closed at rest, un-held and
 // not re-piled. Open its latch again with no convert, since it is a clump on every peer already and

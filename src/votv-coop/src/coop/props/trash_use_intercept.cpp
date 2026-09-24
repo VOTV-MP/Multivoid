@@ -149,11 +149,12 @@ static bool OnPileUseIntercept(void* self, void* /*params*/) {
                         // The position and chip type of the pile the client aims at; the host's
                         // grab-intent line for the same eid must match, and a mismatch names an
                         // identity misalignment.
-                        const ue_wrap::FVector cloc = ue_wrap::engine::GetActorLocation(aimedNative);
-                        UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS on BOUND pile eid=%u at(%.1f,%.1f,%.1f) "
+                        ue_wrap::FVector cloc{};
+                        const bool clocRead = ue_wrap::engine::TryGetActorLocation(aimedNative, cloc);
+                        UE_LOGI("[GRAB-INTENT] CLIENT E-PRESS on BOUND pile eid=%u at(%.1f,%.1f,%.1f)%s "
                                 "chipType=%u (lookAtActor, occlusion-correct) -> native use CANCELLED "
                                 "(no grab, no use_deny) + requesting grab from host",
-                                static_cast<unsigned>(beid), cloc.X, cloc.Y, cloc.Z,
+                                static_cast<unsigned>(beid), cloc.X, cloc.Y, cloc.Z, clocRead ? "" : " (unread)",
                                 static_cast<unsigned>(ue_wrap::prop::GetChipType(aimedNative)));
                         coop::trash_channel::SendGrabIntent(*s, static_cast<uint32_t>(beid));
                         g_cancelPairedUseRelease = true;  // pair: the _42 release of this cancelled press dies too
