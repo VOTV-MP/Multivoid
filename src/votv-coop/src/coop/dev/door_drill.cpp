@@ -153,19 +153,6 @@ void Sample() {
                 Side(), firstNonEmpty, g_doors.size(), firstUnread);
 }
 
-// A game-thread body run from the walker's thread, bounded so a stalled game thread ends the
-// walker instead of hanging it.
-template <class Fn>
-int RunGT(Fn&& body) {
-    auto done = std::make_shared<std::atomic<int>>(0);
-    GT::Post([done, body]() mutable { body(*done); });
-    for (int waited = 0; done->load() == 0; waited += 5) {
-        if (waited >= 4000) return 0;
-        ::Sleep(5);
-    }
-    return done->load();
-}
-
 // The door this peer's navmesh reaches by the shortest walk, standing at one of its two approach
 // points (in front of the leaf or behind it): the route has to end at that point, since a door
 // behind a wall has a route that stops short or winds far around. Says why when there is none. A
@@ -220,7 +207,7 @@ bool PickReachableDoor(void* player, const ue_wrap::FVector& at, DR::DirectorGoa
 // The local player's location, or the origin when it could not be read.
 ue_wrap::FVector LocalAt() {
     auto at = std::make_shared<ue_wrap::FVector>();
-    RunGT([at](std::atomic<int>& done) {
+    GT::RunAndWait([at](std::atomic<int>& done) {
         void* p = coop::players::Registry::Get().Local();
         if (p && R::IsLive(p)) E::TryGetActorLocation(p, *at);
         done.store(1);
@@ -230,7 +217,7 @@ ue_wrap::FVector LocalAt() {
 
 float DistToGoal(const ue_wrap::FVector& target) {
     auto dist = std::make_shared<float>(-1.f);
-    RunGT([dist, target](std::atomic<int>& done) {
+    GT::RunAndWait([dist, target](std::atomic<int>& done) {
         void* p = coop::players::Registry::Get().Local();
         ue_wrap::FVector at{};
         if (p && R::IsLive(p) && E::TryGetActorLocation(p, at)) *dist = HorizDist(at, target);
@@ -243,7 +230,7 @@ float DistToGoal(const ue_wrap::FVector& target) {
 // the read failed.
 int ReadOpen(void* door, bool settled) {
     auto open = std::make_shared<int>(-1);
-    RunGT([door, open, settled](std::atomic<int>& done) {
+    GT::RunAndWait([door, open, settled](std::atomic<int>& done) {
         bool o = false;
         if (settled ? D::TryReadOpen(door, o) : D::TryReadOpenIntent(door, o)) *open = o ? 1 : 0;
         done.store(1);
@@ -264,7 +251,7 @@ int WaitForOpen(void* door, int want, int boundMs, bool settled = false) {
 // Whether this peer's own sensor list for `door` holds its own player: 1 or 0, -1 when unread.
 int WalkerListed(void* door) {
     auto listed = std::make_shared<int>(-1);
-    RunGT([door, listed](std::atomic<int>& done) {
+    GT::RunAndWait([door, listed](std::atomic<int>& done) {
         void* held[kReadMax];
         const int n = D::ReadSensorOverlaps(door, held, kReadMax);
         void* const me = coop::players::Registry::Get().Local();
@@ -393,7 +380,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     auto pick = std::make_shared<Pick>();
     auto toDoor = std::make_shared<DR::DirectorGoal>();
     toDoor->reachCm = kReachCm;
-    const int picked = RunGT([pick, toDoor](std::atomic<int>& done) {
+    const int picked = GT::RunAndWait([pick, toDoor](std::atomic<int>& done) {
         void* p = coop::players::Registry::Get().Local();
         if (!p || !R::IsLive(p) || !E::GetController(p) || !E::TryGetActorLocation(p, pick->start)) {
             done.store(2);
@@ -430,7 +417,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     void* const door = toDoor->targetActor;
     struct Box { bool ok = false; ue_wrap::FVector centre{}, half{}, origin{}, fwd{}; };
     auto box = std::make_shared<Box>();
-    RunGT([door, box](std::atomic<int>& done) {
+    GT::RunAndWait([door, box](std::atomic<int>& done) {
         box->ok = D::ReadSensorBox(door, box->centre, box->half) && E::TryGetActorLocation(door, box->origin);
         box->fwd = E::GetActorForwardVector(door);
         done.store(1);
@@ -499,7 +486,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         // A pass starts from a closed door: an open or opening one is pressed shut first, and its swing
         // waited out; one already closing is only waited out.
         if (ReadOpenIntent(door) == 1) {
-            RunGT([door](std::atomic<int>& done) {
+            GT::RunAndWait([door](std::atomic<int>& done) {
                 void* p = coop::players::Registry::Get().Local();
                 done.store(p && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
             });
@@ -511,7 +498,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         }
         r.listedBefore = WalkerListed(door);
         const int openBefore = ReadOpenIntent(door);
-        const int pressed = RunGT([door](std::atomic<int>& done) {
+        const int pressed = GT::RunAndWait([door](std::atomic<int>& done) {
             void* p = coop::players::Registry::Get().Local();
             done.store(p && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
         });
@@ -552,7 +539,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         r.kept = WalkerListed(door);
         // Where the sensor box is with the door open, against the closed-door reading.
         auto now = std::make_shared<Box>();
-        RunGT([door, now](std::atomic<int>& done) {
+        GT::RunAndWait([door, now](std::atomic<int>& done) {
             now->ok = D::ReadSensorBox(door, now->centre, now->half);
             done.store(1);
         });
@@ -581,7 +568,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
     int hitOpenedAt = -1;
     if (back2) {
         for (int hit = 1; hit <= kHitMax && hitOpenedAt < 0; ++hit) {
-            RunGT([door](std::atomic<int>& done) {
+            GT::RunAndWait([door](std::atomic<int>& done) {
                 void* p = coop::players::Registry::Get().Local();
                 done.store(p && D::CallHit(door, p, kHitDamage) ? 1 : 2);
             });
