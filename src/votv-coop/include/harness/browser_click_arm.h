@@ -1,7 +1,7 @@
 // harness/browser_click_arm.h -- TEST-ONLY: the VOTVCOOP_* variables that do what a player's click in the
 // multiplayer menu does, so an autonomous run can open the browser, host and join without a mouse. They
 // fire once from the harness timeline, once what a click finds ready is loaded: the master list, the
-// session manager's configuration and the durable identity (a real click comes later still, once the menu
+// nickname seed and the durable identity (a real click comes later still, once the menu
 // is up). A host announce made before the identity has loaded reaches the master empty and is refused
 // ("missing/bad identity"). Each is inert unless set.
 //

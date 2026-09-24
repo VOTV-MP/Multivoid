@@ -125,10 +125,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // behind; a drill waits on it to prove the run is measuring the configuration it asked for.
     cfg::ReportEffectiveConfig();
     // The master list and the chosen slot, read from the file the steps above left (every master
-    // contact reads them), then the host fallback Config into session_manager, before any browser
-    // action can fire.
+    // contact reads them), before any browser action can fire.
     coop::net::master_slots::Init();
-    coop::session_manager::Configure(cfg::ReadP2PHostFallback());
     // The local nickname from config (the env twin, the ini, the registry default), so the browser
     // shows the current name; the browser value wins at session start.
     {
@@ -168,7 +166,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // before it is written.
     session_runtime::InstallLobbyPlayerCountSource();
     // The test variables that do what a click in the multiplayer menu does fire here, once what a click
-    // finds ready is: the master list, the session manager's configuration and the identity above.
+    // finds ready is: the master list, the nickname seed and the identity above.
     browser_click_arm::FireFromEnv();
 
     const bool storyBoot = (scenario == "play");

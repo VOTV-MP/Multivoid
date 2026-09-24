@@ -86,9 +86,8 @@ struct Config {
     std::string turnList;    // "turn:host:port,..."
     std::string turnUser;    // parallel to turnList
     std::string turnPass;    // parallel to turnList
-    // ICE policy: "" or "all" (host, reflexive and relay candidates), "relay" (TURN only),
-    // "disable", "default" (GNS's). Mapped to IceEnable in StartP2P.
-    std::string iceMode;
+    // No candidate policy here: it is the player's net.ice setting, which StartP2P reads for
+    // every P2P session whichever door it came through.
 
     // True when the destination was named locally (a typed address, an ini, an autotest) rather
     // than advertised by the network. peer_admission tells "the player chose this address" from

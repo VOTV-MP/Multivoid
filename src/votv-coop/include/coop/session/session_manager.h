@@ -19,11 +19,6 @@
 
 namespace coop::session_manager {
 
-// Push the host fallback Config from the harness at boot, which owns the env and ini readers;
-// call once before any browser action. The fallback is what HostWithSave uses when the master
-// announce fails: hosting must not require a reachable master.
-void Configure(const coop::net::Config& fallbackHostCfg);
-
 // The mod's version identity is a pair: GameTarget names the VOTV cook this build targets, compiled
 // in from the header generated out of coop/version.h.in; the build number is kProtocolVersion,
 // which moves exactly when compatibility moves. DisplayVersion is the composite the menu shows.
@@ -141,9 +136,9 @@ bool ConnectDirect(const std::string& hostPort);
 
 // Dial a host by identity over signaling with no master in the loop, the P2P twin of
 // ConnectDirect. `hostIdentity` is the host's rendered identity (gen: and 64 hex, the dial line
-// in its log); `fallback` supplies the resolved signaling and ICE fields, from the config the
-// caller read. False when either is missing or an action is in flight.
-bool ConnectP2PDirect(const std::string& hostIdentity, const coop::net::Config& fallback);
+// in its log); `p2pFields` supplies the resolved signaling and ICE server fields, from the config
+// the caller read. False when either is missing or an action is in flight.
+bool ConnectP2PDirect(const std::string& hostIdentity, const coop::net::Config& p2pFields);
 
 // Kick an async fetch of the latest version, triggered from the browser surface. Self-debounced:
 // one worker in flight and a minimum interval between fetch starts. LatestVersionLine is empty

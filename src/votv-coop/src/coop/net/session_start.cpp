@@ -6,8 +6,8 @@
 
 #include "coop/net/session.h"
 
-#include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
-#include "coop/config/config_registry.h"  // rows::net_fakelink_kbs, the connect-cap rows
+#include "coop/config/config.h"           // Resolve* for the rows below
+#include "coop/config/config_registry.h"  // rows: net_fakelink_kbs, the connect cap, net_ice
 #include "coop/net/connect_history.h"
 #include "coop/net/master_slots.h"       // an empty relay is the chosen master's
 #include "coop/net/peer_admission.h"
@@ -319,13 +319,14 @@ bool Session::StartP2P() {
     ice.turnList = cfg_.turnList;
     ice.turnUser = cfg_.turnUser;
     ice.turnPass = cfg_.turnPass;
-    // The candidate policy: all (host, reflexive and relay) by default; relay-only forces the TURN
-    // path (privacy, or to validate the relay end to end); disable turns ICE off; default leaves
-    // GNS's own.
-    if (cfg_.iceMode == "relay")        ice.enable = IceEnable::RelayOnly;
-    else if (cfg_.iceMode == "disable") ice.enable = IceEnable::Disable;
-    else if (cfg_.iceMode == "default") ice.enable = IceEnable::Default;
-    else                                ice.enable = IceEnable::All;   // "" / "all"
+    // The candidate policy is the player's own setting, read here, at each P2P start, so every door
+    // a session comes through honours it: a lobby host or join, or a dial with no master. The
+    // servers above are the session's (a lobby's come from its master); the policy is no master's
+    // to know. All by default; relay forces the TURN relay, so the peer is shown the relay's
+    // address instead of ours. MTA reads its player's transport setting at each connect the same
+    // way: CConnectManager reads the packet_tag setting at both of its StartNetwork calls.
+    ice.relayOnly =
+        coop::config::ResolveEnum(coop::config_registry::rows::net_ice) == "relay";
     ApplyGlobalIceConfig(ice);
 
     // 3. The signaling transport, the out-of-band rendezvous for the opaque ICE blobs; constructed

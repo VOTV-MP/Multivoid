@@ -12,24 +12,6 @@
 
 namespace coop::net {
 
-namespace {
-
-int IceEnableFlags(IceEnable e) {
-    switch (e) {
-        case IceEnable::Disable:
-            return k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Disable;
-        case IceEnable::RelayOnly:
-            return k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Relay;
-        case IceEnable::All:
-            return k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_All;
-        case IceEnable::Default:
-        default:
-            return k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Default;
-    }
-}
-
-}  // namespace
-
 void ApplyGlobalIceConfig(const IceConfig& ice) {
     auto* utils = SteamNetworkingUtils();
     if (!utils) {
@@ -37,32 +19,26 @@ void ApplyGlobalIceConfig(const IceConfig& ice) {
         return;
     }
 
-    // Which candidate types to gather/share. Leave GNS's user default in place
-    // when the caller asks for Default (don't write a value).
-    if (ice.enable != IceEnable::Default) {
-        utils->SetGlobalConfigValueInt32(
-            k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable, IceEnableFlags(ice.enable));
-    }
-
-    // STUN server list (rung 2 hole-punch). An empty string is a MEANINGFUL
-    // value to GNS: "NAT piercing will not be attempted" -- so set it
-    // unconditionally to reflect the caller's intent exactly.
+    // Every value is written, because these are process-global and a session must not run on its
+    // predecessor's: a previous session's relay-only policy, or a TURN credential minted for a
+    // lobby that ended, stays in effect until something overwrites it. An empty STUN list is
+    // meaningful to GNS ("NAT piercing will not be attempted"), and an empty TURN list offers no
+    // relay candidate.
+    utils->SetGlobalConfigValueInt32(
+        k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,
+        ice.relayOnly ? k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_Relay
+                      : k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_All);
     utils->SetGlobalConfigValueString(
         k_ESteamNetworkingConfig_P2P_STUN_ServerList, ice.stunList.c_str());
+    utils->SetGlobalConfigValueString(
+        k_ESteamNetworkingConfig_P2P_TURN_ServerList, ice.turnList.c_str());
+    utils->SetGlobalConfigValueString(
+        k_ESteamNetworkingConfig_P2P_TURN_UserList, ice.turnUser.c_str());
+    utils->SetGlobalConfigValueString(
+        k_ESteamNetworkingConfig_P2P_TURN_PassList, ice.turnPass.c_str());
 
-    // TURN relay (rung 3, coturn). Only meaningful with all three parallel
-    // lists; skip entirely when no TURN server is configured.
-    if (!ice.turnList.empty()) {
-        utils->SetGlobalConfigValueString(
-            k_ESteamNetworkingConfig_P2P_TURN_ServerList, ice.turnList.c_str());
-        utils->SetGlobalConfigValueString(
-            k_ESteamNetworkingConfig_P2P_TURN_UserList, ice.turnUser.c_str());
-        utils->SetGlobalConfigValueString(
-            k_ESteamNetworkingConfig_P2P_TURN_PassList, ice.turnPass.c_str());
-    }
-
-    UE_LOGI("ice: applied enable=%d stun='%s' turn='%s'",
-            static_cast<int>(ice.enable),
+    UE_LOGI("ice: applied policy=%s stun='%s' turn='%s'",
+            ice.relayOnly ? "relay" : "all",
             ice.stunList.empty() ? "(none)" : ice.stunList.c_str(),
             ice.turnList.empty() ? "(none)" : ice.turnList.c_str());
 }

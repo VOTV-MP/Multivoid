@@ -48,7 +48,7 @@ CFG_ENUM(net_role, "net.role", "net", "", "host|client", "VOTVCOOP_NET_ROLE",
 CFG_STRING(net_peer, "net.peer", "net", "127.0.0.1", "VOTVCOOP_NET_PEER", false,
     "Test framework: the host address a client connects to at auto-start (lan topology).")
 CFG_INT(net_port, "net.port", "net", ::coop::net::kDefaultPort, 1, 65535, "VOTVCOOP_NET_PORT",
-    "UDP port the host listens on (lan topology).")
+    "UDP port a DIRECT host listens on: the lan topology, and a DIRECT game hosted from the menu.")
 CFG_ENUM(net_topology, "net.topology", "net", "lan", "lan|p2p", "VOTVCOOP_NET_TOPOLOGY",
     "Transport shape: lan = direct UDP, p2p = internet session via the signaling server "
     "(NAT traversal, no port forwarding needed).")
@@ -109,9 +109,10 @@ CFG_STRING(net_turn_user, "net.turn_user", "net", "", "VOTVCOOP_NET_TURN_USER", 
     "Static TURN username (dev / self-hosted relays only).")
 CFG_STRING(net_turn_pass, "net.turn_pass", "net", "", "VOTVCOOP_NET_TURN_PASS", false,
     "Static TURN password (dev / self-hosted relays only).")
-CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay|disable|default", "VOTVCOOP_NET_ICE",
-    "ICE candidate policy for p2p sessions. Unset/all = every path; relay = force the TURN "
-    "relay; disable/default = engine defaults.")
+CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay", "VOTVCOOP_NET_ICE",
+    "ICE candidate policy for every internet (p2p) session, lobbies included. Unset/all = every "
+    "path, direct first; relay = only through the master's TURN relay, and peers see the "
+    "relay's address instead of yours.")
 
 // The receive-boundary novelty cap (coop/text/novelty_ledger.h). Every codepoint in the
 // repertoire is rasterisable on demand from chat text, the one attacker-controlled string in

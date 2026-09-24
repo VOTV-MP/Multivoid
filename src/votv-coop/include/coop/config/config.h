@@ -64,12 +64,6 @@ std::string ResolveString(const config_registry::StringRow& row);
 // otherwise hands-on play stays single-machine.
 coop::net::Config ReadNetConfig(bool& enabled);
 
-// A forced P2P-host transport Config from the same keys as ReadNetConfig's P2P path. The
-// Host-Game flow falls back to it when the master announce fails, so hosting never dies on an
-// unreachable master. It does not read net.role, so it never triggers the play-path
-// auto-start.
-coop::net::Config ReadP2PHostFallback();
-
 // The display nickname: env, then ini, then the registry's my-name default.
 std::wstring ReadNickname();
 

@@ -4,7 +4,7 @@
 
 #include "coop/session/session_manager.h"
 
-#include "coop/config/config.h"           // ResolveString -- the lobby password row
+#include "coop/config/config.h"           // Resolve* -- the password and net.port rows
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
 #include "coop/net/lobby_announcer.h"
 #include "coop/net/master_slots.h"  // which master a new lobby, the list and the update check use
@@ -80,10 +80,8 @@ bool PeekDeferredAnnounce(DeferredAnnounce& out) {
     return true;
 }
 
-// Config pushed from the harness at boot: the host fallback Config (used when the announce
-// fails); g_hostStatus is the last host-action result the UI shows. All under g_cfgMu.
+// g_hostStatus is the last host-action result the UI shows. All under g_cfgMu.
 std::mutex g_cfgMu;
-net::Config g_fallbackHostCfg;
 std::string g_hostStatus;
 std::string g_ownLobbyId;  // our own announced lobbyId -> we never list or join it (no self-join)
 // The nickname default comes from the shared registry constant.
@@ -135,6 +133,32 @@ void QueueStart(const net::Config& cfg) {
     g_hasPending = true;
 }
 
+// The port a DIRECT host listens on is the player's net.port, read when the host starts, like the
+// password rows above, from the same row the host picker displays; MTA's server reads its listen
+// port from its own config each time it starts the same way (CMainConfig::Load, serverport).
+uint16_t PlayerListenPort() {
+    return static_cast<uint16_t>(
+        ::coop::config::ResolveInt(::coop::config_registry::rows::net_port));
+}
+
+// A master lobby's P2P session Config, for the host and the joiner alike: the master's answer
+// names the rendezvous (its signaling relay and token) and the ICE servers (STUN, the TURN
+// credentials it minted for this peer). lobby::HostInfo and lobby::JoinInfo carry the same six
+// fields. The candidate policy is the player's, read at the P2P start (Session::StartP2P).
+template <typename MasterAnswer>
+net::Config LobbyP2PConfig(net::Role role, const MasterAnswer& info) {
+    net::Config cfg;
+    cfg.role = role;
+    cfg.topology = net::Topology::P2P;
+    cfg.signalingUrl = info.signalingUrl;
+    cfg.signalingToken = info.signalingToken;
+    cfg.stunList = info.stun;
+    cfg.turnList = info.turnUri;
+    cfg.turnUser = info.turnUser;
+    cfg.turnPass = info.turnPass;
+    return cfg;
+}
+
 // "host" or "host:port" to host + port (kDefaultPort without one). IPv4 or a hostname; bracketed
 // IPv6 is not parsed.
 bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
@@ -153,35 +177,22 @@ bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
 }
 
 // What an unlisted DIRECT host can honestly promise: an address is enough, and a password if
-// there is one, which is exactly what the joiner's window asks for. `why` is a parameter because
-// the three callers are unlisted for two different reasons (the master could not be reached, or
-// the host chose it), and a builder that hardcoded one told the other something false about its
-// own network.
-std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked) {
+// there is one, which is exactly what the joiner's window asks for. The address includes the port
+// whenever it is not the default, since a bare IP in the Direct Connect box dials kDefaultPort.
+// `why` is a parameter because the three callers are unlisted for two different reasons (the
+// master could not be reached, or the host chose it), and a builder that hardcoded one told the
+// other something false about its own network.
+std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked, uint16_t port) {
     std::string s(lead);
     s += " -- ";
     s += why;
     s += "; friends use Direct Connect with your IP";
+    if (port != net::kDefaultPort) s += ":" + std::to_string(port);
     if (locked) s += " and the password";
     return s;
 }
 
 }  // namespace
-
-void Configure(const net::Config& fallbackHostCfg) {
-    {
-        std::lock_guard<std::mutex> lk(g_cfgMu);
-        g_fallbackHostCfg = fallbackHostCfg;
-        UE_LOGI("session_manager: configured -- fallback(signaling-set=%d)",
-                g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1);
-    }
-    // No update check here: one at boot config time would tell the master every player's source
-    // address at game launch, before any multiplayer decision exists. The check fires from
-    // ui::server_browser_surface::Open(), because opening the browser is a request to talk to the
-    // master, the same trigger the lobby list has; everything else the mod sends follows an action
-    // the player took. The main-menu label falls back to DisplayVersion() when no check has landed,
-    // so it is never empty, and the check is informational, never a gate.
-}
 
 void SetHostStatus(const std::string& status) {
     std::lock_guard<std::mutex> lk(g_cfgMu);
@@ -329,15 +340,7 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, world, locked, playersMax, 8000);
             if (info.ok && !coop::shutdown::IsShuttingDown()) {
-                net::Config cfg;
-                cfg.role = net::Role::Host;
-                cfg.topology = net::Topology::P2P;
-                cfg.signalingUrl = info.signalingUrl;
-                cfg.signalingToken = info.signalingToken;
-                cfg.stunList = info.stun;
-                cfg.turnList = info.turnUri;
-                cfg.turnUser = info.turnUser;
-                cfg.turnPass = info.turnPass;
+                const net::Config cfg = LobbyP2PConfig(net::Role::Host, info);
                 SetOwnLobbyId(info.lobbyId);  // never list or join our own lobby
                 QueueStart(cfg);
                 UE_LOGI("session_manager: HOST ready -- lobby=%s identity=%s (session boot = harness Tier 2)",
@@ -419,9 +422,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     // announce is stashed; the scoreboard's "Show in server browser" performs it if the host asks.
     // No worker and no HTTP: a DIRECT Config is built from the listen port alone.
     if (directConnection && hideFromBrowser) {
-        net::Config fallbackCfg;
-        { std::lock_guard<std::mutex> lk(g_cfgMu); fallbackCfg = g_fallbackHostCfg; }
-        const uint16_t directPort = fallbackCfg.port ? fallbackCfg.port : net::kDefaultPort;
+        const uint16_t directPort = PlayerListenPort();
         net::Config cfg;
         cfg.role = net::Role::Host;
         cfg.topology = net::Topology::LanDirect;
@@ -441,26 +442,24 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         // Through the same builder as the two fallback lines, so the deliberately unlisted
         // configuration gets the same password wording.
         SetHostStatus(UnlistedDirectStatus(("Hosting '" + name + "' DIRECT").c_str(),
-                                           "hidden by your choice, NOT listed", locked));
+                                           "hidden by your choice, NOT listed", locked,
+                                           directPort));
         UE_LOGI("session_manager: hosting DIRECT/HIDDEN '%s' port=%u -- NOT announced (the "
                 "master is never told; the scoreboard's Show-in-browser tick announces it "
                 "later if the host asks)", name.c_str(), directPort);
         g_actionBusy.store(false);
         return true;
     }
-    net::Config fallback;
-    { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
     // `hideFromBrowser` is not captured: the only branch that reads it returned above, before this
     // worker exists.
-    std::thread([masterUrl, fallback, choice, name, locked, playersMax,
-                 directConnection, lobbyPw] {
+    std::thread([masterUrl, choice, name, locked, playersMax, directConnection, lobbyPw] {
         // An exception escaping a detached thread is std::terminate; the store(false) is outside
         // the try so g_actionBusy clears on every path.
         try {
             if (coop::shutdown::IsShuttingDown()) { g_actionBusy.store(false); return; }
             // Hosting never depends on a reachable master: the announce lists the lobby and
             // collects the master-issued signaling and TURN, but the boot is queued either way
-            // (announce ok: the master's P2P Config, listed; announce failed: the local fallback,
+            // (announce ok: the master's P2P Config, listed; announce failed: a DIRECT listen,
             // unlisted but in-game). MTA precedent: the server runs regardless of the master list.
             // The harness loads the world, then starts.
             const std::string world = choice.newGame ? choice.newName : choice.slot;
@@ -468,8 +467,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             // master records conn="direct" and the announce's source address, and /v1/join hands
             // joiners "ip:port"); AUTO announces the P2P lobby. An unreachable master blocks
             // neither.
-            const uint16_t directPort =
-                fallback.port ? fallback.port : net::kDefaultPort;
+            const uint16_t directPort = PlayerListenPort();
             const lobby::HostInfo info =
                 Announcer().Host(masterUrl, name, world, locked, playersMax,
                                  8000, directConnection ? static_cast<int>(directPort) : 0);
@@ -482,14 +480,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 cfg.topology = net::Topology::LanDirect;
                 cfg.port = directPort;
             } else if (listed) {
-                cfg.role = net::Role::Host;
-                cfg.topology = net::Topology::P2P;
-                cfg.signalingUrl = info.signalingUrl;
-                cfg.signalingToken = info.signalingToken;
-                cfg.stunList = info.stun;
-                cfg.turnList = info.turnUri;
-                cfg.turnUser = info.turnUser;
-                cfg.turnPass = info.turnPass;
+                cfg = LobbyP2PConfig(net::Role::Host, info);
             } else {
                 // AUTO with no answer from the master falls back to a LanDirect listen,
                 // unconditionally: a joiner needs the host's `gen:` identity to dial a P2P host,
@@ -497,8 +488,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 // net.host_identity, so an unlisted P2P host is unreachable even with a healthy
                 // signaling server. LanDirect stays reachable with no master alive, through the
                 // Direct Connect box that ships.
-                cfg = fallback;
-                cfg.role = net::Role::Host;        // belt-and-suspenders (fallback is already host)
+                cfg.role = net::Role::Host;
                 cfg.topology = net::Topology::LanDirect;
                 cfg.port = directPort;
             }
@@ -534,13 +524,15 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                         info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
             } else if (directConnection) {
                 SetHostStatus(UnlistedDirectStatus("Hosting DIRECT",
-                                                   "master unreachable, NOT listed", locked));
+                                                   "master unreachable, NOT listed", locked,
+                                                   directPort));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
                         slots::DisplayName(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
                 // The line describes what happened: a DIRECT listen, joinable by address.
                 SetHostStatus(UnlistedDirectStatus("Hosting",
-                                                   "master unreachable, NOT listed", locked));
+                                                   "master unreachable, NOT listed", locked,
+                                                   directPort));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
                         "-- fell back to a DIRECT listen on port %u so the session stays joinable",
                         slots::DisplayName(masterUrl).c_str(), static_cast<unsigned>(directPort));
@@ -659,18 +651,12 @@ bool JoinLobby(const std::string& masterUrl, const std::string& lobbyId,
                     QueueStart(cfg);
                     UE_LOGI("session_manager: JOIN ready -- DIRECT lobby (LanDirect dial; session boot = harness Tier 2)");
                 } else {
-                cfg.topology = net::Topology::P2P;
-                cfg.hostIdentity = info.hostIdentity;
-                cfg.signalingUrl = info.signalingUrl;
-                cfg.signalingToken = info.signalingToken;
-                cfg.stunList = info.stun;
-                cfg.turnList = info.turnUri;
-                cfg.turnUser = info.turnUser;
-                cfg.turnPass = info.turnPass;
-                cfg.lobbyPassword = TakeJoinPassword();
-                QueueStart(cfg);
-                UE_LOGI("session_manager: JOIN ready -- host=%s (session boot = harness Tier 2)",
-                        info.hostIdentity.c_str());
+                    cfg = LobbyP2PConfig(net::Role::Client, info);
+                    cfg.hostIdentity = info.hostIdentity;
+                    cfg.lobbyPassword = TakeJoinPassword();
+                    QueueStart(cfg);
+                    UE_LOGI("session_manager: JOIN ready -- host=%s (session boot = harness Tier 2)",
+                            info.hostIdentity.c_str());
                 }
             } else if (!info.ok) {
                 UE_LOGW("session_manager: JoinLobby '%s' failed", lobbyId.c_str());
@@ -723,7 +709,7 @@ bool ConnectDirect(const std::string& hostPort) {
     return ok;
 }
 
-bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallback) {
+bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& p2pFields) {
     // The P2P twin of ConnectDirect: dial a host by identity through a signaling server with no
     // master in the loop, for the env test client and for a dev dialling a `gen:` line copied from
     // a log. The signaling and ICE half comes from the caller's already resolved config:
@@ -735,13 +721,13 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
     bool ok = false;
     if (hostIdentity.empty()) {
         UE_LOGW("session_manager: P2P connect needs a host identity (`gen:<64 hex>`)");
-    } else if (fallback.signalingUrl.empty() && slots::DefaultSignalingUrl().empty()) {
+    } else if (p2pFields.signalingUrl.empty() && slots::DefaultSignalingUrl().empty()) {
         // An empty relay is the chosen master's (the P2P entry resolves it); with no master
         // either, there is nowhere to rendezvous.
         UE_LOGW("session_manager: P2P connect needs a signaling server (net.signaling is empty "
                 "and no master is chosen)");
     } else {
-        net::Config cfg = fallback;
+        net::Config cfg = p2pFields;
         cfg.role = net::Role::Client;
         cfg.topology = net::Topology::P2P;
         cfg.hostIdentity = hostIdentity;

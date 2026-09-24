@@ -294,9 +294,10 @@ std::string ReadIniValue(const char* key, const char* def) {
     return v;
 }
 
-// The P2P transport fields of `c` from env, then ini, then default; shared by ReadNetConfig and
-// the master-unreachable host fallback, so the key set lives once. c.role picks the identity
-// default.
+// The P2P transport fields of `c` from env, then ini, then default, for a session configured
+// with no master (ReadNetConfig's p2p topology); a master lobby takes its rendezvous and ICE
+// servers from the master's answer instead. The candidate policy, net.ice, is not a field: every
+// P2P start reads it (Session::StartP2P).
 static void FillP2PFields(coop::net::Config& c) {
     // The signaling rendezvous server; both peers connect outbound, no port forward. Only a session
     // dialled with no master reads this (a lobby's rendezvous and token come from its master's own
@@ -322,11 +323,6 @@ static void FillP2PFields(coop::net::Config& c) {
     c.turnList = ResolveString(config_registry::rows::net_turn);
     c.turnUser = ResolveString(config_registry::rows::net_turn_user);
     c.turnPass = ResolveString(config_registry::rows::net_turn_pass);
-
-    // The ICE candidate policy: "" or "all" (the default), "relay" (forces the TURN path, for
-    // privacy or to validate the relay end to end), "disable", "default"; mapped to IceEnable in
-    // Session::StartP2P. An enum row: an unknown token is garbage, the default plus a sweep row.
-    c.iceMode = ResolveEnum(config_registry::rows::net_ice);
 
     // Both as the player wrote them: an empty relay prints as the master's it will be.
     UE_LOGI("config: P2P fields -- identity=<durable key> host='%s' signaling='%s' stun='%s'",
@@ -388,18 +384,6 @@ coop::net::Config ReadNetConfig(bool& enabled) {
         c.lobbyPassword = ResolveString(config_registry::rows::net_join_password);
     }
 
-    return c;
-}
-
-coop::net::Config ReadP2PHostFallback() {
-    // The transport Config the Host-Game flow uses when the master announce fails, so hosting never
-    // dies on an unreachable master: a forced P2P host with signaling, identity and STUN from the
-    // same keys. Unlisted, but a configured peer can still join; MTA's server runs regardless of
-    // the master list too.
-    coop::net::Config c;
-    c.role = coop::net::Role::Host;
-    c.topology = coop::net::Topology::P2P;
-    FillP2PFields(c);
     return c;
 }
 
