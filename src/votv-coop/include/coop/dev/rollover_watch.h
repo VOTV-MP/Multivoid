@@ -9,7 +9,7 @@
 // fault the firewall absorbed, reads as reached above ran. It never refuses a call.
 //
 // Lines: ARMED once per world (the clock's rate inputs, the game mode, the calendar day and the
-// achievement the midnight roll branches on, the gate switch, the watches live); DAY when a day
+// achievement the midnight roll branches on, whether the gate runs, the watches live); DAY when a day
 // number changes (the host's own; on a client the host's, as the clock stream carries it, and its
 // own), with every watch's total; DIGEST when the 24 hash codes change; one line per pump tick for
 // each roll verb or rare consumer that ran in it.

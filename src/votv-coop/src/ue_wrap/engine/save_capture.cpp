@@ -222,12 +222,17 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
         const bool watching = InstallGatherWatch();
         bool called = false;
         {
+            // Both scoped, so an unwind past the call still lets go: a flag left set would go on
+            // refusing the game's event test for the three gatherers.
+            struct Capturing {
+                Capturing() { g_capturing = true; }
+                ~Capturing() { g_capturing = false; }
+            };
             script_gate::Hold gate("the save capture");
             g_worldGateRefused = 0;
             g_otherGatesRefused = 0;
-            g_capturing = true;
+            Capturing capturing;
             called = ue_wrap::Call(gm, f);
-            g_capturing = false;
         }
         if (!called) {
             UE_LOGW("save_capture: mainGamemode.saveObjects dispatch failed -- abort");

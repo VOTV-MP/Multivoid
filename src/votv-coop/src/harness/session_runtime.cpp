@@ -412,6 +412,9 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                 // No session: the object index still follows the engine, so a later session starts
                 // from a current one rather than a backlog.
                 ue_wrap::object_index::Drain();
+                // A session stopped on a path with no teardown (an aborted join) still holds the
+                // script gate; its hold ends here, on the first tick without a running session.
+                coop::subsystems::ReleaseSessionGateHold();
                 if (bootedIntoGameplay) {
                     // A run that auto-loaded its own world and may yet be joined: keep the coop
                     // observers armed so a session starting on this world does not begin behind.

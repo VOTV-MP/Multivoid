@@ -62,6 +62,11 @@ struct DisconnectStats {
 };
 DisconnectStats DisconnectAll();
 
+// The session's hold on the script gate, released: by DisconnectAll, and by the play loop on its
+// first tick without a running session, which covers a session stopped with no teardown (an
+// aborted join). Idempotent. Game thread.
+void ReleaseSessionGateHold();
+
 // Per-tick gameplay-world subsystem chain: the connect-broadcast retry drains,
 // every module's poll/apply Tick, the NPC pose stream/mirror, the trash
 // death-watches, and the dev probes. The caller gates this on worldUp (all of

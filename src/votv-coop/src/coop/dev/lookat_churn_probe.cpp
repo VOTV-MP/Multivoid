@@ -408,11 +408,10 @@ void Tick() {
     if (!IsEnabled()) return;
     ++g_tick;
     if (!g_watchAsked) {
-        // The gate runs while something holds it, and this probe can run outside a session, so it
-        // holds it for the process. Registration is cheap and idempotent; the watches stay inert
-        // until the gate has resolved the names on the game thread, which is why the verdict prints
-        // their liveness.
-        sg::Acquire("the look-at churn probe");
+        // The session's hold keeps the gate running for every tick this probe runs (it ticks inside
+        // TickGameplay only). Registration is cheap and idempotent; the watches stay inert until the
+        // gate has resolved the names on the game thread, which is why the verdict prints their
+        // liveness.
         g_watchAsked = true;
         for (const Watched& w : kWatched)
             if (!sg::WatchName(w.name, w.tag, &OnWatched, nullptr)) g_watchAsked = false;

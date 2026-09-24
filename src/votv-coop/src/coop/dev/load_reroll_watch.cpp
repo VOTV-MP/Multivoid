@@ -44,8 +44,8 @@ std::chrono::steady_clock::time_point g_nextLiveCount{};
 uint64_t g_reached[kCount] = {};
 uint64_t g_ran[kCount] = {};
 int      g_entryLines = 0;
-bool     g_ticked = false;           // a previous tick exists, and it left the switch on
-int      g_foundOff = 0;             // ticks that found the switch off
+bool     g_ticked = false;           // a previous tick exists, holding the gate
+int      g_foundOff = 0;             // ticks that found the gate off while held
 uint32_t g_worldGen = 0;
 
 bool IsEnabled() {
@@ -127,7 +127,7 @@ void Tick(const coop::net::Session& session) {
     EnsureWatches();
     const uint32_t gen = WI::Generation();
     if (gen != g_worldGen) {
-        UE_LOGI("load_reroll_watch: [%c] WORLD generation %u -> %u | the gate switch %s, found %s by this tick | "
+        UE_LOGI("load_reroll_watch: [%c] WORLD generation %u -> %u | the gate %s, found %s by this tick | "
                 "watches live %d/%d | so far: upgrades reached %llu ran %llu, Scramble Radar Dish reached %llu ran "
                 "%llu | join phase %s",
                 RoleChar(), g_worldGen, gen, g_ticked ? "held since the first tick" : "(first tick)",

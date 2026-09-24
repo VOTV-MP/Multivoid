@@ -42,10 +42,10 @@ CapturedForm ConsumeCapturedForm(bool wantNpc);
 // this does NOT clear the slot (the deferred converge still consumes it). GT-only, thread-local.
 bool IsCapturedForm(void* actor);
 
-// Watch the two conversion verbs by name at ue_wrap::script_gate and open the session
-// gate (SetEnabled(true)) -- both roles, since a client needs the window to observe
-// its own conversion. Called from subsystems::Install (world-up, session active).
-// Idempotent: the gate de-dups the watches. The capture store and the observe
+// Watch the two conversion verbs by name at ue_wrap::script_gate -- both roles, since a
+// client needs the window to observe its own conversion; the session's hold keeps the gate
+// running. Called from subsystems::Install (world-up, session active); registers once per
+// process. The capture store and the observe
 // counters accrue for as long as the session is active, behind neither the [dev]
 // script_gate_log gate nor its line cap, so a run cannot end having captured
 // nothing merely because logging was off.
@@ -56,8 +56,8 @@ void Install(coop::net::Session* session);
 // when script_gate_log is off.
 void Tick();
 
-// Close the session gate (SetEnabled(false)). Called from the DisconnectAll
-// teardown fanout. The detour itself stays (process-lifetime by design).
+// The session-end summary, always. Called from the DisconnectAll teardown fanout, which
+// also ends the session's hold on the gate.
 void OnDisconnect();
 
 // The summary lines the teardown prints -- the containment counters, the observe gates and the

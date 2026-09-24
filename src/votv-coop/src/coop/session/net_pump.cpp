@@ -599,6 +599,9 @@ void Tick(coop::net::Session& session) {
         // run-ending seam asked for. Here, not in the seam's own callback, because that runs inside
         // the VM's body loop, where a UFunction dispatch re-enters the interpreter.
         coop::death_revive::Tick(session, g_netLocal.Raw());
+        // A revive that gave up has torn the session down and fled, as the local-death branch below
+        // does; nothing after it may run for this session, the lanes' Install least of all.
+        if (g_fleeing) return;
         // The death policy: on a local death tear every coop game-side state down this frame, then
         // Stop. Stop alone is not enough: the game's death reload blocks the game thread at once,
         // so the deferred disconnect cleanup never runs. `dead` is true only on a real death (a

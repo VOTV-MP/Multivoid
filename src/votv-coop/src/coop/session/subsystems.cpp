@@ -174,13 +174,21 @@ namespace coop::subsystems {
 
 namespace {
 // Whether the session holds the script gate: taken once in Install, which is a retry pump
-// re-entered every tick, and released by DisconnectAll. Game thread.
+// re-entered every tick, and released by ReleaseSessionGateHold. Game thread.
 bool g_sessionHoldsGate = false;
 }  // namespace
 
+void ReleaseSessionGateHold() {
+    if (!g_sessionHoldsGate) return;
+    ue_wrap::script_gate::Release("the coop session");
+    g_sessionHoldsGate = false;
+}
+
 void Install(coop::net::Session& session) {
-    // The session is the gate's owner for its life; no lane enables or disables it.
-    if (!g_sessionHoldsGate) {
+    // The session is the gate's owner while it runs; no lane enables or disables it. Only a
+    // running session holds it: the env play scenario runs this Install with none, and a hold
+    // taken there would keep the gate on in solo play.
+    if (!g_sessionHoldsGate && session.running()) {
         ue_wrap::script_gate::Acquire("the coop session");
         g_sessionHoldsGate = true;
     }
@@ -479,12 +487,10 @@ DisconnectStats DisconnectAll() {
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
     coop::kerfur_convert::OnDisconnect();  // drop pending host-menu converges
     coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always)
-    // The session's hold on the script gate ends with the session's state; a session that lives on
-    // (a host whose last client left) takes it again at the next Install.
-    if (g_sessionHoldsGate) {
-        ue_wrap::script_gate::Release("the coop session");
-        g_sessionHoldsGate = false;
-    }
+    // The session's hold on the script gate ends with the session's state, released where the old
+    // switch turned the gate off, so the lanes below tear down as they always have; a session that
+    // lives on (a host whose last client left) takes it again at the next Install.
+    ReleaseSessionGateHold();
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands + owned-follow map
     coop::kerfur_menu_input::OnDisconnect();  // drop the cached session (the InpActEvt_use observer stays registered)
@@ -689,7 +695,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pause_guard"}; coop::pause_guard::Tick(isConnected); }  // coop no-pause invariant -- un-pause the world while connected (ESC menu stays usable; a paused peer froze its pose stream)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:run_end"}; coop::player::run_end_travel::Tick(); }  // the run-ending seam's session-scoped work: keep the gate enabled and publish the seam's readiness (the verdict itself runs in the VM's body loop)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:run_end"}; coop::player::run_end_travel::Tick(); }  // the run-ending seam's session-scoped work: publish the seam's readiness (the verdict itself runs in the VM's body loop)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // isSleep edge poll + WAITING dilation enforcement + the client need clamp
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)

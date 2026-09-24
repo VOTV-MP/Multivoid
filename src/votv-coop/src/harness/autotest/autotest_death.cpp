@@ -379,7 +379,7 @@ DWORD WINAPI DeathTestThread(LPVOID) {
 
     UE_LOGI("death_test: SEAM -- watching=%d gateEnabled=%d travelsSeen=%llu menuTravels=%llu "
             "cancelled=%llu lastReviveOk=%d sessionRunning=%d (the watch is process-wide; the "
-            "SESSION is what gates the verdict, and the gate's enable is session-scoped)",
+            "SESSION is what gates the verdict, and it holds the gate)",
             RET::WatchInstalled() ? 1 : 0,
             ue_wrap::script_gate::IsEnabled() ? 1 : 0,
             RET::TravelsSeen(), RET::MenuTravelsSeen(), RET::TravelsCancelled(),
@@ -524,10 +524,10 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         // needs both terms -- the detour saw it, and let it through.
         // Refusing nothing is only half the claim: a seam that never saw the travel refuses
         // nothing either. The first re-base of this check asked whether the seam SAW the travel,
-        // and that rested on something it should not have: with no session the gate's enable is
-        // this lane's to withhold, so the callback runs at all only because two OTHER consumers
-        // leave the gate enabled in solo. Fixing THAT would have flipped this check silently, on a
-        // change that has nothing to do with it. So the verdict is asked DIRECTLY: JudgeMenuTravel is the
+        // and that rested on something it should not have: with no session nothing holds the gate,
+        // so the callback runs at all only where something else happens to hold it in solo. A
+        // change to that would flip this check silently, on a change that has nothing to do with
+        // it. So the verdict is asked DIRECTLY: JudgeMenuTravel is the
         // seam's own classification, and with no session it must answer RunNoSession whatever the
         // gate is doing. That is the single-player guarantee resting on the test itself.
         const RET::Judgement j = RET::JudgeMenuTravel(R::FindObjectByClass(P::name::GamemodeClass));

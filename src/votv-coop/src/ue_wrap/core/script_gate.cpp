@@ -55,7 +55,7 @@ std::atomic<bool> g_countOn{false};
 // unresolved placeholder holds a second slot). What fills a table is its KEYED slots, retired
 // ones included, so the cap counts those: at most 3/8 of a table, the load at which a miss
 // probes under two slots. A name watch holds two keyed slots, so the name table takes 192 name
-// watches: each peer of a 2026-09-24 smoke held 24, the dev probes add up to 14, and the
+// watches: each peer of a 2026-09-24 smoke held 24, the dev probes add up to 22, and the
 // POLL->GATE arc moves about seventy polled rows onto watches.
 constexpr int kSlotBits = 10;
 constexpr int kSlots = 1 << kSlotBits;
@@ -490,11 +490,11 @@ void ResolvePendingNames() {
     // The string-to-name conversion dispatches ProcessEvent, so it runs OUTSIDE the registration
     // mutex: a registration reached from inside that dispatch would otherwise wait on itself.
     // Under the mutex only the pending literals are collected, and the re-key is done after.
-    const wchar_t* names[kSlots];
+    const wchar_t* names[kMaxKeyed];   // every keyed slot at most
     int n = 0;
     {
         std::lock_guard<std::mutex> lk(g_regMutex);
-        for (int i = 0; i < kSlots && n < kSlots; ++i) {
+        for (int i = 0; i < kSlots && n < kMaxKeyed; ++i) {
             const Entry& e = g_nameTable[i];
             if (e.key.load(std::memory_order_relaxed) != 0 && !e.resolved.load(std::memory_order_relaxed) && e.name)
                 names[n++] = e.name;

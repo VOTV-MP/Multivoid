@@ -20,9 +20,8 @@ namespace coop::net { class Session; }
 
 namespace coop::trash_morph_gate {
 
-// Resolve the three verbs, watch their bodies and assert the gate's enable while the session
-// runs (idempotent; the session pointer is re-cached on every call so a reconnect keeps the
-// refusals live). Safe before the trash classes load: the class resolve is throttled and a
+// Resolve the three verbs and watch their bodies (idempotent; the session pointer is re-cached
+// on every call so a reconnect keeps the refusals live). Safe before the trash classes load: the class resolve is throttled and a
 // partial set never latches, so a verb that is not resident yet is picked up later. Game thread.
 void Install(coop::net::Session* session);
 

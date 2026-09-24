@@ -440,8 +440,12 @@ bool IsCapturedForm(void* actor) {
 
 void Install(coop::net::Session* session) {
     g_session = session;
-    sg::WatchName(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry, nullptr);
-    sg::WatchName(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry, nullptr);
+    // Once per process: subsystems::Install is a retry pump, and each registration takes the gate's
+    // lock and scans its table for a duplicate. A name watch lives as long as the process.
+    static bool s_watched = false;
+    if (!s_watched)
+        s_watched = sg::WatchName(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry, nullptr) &&
+                    sg::WatchName(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry, nullptr);
 }
 
 void Tick() {

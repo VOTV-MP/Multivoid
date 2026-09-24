@@ -200,9 +200,8 @@ Judgement JudgeMenuTravel(void* author) {
 // site.
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // THE WATCH'S NAME IS RESOLVED FROM HERE, not from Tick, for the reason this lane already
-    // re-asserts the gate's enable rather than riding another consumer's: the resolve is shared,
-    // and driving it only from Tick -- which is session-scoped -- left this watch's readiness in
+    // THE WATCH'S NAME IS RESOLVED FROM HERE, not from Tick: the resolve is shared, and driving it
+    // only from Tick -- which is session-scoped -- left this watch's readiness in
     // the hands of whichever other consumer's tick happened to run. A name watch is inert until
     // the gate has turned the literal into an FName, so an unresolved one is a seam that cannot
     // intercept the travel it is supposed to judge. This runs on the harness's unconditional
@@ -228,11 +227,8 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
-    // The gate's enable is a per-script-call cost on the VM's hottest loop, so it is scoped to a
-    // live session -- which is also what the verdict is scoped to, so an enabled gate with nothing
-    // to judge is pure waste. Measured: the first build enabled it unconditionally and the
-    // sessionless death control caught it, reporting a solo player paying for a seam that can
-    // never fire.
+    // The readiness is published for a live session only, which is what the verdict is scoped to;
+    // the gate itself runs while the session holds it (coop/session/subsystems).
     coop::net::Session* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) {
         coop::death_revive::NoteRunEndSeamReady(false);

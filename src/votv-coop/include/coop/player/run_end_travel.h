@@ -27,9 +27,8 @@ namespace coop::player::run_end_travel {
 // safe every tick. The watch is registered whatever the role: both peers end their own runs.
 void Install(coop::net::Session* session);
 
-// Drive the gate's own game-thread work: the pending name resolve, and this lane's enable. The
-// enable is re-asserted here rather than once at Install because the gate's switch is shared --
-// another consumer retiring would otherwise leave this watch green and its callback silent.
+// Publish the seam's readiness to the revive's arm while a session runs; the name resolve is
+// Install's. Game thread.
 void Tick();
 
 // Reset the per-session latches and counters.

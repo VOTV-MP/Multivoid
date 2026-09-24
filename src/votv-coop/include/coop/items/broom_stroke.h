@@ -21,9 +21,9 @@ namespace coop::net { class Session; struct BroomStrokePayload; }
 
 namespace coop::broom_stroke {
 
-// Watch the stroke's notify, `arm` and the dispenser pile's `broomed` by name, and assert the
-// script-body gate's enable while the session runs. Idempotent and latched: a refused registration,
-// or one that never goes live, is said once and not retried. Game thread.
+// Watch the stroke's notify, `arm` and the dispenser pile's `broomed` by name. Idempotent and
+// latched: a refused registration, or one that never goes live, is said once and not retried.
+// Game thread.
 void Install(coop::net::Session* session);
 
 // HOST receiver: the client in `senderSlot` swung its broom and read `stroke` of its holder. A stroke
