@@ -110,6 +110,7 @@ void RunNavHaltProbe() {
     // =====================================================================
     struct GateA {
         bool  fnResolved   = false;   // the FindPath + random-reachable UFunctions resolved
+        bool  startRead    = false;   // the player's location, the path's start, was read
         bool  reachOk      = false;   // K2_GetRandomReachablePointInRadius succeeded (navmesh queryable)
         bool  pathReturned = false;   // FindPath returned a non-null UNavigationPath
         bool  pathValid    = false;   // UNavigationPath::IsValid()
@@ -129,7 +130,8 @@ void RunNavHaltProbe() {
                     "are not where expected -- Gate A CALL-FAILED", navCdo, findFn, randFn);
             d.store(1); return;
         }
-        if (!E::TryGetActorLocation(player, ga->start)) {
+        ga->startRead = E::TryGetActorLocation(player, ga->start);
+        if (!ga->startRead) {
             UE_LOGW("nav_probe: GATE A -- the player's location could not be read -- Gate A CALL-FAILED");
             d.store(1); return;
         }
@@ -186,10 +188,11 @@ void RunNavHaltProbe() {
         d.store(1);
     });
     const bool gateA = ga->fnResolved && ga->reachOk && ga->pathReturned && ga->pathValid && ga->points > 1;
-    UE_LOGI("nav_probe: GATE A %s -- fnResolved=%d reachOk=%d start=(%.0f,%.0f,%.0f) end=(%.0f,%.0f,%.0f) "
+    UE_LOGI("nav_probe: GATE A %s -- fnResolved=%d reachOk=%d start=(%.0f,%.0f,%.0f)%s end=(%.0f,%.0f,%.0f) "
             "pathReturned=%d IsValid=%d points=%d len=%.0fcm",
             gateA ? "PASS" : "FAIL", ga->fnResolved ? 1 : 0, ga->reachOk ? 1 : 0,
-            ga->start.X, ga->start.Y, ga->start.Z, ga->end.X, ga->end.Y, ga->end.Z,
+            ga->start.X, ga->start.Y, ga->start.Z, (ga->fnResolved && !ga->startRead) ? " (unread)" : "",
+            ga->end.X, ga->end.Y, ga->end.Z,
             ga->pathReturned ? 1 : 0, ga->pathValid ? 1 : 0, ga->points, ga->pathLen);
 
     // =====================================================================

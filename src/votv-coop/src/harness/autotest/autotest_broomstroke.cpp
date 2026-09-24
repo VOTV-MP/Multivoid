@@ -103,7 +103,7 @@ uint32_t ClumpNear(const std::vector<uint32_t>& ids, const ue_wrap::FVector& at,
     uint32_t best = 0;
     float bestCm = withinCm;
     for (const BW::TrackState& s : BW::FormsOf(ids)) {
-        if (s.form != 2) continue;
+        if (s.form != 2 || !s.known) continue;   // an unread clump is at no distance
         const float d = BW::Dist(s.pos, at);
         if (d <= bestCm) { bestCm = d; best = s.eid; outPos = s.pos; }
     }
@@ -273,6 +273,7 @@ void RunBroomStrokeProbe() {
     ue_wrap::FVector centerA{};
     if (!BW::StrikerBody(!isClient, 0, centerA)) {
         UE_LOGW("broom_drill: %s INVALID -- the striker's body could not be placed", who);
+        UE_LOGI("broom_drill: done (INVALID)");
         return;
     }
     std::vector<uint32_t> heapIds;
@@ -292,14 +293,18 @@ void RunBroomStrokeProbe() {
     ue_wrap::FVector centerB = subject;
     if (!isClient && !BW::StrikerBody(false, 1, centerB)) {
         UE_LOGW("broom_drill: %s INVALID -- the striker's puppet could not be placed", who);
+        UE_LOGI("broom_drill: done (INVALID)");
         return;
     }
+    // A client with no subject has no place to census around; the world origin is not one.
+    const bool censusB = !isClient || haveSubject;
+    if (!censusB) UE_LOGW("broom_drill: %s B -- no subject pile, so this peer takes no phase B census", who);
     std::vector<uint32_t> idsB;
-    BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "before", &idsB);
+    if (censusB) BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "before", &idsB);
     std::vector<Beat> strikeB;
     if (haveSubject) strikeB.push_back(Beat{45000, [who] { BW::Swing(who, "B", 1, 2500); }});
     TrackThrough(idsB, centerB, kPileRadiusCm, strikeB, 52000, t0, who, "B");
-    BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "late", nullptr);
+    if (censusB) BW::CensusPiles(centerB, kPileRadiusCm, who, "B", "late", nullptr);
 
     DispenserPhases(isClient, who, t0);
     RestPhases(isClient, who, t0, rest);

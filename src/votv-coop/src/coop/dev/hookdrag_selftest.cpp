@@ -83,6 +83,7 @@ ue_wrap::FVector      g_targetStart{};
 ue_wrap::FVector      g_walkBase{}, g_walkDir{};
 float                 g_maxMovedCm = 0.f;
 float                 g_goneAtS    = -1.f;   // when the target died under the sampler, or -1
+float                 g_unreadAtS  = -1.f;   // when the target's location stopped reading, or -1
 const char*           g_plantNote  = "not attempted";
 
 void* LocalPlayer() {
@@ -92,13 +93,15 @@ void* LocalPlayer() {
 
 // Where both roles look for the target: the host at its own player, the client at the host's
 // puppet, which stands where the host player does.
-bool Anchor(bool isHost, ue_wrap::FVector& out) {
+bool Anchor(bool isHost, ue_wrap::FVector& out, const char*& why) {
+    why = "its location could not be read";
     if (isHost) {
         void* p = LocalPlayer();
-        return p && E::TryGetActorLocation(p, out);
+        if (!p) { why = "the host player is not here yet"; return false; }
+        return E::TryGetActorLocation(p, out);
     }
     coop::RemotePlayer* pup = coop::players::Registry::Get().Puppet(0);
-    if (!pup || !pup->valid() || !pup->GetActor()) return false;
+    if (!pup || !pup->valid() || !pup->GetActor()) { why = "the host puppet is not here yet"; return false; }
     return E::TryGetActorLocation(pup->GetActor(), out);
 }
 
@@ -184,7 +187,9 @@ void Sample(uint64_t since, bool isHost) {
     }
     ue_wrap::FVector loc{};
     if (!E::TryGetActorLocation(t, loc)) {
-        UE_LOGW("hookdrag_selftest: POS t=%.2f key='%ls' -- the target's location could not be read; no sample",
+        // Said once, like a gone target: the read repeats, so sampling stops and the verdict carries the time.
+        g_unreadAtS = static_cast<float>(since / 1000.0);
+        UE_LOGW("hookdrag_selftest: POS t=%.2f key='%ls' -- the target's location could not be read; sampling stops",
                 since / 1000.0, g_targetKey.c_str());
         return;
     }
@@ -254,9 +259,9 @@ void Tick() {
     if (!g_picked && since >= kPickMs) {
         g_picked = true;
         ue_wrap::FVector anchor{};
-        if (!Anchor(isHost, anchor)) {
-            UE_LOGW("hookdrag_selftest: PICK role=%s -- no anchor (the host %s is not here yet)",
-                    isHost ? "HOST" : "CLIENT", isHost ? "player" : "puppet");
+        const char* why = "";
+        if (!Anchor(isHost, anchor, why)) {
+            UE_LOGW("hookdrag_selftest: PICK role=%s -- no anchor (%s)", isHost ? "HOST" : "CLIENT", why);
         } else if (void* t = PickTarget(anchor, g_targetKey, g_targetStart)) {
             g_target.Set(t);
             const float dx = g_targetStart.X - anchor.X, dy = g_targetStart.Y - anchor.Y,
@@ -277,7 +282,7 @@ void Tick() {
                     isHost ? "HOST" : "CLIENT", kPickRadiusCm);
         }
     }
-    if (g_target.Raw() && g_goneAtS < 0.f && now >= g_nextSampleMs && since < kVerdictMs) {
+    if (g_target.Raw() && g_goneAtS < 0.f && g_unreadAtS < 0.f && now >= g_nextSampleMs && since < kVerdictMs) {
         g_nextSampleMs = now + kSampleMs;
         Sample(since, isHost);
     }
@@ -353,9 +358,9 @@ void EmitVerdict() {
     if (!Enabled() || !g_originMs) return;
     auto* s = g_session.load(std::memory_order_acquire);
     const bool isHost = s && s->role() == coop::net::Role::Host;
-    UE_LOGI("hookdrag_selftest: VERDICT role=%s key='%ls' plant=%s maxMoved=%.1f cm goneAt=%.2f",
+    UE_LOGI("hookdrag_selftest: VERDICT role=%s key='%ls' plant=%s maxMoved=%.1f cm goneAt=%.2f unreadAt=%.2f",
             isHost ? "HOST" : "CLIENT", g_targetKey.c_str(),
-            PlantsHere(isHost) ? g_plantNote : "n/a", g_maxMovedCm, g_goneAtS);
+            PlantsHere(isHost) ? g_plantNote : "n/a", g_maxMovedCm, g_goneAtS, g_unreadAtS);
 }
 
 void OnDisconnect() {
@@ -367,6 +372,7 @@ void OnDisconnect() {
     g_targetKey.clear();
     g_maxMovedCm = 0.f;
     g_goneAtS    = -1.f;
+    g_unreadAtS  = -1.f;
     g_plantNote  = "not attempted";
 }
 

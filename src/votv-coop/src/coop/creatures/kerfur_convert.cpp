@@ -483,7 +483,7 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
     const bool plocRead = ue_wrap::engine::TryGetActorLocation(actor, ploc);
     // The form assembler's captured in-bracket successor, captured at its FinishSpawningActor and
     // consumed here at the paired destroy edge (spawn before destroy, measured). The only
-    // which-successor path: GetActorLocation on the dying prop reads near the origin, so a
+    // which-successor path: the dying prop's location reads near the origin, so a
     // proximity walk from it rejected the real successor.
     void* freshNpc = nullptr;
     float bestD2 = 0.f;  // real dist filled in on a capture HIT below; read for the logs only

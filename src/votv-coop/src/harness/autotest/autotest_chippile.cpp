@@ -118,7 +118,7 @@ void RunAutonomousChipPileTest() {
                         pile, cs->pos.X, cs->pos.Y, cs->pos.Z, dist);
                 d.store(1);
             }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no player/pile)"); return; }
-        RunGT([cs](std::atomic<int>& d) {                       // teleport to a 180 cm standoff facing the pile
+        if (RunGT([cs](std::atomic<int>& d) {                   // teleport to a 180 cm standoff facing the pile
             ue_wrap::FVector at{};
             if (!E::TryGetActorLocation(cs->player, at)) {
                 UE_LOGW("chippile_test: CLIENT showcase -- no standoff, the player's location could not be read");
@@ -135,7 +135,7 @@ void RunAutonomousChipPileTest() {
             UE_LOGI("chippile_test: CLIENT showcase -- teleported to (%.0f,%.0f,%.0f) facing the pile; holding 60s",
                     stand.X, stand.Y, stand.Z);
             d.store(1);
-        });
+        }) != 1) { UE_LOGW("chippile_test: CLIENT showcase aborted (no standoff)"); return; }
         for (int i = 0; i < 60; ++i) {                          // hold 60 s, re-facing the pile each second
             ::Sleep(1000);
             RunGT([cs](std::atomic<int>& d) {
@@ -383,22 +383,24 @@ void RunAutonomousChipPileTest() {
     // re-piles it, and the land watch converts the peer's mirror back.
     if (heldClump) {
         RunGT([rsv, heldClump](std::atomic<int>& d) {
-            const bool rel = E::ReleaseMainPlayerGrabIfHolding(rsv->player, heldClump);
             // A directional throw rather than a drop, so the flight stream carries a real arc:
-            // toward the held clump, about 6 m/s forward and 4 m/s up.
+            // toward the held clump, about 6 m/s forward and 4 m/s up. Its direction is read while
+            // the hand still holds the clump.
             ue_wrap::FVector pp{}, cp{};
             float fx = 1.f, fy = 0.f;   // unread: a throw along +X, as a degenerate direction takes
-            if (E::TryGetActorLocation(rsv->player, pp) && E::TryGetActorLocation(heldClump, cp)) {
+            const bool dirRead = E::TryGetActorLocation(rsv->player, pp) && E::TryGetActorLocation(heldClump, cp);
+            if (dirRead) {
                 fx = cp.X - pp.X; fy = cp.Y - pp.Y;
                 const float hl = std::sqrt(fx * fx + fy * fy);
                 if (hl < 1.f) { fx = 1.f; fy = 0.f; } else { fx /= hl; fy /= hl; }
             }
+            const bool rel = E::ReleaseMainPlayerGrabIfHolding(rsv->player, heldClump);
             const ue_wrap::FVector lin{ fx * 600.f, fy * 600.f, 400.f };   // cm/s: ~6 m/s fwd + 4 m/s up
             const bool vel = E::SetActorRootPhysicsVelocity(heldClump, lin, ue_wrap::FVector{0.f, 0.f, 0.f});
-            UE_LOGI("chippile_test: Phase B THROW -- released PHC=%d + threw clump dir=(%.2f,%.2f) up |v|set=%d "
+            UE_LOGI("chippile_test: Phase B THROW -- released PHC=%d + threw clump dir=(%.2f,%.2f)%s up |v|set=%d "
                     "-> expect a flight ARC (host '[PILE] HOST carry/flight CONTINUE' x many) -> impact -> re-pile "
                     "-> '[PILE] HOST RE-PILE(thunk)' + '[TRASH-CH] HOST LAND COMMIT (re-read from the settled pile)'",
-                    rel ? 1 : 0, fx, fy, vel ? 1 : 0);
+                    rel ? 1 : 0, fx, fy, dirRead ? "" : " (unread: +X)", vel ? 1 : 0);
             d.store(1);
         });
     } else {
@@ -500,12 +502,12 @@ void RunPuppetGrabProbe() {
     // 4. Poll the grab state and geometry for about 4 s: the horizontal puppet-to-clump distance,
     // the clump's height over the puppet (it rises to hand height when pulled up) and the grab
     // length.
-    int engagedPolls = 0, totalPolls = 0;
+    int engagedPolls = 0, totalPolls = 0, readPolls = 0;   // readPolls: engaged polls that read both places
     float distFirst = -1.f, distLast = -1.f, distMin = 1e9f, dzFirst = -1e9f, dzLast = -1e9f, grabLenLast = -1.f;
     for (int i = 0; i < 40; ++i) {
         ::Sleep(100);
         ++totalPolls;
-        RunGT([pup, &engagedPolls, &distFirst, &distLast, &distMin, &dzFirst, &dzLast, &grabLenLast, i](std::atomic<int>& d) {
+        RunGT([pup, &engagedPolls, &readPolls, &distFirst, &distLast, &distMin, &dzFirst, &dzLast, &grabLenLast, i](std::atomic<int>& d) {
             E::MainPlayerGrabState gs{};
             if (!E::ReadMainPlayerGrabState(pup->actor, gs)) { d.store(1); return; }
             void* clump = (gs.grabbingActor && ue_wrap::prop::IsGarbageClump(gs.grabbingActor)) ? gs.grabbingActor
@@ -515,6 +517,7 @@ void RunPuppetGrabProbe() {
             float dist = -1.f, dz = -1e9f;
             ue_wrap::FVector pl{}, cl{};   // unread: dist and dz keep their unset values
             if (clump && E::TryGetActorLocation(pup->actor, pl) && E::TryGetActorLocation(clump, cl)) {
+                ++readPolls;
                 const float ddx = cl.X - pl.X, ddy = cl.Y - pl.Y;
                 dist = std::sqrt(ddx * ddx + ddy * ddy);
                 dz = cl.Z - pl.Z;
@@ -547,6 +550,9 @@ void RunPuppetGrabProbe() {
     if (!engaged)
         UE_LOGW("puppet_grab_probe: RESULT = NOT-ENGAGED -- playerGrabbed(puppet) did not leave a clump in "
                 "grabbing_actor/holding_actor. The RE predicted ENGAGED; investigate (param frame? clump self-freed?).");
+    else if (readPolls == 0)
+        UE_LOGW("puppet_grab_probe: RESULT = UNREAD -- a clump was held, but no poll could read both the puppet's and "
+                "the clump's location; no verdict on where it was held");
     else if (tracked)
         UE_LOGI("puppet_grab_probe: RESULT = TRACKED (tick ALIVE) -- the puppet HOLDS the clump at its hand; the "
                 "per-tick PHC maintenance RUNS on the unpossessed puppet. A host-side grab works as-is "
@@ -581,7 +587,7 @@ void RunPileDriftScenario() {
             void* player = coop::players::Registry::Get().Local();
             if (!player || !R::IsLive(player) || !E::GetController(player)) { d.store(2); return; }
             ue_wrap::FVector at{};
-            if (!E::TryGetActorLocation(player, at)) { d.store(2); return; }   // as no player
+            if (!E::TryGetActorLocation(player, at)) { d.store(3); return; }   // repeats: ends the wait below
             // The live chipPiles nearest the player, by distance: five to destroy, the next three
             // to move. One cold walk.
             struct Cand { void* a; float d2; };
@@ -604,6 +610,10 @@ void RunPileDriftScenario() {
             d.store(1);
         });
         if (r == 1) { ready = true; break; }
+        if (r == 3) {
+            UE_LOGW("pile_drift: the player's location could not be read -- aborting (cannot drift)");
+            return;
+        }
         ::Sleep(1000); ++waitedS;
     }
     if (!ready) {

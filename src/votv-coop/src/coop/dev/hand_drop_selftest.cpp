@@ -70,7 +70,8 @@ struct PropRow {
 // real actor of the held item's class sitting at that peer's hands, so counting it would hide
 // exactly the loss this driver measures -- the census would read "still one prop here" while the
 // only thing there is the mirror that is about to be destroyed.
-std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm) {
+// `unreadKeys`: keyed props whose location could not be read -- anywhere, since an unread prop has no distance.
+std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm, std::vector<std::wstring>& unreadKeys) {
     std::vector<PropRow> out;
     void* handAxis[1 + coop::players::kMaxPeers];
     const size_t handAxisN =
@@ -87,17 +88,18 @@ std::vector<PropRow> Census(const ue_wrap::FVector& centre, float radiusCm) {
         for (size_t h = 0; h < handAxisN; ++h) if (handAxis[h] == obj) { isHandAxis = true; break; }
         if (isHandAxis) continue;
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
+        std::wstring key = PR::GetKeyString(obj);
+        if (key.empty() || key == L"None") continue;  // keyless props ride other lanes
         ue_wrap::FVector loc{};
-        if (!E::TryGetActorLocation(obj, loc)) continue;   // unreadable: not in this census
+        if (!E::TryGetActorLocation(obj, loc)) { unreadKeys.push_back(std::move(key)); continue; }
         const float dx = loc.X - centre.X, dy = loc.Y - centre.Y, dz = loc.Z - centre.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > r2) continue;
         PropRow row;
         row.actor  = obj;
-        row.key    = PR::GetKeyString(obj);
+        row.key    = std::move(key);
         row.cls    = R::ClassNameOf(obj);
         row.distCm = std::sqrt(d2);
-        if (row.key.empty() || row.key == L"None") continue;  // keyless props ride other lanes
         out.push_back(std::move(row));
     }
     std::sort(out.begin(), out.end(),
@@ -311,7 +313,12 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
                           : "the holder's puppet is not up here, or its location unread");
         return;
     }
-    const std::vector<PropRow> rows = Census(centre, kCensusRadiusCm);
+    std::vector<std::wstring> unreadKeys;
+    const std::vector<PropRow> rows = Census(centre, kCensusRadiusCm, unreadKeys);
+    if (!unreadKeys.empty())
+        UE_LOGW("hand_drop_selftest: ep%d %s -- %zu keyed prop(s) could not be read (first key='%ls'); this "
+                "census cannot say where they are", st.episode, ActName(st.act), unreadKeys.size(),
+                unreadKeys[0].c_str());
     EpisodeResult& ep = g_ep[st.episode];
     const int count = static_cast<int>(rows.size());
 
@@ -343,7 +350,10 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
             for (const PropRow& r : rows) if (r.key == k) { present = true; break; }
             if (!present) gone.push_back(k);
         }
-        if (gone.size() == 1) {
+        if (!unreadKeys.empty()) {
+            UE_LOGW("hand_drop_selftest: ep%d WATCHER cannot name a subject -- %zu keyed prop(s) could not be "
+                    "read, and an unread prop cannot be told from one that left", st.episode, unreadKeys.size());
+        } else if (gone.size() == 1) {
             ep.targetKey = gone[0];
             UE_LOGI("hand_drop_selftest: ep%d WATCHER subject inferred -- key='%ls' left this world "
                     "when the holder picked it up", st.episode, ep.targetKey.c_str());
@@ -364,9 +374,13 @@ void RunStep(const Step& st, bool iAmHolder, uint64_t since) {
             // verdict is about that key and not about a count that two unrelated changes can
             // balance. A key that is gone from this peer after the drop is the loss: the holder
             // has the prop and this peer has nothing bound to it.
-            bool stillHere = false;
+            bool stillHere = false, unread = false;
             for (const PropRow& r : rows) if (r.key == ep.targetKey) { stillHere = true; break; }
-            if (ep.targetKey.empty())
+            for (const std::wstring& k : unreadKeys) if (k == ep.targetKey) { unread = true; break; }
+            if (unread)
+                UE_LOGW("hand_drop_selftest: ep%d WATCHER cannot judge -- key='%ls' could not be read after the "
+                        "drop", st.episode, ep.targetKey.c_str());
+            else if (ep.targetKey.empty())
                 UE_LOGI("hand_drop_selftest: ep%d WATCHER -- the holder named no key this episode; "
                         "%d before, %d after", st.episode, ep.before, ep.after);
             else if (!stillHere)

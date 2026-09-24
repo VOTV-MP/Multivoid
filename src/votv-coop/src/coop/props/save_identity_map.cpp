@@ -37,7 +37,7 @@ constexpr size_t kOffLocation = 0x20;  // the FTransform's translation within th
 constexpr size_t kOffKey      = 0x40;
 
 // Quantize a world location to a 0.01-unit grid so the host-local join tolerates any sub-0.01 FP jitter
-// between saveObjects' getTransform (-> objectsData) and GetActorLocation (-> the eid bridge) while keeping
+// between saveObjects' getTransform (-> objectsData) and TryGetActorLocation (-> the eid bridge) while keeping
 // distinct piles distinct. Two props within the quantum collapse into one bucket -> resolved by the
 // same-class-same-location tiebreak (a deterministic rank-pairing; benign -- they are physically identical).
 struct LocKey {

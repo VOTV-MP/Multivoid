@@ -38,24 +38,32 @@ bool WaitDone(const std::shared_ptr<std::atomic<int>>& d, int timeoutMs) {
     return d->load() != 0;
 }
 
+bool g_frameUnreadSaid = false;   // game thread; the read repeats, so it is said once
+
 // Puppet-frame nameplate shot: a proper, non-ragdoll capture. Frame the slot-1 STANDING puppet --
 // stand the host a few metres back and aim the camera at the puppet's HEAD, so the whole body AND
 // the ImGui nameplate sit IN frame. `reposition` is true only on the FIRST call (move the host back
-// once); later calls re-aim only, so the host is not teleported every tick.
-void FramePuppetForNameplate(bool reposition) {
+// once); later calls re-aim only, so the host is not teleported every tick. True when it framed.
+bool FramePuppetForNameplate(bool reposition) {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done, reposition] {
         void* local = coop::players::Registry::Get().Local();
         void* puppet = coop::puppet_drive::Puppet(1).GetActor();
-        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(1); return; }
+        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(2); return; }
         void* ctrl = E::GetController(local);
-        if (!ctrl || !R::IsLive(ctrl)) { done->store(1); return; }
+        if (!ctrl || !R::IsLive(ctrl)) { done->store(2); return; }
         // Aim/position against the VISIBLE MESH (mirrors AimHostAtPuppet) -- the
         // mainPlayer_C ACTOR pivot sits up high (pose-drive alignment), so using the
         // actor Z would float the host at head height + aim over the body.
         ue_wrap::FVector pa{}, eye{};
         if (!E::TryGetActorLocation(puppet, pa) || !E::TryGetActorLocation(local, eye)) {
-            UE_LOGW("puppet-frame[host]: not framed -- a location could not be read"); done->store(1); return; }
+            if (!g_frameUnreadSaid) {
+                g_frameUnreadSaid = true;
+                UE_LOGW("puppet-frame[host]: not framed -- a location could not be read");
+            }
+            done->store(2);
+            return;
+        }
         void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
         const ue_wrap::FVector pm = (mesh && R::IsLive(mesh)) ? E::GetComponentLocation(mesh) : pa;
         if (reposition) {
@@ -81,6 +89,7 @@ void FramePuppetForNameplate(bool reposition) {
         done->store(1);
     });
     WaitDone(done, 8000);
+    return done->load() == 1;
 }
 
 // Destroy EVERY kerfurOmega NPC in the world: the ones parked near the spawn clutter and occlude
@@ -129,8 +138,8 @@ void FrameStandingPuppetOnHost() {
         if (*v) {
             if (++settle >= 6) {  // let the puppet converge from the spawn placeholder
                 if (!cleared) { DestroyAllKerfurs(); cleared = true; }
-                FramePuppetForNameplate(/*reposition=*/true);  // close + tracking
-                if (!announced) {
+                const bool framed = FramePuppetForNameplate(/*reposition=*/true);  // close + tracking
+                if (framed && !announced) {   // READY only for a frame that happened: the shot waits on it
                     announced = true;
                     UE_LOGI("puppet-frame[host]: positioned + aimed CLOSE at the STANDING puppet "
                             "(kerfurs removed) -- PUPPET-FRAME READY");

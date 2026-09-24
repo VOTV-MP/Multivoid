@@ -100,7 +100,9 @@ void CensusPiles(const ue_wrap::FVector& center, float radiusCm, const char* who
 // One pass of the tracker: each followed id's form and place, logged as a TRACK row when the form
 // changed or it moved more than 5 cm; and the clumps no element owns within `radiusCm`, logged as an
 // UNNAMED row when their count changes.
-struct TrackState { uint32_t eid; int form; ue_wrap::FVector pos; };   // form: 0 gone, 1 pile, 2 clump
+// form: 0 gone, 1 pile, 2 clump. `known`: pos is a read place; an unread one is never logged as numbers, because the
+// judge reads a row's coordinates as a place.
+struct TrackState { uint32_t eid; int form; ue_wrap::FVector pos; bool known = false; };
 void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, float radiusCm,
                int& unnamedLast, const char* who, const char* phase);
 // Each followed id's form and place at the end of the tracker, as a FINAL row whether or not it moved.

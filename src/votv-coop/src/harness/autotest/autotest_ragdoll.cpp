@@ -74,27 +74,34 @@ bool PuppetHasFloppingRagdollBody() {
     return *ok != 0;
 }
 
+bool g_shotUnreadSaid = false;   // game thread; the read repeats, so it is said once
+
 // Aim the host player's camera at the slot-1 puppet's body, so an autonomous screenshot
 // frames the falling puppet. The puppet converges next to the host but often off to the side
 // or behind, out of the forward view. Computes the look-at from the host camera (the actor
 // plus eye height) to the puppet's mesh location (the limp body during the flop) and writes
-// the host controller's control rotation. Game thread; bounded.
-void AimHostAtPuppet() {
+// the host controller's control rotation. Game thread; bounded. True when it aimed.
+bool AimHostAtPuppet() {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done] {
         void* local = coop::players::Registry::Get().Local();
         void* puppet = coop::puppet_drive::Puppet(1).GetActor();
-        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(1); return; }
+        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(2); return; }
         void* ctrl = E::GetController(local);
-        if (!ctrl || !R::IsLive(ctrl)) { done->store(1); return; }
+        if (!ctrl || !R::IsLive(ctrl)) { done->store(2); return; }
         ue_wrap::FVector h{};
-        if (!E::TryGetActorLocation(local, h)) {
-            UE_LOGW("ragdoll_test[host]: not aimed -- the host's location could not be read"); done->store(1); return; }
         void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(puppet);
         ue_wrap::FVector p{};
-        if (mesh && R::IsLive(mesh)) p = E::GetComponentLocation(mesh);
-        else if (!E::TryGetActorLocation(puppet, p)) {
-            UE_LOGW("ragdoll_test[host]: not aimed -- the puppet's location could not be read"); done->store(1); return; }
+        const bool meshLive = mesh && R::IsLive(mesh);
+        if (meshLive) p = E::GetComponentLocation(mesh);
+        if (!E::TryGetActorLocation(local, h) || (!meshLive && !E::TryGetActorLocation(puppet, p))) {
+            if (!g_shotUnreadSaid) {
+                g_shotUnreadSaid = true;
+                UE_LOGW("ragdoll_test[host]: not aimed -- a location could not be read");
+            }
+            done->store(2);
+            return;
+        }
         const float dx = p.X - h.X, dy = p.Y - h.Y, dz = p.Z - (h.Z + 60.f);
         const float horiz = std::sqrt(dx * dx + dy * dy);
         const float yaw = std::atan2(dy, dx) * 57.29578f;
@@ -105,21 +112,26 @@ void AimHostAtPuppet() {
         done->store(1);
     });
     WaitDone(done, 8000);
+    return done->load() == 1;
 }
 
 // Move the host back from the puppet (the same Z, so it stays on the floor) so the fallen
 // body is ahead in the frame, not directly under the host's own first-person legs (the host
 // and client spawn overlapping, so a straight-down view is just the host's own feet occluding
 // the body). One shot at the rising edge.
-void PositionHostForShot() {
+// True when the host was moved.
+bool PositionHostForShot() {
     auto done = std::make_shared<std::atomic<int>>(0);
     GT::Post([done] {
         void* local = coop::players::Registry::Get().Local();
         void* puppet = coop::puppet_drive::Puppet(1).GetActor();
-        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(1); return; }
+        if (!local || !R::IsLive(local) || !puppet || !R::IsLive(puppet)) { done->store(2); return; }
         ue_wrap::FVector h{}, p{};
         if (!E::TryGetActorLocation(local, h) || !E::TryGetActorLocation(puppet, p)) {
-            UE_LOGW("ragdoll_test[host]: not moved for the shot -- a location could not be read"); done->store(1); return; }
+            UE_LOGW("ragdoll_test[host]: not moved for the shot -- a location could not be read");
+            done->store(2);
+            return;
+        }
         float dx = h.X - p.X, dy = h.Y - p.Y;            // direction AWAY from the puppet
         const float len = std::sqrt(dx * dx + dy * dy);
         if (len < 1.f) { dx = 1.f; dy = 0.f; } else { dx /= len; dy /= len; }
@@ -130,6 +142,7 @@ void PositionHostForShot() {
         done->store(1);
     });
     WaitDone(done, 8000);
+    return done->load() == 1;
 }
 
 // The geometry probe: samples whether the body's bounds and lowest bone actually drop toward
@@ -202,10 +215,15 @@ void ObserveOnHost() {
         // keep tracking until the ragdoll fires.
         if (phase == 1 && !positioned) {
             if (++settle >= 4) {
-                PositionHostForShot();
-                AimHostAtPuppet();
+                const bool placed = PositionHostForShot();
+                const bool aimed = AimHostAtPuppet();
                 positioned = true;
-                UE_LOGI("ragdoll_test[host]: host positioned + aimed at STANDING puppet -- BEFORE-SHOT READY");
+                // READY only for a frame that happened: the before shot waits on it.
+                if (placed && aimed)
+                    UE_LOGI("ragdoll_test[host]: host positioned + aimed at STANDING puppet -- BEFORE-SHOT READY");
+                else
+                    UE_LOGW("ragdoll_test[host]: BEFORE-SHOT NOT READY -- the host could not be %s",
+                            placed ? "aimed" : "positioned");
                 ProbePuppetRagdollGeometry("standing");  // baseline before the flop
             }
         } else if (phase == 1 && positioned) {

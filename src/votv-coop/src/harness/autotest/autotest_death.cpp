@@ -425,12 +425,15 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         // The delta, not only the distance: a run once landed the teleport exactly and the player
         // drifted afterwards, and a scalar cannot tell a fall from a walk from a slide.
         char at[256];
-        _snprintf_s(at, sizeof(at), _TRUNCATE,
-                    "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- delta (%.0f,%.0f,%.0f), "
-                    "horiz %.0f vert %.0f -- read back from the pawn, not inferred from the "
-                    "teleport's return", dist,
-                    P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ,
-                    dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
+        if (!last.haveLoc)
+            _snprintf_s(at, sizeof(at), _TRUNCATE, "no location could be read back from the pawn");
+        else
+            _snprintf_s(at, sizeof(at), _TRUNCATE,
+                        "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- delta (%.0f,%.0f,%.0f), "
+                        "horiz %.0f vert %.0f -- read back from the pawn, not inferred from the "
+                        "teleport's return", dist,
+                        P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ,
+                        dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
         Verdict("D7 at-KPP", last.haveLoc && dist <= 500.f, at);
         // D8 asserted that the revive had RESTORED the menu prep loadLevel stomps. The cut is the
         // loadLevel body now, so those writes are never made and there is nothing to restore: the

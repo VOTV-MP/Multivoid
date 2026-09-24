@@ -355,7 +355,7 @@ bool TryGetActorLocation(void* actor, FVector& out) {
     if (!actor || !ResolveActorFns()) return false;
     ParamFrame f(g_getLocFn);
     if (!Call(actor, f)) return false;
-    f.GetRaw(L"ReturnValue", &out, sizeof(out));
+    if (!f.GetRaw(L"ReturnValue", &out, static_cast<int32_t>(sizeof(out)))) { out = FVector{}; return false; }
     return true;
 }
 

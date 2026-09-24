@@ -87,6 +87,7 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool statiq = false, frozen = false, gone = false;
+    bool unreadSaid = false;   // its location stopped reading: said once, the watch has no sighting of it
 };
 std::vector<Watched> g_watched;
 bool g_watchArmed = false;
@@ -148,7 +149,15 @@ void TickWatch(char who) {
             continue;
         }
         ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(o, at)) continue;   // no sighting this pass
+        if (!E::TryGetActorLocation(o, at)) {
+            // Silence here reads as "did not move", so the watch says once that it cannot see it.
+            if (!w.unreadSaid) {
+                w.unreadSaid = true;
+                UE_LOGW("[PRY-DRILL] [%c] UNREAD key='%ls' -- its location could not be read; the watch cannot "
+                        "say whether it moved", who, w.key.c_str());
+            }
+            continue;
+        }
         const bool statiq = PR::IsStatic(o), frozen = PR::IsFrozen(o);
         if (Dist(at, w.printed) < kWatchMoveCm && statiq == w.statiq && frozen == w.frozen) continue;
         w.printed = at;

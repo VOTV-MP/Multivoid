@@ -139,7 +139,7 @@ void Npc::Tick() {
 void Npc::ApplyToEngine() {
     void* actor = GetActor();
     if (!actor) return;
-    // NPC capsule centre IS the actor pivot (the host streams GetActorLocation, the mirror is the
+    // NPC capsule centre IS the actor pivot (the host streams the actor's location, the mirror is the
     // same class spawned at the same place) -- no mesh-offset reconstruction (unlike RemotePlayer).
     E::SetActorLocation(actor, curPos_);
     E::SetActorRotation(actor, ue_wrap::FRotator{0.f, curYaw_, 0.f});

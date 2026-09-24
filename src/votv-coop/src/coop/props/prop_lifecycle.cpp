@@ -73,7 +73,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self);
 void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
     auto* s = LoadSession();
     if (!self || !s) return;
-    // The body calls UFunctions (GetActorLocation, GetKey), which are game-thread only, and the
+    // The body calls UFunctions (K2_GetActorLocation, GetKey), which are game-thread only, and the
     // observer can fire on a parallel-anim worker; off-thread it is posted to the game thread,
     // where the body re-validates the actor with IsLive.
     if (!GT::IsGameThread()) {

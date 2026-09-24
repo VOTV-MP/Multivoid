@@ -98,6 +98,7 @@ struct Watched {
     std::wstring key;
     ue_wrap::FVector start{}, printed{};
     bool frozen = false, mounted = false, gone = false;
+    bool unreadSaid = false;          // its location stopped reading: said once, the watch has no sighting of it
     int thrusting = 0, spraying = 0;  // a drop hard enough starts the runaway thrust; -1 = unread
 };
 std::vector<Watched> g_watched;
@@ -172,7 +173,15 @@ void TickWatch(char who) {
             continue;
         }
         ue_wrap::FVector at{};
-        if (!E::TryGetActorLocation(o, at)) continue;   // no sighting this pass
+        if (!E::TryGetActorLocation(o, at)) {
+            // Silence here reads as "did not move", so the watch says once that it cannot see it.
+            if (!w.unreadSaid) {
+                w.unreadSaid = true;
+                UE_LOGW("[FIREEXT-DRILL] [%c] UNREAD key='%ls' -- its location could not be read; the watch "
+                        "cannot say whether it moved", who, w.key.c_str());
+            }
+            continue;
+        }
         const bool frozen = PR::IsFrozen(o);
         const bool mounted = IsMounted(o);
         bool th = false, sp = false;
@@ -275,6 +284,7 @@ int g_aimPose = 0;
 // tail clears it: its end, a target that died, a tick on which the drill does not act.
 uint16_t g_staleGen = 0;
 bool g_tailSet = false;
+bool g_tailInvalid = false;   // the tail's pose could not be read: this arm's second measurement has no stimulus
 
 void ClearStaleTail(coop::net::Session& s) {
     if (!g_tailSet) return;
@@ -283,22 +293,30 @@ void ClearStaleTail(coop::net::Session& s) {
 }
 
 void SendStaleTail(coop::net::Session& s, void* t, int tick) {
-    if (tick > kStaleTailTicks + 1) return;
+    if (tick > kStaleTailTicks + 1 || g_tailInvalid) return;
+    if (tick > kStaleTailTicks || !t) {
+        ClearStaleTail(s);
+        return;
+    }
+    // Read before the tail is announced: a tail that sends nothing would make the receivers' "not
+    // pulled back" pass by default.
+    ue_wrap::FVector loc{};
+    if (!E::TryGetActorLocation(t, loc)) {
+        g_tailInvalid = true;
+        ClearStaleTail(s);
+        UE_LOGW("[FIREEXT-DRILL] [%c] STALE TAIL INVALID -- the extinguisher's location could not be read, so "
+                "no stale pose is sent and this arm's second measurement has no stimulus", Who());
+        return;
+    }
     if (tick == 1) {
         g_staleGen = coop::local_streams::CurrentHoldGen();
         UE_LOGI("[FIREEXT-DRILL] [%c] STALE TAIL: re-sending hold %u's pose after its release, %d ticks",
                 Who(), static_cast<unsigned>(g_staleGen), kStaleTailTicks);
     }
-    if (tick > kStaleTailTicks || !t) {
-        ClearStaleTail(s);
-        return;
-    }
     coop::net::PropPoseSnapshot pp{};
     for (size_t i = 0; i < g_targetKey.size() && pp.key.len < 31; ++i)
         pp.key.data[pp.key.len++] = static_cast<char>(g_targetKey[i]);
     pp.holdGen = g_staleGen;
-    ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(t, loc)) return;   // no stale pose to re-send this tick
     const ue_wrap::FRotator rot = E::GetActorRotation(t);
     pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
     pp.pitch = rot.Pitch; pp.yaw = rot.Yaw; pp.roll = rot.Roll;
@@ -385,9 +403,10 @@ void* Grabbing(void* player) {
 // The mounted extinguisher at the end of the shortest NavMesh route from the player, from the
 // watch's own lists: a route must exist and end within reach of the wall, as the director's pile
 // pick asks (director_run.cpp, PickReachablePile).
-bool PickTarget(void* player) {
+bool PickTarget(void* player, const char*& why) {
     ue_wrap::FVector me{};
-    if (!E::TryGetActorLocation(player, me)) return false;
+    if (!E::TryGetActorLocation(player, me)) { why = "the player's location could not be read"; return false; }
+    why = "no mounted, frozen extinguisher a route reaches";
     float best = 1e30f;
     ue_wrap::FVector bestAt{};
     for (const auto& w : g_watched) {
@@ -412,9 +431,10 @@ bool PickTarget(void* player) {
 
 // A point the NavMesh routes to, some metres from the mount: the route's own last point is on the
 // mesh by construction, which a computed offset is not.
-bool PickCarryEnd(void* player, ue_wrap::FVector& out) {
+bool PickCarryEnd(void* player, ue_wrap::FVector& out, const char*& why) {
     ue_wrap::FVector me{};
-    if (!E::TryGetActorLocation(player, me)) return false;
+    if (!E::TryGetActorLocation(player, me)) { why = "the player's location could not be read"; return false; }
+    why = "no NavMesh route to carry it along";
     for (int k = 0; k < 8; ++k) {
         const float a = static_cast<float>(k) * 0.785398f;
         const ue_wrap::FVector want{me.X + kCarryCm * std::cos(a), me.Y + kCarryCm * std::sin(a), me.Z};
@@ -464,7 +484,8 @@ void ActStep(coop::net::Session& s, void* player) {
     case Step::WaitJoin: {
         if (!ActorMayStart(s)) return;
         if (!g_watchArmed) ArmWatch(Who());
-        if (!PickTarget(player)) { Invalid("no mounted, frozen extinguisher a route reaches"); return; }
+        const char* why = "";
+        if (!PickTarget(player, why)) { Invalid(why); return; }
         StartWalk(g_mountPos, kReachCm, /*carry=*/false);
         Go(Step::WalkTo);
         return;
@@ -532,7 +553,13 @@ void ActStep(coop::net::Session& s, void* player) {
                 return;
             }
             ue_wrap::FVector end{};
-            if (!PickCarryEnd(player, end)) { Invalid("no NavMesh route to carry it along"); return; }
+            const char* why = "";
+            if (!PickCarryEnd(player, end, why)) {
+                CallOnPlayer(player, L"dropGrabObject");   // the drill ends with an empty hand
+                LogTarget("DROPPED");
+                Invalid(why);
+                return;
+            }
             StartWalk(end, 80.f, /*carry=*/true);
             Go(Step::WalkAway);
             return;
@@ -618,6 +645,7 @@ void OnDisconnect() {
     g_probedKey.clear();
     g_probeTicks = -1;
     g_afterTicks = -1;
+    g_tailInvalid = false;
     if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
         g_walk->goal.failed = true;
         g_walk->goal.failReason = "session ended";

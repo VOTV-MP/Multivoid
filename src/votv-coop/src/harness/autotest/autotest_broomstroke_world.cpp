@@ -207,7 +207,11 @@ void AimAt(const ue_wrap::FVector& target, float bodyTurnDeg, const char* who, c
     RunGT([target, bodyTurnDeg](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector from{};
-        if (!player || !E::TryGetActorLocation(player, from)) { d.store(1); return; }
+        if (!player || !E::TryGetActorLocation(player, from)) {
+            UE_LOGW("broom_drill: no stand -- %s", player ? "the player's location could not be read" : "no player");
+            d.store(1);
+            return;
+        }
         float ax = from.X - target.X, ay = from.Y - target.Y;
         const float h = std::sqrt(ax * ax + ay * ay);
         if (h < 1.f) { ax = 1.f; ay = 0.f; } else { ax /= h; ay /= h; }
@@ -356,7 +360,12 @@ bool PickChipPile(const char* who, const char* phase, ue_wrap::FVector& outPos, 
     RunGT([who, phase, aloneCm, bounded, centre, withinCm, found](std::atomic<int>& d) {
         void* player = LocalPlayer();
         ue_wrap::FVector me{};
-        if (!player || !E::TryGetActorLocation(player, me)) { d.store(1); return; }
+        if (!player || !E::TryGetActorLocation(player, me)) {
+            UE_LOGW("broom_drill: %s %s SUBJECT chip pile NOT found -- %s", who, phase,
+                    player ? "the player's location could not be read" : "no player");
+            d.store(1);
+            return;
+        }
         // Every pile counts as a neighbour, owned or not; the candidates are the owned ones, nearest first.
         struct Pile { void* obj; ue_wrap::FVector loc; float d2; };
         std::vector<Pile> piles;
@@ -460,12 +469,20 @@ void TrackStep(std::vector<TrackState>& states, const ue_wrap::FVector& center, 
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
             const int form = !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1);
             ue_wrap::FVector got{};
-            const ue_wrap::FVector pos = (live && E::TryGetActorLocation(a, got)) ? got : s.pos;   // unread: the last tracked
-            if (form == s.form && Dist(pos, s.pos) <= 5.f) continue;
+            const bool read = live && E::TryGetActorLocation(a, got);
+            const bool known = read || (!live && s.known);   // gone: the last place read, if there was one
+            const ue_wrap::FVector pos = read ? got : s.pos;
+            if (form == s.form && known == s.known && (!known || Dist(pos, s.pos) <= 5.f)) continue;
             s.form = form;
+            s.known = known;
             s.pos = pos;
-            UE_LOGI("broom_drill: TRACK role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)", who, phase,
-                    tick, s.eid, form == 2 ? "clump" : (form == 1 ? "pile" : "gone"), pos.X, pos.Y, pos.Z);
+            const char* formName = form == 2 ? "clump" : (form == 1 ? "pile" : "gone");
+            if (known)
+                UE_LOGI("broom_drill: TRACK role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)", who, phase,
+                        tick, s.eid, formName, pos.X, pos.Y, pos.Z);
+            else
+                UE_LOGI("broom_drill: TRACK role=%s phase=%s tick=%lu eid=%u form=%s at(unread)", who, phase, tick,
+                        s.eid, formName);
         }
         const float r2 = radiusCm * radiusCm;
         int unnamed = 0;
@@ -490,11 +507,16 @@ void TrackFinal(const std::vector<TrackState>& states, const char* who, const ch
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
             ue_wrap::FVector got{};
-            const bool posRead = live && E::TryGetActorLocation(a, got);
-            const ue_wrap::FVector pos = posRead ? got : s.pos;
-            UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)%s", who, phase,
-                    tick, s.eid, !live ? "gone" : (UP::IsGarbageClump(a) ? "clump" : "pile"), pos.X, pos.Y, pos.Z,
-                    (live && !posRead) ? " (unread, last tracked)" : "");
+            const bool read = live && E::TryGetActorLocation(a, got);
+            const char* formName = !live ? "gone" : (UP::IsGarbageClump(a) ? "clump" : "pile");
+            if (read || (!live && s.known)) {
+                const ue_wrap::FVector pos = read ? got : s.pos;   // gone: the last place read
+                UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(%.1f,%.1f,%.1f)", who, phase,
+                        tick, s.eid, formName, pos.X, pos.Y, pos.Z);
+            } else {
+                UE_LOGI("broom_drill: FINAL role=%s phase=%s tick=%lu eid=%u form=%s at(unread)", who, phase, tick,
+                        s.eid, formName);
+            }
         }
         d.store(1);
     });
@@ -507,9 +529,9 @@ std::vector<TrackState> FormsOf(const std::vector<uint32_t>& ids) {
             coop::element::Element* e = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(id));
             void* a = e ? e->GetActor() : nullptr;
             const bool live = a && R::IsLiveByIndex(a, e->GetInternalIdx());
-            ue_wrap::FVector pos{};   // gone or unread: no place yet; the track fills it on its first read
-            if (live) E::TryGetActorLocation(a, pos);
-            out->push_back(TrackState{id, !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1), pos});
+            ue_wrap::FVector pos{};
+            const bool known = live && E::TryGetActorLocation(a, pos);   // gone or unread: no place
+            out->push_back(TrackState{id, !live ? 0 : (UP::IsGarbageClump(a) ? 2 : 1), pos, known});
         }
         d.store(1);
     });

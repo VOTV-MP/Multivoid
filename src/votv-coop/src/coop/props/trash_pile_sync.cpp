@@ -371,7 +371,7 @@ void Tick(bool inTransition) {
             } else if (a > e.lastA || b > e.lastB) {
                 e.lastA = a; e.lastB = b;  // BeginPlay re-roll / save reload: re-prime, never propagate
             }
-            // No per-poll GetActorLocation here: it is a ProcessEvent dispatch, and a few hundred
+            // No per-poll location read here: it is a ProcessEvent dispatch, and a few hundred
             // piles at the 20 Hz poll would push several thousand dispatches a second through our
             // own detour. Piles are save-placed and never move, so the position the hub's pass
             // captured when it matched the actor is the death-watch's proximity input.

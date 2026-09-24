@@ -76,12 +76,14 @@ void RunPileLookScenario() {
                        : coop::prop_element_tracker::GetPropElementIdForActor(o);
             if (isClump) {
                 ue_wrap::FVector at{};
-                const bool atRead = E::TryGetActorLocation(o, at);
                 const bool none = (eid == coop::element::kInvalidId || eid == 0);
-                UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(%.1f,%.1f,%.1f)%s",
-                        none ? 0u : static_cast<unsigned>(eid),
-                        !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save"),
-                        R::ClassNameOf(o).c_str(), at.X, at.Y, at.Z, atRead ? "" : " (unread)");
+                const char* kind = !client ? "host" : (coop::trash_mirror::WeMade(o) ? "made" : "save");
+                if (E::TryGetActorLocation(o, at))
+                    UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(%.1f,%.1f,%.1f)",
+                            none ? 0u : static_cast<unsigned>(eid), kind, R::ClassNameOf(o).c_str(), at.X, at.Y, at.Z);
+                else   // no numbers: the judge reads a row's coordinates as a place
+                    UE_LOGI("pilelook: CLUMP eid=%u kind=%s cls='%ls' pos=(unread)",
+                            none ? 0u : static_cast<unsigned>(eid), kind, R::ClassNameOf(o).c_str());
                 ++clumps;
                 if (none) ++clumpsUnnamed;
                 continue;

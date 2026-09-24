@@ -8,7 +8,7 @@
 // remote is fragile, so we HOST-AUTHORITATIVELY stream the resolved actor TRANSFORM and the client
 // mirrors it kinematically (SuppressTick stops the client drone's own ReceiveTick so it can't fly
 // on its own + fight the stream -- the npc/clump mirror discipline). The drone moves the ACTOR
-// (not a physics body), so actor-level GetActorLocation/SetActorLocation is the transform.
+// (not a physics body), so actor-level TryGetActorLocation/SetActorLocation is the transform.
 //
 // Identity = SINGLETON (resolve via FindObjectByClass(drone_C); both peers load the same placed
 // drone). It has no top-level Key (its key lives inside Data) -- but a singleton needs no key.
