@@ -53,9 +53,13 @@ std::atomic<bool> g_countOn{false};
 // only clears its enabled flag, leaving the probe chain intact. Two key spaces, two tables: an
 // exact watch keys on the UFunction pointer, a name watch on the FName's two indices (its
 // unresolved placeholder holds a second slot). What fills a table is its KEYED slots, retired
-// ones included, so the cap counts those: at most 96 of 256, a miss probes under two slots.
-constexpr int kSlots = 256;
-constexpr int kMaxKeyed = 96;
+// ones included, so the cap counts those: at most 3/8 of a table, the load at which a miss
+// probes under two slots. A name watch holds two keyed slots, so the name table takes 192 name
+// watches: each peer of a 2026-09-24 smoke held 24, the dev probes add up to 14, and the
+// POLL->GATE arc moves about seventy polled rows onto watches.
+constexpr int kSlotBits = 10;
+constexpr int kSlots = 1 << kSlotBits;
+constexpr int kMaxKeyed = kSlots * 3 / 8;
 
 struct Entry {
     std::atomic<std::uint64_t> key{0};
@@ -78,8 +82,9 @@ std::mutex g_regMutex;   // registration only; never on the call path
 inline std::uint64_t HashKey(std::uint64_t key) {
     return (key >> 4) * 0x9E3779B97F4A7C15ull;
 }
+// The hash's top bits pick the slot: exactly kSlotBits of them, so every slot is a home slot.
 inline int SlotOf(std::uint64_t key) {
-    return static_cast<int>(HashKey(key) >> 56) & (kSlots - 1);
+    return static_cast<int>(HashKey(key) >> (64 - kSlotBits));
 }
 inline std::uint64_t NameKey(const R::FName& n) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(n.ComparisonIndex)) << 32) |
