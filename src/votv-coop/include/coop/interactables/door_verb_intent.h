@@ -1,24 +1,16 @@
 // coop/interactables/door_verb_intent.h -- a client's own press, hit or pry of a base door runs on
 // the host.
 //
-// A base door's state is the host's (DoorState, coop/interactables/interactable_sync), and a
-// client's copy is render-only. A player's use of a door enters it through one of its entry verbs:
-// actionOptionIndex (the press), addDamage (a melee hit) and, on the pryable door,
-// door_pryable_C::crowbarOpen (a crowbar's pry). On a client the script-body gate refuses those
-// bodies on a door the door lane indexes and sends the verb here; the host runs the same verb on its
-// own copy, where the door's body decides it once, on the authority: the power gate with its
-// blackout clause, a swing already moving, the alienated door's fake gray, the pry. The result
-// reaches every peer as DoorState. The cut is at the entry verb and not at doorOpen or doorClose:
-// every in-door caller reaches those through the door's own event graph, where a press cannot be
-// told from a hit or a trigger, and a hit moves both panels before it ever reaches doorOpen.
-//
-// A damage the client's own player did not author (a creature, an explosion, the cheat menu) is
-// refused on the client without a send: a world event is the host's to run. A client's creatures
-// are mirrors that run no AI; an explosion the client's own graph spawns is a birth the host should
-// author, and until it does, its hit on a door is lost here rather than moving this copy alone.
-// A door the lane does not index keeps its native verbs: the lane has no name for it.
-// MTA precedent: a client's vehicle entry is a request the server checks, its distance included,
-// and runs (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3018, Packet_Vehicle_InOut).
+// A player's use of a door enters it through an entry verb -- actionOptionIndex (the press),
+// addDamage (a melee hit), door_pryable_C::crowbarOpen (a crowbar's pry). On a client the script-body
+// gate refuses those bodies on a door the door lane indexes and sends the verb here; the host runs
+// the same verb on its own copy, where the door's body decides it once (its power gate and blackout
+// clause, a swing already moving, the pry), and the result reaches every peer as DoorState. A damage
+// the client's own player did not author is refused without a send: a world event is the host's to
+// run. A door the lane does not index keeps its native verbs. Why the cut is at the entry verbs:
+// docs/devices.md. MTA precedent: a client's vehicle entry is a request the server checks, distance
+// included, and runs (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3018,
+// Packet_Vehicle_InOut).
 
 #pragma once
 
