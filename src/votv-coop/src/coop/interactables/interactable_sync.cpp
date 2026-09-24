@@ -210,8 +210,9 @@ bool ApplySwitchPresentation(void* sw) {
     return ue_wrap::lightswitch::CallUse(sw);
 }
 
-// The sender is a per-tick poll of each state field (Channel::PollAndBroadcast): it catches every
-// writer (a press, an NPC's open, a keypad unlock, a script) without watching each one.
+// A polled channel's sender is a per-tick poll of each state field (Channel::PollAndBroadcast),
+// which catches every writer without watching each one; the door channel is sent at the door's own
+// state verbs (coop/interactables/door_state_verbs), with the poll as its shadow probe.
 
 // A client's light-switch press. The native use() ends in runTrigger(root, 0), which would move a
 // group the host owns, so the PRE observer on AmainPlayer_C::InpActEvt_use shuts the group's

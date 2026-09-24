@@ -34,8 +34,8 @@ bool g_watchInstalled[kWatchCount] = {};
 bool g_announcedLive = false;
 
 uint64_t g_refused = 0, g_edges = 0;
-// A key's first refusal is said; the rest are counted. One door refuses at most one autoclose per
-// open, so the set stays the size of the doors this client's own world tried to move.
+// A key's first refusal is said; the rest are counted. The set holds each door this client's own
+// world tried to move, once.
 std::unordered_set<std::wstring> g_saidRefused;
 
 const char* WhatOf(int tag) {

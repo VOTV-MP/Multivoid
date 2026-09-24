@@ -294,7 +294,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 
 | State | Owner | Shape |
 |---|---|---|
-| a door, a light group | the host | the host's poll answers; a client's own door verb is an intent the host runs |
+| a door, a light group | the host | a door is sent at its own verbs, a light group by the host's poll; a client's own door verb is an intent the host runs |
 | a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
 | a keypad's buffer and its accept | the presser | the input mirrored; the native chain replayed |
 | the turbine | the host | six floats a second |

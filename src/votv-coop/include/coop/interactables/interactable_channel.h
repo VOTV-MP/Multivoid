@@ -104,9 +104,11 @@ public:
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
 
-    // The sender: polls every indexed instance for a state change and broadcasts deltas. The poll
-    // catches every writer of the state (a press, an NPC's open, a keypad unlock, a script) without
-    // watching each one. The first sighting of a key primes the baseline silently, since initial
+    // The sender of a polled channel, and the shadow probe of an edge-fed one: polls every indexed
+    // instance for a state change and broadcasts deltas, catching every writer of the state (a
+    // press, an NPC's open, a keypad unlock, a script) without watching each one. A send no peer can
+    // take -- none is world-ready -- counts as sent: each joiner's snapshot at its ready edge carries
+    // the state. The first sighting of a key primes the baseline silently, since initial
     // divergence is the connect snapshot's job; ApplyResolved primes lastKnown_ to the applied
     // value, so an echo never shows as a delta. Game thread.
     void PollAndBroadcast() {
@@ -122,17 +124,23 @@ public:
         // as its own, the feedback storm that oscillated doors. The non-authority sends its player's
         // verbs only (coop/interactables/door_verb_intent).
         if (mode_ == Mode::HostAuth && s->role() != coop::net::Role::Host) return;
-        // The index refs are snapshotted so indexMutex_ is not held across ReadState and Send; the
-        // buffer is a member (game-thread serial) so the per-tick path does not allocate.
+        // The index refs are snapshotted so indexMutex_ is not held across ReadState and Send. The
+        // buffer is a member (game-thread serial) whose strings are assigned in place, so the per-tick
+        // path allocates only when a key outgrows the slot it lands in.
         auto& refs = pollScratch_;
-        refs.clear();
+        size_t count = 0;
         {
             std::lock_guard<std::mutex> lk(indexMutex_);
             if (byKey_.empty()) return;
-            refs.reserve(byKey_.size());
-            for (auto& kv : byKey_) refs.emplace_back(kv.first, kv.second);
+            if (refs.size() < byKey_.size()) refs.resize(byKey_.size());
+            for (auto& kv : byKey_) {
+                refs[count].first = kv.first;
+                refs[count].second = kv.second;
+                ++count;
+            }
         }
-        for (auto& r : refs) {
+        for (size_t i = 0; i < count; ++i) {
+            auto& r = refs[i];
             if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
             bool cur = false;
             if (!a_.ReadState(r.second.actor, cur)) continue;
@@ -148,21 +156,22 @@ public:
             }
             // An edge-fed channel's verbs sent every change they saw; one the poll finds first was
             // made by a writer no watched verb covers -- the migration's measurement, said and sent.
-            if (a_.edgeFed && !resend_.count(r.first))
+            // A key whose verb did report it and whose send was refused is sent again here, and is
+            // not a miss.
+            if (a_.edgeFed && !sendRefused_.count(r.first))
                 UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it",
                         a_.name, r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF");
             coop::net::KeyedTogglePayload p{};
             WireKeyFromString(r.first, p.key);
             p.action = cur ? 1 : 0;
-            if (s->SendReliable(a_.kind, &p, sizeof(p))) {
+            if (s->SendReliable(a_.kind, &p, sizeof(p)) || !s->AnyWorldReadyPeer()) {
                 { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[r.first] = cur; }
                 sendRefused_.erase(r.first);
                 UE_LOGI("%s: sent %s key='%ls'", a_.name, cur ? "ON" : "OFF", r.first.c_str());
             } else if (sendRefused_.insert(r.first).second) {
-                // The change stays unsent and this poll retries it every tick until the channel
-                // takes it (a joiner's save stream holds it for the length of the transfer), so the
-                // refusal is said once per streak: measured unthrottled, 1196 lines in 20 s.
-                UE_LOGW("%s: SendReliable refused key='%ls' -- retrying every poll until it is sent",
+                // A world-ready peer is there and the send still failed (its connection is going):
+                // this poll tries again each tick, said once per streak.
+                UE_LOGW("%s: SendReliable refused key='%ls' with a world-ready peer -- retrying every poll",
                         a_.name, r.first.c_str());
             }
         }
@@ -190,9 +199,7 @@ public:
     }
 
     // The authority's edge on an edge-fed channel: a watched verb just ran on `actor`, so the state
-    // it left is read and sent when it differs from what the peers last got. A send no peer could
-    // take -- every client still loading, whose snapshot at its ready edge carries the state anyway
-    // -- is kept and tried again each tick until one can. Game thread.
+    // it left is read and sent when it differs from what the peers last got. Game thread.
     void OnLocalEdge(void* actor) {
         if (!a_.edgeFed || !actor) return;
         auto* s = session_.load(std::memory_order_acquire);
@@ -284,8 +291,6 @@ public:
                             "%d still pending", a_.name, applied, expired, backstopped, still);
             }
         }
-        // An edge-fed channel's refused sends, retried with the state as it is now.
-        if (a_.edgeFed && !resend_.empty()) RetryEdgeSends();
         // The poll, every tick: bool reads over the current index.
         PollAndBroadcast();
     }
@@ -293,7 +298,6 @@ public:
     void OnDisconnect() {
         size_t nP = pending_.size();
         pending_.clear();
-        resend_.clear();
         std::lock_guard<std::mutex> lk(stateMutex_);
         const size_t n = lastKnown_.size();
         lastKnown_.clear();
@@ -467,40 +471,28 @@ private:
     }
 
     // Sends the key's state when it differs from what the peers last got, and primes lastKnown_ to
-    // it; a refusal leaves the key for RetryEdgeSends, said once per streak. Host, game thread.
+    // it. No world-ready peer is a vacuous success: each joiner's snapshot at its ready edge carries
+    // the state (Session::AnyWorldReadyPeer). A send that fails with a world-ready peer present --
+    // every such peer's connection is going (SendBacklog's Dropped) -- leaves the baseline, and the
+    // poll sends the key again at its next tick. Host, game thread.
     void SendEdge(const std::wstring& key, bool cur, coop::net::Session* s) {
         {
             std::lock_guard<std::mutex> lk(stateMutex_);
             auto it = lastKnown_.find(key);
-            if (it != lastKnown_.end() && it->second == cur) { resend_.erase(key); return; }
+            if (it != lastKnown_.end() && it->second == cur) return;
         }
         coop::net::KeyedTogglePayload p{};
         WireKeyFromString(key, p.key);
         p.action = cur ? 1 : 0;
-        if (s->SendReliable(a_.kind, &p, sizeof(p))) {
+        const bool sent = s->SendReliable(a_.kind, &p, sizeof(p));
+        if (sent || !s->AnyWorldReadyPeer()) {
             { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = cur; }
-            resend_.erase(key);
             sendRefused_.erase(key);
-            UE_LOGI("%s: sent %s key='%ls' at the verb", a_.name, cur ? "ON" : "OFF", key.c_str());
-        } else {
-            resend_.insert(key);
-            if (sendRefused_.insert(key).second)
-                UE_LOGW("%s: SendReliable refused key='%ls' at the verb -- no peer can take it yet; "
-                        "retried each tick until one can", a_.name, key.c_str());
-        }
-    }
-
-    // The refused edges again, with each door's state as it is now; a key whose door left the
-    // index is dropped (the joiner's snapshot carries what is there). Host, game thread.
-    void RetryEdgeSends() {
-        auto* s = session_.load(std::memory_order_acquire);
-        if (!s || !s->connected() || s->role() != coop::net::Role::Host) { resend_.clear(); return; }
-        resendScratch_.assign(resend_.begin(), resend_.end());
-        for (const std::wstring& key : resendScratch_) {
-            void* actor = ResolveFast(key);
-            bool cur = false;
-            if (!actor || !a_.ReadState(actor, cur)) { resend_.erase(key); continue; }
-            SendEdge(key, cur, s);
+            UE_LOGI("%s: %s %s key='%ls' at the verb", a_.name, sent ? "sent" : "noted (no world-ready peer)",
+                    cur ? "ON" : "OFF", key.c_str());
+        } else if (sendRefused_.insert(key).second) {
+            UE_LOGW("%s: SendReliable refused key='%ls' at the verb with a world-ready peer -- its "
+                    "connection is going; the poll sends it again", a_.name, key.c_str());
         }
     }
 
@@ -528,8 +520,6 @@ private:
     std::unordered_set<std::wstring> sendRefused_;               // GT-only: keys whose refused send is already logged
 
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
-    std::unordered_set<std::wstring> resend_;                     // GT-only: an edge-fed channel's refused sends
-    std::vector<std::wstring> resendScratch_;                     // GT-only: RetryEdgeSends' snapshot of resend_
     std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: reused poll snapshot buffer
     std::chrono::steady_clock::time_point lastRetry_{};           // GT-only
     size_t lastLogCount_ = SIZE_MAX;                              // GT-only: dedup the rebuilt log

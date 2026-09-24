@@ -125,7 +125,7 @@ void Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     const bool readAfter = D::TryReadOpenIntent(door, after);
     if (dispatched) ++g_ran; else ++g_denied;
     // The door's own body owns the outcome, so a press on an unpowered door or a hit below the pry
-    // leaves the state as it was; the line says which, and the poll carries any change to every peer.
+    // leaves the state as it was; the line says which, and the door's state verbs send any change.
     UE_LOGI("[DOOR-VERB] host ran slot %u's %s on key='%ls': dispatched=%d damage=%.1f, open %s -> %s",
             static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(), dispatched ? 1 : 0, p.damage,
             readBefore ? (before ? "1" : "0") : "(unread)", readAfter ? (after ? "1" : "0") : "(unread)");
