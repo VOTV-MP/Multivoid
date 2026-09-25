@@ -1,12 +1,13 @@
 // ue_wrap/actors/swinger.cpp -- see ue_wrap/actors/swinger.h. Engine access for VOTV container
-// lids (Aprop_swinger_C). The `opened` offset is resolved from the live class via
-// reflection (version-portable); the Alpha 0.9.0-n value is a logged fallback.
-// The Key is read through ue_wrap::prop (a swinger IS an Aprop_C).
+// lids (Aprop_swinger_C). The `opened` offset and the two verbs are resolved from the live class by
+// name; a class they do not resolve on leaves the lane off, said once. The Key is read through
+// ue_wrap::prop (a swinger IS an Aprop_C).
 
 #include "ue_wrap/actors/swinger.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -20,12 +21,14 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 
 void*   g_swingerCls = nullptr;  // prop_swinger_C UClass
-int32_t g_openedOff  = -1;       // Aprop_swinger_C::opened (Alpha 0.9.0-n: 0x03C5)
+int32_t g_openedOff  = -1;       // Aprop_swinger_C::opened
 int32_t g_lockableOff = -1;      // Aprop_swinger_C::isLockable (optional: only a drill reads it)
 void*   g_openFn     = nullptr;  // Open(bool Damage)
 void*   g_closeFn    = nullptr;  // Close()
 
-constexpr int32_t kOpenedOffFallback = 0x03C5;
+// A swinger class whose `opened` or verbs did not resolve: said once, asked again only for another
+// class object.
+void* g_failedCls = nullptr;
 
 // The verb THIS swinger runs. IsSwinger admits any descendant, and a UFunction handed to
 // ProcessEvent is the body that runs -- the engine does not re-resolve it by name -- so the base
@@ -43,19 +46,17 @@ void* VerbFor(void* swinger, const wchar_t* name, void* baseFn) {
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
-    void* cls = R::FindClass(L"prop_swinger_C");
-    if (!cls) return false;
+    // One object-index lookup a call until the class loads, which costs nothing while it has not.
+    void* cls = ue_wrap::object_index::ClassByName(L"prop_swinger_C");
+    if (!cls || cls == g_failedCls) return false;
 
-    int32_t openedOff = R::FindPropertyOffset(cls, L"opened");
-    if (openedOff < 0) {
-        UE_LOGW("swinger: reflected opened offset not found -- using fallback 0x%04X", kOpenedOffFallback);
-        openedOff = kOpenedOffFallback;
-    }
+    const int32_t openedOff = R::FindPropertyOffset(cls, L"opened");
     void* openFn  = R::FindFunction(cls, L"Open");
     void* closeFn = R::FindFunction(cls, L"Close");
-
-    if (!openFn || !closeFn) {
-        UE_LOGW("swinger: UFunction resolve incomplete (Open=%p Close=%p) -- not ready", openFn, closeFn);
+    if (openedOff < 0 || !openFn || !closeFn) {
+        g_failedCls = cls;
+        UE_LOGE("swinger: prop_swinger_C did not resolve by name (opened@%d Open=%p Close=%p) -- the container "
+                "lane stays off for this class", openedOff, openFn, closeFn);
         return false;
     }
 

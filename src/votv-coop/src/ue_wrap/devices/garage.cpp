@@ -1,11 +1,13 @@
 // ue_wrap/devices/garage.cpp -- see ue_wrap/devices/garage.h. Engine access for the base garage
-// door (Agarage_C). Offsets resolved from the live class via reflection (version-portable); the
-// Alpha 0.9.0-n values are logged fallbacks.
+// door (Agarage_C). Offsets and verbs are resolved from the live class by name; a class whose Open or
+// acivae does not resolve leaves the lane off, said once, since a guessed offset would write whatever a
+// newer build keeps there.
 
 #include "ue_wrap/devices/garage.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -19,7 +21,7 @@ namespace R = reflection;
 std::atomic<bool> g_resolved{false};
 
 void*   g_garageCls = nullptr;  // garage_C UClass
-int32_t g_openOff   = -1;       // Agarage_C::Open     (0x02E8)
+int32_t g_openOff   = -1;       // Agarage_C::Open
 int32_t g_movOff    = -1;       // Agarage_C::mov, true mid-swing (optional: only a drill reads it)
 void*   g_runTriggerFn = nullptr;  // runTrigger(owner, index), the wall button's call (optional, a drill's)
 void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the montage from position
@@ -30,24 +32,24 @@ void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (the mo
 // No Key offset: identity is the level-export FName (GetNameKey), not the save key -- see
 // garage.h for why the key cannot serve as one.
 
-constexpr int32_t kOpenOffFallback = 0x02E8;
+// A garage class whose Open or acivae did not resolve: said once, asked again only for another class
+// object.
+void* g_failedCls = nullptr;
 
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
-    void* cls = R::FindClass(L"garage_C");
-    if (!cls) return false;
-
-    int32_t openOff = R::FindPropertyOffset(cls, L"Open");
-    if (openOff < 0) {
-        UE_LOGW("garage: reflected Open offset not found -- using fallback 0x%04X", kOpenOffFallback);
-        openOff = kOpenOffFallback;
-    }
+    // One object-index lookup a call until the class loads, which costs nothing while it has not.
+    void* cls = ue_wrap::object_index::ClassByName(L"garage_C");
+    if (!cls || cls == g_failedCls) return false;
+    const int32_t openOff = R::FindPropertyOffset(cls, L"Open");
     void* acivaeFn = R::FindFunction(cls, L"acivae");
-    if (!acivaeFn) {
-        UE_LOGW("garage: acivae UFunction not found -- not ready");
+    if (openOff < 0 || !acivaeFn) {
+        g_failedCls = cls;
+        UE_LOGE("garage: garage_C did not resolve by name (Open@%d acivae=%p) -- the garage lane stays off for "
+                "this class", openOff, acivaeFn);
         return false;
     }
 
