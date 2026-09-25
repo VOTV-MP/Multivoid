@@ -7,9 +7,9 @@
 // higher is dirtier, cleanSponge wipes it DOWN toward 0 and nothing re-raises it, and setClean()
 // pushes it into the mesh shader through SetCustomPrimitiveDataFloat(0). Its cross-peer-stable
 // identity is the inherited Aactor_save_C::Key FName, assigned deterministically by
-// intComs_gamemodeMakeKeys and save-persistent, the same Key family the doors use. That inheritance
-// is the trap: a door declares its own Key and this class does not, and FindPropertyOffset does NOT
-// climb to parent classes, so EnsureResolved resolves the Key against actor_save_C explicitly.
+// intComs_gamemodeMakeKeys and save-persistent, the same Key family the doors use. The class does
+// not declare Key itself; EnsureResolved asks baseWindow_C, and the property lookup climbs to the
+// actor_save_C parent that declares it.
 
 #pragma once
 

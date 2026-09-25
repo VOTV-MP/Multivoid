@@ -83,10 +83,9 @@ bool EnsureResolved() {
     void* lockCls = R::FindClass(L"passwordLock_C");
     if (!lockCls) return false;  // not loaded yet: the caller retries
 
-    // Key is declared on the trigger base and FindPropertyOffset does not climb, so it is asked
-    // of the declaring class; the rest are the keypad's own.
-    void* trigCls = R::FindClass(L"triggerBase_C");
-    const int32_t keyOff     = trigCls ? R::FindPropertyOffset(trigCls, L"Key") : -1;
+    // Key is declared on the trigger base, which the property lookup climbs to; the rest are the
+    // keypad's own.
+    const int32_t keyOff     = R::FindPropertyOffset(lockCls, L"Key");
     const int32_t inPwOff    = R::FindPropertyOffset(lockCls, L"inPassword");
     const int32_t pwOff      = R::FindPropertyOffset(lockCls, L"password");
     const int32_t doorOff    = R::FindPropertyOffset(lockCls, L"door");

@@ -46,10 +46,8 @@ bool EnsureResolved() {
     void* rootCls = R::FindClass(L"trigger_lightRoot_C");
     if (!rootCls) return false;
 
-    int32_t keyOff = -1;
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) {
-        keyOff = R::FindPropertyOffset(trigCls, L"Key");
-    }
+    // Key is declared on the trigger base, which the property lookup climbs to.
+    int32_t keyOff = R::FindPropertyOffset(rootCls, L"Key");
     if (keyOff < 0) {
         UE_LOGW("lightswitch: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
         keyOff = kKeyOffFallback;
@@ -111,8 +109,8 @@ bool EnsureSwitchResolved() {
     if (g_swResolved.load(std::memory_order_acquire)) return true;
     void* cls = R::FindClass(L"lightswitch_C");
     if (!cls) return false;
-    int32_t keyOff = -1;
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) keyOff = R::FindPropertyOffset(trigCls, L"Key");
+    // Key and objects are declared on the trigger base, which the property lookup climbs to.
+    int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
     if (keyOff < 0) keyOff = kKeyOffFallback;
     int32_t aOff = R::FindPropertyOffset(cls, L"A");
     if (aOff < 0) {
@@ -121,11 +119,11 @@ bool EnsureSwitchResolved() {
     }
     void* useFn = R::FindFunction(cls, L"use");
     if (!useFn) { UE_LOGW("lightswitch: switch use() UFunction not found -- not ready"); return false; }
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) g_objectsOff = R::FindPropertyOffset(trigCls, L"objects");
+    g_objectsOff = R::FindPropertyOffset(cls, L"objects");
     g_swCls = cls; g_swKeyOff = keyOff; g_swAOff = aOff; g_useFn = useFn;
     g_swResolved.store(true, std::memory_order_release);
-    UE_LOGI("lightswitch: resolved switch lightswitch_C=%p Key@0x%04X A@0x%04X use=%p",
-            cls, keyOff, aOff, useFn);
+    UE_LOGI("lightswitch: resolved switch lightswitch_C=%p Key@0x%04X A@0x%04X objects@0x%04X use=%p",
+            cls, keyOff, aOff, g_objectsOff, useFn);
     return true;
 }
 

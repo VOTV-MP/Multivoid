@@ -9,9 +9,8 @@
 // press_downl (downloading), bit2 press_play (playing), bit3 press_calc (calculating), bit4
 // press_light (lights) -- the press_ FIELD order, which power_control.cpp resolves by name.
 //
-// Identity = the inherited AtriggerBase_C::Key (save-persistent, cross-peer stable;
-// FindPropertyOffset does NOT climb to a super, so Key resolves against triggerBase_C directly,
-// the same gotcha garage/appliance handle). The base power EFFECTS (servers/doors/lightRoots)
+// Identity = the inherited AtriggerBase_C::Key (save-persistent, cross-peer stable; the property
+// lookup climbs to the base that declares it). The base power EFFECTS (servers/doors/lightRoots)
 // are synced by their OWN channels -- this wrapper mirrors the PANEL's own breaker/LED visual.
 
 #pragma once
