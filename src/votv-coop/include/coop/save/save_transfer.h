@@ -65,6 +65,11 @@ void TickHost();
 // A peer left mid-stream: drop its pump state (the disconnect edge).
 void CancelForSlot(int peerSlot);
 
+// Whether the host has taken `peerSlot`'s world for this connection's join, live or from the file on
+// disk: from that instant a change the host makes reaches the joiner only through the lanes' own
+// replays at its world-ready. False again when the slot leaves. Host, game thread.
+bool WorldTakenFor(int peerSlot);
+
 // Client side.
 
 enum class ClientState : int {

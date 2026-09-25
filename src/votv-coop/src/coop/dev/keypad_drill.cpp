@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
+#include "coop/save/save_transfer.h"  // WorldTakenFor: the late leg's window opens
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
@@ -66,6 +67,7 @@ int          g_doorBefore = -1;   // the press leg: the gated door's open on thi
 std::wstring g_tailDigits;        // the tail leg: the two digits typed after its submit
 Clock::time_point g_since{};
 int          g_failures = 0;
+bool         g_lateDone = false;  // the host's late leg ran, or was found impossible
 
 // The host watches every keypad that gates a door, since the client picks by its own walk.
 struct Watched { void* lock; int32_t idx; std::wstring key; PL::State last; };
@@ -158,6 +160,27 @@ bool PickReachableKeypad(void* player, const ue_wrap::FVector& at, DR::DirectorG
     return true;
 }
 
+// The keypad the late leg flips: the first, by key, of the named keypads that gate a door and whose
+// code the keys cannot type, so no leg of the client's stands at it or its pair (a pair shares one
+// code). Null when there is none.
+void* LateKeypad(std::wstring& keyOut) {
+    void* best = nullptr;
+    keyOut.clear();
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o) || !PL::IsPasswordLock(o) || !PL::GatedDoor(o)) continue;
+        std::wstring key = coop::keypad_sync::KeypadKey(o);
+        PL::State st;
+        if (key.empty() || !PL::ReadState(o, st) || Typeable(st.password)) continue;
+        if (!best || key < keyOut) {
+            best = o;
+            keyOut = std::move(key);
+        }
+    }
+    return best;
+}
+
 int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 100.f) + 60, 90, 900); }
 
 // The client walks to its keypad with the director, as a player would stand at it.
@@ -245,8 +268,26 @@ void Census(const char* when) {
     }
 }
 
+// The client's half of the late leg, once every leg is over: the keypad the host flipped after this
+// client's world was taken, when only the snapshot could carry it, reads with its door as one.
+void CheckLate() {
+    std::wstring key;
+    void* lock = LateKeypad(key);
+    PL::State st;
+    if (!lock || !PL::ReadState(lock, st)) {
+        UE_LOGI("[KEYPAD-DRILL] client LATE: no keypad the legs cannot type gates a door -- INCONCLUSIVE");
+        return;
+    }
+    const int door = DoorOf(lock);
+    const bool same = door == (st.active ? 1 : 0);
+    UE_LOGI("[KEYPAD-DRILL] client LATE keypad='%ls': active %d, its door %d (%s)", key.c_str(), st.active ? 1 : 0,
+            door, same ? "the door follows its keypad" : "the door DIFFERS -- FAIL");
+    if (!same) ++g_failures;
+}
+
 void Done(const char* verdict) {
     g_phase = Phase::Done;
+    if (!coop::roster::LocalIsHost()) CheckLate();
     Census("at the end");
     UE_LOGI("[KEYPAD-DRILL] %s DONE keypad='%ls' %s", Side(), g_key.c_str(), verdict);
 }
@@ -420,8 +461,34 @@ void ClientStep(const PL::State& cur, long long ms) {
     }
 }
 
+// The host's half of the late leg: once slot 1's world is taken for its join, and before slot 1 is
+// world-ready, the late keypad's verdict is negated as its own chain leaves it (active, then
+// setActive(false), which hands it on to its pair and door). No state of it can reach the joiner
+// before it is ready, so only the joiner's snapshot carries the new verdict to that door.
+void HostLate(coop::net::Session& s) {
+    if (g_lateDone || !coop::save_transfer::WorldTakenFor(1)) return;
+    g_lateDone = true;
+    if (s.IsSlotWorldReady(1)) {
+        UE_LOGW("[KEYPAD-DRILL] host LATE: slot 1 was world-ready when its world was seen taken -- INCONCLUSIVE");
+        return;
+    }
+    std::wstring key;
+    void* lock = LateKeypad(key);
+    PL::State st;
+    if (!lock || !PL::ReadState(lock, st)) {
+        UE_LOGI("[KEYPAD-DRILL] host LATE: no keypad the legs cannot type gates a door -- INCONCLUSIVE");
+        return;
+    }
+    const bool flipped = PL::WriteActive(lock, !st.active) && PL::CallSetActive(lock, false);
+    UE_LOGI("[KEYPAD-DRILL] host LATE keypad='%ls': active %d -> %d after slot 1's world was taken, before it "
+            "was ready (dispatched=%d, its door now %d)", key.c_str(), st.active ? 1 : 0, st.active ? 0 : 1,
+            flipped ? 1 : 0, DoorOf(lock));
+    Census("after the late flip");
+}
+
 // The host logs every change of every keypad that gates a door.
-void HostTick() {
+void HostTick(coop::net::Session& s) {
+    HostLate(s);
     if (g_watched.empty()) {
         const int32_t n = R::NumObjects();
         for (int32_t i = 0; i < n; ++i) {
@@ -461,7 +528,7 @@ void Tick(coop::net::Session* session) {
     if (!session || !session->connected() || !RoleIsReady()) return;
     if (!PL::EnsureResolved()) return;
     if (coop::roster::LocalIsHost()) {
-        HostTick();
+        HostTick(*session);
         return;
     }
     if (g_phase == Phase::Unpicked) {
@@ -534,6 +601,7 @@ void OnDisconnect() {
     g_doorBefore = -1;
     g_tailDigits.clear();
     g_failures = 0;
+    g_lateDone = false;
     g_watched.clear();
     // A walker still running finishes its walk; its result is for the session that started it.
     g_walkerStarted.store(false);

@@ -113,6 +113,8 @@ struct HostStream {
                                    // freed on completion -- joins are rare)
 };
 HostStream g_host[coop::net::kMaxPeers];
+// Per slot, whether its world was taken for this connection's join (WorldTakenFor).
+bool g_worldTaken[coop::net::kMaxPeers] = {};
 
 // Chunks per TickHost pass per slot: a ~13 MB/s ceiling at 60 Hz; the send buffer's backpressure
 // (a failed send stops the pass) is the real pacer on a slower link.
@@ -156,6 +158,7 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
     hs.active = true;
     hs.blob = std::move(bytes);  // already framed (identity sidecar prepended) by the caller
     hs.blobReady = true;
+    g_worldTaken[slot] = true;
     hs.nextChunk = 0;
     hs.chunkCount = static_cast<uint32_t>(
         (hs.blob.size() + coop::net::kSaveChunkBytes - 1) / coop::net::kSaveChunkBytes);
@@ -595,6 +598,7 @@ void CancelForSlot(int peerSlot) {
     if (g_host[peerSlot].active)
         UE_LOGI("save_transfer: slot %d left mid-stream -- cancelled", peerSlot);
     g_host[peerSlot] = HostStream{};
+    g_worldTaken[peerSlot] = false;
     coop::meadow_db_sync::CancelJoinSnapshot(peerSlot);  // drop the seed baseline and the pending masks
     coop::signal_sync::CancelJoinSnapshot(peerSlot);
     coop::email_sync::CancelJoinSnapshot(peerSlot);
@@ -734,8 +738,13 @@ void OnDisconnect() {
     }
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_host[slot] = HostStream{};
+        g_worldTaken[slot] = false;
         coop::join_window_baseline::ClearForSlot(slot);  // no baseline survives a session end
     }
+}
+
+bool WorldTakenFor(int peerSlot) {
+    return peerSlot >= 1 && peerSlot < coop::net::kMaxPeers && g_worldTaken[peerSlot];
 }
 
 }  // namespace coop::save_transfer
