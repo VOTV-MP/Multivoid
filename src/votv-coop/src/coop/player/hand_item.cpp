@@ -32,6 +32,9 @@ namespace E = ue_wrap::engine;
 
 // Wire caps: class names and item names are short ASCII, one length byte each.
 constexpr size_t kMaxStr = 63;
+// The largest HandItem: slot, has, three length-prefixed strings at the cap, the hold transform.
+static_assert(2 + 3 * (1 + kMaxStr) + 6 * sizeof(float) <= static_cast<size_t>(coop::net::kMaxReliablePayload),
+              "a HandItem at its string caps must fit one reliable datagram");
 
 // Display placement: the held item appears in front of the camera, as in the single-player
 // view, seen in third person on the puppet. Natively the held item is welded into the

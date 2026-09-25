@@ -10,7 +10,7 @@
 // The model is MTA's: a ped's current weapon is PLAYER STATE attached to the ped locally on
 // every machine, so the hand item is part of the player's EXPRESSION like skin and nick colour.
 // The owner polls mainPlayer.holding_actor (Aprop_C only -- the trash clump/pile carry keeps its
-// own lane) and broadcasts a small reliable HandItem{class, name} on change; every peer keeps a
+// own lane) and broadcasts a small reliable HandItem{class, name, item} on change; every peer keeps a
 // display-only mirror. Nothing goes per-tick on the wire, switch latency is one reliable
 // message, and late join replays per-slot state. All functions game-thread only.
 
@@ -85,8 +85,8 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls);
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 
 // The item `slot`'s hand holds, as its owner last announced: the name its hold slot holds it under,
-// which the player's updateHold keys the game's item tables by (the actor's own `name` can be empty
-// for a class of its own), or empty when it holds nothing. Game thread only.
+// the key the player's updateHold looks the game's item tables up by, or empty when it holds
+// nothing. Game thread only.
 std::wstring HeldItem(uint8_t slot);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)

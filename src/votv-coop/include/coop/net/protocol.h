@@ -481,9 +481,10 @@ enum class ReliableKind : uint8_t {
     // pre-world sendable.
     NickColorChange = 88,
 
-    // What a player's hand shows: [u8 slot][u8 has][u8 clsLen][cls][u8 nameLen][name]. The trust
-    // shape of SkinChange. Receivers keep a display-only mirror on the puppet; the host replays every
-    // non-empty hand to a joiner.
+    // What a player's hand shows: [u8 slot][u8 has][u8 clsLen][cls][u8 nameLen][name][u8 itemLen]
+    // [item], then, when it has one, the hold transform (relPos, relRot: six floats). `item` is the
+    // name the hold slot holds it under. The trust shape of SkinChange. Receivers keep a display-only
+    // mirror on the puppet; the host replays every non-empty hand to a joiner.
     HandItem = 89,
 
     // Client to host: I placed this keyed prop I had picked up; spawn it by key at this transform
@@ -1818,7 +1819,7 @@ static_assert(sizeof(BroomStrokePayload) <= 256 - 20 - 8,
 // settled state on a State record, which is written whole, the password with it (a set-new-code
 // chain changes it on the keypad and its pair).
 enum class KeypadEvent : uint8_t {
-    State      = 0,  // the settled state: written, then setActive(false) hands the power on
+    State      = 0,  // the settled state: written, then setActive, handing the power on when arg is 1
     Digit      = 1,  // inputNumber(arg), arg 0..9
     Open       = 2,  // open(arg != 0): the verdict, or in set-new-code mode the new password
     Guesser    = 3,  // open2()
