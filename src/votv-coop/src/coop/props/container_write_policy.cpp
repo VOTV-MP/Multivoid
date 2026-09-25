@@ -6,9 +6,13 @@
 #include "coop/element/intent_authority.h"
 #include "coop/net/connect_history.h"
 #include "coop/net/session.h"
+#include "ue_wrap/actors/container_openers.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <map>
+#include <set>
+#include <utility>
 
 namespace coop::props::container_write_policy {
 namespace {
@@ -35,6 +39,26 @@ uint64_t g_refused = 0;
 coop::net::connect_history::History g_writes{
     coop::net::connect_history::Policy{kRateMax, kRateWindowMs, kRateWindowMs},
     "container writes"};
+
+// A container the game opens through another actor stands where no player does: the drone's inventory
+// kilometres off, the ATV's under the world origin. Its author reaches it through the actor that opens
+// it -- the game's own field on the opener, never the author's claim.
+void* OpenerInReach(const coop::element::IntentTarget& tok, void* container) {
+    struct Ctx {
+        const coop::element::IntentTarget* tok;
+        void* reached;
+    } ctx{&tok, nullptr};
+    ue_wrap::container_openers::ForEach(container, [](void* c, void* opener) {
+        Ctx& x = *static_cast<Ctx*>(c);
+        if (x.tok->Authorize(opener).outcome != coop::element::IntentOutcome::Ok) return true;
+        x.reached = opener;
+        return false;
+    }, &ctx);
+    return ctx.reached;
+}
+
+// Said once per container and author, the first time an author reaches it through an opener.
+std::set<std::pair<uint32_t, uint8_t>> g_reachedThrough;
 
 }  // namespace
 
@@ -92,19 +116,28 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
     }
 
     // REACH, and only where it is answerable. A container's contents are mutated through the
-    // player's own look-at trace, so an author that is not at the container did not run the verb it
-    // is reporting. NoRow and StaleDead are not refusals here: they mean the element has not
-    // arrived (or has gone), which is the park's question, not this one.
+    // player's own look-at trace, so an author that is neither at the container nor at an actor that
+    // opens it (the drone, its sack, the ATV) did not run the verb it is reporting. NoRow and StaleDead
+    // are not refusals here: they mean the element has not arrived (or has gone), which is the park's
+    // question, not this one.
     const auto tok = coop::element::IntentTarget::ForClientIntent(session, authorSlot, kReachUU);
     const auto sub = tok.Resolve(static_cast<coop::element::ElementId>(eid),
                                  coop::element::ElementType::Prop);
     if (sub.outcome == coop::element::IntentOutcome::NoBody) return Decision::NoBodyYet;
-    if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
-        sub.outcome == coop::element::IntentOutcome::NoTarget) {
+    // Far, or with no place to measure to: the author may still stand at an actor that opens it.
+    const bool unmet = sub.outcome == coop::element::IntentOutcome::OutOfReach ||
+                       sub.outcome == coop::element::IntentOutcome::NoTarget;
+    void* const opener = unmet ? OpenerInReach(tok, sub.actor) : nullptr;
+    if (opener && g_reachedThrough.insert({eid, authorSlot}).second)
+        UE_LOGI("container_contents: eid=%u slot %u reached through the %ls that opens it (the container: "
+                "%s, %.0f uu away)", eid, static_cast<unsigned>(authorSlot),
+                ue_wrap::reflection::ClassNameOf(opener).c_str(), coop::element::OutcomeName(sub.outcome),
+                sub.distUU);
+    if (unmet && !opener) {
         ++g_refused;
-        UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- the author cannot reach it (%s, "
-                "dist=%.0f allowed=%.0f). Write REFUSED; re-publishing host truth to the author. "
-                "Total refused this session: %llu",
+        UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- the author cannot reach it nor any actor "
+                "that opens it (%s, dist=%.0f allowed=%.0f). Write REFUSED; re-publishing host truth to the "
+                "author. Total refused this session: %llu",
                 eid, static_cast<unsigned>(authorSlot),
                 coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU,
                 static_cast<unsigned long long>(g_refused));
@@ -192,6 +225,7 @@ void Reset() {
     g_localChangeMs.clear();
     g_writes.Clear();
     g_refused = 0;
+    g_reachedThrough.clear();
 }
 
 }  // namespace coop::props::container_write_policy

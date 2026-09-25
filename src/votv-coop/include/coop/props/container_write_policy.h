@@ -24,8 +24,8 @@ namespace coop::props::container_write_policy {
 enum class Decision : uint8_t {
     Accept = 0,
     TooFast,             // this author has spent its window's worth of the host's arbitration
-    Unreachable,         // the author is not where this container is; the element's own outcome
-                         // name rides in the log line
+    Unreachable,         // the author is neither where this container is nor at an actor that opens
+                         // it (ue_wrap/actors/container_openers); the outcome name rides in the log
     NoBodyYet,           // the author has no body on this machine to measure a reach from, which
                          // is a mid-join window rather than a verdict: the caller HOLDS the slice
                          // instead of refusing it (principle 8 -- a lane owes its late-join answer,
