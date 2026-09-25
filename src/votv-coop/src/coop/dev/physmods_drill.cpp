@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace coop::dev::physmods_drill {
@@ -39,8 +40,10 @@ int      g_theirSlot = -1;  // where the host's module arrived
 int      g_mySlot = -1;     // leg 2's slot
 uint8_t  g_myType = 0;
 uint64_t g_adoptsAtLeg4 = 0;
-// Set before a lifted call and cleared after it: a fault inside the call is absorbed past the call's
-// frame, and the next tick puts back the coldswap it left lifted.
+uint8_t  g_afterLeg4[PM::kSlots] = {};  // this peer's array once its leg-4 ops ran
+// Set before a lifted call and cleared after it. An engine fault inside the call is absorbed at its own
+// dispatch and the call returns false, so the put-back runs in the same tick; a fault in this file's code
+// between the two would skip it, and the next tick puts back the coldswap it left lifted.
 bool g_liftOut = false;
 
 int CountModules(const uint8_t arr[PM::kSlots]) {
@@ -163,21 +166,29 @@ const char* Say(Out o) {
     return "?";
 }
 
+// Every leg that cannot go on ends here, on one line a run can pass as its dead marker
+// ("[PHYSMODS-DRILL] ABANDONED"), so it dies with its phase instead of waiting out its clock.
+void Abandon(const char* side, const std::string& why) {
+    UE_LOGW("[PHYSMODS-DRILL] ABANDONED on the %s: %s", side, why.c_str());
+}
+
 void HostTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
     switch (g_host) {
     case Host::Start: {
         g_host = Host::Done;
-        if (const int n = CountModules(arr)) {
-            UE_LOGW("[PHYSMODS-DRILL] host REFUSED the desk holds %d module(s) %s at the drill's start; the drill "
-                    "needs an empty desk, since its rejoin leg reads a module at the joiner's world-ready as the "
-                    "joiner's own load", n, Describe(arr).c_str());
+        if (CountModules(arr)) {
+            Abandon("host", "the desk holds " + Describe(arr) + " at the drill's start; the drill needs an empty "
+                    "desk, since its rejoin leg reads a module at the joiner's world-ready as the joiner's own load");
             return;
         }
         g_hostSlot = 0;
         g_hostType = PlugAnyType(desk, pawn, g_hostSlot, 0);
-        UE_LOGI("[PHYSMODS-DRILL] host leg 1 plugged byte=%u into slot=%d through plugInModule%s", g_hostType,
-                g_hostSlot, g_hostType ? "" : " -- NO module landed");
-        if (g_hostType) g_host = Host::Plugged;
+        if (!g_hostType) {
+            Abandon("host", "leg 1 landed no module in slot 0");
+            return;
+        }
+        UE_LOGI("[PHYSMODS-DRILL] host leg 1 plugged byte=%u into slot=%d through plugInModule", g_hostType, g_hostSlot);
+        g_host = Host::Plugged;
         return;
     }
     case Host::Plugged: {
@@ -185,9 +196,13 @@ void HostTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
         if (theirs < 0) return;  // the client's second module of this type has not arrived
         g_host = Host::Done;
         const Out out = Unplug(desk, pawn, g_hostSlot);
+        if (out != Out::Emptied) {
+            Abandon("host", std::string("leg 3, its own slot 0 through the E press: ") + Say(out));
+            return;
+        }
         UE_LOGI("[PHYSMODS-DRILL] host leg 3 saw the client's second byte=%u in slot=%d and unplugged its own "
-                "slot=%d through the E press -- %s", g_hostType, theirs, g_hostSlot, Say(out));
-        if (out == Out::Emptied) g_host = Host::Unplugged;
+                "slot=%d through the E press", g_hostType, theirs, g_hostSlot);
+        g_host = Host::Unplugged;
         return;
     }
     case Host::Unplugged: {
@@ -223,33 +238,50 @@ void ClientTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
         g_myType = arr[g_theirSlot];
         g_mySlot = FirstEmpty(arr);
         g_client = Client::Done;
-        const bool in = g_mySlot >= 0 && Plug(desk, pawn, g_mySlot, g_myType);
+        if (g_mySlot < 0 || !Plug(desk, pawn, g_mySlot, g_myType)) {
+            Abandon("client", "leg 2 landed no second module of byte " + std::to_string(g_myType));
+            return;
+        }
         UE_LOGI("[PHYSMODS-DRILL] client leg 2 saw the host's byte=%u in slot=%d and plugged a second byte=%u into "
-                "slot=%d through plugInModule%s", g_myType, g_theirSlot, g_myType, g_mySlot,
-                in ? "" : " -- NO module landed");
-        if (in) g_client = Client::Plugged;
+                "slot=%d through plugInModule", g_myType, g_theirSlot, g_myType, g_mySlot);
+        g_client = Client::Plugged;
         return;
     }
     case Client::Plugged: {
         if (arr[g_theirSlot]) return;  // the host's unplug has not arrived
         g_client = Client::Done;
         const Out out = Unplug(desk, pawn, g_mySlot);
+        if (out != Out::Emptied) {
+            Abandon("client", std::string("leg 4, its own slot through the E press: ") + Say(out));
+            return;
+        }
         uint8_t now[PM::kSlots];
         const int slot = PM::ReadArray(now) ? FirstEmpty(now) : -1;
-        const uint8_t other = (out == Out::Emptied && slot >= 0) ? PlugAnyType(desk, pawn, slot, g_myType) : 0;
+        const uint8_t other = slot >= 0 ? PlugAnyType(desk, pawn, slot, g_myType) : 0;
+        if (!other || !PM::ReadArray(g_afterLeg4)) {
+            Abandon("client", "leg 4 landed no module of another type");
+            return;
+        }
         g_adoptsAtLeg4 = coop::physmods_sync::CanonicalsAdopted();
         UE_LOGI("[PHYSMODS-DRILL] client leg 4 saw the host's slot=%d empty, unplugged its own slot=%d through the "
-                "E press (%s) and plugged byte=%u into slot=%d", g_theirSlot, g_mySlot, Say(out), other, slot);
-        if (out == Out::Emptied && other) g_client = Client::Acking;
+                "E press and plugged byte=%u into slot=%d", g_theirSlot, g_mySlot, other, slot);
+        g_client = Client::Acking;
         return;
     }
     case Client::Acking: {
-        // The host broadcasts its canonical after each op it applies: two back means both were applied.
+        // The host sends its canonical after each op, applied or denied, so a count alone cannot tell the two
+        // apart: the ops were applied when, two canonicals on, this peer's array is still the one its own
+        // leg-4 ops left.
         const uint64_t back = coop::physmods_sync::CanonicalsAdopted() - g_adoptsAtLeg4;
         if (back < 2) return;
         g_client = Client::Done;
-        UE_LOGI("[PHYSMODS-DRILL] client ACKED the host's canonical came back %llu time(s) after leg 4; the array is "
-                "%s", static_cast<unsigned long long>(back), Describe(arr).c_str());
+        if (std::memcmp(arr, g_afterLeg4, PM::kSlots) != 0) {
+            Abandon("client", "two canonicals after leg 4 the array is " + Describe(arr) + ", not the " +
+                    Describe(g_afterLeg4) + " its own ops left (an op was denied)");
+            return;
+        }
+        UE_LOGI("[PHYSMODS-DRILL] client ACKED the host's canonical came back %llu time(s) after leg 4 and the array "
+                "is still %s", static_cast<unsigned long long>(back), Describe(arr).c_str());
         return;
     }
     case Client::Done:
