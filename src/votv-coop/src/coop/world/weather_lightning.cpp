@@ -29,8 +29,8 @@ namespace GT = ue_wrap::game_thread;
 // pattern.
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Resolved-once dependencies. Once non-null, stay non-null for the process
-// lifetime (GUObjectArray entries don't get unloaded in shipped UE4).
+// Resolved-once dependencies, kept for the process: the GameplayStatics parts are native, and
+// lightningStrike_C is an import of mainPlayer_C, which is one class object in every world.
 void* g_gameplayStaticsCdo   = nullptr;
 void* g_beginDeferredSpawnFn = nullptr;
 void* g_finishSpawnFn        = nullptr;
@@ -39,6 +39,7 @@ int32_t g_spawnActorClassParamOff = -1;
 int32_t g_spawnTransformParamOff  = -1;
 bool g_observerRegistered = false;
 bool g_observerRefused = false;  // the observer table was full this session: a capacity fault, said once
+bool g_spawnPathRefused = false; // GameplayStatics lacks a part of the spawn path: a fact of the build
 
 // HOST POST observer on BeginDeferredActorSpawnFromClass. Fires for EVERY deferred spawn (it also
 // carries NPC and prop spawns); filtered by ActorClass == lightningStrike_C. The strike's actor
@@ -92,30 +93,29 @@ void SetSession(coop::net::Session* session) {
 }
 
 bool TryResolve() {
-    if (!g_gameplayStaticsCdo) {
+    if (g_spawnPathRefused) return false;
+    // The spawn path is the engine's own GameplayStatics, there from boot: resolved once, and a part
+    // of it that does not resolve is a fact of this engine build, said once and not asked again (the
+    // default object's lookup walks the object array).
+    if (!g_beginDeferredSpawnFn || !g_finishSpawnFn || g_spawnActorClassParamOff < 0 ||
+        g_spawnTransformParamOff < 0) {
         g_gameplayStaticsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    }
-    if (!g_gameplayStaticsCdo) return false;
-
-    if (!g_beginDeferredSpawnFn || !g_finishSpawnFn) {
-        void* gsCls = R::ClassOf(g_gameplayStaticsCdo);
-        if (!gsCls) return false;
-        if (!g_beginDeferredSpawnFn) {
-            g_beginDeferredSpawnFn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
+        void* gsCls = g_gameplayStaticsCdo ? R::ClassOf(g_gameplayStaticsCdo) : nullptr;
+        g_beginDeferredSpawnFn = gsCls ? R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn) : nullptr;
+        g_finishSpawnFn = gsCls ? R::FindFunction(gsCls, P::name::FinishSpawningActorFn) : nullptr;
+        g_spawnActorClassParamOff =
+            g_beginDeferredSpawnFn ? R::FindParamOffset(g_beginDeferredSpawnFn, L"ActorClass") : -1;
+        g_spawnTransformParamOff =
+            g_beginDeferredSpawnFn ? R::FindParamOffset(g_beginDeferredSpawnFn, L"SpawnTransform") : -1;
+        if (!g_finishSpawnFn || g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) {
+            g_spawnPathRefused = true;
+            UE_LOGE("weather: lightning spawn path unresolved on GameplayStatics (cdo=%p begin=%p finish=%p "
+                    "ActorClass@%d SpawnTransform@%d) -- no strike is observed or spawned this process",
+                    g_gameplayStaticsCdo, g_beginDeferredSpawnFn, g_finishSpawnFn, g_spawnActorClassParamOff,
+                    g_spawnTransformParamOff);
+            return false;
         }
-        if (!g_finishSpawnFn) {
-            g_finishSpawnFn = R::FindFunction(gsCls, P::name::FinishSpawningActorFn);
-        }
     }
-    if (!g_beginDeferredSpawnFn || !g_finishSpawnFn) return false;
-
-    if (g_spawnActorClassParamOff < 0) {
-        g_spawnActorClassParamOff = R::FindParamOffset(g_beginDeferredSpawnFn, L"ActorClass");
-    }
-    if (g_spawnTransformParamOff < 0) {
-        g_spawnTransformParamOff = R::FindParamOffset(g_beginDeferredSpawnFn, L"SpawnTransform");
-    }
-    if (g_spawnActorClassParamOff < 0 || g_spawnTransformParamOff < 0) return false;
 
     // One index lookup, a miss included, so a caller may ask on every use until the class loads.
     if (!g_lightningStrikeClass) {

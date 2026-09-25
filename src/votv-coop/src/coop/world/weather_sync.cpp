@@ -317,6 +317,15 @@ void Install(coop::net::Session* session) {
         }
     }
 
+    // Lightning sits above the early-outs too, and the latch does not wait on it: the host observes
+    // BeginDeferredActorSpawnFromClass (a POST observer; nothing to cancel, the client never spawns
+    // lightning locally since timerLightning is suppressed) and broadcasts the strike, and a client
+    // resolves the spawn path its Apply uses. Either happens whenever the strike class is listed:
+    // one index lookup until then, O(1) once settled.
+    coop::weather_lightning::SetSession(session);
+    if (session && session->role() == coop::net::Role::Host) coop::weather_lightning::RegisterHostObserver();
+    else if (session) coop::weather_lightning::TryResolve();
+
     if (g_installed) return;
 
     if (!TryResolveAllFunctions()) return;  // the cycle class is not loaded yet, or refused for good
@@ -389,12 +398,6 @@ void Install(coop::net::Session* session) {
     coop::weather_redsky::SetSession(session);
     coop::weather_redsky::TryResolve();
 
-    // Lightning: the host observes BeginDeferredActorSpawnFromClass (a POST observer; nothing to
-    // cancel, the client never spawns lightning locally since timerLightning is suppressed) and
-    // broadcasts the strike; a client's Apply resolves its spawn path per use. SetSession on every
-    // re-entry, so the once-registered observer reads the current session.
-    coop::weather_lightning::SetSession(session);
-
     // Fog: the role-gated, echo-suppressed spawnFog interceptor, so a client never makes
     // uncommanded fog. The latch waits on it: an unregistered interceptor must retry, not leave the
     // client unsuppressed.
@@ -404,10 +407,6 @@ void Install(coop::net::Session* session) {
     // destroyed at FinishSpawningActor, the one place the organic roll surfaces (its caller is
     // invisible to every ProcessEvent seam). The latch waits on it too.
     if (!coop::weather_event_births::Install(session, isHost)) return;
-
-    // The host's lightning observer: the latch waits on it too, so a strike class that loads after
-    // the rest is still observed (its lookups are index lookups, so the re-entry costs nothing).
-    if (isHost && !coop::weather_lightning::RegisterHostObserver()) return;
 
     g_installed = true;
 }

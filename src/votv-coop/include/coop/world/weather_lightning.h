@@ -27,13 +27,14 @@ void SetSession(coop::net::Session* session);
 // Resolve the UGameplayStatics CDO + the BeginDeferred / FinishSpawn UFunctions + the
 // lightningStrike_C class + the ActorClass / SpawnTransform param offsets. Idempotent -- fields are
 // cached on first success. Returns true when every dependency is resolved (safe to register the
-// observer / call Apply).
+// observer / call Apply). The strike class is waited for at the cost of one index lookup; a part of
+// the engine's spawn path that does not resolve refuses the lane for the process, said once.
 bool TryResolve();
 
 // HOST-only: register the POST observer on BeginDeferredActorSpawnFromClass if not already
 // registered AND TryResolve() succeeded. Returns true once settled for the session: the observer is
-// active, or the observer table refused it (said once). False while a dependency is not loaded yet,
-// asked again at no cost. Safe to call every net-pump tick.
+// active, or the observer table refused it (said once). False while TryResolve is false, asked
+// again at no cost. Safe to call every net-pump tick.
 bool RegisterHostObserver();
 
 // Receiver: spawn lightningStrike_C at the wire-received location via the standard BeginDeferred +
