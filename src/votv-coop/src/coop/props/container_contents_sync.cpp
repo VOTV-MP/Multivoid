@@ -113,12 +113,6 @@ int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_
 int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
 int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
 
-// The two re-derive verbs, resolved once from the class that declares each, never the instance's
-// class (see ResolveRederiveFns).
-void* g_fnUpdateVol  = nullptr;   // Aprop_container_C::updateVolumesAndMass
-void* g_fnRecalcName = nullptr;   // UpropInventory_C::recalculateNames
-bool  g_rederiveResolved = false;
-
 // An offset resolved once; -1 means looked and failed, never retried, never guessed.
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
     if (slot == -2) {
@@ -353,36 +347,26 @@ void DrainDirty(coop::net::Session* s) {
 
 // The setter-managed state (currVol, Mass, the display names) is re-derived through the engine's
 // own verbs, never raw-written; updateVolumesAndMass calls only Get Volume, and the ejector
-// checkObjectsVolume (which calls takeObj) is not called. Resolved from the declaring class:
-// FindFunction matches the exact owning class and does not climb the superclass chain, and
-// updateVolumesAndMass is declared only on Aprop_container_C while every real container is a
-// subclass, so a per-instance-class cache resolved null for every container and the re-derive had
-// never run (a null UFunction was silently skipped and the applied volume stayed at whatever the
-// last native mutation left). No subclass overrides it, so a base-declared UFunction dispatched
-// against a derived instance is correct. The resolution is logged, including failure.
-void ResolveRederiveFns() {
-    if (g_rederiveResolved) return;
-    void* contCls = ContainerClass();
-    void* invCls  = InventoryClass();
-    if (!contCls || !invCls) return;  // classes not loaded yet -- retry on the next apply
-    g_rederiveResolved = true;
-    g_fnUpdateVol  = R::FindFunction(contCls, L"updateVolumesAndMass");
-    g_fnRecalcName = R::FindFunction(invCls,  L"recalculateNames");
-    if (g_fnUpdateVol && g_fnRecalcName) {
-        UE_LOGI("container_contents: re-derive verbs resolved (updateVolumesAndMass=%p on "
-                "prop_container_C, recalculateNames=%p on propInventory_C)",
-                g_fnUpdateVol, g_fnRecalcName);
-    } else {
-        UE_LOGW("container_contents: re-derive verb MISSING (updateVolumesAndMass=%p "
-                "recalculateNames=%p) -- applied contents will show a STALE currVol / names",
-                g_fnUpdateVol, g_fnRecalcName);
-    }
-}
-
+// checkObjectsVolume (which calls takeObj) is not called. Each verb is looked up on the instance's own
+// class through the memoised dispatch lookup, which climbs to the class that declares it --
+// updateVolumesAndMass is declared only on Aprop_container_C, and every real container is a subclass --
+// and holds its answer by the class's slot and serial, so no function of a class that is gone is
+// called. A verb that does not resolve is said once: the applied contents then show a stale currVol or
+// stale names.
 void RederiveManagedState(void* owner, void* inv) {
-    ResolveRederiveFns();
-    if (owner && g_fnUpdateVol)  ue_wrap::component_calls::CallParamless(owner, g_fnUpdateVol);
-    if (inv   && g_fnRecalcName) ue_wrap::component_calls::CallParamless(inv,   g_fnRecalcName);
+    void* const updateVol =
+        owner ? R::FindDispatchFunctionCached(R::ClassOf(owner), L"updateVolumesAndMass") : nullptr;
+    void* const recalcNames = inv ? R::FindDispatchFunctionCached(R::ClassOf(inv), L"recalculateNames") : nullptr;
+    if ((owner && !updateVol) || (inv && !recalcNames)) {
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGW("container_contents: re-derive verb MISSING (updateVolumesAndMass=%p recalculateNames=%p) "
+                    "-- applied contents will show a STALE currVol / names", updateVol, recalcNames);
+        }
+    }
+    if (updateVol)   ue_wrap::component_calls::CallParamless(owner, updateVol);
+    if (recalcNames) ue_wrap::component_calls::CallParamless(inv, recalcNames);
 }
 
 // What an inbound blob did to this peer; a bool cannot express it, since "handled" and "changed
