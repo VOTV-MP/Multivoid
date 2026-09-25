@@ -450,6 +450,16 @@ void Session::NetThread() {
                 } else {
                     peerSlot = 0;
                 }
+                // The slot is the authority on who holds it, as the band is for a pending entry: the
+                // batch carries the user data its messages had at receipt, so a connection closed in
+                // the middle of it -- a kick from the game thread, a client leaving its host -- would
+                // have its remaining messages re-latch the epoch its close just cleared, and the next
+                // occupant of the slot refused as that sender until its own close.
+                if (peerConns_[peerSlot].load(std::memory_order_acquire) !=
+                    static_cast<uint32_t>(msgs[i]->m_conn)) {
+                    msgs[i]->Release();
+                    continue;
+                }
                 HandleMessage(peerSlot, msgs[i]->m_pData, static_cast<int>(msgs[i]->m_cbSize));
                 msgs[i]->Release();
             }
