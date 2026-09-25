@@ -52,19 +52,25 @@ constexpr int kDenyRecs = 8;
 constexpr auto kDenyTtl = std::chrono::seconds(10);
 DenyRec g_denies[kDenyRecs];
 
-void SendOp(coop::net::Session* s, uint8_t op, uint8_t byte) {
+constexpr uint8_t kOpPlug      = 0;
+constexpr uint8_t kOpUnplug    = 1;
+constexpr uint8_t kOpCanonical = 2;
+constexpr uint8_t kOpDeny      = 3;
+
+void SendOp(coop::net::Session* s, uint8_t op, int slot, uint8_t byte) {
     // CLIENT-only: the host's organic changes never ride ops -- its live array
     // IS the canonical. A host that self-applied an already-applied op hit the
-    // dup and absent branches, refunding a phantom and broadcasting nothing.
+    // occupied and absent branches, refunding a phantom and broadcasting nothing.
     coop::net::PhysModsStatePayload p{};
     p.op = op;
     p.byte = byte;
+    p.slot = static_cast<uint8_t>(slot);
     s->SendReliableToSlot(0, coop::net::ReliableKind::PhysModsState, &p, sizeof(p));
 }
 
 void HostBroadcastCanonical(coop::net::Session* s, int onlySlot = -1) {
     coop::net::PhysModsStatePayload p{};
-    p.op = 2;
+    p.op = kOpCanonical;
     if (!PM::ReadArray(p.bytes)) return;
     if (onlySlot >= 0)
         s->SendReliableToSlot(onlySlot, coop::net::ReliableKind::PhysModsState, &p, sizeof(p));
@@ -72,81 +78,106 @@ void HostBroadcastCanonical(coop::net::Session* s, int onlySlot = -1) {
         s->SendReliable(coop::net::ReliableKind::PhysModsState, &p, sizeof(p));
 }
 
-// The ops of one local edit: the array is a SET, so the change decomposes into vanished bytes
-// (unplugs) and appeared bytes (plugs) regardless of slot movement.
+// A refused op goes back to its author with the canonical array behind it: the author's own array
+// left the canonical when its verb ran, and adopting it is what brings the two together again. MTA
+// answers a refused element-data change the same way, with the server's value sent to that player
+// alone (Server/mods/deathmatch/logic/CGame.cpp:2779, Packet_CustomData).
+void SendDeny(coop::net::Session* s, uint8_t author, const coop::net::PhysModsStatePayload& op) {
+    if (author == 0 || author >= coop::net::kMaxPeers) return;
+    coop::net::PhysModsStatePayload d{};
+    d.op = kOpDeny;
+    d.byte = op.op;
+    d.byte2 = op.byte;
+    d.slot = op.slot;
+    s->SendReliableToSlot(author, coop::net::ReliableKind::PhysModsState, &d, sizeof(d));
+    HostBroadcastCanonical(s, author);
+}
+
+// The ops of one local edit, slot by slot: a slot that lost its module is an unplug of it, one that
+// gained a module a plug of it. The desk takes two modules of one type (isModuleAllowed is a list of
+// types, not a duplicate check), so an op names its slot as well as its module.
 void SendLocalEdit(coop::net::Session* s, const uint8_t before[PM::kSlots], const uint8_t live[PM::kSlots]) {
     const bool isHost = (s->role() == coop::net::Role::Host);
-    bool hostChanged = false;
+    bool changed = false;
     for (int i = 0; i < PM::kSlots; ++i) {
-        const uint8_t b = before[i];
-        if (!b) continue;
-        bool still = false;
-        for (int j = 0; j < PM::kSlots; ++j) if (live[j] == b) { still = true; break; }
-        if (!still) {
-            UE_LOGI("physmods: local UNPLUG byte=%u -- %s", b,
+        if (before[i] == live[i]) continue;
+        changed = true;
+        if (before[i]) {
+            UE_LOGI("physmods: local UNPLUG slot=%d byte=%u -- %s", i, before[i],
                     isHost ? "canonical will carry it" : "op to host");
-            if (isHost) hostChanged = true; else SendOp(s, 1, b);
+            if (!isHost) SendOp(s, kOpUnplug, i, before[i]);
         }
-    }
-    for (int i = 0; i < PM::kSlots; ++i) {
-        const uint8_t b = live[i];
-        if (!b) continue;
-        bool had = false;
-        for (int j = 0; j < PM::kSlots; ++j) if (before[j] == b) { had = true; break; }
-        if (!had) {
-            UE_LOGI("physmods: local PLUG byte=%u -- %s", b,
+        if (live[i]) {
+            UE_LOGI("physmods: local PLUG slot=%d byte=%u -- %s", i, live[i],
                     isHost ? "canonical will carry it" : "op to host");
-            if (isHost) hostChanged = true; else SendOp(s, 0, b);
+            if (!isHost) SendOp(s, kOpPlug, i, live[i]);
         }
     }
     // The host's live array IS the canonical, so ONE broadcast carries any
     // number of organic changes.
-    if (isHost && hostChanged && s->connected()) HostBroadcastCanonical(s);
+    if (isHost && changed && s->connected()) HostBroadcastCanonical(s);
 }
 
-void AdoptCanonical(const uint8_t bytes[PM::kSlots]) {
+uint64_t g_adopted = 0;  // canonical arrays written into this peer's desk, game thread
+
+bool AdoptCanonical(const uint8_t bytes[PM::kSlots]) {
     coop::desk_snd_fx::ScopedWireApply guard;
-    if (!PM::WriteArray(bytes)) return;
+    if (!PM::WriteArray(bytes)) return false;
+    ++g_adopted;
     PM::CallUpdPhysMods();
+    return true;
 }
 
-// The edits from play are the desk's two verbs that write the array: plugInModule (a module into a
-// free slot) and playerHitWith, whose unplug branch reborns the module into the hand and zeroes its
-// slot (a hit on a slot with a module in hand runs plugInModule inside it). setData writes the array
-// wholesale on a save load and is not an edit, so a joiner's load sends nothing; nor are this lane's
-// own applies, which write the array and run updPhysMods, never a verb. Each watched body snapshots
-// the array at entry and sends what it changed at exit; after a send every enclosing body's snapshot
-// moves to the array as sent, so a plug inside a hit is sent once.
-constexpr int kTagPlug = 0x504C5547;  // 'PLUG'
-constexpr int kTagHit  = 0x50484954;  // 'PHIT'
+// The edits from play are the desk's two verbs that write the array (its ubergraph's control flow):
+// plugInModule, a module into an empty slot, which the in-hand use (playerUsedOn) and a module dropped
+// onto a slot (the slots' overlap events) both run; and actionOptionIndex, the E press, whose one write
+// is the unplug: the slot's module is reborn into the hand and the slot goes to 0. playerHitWith is an
+// empty body on the desk. setData writes the array wholesale on a save load and is not an edit, so a
+// joiner's load sends nothing; nor are this lane's own applies, which write the array and run
+// updPhysMods, never a verb. Each watched body snapshots the array at entry and sends what it changed
+// at exit. Neither verb runs the other; a module reborn onto a slot's trigger would plug inside the
+// press, so after a send every enclosing body's snapshot moves to the array as sent, and a change is
+// sent once.
+constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
+constexpr const wchar_t* kPlugVerb  = L"plugInModule";
+constexpr const wchar_t* kPressVerb = L"actionOptionIndex";
+constexpr int kTagPlug  = 0x504C5547;  // 'PLUG'
+constexpr int kTagPress = 0x50505253;  // 'PPRS'
 bool g_editsWatched = false;
 
 struct InFlight {
+    int     depth;  // the body's place on the gate's chain of watched bodies
     void*   stack;
     uint8_t before[PM::kSlots];
 };
 std::vector<InFlight> g_inFlight;  // game thread only
 
+// The gate's own chain is the scope: a body at depth d has only its ancestors below it, so an entry
+// at d or deeper belongs to a body that ended without its post (another watcher's Cancel, or a fault
+// the firewall absorbed, skips every post). Such an entry goes, and the stack never outgrows the chain.
+void DropFrom(int depth) {
+    while (!g_inFlight.empty() && g_inFlight.back().depth >= depth) g_inFlight.pop_back();
+}
+
 sg::Verdict OnEditPre(const sg::Call& call) {
-    InFlight f{call.stack, {}};
-    if (PM::ReadArray(f.before)) g_inFlight.push_back(f);
+    DropFrom(call.depth);
+    InFlight f{call.depth, call.stack, {}};
+    if (PM::EnsureResolved() && PM::ReadArray(f.before)) g_inFlight.push_back(f);
     return sg::Verdict::Run;
 }
 
 void OnEditPost(const sg::Call& call) {
-    // The innermost entry of this body; any above it is a body that ended without its post.
-    for (size_t i = g_inFlight.size(); i-- > 0;) {
-        if (g_inFlight[i].stack != call.stack) continue;
-        uint8_t before[PM::kSlots];
-        std::memcpy(before, g_inFlight[i].before, PM::kSlots);
-        g_inFlight.resize(i);
-        uint8_t live[PM::kSlots];
-        if (!PM::ReadArray(live) || std::memcmp(before, live, PM::kSlots) == 0) return;
-        auto* s = g_session.load(std::memory_order_acquire);
-        if (s && s->connected()) SendLocalEdit(s, before, live);
-        for (InFlight& outer : g_inFlight) std::memcpy(outer.before, live, PM::kSlots);
-        return;
-    }
+    DropFrom(call.depth + 1);
+    if (g_inFlight.empty() || g_inFlight.back().depth != call.depth || g_inFlight.back().stack != call.stack)
+        return;  // its entry read no array
+    uint8_t before[PM::kSlots];
+    std::memcpy(before, g_inFlight.back().before, PM::kSlots);
+    g_inFlight.pop_back();
+    uint8_t live[PM::kSlots];
+    if (!PM::ReadArray(live) || std::memcmp(before, live, PM::kSlots) == 0) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (s && s->connected()) SendLocalEdit(s, before, live);
+    for (InFlight& outer : g_inFlight) std::memcpy(outer.before, live, PM::kSlots);
 }
 
 void RecordDeny(uint8_t slot, uint8_t byte) {
@@ -158,12 +189,14 @@ void RecordDeny(uint8_t slot, uint8_t byte) {
 }
 
 // CLIENT deny handling: destroy the local hand ghost, else sweep untracked
-// module actors of the byte's class (the drop-before-deny case).
-void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
-    if (origOp == 0) {
-        // plug-dup: the HOST refunded (spawned the module back at the desk);
-        // our local item is already destroyed by our own plugInModule. Log only.
-        UE_LOGW("physmods: plug byte=%u was a duplicate -- host refunded the item", byte);
+// module actors of the byte's class (the drop-before-deny case). The canonical
+// array follows the deny and puts this peer's desk back.
+void ClientHandleDeny(uint8_t origOp, uint8_t slot, uint8_t byte) {
+    if (origOp == kOpPlug) {
+        // The slot was taken first: the HOST refunded (spawned the module back at
+        // the desk); our local item is already destroyed by our own plugInModule.
+        UE_LOGW("physmods: plug slot=%u byte=%u refused, the slot was taken first -- host refunded the item",
+                slot, byte);
         return;
     }
     // unplug no-op: our unplug raced another peer's -- our hand/world ghost is
@@ -179,7 +212,7 @@ void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
         coop::prop_lifecycle::DestroyLocalProp(a, /*deferred*/true);
         ++swept;
     }
-    UE_LOGW("physmods: unplug byte=%u denied (raced) -- swept %d untracked ghost(s)", byte, swept);
+    UE_LOGW("physmods: unplug slot=%u byte=%u denied (raced) -- swept %d untracked ghost(s)", slot, byte, swept);
 }
 
 }  // namespace
@@ -187,9 +220,8 @@ void ClientHandleDeny(uint8_t origOp, uint8_t byte) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_editsWatched)
-        g_editsWatched =
-            sg::WatchClassName(L"analogDScreenTest_C", L"plugInModule", kTagPlug, &OnEditPre, &OnEditPost) &&
-            sg::WatchClassName(L"analogDScreenTest_C", L"playerHitWith", kTagHit, &OnEditPre, &OnEditPost);
+        g_editsWatched = sg::WatchClassName(kDeskClass, kPlugVerb, kTagPlug, &OnEditPre, &OnEditPost) &&
+                         sg::WatchClassName(kDeskClass, kPressVerb, kTagPress, &OnEditPre, &OnEditPost);
 }
 
 void Tick() {
@@ -200,18 +232,20 @@ void Tick() {
     if (now < g_nextParkedTry) return;
     g_nextParkedTry = now + kParkedRetry;
     if (!PM::EnsureResolved() || !CD::Instance()) return;  // backoff inside
-    AdoptCanonical(g_pendingCanon);
     g_havePendingCanon = false;
-    UE_LOGI("physmods: parked canonical applied at desk resolve");
+    if (AdoptCanonical(g_pendingCanon))
+        UE_LOGI("physmods: parked canonical applied at desk resolve");
+    else
+        UE_LOGW("physmods: parked canonical not written at desk resolve (WriteArray refused it)");
 }
 
 void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    if (p.op > 3) return;
+    if (p.op > kOpDeny) return;
     const bool isHost = (s->role() == coop::net::Role::Host);
 
-    if (p.op == 2) {  // canonical array (host-authored)
+    if (p.op == kOpCanonical) {  // host-authored
         if (isHost) return;  // the host IS the canonical source
         if (senderSlot != 0) {
             UE_LOGW("physmods: canonical from non-host slot=%u -- dropping", senderSlot);
@@ -224,17 +258,15 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
             return;
         }
         // A local edit was sent at its verb, so adopting the canonical eats nothing.
-        AdoptCanonical(p.bytes);
-        static uint64_t s_n = 0;
-        if ((++s_n % 8) == 1)
-            UE_LOGI("physmods: canonical adopted (n=%llu)", (unsigned long long)s_n);
+        if (AdoptCanonical(p.bytes) && (g_adopted % 8) == 1)
+            UE_LOGI("physmods: canonical adopted (n=%llu)", (unsigned long long)g_adopted);
         return;
     }
 
-    if (p.op == 3) {  // deny (host -> this author)
+    if (p.op == kOpDeny) {  // host -> this author
         if (isHost) return;
         if (senderSlot != 0) return;
-        ClientHandleDeny(p.byte, p.byte2);
+        ClientHandleDeny(p.byte, p.slot, p.byte2);
         return;
     }
 
@@ -244,62 +276,48 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         return;
     }
     if (!PM::EnsureResolved() || !CD::Instance()) {
-        UE_LOGW("physmods: host op=%u byte=%u declined (desk unresolved)", p.op, p.byte);
+        UE_LOGW("physmods: host op=%u slot=%u byte=%u declined (desk unresolved)", p.op, p.slot, p.byte);
+        return;
+    }
+    if (p.slot >= PM::kSlots || !p.byte) {
+        UE_LOGW("physmods: host op=%u slot=%u byte=%u from slot %u -- not a desk slot and module, dropping",
+                p.op, p.slot, p.byte, senderSlot);
         return;
     }
     uint8_t arr[PM::kSlots];
     if (!PM::ReadArray(arr)) return;
 
-    if (p.op == 0) {  // plug{byte}
-        bool dup = false;
-        for (int i = 0; i < PM::kSlots; ++i) if (arr[i] == p.byte) { dup = true; break; }
-        if (dup) {
-            // Same-byte double-plug race: deny + REFUND (spawn the module back
-            // at the desk; the host's spawn watcher expresses + fans it).
-            if (senderSlot != 0 && senderSlot < coop::net::kMaxPeers) {
-                coop::net::PhysModsStatePayload d{};
-                d.op = 3; d.byte = 0; d.byte2 = p.byte;
-                s->SendReliableToSlot(senderSlot, coop::net::ReliableKind::PhysModsState,
-                                      &d, sizeof(d));
-            }
+    if (p.op == kOpPlug) {
+        if (arr[p.slot] != 0) {
+            // Two peers plugged into one slot and this op came second: deny + REFUND (spawn the module
+            // back at the desk; the host's spawn watcher expresses + fans it).
+            SendDeny(s, senderSlot, p);
             void* cls = PM::ClassForByte(p.byte);
             void* desk = CD::Instance();
             ue_wrap::FVector deskLoc{};
             if (cls && desk && ue_wrap::engine::TryGetActorLocation(desk, deskLoc)) {
                 void* refunded = ue_wrap::engine::SpawnActor(
                     cls, {deskLoc.X, deskLoc.Y, deskLoc.Z + 120.f});
-                UE_LOGW("physmods: plug byte=%u DUP from slot %u -- denied + refund %s",
-                        p.byte, senderSlot, refunded ? "spawned" : "SPAWN FAILED");
+                UE_LOGW("physmods: plug slot=%u byte=%u from slot %u -- the slot holds byte=%u, denied + refund %s",
+                        p.slot, p.byte, senderSlot, arr[p.slot], refunded ? "spawned" : "SPAWN FAILED");
             } else {
-                UE_LOGW("physmods: plug byte=%u DUP from slot %u -- denied, refund %s (item lost)", p.byte, senderSlot,
+                UE_LOGW("physmods: plug slot=%u byte=%u from slot %u -- the slot holds byte=%u, denied, refund %s "
+                        "(item lost)", p.slot, p.byte, senderSlot, arr[p.slot],
                         (cls && desk) ? "not placed: the desk's location unread" : "class unresolved");
             }
             return;
         }
-        int free = -1;
-        for (int i = 0; i < PM::kSlots; ++i) if (arr[i] == 0) { free = i; break; }
-        if (free < 0) {
-            UE_LOGW("physmods: plug byte=%u from slot %u -- array full?! dropping", p.byte, senderSlot);
+        arr[p.slot] = p.byte;
+    } else {  // kOpUnplug
+        if (arr[p.slot] != p.byte) {
+            // Raced: the slot was emptied or refilled first. Deny -> the author destroys its ghost.
+            if (senderSlot != 0 && senderSlot < coop::net::kMaxPeers) RecordDeny(senderSlot, p.byte);
+            SendDeny(s, senderSlot, p);
+            UE_LOGW("physmods: unplug slot=%u byte=%u from slot %u raced (the slot holds byte=%u) -- deny sent",
+                    p.slot, p.byte, senderSlot, arr[p.slot]);
             return;
         }
-        arr[free] = p.byte;
-    } else {  // unplug{byte}
-        int at = -1;
-        for (int i = 0; i < PM::kSlots; ++i) if (arr[i] == p.byte) { at = i; break; }
-        if (at < 0) {
-            // No-op unplug (raced): deny -> the author destroys its ghost.
-            if (senderSlot != 0 && senderSlot < coop::net::kMaxPeers) {
-                RecordDeny(senderSlot, p.byte);
-                coop::net::PhysModsStatePayload d{};
-                d.op = 3; d.byte = 1; d.byte2 = p.byte;
-                s->SendReliableToSlot(senderSlot, coop::net::ReliableKind::PhysModsState,
-                                      &d, sizeof(d));
-                UE_LOGW("physmods: unplug byte=%u from slot %u raced (absent) -- deny sent",
-                        p.byte, senderSlot);
-            }
-            return;
-        }
-        arr[at] = 0;
+        arr[p.slot] = 0;
     }
     {
         coop::desk_snd_fx::ScopedWireApply guard;
@@ -310,8 +328,8 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         PM::CallUpdPhysMods();
     }
     HostBroadcastCanonical(s);
-    UE_LOGI("physmods: host applied op=%u byte=%u from slot %u -- canonical broadcast",
-            p.op, p.byte, senderSlot);
+    UE_LOGI("physmods: host applied op=%u slot=%u byte=%u from slot %u -- canonical broadcast",
+            p.op, p.slot, p.byte, senderSlot);
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
@@ -321,6 +339,8 @@ void QueueConnectBroadcastForSlot(int slot) {
     HostBroadcastCanonical(s, slot);
     UE_LOGI("physmods: canonical -> joiner slot %d", slot);
 }
+
+uint64_t CanonicalsAdopted() { return g_adopted; }
 
 bool HostShouldReapModuleBirth(uint8_t senderSlot, void* moduleClass) {
     if (!moduleClass) return false;
