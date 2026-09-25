@@ -1,6 +1,7 @@
 // ue_wrap/devices/appliance.cpp -- see ue_wrap/devices/appliance.h. Per-class engine access for the
-// six simple on/off appliances. Offsets/verbs resolved from the live classes via reflection
-// (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
+// six simple on/off appliances. Offsets and verbs are resolved from the live classes by name; a name
+// that does not resolve leaves its class out, since a hard-coded offset would write whatever a newer
+// build keeps there.
 
 #include "ue_wrap/devices/appliance.h"
 
@@ -17,11 +18,11 @@ namespace {
 namespace R = reflection;
 
 // One descriptor per appliance class. `applyTakesBool` marks the named setter (serverBox's
-// SetActive(bool)); the others direct-write the bool then call a no-arg refresh verb.
+// SetActive(bool)); the others direct-write the bool then call a no-arg refresh verb. The bool is the
+// one the class's own getData saves: the state its use verb toggles.
 struct Desc {
     const wchar_t* className;
     const wchar_t* boolName;
-    int32_t        boolOffFallback;
     const wchar_t* applyFn;
     const wchar_t* applyFn2;       // optional 2nd refresh verb (sink: upd() AFTER updIsOn()); nullptr if none
     bool           applyTakesBool;
@@ -30,6 +31,7 @@ struct Desc {
     int32_t boolOff;
     void*   fn;
     void*   fn2;
+    bool    unusable;              // its class loaded but its bool did not resolve: left out, said once
 };
 
 // sink_C's BP player_use calls updIsOn() THEN upd() -- updIsOn() flips the tap state, upd()
@@ -41,13 +43,16 @@ struct Desc {
 // updWater() -- the verb that raises the water emitter, the audio component and the actor tick
 // off running_cold. Mirroring upd() here wrote the bit with nothing to show for it, which is
 // how a shower toggle travelled (applied ok=1 on the far peer) yet ran dry there.
+//
+// The faucet's is `active`, which its use action toggles before calling upd() and its getData saves;
+// its `turnOn` is the look-at flag lookAt sets while a player aims at the tap (faucet_C's bytecode).
 Desc g_descs[] = {
-    { L"faucet_C",         L"turnon",       0x0278, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
-    { L"sink_C",           L"isOn",         0x0278, L"updIsOn",   L"upd",  false, nullptr, -1, nullptr, nullptr },
-    { L"prop_shower_C",    L"running_cold", 0x0298, L"updWater",  nullptr, false, nullptr, -1, nullptr, nullptr },
-    { L"kitchen_C",        L"Active",       0x02E1, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
-    { L"serverBox_C",      L"Active",       0x03D5, L"SetActive", nullptr, true,  nullptr, -1, nullptr, nullptr },
-    { L"wallunit_tapes_C", L"Active",       0x0290, L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr },
+    { L"faucet_C",         L"active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
+    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  false, nullptr, -1, nullptr, nullptr, false },
+    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, false, nullptr, -1, nullptr, nullptr, false },
+    { L"kitchen_C",        L"Active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
+    { L"serverBox_C",      L"Active",       L"SetActive", nullptr, true,  nullptr, -1, nullptr, nullptr, false },
+    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, false, nullptr, -1, nullptr, nullptr, false },
 };
 constexpr int kNumDescs = sizeof(g_descs) / sizeof(g_descs[0]);
 
@@ -81,10 +86,15 @@ bool EnsureResolved() {
     if (!g_keyResolved.load(std::memory_order_acquire)) {
         void* saveCls = R::FindClass(L"actor_save_C");
         if (!saveCls) return false;  // base not loaded yet
-        int32_t k = R::FindPropertyOffset(saveCls, L"Key");
+        const int32_t k = R::FindPropertyOffset(saveCls, L"Key");
         if (k < 0) {
-            UE_LOGW("appliance: reflected Key offset not found -- using fallback 0x0230");
-            k = 0x0230;
+            // No identity, so no appliance syncs: said once, and the family stays off.
+            static bool s_said = false;
+            if (!s_said) {
+                s_said = true;
+                UE_LOGE("appliance: actor_save_C.Key did not resolve by name -- the appliance family stays off");
+            }
+            return false;
         }
         g_keyOff = k;
         g_keyResolved.store(true, std::memory_order_release);
@@ -93,14 +103,15 @@ bool EnsureResolved() {
     // Lazily resolve each leaf class (best-effort -- cheap hash lookups, skipped once cached).
     bool newlyResolved = false;
     for (auto& d : g_descs) {
-        if (d.cls) continue;
+        if (d.cls || d.unusable) continue;
         void* cls = R::FindClass(d.className);
         if (!cls) continue;
-        int32_t off = R::FindPropertyOffset(cls, d.boolName);
+        const int32_t off = R::FindPropertyOffset(cls, d.boolName);
         if (off < 0) {
-            UE_LOGW("appliance: %ls.%ls offset not found -- fallback 0x%04X",
-                    d.className, d.boolName, d.boolOffFallback);
-            off = d.boolOffFallback;
+            d.unusable = true;
+            UE_LOGE("appliance: %ls.%ls did not resolve by name -- this class is left out of the sync",
+                    d.className, d.boolName);
+            continue;
         }
         void* fn = R::FindFunction(cls, d.applyFn);
         if (!fn)
