@@ -113,10 +113,15 @@ public:
 
     // The dev probe beside the verbs (channel_shadow_probe): polls every indexed instance and says a
     // change the lane neither sent nor applied, a SHADOW MISS -- a writer no watched verb covers. It
-    // sends nothing and keeps a baseline of its own, so it changes nothing the lane does; the first
-    // sighting of a key primes that baseline. Game thread.
+    // sends nothing and keeps a baseline of its own, so it changes nothing the lane does. The first
+    // sighting of a key primes that baseline, and so does every change no peer could see: a client's
+    // own world load (the host's save) until it announced that world, and the host's world while no
+    // peer's is ready -- each joiner's snapshot carries those. Game thread.
     void ShadowProbeTick() {
         if (!IndexCurrent()) return;
+        auto* s = session_.load(std::memory_order_acquire);
+        const bool isClient = s && s->connected() && s->role() != coop::net::Role::Host;
+        int worldTold = isClient ? -1 : (s && s->AnyWorldReadyPeer() ? 1 : 0);  // -1: not asked yet this pass
         auto& refs = pollScratch_;
         size_t count = 0;
         {
@@ -134,8 +139,9 @@ public:
             if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
             bool cur = false;
             if (!a_.ReadState(r.second.actor, cur)) continue;
+            if (worldTold < 0) worldTold = coop::net_pump::IsInAnnouncedWorld(r.second.actor) ? 1 : 0;
             auto seen = probeLast_.find(r.first);
-            if (seen == probeLast_.end()) { probeLast_[r.first] = cur; continue; }
+            if (seen == probeLast_.end() || worldTold == 0) { probeLast_[r.first] = cur; continue; }
             if (seen->second == cur) continue;
             seen->second = cur;
             bool accounted = false;
