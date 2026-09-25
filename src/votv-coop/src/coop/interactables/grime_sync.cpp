@@ -29,7 +29,6 @@
 #include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
 #include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
-#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -56,8 +55,10 @@ using coop::net::FnvKey;
 constexpr float kProcessEps = 0.0005f;
 // The position quantisation grid (cm). A decal's saved position is bit-identical across peers
 // (the same save, a static actor), so any deterministic quantisation yields the same key on
-// both; the grid has to be fine enough that distinct decals rarely share a cell (a base world's
-// thousand-odd decals share two, see the header).
+// both; the grid has to be fine enough that distinct decals rarely share a cell. A base world's 1117
+// decals land on 1087 keys: 30 stand in a cell another of their type holds, and the lane treats a
+// cell's decals as one -- the floor is kept per key, so a fall on one lowers its twins at the next
+// pass.
 constexpr double kPosGrid = 2.0;
 bool ProbeLog() {
     static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::grime_log);
@@ -78,6 +79,17 @@ std::unordered_map<std::wstring, Ref> g_byKey;
 // thread only.
 std::unordered_map<std::wstring, float> g_floor;
 uint32_t g_floorGen = 0;
+
+// The register of the running world: another world's is dropped the first time it is touched in this
+// one, a value that arrives before the new world's first pass included.
+std::unordered_map<std::wstring, float>& Floor() {
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_floorGen) {
+        g_floor.clear();
+        g_floorGen = gen;
+    }
+    return g_floor;
+}
 
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
@@ -115,17 +127,20 @@ void* ResolveFast(const std::wstring& key) {
 
 // Lowers the floor of `key` to `value`; true when it moved.
 bool Lower(const std::wstring& key, float value) {
-    const auto it = g_floor.find(key);
-    if (it != g_floor.end() && value >= it->second - kProcessEps) return false;
-    g_floor[key] = value;
+    auto& floor = Floor();
+    const auto it = floor.find(key);
+    if (it != floor.end() && value >= it->second - kProcessEps) return false;
+    floor[key] = value;
     return true;
 }
 
-// Write `target` into the decal and repaint it, unless it already reads that. The apply runs no verb, so
-// it is never heard back as a fall.
-void ApplyResolved(void* actor, const std::wstring& key, float target, const char* why) {
+// Write `target` into a live decal and repaint it, unless it already reads that -- or, `lowerOnly`, unless
+// it already reads that or less: a fall lowers a decal and never raises one this peer cleaned further.
+// The apply runs no verb, so it is never heard back as a fall.
+void ApplyResolved(void* actor, const std::wstring& key, float target, const char* why, bool lowerOnly) {
     float cur = 0.f;
     if (!G::ReadProcess(actor, cur) || std::fabs(target - cur) < kProcessEps) return;
+    if (lowerOnly && cur < target) return;
     const bool ok = G::WriteProcessAndApply(actor, target);
     if (ProbeLog() || !ok)
         UE_LOGI("grime: applied process=%.3f (was %.3f, %s) ok=%d key='%ls'", target, cur, why, ok ? 1 : 0,
@@ -179,10 +194,6 @@ void HubMatch(void*, void* obj) {
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
-    if (worldGen != g_floorGen) {  // another world: its decals and its register start over
-        g_floor.clear();
-        g_floorGen = worldGen;
-    }
     const size_t added = g_scanFound.size();
     if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
     uint64_t posHash = 0;
@@ -202,15 +213,18 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         g_indexGen = worldGen;
     }
     // Every decal this pass found is lowered to its floor: one that streamed back in, one a join brought
-    // after its value arrived, one this peer had not indexed when a peer's fall came.
+    // after its value arrived, one this peer had not indexed when a peer's fall came. A pass spans frames,
+    // so a decal matched early may have ended since: only one still live is read.
     size_t lowered = 0;
-    if (!g_floor.empty()) {
+    auto& floor = Floor();
+    if (!floor.empty()) {
         for (const auto& f : g_scanFound) {
-            const auto it = g_floor.find(f.first);
-            if (it == g_floor.end()) continue;
+            if (!R::IsLiveByIndex(f.second.actor, f.second.idx)) continue;
+            const auto it = floor.find(f.first);
+            if (it == floor.end()) continue;
             float cur = 0.f;
             if (!G::ReadProcess(f.second.actor, cur) || cur <= it->second + kProcessEps) continue;
-            ApplyResolved(f.second.actor, f.first, it->second, "floor at index");
+            ApplyResolved(f.second.actor, f.first, it->second, "floor at index", /*lowerOnly=*/true);
             ++lowered;
         }
     }
@@ -300,8 +314,11 @@ void OnLowerPost(const sg::Call& call) {
 void OnGrimeEnd(const DS::ActorEnd& end) {
     const std::wstring key = KeyOf(end.actor, end.actorIndex, end.actorSerial);
     if (key.empty()) return;
+    // The actor ended before this drain; its memory is read only while its slot still holds it under the
+    // serial it ended with, which a purge in between resets.
     float at = 0.f;
-    const bool read = end.streamedOut && G::ReadProcess(end.actor, at);
+    const bool held = R::ObjectAt(end.actorIndex) == end.actor && R::SlotSerial(end.actorIndex) == end.actorSerial;
+    const bool read = end.streamedOut && held && G::ReadProcess(end.actor, at);
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
         const auto it = g_byKey.find(key);
@@ -330,10 +347,12 @@ void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeer
     // only from the host; a client edge is forced to a min-wins live fall.
     const bool adopt = (payload.adopt != 0) && (senderPeerSlot == 0);
     // The floor takes the value whether or not the decal is here to show it: one that is not yet indexed
-    // takes it when a pass reaches it.
-    if (adopt) g_floor[key] = payload.value;
+    // takes it when a pass reaches it. The host's snapshot is adopted as is; a peer's fall only lowers.
+    auto& floor = Floor();
+    if (adopt) floor[key] = payload.value;
     else if (!Lower(key, payload.value)) return;  // not below what this peer already holds
-    if (void* actor = ResolveFast(key)) ApplyResolved(actor, key, g_floor[key], adopt ? "adopted" : "a peer's fall");
+    if (void* actor = ResolveFast(key))
+        ApplyResolved(actor, key, floor[key], adopt ? "adopted" : "a peer's fall", /*lowerOnly=*/!adopt);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -365,10 +384,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::GrimeState, &p, sizeof(p));
             ++sent;
         }
-        // And the floor of every key the index does not hold: a decal ended here -- zero -- or streamed
-        // out, which the joiner has from its own copy of the save and must see as this world has it.
-        for (const auto& kv : g_floor) {
-            if (g_byKey.count(kv.first)) continue;
+        // And the floor of every key the index does not hold live: a decal ended here -- zero -- or
+        // streamed out, which the joiner has from its own copy of the save and must see as this world
+        // has it.
+        for (const auto& kv : Floor()) {
+            const auto idx = g_byKey.find(kv.first);
+            if (idx != g_byKey.end() && R::IsLiveByIndex(idx->second.actor, idx->second.idx)) continue;
             coop::net::KeyedScalarPayload p{};
             WireKeyFromString(kv.first, p.key);
             p.value = kv.second;

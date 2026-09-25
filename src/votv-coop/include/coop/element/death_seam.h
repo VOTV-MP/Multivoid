@@ -65,8 +65,9 @@ bool SubscribeClass(const wchar_t* className, ClassHandler handler);
 bool Install();
 
 // Ends are recorded only while a holder has the seam, as the script gate is held: the session takes it
-// while it runs and gives it back when it stops, which drops what was recorded and not handed out, so a
-// solo stretch between sessions leaves nothing for the next one. Counted; game thread.
+// while it runs and gives it back when it stops -- and when a host's last peer leaves, taking it again
+// the next tick -- which drops what was recorded and not handed out, so a solo stretch between sessions
+// leaves nothing for the next one. Counted; game thread.
 void Acquire(const char* who);
 void Release(const char* who);
 

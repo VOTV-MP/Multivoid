@@ -9,7 +9,6 @@
 #include "ue_wrap/engine/actor_end_play.h"
 #include "ue_wrap/engine/world_identity.h"
 
-#include <utility>
 #include <vector>
 
 namespace coop::element::death_seam {

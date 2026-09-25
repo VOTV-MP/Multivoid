@@ -76,7 +76,8 @@ void RefreshLook(void* box, bool opened) {
     if (!cls) return;
     if (g_nameOff < 0) g_nameOff = R::FindPropertyOffset(cls, L"name");
     // Looked up on the box's own class at each use, through the lookup memoised by the class's slot
-    // and serial: two hash lookups and a slot check, and never a function of a class that is gone.
+    // and serial: two hash lookups and two slot-and-serial checks, and never a function of a class that
+    // is gone.
     void* const initFn = R::FindDispatchFunctionCached(cls, L"init");
     if (g_nameOff < 0 || !initFn) {
         static bool s_warned = false;

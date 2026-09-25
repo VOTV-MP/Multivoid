@@ -48,8 +48,8 @@ void Tick();
 
 // DEV-DRILL ONLY: the quantised position key this module would index `actor` under. The
 // scan-parity drill uses it so its independent walk counts DISTINCT CELLS the way the index
-// does. An instance count over-reads, because the grid is not collision-free: a base world's
-// thousand-odd decals land on two fewer cells than there are decals.
+// does. An instance count over-reads, because the grid is not collision-free: a base world's 1117
+// decals land on 1087 cells.
 std::wstring DebugPosKeyForActor(void* actor);
 
 }  // namespace coop::grime_sync
