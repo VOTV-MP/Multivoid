@@ -288,8 +288,10 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         // The author of a mutation re-derives its own volume, mass and names here: the host
         // excludes the author from the relay, and the native take path does not call
         // updateVolumesAndMass, so the mutator's own displayed volume went stale while every other
-        // peer converged.
-        RederiveManagedState(OwnerOf(inv), inv);
+        // peer converged. A targeted send -- a joiner's seed, the truth re-sent to a refused
+        // author -- changed nothing on this peer, so it re-derives nothing; the seed sends every
+        // container in the world in one frame.
+        if (toSlot < 0) RederiveManagedState(OwnerOf(inv), inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s",
                 eid, recs.size(), blob.size(),
                 toSlot < 0 ? "" : " [targeted]",
