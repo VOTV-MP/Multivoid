@@ -8,8 +8,10 @@
 // weak pointer draws one. The engine resets the serial when the object is freed, so a successor at a
 // recycled address or in a reused slot never matches, and a mark holds for its actor's whole life
 // with nothing to repay: a wire mirror stays one however late a drain asks. Keyed by pointer and
-// repaid one-shot by an observer that never runs for a mirror, a stale mark at a recycled address
-// passed a real birth off as an echo. Game thread only; each set prunes its dead slots as it doubles.
+// repaid one-shot by an observer that never runs for a mirror at its spawn, a stale mark at a
+// recycled address passed a real birth off as an echo. A mark and a question read the actor's own
+// slot index, so the actor must be mapped: fresh in this game-thread slice. Game thread only; each
+// set prunes its dead slots as it doubles.
 
 #pragma once
 

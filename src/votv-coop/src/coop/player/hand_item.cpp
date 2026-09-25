@@ -274,7 +274,14 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     ue_wrap::FVector loc{};
     if (!E::TryGetActorLocation(puppetActor, loc)) return;   // retried next tick, as a missing class is
     const ue_wrap::FRotator rot{};
-    void* actor = E::BeginDeferredSpawn(cls, loc, rot);
+    // The begin dispatches through ProcessEvent, so the spawn observers (the ambient broadcaster's among
+    // them, which a held pinecone, stick or crystal passes) run inside it, before the actor exists to be
+    // marked; the mirror-spawn scope tells them it is a display's.
+    void* actor = nullptr;
+    {
+        coop::prop_echo_suppress::ScopedMirrorSpawn mirrorScope;
+        actor = E::BeginDeferredSpawn(cls, loc, rot);
+    }
     if (!actor) {
         UE_LOGW("hand_item: BeginDeferredSpawn '%ls' failed", want.cls.c_str());
         return;

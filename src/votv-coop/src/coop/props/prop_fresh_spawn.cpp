@@ -107,7 +107,7 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
     xform.SZ = payload.scaleZ;
     // Phase 1: the deferred spawn, an uninitialised actor. The mirror-spawn scope: this UFunction
     // call dispatches through ProcessEvent, so the ambient broadcaster's spawn POST observer fires
-    // inside it, before the actor exists to be marked incoming; the scope is its re-entrancy guard
+    // inside it, before the actor exists to be marked a mirror; the scope is its re-entrancy guard
     // (see prop_echo_suppress.h).
     constexpr uint8_t kAlwaysSpawn = 1;
     void* spawned = nullptr;

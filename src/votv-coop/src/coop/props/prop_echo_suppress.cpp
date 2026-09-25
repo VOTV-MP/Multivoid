@@ -43,6 +43,8 @@ void Mark(MarkSet& m, void* actor) {
     m.serialBySlot[slot] = serial;
 }
 
+// Deliberately no kill-flag test: the destroy seam asks while the actor it destroys is already
+// marked for death, and it is still the same object until the purge resets its slot's serial.
 bool Has(const MarkSet& m, void* actor) {
     if (!actor) return false;
     const int32_t slot = R::InternalIndexOf(actor);

@@ -33,7 +33,7 @@ namespace coop::save_time_retire_util {
 // skip guard below keeps it FAIL-SAFE if two ever sat <1cm apart.
 constexpr float kExactMatchR2Cm = 1.0f;
 
-// Silence the K2_DestroyActor PRE observer, then destroy. Game-thread only.
+// Silence the destroy seam, then destroy. Game-thread only.
 //
 // THE SILENCE IS EXPLICIT, NOT A SIDE EFFECT. It cannot rest on "UnmarkKnownKeyedProp
 // first, so the seam reads no eid and the keyless-and-no-eid early-out swallows it":
@@ -45,7 +45,7 @@ constexpr float kExactMatchR2Cm = 1.0f;
 // every level-pile twin it retires -- identities the host never heard of, which it parks as
 // destroy-before-load and expires -- in the join minute, when the send buffer is already
 // refusing spawns. The mark is what prop_lifecycle::DestroyLocalProp uses, and the seam
-// consumes it first. It must PRECEDE the destroy, because the seam fires inside it.
+// asks for it. It must PRECEDE the destroy, because the seam fires inside it.
 // UnmarkKnownKeyedProp stays as tracker hygiene.
 inline void UnmarkAndDestroy(void* actor) {
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);

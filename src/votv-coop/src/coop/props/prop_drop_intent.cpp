@@ -128,7 +128,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     // what exempts a birth from the load gates below.
     const bool playerAuthored = coop::prop_spawn_authoring::BirthIsPlayerAuthored();
     // The end condition: quiet during the load episode and the reconcile window's load-kind
-    // segments (the join and reload bracket, whose spawn churn flooded this path; the echo peek
+    // segments (the join and reload bracket, whose spawn churn flooded this path; the mirror mark
     // below already scopes our own applies out). A mid-session bracket does not suppress: a
     // client's genuine place has no other delivery channel (the census express is host-only)
     // and the re-bracket sweep would doom it, so intent, host spawn, express, claim must flow.
@@ -203,8 +203,8 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
 
 // Host: spawn the authoritative prop by key at the transform. Mirrors the spawn receiver's
 // spawn-by-key (deferred begin, set the key, write the parity identity, finish) but does not
-// mark an incoming spawn, so the host's own finish-spawn watcher catches it and broadcasts
-// the authoritative spawn to every peer. Returns the spawned actor, or null.
+// mark it a mirror, so the host's own finish-spawn watcher catches it and broadcasts the
+// authoritative spawn to every peer. Returns the spawned actor, or null.
 void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::wstring& cls,
                           const std::wstring& key, uint8_t authorSlot) {
     void* clsObj = R::FindClass(cls.c_str());
@@ -286,7 +286,7 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
             (p.physFlags & pf::kFrozen) != 0,
             (p.physFlags & pf::kSleep) != 0);
     }
-    // No incoming-spawn mark: the host finish-spawn watcher must see this and broadcast it.
+    // No mirror mark: the host finish-spawn watcher must see this and broadcast it.
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
         UE_LOGW("[PROP-DROP] HOST FinishDeferredSpawn('%ls') failed", cls.c_str());
         return nullptr;
@@ -391,7 +391,7 @@ void Tick(coop::net::Session* session) {
         const bool parked = (g_parkedKeys.find(key) != g_parkedKeys.end());
         // The fresh births. A client's fresh prop spawn never broadcasts (the lifecycle's client
         // skip), so a caddy or reel-box eject on a client is a local-only ghost; an unparked
-        // reel-class pending entry here is that birth (mirrors are excluded by the echo peek above,
+        // reel-class pending entry here is that birth (mirrors are excluded by the mirror mark above,
         // tracked actors by the eid check, and the actor already carries the key the init minted
         // inside the finish spawn). Author it host-side via the eject intent, the same spawn
         // author, class-whitelisted at the host. The whitelist widens to desk modules (the unplug

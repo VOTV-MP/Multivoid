@@ -6,7 +6,7 @@
 //     birth (a deferred spawn's construction script) is expressed at FinishSpawningActor by
 //     coop/props/host_spawn_watcher instead.
 //   - AActor::K2_DestroyActor, a post-native Func patch: bidirectional broadcast (food consumption,
-//     container break). Echo-suppressed through the remote_prop incoming-destroy set.
+//     container break). Echo-suppressed through prop_echo_suppress's incoming-destroy marks.
 //   - propInventory_C::takeObj PRE/POST: brackets a container extract so the nested Init POST
 //     defers its broadcast (Key is a NewGuid until loadData runs) and takeObj POST broadcasts
 //     with the restored saved UUID.
@@ -60,8 +60,8 @@ bool IsWireSuppressedPropClass(const std::wstring& cls);
 bool IsPerPlayerPropClass(const std::wstring& cls);
 
 // Destroy a local prop via K2_DestroyActor, ECHO-SUPPRESSED: MarkIncomingDestroy
-// runs before the call so our K2_DestroyActor PRE observer does not re-broadcast
-// the destroy to peers. `deferred=true` schedules via game_thread::Post -- required
+// runs before the call so the destroy seam does not re-broadcast the destroy to
+// peers. `deferred=true` schedules via game_thread::Post -- required
 // when called from inside Aprop_C::Init POST (the engine is still executing
 // FinishSpawningActor; the calling BP graph's continuation must complete first).
 // `deferred=false` destroys immediately -- safe from plain game-thread context

@@ -111,8 +111,8 @@ void OnSpawnPost(void* /*self*/, void* /*function*/, void* params) {
 
     // Any connected peer broadcasts its own ambient spawns, the owner effect. The mirror-scope
     // check kills the echo: a wire mirror is spawned through this same UFunction by the spawn
-    // receiver, and this POST fires inside that call, before the actor exists to carry an
-    // incoming-spawn mark.
+    // receiver, and this POST fires inside that call, before the actor exists to carry a mirror
+    // mark.
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
     if (coop::prop_echo_suppress::InMirrorSpawnScope()) return;
