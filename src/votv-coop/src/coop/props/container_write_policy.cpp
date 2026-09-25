@@ -73,8 +73,9 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
         if (v.refused) {
             ++g_refused;
             UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- %d slices inside %llu ms is "
-                    "past the bound; refused for %llu ms. Write REFUSED; re-publishing host truth "
-                    "to the author. Total refused this session: %llu",
+                    "past the bound; refused for %llu ms. Write REFUSED, and nothing re-published: an "
+                    "author pushing faster must not make the host spend more. Total refused this "
+                    "session: %llu",
                     eid, static_cast<unsigned>(authorSlot), v.count,
                     static_cast<unsigned long long>(kRateWindowMs),
                     static_cast<unsigned long long>(v.retryMs),

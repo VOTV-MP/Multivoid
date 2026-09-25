@@ -19,7 +19,8 @@ namespace coop::props::container_write_policy {
 
 // Why a client-authored slice was accepted or refused. A refusal is never silent and never
 // rolled back: the lane answers it by re-publishing the host's truth to the author, so the loser
-// converges instead of keeping a divergent view.
+// converges instead of keeping a divergent view -- all but TooFast, which re-publishes nothing, since
+// an author pushing faster must not make the host spend more.
 enum class Decision : uint8_t {
     Accept = 0,
     TooFast,             // this author has spent its window's worth of the host's arbitration
