@@ -24,13 +24,18 @@ next day number `[V]` (`coop/world/time_sync`). Its hour pulses still run, so th
 6 am drone order is latched on a client: its slot can load the flag open from the save, and the
 midnight that re-opens it daily is the host's alone; the weather births and the event walk are held
 too (below), while the sky eye, the jellyfish, the flesh rain, the gifts and the red sky's noon end
-run per peer (the known limits). A sample is sent each time the host's clock has moved half a game
-minute, and at least twice a second: every 500 ms at the normal speed, where a game minute holds
-about six, so a client's own minute and hour pulses, its sun, sounds, decals and weekday, follow
-the host's minute for minute `[RD]`; in the shared sleep (on [players.md](players.md)) one comes
-about every 80 ms `[RD]`, and a frame longer than that on either peer can merge two and skip a
-minute's pulse `[RD]` -- one night gave 44 of 45 `[V]`. The star dome's random orientation and the
-save-derived moon phase are pushed once (`coop/world/sky_sync`).
+run per peer (the known limits). Game mode 5 resets the time of day every second on every machine;
+a client refuses its own copy of that loop at the loop's once-a-second resume, after the one pass
+its begin-play runs, which the clock takes back `[V]`, and the mode's other flows run on: its needs
+restore `[V]`, its ambience and spawners `[RD]` (measured on a master spawned in a joined world;
+one a mode-5 world loads with is `[RD]`). A sample is sent each time the host's clock has moved
+half a game minute, and at least twice a second: every 500 ms at the normal speed, where a game
+minute holds about six, so a client's own minute and hour pulses, its sun, sounds, decals and
+weekday, follow the host's minute for minute `[RD]`; in the shared sleep (on
+[players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than that on
+either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45 `[V]`. The
+star dome's random orientation and the save-derived moon phase are pushed once
+(`coop/world/sky_sync`).
 
 ### Weather
 

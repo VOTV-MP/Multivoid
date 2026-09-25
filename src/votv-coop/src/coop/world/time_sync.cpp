@@ -8,23 +8,29 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/world/daynightcycle.h"
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 
 namespace coop::time_sync {
 namespace {
 
 namespace DNC = ue_wrap::daynightcycle;
 namespace GT  = ue_wrap::game_thread;
+namespace R   = ue_wrap::reflection;
+namespace SG  = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 // The host's day number as the last applied sample carried it; -1 before the first.
 std::atomic<int32_t> g_lastHostDayZ{-1};
 bool g_tickObserved = false;  // the pre-observer on the cycle's tick is registered (once per process)
+bool g_resetWatched = false;  // game mode 5's reset is watched (once per process)
 
 // HOST: when a sample is due. One is sent when the clock has moved half a game minute since the last
 // one sent, so consecutive samples cross at most one minute boundary -- a lost or merged sample, or a
@@ -46,6 +52,7 @@ bool     g_haveHeld = false;
 coop::net::TimeSyncPayload g_held{};
 uint32_t g_backRun = 0;         // consecutive samples that stepped back
 double   g_backRunUnits = 0.0;  // and how far, in all
+uint32_t g_backRuns = 0;        // backward runs ended since the connect
 uint32_t g_scaleOverrides = 0;
 uint32_t g_clockOverrides = 0;
 LocalWrites g_localWrites{};    // the same writes, by what wrote over them
@@ -60,6 +67,34 @@ Clock::time_point g_nextStreamLine{};
 bool IsWellFormed(const coop::net::TimeSyncPayload& p) {
     return std::isfinite(p.totalTime) && std::isfinite(p.day) && std::fabs(p.totalTime) <= 1.0e7f &&
            std::fabs(p.day) <= 1.0e7f && p.dayZ >= 0 && p.dayZ <= 1000000;
+}
+
+// CLIENT: game mode 5's master sets the cycle's `day` to 0, waits a second and loops, on every peer. Its
+// begin-play runs one pass of that loop inline beside six flows of its own (the needs restore, the
+// ambience, four spawners), and every wait resumes its ubergraph at the loop's entry, whenever the master
+// was spawned. The host's reset reaches a client in its samples, so a client refuses that resume: the loop
+// ends after the begin-play's pass, which the hold takes back, and the other flows run on. The entry is a
+// byte offset in the cooked Blueprint, as the wall-attachable's and the door's entry constants are: a
+// recook moves it, and the install line says the one it refuses.
+constexpr int     kTagModeReset = 0x54534d52;  // 'TSMR'
+constexpr int32_t kModeResetResume = 68;       // the Delay's resume in ExecuteUbergraph_halloweenMaster
+void*   g_modeResetFn = nullptr;               // the ubergraph the entry parameter's offset was read from
+int32_t g_modeResetEntryOff = -1;
+
+SG::Verdict OnModeResetResumePre(const SG::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client || !call.locals) return SG::Verdict::Run;
+    if (call.function != g_modeResetFn) {
+        g_modeResetFn = call.function;
+        g_modeResetEntryOff = R::FindParamOffset(call.function, L"EntryPoint");
+    }
+    if (g_modeResetEntryOff < 0) return SG::Verdict::Run;
+    int32_t entry = 0;
+    std::memcpy(&entry, call.locals + g_modeResetEntryOff, sizeof(entry));
+    if (entry != kModeResetResume) return SG::Verdict::Run;
+    UE_LOGI("time_sync: game mode 5's reset of the day every second refused on this client (%p) -- the host's "
+            "samples carry its own", call.object);
+    return SG::Verdict::Cancel;
 }
 
 // HOST: the sample, its absolute clock and the day length. False until the cycle and the save slot
@@ -110,9 +145,9 @@ void NameLocalWrite(float t, float d, int32_t dayZ, const coop::net::TimeSyncPay
 }
 
 // CLIENT: between samples, the parked cycle presents the last applied one. A write on this machine
-// since the last tick -- the cheat menu's day buttons, game mode 5's reset of the day every second --
-// is overwritten, and named, before the tick reads it, so no tick the pre-observer precedes rolls this
-// machine's `day`; the cycle's call from the gamemode's begin-play runs the tick body once per world
+// since the last tick -- the cheat menu's day buttons, the one pass of game mode 5's reset a master's
+// begin-play runs -- is overwritten, and named, before the tick reads it, so no tick the pre-observer
+// precedes rolls this machine's `day`; the cycle's call from the gamemode's begin-play runs the tick body once per world
 // without it, on the loaded `day`, which is below maxTime. A new world's cycle takes the sample at its
 // park, unnamed: its clock is the save's. Every correction latches the 6 am order, as a sample's does:
 // a new world's slot, parked before its first sample, can carry it open.
@@ -129,11 +164,14 @@ void HoldClock(void* cycle, float t, float d, bool parked) {
 }
 
 // CLIENT: say a backward run once, when it ends. The host's rewind runs its clock back for an hour,
-// so every sample inside it steps back; a clock set back steps back once.
+// so every sample inside it steps back; a clock set back steps back once, and game mode 5 sets it back
+// every second, so the first five runs and every 50th are said.
 void EndBackRun() {
     if (g_backRun == 0) return;
-    UE_LOGI("time_sync: the host's clock went back %.2f units over %u sample(s) -- its rewind or a set clock",
-            g_backRunUnits, g_backRun);
+    const uint32_t n = ++g_backRuns;
+    if (n <= 5 || (n % 50) == 0)
+        UE_LOGI("time_sync: the host's clock went back %.2f units over %u sample(s) -- its rewind or a set clock "
+                "(#%u)", g_backRunUnits, g_backRun, n);
     g_backRun = 0;
     g_backRunUnits = 0.0;
 }
@@ -210,6 +248,16 @@ void OnCycleTickPre(void* self, void* /*function*/, void* /*params*/) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (!g_resetWatched) {
+        // Keyed by names, so it holds from the class's first load, in whichever world brings it.
+        g_resetWatched = true;
+        if (SG::WatchClassName(L"halloweenMaster_C", L"ExecuteUbergraph_halloweenMaster", kTagModeReset,
+                               &OnModeResetResumePre, nullptr))
+            UE_LOGI("time_sync: a client refuses game mode 5's reset at its ubergraph entry %d (the loop's resume)",
+                    kModeResetResume);
+        else
+            UE_LOGE("time_sync: the watch on game mode 5's reset did not register -- a client runs its own");
+    }
     // The install fanout calls this every pump tick, which is the retry until the cycle class loads.
     if (g_tickObserved || !DNC::EnsureResolved()) return;
     void* fn = DNC::TickFunction();
@@ -261,7 +309,7 @@ void OnDisconnect() {
     EndBackRun();
     g_haveHeld = false;
     g_held = coop::net::TimeSyncPayload{};
-    g_scaleOverrides = g_clockOverrides = g_malformed = g_appliedSince = 0;
+    g_scaleOverrides = g_clockOverrides = g_malformed = g_appliedSince = g_backRuns = 0;
     g_localWrites = LocalWrites{};
     g_nextStreamLine = Clock::time_point{};
     if (void* cycle = g_heldCycle.Get()) {

@@ -4,8 +4,9 @@
 // is a parked mirror: before each tick (a pre-observer on its own ReceiveTick) its rate is held at 0
 // and the host's last applied sample written in, a newly arrived one or else the one before it again,
 // so neither its own advance nor a local write (the cheat menu's day buttons) reaches a midnight -- a
-// sample's `day` is below maxTime, as the host wraps inside its tick. What else a client's clock holds
-// or runs per peer: docs/events-and-weather.md. MTA's server keeps the anchor
+// sample's `day` is below maxTime, as the host wraps inside its tick -- and game mode 5's reset of `day`
+// every second is refused on a client at its loop's resume, as the samples carry the host's. What else
+// a client's clock holds or runs per peer: docs/events-and-weather.md. MTA's server keeps the anchor
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CClock.cpp:35-42) and sends it at a join
 // (reference/mtasa-blue/Server/mods/deathmatch/logic/CMapManager.cpp:444-455); its client's freeze
 // stops only the advance, and a local setTime stands (reference/mtasa-blue/Client/game_sa/CClockSA.cpp:18-43).
