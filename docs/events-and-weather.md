@@ -20,21 +20,24 @@ the last one again, so the client's clock advances only with the host's and neit
 nor a write on the client (its cheat menu's day buttons, which do nothing there) reaches a
 midnight: the midnight's shared outputs (the dish hash codes, the daily task, the Bad Sun roll, the
 results mail) are the host's, and the host's midnight reaches a client as one sample carrying the
-next day number `[V]` (`coop/world/time_sync`). Its hour pulses still run, so the game's automatic
-6 am drone order is latched on a client: its slot can load the flag open from the save, and the
-midnight that re-opens it daily is the host's alone; the weather births and the event walk are held
-too (below), while the sky eye, the jellyfish, the flesh rain, the gifts and the red sky's noon end
-run per peer (the known limits). Game mode 5 resets the time of day every second on every machine;
-a client refuses its own copy of that loop at the loop's once-a-second resume, after the one pass
-its begin-play runs, which the clock takes back `[V]`, and the mode's other flows run on: its needs
-restore `[V]`, its ambience and spawners `[RD]` (measured on a master spawned in a joined world;
-one a mode-5 world loads with is `[RD]`). A sample is sent each time the host's clock has moved
-half a game minute, and at least twice a second: every 500 ms at the normal speed, where a game
-minute holds about six, so a client's own minute and hour pulses, its sun, sounds, decals and
-weekday, follow the host's minute for minute `[RD]`; in the shared sleep (on
-[players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than that on
-either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45 `[V]`. The
-star dome's random orientation and the save-derived moon phase are pushed once
+next day number `[V]` (`coop/world/time_sync`). At that sample a client performs its own share of
+the rollover, the part each machine keeps for its own player: its profile's days lived, its count
+of midnights since its world loaded (the insomniac achievement at seven), the day's music flags set
+again, and game mode 0's day-number achievements `[RD]` (`coop/world/day_edge`). Its hour pulses
+still run, so the game's automatic 6 am drone order is latched on a client: its slot can load the
+flag open from the save, and the midnight that re-opens it daily is the host's alone; the weather
+births and the event walk are held too (below), while the sky eye, the jellyfish, the flesh rain,
+the gifts and the red sky's noon end run per peer (the known limits). Game mode 5 resets the time
+of day every second on every machine; a client refuses its own copy of that loop at the loop's
+once-a-second resume, after the one pass its begin-play runs, which the clock takes back `[V]`, and
+the mode's other flows run on: its needs restore `[V]`, its ambience and spawners `[RD]` (measured
+on a master spawned in a joined world; one a mode-5 world loads with is `[RD]`). A sample is sent
+each time the host's clock has moved half a game minute, and at least twice a second: every 500 ms
+at the normal speed, where a game minute holds about six, so a client's own minute and hour pulses,
+its sun, sounds, decals and weekday, follow the host's minute for minute `[RD]`; in the shared
+sleep (on [players.md](players.md)) one comes about every 80 ms `[RD]`, and a frame longer than
+that on either peer can merge two and skip a minute's pulse `[RD]` -- one night gave 44 of 45
+`[V]`. The star dome's random orientation and the save-derived moon phase are pushed once
 (`coop/world/sky_sync`).
 
 ### Weather
@@ -199,7 +202,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 
 | Concept | Files |
 |---|---|
-| the clock and the sky | `coop/world/time_sync`, `coop/world/sky_sync`, `ue_wrap/world/daynightcycle`, `ue_wrap/world/skysphere` |
+| the clock and the sky | `coop/world/time_sync`, `coop/world/day_edge`, `coop/world/sky_sync`, `ue_wrap/world/daynightcycle`, `ue_wrap/world/profile`, `ue_wrap/world/event_list`, `ue_wrap/world/skysphere` |
 | weather | `coop/world/weather_sync`, `coop/world/weather_rain`, `coop/world/weather_fog`, `coop/world/weather_lightning`, `coop/world/weather_redsky`, `coop/world/weather_event_births`, `ue_wrap/world/directionalwind` |
 | fireflies and the spawners | `coop/world/firefly_sync`, `coop/world/spawn_authority` |
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/event_cue_sync`, `coop/dev/event_trigger` |

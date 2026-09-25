@@ -130,6 +130,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
     src/ue_wrap/world/profile.cpp
+    src/ue_wrap/world/event_list.cpp
     src/ue_wrap/world/order_economy.cpp
     src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/world/weapon_catalog.cpp
@@ -191,6 +192,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/keypad_sync.cpp
     src/coop/interactables/keypad_verbs.cpp
     src/coop/world/time_sync.cpp
+    src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
     src/coop/interactables/power_sync.cpp
     src/coop/interactables/atv_sync.cpp

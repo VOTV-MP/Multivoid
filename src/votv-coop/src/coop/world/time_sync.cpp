@@ -4,6 +4,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/world/day_edge.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
@@ -185,6 +186,9 @@ void ApplyClockSnapshot(void* cycle, const coop::net::TimeSyncPayload& p, float 
     int32_t sh = 0, sm = 0, sz = 0;
     if (DNC::ReadSavedTimeOf(slot, sh, sm, sz) && sz != p.dayZ && DNC::WriteSavedDayOf(slot, p.dayZ))
         UE_LOGI("time_sync: day number %d -> %d, the host's", sz, p.dayZ);
+    // The host's midnight, crossed between two samples of this session: this client performs its own
+    // share of the rollover. A day number the host already had when the session began is the save's.
+    if (g_haveHeld && p.dayZ > g_held.dayZ) coop::day_edge::OnHostDayEdge(cycle, slot, g_held.dayZ, p.dayZ);
     const double abs = static_cast<double>(p.dayZ) * maxT + p.day;
     const double heldAbs = static_cast<double>(g_held.dayZ) * maxT + g_held.day;
     if (g_haveHeld && abs < heldAbs) {
