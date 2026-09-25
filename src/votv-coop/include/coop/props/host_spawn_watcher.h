@@ -37,7 +37,7 @@ void SetSession(coop::net::Session* session);
 // the host's relay fan-out. The broadcast mirror spawns SIMULATING and falls under its own
 // physics, deliberately not synced. Echo protection: a receiver's mirror spawn dispatches
 // BeginDeferred through ProcessEvent, so this POST fires INSIDE it, and ScopedMirrorSpawn
-// is the guard -- a MarkIncomingSpawn cannot exist before the actor does.
+// is the guard -- a MarkMirrorSpawn cannot exist before the actor does.
 void Install(coop::net::Session* session);
 
 // Drain the FinishSpawningActor pending queue: express (prop_lifecycle::ExpressSpawnedProp)

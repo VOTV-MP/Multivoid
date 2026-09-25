@@ -52,7 +52,7 @@ void DestroySeamBody(void* self) {
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
     if (!s->connected()) return;
-    if (coop::prop_echo_suppress::ConsumeIncomingDestroy(self)) {
+    if (coop::prop_echo_suppress::IsIncomingDestroy(self)) {
         UE_LOGI("grab_hook[destroy-seam]: actor %p was wire-received destroy -- skip rebroadcast",
                 self);
         return;

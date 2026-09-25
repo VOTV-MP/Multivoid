@@ -7,7 +7,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (drain: hotbar view-actor exclusion)
-#include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (mirror-spawn exclusion)
+#include "coop/props/prop_echo_suppress.h"  // IsMirrorSpawn (mirror-spawn exclusion)
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
 #include "coop/props/remote_prop_spawn.h"
@@ -226,10 +226,9 @@ void OnFinishSpawnFunc(void* /*context*/, void* /*srcObj*/, void* result) {
     if (s->role() != coop::net::Role::Host) return;        // host-only broadcaster
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
-    // Wire and display mirror spawns are marked before the finish: peek (non-destructive; the
-    // init POST observer owns consuming the mark) and never enqueue them, since expressing a
-    // mirror as a fresh world prop is the dupe.
-    if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;
+    // Wire and display mirror spawns are marked before the finish and never enqueued, since
+    // expressing a mirror as a fresh world prop is the dupe.
+    if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;  // KEYED Aprop_C lineage only
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked
     if (g_pendingFinished.size() >= kMaxPendingFinished) {
@@ -365,8 +364,8 @@ void DrainPendingSpawns(coop::net::Session* s) {
         // local elements and wire mirrors): someone owns it.
         if (coop::element::Registry::Get().EidForActor(e.actor) != coop::element::kInvalidId)
             continue;
-        // A late echo mark (a mirror finished after our enqueue check): not ours.
-        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) continue;
+        // Marked as a mirror after our enqueue check: not ours.
+        if (coop::prop_echo_suppress::IsMirrorSpawn(e.actor)) continue;
         // The local hotbar hand actor, the hold update's view spawn: display-only while held, and
         // the hand edge in the hand-item module expresses it if and when it is released into the
         // world. Never adopted here.

@@ -6,7 +6,7 @@
 
 #include "coop/element/mirror_defer.h"        // instant-world: hide the fresh mirror until reveal
 #include "coop/props/join_membership_sweep.h" // RecordClaimIfTracking (claim BEFORE any failure return)
-#include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkIncomingSpawn
+#include "coop/props/prop_echo_suppress.h"    // ScopedMirrorSpawn + MarkMirrorSpawn
 #include "coop/props/prop_element_tracker.h"  // IndexActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/prop_save_data.h"
@@ -203,11 +203,10 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
             (payload.physFlags & pf::kFrozen) != 0,
             (payload.physFlags & pf::kSleep) != 0);
     }
-    // Echo suppression: mark this actor as wire-induced before the finish, which runs the prop's
-    // init through the construction script and trips our init POST observer; the observer's
-    // consume then returns true and skips the broadcast back to the sender, so there is no echo
-    // loop.
-    coop::prop_echo_suppress::MarkIncomingSpawn(spawned);
+    // Echo suppression: this actor is the wire's spawn, marked before the finish, whose spawn
+    // observers ask and leave it alone, so nothing is broadcast back to the sender. The mark holds
+    // while the actor lives.
+    coop::prop_echo_suppress::MarkMirrorSpawn(spawned);
     // Phase 3: the finish, which runs the construction script and BeginPlay.
     {
         ParamFrame finish(g_finishSpawnFn);

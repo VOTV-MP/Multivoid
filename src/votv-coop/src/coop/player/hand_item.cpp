@@ -248,14 +248,6 @@ void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
 
 void DestroyMirror(uint8_t slot, const char* why) {
     Mirror& m = g_mirrors[slot];
-    if (m.actor) {
-        // Consume the spawn-time incoming mark: the mirror's Init runs blueprint-internally, so the
-        // Init observer that would consume the mark never fires, and unconsumed marks accumulate to
-        // the cap (a clear-on-cap wipes in-flight marks) while a stale mark at a recycled address
-        // makes the peek misclassify a real world prop as an echo. The mark is a loan; the mirror's
-        // only exit repays it.
-        coop::prop_echo_suppress::ConsumeIncomingSpawn(m.actor);
-    }
     if (m.actor && R::IsLiveByIndex(m.actor, m.idx)) {
         // Suppress the destroy observer's echo; the host would otherwise broadcast a destroy for a
         // display-only actor.
@@ -298,7 +290,7 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     }
     // Suppress the Init spawn-catch echo: a display mirror must never be expressed as a world
     // prop.
-    coop::prop_echo_suppress::MarkIncomingSpawn(actor);
+    coop::prop_echo_suppress::MarkMirrorSpawn(actor);
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
         UE_LOGW("hand_item: FinishDeferredSpawn '%ls' failed", want.cls.c_str());
         return;

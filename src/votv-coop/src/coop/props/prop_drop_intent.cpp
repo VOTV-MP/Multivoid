@@ -7,7 +7,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
-#include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
+#include "coop/props/prop_echo_suppress.h"  // IsMirrorSpawn (exclude host-echo adopt spawns)
 #include "coop/props/join_membership_sweep.h"// RecordSelfAuthored (a player's own prop is never divergence)
 #include "coop/props/prop_lifecycle.h"      // IsPerPlayerPropClass / IsWireSuppressedPropClass (the host gate)
 #include "coop/props/prop_save_data.h"
@@ -157,7 +157,7 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     }
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
-    if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;  // a host-authored mirror we adopt, not a place
+    if (coop::prop_echo_suppress::IsMirrorSpawn(actor)) return;  // a host-authored mirror we adopt, not a place
     if (!ue_wrap::prop::IsDescendantOfProp(actor)) return;          // keyed Aprop_C lineage only
     if (PT::GetPropElementIdForActor(actor) != coop::element::kInvalidId) return;  // already tracked = not a fresh place
     // The hand-axis exclusion, the enqueue half (a fast path only, not load-bearing here: at
@@ -366,7 +366,7 @@ void Tick(coop::net::Session* session) {
             probe::NoteDrainExit(e.actor, "already-tracked", e.tries, std::wstring());
             continue;
         }
-        if (coop::prop_echo_suppress::PeekIncomingSpawn(e.actor)) {                   // a late echo mark -> not a place
+        if (coop::prop_echo_suppress::IsMirrorSpawn(e.actor)) {                       // marked as a mirror since -> not a place
             probe::NoteDrainExit(e.actor, "late-echo", e.tries, std::wstring());
             continue;
         }

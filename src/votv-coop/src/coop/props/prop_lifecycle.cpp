@@ -111,7 +111,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     auto* s = LoadSession();
     if (!s) return;
     if (!s->connected()) return;                      // pre-handshake save-load -> skip
-    if (coop::prop_echo_suppress::ConsumeIncomingSpawn(self)) {
+    if (coop::prop_echo_suppress::IsMirrorSpawn(self)) {
         UE_LOGI("grab_hook[Aprop.Init POST]: actor %p was wire-received -- skip broadcast (echo suppression)",
                 self);
         return;

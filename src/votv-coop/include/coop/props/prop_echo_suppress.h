@@ -1,15 +1,15 @@
-// coop/props/prop_echo_suppress.h -- one-shot echo-suppression sets, so a spawn or destroy that arrived
-// from the OTHER end of the wire is not broadcast back. The receiver side (coop::remote_prop's
-// OnSpawn and OnDestroy) calls Mark*; the symmetric observer in coop::prop_lifecycle calls
-// Consume*. Without them our own receiver-applied spawn or destroy re-broadcasts to the original
-// sender, and the packets ping-pong.
+// coop/props/prop_echo_suppress.h -- the actors this peer spawned or destroyed on the wire's word, so
+// the observers that broadcast a local spawn or destroy leave them alone and the packets do not
+// ping-pong. A receiver marks an actor before the call that could trip an observer; the observers
+// ask. Internals of the prop lane's receivers and observers, in their own header so remote_prop's
+// public surface stays free of them.
 //
-// These are internals shared by exactly two translation units, prop_lifecycle and remote_prop, and
-// they live in their own header so remote_prop's public surface stays free of them.
-//
-// Game thread only. Each set's capacity is bounded internally, and on overflow the set is cleared:
-// a one-shot stale lookup on a never-consumed entry is harmless, since it only lets a wire-induced
-// spawn re-broadcast once and the other side de-dupes it by key.
+// A mark names the OBJECT: its slot in the object array and the slot's serial, drawn as the engine's
+// weak pointer draws one. The engine resets the serial when the object is freed, so a successor at a
+// recycled address or in a reused slot never matches, and a mark holds for its actor's whole life
+// with nothing to repay: a wire mirror stays one however late a drain asks. Keyed by pointer and
+// repaid one-shot by an observer that never runs for a mirror, a stale mark at a recycled address
+// passed a real birth off as an echo. Game thread only; each set prunes its dead slots as it doubles.
 
 #pragma once
 
@@ -17,14 +17,15 @@
 
 namespace coop::prop_echo_suppress {
 
-void MarkIncomingSpawn(void* actor);
-bool ConsumeIncomingSpawn(void* actor);
-// Non-destructive membership check. The FinishSpawningActor callback must EXCLUDE wire and display
-// mirror spawns, which are marked before Finish, WITHOUT eating the mark that the Init POST
-// observer consumes on its own path.
-bool PeekIncomingSpawn(void* actor);
+// This peer is spawning `actor` as a mirror, of a wire spawn or a held item on display: marked before
+// the finish, whose observers ask, and true while the actor lives.
+void MarkMirrorSpawn(void* actor);
+bool IsMirrorSpawn(void* actor);
+
+// This peer is destroying `actor` on the wire's word, or as its own cleanup that no peer should hear:
+// marked before the destroy, whose observer asks.
 void MarkIncomingDestroy(void* actor);
-bool ConsumeIncomingDestroy(void* actor);
+bool IsIncomingDestroy(void* actor);
 
 // ---- the ARBITER-CONSUMED key ---------------------------------------------------------------
 //
@@ -39,14 +40,14 @@ bool ConsumeIncomingDestroy(void* actor);
 // already knew, turning an O(1) index hit into a guaranteed cold scan on EVERY arbiter-performed
 // transaction.
 //
-// One-shot and capped like the pointer sets above; a stale entry that is never consumed costs one
+// One-shot, and cleared whole at its cap of 256: an entry lost that way, or never consumed, costs one
 // missed short-circuit, never a wrong destroy. Game thread only.
 void MarkArbiterConsumedKey(const std::wstring& key);
 bool ConsumeArbiterConsumedKey(const std::wstring& key);
 
 // Mirror-spawn re-entrancy scope. The receiver's BeginDeferred UFunction call dispatches through
 // ProcessEvent, so the BeginDeferred POST observers -- host_spawn_watcher's ambient broadcaster
-// among them -- fire INSIDE it, before MarkIncomingSpawn can run, because the actor only exists
+// among them -- fire INSIDE it, before MarkMirrorSpawn can run, because the actor only exists
 // once Begin returns. The ambient broadcaster is peer-symmetric, so a mirror spawn of an ambient
 // class would re-broadcast and ping-pong. The receiver wraps its spawn call in this scope and the
 // broadcaster checks it. Game thread only: the POST fires synchronously inside the wrapped call.
