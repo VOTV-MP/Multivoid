@@ -44,4 +44,10 @@ void Tick();
 // Session teardown: restore the drone's tick (so single-player flight works again) + reset state.
 void OnDisconnect();
 
+// CLIENT: the host's last word on its drone's Active -- its connect snapshot, the stream, or the
+// stream's one falling edge: 1 in flight, 0 parked, -1 before any word this session. The mirror's own
+// Active field is not this: its tick is suppressed, so the field keeps what the load gave it. Game
+// thread.
+int HostActive();
+
 }  // namespace coop::drone_sync

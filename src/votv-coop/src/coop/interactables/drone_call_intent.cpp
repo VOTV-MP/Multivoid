@@ -218,6 +218,8 @@ void OnPeerLeft(uint8_t slot) {
     g_waitSaid[slot] = false;
 }
 
+uint64_t SentCount() { return g_sent; }
+
 void OnDisconnect() {
     if (g_sent || g_flown || g_denied)
         UE_LOGI("[DRONE-CALL] session end -- sent=%llu pressed=%llu denied=%llu",

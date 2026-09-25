@@ -501,6 +501,12 @@ CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRIL
     "line says whether its array holds that one module alone. A joiner whose desk already holds modules at "
     "its world-ready (a rejoin into the drill's world) plugs nothing and says what it loaded. Lines tagged "
     "[PHYSMODS-DRILL].")
+CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CALL_DRILL",
+    "Drill (BOTH peers): the client walks to the garage's drone console, opens its lid if it is shut, aims "
+    "at its keyboard and presses it through the player's own E dispatch; the press goes to the host, which "
+    "presses its console for the client. A sack the first press brought is followed by a second press, and "
+    "the client's DONE line says whether the drone flew on its copy; the host logs its drone's changes. "
+    "Lines tagged [DRONE-CALL-DRILL].")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "

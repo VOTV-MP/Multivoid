@@ -35,6 +35,17 @@ bool IsLidOpen(void* console);
 // the game itself uses to pick the verb, and it is LOCAL to whoever is looking.
 bool IsCursorOnKeyboard(void* console);
 
+// The presser's cursor is on the lid's latch, whose press toggles the lid. Local, like the keyboard's.
+// Both flags are written when the console builds a presser's action options, not cleared when the
+// presser looks away, so a reader that needs the trace's present answer asks the trace too.
+bool IsCursorOnLid(void* console);
+
+// A part of the console by the name its graph gives the component: `button_call` (the keyboard),
+// `button_door` (the lid's latch) or `button_changeLeave` (the leave-timer face). Null on null, an
+// unresolved name or a dead component. For a dev drill's aim only: each call walks the class's
+// properties by name. Game thread.
+void* PartOf(void* console, const wchar_t* name);
+
 // Run the keyboard's own verb: drone.triggerFly(console) on the drone this console references.
 // The drone's body owns every condition (a sack aboard, the radiotower, a sack on the pad), so
 // this asks nothing and answers only whether the call was dispatched. Game thread.

@@ -47,6 +47,7 @@ struct DroneMirror {
     bool    suppressed = false;   // we disabled the client drone's flight tick
     uint8_t lastStateBits = 0;    // last applied FX bits (dust / canTakeOff) -- edge detection
     bool    haveStateBits = false;
+    int8_t  hostActive = -1;      // the host's last word on Active: 1, 0, or -1 before any
 };
 DroneMirror g_m;
 
@@ -150,6 +151,7 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     if (!drone) return;  // not streamed in yet -- the next packet applies once it resolves
     if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
     SetTarget(g_m, payload, /*snap*/ payload.adopt != 0);
+    g_m.hostActive = payload.active ? 1 : 0;
     // FX mirror: the suppressed tick kills the rotor-dust particle and the delivery alarm cue, so
     // replay them off the synced state the host packs in FillPayload -- the dust as a per-packet
     // replay of the blueprint's own tick update (see ApplyDustMirror below), the "items ready"
@@ -243,6 +245,8 @@ void Tick() {
         if (g_m.hasPose) { AdvanceInterp(g_m); ApplyMirror(drone, g_m); }
     }
 }
+
+int HostActive() { return g_m.hostActive; }
 
 void OnDisconnect() {
     if (g_m.suppressed) {

@@ -44,4 +44,8 @@ void OnPeerLeft(uint8_t slot);
 // Session teardown: the queues and the buckets are dropped.
 void OnDisconnect();
 
+// The keyboard presses this client has sent the host (the drone call drill's proof that a press
+// reached the lane's gate). Game thread.
+uint64_t SentCount();
+
 }  // namespace coop::drone_call_intent

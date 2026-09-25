@@ -406,4 +406,4 @@ an error line.
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/coingun_sync`, `coop/interactables/upgrade_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog`, `ue_wrap/world/upgrades` |
 | identity | `coop/element/portable_identity` |
-| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/light_group_census`, `coop/dev/floppy_selftest` |
+| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/floppy_selftest` |
