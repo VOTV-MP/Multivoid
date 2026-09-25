@@ -132,7 +132,7 @@ void SayWait(uint8_t slot, uint8_t what, const std::wstring& key) {
     if (what == kWaitBody)
         UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits: the host has no body for it yet", static_cast<unsigned>(slot));
     else
-        UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits for key='%ls''s open to end its 0.2 s tail",
+        UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits for the open of key='%ls' to end its 0.2 s tail",
                 static_cast<unsigned>(slot), key.c_str());
 }
 
@@ -346,16 +346,17 @@ void OnVerbPost(const sg::Call& call) {
         // An open's chain settles at its own setActive; a protected keypad's reset changes nothing.
         if (!host || PL::IsEntering(call.object)) return;
         if (w->verb == KS::Verb::Reset && PL::IsProtected(call.object)) return;
-        KS::SendState(call.object);
+        KS::SendState(call.object, /*handedOn*/ false);
         if (w->verb == KS::Verb::Reset)
-            if (void* pair = PL::PairOf(call.object)) KS::SendState(pair);
+            if (void* pair = PL::PairOf(call.object)) KS::SendState(pair, false);
         return;
     }
     const int32_t off = ParamOffset(g_pairParam, call, L"isPairCall");
     if (off < 0 || *reinterpret_cast<const bool*>(call.locals + off)) return;
     if (host) {
-        KS::SendState(call.object);
-        if (void* pair = PL::PairOf(call.object)) KS::SendState(pair);
+        // This call handed the verdict on; its pair's own setActive was a pair's call, a repaint.
+        KS::SendState(call.object, /*handedOn*/ true);
+        if (void* pair = PL::PairOf(call.object)) KS::SendState(pair, false);
         return;
     }
     if (call.callerObject && PL::IsPasswordLock(call.callerObject)) KS::OnClientChainEnd(call.object);

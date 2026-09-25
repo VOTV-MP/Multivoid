@@ -1828,7 +1828,7 @@ struct KeypadSyncPayload {
     uint8_t  buf[16];    // 16 -- the typed digits, one per byte (each 0..9)
     uint8_t  active;     // 1  -- the keypad's active: its verdict and the gated door's power
     uint8_t  event;      // 1  -- KeypadEvent
-    uint8_t  arg;        // 1  -- Digit: the digit; Open: the verdict; zero otherwise
+    uint8_t  arg;        // 1  -- Digit: the digit; Open: the verdict; State: 1 when its chain handed the verdict on
     uint8_t  isReset;    // 1  -- set-new-code mode
     uint8_t  pwLen;      // 1  -- bytes in `pw` (0..16)
     uint8_t  pw[16];     // 16 -- the password's UTF-8 bytes: a map's code can be letters

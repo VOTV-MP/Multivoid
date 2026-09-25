@@ -52,9 +52,11 @@ bool Applying(void* lock, Verb verb);
 bool ApplyingAny(void* lock);
 
 // HOST: what `lock` is doing, to every client -- a verb it is about to run (from the verb's own
-// watch, before its body), or the state its chain settled on (after it). Game thread.
+// watch, before its body), or the state its chain settled on (after it). `handedOn`: that chain
+// handed the verdict on to the pair and the gated door (its setActive(false)), so a client's copy
+// hands it on too; otherwise the copy is only repainted. Game thread.
 void SendEvent(void* lock, coop::net::KeypadEvent event, uint8_t arg);
-void SendState(void* lock);
+void SendState(void* lock, bool handedOn);
 
 // CLIENT: `lock`'s own chain ended at its setActive(false): a state that arrived while the chain was
 // in its wait, for `lock` or for its pair (which the tail writes too), is written now; the pair's

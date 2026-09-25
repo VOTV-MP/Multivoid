@@ -337,7 +337,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `DoorState`, `LightGroupState` | the host to all | a key and a state |
 | `LightState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed | a key and a state |
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
-| `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode |
+| `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |

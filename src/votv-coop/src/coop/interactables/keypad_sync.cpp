@@ -86,18 +86,18 @@ const char* EventName(uint8_t ev) {
 // The password as its UTF-8 bytes: a map-placed keypad's code can be letters (the alpha bunker's
 // "lmao" and "oi"), which the typed buffer, digits only, never is. Cut at a character boundary.
 uint8_t PackText(const std::wstring& s, uint8_t* out, size_t cap) {
-    const std::string u = coop::text::ToUtf8(s);
-    size_t n = u.size() < cap ? u.size() : cap;
-    while (n > 0 && n < u.size() && (static_cast<uint8_t>(u[n]) & 0xC0) == 0x80) --n;
-    if (n < u.size()) {
+    const std::string whole = coop::text::ToUtf8(s);
+    const std::string u = coop::text::CapUtf8Bytes(whole, cap);
+    if (u.size() < whole.size()) {
         static bool s_said = false;
         if (!s_said) {
             s_said = true;
-            UE_LOGW("keypad: a password of %zu UTF-8 bytes is cut to the %zu the wire carries", u.size(), n);
+            UE_LOGW("keypad: a password of %zu UTF-8 bytes is cut to the %zu the wire carries", whole.size(),
+                    u.size());
         }
     }
-    std::memcpy(out, u.data(), n);
-    return static_cast<uint8_t>(n);
+    std::memcpy(out, u.data(), u.size());
+    return static_cast<uint8_t>(u.size());
 }
 
 uint8_t PackDigits(const std::wstring& s, uint8_t* out, size_t cap) {
@@ -178,10 +178,11 @@ void RegisterWithScanHub() {
 }
 
 // ---- the client's apply ------------------------------------------------------------------------
-// The settled state, written whole -- the buffer, the password, the verdict and the mode -- then
-// setActive. The verdict is handed on to the pair and the gated door (isPairCall false) only when
-// this state changes it: a digit's or a reset's state, like the host's own chain for them, leaves
-// both as they are, and the keypad is only repainted, which is all setActive does for a pair's call.
+// The settled state -- the buffer, the password when it reads as UTF-8, the verdict and the mode --
+// then setActive as the host's chain ended: handing the verdict on to the pair and the gated door
+// (isPairCall false) when the host's did (the state's arg), otherwise only a repaint, which is all
+// setActive does for a pair's call. A digit's, a reset's and a joiner's snapshot states hand nothing
+// on: the load set each door from the host's save, and a keypad copies its door as it begins play.
 void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
     PL::State cur;
     if (!PL::ReadState(lock, cur)) return;
@@ -191,17 +192,19 @@ void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
                                                    p.pwLen < sizeof(p.pw) ? p.pwLen : sizeof(p.pw), &password);
     if (cur.buffer != buffer) PL::WriteBuffer(lock, buffer);
     if (pwRead && cur.password != password) PL::WritePassword(lock, password);
-    const bool verdictMoves = cur.active != (p.active != 0);
     PL::WriteActive(lock, p.active != 0);
     PL::WriteResetMode(lock, p.isReset != 0);
     MarkScope mark(lock, Verb::SetActive);
-    PL::CallSetActive(lock, !verdictMoves);
+    PL::CallSetActive(lock, (p.arg & 1) == 0);
 }
 
 void ApplyState(void* lock, const std::wstring& key, const coop::net::KeypadSyncPayload& p) {
     void* pair = PL::PairOf(lock);
     if (PL::IsEntering(lock) || (pair && PL::IsEntering(pair))) {
+        // The latest state wins, but a hand-on any parked one carried is kept.
+        const uint8_t handedOn = static_cast<uint8_t>((p.arg | g_parked[key].arg) & 1);
         g_parked[key] = p;
+        g_parked[key].arg = handedOn;
         return;
     }
     g_parked.erase(key);
@@ -395,7 +398,7 @@ void SendEvent(void* lock, coop::net::KeypadEvent event, uint8_t arg) {
                 static_cast<unsigned>(arg));
 }
 
-void SendState(void* lock) {
+void SendState(void* lock, bool handedOn) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     const std::wstring key = KeypadKey(lock);
@@ -405,6 +408,7 @@ void SendState(void* lock) {
     coop::net::KeypadSyncPayload p{};
     StateToPayload(key, st, p);
     p.event = static_cast<uint8_t>(coop::net::KeypadEvent::State);
+    p.arg = handedOn ? 1 : 0;
     if (!s->SendReliable(coop::net::ReliableKind::KeypadState, &p, sizeof(p))) {
         UE_LOGW("keypad: the state of key='%ls' was not sent (the session refused it)", key.c_str());
         return;

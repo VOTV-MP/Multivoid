@@ -108,6 +108,7 @@ bool HandleStateEvent(net::Session& session,
         // field alone when they are not well formed (coop/text/utf8_codec).
         bool ok = kp.event <= net::kKeypadEventMax && kp.bufLen <= sizeof(kp.buf) && kp.pwLen <= sizeof(kp.pw);
         if (ok && kp.event == static_cast<uint8_t>(net::KeypadEvent::Digit)) ok = kp.arg <= 9;
+        if (ok && kp.event == static_cast<uint8_t>(net::KeypadEvent::State)) ok = kp.arg <= 1;  // handed on
         for (uint8_t i = 0; ok && i < kp.bufLen; ++i) ok = kp.buf[i] <= 9;
         if (!ok) {
             UE_LOGW("event_feed: KeypadState malformed (event=%u arg=%u bufLen=%u) -- dropping",
