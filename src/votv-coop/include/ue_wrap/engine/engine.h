@@ -137,6 +137,11 @@ bool TeleportTo(void* actor, const FVector& location, const FRotator& rotation);
 // lowest visible point is Origin.Z - BoxExtent.Z). Game thread.
 bool GetActorBounds(void* actor, bool onlyColliding, FVector& outOrigin, FVector& outBoxExtent);
 
+// The sphere a reach is measured to: the centre of the actor's colliding bounds and half their
+// diagonal, or its location with no radius when it has no colliding component. False when neither
+// can be read, never a point at the world origin. Game thread.
+bool ActorReachSphere(void* actor, FVector& outCenter, float& outRadiusUU);
+
 // APlayerController::ProjectWorldLocationToScreen: a world point to viewport pixels through the
 // local camera; false, `outScreen` untouched, behind the camera. The nameplates project here and
 // snapshot the result for the render thread. Game thread.

@@ -574,6 +574,29 @@ bool GetActorBounds(void* actor, bool onlyColliding, FVector& outOrigin, FVector
     return true;
 }
 
+// The target ORIGIN is not its surface, and the game traces stop at whatever they HIT, so a large
+// prop is legitimately reachable from further away than reach-from-origin. Measure the real bounds
+// instead of inventing a constant fudge for "big things".
+//
+// `GetActorBounds` returning true means THE DISPATCH SUCCEEDED, not that the box is meaningful:
+// UE4's `AActor::GetActorBounds` starts from an empty FBox and expands it per qualifying
+// component, so an actor with no COLLIDING components (carried, physics off, inside a container)
+// yields Origin=(0,0,0) Extent=(0,0,0) -- the WORLD ORIGIN, an ordinary position. A zero extent is
+// therefore "no bounds", never "a point-sized prop at the origin".
+bool ActorReachSphere(void* actor, FVector& outCenter, float& outRadiusUU) {
+    outRadiusUU = 0.f;
+    FVector extent{};
+    const bool haveBounds = GetActorBounds(actor, /*onlyColliding=*/true, outCenter, extent) &&
+                            !(extent.X == 0.f && extent.Y == 0.f && extent.Z == 0.f);
+    if (haveBounds) {
+        outRadiusUU = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
+        return true;
+    }
+    // A failed read answers false: a target placed at the world origin would authorize anything
+    // else near it -- a fail-OPEN inside a function whose job is to fail closed.
+    return TryGetActorLocation(actor, outCenter);
+}
+
 bool TeleportTo(void* actor, const FVector& location, const FRotator& rotation) {
     if (!actor || !ResolveActorFns()) return false;
     if (!g_teleportToFn) g_teleportToFn = R::FindFunction(g_actorClass, P::name::TeleportToFn);
