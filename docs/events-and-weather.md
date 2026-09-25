@@ -12,21 +12,25 @@ client never rolls a shared outcome.
 
 ### The clock and the sky
 
-The game's clock lives on one actor, the day-night cycle, and the sun is a pure function of it.
-The host streams its clock -- the within-day time, the absolute time and the day number. On a
-client, right before each tick of its world's cycle (the menu scene's own cycle is left alone), the
-lane holds the cycle's rate at zero and writes the host's last sample in, a newly arrived one or
-else the last one again, so the client's clock advances only with the host's and neither its own
-advance nor a write on the client (its cheat menu's day buttons, which do nothing there) reaches a
+The game's clock lives on one actor, the day-night cycle, and the sun is a pure function of it. The
+host streams its clock -- the within-day time, the absolute time and the day number. On a client,
+right before each tick of its world's cycle (the menu scene's own cycle is left alone), the lane
+holds the cycle's rate at zero and writes the host's last sample in, a newly arrived one or else
+the last one again, so the client's clock advances only with the host's and neither its own advance
+nor a write on the client (its cheat menu's day buttons, which do nothing there) reaches a
 midnight: the midnight's shared outputs (the dish hash codes, the daily task, the Bad Sun roll, the
 results mail) are the host's, and the host's midnight reaches a client as one sample carrying the
-next day number `[V]` (`coop/world/time_sync`). A sample is sent each time the host's clock has moved half a game minute,
-and at least twice a second: every 500 ms at the normal speed, where a game minute holds about six,
-so a client's own minute and hour pulses, its sun, sounds, decals and weekday, follow the host's
-minute for minute `[RD]`; in the shared sleep (on [players.md](players.md)) one comes about every
-80 ms `[RD]`, and a frame longer than that on either peer can merge two and skip a minute's pulse
-`[RD]` -- one night gave 44 of 45 `[V]`. The star dome's random orientation and the save-derived moon phase are pushed once
-(`coop/world/sky_sync`).
+next day number `[V]` (`coop/world/time_sync`). Its hour pulses still run, so the game's automatic
+6 am drone order is latched on a client: its slot can load the flag open from the save, and the
+midnight that re-opens it daily is the host's alone; the weather births and the event walk are held
+too (below), while the sky eye, the jellyfish, the flesh rain, the gifts and the red sky's noon end
+run per peer (the known limits). A sample is sent each time the host's clock has moved half a game
+minute, and at least twice a second: every 500 ms at the normal speed, where a game minute holds
+about six, so a client's own minute and hour pulses, its sun, sounds, decals and weekday, follow
+the host's minute for minute `[RD]`; in the shared sleep (on [players.md](players.md)) one comes
+about every 80 ms `[RD]`, and a frame longer than that on either peer can merge two and skip a
+minute's pulse `[RD]` -- one night gave 44 of 45 `[V]`. The star dome's random orientation and the
+save-derived moon phase are pushed once (`coop/world/sky_sync`).
 
 ### Weather
 

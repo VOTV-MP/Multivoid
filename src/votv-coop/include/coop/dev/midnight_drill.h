@@ -9,9 +9,9 @@
 // client does once joined; both print their dilation and time scale at the shared fast-forward, and
 // the host its runway at every set. cheat leaves the host's clock alone: the joined client writes a
 // day onto its own as the cheat menu's day button does, three times, and says how each next tick
-// ended (its own midnight rolled, the day it had held, or a new host sample met the write). A
-// refused step ends the arm INVALID with its reason. The evidence is rollover_watch's: its DAY lines
-// for awake and asleep, and the run counts cheat's verdicts read.
+// ended (its own midnight rolled, the clock lane held its last sample over the write, or a new one
+// met it). A refused step ends the arm INVALID with its reason. The evidence is rollover_watch's DAY
+// lines for awake and asleep; cheat reads its run counts and the clock lane's count of the writes.
 
 #pragma once
 

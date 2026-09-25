@@ -104,10 +104,11 @@ bool ReadRates(Rates& out);
 // The midnight cascade -- the hash codes, the task roll, the Bad Sun, the results mail and points
 // -- is a tick threshold, `day > maxTime` inside the cycle's own tick chain, armed on every peer.
 // A client's cycle is held at timeScale 0, so its own advance never moves `day`, and the last host
-// sample is written in before each tick, over any local write; a sample's `day` is below maxTime, as
-// the host wraps inside its own tick, so the cascade is out of its reach while the sky keeps
-// deriving from `day`. The hour pulse still runs, and func_newHour would place the automatic 6 am
-// drone order while dailyDelivery is false, so that is latched too.
+// sample is written in before each ReceiveTick, over a local write; a sample's `day` is below maxTime,
+// as the host wraps inside its own tick, so the cascade is out of its reach while the sky keeps
+// deriving from `day`. The gamemode's begin-play call enters the tick body once per world without
+// that write, on the loaded `day`, below maxTime too. The hour pulse still runs, and func_newHour
+// would place the automatic 6 am drone order while dailyDelivery is false, so that is latched too.
 
 // Write timeScale alone: 0 to park a client's clock, 1.0f -- the game's own running value, the
 // one its rewind restores after the hour it spends at -1 -- to hand it back. No-op if unresolved.

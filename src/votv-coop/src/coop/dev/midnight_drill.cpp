@@ -64,10 +64,12 @@ bool     g_pokedRate = false;   // the clock latch's control write is done (clie
 // with what it is judged against.
 int      g_cheatWrites = 0;
 int      g_cheatRolled = 0;
-int      g_cheatHeld = 0;      // the tick found the day it had before the write
-int      g_cheatMet = 0;       // a host sample was written in at the same tick
+int      g_cheatHeld = 0;      // the clock lane wrote its last sample over the write
+int      g_cheatMet = 0;       // the clock lane wrote a new sample over it at the same tick
+int      g_cheatUnaccounted = 0;  // no roll, and the lane named no write
 bool     g_cheatPending = false;
 uint64_t g_cheatHashRan = 0;   // generteHashcode's run count before the write
+coop::time_sync::LocalWrites g_cheatFound{};  // the lane's count of the writes it found, before the write
 int32_t  g_cheatDayZ = -1;     // this client's day number before the write
 float    g_cheatDay = 0.f;     // and its `day`
 
@@ -336,8 +338,9 @@ void PokeClockRate() {
 // `ui_cheatMenu` @23765 -- written into this client's clock, which puts `day` past the day's end, so
 // the cycle's next tick rolls this machine's own midnight unless the clock lane rewrites it first.
 // Each write waits for the clock to be the host's (a sample applied, the day number the host's, the
-// rate held again after the control write); each is judged once the cycle has ticked, which brings
-// `day` back below the day's end whether it rolled, was held at the day it had, or met a new sample.
+// rate held again after the control write); each is judged once `day` is back below the day's end:
+// ROLLED when generteHashcode ran, else by the clock lane's own count of the writes it found, HELD
+// under its last sample or MET by a new one -- the day alone cannot tell a hold from a still host.
 void TickCheat() {
     if (g_step == Step::Done || g_step == Step::Invalid || !g_pokedRate) return;
     if (!coop::dev::rollover_watch::IsEnabled()) {
@@ -352,18 +355,22 @@ void TickCheat() {
         if (day > maxT) return;  // the cycle has not ticked since the write
         g_cheatPending = false;
         const uint64_t ran = coop::dev::rollover_watch::RanCount(L"generteHashcode") - g_cheatHashRan;
-        const bool rolled = ran > 0 || z != g_cheatDayZ;
-        const bool held = !rolled && day == g_cheatDay;
+        const coop::time_sync::LocalWrites found = coop::time_sync::LocalWritesFound();
+        const bool rolled = ran > 0;
+        const bool held = !rolled && found.held != g_cheatFound.held;
+        const bool met = !rolled && !held && found.met != g_cheatFound.met;
         const char* verdict = rolled ? "ROLLED this client's own midnight"
-                              : held ? "HELD at the day it had before the write"
-                                     : "MET a host sample at the same tick, no roll";
-        ++(rolled ? g_cheatRolled : held ? g_cheatHeld : g_cheatMet);
-        UE_LOGI("midnight_drill: [C] write %d of %d %s -- generteHashcode ran %llu time(s), this client's day "
+                              : held ? "HELD: the clock lane wrote its last sample over it"
+                              : met  ? "MET: the clock lane wrote a new host sample over it at the same tick"
+                                     : "UNACCOUNTED: no roll, and the clock lane named no write";
+        ++(rolled ? g_cheatRolled : held ? g_cheatHeld : met ? g_cheatMet : g_cheatUnaccounted);
+        UE_LOGI("midnight_drill: [C] write %d of %d %s -- generteHashcode ran %llu time(s); this client's day "
                 "number %d -> %d, day %.2f -> %.2f", g_cheatWrites, kCheatWrites, verdict,
                 static_cast<unsigned long long>(ran), g_cheatDayZ, z, g_cheatDay, day);
         if (g_cheatWrites >= kCheatWrites) {
             UE_LOGI("midnight_drill: [C] cheat done -- %d write(s): %d rolled this client's own midnight, %d held, "
-                    "%d met a host sample", g_cheatWrites, g_cheatRolled, g_cheatHeld, g_cheatMet);
+                    "%d met a host sample, %d unaccounted", g_cheatWrites, g_cheatRolled, g_cheatHeld, g_cheatMet,
+                    g_cheatUnaccounted);
             g_step = Step::Done;
         }
         return;
@@ -375,6 +382,7 @@ void TickCheat() {
         return;
     }
     g_cheatHashRan = coop::dev::rollover_watch::RanCount(L"generteHashcode");
+    g_cheatFound = coop::time_sync::LocalWritesFound();
     g_cheatDayZ = z;
     g_cheatDay = day;
     ++g_cheatWrites;
@@ -442,9 +450,10 @@ void OnDisconnect() {
     g_setDayZ = -1;
     g_minutesAtAccel = 0;
     g_pokedRate = false;
-    g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = 0;
+    g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = g_cheatUnaccounted = 0;
     g_cheatPending = false;
     g_cheatHashRan = 0;
+    g_cheatFound = coop::time_sync::LocalWrites{};
     g_cheatDayZ = -1;
     g_cheatDay = 0.f;
     g_wakeLines = 0;
