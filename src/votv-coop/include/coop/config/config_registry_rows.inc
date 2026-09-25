@@ -276,11 +276,11 @@ CFG_FLAG(weather_probe, "weather_probe", "dev", false, nullptr,
     "Diagnostic probe block for the weather subsystem.")
 CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, nullptr,
     "Autonomous selftest: meadow signal database sync.")
-CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, nullptr,
+CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, "VOTVCOOP_LAPTOP_SELFTEST",
     "Autonomous selftest: laptop buffer sync.")
 CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr,
     "Autonomous selftest: tape deck playback sync.")
-CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, nullptr,
+CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, "VOTVCOOP_DRIVE_SELFTEST",
     "Autonomous selftest: drive rack digest instrument.")
 CFG_FLAG(desk_snd_selftest, "desk_snd_selftest", "dev", false, nullptr,
     "Autonomous selftest: desk sound mirror.")

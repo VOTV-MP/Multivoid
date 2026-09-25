@@ -18,19 +18,17 @@ namespace {
 namespace R = ue_wrap::reflection;
 
 void* g_deskCls = nullptr;
-void* g_atlasCls = nullptr;
 
 // The REQUIRED set (the g_required latch): the 4 comp field offsets on the
 // desk class. Everything below them resolves opportunistically in the same
-// throttled pass with per-function null guards -- the pre-split console_desk
-// semantics exactly (its core latch never covered verbs/sounds/atlas either).
+// throttled pass with per-function null guards: members of the desk class and
+// the two cues it references, all loaded with it. The atlas's text blocks are
+// read off the atlas widget in hand (see AtlasTextBlock).
 int32_t g_offCompProgress = -1;        // comp_progress (float, 0..100)
 int32_t g_offCompData0 = -1;           // comp_data_0 (Fstruct_signalDataDynamic 0x70)
 int32_t g_offCompDownloading = -1;     // comp_downloading (float; B\s readout)
 int32_t g_offCompIsDecodeActive = -1;  // comp_isDecodeActive (bool; the decode latch)
 // Opportunistic:
-int32_t g_offTextCompProgress = -1;    // atlas.text_comp_progress (UTextBlock*)
-int32_t g_offTextCompProcess = -1;     // atlas.text_comp_process
 int32_t g_offCueWorking = -1;          // desk.computerWorking_Cue (UAudioComponent*)
 int32_t g_offCueProg = -1;             // desk.prog
 int32_t g_offCueDone = -1;             // desk.Done
@@ -61,13 +59,6 @@ void ResolvePass() {
     if (g_offCueProg < 0) g_offCueProg = R::FindPropertyOffset(g_deskCls, L"prog");
     if (g_offCueDone < 0) g_offCueDone = R::FindPropertyOffset(g_deskCls, L"Done");
     if (!g_updCompFn) g_updCompFn = R::FindFunction(g_deskCls, L"updComp");
-    if (!g_atlasCls) g_atlasCls = R::FindClass(L"ui_consolesAtlas_C");
-    if (g_atlasCls) {
-        if (g_offTextCompProgress < 0)
-            g_offTextCompProgress = R::FindPropertyOffset(g_atlasCls, L"text_comp_progress");
-        if (g_offTextCompProcess < 0)
-            g_offTextCompProcess = R::FindPropertyOffset(g_atlasCls, L"text_comp_process");
-    }
     // The cue ASSETS share the component property's leaf name -- class-filter
     // the lookup so we never grab the component instance by mistake.
     if (!g_sndWorking) {
@@ -84,12 +75,10 @@ void ResolvePass() {
         g_offCompDownloading >= 0 && g_offCompIsDecodeActive >= 0) {
         g_required = true;
         UE_LOGI("comp_pane: resolved -- prog/data/dl/act=0x%X/0x%X/0x%X/0x%X, "
-                "updComp=%s texts=%s/%s cues=%s/%s/%s sounds=%s/%s",
+                "updComp=%s cues=%s/%s/%s sounds=%s/%s",
                 g_offCompProgress, g_offCompData0, g_offCompDownloading,
                 g_offCompIsDecodeActive,
                 g_updCompFn ? "yes" : "NO",
-                g_offTextCompProgress >= 0 ? "yes" : "NO",
-                g_offTextCompProcess >= 0 ? "yes" : "NO",
                 g_offCueWorking >= 0 ? "yes" : "NO",
                 g_offCueProg >= 0 ? "yes" : "NO",
                 g_offCueDone >= 0 ? "yes" : "NO",
@@ -109,9 +98,15 @@ T* OffPtr(void* obj, int32_t off) {
     return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
-void* AtlasTextBlock(int32_t off) {
+// The atlas's text blocks, from the atlas widget in hand: its class is loaded by construction, so
+// nothing waits on the widget class by name.
+R::InstanceOffset g_textCompProgress{L"text_comp_progress"};  // atlas (UTextBlock*)
+R::InstanceOffset g_textCompProcess{L"text_comp_process"};    // atlas (UTextBlock*)
+
+void* AtlasTextBlock(R::InstanceOffset& field) {
     void* atlas = ue_wrap::console_desk::AtlasWidget();
-    if (!atlas || off < 0) return nullptr;
+    const int32_t off = field.Of(atlas);
+    if (off < 0) return nullptr;
     void* tb = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(atlas) + off);
     return (tb && R::IsLive(tb)) ? tb : nullptr;
 }
@@ -170,7 +165,7 @@ bool UpdComp(bool hasData) {
 
 bool PaintCompProgress(float progress) {
     if (!g_required) ResolvePass();
-    void* tb = AtlasTextBlock(g_offTextCompProgress);
+    void* tb = AtlasTextBlock(g_textCompProgress);
     if (!tb) return false;
     // The native paint: Conv_FloatToText(min 3 integral / 3,3 fractional) + "%".
     wchar_t buf[24];
@@ -180,7 +175,7 @@ bool PaintCompProgress(float progress) {
 
 bool PaintCompProcess(const wchar_t* text) {
     if (!g_required) ResolvePass();
-    void* tb = AtlasTextBlock(g_offTextCompProcess);
+    void* tb = AtlasTextBlock(g_textCompProcess);
     if (!tb) return false;
     return ue_wrap::component_calls::SetText(tb, text);
 }

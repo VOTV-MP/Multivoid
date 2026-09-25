@@ -100,6 +100,22 @@ int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName) {
     return -1;
 }
 
+int32_t InstanceOffset::Of(void* obj) {
+    void* const cls = obj ? ClassOf(obj) : nullptr;
+    if (!cls) return -1;
+    if (cls != cls_ || !IsLiveByIndex(cls_, clsIdx_) || SlotSerial(clsIdx_) != clsSerial_) {
+        cls_ = cls;
+        clsIdx_ = InternalIndexOf(cls);
+        clsSerial_ = AllocateSlotSerial(clsIdx_);
+        off_ = FindPropertyOffset(cls, prop_);
+        if (off_ < 0)
+            UE_LOGW("reflection: the loaded %ls declares no '%ls'", ClassNameOf(obj).c_str(), prop_);
+        else
+            UE_LOGI("reflection: %ls.%ls @0x%04X", ClassNameOf(obj).c_str(), prop_, off_);
+    }
+    return off_;
+}
+
 int32_t FindParamOffset(void* function, const wchar_t* paramName) {
     if (!function || !paramName) return -1;
     for (const ParamInfo& p : FunctionParams(function)) {

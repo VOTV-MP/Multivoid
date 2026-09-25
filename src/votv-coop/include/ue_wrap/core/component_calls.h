@@ -1,6 +1,6 @@
 // ue_wrap/core/component_calls.h -- GENERIC reflected component/widget calls.
 //
-// The six helpers are not desk-specific: each resolves its UFunction lazily from the PASSED
+// The helpers are not desk-specific: each resolves its UFunction lazily from the PASSED
 // object's own class and caches it, so any module driving a UTextBlock / UAudioComponent /
 // UActorComponent / USceneComponent through reflection can use them.
 // Game thread (reflected UFunction dispatch).
@@ -30,5 +30,10 @@ bool SetVolumeMultiplier(void* comp, float mult);
 
 // Dispatch a parameterless UFunction on obj (fn already resolved by the caller).
 bool CallParamless(void* obj, void* fn);
+
+// Dispatch the parameterless UFunction `verb` on obj, looked up on obj's own class through the
+// dispatch cache, which climbs to the declaring class. False when it does not resolve or the call
+// fails.
+bool CallParamlessNamed(void* obj, const wchar_t* verb);
 
 }  // namespace ue_wrap::component_calls

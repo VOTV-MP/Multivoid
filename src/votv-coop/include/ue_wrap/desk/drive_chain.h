@@ -27,7 +27,8 @@ inline constexpr int kRoleCount    = 3;
 bool EnsureResolved();
 
 // Class predicates (for the freshBirth whitelist + verb-ctx discrimination).
-// Safe pre-resolve (false until the class loads).
+// Safe pre-resolve (false until the class loads). IsRackClass looks the rack class up per call
+// (one index lookup, game thread).
 bool IsDriveClass(void* cls);
 bool IsRackClass(void* cls);
 
@@ -36,8 +37,9 @@ bool IsRackClass(void* cls);
 void* DriveClass();
 
 // The live slot ACTOR for a role (desk slots via the cached desk actor's
-// obj_driveSlot_play/comp fields; eraser via a signalDriveEraser_C census ->
-// its driveSLot_obj field). Cached + liveness-checked. Null while unresolved.
+// obj_driveSlot_play/comp fields; the eraser's via the world's signalDriveEraser_C
+// (world_singleton) -> its driveSLot_obj field). Cached by slot, serial and world.
+// Null while unresolved.
 void* SlotActor(int role);
 
 // Reverse: the role of a slot actor caught as a watched verb's instance (-1 unknown --

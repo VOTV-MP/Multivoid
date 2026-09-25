@@ -116,4 +116,9 @@ bool CallParamless(void* obj, void* fn) {
     return f.valid() && ue_wrap::Call(obj, f);
 }
 
+bool CallParamlessNamed(void* obj, const wchar_t* verb) {
+    if (!obj || !verb) return false;
+    return CallParamless(obj, R::FindDispatchFunctionCached(R::ClassOf(obj), verb));
+}
+
 }  // namespace ue_wrap::component_calls

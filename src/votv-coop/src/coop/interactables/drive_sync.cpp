@@ -577,9 +577,11 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!DC::EnsureResolved()) return;
     // Slot lines.
+    int lines = 0;
     for (int r = 0; r < DC::kRoleCount; ++r) {
         void* slot = DC::SlotActor(r);
         if (!slot) continue;
+        ++lines;
         void* drive = DC::SlotDrive(slot);
         coop::net::DriveSlotStatePayload p{};
         p.role = static_cast<uint8_t>(r);
@@ -601,8 +603,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     }
     // (Rack canonicals ride drive_rack_sync's seed, called right after this
     // one in subsystems -- the shipped slot-lines -> payloads -> racks order.)
-    UE_LOGI("drive_sync: connect seed -> joiner slot %d (3 slot lines, %d payloads)",
-            peerSlot, sent);
+    UE_LOGI("drive_sync: connect seed -> joiner slot %d (%d of %d slot lines, %d payloads)",
+            peerSlot, lines, DC::kRoleCount, sent);
 }
 
 void NoteLocalDriveBirth(void* actor) {

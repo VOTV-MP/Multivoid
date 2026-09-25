@@ -4,6 +4,7 @@
 #include "ue_wrap/devices/laptop.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -40,25 +41,27 @@ int32_t g_offReadWrites = -1, g_offFloppyData = -1;
 int32_t g_offWidget = -1;
 void*   g_fnAction = nullptr;      // actionOptionIndex
 void*   g_fnUpdButton = nullptr;   // updButton
-void*   g_fnWidgetUpdFloppy = nullptr;  // ui_laptop.updFloppy
-// The buffer fields and the widget rebuild seam.
+// The buffer fields.
 int32_t g_offFloppyBuffer = -1;     // laptop.floppyBuffer (TArray<FString>)
 int32_t g_offFloppyBufUids = -1;    // laptop.floppyBufferUIDs (TArray<int32>)
-int32_t g_offWidgetBufferSlots = -1;  // ui_laptop.bufferSlots (TArray<UUserWidget*>)
-int32_t g_offBufRowData = -1;       // ui_bufferDatablock_C.data (FString)
-void*   g_fnWidgetGenFloppyBuffer = nullptr;  // ui_laptop.genFloppyBuffer
-void*   g_fnWidgetRemoveFromParent = nullptr; // UWidget::RemoveFromParent (declaring class!)
 bool    g_resolved = false;
 uint64_t g_nextResolveTryMs = 0;
 
-bool CallWidgetUpdFloppy(void* inst) {
-    if (!g_fnWidgetUpdFloppy || g_offWidget < 0) return false;
-    void* widget = *reinterpret_cast<void* const*>(
+// The widget seam is resolved from the widget and its rows where they are used: an instance's class
+// is loaded by construction, so nothing waits on a widget class by name, and its verbs go through
+// the dispatch cache, which climbs to the declaring class (RemoveFromParent is UWidget's).
+R::InstanceOffset g_widgetBufferSlots{L"bufferSlots"};  // ui_laptop.bufferSlots (TArray<UUserWidget*>)
+R::InstanceOffset g_bufRowData{L"data"};                // ui_bufferDatablock_C.data (FString)
+
+void* WidgetOf(void* inst) {
+    if (g_offWidget < 0) return nullptr;
+    return *reinterpret_cast<void* const*>(
         reinterpret_cast<const uint8_t*>(inst) + g_offWidget);
-    if (!widget) return false;
-    ParamFrame f(g_fnWidgetUpdFloppy);
-    if (!f.valid()) return false;
-    return Call(widget, f);
+}
+
+bool CallWidgetUpdFloppy(void* inst) {
+    void* widget = WidgetOf(inst);
+    return widget && component_calls::CallParamlessNamed(widget, L"updFloppy");
 }
 
 }  // namespace
@@ -90,33 +93,14 @@ bool EnsureResolved() {
     }
     g_fnAction    = R::FindFunction(cls, L"actionOptionIndex");
     g_fnUpdButton = R::FindFunction(cls, L"updButton");
-    void* widgetCls = R::FindClass(L"ui_laptop_C");
-    g_fnWidgetUpdFloppy = widgetCls ? R::FindFunction(widgetCls, L"updFloppy") : nullptr;
     if (!g_fnAction)
         UE_LOGW("laptop: actionOptionIndex not found -- power replay disabled");
 
-    // The buffer fields and the widget rebuild seam.
+    // The buffer fields.
     g_offFloppyBuffer  = R::FindPropertyOffset(cls, L"floppyBuffer");
     g_offFloppyBufUids = R::FindPropertyOffset(cls, L"floppyBufferUIDs");
     if (g_offFloppyBuffer < 0)  { UE_LOGW("laptop: floppyBuffer offset -- fallback 0x4B8"); g_offFloppyBuffer = 0x4B8; }
     if (g_offFloppyBufUids < 0) { UE_LOGW("laptop: floppyBufferUIDs offset -- fallback 0x4D8"); g_offFloppyBufUids = 0x4D8; }
-    if (widgetCls) {
-        g_offWidgetBufferSlots = R::FindPropertyOffset(widgetCls, L"bufferSlots");
-        g_fnWidgetGenFloppyBuffer = R::FindFunction(widgetCls, L"genFloppyBuffer");
-    }
-    void* bufRowCls = R::FindClass(L"ui_bufferDatablock_C");
-    g_offBufRowData = bufRowCls ? R::FindPropertyOffset(bufRowCls, L"data") : -1;
-    // RemoveFromParent is DECLARED on the engine UWidget class, and FindFunction matches on the
-    // exact owner -- it never climbs SuperStruct -- so the lookup has to name UWidget, not the row
-    // class.
-    void* uwidgetCls = R::FindClass(L"Widget");
-    g_fnWidgetRemoveFromParent = uwidgetCls ? R::FindFunction(uwidgetCls, L"RemoveFromParent") : nullptr;
-    if (g_offWidgetBufferSlots < 0 || !g_fnWidgetGenFloppyBuffer ||
-        g_offBufRowData < 0 || !g_fnWidgetRemoveFromParent)
-        UE_LOGW("laptop: quad widget seam partial (bufferSlots=0x%X gen=%p rowData=0x%X "
-                "removeFromParent=%p) -- quad rebuild degraded",
-                g_offWidgetBufferSlots, g_fnWidgetGenFloppyBuffer, g_offBufRowData,
-                g_fnWidgetRemoveFromParent);
 
     g_cls = cls;
     g_resolved = true;
@@ -159,16 +143,6 @@ bool CallPowerToggle() {
 
 // ---- the file-buffer quad --------------------------------------------------
 
-namespace {
-
-void* WidgetOf(void* inst) {
-    if (g_offWidget < 0) return nullptr;
-    return *reinterpret_cast<void* const*>(
-        reinterpret_cast<const uint8_t*>(inst) + g_offWidget);
-}
-
-}  // namespace
-
 bool ReadQuad(BufferQuad& out) {
     void* l = Instance();
     if (!l) return false;
@@ -210,30 +184,25 @@ bool WriteQuadAndRebuild(const BufferQuad& in) {
                 "from the actual fields; the next canonical re-converges");
 
     void* widget = WidgetOf(l);
-    if (!widget || g_offWidgetBufferSlots < 0 || !g_fnWidgetGenFloppyBuffer ||
-        !g_fnWidgetRemoveFromParent) {
+    const int32_t slotsOff = g_widgetBufferSlots.Of(widget);
+    if (slotsOff < 0 || !R::FindDispatchFunctionCached(R::ClassOf(widget), L"genFloppyBuffer")) {
         UE_LOGW("laptop: quad fields written but widget rebuild unreachable");
         return false;
     }
     // Teardown: RemoveFromParent each bufferSlots row (native removeBuffer
     // per-row semantics, measured @166-311) then num=0 (buffer kept for the
     // engine's Array_Add reuse -- no free, elements are engine-owned widgets).
-    auto* slots = reinterpret_cast<TArrayView*>(
-        reinterpret_cast<uint8_t*>(widget) + g_offWidgetBufferSlots);
+    auto* slots = reinterpret_cast<TArrayView*>(reinterpret_cast<uint8_t*>(widget) + slotsOff);
     if (slots->data && slots->num > 0 && slots->num <= 4096) {
         for (int32_t i = 0; i < slots->num; ++i) {
             void* row = *reinterpret_cast<void* const*>(slots->data + i * 8);
             if (!row || !R::IsLive(row)) continue;
-            ParamFrame f(g_fnWidgetRemoveFromParent);
-            if (f.valid()) Call(row, f);
+            component_calls::CallParamlessNamed(row, L"RemoveFromParent");
         }
     }
     slots->num = 0;
     // Rebuild: the native loadData recipe (genFloppyBuffer + updFloppy).
-    {
-        ParamFrame f(g_fnWidgetGenFloppyBuffer);
-        if (f.valid()) Call(widget, f);
-    }
+    component_calls::CallParamlessNamed(widget, L"genFloppyBuffer");
     CallWidgetUpdFloppy(l);
     return true;
 }
@@ -242,15 +211,18 @@ bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv) {
     void* l = Instance();
     if (!l) return false;
     void* widget = WidgetOf(l);
-    if (!widget || g_offWidgetBufferSlots < 0 || g_offBufRowData < 0) return false;
+    const int32_t slotsOff = g_widgetBufferSlots.Of(widget);
+    if (slotsOff < 0) return false;
     const auto* slots = reinterpret_cast<const TArrayView*>(
-        reinterpret_cast<const uint8_t*>(widget) + g_offWidgetBufferSlots);
+        reinterpret_cast<const uint8_t*>(widget) + slotsOff);
     outCount = (slots->data && slots->num > 0 && slots->num <= 4096) ? slots->num : 0;
     uint64_t h = 1469598103934665603ull;
     for (int32_t i = 0; i < outCount; ++i) {
         void* row = *reinterpret_cast<void* const*>(slots->data + i * 8);
         if (!row || !R::IsLive(row)) continue;
-        const std::wstring s = ReadFStringAt(row, g_offBufRowData);
+        const int32_t dataOff = g_bufRowData.Of(row);
+        if (dataOff < 0) return false;
+        const std::wstring s = ReadFStringAt(row, dataOff);
         const auto* bytes = reinterpret_cast<const uint8_t*>(s.data());
         for (size_t b = 0; b < s.size() * sizeof(wchar_t); ++b) {
             h ^= bytes[b];

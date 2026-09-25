@@ -278,6 +278,25 @@ int32_t FindParamOffset(void* function, const wchar_t* paramName);
 // a miss. -1 if not found. Cache the result; the walk is linear.
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName);
 
+// A property's offset on the class of the instance it is asked with, for a wrapper that holds an
+// instance rather than a class by name: the instance's class is loaded by construction, so nothing
+// waits on a class to load. Kept per class object, held by its slot and serial as a weak pointer
+// is, and asked again when an instance of another class object comes (a subclass, a class a new
+// world reloaded, or a new class at a dead one's address). -1 when that class does not declare it,
+// said once per class object. Game thread.
+class InstanceOffset {
+public:
+    explicit constexpr InstanceOffset(const wchar_t* propName) : prop_(propName) {}
+    int32_t Of(void* obj);
+
+private:
+    const wchar_t* prop_;
+    void* cls_ = nullptr;
+    int32_t clsIdx_ = -1;
+    int32_t clsSerial_ = 0;
+    int32_t off_ = -1;
+};
+
 // The prefix-matched variant for GUID-mangled BP struct members: a UserDefinedStruct member
 // renders as "decoded_5_A9CAC26F480C342A406FFFB77DD0AB68", where the human prefix is stable
 // across recooks and the GUID suffix is not. Takes a UScriptStruct* (see PropertyInnerStruct) or
