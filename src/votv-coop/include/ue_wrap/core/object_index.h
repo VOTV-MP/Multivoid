@@ -52,9 +52,10 @@ size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx);
 // Every class with at least one such instance, with one of them. Same contract.
 size_t ForEachClass(ClassFn fn, void* ctx);
 
-// A number that moves whenever a class gains its first listed instance or loses its last -- whenever
-// ForEachClass's set of classes changes. A list derived from that set is rebuilt when it moves. Game
-// thread.
+// A number that moves whenever a class gains its first listed instance or loses its last. ForEachClass
+// also passes over a class none of whose instances is readable yet, so its set can change without the
+// number moving, when an instance finishes loading: a list derived from it is rebuilt when the number
+// moves and when a class it was built without has become readable. Game thread.
 uint64_t ClassSetVersion();
 
 // The loaded class whose short name is `name`, compared without case as the engine compares names:

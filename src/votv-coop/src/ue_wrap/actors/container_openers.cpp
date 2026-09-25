@@ -23,6 +23,7 @@ struct Opener {
     const wchar_t* field;
     void* resolvedCls = nullptr;
     int32_t off = -1;
+    void* builtFrom = nullptr;   // the kind's class object when `classes` was built
     std::vector<void*> classes;  // the kind's class and its descendants that have live instances
 };
 Opener g_openers[] = {
@@ -46,17 +47,24 @@ int32_t OffsetOn(Opener& o, void* cls) {
 }
 
 // Each kind's live classes, rebuilt from the index's class set when that set has changed since the
-// last call: a class gaining its first instance or losing its last, a few times a minute in play.
+// last call -- a class gaining its first instance or losing its last -- or when a kind's class is not
+// the object the list was built from: a list built while the kind's class was still loading held
+// nothing of it, and its finishing moves no class-set number.
 void RefreshClasses() {
     const uint64_t version = object_index::ClassSetVersion();
-    if (version == g_classSetSeen) return;
-    g_classSetSeen = version;
     struct Kinds {
         void* cls[kKinds];
     } kinds{};
+    bool stale = version != g_classSetSeen;
+    for (size_t i = 0; i < kKinds; ++i) {
+        kinds.cls[i] = object_index::ClassByName(g_openers[i].cls);
+        if (kinds.cls[i] != g_openers[i].builtFrom) stale = true;
+    }
+    if (!stale) return;
+    g_classSetSeen = version;
     for (size_t i = 0; i < kKinds; ++i) {
         g_openers[i].classes.clear();
-        kinds.cls[i] = object_index::ClassByName(g_openers[i].cls);
+        g_openers[i].builtFrom = kinds.cls[i];
     }
     object_index::ForEachClass([](void* ctx, void* cls, void*) {
         const Kinds& k = *static_cast<const Kinds*>(ctx);

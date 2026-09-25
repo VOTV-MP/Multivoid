@@ -39,7 +39,7 @@ struct Kind {
 const Kind kKinds[] = {{L"drone_C", L"container"}, {L"prop_dronesack_C", L"container"}, {L"ATV_C", L"spawnedContainer"}};
 
 // Each kind's classes with live instances, its subclasses included (the ATV has five), found in the index's
-// class set and kept until that set changes.
+// class set and kept until that set changes or a kind's class is not the object they were found from.
 struct KindClasses {
     void* kind = nullptr;
     int32_t off = -1;
@@ -50,11 +50,17 @@ uint64_t g_kindsVersion = UINT64_MAX;
 
 void RefreshKinds() {
     const uint64_t v = ue_wrap::object_index::ClassSetVersion();
-    if (v == g_kindsVersion) return;
+    void* now[std::size(kKinds)];
+    bool stale = v != g_kindsVersion;
+    for (size_t i = 0; i < std::size(kKinds); ++i) {
+        now[i] = ue_wrap::object_index::ClassByName(kKinds[i].cls);
+        if (now[i] != g_kinds[i].kind) stale = true;
+    }
+    if (!stale) return;
     g_kindsVersion = v;
     for (size_t i = 0; i < std::size(kKinds); ++i) {
         g_kinds[i] = KindClasses{};
-        g_kinds[i].kind = ue_wrap::object_index::ClassByName(kKinds[i].cls);
+        g_kinds[i].kind = now[i];
         if (g_kinds[i].kind) g_kinds[i].off = R::FindPropertyOffset(g_kinds[i].kind, kKinds[i].field);
     }
     ue_wrap::object_index::ForEachClass([](void*, void* cls, void*) {

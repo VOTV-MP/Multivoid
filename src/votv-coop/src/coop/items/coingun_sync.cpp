@@ -21,6 +21,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/core/script_gate.h"
@@ -177,13 +178,11 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
     // barrier destroys its coins only if a sale went out. The context gate is not optional:
     // a name watch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
     // tool, so without it every knife swing would open and release an empty group. Read-only on the
-    // gun class, never resolved here: the gun's class is not resident in the ordinary world, and
-    // FindClass walks the whole array on a miss, which resolving here once cost on every left click.
-    // Install retries the resolve inside its throttle, one tick in 125, about every 2 s. The cost:
-    // for up to that long after the class becomes resident a shot opens no group, its coins
-    // land in the defensive group the birth seam opens and are released, the safe direction; and
-    // both this gate and IsInCoinGunVerb must read rather than resolve, or they could disagree
-    // inside one shot.
+    // gun class, never resolved here: Install resolves it, one tick in 125, about every 2 s, and does
+    // not finish until it has. The cost: for up to that long after the class becomes resident a shot
+    // opens no group, its coins land in the defensive group the birth seam opens and are released,
+    // the safe direction; and both this gate and IsInCoinGunVerb must read rather than resolve, or
+    // they could disagree inside one shot.
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     if (!b.object || !g_gunClass) return sg::Verdict::Run;
@@ -565,14 +564,15 @@ void Install(coop::net::Session* session) {
     // and sellObject, the collect lane the coin's overlap delegate, so either can resolve first,
     // and gating on one latch alone would strand the other.
     if (g_installed.load(std::memory_order_acquire) && internal::CollectInstalled()) return;
-    // This runs at the pump rate, and a class resolve below walks the whole array on a miss; in a
-    // world where the coin class is not resident (it loads with the gun asset) that would be
-    // several walks per tick, so the retry is bound to one tick in 125, about every 2 s.
+    // This runs at the pump rate, and the arbiter's resolves below walk the whole array on a miss; in
+    // a world where the gun is not resident (the coin class loads with it) that would be several walks
+    // per tick, so the retry is bound to one tick in 125, about every 2 s. The coin and gun classes
+    // are one index lookup each, and one still loading answers null and is asked for again.
     static uint32_t sResolveN = 0;
     if ((sResolveN++ % 125u) != 0u) return;
 
-    if (!g_coinClass)     g_coinClass     = R::FindClass(kCoinClassName);
-    if (!g_gunClass)      g_gunClass      = R::FindClass(kGunClassName);
+    if (!g_coinClass)     g_coinClass     = ue_wrap::object_index::ClassByName(kCoinClassName);
+    if (!g_gunClass)      g_gunClass      = ue_wrap::object_index::ClassByName(kGunClassName);
     internal::InstallArbiter();   // the HOST half's own resolves, inside this same throttle
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");
@@ -596,7 +596,8 @@ void Install(coop::net::Session* session) {
     // The client barrier's install is gated on the host arbiter's sellObject resolve, which it does
     // not depend on; a client whose lib_C CDO never resolves gets no barrier. Filed as its own
     // item.
-    if (!g_coinClass || !g_finishSpawnFn || !internal::ArbiterResolved()) return;  // retry next tick
+    // The gun class too: the verb's gate reads it, and nothing resolves it once this is done.
+    if (!g_coinClass || !g_gunClass || !g_finishSpawnFn || !internal::ArbiterResolved()) return;
 
     if (!ue_wrap::ufunction_hook::InstallPostHook(g_finishSpawnFn, &OnFinishSpawnPost)) {
         UE_LOGE("coingun[sale]: FinishSpawningActor POST install FAILED -- the client-coin barrier is "

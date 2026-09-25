@@ -568,15 +568,21 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
     return true;
 }
 
-bool DeleteSignalActor() {
+SignalActorDelete DeleteSignalActor() {
     // The object renderer is the running world's one, and its verb is looked up on its live class
     // through the memoised lookup, which holds its answer by slot and serial.
     void* const renderer = ue_wrap::world_singleton::Find(L"objectRenderer_C");
-    if (!renderer) return false;
-    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(renderer), L"deleteSignalActor");
-    if (!fn) return false;
+    if (!renderer) return SignalActorDelete::Unresolved;
+    void* const cls = R::ClassOf(renderer);
+    void* const fn = R::FindDispatchFunctionCached(cls, L"deleteSignalActor");
+    const int32_t off = R::FindPropertyOffset(cls, L"signalObjectActor");
+    if (!fn || off < 0) return SignalActorDelete::Unresolved;
+    // The verb destroys signalObjectActor only if it is valid, so the field is read first and the
+    // answer says what the verb did.
+    void* const actor = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(renderer) + off);
+    if (!actor || !R::IsLive(actor)) return SignalActorDelete::NoneToDelete;
     ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(renderer, f);
+    return f.valid() && ue_wrap::Call(renderer, f) ? SignalActorDelete::Deleted : SignalActorDelete::Unresolved;
 }
 
 bool ReadDLSignalKey(uint64_t& out) {
