@@ -37,12 +37,13 @@ enum class IntentOutcome : uint8_t {
     NoRow,       // no Element row under this eid
     StaleDead,   // row present, actor pointer no longer live
     WrongType,   // a LIVE actor of another ElementType -- `actor` IS SET
-    NoBody,      // the sender has no live puppet on the host: no body to measure a reach from
+    NoBody,      // the sender has no puppet on the host that took a pose: no body to measure from
     OutOfReach,  // live and of the right type, but outside the sender's reach -- `actor` IS SET
+    NoTarget,    // live, but its place cannot be read: no point to measure to -- `actor` IS SET
 };
 
-// One authorized subject. `actor` is populated for `Ok`, `WrongType` and `OutOfReach`, because all
-// three name a real entity and callers legitimately act on two of them.
+// One authorized subject. `actor` is populated whenever the subject names a live entity: `Ok`,
+// `WrongType`, `OutOfReach`, `NoTarget`, and `NoBody` from Authorize; callers act on two of them.
 //
 // `StaleDead` deliberately does NOT carry the actor, even though a pointer exists: it is a pointer
 // to an object the engine has already reclaimed, and handing it out invites exactly the deref this

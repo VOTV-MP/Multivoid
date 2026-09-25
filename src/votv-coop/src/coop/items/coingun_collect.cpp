@@ -292,7 +292,8 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
     const coop::element::IntentSubject sub = tok.Resolve(
         static_cast<coop::element::ElementId>(p.elementId), coop::element::ElementType::WorldActor);
     if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
-        sub.outcome == coop::element::IntentOutcome::NoBody) {
+        sub.outcome == coop::element::IntentOutcome::NoBody ||
+        sub.outcome == coop::element::IntentOutcome::NoTarget) {
         UE_LOGW("coingun[host collect]: REFUSED slot=%u eid=%u -- REASON=%s (dist=%.0f allowed=%.0f). "
                 "'no-body' means the sender has no live puppet on the host, so there is no body to "
                 "measure a reach from and we refuse rather than assume one -- the same fail-closed "

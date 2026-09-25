@@ -99,7 +99,8 @@ Decision Accept(uint32_t eid, uint64_t baseHash, uint8_t authorSlot, uint64_t no
     const auto sub = tok.Resolve(static_cast<coop::element::ElementId>(eid),
                                  coop::element::ElementType::Prop);
     if (sub.outcome == coop::element::IntentOutcome::NoBody) return Decision::NoBodyYet;
-    if (sub.outcome == coop::element::IntentOutcome::OutOfReach) {
+    if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
+        sub.outcome == coop::element::IntentOutcome::NoTarget) {
         ++g_refused;
         UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- the author cannot reach it (%s, "
                 "dist=%.0f allowed=%.0f). Write REFUSED; re-publishing host truth to the author. "

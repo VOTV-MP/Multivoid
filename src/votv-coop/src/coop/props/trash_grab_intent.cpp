@@ -240,10 +240,11 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint16_t reqId, uint8_t s
         tok.Resolve(static_cast<coop::element::ElementId>(eid), coop::element::ElementType::Prop);
 
     if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
-        sub.outcome == coop::element::IntentOutcome::NoBody) {
-        // Not a ghost and not a smear: the eid names a real, live pile the sender is simply not
-        // standing near. Nothing to heal and nothing to destroy; broadcasting either would answer a
-        // reach question with an identity remedy.
+        sub.outcome == coop::element::IntentOutcome::NoBody ||
+        sub.outcome == coop::element::IntentOutcome::NoTarget) {
+        // Not a ghost and not a smear: the eid names a real, live pile the sender is not standing
+        // near, or cannot be shown to be. Nothing to heal and nothing to destroy; broadcasting either
+        // would answer a reach question with an identity remedy.
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- REASON=%s (dist=%.0f allowed=%.0f); the pile "
                 "is real and untouched, the sender is just not near it",
                 eid, senderSlot, coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU);

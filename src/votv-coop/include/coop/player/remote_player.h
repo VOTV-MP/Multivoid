@@ -38,6 +38,10 @@ public:
 
     bool valid() const;
 
+    // Whether a network pose has placed the puppet. Before the first it stands at its spawn
+    // placeholder, in front of the local player, which says nothing of where the peer is.
+    bool HasPose() const { return hasPose_; }
+
     // Receiver-side interpolation, two calls on the game thread. SetTargetPose on each new pose
     // from the wire: computes the error from the current applied pose and opens a kInterpWindowMs
     // window to walk toward it, or snaps when the error exceeds the snap threshold (a teleport) or

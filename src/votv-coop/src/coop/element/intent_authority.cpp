@@ -132,6 +132,7 @@ const char* OutcomeName(IntentOutcome o) {
     case IntentOutcome::WrongType:  return "wrong-type";
     case IntentOutcome::NoBody:     return "no-body";
     case IntentOutcome::OutOfReach: return "out-of-reach";
+    case IntentOutcome::NoTarget:   return "no-target";
     }
     return "?";
 }
@@ -194,7 +195,8 @@ IntentSubject IntentTarget::Authorize(void* actor) const {
 
     UE_ASSERT_GAME_THREAD("intent_authority::Authorize");
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot_);
-    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    // Before its first pose a puppet stands at its spawn placeholder, in front of the host: no body.
+    void* puppet = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;
     ue_wrap::FVector body{};
     if (!puppet || !E::TryGetActorLocation(puppet, body)) {
         // FAIL-CLOSED, as both lanes that already ask this do: the coin-gun arbiter returns
@@ -207,7 +209,7 @@ IntentSubject IntentTarget::Authorize(void* actor) const {
     ue_wrap::FVector target{};
     float radius = 0.f;
     if (!internal::TargetPointAndRadius(actor, target, radius)) {
-        s.outcome = IntentOutcome::NoBody;       // we cannot say where it is, so we cannot vouch
+        s.outcome = IntentOutcome::NoTarget;     // we cannot say where it is, so we cannot vouch
         return s;
     }
 
@@ -226,7 +228,7 @@ IntentSubject IntentTarget::AuthorizeSegment(const ue_wrap::FVector& start,
 
     UE_ASSERT_GAME_THREAD("intent_authority::AuthorizeSegment");
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot_);
-    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    void* puppet = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;  // as in Authorize
     ue_wrap::FVector body{};
     if (!puppet || !E::TryGetActorLocation(puppet, body)) {
         s.outcome = IntentOutcome::NoBody;   // fail closed, as Authorize does
@@ -260,7 +262,8 @@ void RunSelftest() {
     {
         const IntentOutcome all[] = {IntentOutcome::Ok,        IntentOutcome::NoRow,
                                      IntentOutcome::StaleDead, IntentOutcome::WrongType,
-                                     IntentOutcome::NoBody,    IntentOutcome::OutOfReach};
+                                     IntentOutcome::NoBody,    IntentOutcome::OutOfReach,
+                                     IntentOutcome::NoTarget};
         const size_t n = sizeof(all) / sizeof(all[0]);
         for (size_t i = 0; i < n; ++i) {
             const char* a = OutcomeName(all[i]);
