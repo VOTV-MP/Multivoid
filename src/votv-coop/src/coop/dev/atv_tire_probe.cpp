@@ -14,7 +14,6 @@ namespace coop::atv_tire_probe {
 namespace {
 
 bool  g_resolved = false;
-bool  g_resolveTried = false;
 int32_t g_tiresOff      = -1;   // TArray<bool>  (ElementSize 1)
 int32_t g_durabilityOff = -1;   // TArray<float> (ElementSize 4)
 int32_t g_dirtOff       = -1;   // TArray<float> (ElementSize 4)
@@ -85,11 +84,11 @@ int32_t ReadBytesPacked(void* obj, int32_t off) {
     return packed;
 }
 
-bool Resolve() {
+// The offsets are read off the sampled ATV's own class, loaded by construction; the property lookup
+// climbs to ATV_C, which declares them, from any of its subclasses.
+bool Resolve(void* atv) {
     if (g_resolved) return true;
-    if (g_resolveTried) return false;      // one attempt per process; the class is resident
-    g_resolveTried = true;
-    void* cls = R::FindClass(L"ATV_C");
+    void* cls = R::ClassOf(atv);
     if (!cls) return false;
     g_tiresOff      = R::FindPropertyOffset(cls, L"tires");
     g_durabilityOff = R::FindPropertyOffset(cls, L"tiresDurability");
@@ -110,7 +109,7 @@ bool Resolve() {
 
 void Sample(void* atv, std::size_t idx, const wchar_t* key, bool ownsTick, std::uint32_t n) {
     if (!atv) return;
-    if (!Resolve()) return;
+    if (!Resolve(atv)) return;
 
     const int32_t tires = ReadBoolMask(atv, g_tiresOff);
     const int32_t types = ReadBytesPacked(atv, g_typesOff);
