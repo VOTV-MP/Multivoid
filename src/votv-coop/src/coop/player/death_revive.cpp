@@ -12,6 +12,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -115,42 +116,40 @@ Verbs g_verbs;
 // Widget for RemoveFromParent and SetVisibility, UserWidget for IsInViewport. Off the BP class
 // they return null.
 bool ResolveVerbs() {
-    if (g_verbs.resolved) return true;
-    // Throttled while unresolved: each attempt is three FindClass calls, and a MISS walks every
-    // UObject slot and is never cached, so an unthrottled retry is a full-array scan per frame for
-    // as long as the widget classes are not loaded. The pump is posted behind a 16 ms sleep, so
-    // ~60 Hz, and 60 attempts apart is about a second.
-    static uint32_t sThrottle = 0;
-    if ((sThrottle++ % 60) != 0) return false;
+    if (g_verbs.resolved) return g_verbsResolved.load(std::memory_order_acquire);
+    // Each class is one index lookup, a miss included, so this is asked every tick until all five are
+    // loaded (the widget ones load with gameplay), and it settles only then: a member a loaded class
+    // lacks is a fact of this game build, and a missing verb turns the revive off, said once.
+    void* const widgetCls = ue_wrap::object_index::ClassByName(P::name::WidgetClass);
+    void* const userWidgetCls = ue_wrap::object_index::ClassByName(P::name::UserWidgetClass);
+    void* const gmCls = ue_wrap::object_index::ClassByName(P::name::GamemodeClass);
+    void* const uiCls = ue_wrap::object_index::ClassByName(L"ui_UI_C");
+    void* const dmgCls = ue_wrap::object_index::ClassByName(L"ui_damageIndicator_C");
+    if (!widgetCls || !userWidgetCls || !gmCls || !uiCls || !dmgCls) return false;
     Verbs v;
-    void* widgetCls = R::FindClass(P::name::WidgetClass);
-    void* userWidgetCls = R::FindClass(P::name::UserWidgetClass);
-    void* gmCls = R::FindClass(P::name::GamemodeClass);
-    if (widgetCls) {
-        v.removeFromParent = R::FindFunction(widgetCls, L"RemoveFromParent");
-        v.setVisibility = R::FindFunction(widgetCls, P::name::WidgetSetVisibilityFn);
-    }
-    if (userWidgetCls) v.isInViewport = R::FindFunction(userWidgetCls, L"IsInViewport");
-    if (gmCls) v.offPlayerInterface = R::FindPropertyOffset(gmCls, L"playerInterface");
-    if (void* uiCls = R::FindClass(L"ui_UI_C"))
-        v.offDamageIndicator = R::FindPropertyOffset(uiCls, L"umg_damageIndicator");
-    if (void* dmgCls = R::FindClass(L"ui_damageIndicator_C")) {
-        v.offDmgUp = R::FindPropertyOffset(dmgCls, L"damage_up");
-        v.offDmgDown = R::FindPropertyOffset(dmgCls, L"damage_down");
-        v.offDmgLeft = R::FindPropertyOffset(dmgCls, L"damage_left");
-        v.offDmgRight = R::FindPropertyOffset(dmgCls, L"damage_right");
-    }
-    if (void* dmgCls2 = R::FindClass(L"ui_damageIndicator_C"))
-        v.offDmgFull = R::FindPropertyOffset(dmgCls2, L"dmg_full");
-    const bool ok = v.removeFromParent && v.isInViewport && v.setVisibility;
-    if (!ok) return false;  // classes load with gameplay; retry next tick, quietly
+    v.removeFromParent = R::FindFunction(widgetCls, L"RemoveFromParent");
+    v.setVisibility = R::FindFunction(widgetCls, P::name::WidgetSetVisibilityFn);
+    v.isInViewport = R::FindFunction(userWidgetCls, L"IsInViewport");
+    v.offPlayerInterface = R::FindPropertyOffset(gmCls, L"playerInterface");
+    v.offDamageIndicator = R::FindPropertyOffset(uiCls, L"umg_damageIndicator");
+    v.offDmgUp = R::FindPropertyOffset(dmgCls, L"damage_up");
+    v.offDmgDown = R::FindPropertyOffset(dmgCls, L"damage_down");
+    v.offDmgLeft = R::FindPropertyOffset(dmgCls, L"damage_left");
+    v.offDmgRight = R::FindPropertyOffset(dmgCls, L"damage_right");
+    v.offDmgFull = R::FindPropertyOffset(dmgCls, L"dmg_full");
     v.resolved = true;
     g_verbs = v;
-    g_verbsResolved.store(true, std::memory_order_release);
+    const bool ok = v.removeFromParent && v.isInViewport && v.setVisibility;
+    g_verbsResolved.store(ok, std::memory_order_release);
+    if (!ok) {
+        UE_LOGW("death_revive: a revive verb is missing on its loaded class (remove=%p inViewport=%p setVis=%p) "
+                "-- the revive is off for this game build", v.removeFromParent, v.isInViewport, v.setVisibility);
+        return false;
+    }
     UE_LOGI("death_revive: revive verbs resolved (remove=%p inViewport=%p setVis=%p "
-            "playerInterface=0x%X dmg_full=0x%X)",
+            "playerInterface=0x%X damageIndicator=0x%X dmg_full=0x%X)",
             v.removeFromParent, v.isInViewport, v.setVisibility,
-            v.offPlayerInterface, v.offDmgFull);
+            v.offPlayerInterface, v.offDamageIndicator, v.offDmgFull);
     return true;
 }
 
@@ -610,15 +609,16 @@ void Tick(coop::net::Session& session, void* localPawn) {
     }
 
     // The screen artifacts, retried until gone; after the pending-revive block and outside every
-    // gate above it, since it must keep running once the death is over.
-    if (g_screenCleanupLeft > 0 &&
-        ((kScreenCleanupTicks - g_screenCleanupLeft) % kScreenCleanupStride) == 0) {
-        if (TickScreenCleanup()) {
+    // gate above it, since it must keep running once the death is over. The window counts every
+    // tick and an attempt runs on each stride-th one, so a failed attempt is followed by the next a
+    // stride later, and the window closes on its last tick.
+    if (g_screenCleanupLeft > 0) {
+        const int tick = kScreenCleanupTicks - g_screenCleanupLeft--;  // 0 on the revive's first tick
+        if (tick % kScreenCleanupStride == 0 && TickScreenCleanup()) {
             UE_LOGI("death_revive: screen cleanup complete (black screen, damage indicator and "
-                    "bloodLoss all clear) after %d of %d retry ticks",
-                    kScreenCleanupTicks - g_screenCleanupLeft + 1, kScreenCleanupTicks);
+                    "bloodLoss all clear) after %d of %d retry ticks", tick + 1, kScreenCleanupTicks);
             g_screenCleanupLeft = 0;
-        } else if (--g_screenCleanupLeft == 0) {
+        } else if (g_screenCleanupLeft == 0) {
             UE_LOGW("death_revive: screen cleanup did NOT finish in %d ticks -- the player is "
                     "alive and playable but something red or black may still be on screen. "
                     "This is deliberately NOT a reason to leave the world.",
