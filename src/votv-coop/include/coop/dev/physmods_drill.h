@@ -18,8 +18,8 @@
 // that would explode a hot plug or unplug (a console active with coldswap on) has coldswap lifted for
 // the drill's own call and put back. The host's legs run once per process, which it keeps across a
 // client's rejoin; the client's run per session. A leg that cannot go on says "[PHYSMODS-DRILL]
-// ABANDONED", which a run passes as its --dead-marker. Lines are tagged [PHYSMODS-DRILL]; run with
-// physmods_drill=1.
+// ABANDONED" (a run's --dead-marker) and a lane that measured wrong "[PHYSMODS-DRILL] FAIL" (its
+// --fail-marker). Lines are tagged [PHYSMODS-DRILL]; run with physmods_drill=1.
 
 #pragma once
 

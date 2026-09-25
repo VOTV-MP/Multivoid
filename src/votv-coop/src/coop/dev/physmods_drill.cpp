@@ -166,10 +166,16 @@ const char* Say(Out o) {
     return "?";
 }
 
-// Every leg that cannot go on ends here, on one line a run can pass as its dead marker
-// ("[PHYSMODS-DRILL] ABANDONED"), so it dies with its phase instead of waiting out its clock.
+// A leg that cannot go on (the desk refused the drill's own plug or press, or it did not start empty)
+// ends on a line a run passes as its --dead-marker, "[PHYSMODS-DRILL] ABANDONED": nothing was measured.
+// A lane that measured wrong ends on one a run passes as its --fail-marker, "[PHYSMODS-DRILL] FAIL".
+// Either way the run dies with its phase instead of waiting out its clock.
 void Abandon(const char* side, const std::string& why) {
     UE_LOGW("[PHYSMODS-DRILL] ABANDONED on the %s: %s", side, why.c_str());
+}
+
+void Fail(const char* side, const std::string& why) {
+    UE_LOGW("[PHYSMODS-DRILL] FAIL on the %s: %s", side, why.c_str());
 }
 
 void HostTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
@@ -209,10 +215,13 @@ void HostTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
         // Both modules of the type gone, and the client's other one in.
         if (SlotOf(arr, g_hostType, -1) >= 0 || !CountModules(arr)) return;
         g_host = Host::Done;
-        const bool pass = CountModules(arr) == 1;
+        if (CountModules(arr) != 1) {
+            Fail("host", "the array is " + Describe(arr) + ": both modules of byte " + std::to_string(g_hostType) +
+                 " are gone, but not one module of another type alone");
+            return;
+        }
         UE_LOGI("[PHYSMODS-DRILL] host DONE the array is %s: both modules of byte=%u are gone and the client's "
-                "module of another type is in -- %s", Describe(arr).c_str(), g_hostType,
-                pass ? "PASS" : "FAIL (one module expected)");
+                "module of another type is in -- PASS", Describe(arr).c_str(), g_hostType);
         return;
     }
     case Host::Done:
@@ -276,8 +285,8 @@ void ClientTick(void* desk, void* pawn, const uint8_t arr[PM::kSlots]) {
         if (back < 2) return;
         g_client = Client::Done;
         if (std::memcmp(arr, g_afterLeg4, PM::kSlots) != 0) {
-            Abandon("client", "two canonicals after leg 4 the array is " + Describe(arr) + ", not the " +
-                    Describe(g_afterLeg4) + " its own ops left (an op was denied)");
+            Fail("client", "two canonicals after leg 4 the array is " + Describe(arr) + ", not the " +
+                 Describe(g_afterLeg4) + " its own ops left (an op was denied)");
             return;
         }
         UE_LOGI("[PHYSMODS-DRILL] client ACKED the host's canonical came back %llu time(s) after leg 4 and the array "

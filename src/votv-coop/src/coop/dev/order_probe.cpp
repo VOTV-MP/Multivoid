@@ -119,6 +119,7 @@ bool IsEnabled() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!IsEnabled() || g_installed) return;
+    static bool s_saidFailed = false;
     g_installed = sg::WatchClassName(kLaptop, kMake, kTagMake, &OnMakeAnOrder, nullptr) &&
                   sg::WatchClassName(kLaptop, kAdd, kTagAdd, nullptr, &OnQueuePost) &&
                   sg::WatchClassName(kLaptop, kRemove, kTagRemove, nullptr, &OnQueuePost) &&
@@ -126,6 +127,8 @@ void Install(coop::net::Session* session) {
                   sg::WatchClassName(kDrone, kCheck, kTagCheck, &OnDroneVerb, nullptr) &&
                   sg::WatchClassName(kDrone, kDeliver, kTagDeliver, &OnDroneVerb, nullptr) &&
                   sg::WatchClassName(kCycle, kHour, kTagHour, &OnNewHour, nullptr);
+    if (!g_installed && s_saidFailed) return;  // asked again each tick (the watch is idempotent); said once
+    s_saidFailed = !g_installed;
     UE_LOGI("[ORDER-PROBE] watches %s: makeAnOrder, addOrderCart, removeOrderCart, drone sendShop/checkOrders/"
             "compileOrder, daynightCycle func_newHour", g_installed ? "registered" : "NOT all registered");
 }
