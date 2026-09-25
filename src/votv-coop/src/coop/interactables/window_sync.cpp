@@ -50,9 +50,9 @@ using coop::net::FnvKey;
 
 constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
 constexpr auto kPendingTTL = std::chrono::seconds(25);
-// `clean` changes in discrete wipe steps (cleanSponge: clean -= strength*0.01); this epsilon
-// is smaller than the smallest real step, so it only filters float-equality noise -- never a
-// genuine wipe. Used both to detect a decrease (send) and to skip an idempotent apply.
+// `clean` changes in wipe steps (cleanSponge: clean -= strength*0.01), and a step can be smaller
+// than this epsilon (a water-shooter droplet, a slow bucket pour), so a fall is measured against the
+// value last sent and small ones add up (see Sent). It also skips an idempotent apply.
 constexpr float kCleanEps = 0.0005f;
 
 bool ProbeLog() {
@@ -146,6 +146,21 @@ void RegisterWithScanHub() {
         &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2});
 }
 
+// Per window, the value this peer last sent, seeded at the entry of its first wipe and lowered by what
+// it applies: a fall is measured against it, so falls smaller than the epsilon -- a water-shooter
+// droplet, a slow bucket pour -- add up and go out once they pass it. Per world, since the save's
+// load sets every window anew.
+std::unordered_map<std::wstring, float> g_sent;  // GT-only
+uint32_t g_sentGen = 0;
+std::unordered_map<std::wstring, float>& Sent() {
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_sentGen) {
+        g_sent.clear();
+        g_sentGen = gen;
+    }
+    return g_sent;
+}
+
 // Apply a remote clean value. An adopt takes it unchanged (connect-snapshot: the joiner adopts the
 // host's world); a live wipe is MIN-WINS, so a value above ours is ignored.
 void ApplyResolved(void* actor, const std::wstring& key, float wireClean, bool adopt, unsigned fromSlot) {
@@ -158,6 +173,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float wireClean, bool a
         return;
     }
     const bool ok = BW::WriteCleanAndApply(actor, target);
+    if (ok) Sent()[key] = target;  // a local wipe after it is measured from what this peer now shows
     if (ProbeLog() || !ok)
         UE_LOGI("window: applied %s clean=%.3f (wire=%.3f) ok=%d key='%ls' (from slot %u)",
                 adopt ? "an adopt" : "a live wipe", target, wireClean, ok ? 1 : 0, key.c_str(), fromSlot);
@@ -165,10 +181,12 @@ void ApplyResolved(void* actor, const std::wstring& key, float wireClean, bool a
 
 // ---- the sender: the wipe verb ---------------------------------------------------------------
 constexpr int kTagWindowWipe = 0x57495045;  // 'WIPE'
+constexpr const wchar_t* kWindowClass = L"baseWindow_C";  // one literal each: the gate keys watches on the pointer
+constexpr const wchar_t* kWipeVerb = L"cleanSponge";
 bool g_wipeWatched = false;
 
-// The window a cleanSponge body runs on and its clean before the body. A body never nests on one
-// window.
+// The window a cleanSponge body runs on and its clean before the body. The body (ubergraph entry 29)
+// calls only native helpers and setClean, so no watched body runs inside it and one slot holds it.
 void* g_wiping = nullptr;
 float g_before = 0.f;
 
@@ -186,9 +204,16 @@ void OnWipePost(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     float cur = 0.f;
-    if (!BW::ReadClean(call.object, cur) || cur >= g_before - kCleanEps) return;
+    if (!BW::ReadClean(call.object, cur) || cur >= g_before) return;  // at 0 the body lowers nothing
     const std::wstring key = BW::GetKeyString(call.object);
     if (key.empty() || key == L"None") return;
+    auto& sent = Sent();
+    const auto it = sent.find(key);
+    if (cur >= (it != sent.end() ? it->second : g_before) - kCleanEps) {
+        if (it == sent.end()) sent[key] = g_before;
+        return;
+    }
+    sent[key] = cur;
     coop::net::KeyedScalarPayload p{};
     WireKeyFromString(key, p.key);
     p.value = cur;
@@ -200,9 +225,10 @@ void OnWipePost(const sg::Call& call) {
 }
 
 // DEV-ONLY synthetic wipe (`window_synth=1`). One-shot, host-only, armed when the joiner's world is
-// ready: it runs cleanSponge on the first indexed window through the verb itself, as a sponge would,
-// so the watch above sends the fall and the client applies it -- the live-wipe chain end to end
-// without a hand at the keyboard. NOT shipped behavior -- gated off by default.
+// ready: it runs cleanSponge through the verb itself, as a sponge would, on the first indexed window
+// with dirt left (the body returns at 0), in falls too small to send alone, so the watch above sends
+// their sum and the client applies it -- the live-wipe chain end to end without a hand at the
+// keyboard. Run it with window_log=1, which logs the send and the apply. NOT shipped behavior.
 void MaybeSyntheticWipe() {
     static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::window_synth);
     if (!s_on) return;
@@ -210,29 +236,37 @@ void MaybeSyntheticWipe() {
     if (s_done) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host || !s->IsSlotWorldReady(1)) return;
-    if (!sg::ClassNameWatchLive(L"baseWindow_C", L"cleanSponge", kTagWindowWipe)) return;  // the send rides it
+    if (!sg::ClassNameWatchLive(kWindowClass, kWipeVerb, kTagWindowWipe)) return;  // the send rides it
     void* actor = nullptr;
-    int32_t idx = -1;
     std::wstring key;
+    float before = 0.f;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
-        if (g_byKey.empty()) return;
-        auto& kv = *g_byKey.begin();
-        key = kv.first;
-        actor = kv.second.actor;
-        idx = kv.second.idx;
+        for (const auto& kv : g_byKey) {
+            float clean = 0.f;
+            if (!R::IsLiveByIndex(kv.second.actor, kv.second.idx) || !BW::ReadClean(kv.second.actor, clean) ||
+                clean <= 0.f)
+                continue;
+            key = kv.first;
+            actor = kv.second.actor;
+            before = clean;
+            break;
+        }
     }
-    if (!actor || !R::IsLiveByIndex(actor, idx)) return;
-    float before = 0.f;
-    if (!BW::ReadClean(actor, before)) return;
+    if (!actor) return;
     s_done = true;
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"cleanSponge");
-    ue_wrap::ParamFrame f(fn);
-    const bool ok = fn && f.valid() && f.Set<float>(L"clean", 40.f) && ue_wrap::Call(actor, f);  // 0.4 off
+    // Ten dabs of 0.0001, each under the epsilon and twice it together: the watch must send once they
+    // have added up past it, and the client apply that value.
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(actor), kWipeVerb);
+    int ran = 0;
+    for (int i = 0; fn && i < 10; ++i) {
+        ue_wrap::ParamFrame f(fn);
+        if (f.valid() && f.Set<float>(L"clean", 0.01f) && ue_wrap::Call(actor, f)) ++ran;
+    }
     float after = before;
     BW::ReadClean(actor, after);
-    UE_LOGW("window[SYNTH]: dev synthetic wipe through cleanSponge -- key='%ls' clean %.3f -> %.3f ok=%d",
-            key.c_str(), before, after, ok ? 1 : 0);
+    UE_LOGW("window[SYNTH]: %d of 10 dabs of 0.0001 through cleanSponge -- key='%ls' clean %.4f -> %.4f",
+            ran, key.c_str(), before, after);
 }
 
 }  // namespace
@@ -241,7 +275,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     RegisterWithScanHub();  // the hub builds the index on its own cadence
     if (!g_wipeWatched)
-        g_wipeWatched = sg::WatchClassName(L"baseWindow_C", L"cleanSponge", kTagWindowWipe, &OnWipePre, &OnWipePost);
+        g_wipeWatched = sg::WatchClassName(kWindowClass, kWipeVerb, kTagWindowWipe, &OnWipePre, &OnWipePost);
 }
 
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot) {
@@ -334,6 +368,7 @@ void Tick() {
 void OnDisconnect() {
     g_pending.clear();
     g_wiping = nullptr;
+    g_sent.clear();
 }
 
 }  // namespace coop::window_sync

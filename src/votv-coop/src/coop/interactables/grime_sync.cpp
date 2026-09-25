@@ -51,7 +51,8 @@ using coop::net::WireKeyFromString;
 using coop::net::StringFromWireKey;
 using coop::net::FnvKey;
 
-// The process changes in discrete wipe steps; this epsilon only filters float-equality noise.
+// The process changes in wipe steps, and a step can be smaller than this epsilon, so a fall is
+// measured against the floor and small ones add up (OnLowerPost); it also skips an idempotent apply.
 constexpr float kProcessEps = 0.0005f;
 // The position quantisation grid (cm). A decal's saved position is bit-identical across peers
 // (the same save, a static actor), so any deterministic quantisation yields the same key on
@@ -305,9 +306,17 @@ void OnLowerPost(const sg::Call& call) {
     const int32_t idx = R::InternalIndexOf(call.object);
     if (!R::IsLiveByIndex(call.object, idx)) return;
     float cur = 0.f;
-    if (!G::ReadProcess(call.object, cur) || cur >= g_before - kProcessEps) return;  // an uncleanable decal
+    if (!G::ReadProcess(call.object, cur) || cur >= g_before) return;  // an uncleanable decal
     const std::wstring key = KeyOf(call.object, idx, R::SlotSerial(idx));
     if (key.empty()) return;
+    // Measured against the floor, the lowest value this peer knows for the key, so falls smaller than
+    // the epsilon add up and go out once they pass it; a first such fall seeds the floor at the entry.
+    auto& floor = Floor();
+    const auto it = floor.find(key);
+    if (cur >= (it != floor.end() ? it->second : g_before) - kProcessEps) {
+        if (it == floor.end()) floor[key] = g_before;
+        return;
+    }
     Lower(key, cur);
     Send(key, cur);
 }

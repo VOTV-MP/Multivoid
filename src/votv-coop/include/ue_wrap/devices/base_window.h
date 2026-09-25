@@ -39,7 +39,7 @@ bool ReadClean(void* win, float& out);
 // Write the window's `clean` scalar + call AbaseWindow_C::setClean() to push it into the
 // shader (SetCustomPrimitiveDataFloat(0, clean) -- a pure setter, no gameplay side effect,
 // game-thread). Returns false on null window / unresolved. The receiver of a remote wipe
-// uses this; coop::window_sync echo-suppresses so the resulting field change isn't re-broadcast.
+// uses this; it runs no cleanSponge, so coop::window_sync never hears it back as a wipe.
 bool WriteCleanAndApply(void* win, float clean);
 
 }  // namespace ue_wrap::base_window

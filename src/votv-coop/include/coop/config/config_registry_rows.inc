@@ -268,8 +268,8 @@ CFG_FLAG(window_log, "window_log", "dev", false, "VOTVCOOP_WINDOW_LOG",
     "Diagnostic logging for window sync: each wipe sent, each value applied, and every window an index "
     "pass finds, one line each.")
 CFG_FLAG(window_synth, "window_synth", "dev", false, "VOTVCOOP_WINDOW_SYNTH",
-    "Test driver: once the joiner's world is ready, the host wipes the first indexed window through its "
-    "own cleanSponge, so the client applies the fall.")
+    "Test driver: once the joiner's world is ready, the host wipes a dirty window through its own "
+    "cleanSponge in ten dabs each too small to send alone, so the client applies their sum.")
 CFG_FLAG(window_stroke_log, "window_stroke_log", "dev", false, nullptr,
     "Diagnostic logging for the bay-window dab sync (every dab sent and received).")
 CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr,

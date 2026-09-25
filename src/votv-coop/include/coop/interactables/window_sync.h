@@ -10,7 +10,7 @@
 // window by Key, deferring and retrying if it has not streamed in yet, and applies MIN(local,
 // wire): a live edge can only make a window CLEANER, so two peers wiping at once converge without
 // oscillation, and nothing re-raises `clean` the way a door re-closes, so no host authority is
-// needed. The host's relay carries a client's wipe to the other clients. On a connect edge the host
+// needed. The host's relay carries a client's wipe to the other clients. When a joiner's world is ready the host
 // sends each window's current value with adopt=1, applied AS SENT so a joiner takes the host's
 // world even where its own save was cleaner -- which is why an adopt counts only from the host.
 
@@ -35,9 +35,9 @@ void Install(coop::net::Session* session);
 // not streamed in. Called from event_feed's reliable drain loop.
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot);
 
-// HOST-only: snapshot the current `clean` of every indexed window to a freshly connected
-// client `peerSlot` with adopt=1 (the joiner adopts the host's world). Called from the
-// net-pump connect edge. Game thread.
+// HOST-only: snapshot the current `clean` of every indexed window to the client `peerSlot` whose
+// world is ready, with adopt=1 (the joiner adopts the host's world). Called from the world-ready
+// replay. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Per-tick: retry deferred applies (throttled), and the dev synthetic wipe when armed. Call every

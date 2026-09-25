@@ -21,7 +21,7 @@ namespace R = reflection;
 
 // Resolved once at EnsureResolved, then read-only. Published via the g_resolved
 // release-store / acquire-load so any thread that sees g_resolved==true also sees
-// the fully-written caches below. Game-thread writes; poll/apply reads.
+// the fully-written caches below. Game-thread writes; the wipe watch's and the apply's reads.
 std::atomic<bool> g_resolved{false};
 
 void*   g_winCls     = nullptr;  // baseWindow_C UClass
