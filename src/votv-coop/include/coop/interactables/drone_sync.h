@@ -5,7 +5,8 @@
 //
 // The drone is a host-simulated singleton, MTA's server-simulated entity: its blueprint ReceiveTick
 // is a fragile per-tick float flight integrator, not worth reproducing bit-exact on a remote. The
-// host streams the resolved transform at about 20 Hz while the drone is active; a client suppresses
+// host streams the resolved transform, at most about 20 Hz, while the drone moves -- Active or not, since
+// it glides on after Active drops -- and its state the moment it changes; a client suppresses
 // its own drone tick, so the drone there is ALWAYS a mirror rather than a second flier fighting the
 // stream, and drives the streamed transform kinematically through the interpolation window. Host to
 // client only, never relayed, honoured only from slot 0. Identity is the singleton found by class:
@@ -36,7 +37,7 @@ void OnReliable(const coop::net::DroneStatePayload& payload);
 // so the joiner snaps to it (mid-flight or parked). Net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick pump: HOST streams the drone transform while Active (+ one falling-edge inactive);
+// Per-tick pump: HOST streams the drone's transform while it moves and its state as it changes;
 // CLIENT suppresses the drone tick once + drives the mirror interp. Call every net-pump tick on the
 // game thread.
 void Tick();

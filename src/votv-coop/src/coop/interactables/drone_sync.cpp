@@ -1,6 +1,7 @@
 // coop/interactables/drone_sync.cpp -- see coop/interactables/drone_sync.h. Delivery drone
 // (Adrone_C) Phase 1 body pose sync. Host-authoritative singleton transform stream: the host reads
-// the live drone transform + throttled-streams it while Active; the client suppresses the drone's
+// the live drone transform and streams it, throttled, while it moves or its state changes; the client
+// suppresses the drone's
 // own ReceiveTick (so it is purely a mirror) and drives the streamed transform kinematically with a
 // LerpWindow interp.
 //
@@ -30,7 +31,11 @@ namespace D = ue_wrap::drone;
 using ue_wrap::FVector;
 using ue_wrap::FRotator;
 
-constexpr uint64_t kSendIntervalMs = 50;   // ~20 Hz host transform stream while the drone is Active
+constexpr uint64_t kSendIntervalMs = 50;   // ~20 Hz at most, while the drone moves or its state changes
+// Past its flight and its dust, how far the drone must be from the pose last sent for a new one to
+// go: a glide streams until it is this close to where it rests, and a parked drone sends nothing.
+constexpr float    kMoveEpsCm  = 1.0f;
+constexpr float    kTurnEpsDeg = 0.5f;
 constexpr int      kInterpWindowMs = 75;   // matches the NPC/ATV pose interp window
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -48,12 +53,21 @@ struct DroneMirror {
     uint8_t lastStateBits = 0;    // last applied FX bits (dust / canTakeOff) -- edge detection
     bool    haveStateBits = false;
     int8_t  hostActive = -1;      // the host's last word on Active: 1, 0, or -1 before any
+    // The newest word that arrived before this peer's drone resolved, waiting whole -- the pose and the
+    // gate fields with it -- for the first tick that finds the drone.
+    bool    hasPending = false;
+    coop::net::DroneStatePayload pending{};
 };
 DroneMirror g_m;
 
-// Host sender edge state (game thread only).
-uint64_t g_lastSentMs     = 0;
-bool     g_lastSentActive = false;
+// What the host last sent (game thread only): a pose goes when the drone moved away from it, and a
+// state when Active or the FX / gate bits differ from it.
+uint64_t g_lastSentMs = 0;
+bool     g_haveSent   = false;
+FVector  g_sentLoc{};
+FRotator g_sentRot{};
+bool     g_sentActive = false;
+uint8_t  g_sentBits   = 0;
 bool     g_installLogged  = false;  // latch the install log (Install is the per-tick ensure path)
 
 uint64_t NowMs() {
@@ -137,21 +151,11 @@ void Install(coop::net::Session* session) {
     }
 }
 
-void OnReliable(const coop::net::DroneStatePayload& payload) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // host is the authority -- never applies
-    if (!D::EnsureResolved()) return;
-    if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
-        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll) ||
-        !std::isfinite(payload.dustX) || !std::isfinite(payload.dustY) || !std::isfinite(payload.dustZ)) {
-        UE_LOGW("drone: OnReliable non-finite pose -- dropping");
-        return;
-    }
-    // The host's word on Active is kept even before the mirror resolves: a parked drone sends nothing
-    // after its connect snapshot, so a word dropped here would never come again.
-    g_m.hostActive = payload.active ? 1 : 0;
-    void* drone = D::Find();
-    if (!drone) return;  // not streamed in yet -- the next packet applies once it resolves
+namespace {
+
+// One word of the host's onto this peer's drone: the pose into the interpolation, then the FX and gate
+// state. Game thread.
+void ApplyState(void* drone, const coop::net::DroneStatePayload& payload) {
     if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
     SetTarget(g_m, payload, /*snap*/ payload.adopt != 0);
     // FX mirror: the suppressed tick kills the rotor-dust particle and the delivery alarm cue, so
@@ -202,6 +206,31 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     g_m.haveStateBits = true;
 }
 
+}  // namespace
+
+void OnReliable(const coop::net::DroneStatePayload& payload) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() == coop::net::Role::Host) return;  // host is the authority -- never applies
+    if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
+        !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll) ||
+        !std::isfinite(payload.dustX) || !std::isfinite(payload.dustY) || !std::isfinite(payload.dustZ)) {
+        UE_LOGW("drone: OnReliable non-finite pose -- dropping");
+        return;
+    }
+    // The host's word is kept whole even before this peer's drone resolves: a parked drone sends
+    // nothing after its connect snapshot, so a word dropped here -- its Active, its pose, its gate
+    // fields -- would not come again until the next flight.
+    g_m.hostActive = payload.active ? 1 : 0;
+    void* drone = D::EnsureResolved() ? D::Find() : nullptr;
+    if (!drone) {
+        g_m.pending = payload;
+        g_m.hasPending = true;
+        return;
+    }
+    g_m.hasPending = false;
+    ApplyState(drone, payload);
+}
+
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
@@ -222,28 +251,44 @@ void Tick() {
     if (!drone) return;
 
     if (s->role() == coop::net::Role::Host) {
-        // HOST authority: stream the transform while the drone is Active; emit one falling-edge
-        // inactive so the client's active flag is accurate (it already holds the last pose).
-        const bool active = D::IsActive(drone);
+        // HOST authority. While the drone is Active or its dust is on, the stream runs as it always did:
+        // the client replays the dust once per packet, and the effect ends itself unless re-armed. Past
+        // that, the pose goes while the drone MOVES -- it glides on after Active drops, and a client that
+        // stopped hearing at that edge kept its mirror metres short of where it came to rest -- and
+        // Active and the FX / gate bits the moment they change, moving or not: a sack put on a parked
+        // drone is a change a client's gate fields need.
         const uint64_t nowMs = NowMs();
-        if (active) {
-            if (nowMs - g_lastSentMs >= kSendIntervalMs) {
-                g_lastSentMs = nowMs;
-                coop::net::DroneStatePayload p{};
-                if (FillPayload(drone, true, /*adopt*/false, p))
-                    s->SendReliable(coop::net::ReliableKind::DroneState, &p, sizeof(p));
-                g_lastSentActive = true;
-            }
-        } else if (g_lastSentActive) {
-            coop::net::DroneStatePayload p{};
-            if (FillPayload(drone, false, /*adopt*/false, p))
-                s->SendReliable(coop::net::ReliableKind::DroneState, &p, sizeof(p));
-            g_lastSentActive = false;
-        }
+        if (nowMs - g_lastSentMs < kSendIntervalMs) return;
+        FVector loc; FRotator rot;
+        if (!D::GetTransform(drone, loc, rot)) return;
+        const bool active = D::IsActive(drone);
+        const uint8_t bits = D::ReadFxBits(drone);
+        const float dx = loc.X - g_sentLoc.X, dy = loc.Y - g_sentLoc.Y, dz = loc.Z - g_sentLoc.Z;
+        const bool moved =
+            !g_haveSent || dx * dx + dy * dy + dz * dz > kMoveEpsCm * kMoveEpsCm ||
+            std::fabs(ue_wrap::NormalizeAxis(rot.Pitch - g_sentRot.Pitch)) > kTurnEpsDeg ||
+            std::fabs(ue_wrap::NormalizeAxis(rot.Yaw - g_sentRot.Yaw)) > kTurnEpsDeg ||
+            std::fabs(ue_wrap::NormalizeAxis(rot.Roll - g_sentRot.Roll)) > kTurnEpsDeg;
+        const bool streaming = active || (bits & D::kFxDust) != 0;
+        if (!streaming && !moved && active == g_sentActive && bits == g_sentBits) return;
+        coop::net::DroneStatePayload p{};
+        if (!FillPayload(drone, active, /*adopt*/false, p)) return;
+        if (!s->SendReliable(coop::net::ReliableKind::DroneState, &p, sizeof(p))) return;
+        g_lastSentMs = nowMs;
+        g_haveSent = true;
+        g_sentLoc = loc;
+        g_sentRot = rot;
+        g_sentActive = active;
+        g_sentBits = bits;  // the bits as read: FillPayload drops the dust bit when its anchor is unread
     } else {
-        // CLIENT: the drone is ALWAYS a mirror -- suppress its own flight tick once, then drive the
-        // interp toward the last streamed pose (no-op when frozen at target between packets).
+        // CLIENT: the drone is ALWAYS a mirror -- suppress its own flight tick once, take a word that
+        // waited for the drone to resolve, then drive the interp toward the last streamed pose (no-op
+        // when frozen at target between packets).
         if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
+        if (g_m.hasPending) {
+            g_m.hasPending = false;
+            ApplyState(drone, g_m.pending);
+        }
         if (g_m.hasPose) { AdvanceInterp(g_m); ApplyMirror(drone, g_m); }
     }
 }
@@ -256,7 +301,11 @@ void OnDisconnect() {
     }
     g_m = DroneMirror{};
     g_lastSentMs = 0;
-    g_lastSentActive = false;
+    g_haveSent = false;
+    g_sentLoc = FVector{};
+    g_sentRot = FRotator{};
+    g_sentActive = false;
+    g_sentBits = 0;
     g_installLogged = false;
 }
 

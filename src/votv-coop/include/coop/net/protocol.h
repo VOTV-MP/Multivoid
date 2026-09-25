@@ -267,8 +267,9 @@ enum class ReliableKind : uint8_t {
     // AtvStatePayload.
     AtvState = 37,
 
-    // Host to all: the delivery drone's transform, activity bits and dust anchor, about 20 Hz while
-    // flying. The client suppresses its own drone tick and drives the transform. DroneStatePayload.
+    // Host to all: the delivery drone's transform, activity bits and dust anchor, at most about 20 Hz,
+    // while it moves and as its state changes. The client suppresses its own drone tick and drives the
+    // transform. DroneStatePayload.
     DroneState = 38,
 
     // Client to host: a laptop shop order, as list_store row names only. The host prices it from
@@ -1934,7 +1935,7 @@ static_assert(sizeof(AtvReleasePayload) == 32, "AtvReleasePayload must be 32 byt
 struct DroneStatePayload {
     float   x, y, z;           // 12 -- root actor world location (cm)
     float   pitch, yaw, roll;  // 12 -- full rotation (the drone leans/pitches in flight)
-    uint8_t active;            // 1  -- Adrone_C::Active (dormant<->flying); gates the host stream
+    uint8_t active;            // 1  -- Adrone_C::Active (dormant<->flying); a change is sent at once
     uint8_t stateBits;         // 1  -- bit 0 rotor dust active, bit 1 can take off (arrived: the alarm cue and the
                                //        interaction gate), bit 2 has sack (cargo aboard)
     uint8_t adopt;             // 1  -- 1 = host connect-snapshot (snap as is), 0 = live stream

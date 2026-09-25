@@ -54,8 +54,8 @@ void RestoreTick(void* drone);
 // with NO relative offset, so unmoved it sits at WORLD ORIGIN (invisible: frustum-culled fixed
 // bounds), and (3) SetFloatParameter('dust', 1 - dist/2000) (a [0,1] RateScale). The PS is
 // EmitterLoops=1/20s -- it self-completes and needs the per-tick IsActive!=want re-arm. So the
-// HOST streams the FX bits + the dust component's world location in DroneState (20 Hz while
-// Active) and the CLIENT replays the BP's exact three calls per packet (ApplyDustMirror). The
+// HOST streams the FX bits + the dust component's world location in DroneState (about 20 Hz while
+// Active or the dust is on, and as they change) and the CLIENT replays the BP's exact three calls per packet (ApplyDustMirror). The
 // alarm cue fires on the canTakeOff false->true edge (drone within 25cm of its drop).
 
 // stateBits packing (DroneStatePayload.stateBits): bit0 = dust active, bit1 = canTakeOff (arrived /

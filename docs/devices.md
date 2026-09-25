@@ -176,7 +176,8 @@ window, and an outside `endDraw` deletes the world canvas the game's own next da
 ### The drone
 
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
-worth reproducing, so the host streams its transform while it is active, the client suppresses
+worth reproducing, so the host streams its transform while it moves (it glides on after its active
+flag drops) and its state the moment it changes, the client suppresses
 the drone's own tick and drives the streamed transform through an interpolation window, and the
 cargo it drops rides the ordinary prop lanes (`coop/interactables/drone_sync`). The drone's sale
 runs on the host only, which is what makes selling into it the one economy path that credits the
