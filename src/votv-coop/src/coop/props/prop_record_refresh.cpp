@@ -46,7 +46,6 @@ unsigned long long g_cRelooked  = 0;
 // `opened` is read to drive the look below; `name` and init() are what re-derive it.
 int32_t g_openedOff = -1;
 int32_t g_nameOff   = -1;
-void*   g_initFn    = nullptr;
 
 // The box's two names, exactly as its own Blueprint spells them: the open action sets
 // 'drivebox_sb', putLidOn sets 'drivebox_s' back.
@@ -76,10 +75,10 @@ void RefreshLook(void* box, bool opened) {
     void* cls = R::ClassOf(box);
     if (!cls) return;
     if (g_nameOff < 0) g_nameOff = R::FindPropertyOffset(cls, L"name");
-    // The memoised lookup: a box whose init never resolved would be looked up again, hop by hop, on
-    // every record that lands on it.
-    if (!g_initFn)     g_initFn  = R::FindDispatchFunctionCached(cls, L"init");
-    if (g_nameOff < 0 || !g_initFn) {
+    // Looked up on the box's own class at each use, through the lookup memoised by the class's slot
+    // and serial, which costs what a kept pointer did and cannot outlive the class it came from.
+    void* const initFn = R::FindDispatchFunctionCached(cls, L"init");
+    if (g_nameOff < 0 || !initFn) {
         static bool s_warned = false;
         if (!s_warned) { s_warned = true;
             UE_LOGW("prop_record_refresh: no `name` offset or no init() on the box -- a mirrored open "
@@ -90,7 +89,7 @@ void RefreshLook(void* box, bool opened) {
     if (ue_wrap::prop::GetPropNameString(box) == want) return;  // already the right look
     R::FName n = ue_wrap::fname_utils::StringToFName(want);
     std::memcpy(reinterpret_cast<uint8_t*>(box) + g_nameOff, &n, sizeof(n));
-    ue_wrap::ParamFrame f(g_initFn);
+    ue_wrap::ParamFrame f(initFn);
     if (f.valid()) ue_wrap::Call(box, f);
     ++g_cRelooked;
     UE_LOGI("prop_record_refresh: a record landed on a drive box -> opened=%d, look re-derived to '%ls'",
@@ -135,10 +134,11 @@ constexpr Watched kWatched[] = {
     { L"prop_box_C",     0x44424F58, true,  &DescribeBox },       // 'DBOX'
     { L"prop_reelbox_C", 0x5242584F, false, &DescribeReelCase },  // 'RBXO'
 };
-// The UFunction each watch was armed on, so a re-armed one can be recognised. A world reload
-// destroys and re-creates these classes and their functions: at a new address the old watch simply
-// never fires again, and at a recycled one it would fire for whatever now lives there. An exact
-// watch has to be re-validated; the neighbouring lanes use name watches, which resolve themselves.
+// The UFunction each watch was armed on, so a re-armed one can be recognised. A world change can
+// re-create a Blueprint class and its functions (127 were in a same-process rejoin; these two kept
+// theirs): at a new address the old watch would never fire again, and at a recycled one it would
+// fire for whatever lives there. An exact watch is re-validated; the neighbouring lanes use name
+// watches, which resolve themselves.
 void* g_watchedFn[std::size(kWatched)] = {};  // game thread only
 
 const Watched* ByTag(int tag) {
