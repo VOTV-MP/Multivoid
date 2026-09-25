@@ -9,7 +9,6 @@
 #include "npc_sync_internal.h"  // install/state seam (impl-private, src-local): shared globals + callback decls
 
 #include "coop/dev/rng_roll_census.h"       // channel (a): BeginDeferred pass-through census
-#include "coop/world/spawn_authority.h"     // the tripwire for a park-class spawner spawning on a client
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -340,10 +339,6 @@ bool NpcSuppress_Interceptor(void* self, void* params) {
         }
         return true;  // SKIP the original
     }
-    // The spawn-authority tripwire: a park-class spawner spawning on a connected client, a log-only
-    // alarm and the late-instance signal (the reconcile walk parks it). Pre-resolved pointer
-    // compares only, since this may be a worker thread.
-    coop::spawn_authority::NoteClientSpawnPassThrough(actorClass);
     // The roll census, client half: a BP deferred spawn the suppression does not cover; a no-op
     // unless the dev ini flag is on. Our own mirror spawns re-enter this interceptor on the game
     // thread and are excluded, or they would inflate the very count the census exists for; the

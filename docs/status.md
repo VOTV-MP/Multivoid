@@ -43,7 +43,7 @@ host validates and commits contested writes), `local` (never shared).
 | Drone | the delivery drone's flight and state | host | snapshot | built |
 | Sky and time | sky rotation, moon phase, the clock and the day number (a client's clock never runs on its own, so its own advance never rolls a midnight; its cheat menu's day buttons still can) | host | the clock stream from the connect; the sky seeded at connect | built |
 | Weather | rain, snow, fog, wind, lightning, red sky, the event-born weathers | host | snapshot | tested, one known break |
-| Fireflies, ambient spawners | cosmetic spawns and the flora and forage spawners (host only) | peer for cosmetics, host for spawners | none or parked at join | built |
+| Fireflies, ambient spawners | cosmetic spawns and the flora and forage spawners (host only) | peer for cosmetics, host for spawners | none; a client's spawners are refused from its session's start | built |
 | Story and scheduled events | host-observed fires replayed on clients by a per-event policy; the active-events registry mirrored for late joiners | host | replay and snapshot | built |
 | Alarm | the base klaxon | presser | snapshot | built |
 | Balance | the shared points total | host | replay at connect | built |
@@ -78,7 +78,7 @@ host validates and commits contested writes), `local` (never shared).
 ## Enforced without a packet
 
 Moderation (kick and ban are a connection close plus a host-local list), save suppression (clients
-never write a save), spawn authority (client-side shared-world spawners are parked), the no-pause
+never write a save), spawn authority (client-side shared-world spawners are refused at the script-body gate), the no-pause
 rule (a paused world is un-paused every tick while connected). They hold host authority by
 construction; a census of wire lanes does not see them.
 

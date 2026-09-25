@@ -55,11 +55,11 @@ so every peer keeps its own and shares each spawn, and the union is fireflies ne
 ### Who rolls
 
 A connected client ticks no shared-world spawner and rolls no shared-world spawn
-(`coop/world/spawn_authority`), by one table of two shapes: the spawner's tick is parked
-through the engine's own tick switch, re-parked once a second and restored when the session
-ends, or the spawner's entry function is cancelled before its body. Shared-world content then
-arrives only from the host through the character, world-actor and prop mirrors. A spawner
-anchored to the player's camera (the pinecone drops) is the exception: each peer rolls its own
+(`coop/world/spawn_authority`), by one table of the bodies a client must not run, a spawner's
+tick or its entry function, each refused at the script gate by a watch on its class and function
+names while a client session runs. Shared-world content then arrives only from the host
+through the character, world-actor and prop mirrors. A spawner anchored to the player's camera
+(the pinecone drops) is the exception: each peer rolls its own
 and the drops are shared peer-symmetrically. The remaining randomness is closed shape by shape:
 a mirror where the host owns the roll and the state, an intent where a client's action makes
 the host roll (a shop delivery time, a signal catch, a device claim), and a shared seed where
@@ -139,7 +139,7 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 | the clock, the sky | the host | streamed; the client's clock held at zero rate |
 | rain, snow, fog, wind, lightning, red sky | the host | scheduler observed on the host, cancelled on the client; the client's births killed |
 | fireflies | each peer | peer-symmetric union |
-| ambient spawners | the host | parked or cancelled on clients; the camera-anchored ones per peer |
+| ambient spawners | the host | refused on clients at the script-body gate; the camera-anchored ones per peer |
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
@@ -182,7 +182,7 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | A client's cheat-menu day buttons (a day forward, or two hours after 22:00) still roll that client's own midnight at its next tick, unless a host sample lands first: the hold covers the clock's rate, and a written time stands until the next sample | `[RD]` the cheat menu's writes and the cycle's roll test |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |
-| The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither parked on a client nor mirrored from the host, so each peer rolls its own | `[V]` `coop/world/spawn_authority.h`, the unmirrored families |
+| The deer, hexahive, walking-tree, dirt-hole, beehive, flora and mannequin spawners are neither refused on a client nor mirrored from the host, so each peer rolls its own | `[V]` no row of `coop/world/spawn_authority` names them; the table in `docs/npcs-and-kerfur.md`, "Which spawners a client refuses" |
 | Trigger-volume fires (a bed event, a scare a player walks into) run per peer, as the single-player design intends | `[V]` by design, not a gap |
 | Only the pyramid and the alarm have had the one-event-at-a-time pass; every other event rides the generic lanes on the per-row replay policy | `[V]` `coop/world/event_fire_sync`, the replay allowlist |
 

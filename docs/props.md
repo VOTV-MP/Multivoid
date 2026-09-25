@@ -28,7 +28,7 @@ Nothing about a prop is reflected as replication, so the mod watches four seams:
 | A prop that | Is caught by |
 |---|---|
 | came from the save | the shared discovery pass at world start (`coop/element/object_scan_hub`, over the object index the engine's own notifications keep) |
-| was born by a spawner (mushrooms, pinecones, forage) | the prop's initialisation on the host; a client's shared-world spawners are parked (`coop/world/spawn_authority`) and the host mirrors what its own produce (`coop/props/host_spawn_watcher`) |
+| was born by a spawner (mushrooms, pinecones, forage) | the prop's initialisation on the host; a client's shared-world spawners are refused (`coop/world/spawn_authority`) and the host mirrors what its own produce (`coop/props/host_spawn_watcher`) |
 | was spawned by the spawn menu or extracted from a container on the host | the engine's finish-spawning call, because those births run their initialisation inside the Blueprint and that call is where the actor is finished |
 | was destroyed | the engine's destroy call on either role: eaten, broken, picked up into a pocket (`coop/props/prop_lifecycle`); a prop that vanishes inside a Blueprint (the truck, culling, a lifespan) is caught by the host's death-watch and destroyed by id on every peer (`coop/props/registry_reaper`) |
 
@@ -229,7 +229,7 @@ is built; concrete and food are designed and not built.
 | container contents | the host | slices of its object array; an extraction is an intent |
 | a stuck prop, and its unstick | the peer that sticks or frees it; every peer runs the component's own verb | one reliable message |
 | a self-changing prop's progression | the host | park, corrector or anchor, per prop |
-| a client's shared-world spawners | parked | shared-world content arrives only from the host |
+| a client's shared-world spawners | the host | refused on a client at the script-body gate; shared-world content arrives only from the host |
 
 ## Wire messages
 

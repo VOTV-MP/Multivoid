@@ -34,10 +34,10 @@ void Install(coop::net::Session* session);
 // keepalive.
 //
 // CLIENT: liveness-scan the tracked mirror set and send a RoachConsumed intent for a roach eaten or
-// stomped locally. Client SUPPRESSION itself lives in coop/world/spawn_authority: it parks the
-// cockroachMaster_C and ticker_roachSummoner_C actor ticks, and PRE-cancels summonRoach along with
-// the three looping timer delegates, which fire independently of the park. Interaction events, an
-// eat or a stomp, are not tick-driven and stay native.
+// stomped locally. Client SUPPRESSION itself lives in coop/world/spawn_authority: it refuses the
+// cockroachMaster_C and ticker_roachSummoner_C ticks, summonRoach, and the three looping timer
+// delegates, which fire independently of the tick. Interaction events, an eat or a stomp, are not
+// tick-driven and stay native.
 void Tick();
 
 // CLIENT receive: assemble the pages of one snapshot seq and apply when complete, checked to have
@@ -64,7 +64,6 @@ void OnConsumedIntent(const coop::net::RoachConsumedPayload& payload, int sender
 void QueueConnectBroadcastForSlot(int slot);
 
 // Session teardown: clear assembly buffers, baselines, and the tracked set.
-// (The t1 park restore lives in spawn_authority's own OnDisconnect.)
 void OnDisconnect();
 
 }  // namespace coop::roach_sync

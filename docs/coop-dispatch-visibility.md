@@ -145,7 +145,7 @@ Never spawn from an observer directly; post it. `[V]`
 | the desk ping | not a verb: a latent tick machine gated on a flag | | never write the flag into a mirror `[V]` |
 | the laptop's interaction verbs | `EX_LocalVirtualFunction` | no | poll the power flag; the host authors the content `[V]` |
 | the base alarm's trigger | a virtual call after a key lookup | no | poll the active flag on both peers `[V]` |
-| the timer, delay and tick-interval drivers | `EX_CallMath` | not to the interceptor | park the instance's tick, or cancel the spawner's entry function `[V]` |
+| the timer, delay and tick-interval drivers | `EX_CallMath` | not to the interceptor; yes to the script-body gate | refuse the spawner's tick or entry function at the gate, by a watch on its class and function names (`coop/world/spawn_authority`) `[V]` |
 | the container contents verbs | `EX_LocalVirtualFunction` | no | the peer whose verb fired authors the contents and the host arbitrates; the script-body gate marks the owning actor's eid dirty `[V]` -- both peers log `the verb watch ENTERED` once per session, and a client's slice is judged on the author's reach, its rate, and the base it edited from |
 | the desk's audio components' play and activate | virtual calls on native targets | yes, to the native seam | the effect forward `[V]` |
 | deck playback | stubs into the graph; the sound component's activate and deactivate | yes, to the native seam | the play and stop edges `[V]` |

@@ -91,7 +91,7 @@
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
-#include "coop/world/spawn_authority.h"  // the client shared-world spawner park and cancel
+#include "coop/world/spawn_authority.h"  // the client refuses the shared-world spawners
 #include "coop/props/host_spawn_watcher.h"  // HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_spawn_authoring.h"  // a PLAYER's spawn verb vs the world's own spawns
@@ -285,7 +285,7 @@ void Install(coop::net::Session& session) {
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();  // garbage
-    coop::spawn_authority::Install(&session);  // the client spawner cancels and park-class resolve (host results stream through the mirrors)
+    coop::spawn_authority::Install(&session);  // the spawner bodies a client refuses (host results stream through the mirrors)
     coop::dev::rng_roll_census::Install(&session);  // [dev] driver/QuitGame interceptors (no-op unless rng_roll_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
@@ -542,10 +542,9 @@ DisconnectStats DisconnectAll() {
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
     coop::floppy_slot_entry::OnDisconnect();  // counters, then the transit marks and the interceptors: the line above drops the UFunctions they name
-    coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
+    coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
     coop::owner_entity_sync::OnDisconnect();  // destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::hook_sync::OnDisconnect();  // same, for every hook mirror, anchored included
-    coop::spawn_authority::OnDisconnect();  // restore parked spawner ticks (loan repayment belt)
     coop::skin_preview::OnDisconnect();  // despawn the F1-skins mannequin
     coop::inventory_pickup_sync::OnDisconnect();
     coop::chat_sync::OnDisconnect();
@@ -684,7 +683,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::grime_drill::Tick(&session);  // [dev] the grime drill's legs (a latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
-    coop::spawn_authority::Tick();  // the client spawner park driver (a client-session gate; cheap when idle)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)
     coop::player_handshake::TickSkinConverge();  // heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();  // F1-skins live mannequin preview (spawn/apply/position/hide)
