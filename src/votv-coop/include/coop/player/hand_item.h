@@ -19,6 +19,7 @@
 #include "coop/net/session.h"
 
 #include <cstdint>
+#include <string>
 
 namespace coop::hand_item {
 
@@ -76,6 +77,16 @@ void* MirrorActorForSlot(uint8_t slot);
 // asks it of a client's intent that only a held item can author (a keycard's swipe). Game thread
 // only.
 bool HeldClassIs(uint8_t slot, const wchar_t* cls);
+
+// Whether the class `slot`'s hand held last is the one named `cls`: the one it holds now or, since
+// the hand emptied, the one it held before. A host asks it of a verb that takes the held item as it
+// starts: a crowbar's pry, whose prying crowbar destroys the held one when it goes into the door, so
+// the pry ends with an empty hand. Game thread only.
+bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
+
+// The name of the item `slot`'s hand holds, as its owner last announced (the Aprop_C `name` the game
+// keys its item tables by), or empty when it holds nothing. Game thread only.
+std::wstring HeldName(uint8_t slot);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)
 // into out[]; returns the count (<= 1 + kMaxPeers). For per-walk hoisting.
