@@ -102,12 +102,9 @@ bool EnsureResolved() {
     void* doorCls = R::FindClass(L"door_C");
     if (!doorCls) return false;  // BP class not loaded yet -- caller retries
 
-    // The key is declared on the trigger base; the property lookup does not climb to the
-    // superclass, so query the declaring class. The opened flag is declared on the door.
-    int32_t keyOff = -1;
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) {
-        keyOff = R::FindPropertyOffset(trigCls, L"Key");
-    }
+    // The key is declared on the trigger base, which the property lookup climbs to; the opened flag
+    // is declared on the door.
+    int32_t keyOff = R::FindPropertyOffset(doorCls, L"Key");
     if (keyOff < 0) {
         UE_LOGW("door: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
         keyOff = kKeyOffFallback;

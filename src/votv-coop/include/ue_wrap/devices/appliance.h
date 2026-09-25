@@ -19,17 +19,18 @@
 
 namespace ue_wrap::appliance {
 
-// Resolve the shared Aactor_save_C::Key offset + each leaf class's UClass / bool offset /
-// refresh verb. Lazy + best-effort: returns true once the Key offset is known (the family
-// can operate); individual classes resolve as they stream in -- a save lacking one class
-// just never indexes it. Idempotent. Game thread.
+// Resolve each leaf class as it streams in: its UClass, the Key it inherits from Aactor_save_C, its
+// bool offset and its refresh verb. Lazy + best-effort: returns true once any class has resolved
+// (the family can operate); a save lacking one class just never indexes it. Idempotent. Game
+// thread.
 bool EnsureResolved();
 
 // True iff `obj`'s class is (a descendant of) any of the six appliance classes. Cheap
 // (pointer compares + one hierarchy walk over the resolved set); false until resolved.
 bool IsAppliance(void* obj);
 
-// The appliance's Aactor_save_C::Key as a wide string ("" on failure, L"None" if unkeyed).
+// The appliance's Aactor_save_C::Key as a wide string ("" on failure or for a class not in the set,
+// L"None" if unkeyed).
 std::wstring GetKeyString(void* a);
 
 // Read the appliance's per-class on/off bool into `on`. False if the read could not be made

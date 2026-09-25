@@ -9,7 +9,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
-#include <atomic>
 #include <cstdint>
 #include <cwchar>
 
@@ -30,10 +29,11 @@ struct Desc {
     const wchar_t* applyParam;     // the setter's bool parameter; nullptr for a no-arg refresh verb
     // resolved lazily (game-thread serial -- no lock):
     void*   cls;
+    int32_t keyOff;                // the Key the class inherits from Aactor_save_C
     int32_t boolOff;
     void*   fn;
     void*   fn2;
-    bool    unusable;              // its class loaded but its bool did not resolve: left out, said once
+    bool    unusable;              // its class loaded but its Key or bool did not resolve: left out, said once
 };
 
 // sink_C's BP player_use calls updIsOn() THEN upd() -- updIsOn() flips the tap state, upd()
@@ -49,17 +49,14 @@ struct Desc {
 // The faucet's is `active`, which its use action toggles before calling upd() and its getData saves;
 // its `turnOn` is the look-at flag lookAt sets while a player aims at the tap (faucet_C's bytecode).
 Desc g_descs[] = {
-    { L"faucet_C",         L"active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
-    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  nullptr,   nullptr, -1, nullptr, nullptr, false },
-    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
-    { L"kitchen_C",        L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
-    { L"serverBox_C",      L"active",       L"visual",    nullptr, L"active", nullptr, -1, nullptr, nullptr, false },
-    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, nullptr, nullptr, false },
+    { L"faucet_C",         L"active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
+    { L"sink_C",           L"isOn",         L"updIsOn",   L"upd",  nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
+    { L"prop_shower_C",    L"running_cold", L"updWater",  nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
+    { L"kitchen_C",        L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
+    { L"serverBox_C",      L"active",       L"visual",    nullptr, L"active", nullptr, -1, -1, nullptr, nullptr, false },
+    { L"wallunit_tapes_C", L"Active",       L"upd",       nullptr, nullptr,   nullptr, -1, -1, nullptr, nullptr, false },
 };
 constexpr int kNumDescs = sizeof(g_descs) / sizeof(g_descs[0]);
-
-std::atomic<bool> g_keyResolved{false};
-int32_t g_keyOff = -1;                 // Aactor_save_C::Key (Alpha 0.9.0-n: 0x0230)
 
 void* g_bases[kNumDescs] = {};         // resolved class pointers, for the IsAppliance fast filter
 int   g_nBases = 0;
@@ -83,36 +80,19 @@ Desc* DescFor(void* obj) {
 }  // namespace
 
 bool EnsureResolved() {
-    // The shared Key lives on the Aactor_save_C base; FindPropertyOffset does NOT climb to a
-    // super, so resolve it against actor_save_C directly (same gotcha garage/door handle).
-    if (!g_keyResolved.load(std::memory_order_acquire)) {
-        void* saveCls = R::FindClass(L"actor_save_C");
-        if (!saveCls) return false;  // base not loaded yet
-        const int32_t k = R::FindPropertyOffset(saveCls, L"Key");
-        if (k < 0) {
-            // No identity, so no appliance syncs: said once, and the family stays off.
-            static bool s_said = false;
-            if (!s_said) {
-                s_said = true;
-                UE_LOGE("appliance: actor_save_C.Key did not resolve by name -- the appliance family stays off");
-            }
-            return false;
-        }
-        g_keyOff = k;
-        g_keyResolved.store(true, std::memory_order_release);
-        UE_LOGI("appliance: Key@0x%04X (actor_save_C)", k);
-    }
-    // Lazily resolve each leaf class (best-effort -- cheap hash lookups, skipped once cached).
+    // Each leaf class as it streams in (cheap hash lookups, skipped once cached): its bool, its verbs
+    // and its Key, which is declared on the Aactor_save_C base and which the property lookup climbs to.
     bool newlyResolved = false;
     for (auto& d : g_descs) {
         if (d.cls || d.unusable) continue;
         void* cls = R::FindClass(d.className);
         if (!cls) continue;
+        const int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
         const int32_t off = R::FindPropertyOffset(cls, d.boolName);
-        if (off < 0) {
+        if (keyOff < 0 || off < 0) {
             d.unusable = true;
             UE_LOGE("appliance: %ls.%ls did not resolve by name -- this class is left out of the sync",
-                    d.className, d.boolName);
+                    d.className, keyOff < 0 ? L"Key" : d.boolName);
             continue;
         }
         void* fn = R::FindFunction(cls, d.applyFn);
@@ -126,18 +106,19 @@ bool EnsureResolved() {
                 UE_LOGW("appliance: %ls.%ls() 2nd refresh verb not found", d.className, d.applyFn2);
         }
         d.cls = cls;
+        d.keyOff = keyOff;
         d.boolOff = off;
         d.fn = fn;
         d.fn2 = fn2;
         newlyResolved = true;
-        UE_LOGI("appliance: resolved %ls bool@0x%04X fn=%p fn2=%p", d.className, off, fn, fn2);
+        UE_LOGI("appliance: resolved %ls Key@0x%04X bool@0x%04X fn=%p fn2=%p", d.className, keyOff, off, fn, fn2);
     }
     if (newlyResolved) {
         g_nBases = 0;
         for (auto& d : g_descs)
             if (d.cls) g_bases[g_nBases++] = d.cls;
     }
-    return g_keyResolved.load(std::memory_order_acquire);
+    return g_nBases > 0;
 }
 
 bool IsAppliance(void* obj) {
@@ -148,9 +129,10 @@ bool IsAppliance(void* obj) {
 }
 
 std::wstring GetKeyString(void* a) {
-    if (!a || g_keyOff < 0) return std::wstring();
+    const Desc* d = DescFor(a);
+    if (!d || d->keyOff < 0) return std::wstring();
     const R::FName& key = *reinterpret_cast<const R::FName*>(
-        reinterpret_cast<const char*>(a) + g_keyOff);
+        reinterpret_cast<const char*>(a) + d->keyOff);
     return R::ToString(key);
 }
 
