@@ -79,6 +79,7 @@
 #include "coop/dev/kerfur_menu_drill.h"  // [dev] a kerfur turned on through its menu event, nested in a watched body
 #include "coop/dev/container_opener_probe.h"  // [dev] the actors far containers open through, on real objects
 #include "coop/dev/container_view_drill.h"  // [dev] a container view closes as its opener leaves reach
+#include "coop/dev/physmods_drill.h"  // [dev] a module plug is sent at its verb, and a rejoin's load sends none
 #include "coop/dev/container_selftest.h"  // [dev] container-lane e2e circle (organic addLoot)
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
@@ -492,6 +493,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::light_drill::OnDisconnect();  // [dev] the switch, its group and the phase belong to one world
     coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::container_view_drill::OnDisconnect();  // [dev] the ATV, the view and the walks belong to one world
+    coop::dev::physmods_drill::OnDisconnect();  // [dev] a rejoin's client says its line again
     coop::dev::grime_drill::OnDisconnect();  // [dev] the decals and the phase belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
@@ -660,6 +662,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::container_selftest::Tick();  // [dev] the container-lane e2e circle (a single bool read when off)
     coop::dev::container_opener_probe::Tick(&session);  // [dev] far containers' openers and the reach to them (latched read when off)
     coop::dev::container_view_drill::Tick(&session);  // [dev] the view-close drill (a single bool read when off)
+    coop::dev::physmods_drill::Tick(&session);  // [dev] the module-plug drill (a single bool read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::floppy_selftest::Tick();  // [dev] disc/server episodes (single bool read when off; 6 s census period)
     coop::dev::hookdrag_selftest::Tick();  // [dev] the hook drag and its 4 Hz position log (single bool read when off)

@@ -433,6 +433,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/function_lookup_parity.cpp
     src/coop/dev/container_opener_probe.cpp
     src/coop/dev/container_view_drill.cpp
+    src/coop/dev/physmods_drill.cpp
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
     src/coop/dev/grime_drill.cpp
