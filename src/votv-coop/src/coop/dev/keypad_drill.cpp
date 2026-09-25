@@ -43,7 +43,7 @@ constexpr auto  kLegBound   = std::chrono::seconds(10);
 constexpr float kStandCm    = 150.f;   // this near the keypad, a player stands where it can use it
 constexpr int   kCandidates = 14;      // the nearest keypads by straight distance; each costs a route
 
-enum class Leg { Press, Accept, Cancel, Deny };
+enum class Leg { Press, Accept, Cancel, Deny, Tail };
 enum class Phase { Unpicked, Walking, Typing, Landing, Done };
 
 // What the walker thread hands the game thread: the keypad it stood at, or that it could not.
@@ -63,6 +63,7 @@ size_t       g_leg = 0;
 bool         g_cancelSawDigits = false;
 bool         g_sawEcho = false;   // this leg's typing has shown on this copy: the host's digits came back
 int          g_doorBefore = -1;   // the press leg: the gated door's open on this copy before the press
+std::wstring g_tailDigits;        // the tail leg: the two digits typed after its submit
 Clock::time_point g_since{};
 int          g_failures = 0;
 
@@ -78,6 +79,7 @@ const char* LegName(Leg leg) {
     case Leg::Accept: return "ACCEPT";
     case Leg::Cancel: return "CANCEL";
     case Leg::Deny:   return "DENY";
+    case Leg::Tail:   return "TAIL";
     }
     return "?";
 }
@@ -304,6 +306,16 @@ void StartLeg(const PL::State& before) {
         TypeDigits(g_password.substr(0, 2), true);
         g_cancelSawDigits = false;
         break;
+    case Leg::Tail: {
+        // Two digits no prefix of the wrong code can read as, typed after its submit in the same tick.
+        const std::wstring wrong = WrongCode();
+        TypeDigits(wrong, false);
+        if (!longCode) PressKey(false);
+        const wchar_t d = static_cast<wchar_t>(L'0' + ((wrong.empty() ? 0 : wrong[0] - L'0') + 1) % 10);
+        g_tailDigits = std::wstring(2, d);
+        TypeDigits(g_tailDigits, false);
+        break;
+    }
     case Leg::Press:
         break;
     }
@@ -319,11 +331,11 @@ void StartLeg(const PL::State& before) {
     g_since = Clock::now();
 }
 
-// Whether this copy shows the leg's end: the buffer empty on the verdict, and the gated door handed
-// the same power.
+// Whether this copy shows the leg's end: the buffer on the verdict (empty, or the tail's two digits),
+// and the gated door handed the same power.
 bool Landed(Leg leg, const PL::State& cur, bool& fail) {
     fail = false;
-    if (!cur.buffer.empty()) return false;
+    if (cur.buffer != (leg == Leg::Tail ? g_tailDigits : std::wstring())) return false;
     const bool want = leg == Leg::Accept;
     if (cur.active != want) return false;
     bool door = false;
@@ -378,8 +390,8 @@ void ClientStep(const PL::State& cur, long long ms) {
         bool fail = false;
         if (g_sawEcho && Landed(leg, cur, fail)) {
             if (fail) ++g_failures;
-            UE_LOGI("[KEYPAD-DRILL] client %s landed after %lld ms: buf '' active %d", LegName(leg), ms,
-                    cur.active ? 1 : 0);
+            UE_LOGI("[KEYPAD-DRILL] client %s landed after %lld ms: buf '%ls' active %d", LegName(leg), ms,
+                    cur.buffer.c_str(), cur.active ? 1 : 0);
             ended = true;
         } else if (late) {
             UE_LOGW("[KEYPAD-DRILL] client %s did not land within %lld s (echo seen %d, buf '%ls' active %d) -- FAIL",
@@ -392,8 +404,10 @@ void ClientStep(const PL::State& cur, long long ms) {
     if (!ended) return;
     ++g_leg;
     g_phase = Phase::Typing;
-    if (g_leg >= g_legs.size())
+    if (g_leg >= g_legs.size()) {
+        PL::CallPlayerAnykey(g_lock, L"Subtract", true);  // the tail's two digits cleared, unchecked
         Done(g_failures == 0 ? "all legs landed on both copies" : "a leg failed -- FAIL");
+    }
 }
 
 // The host logs every change of every keypad that gates a door.
@@ -471,8 +485,8 @@ void Tick(coop::net::Session* session) {
             return;
         }
         // The press comes while the keypad is unlocked: first on one found so, as a joiner meets it.
-        g_legs = g_last.active ? std::vector<Leg>{Leg::Press, Leg::Deny, Leg::Accept, Leg::Cancel}
-                               : std::vector<Leg>{Leg::Accept, Leg::Press, Leg::Cancel, Leg::Deny};
+        g_legs = g_last.active ? std::vector<Leg>{Leg::Press, Leg::Deny, Leg::Accept, Leg::Cancel, Leg::Tail}
+                               : std::vector<Leg>{Leg::Accept, Leg::Press, Leg::Cancel, Leg::Deny, Leg::Tail};
         g_leg = 0;
         g_phase = Phase::Typing;
         return;
@@ -507,6 +521,7 @@ void OnDisconnect() {
     g_cancelSawDigits = false;
     g_sawEcho = false;
     g_doorBefore = -1;
+    g_tailDigits.clear();
     g_failures = 0;
     g_watched.clear();
     // A walker still running finishes its walk; its result is for the session that started it.
