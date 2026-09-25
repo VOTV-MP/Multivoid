@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cwchar>
 
 namespace ue_wrap::appliance {
 namespace {
@@ -193,6 +194,25 @@ bool ApplyState(void* a, bool on) {
         if (f2.valid()) Call(a, f2);
     }
     return ok;
+}
+
+bool IsFaucet(void* obj) {
+    static const Desc* s_faucet = nullptr;
+    if (!s_faucet)
+        for (const Desc& d : g_descs)
+            if (std::wcscmp(d.className, L"faucet_C") == 0) s_faucet = &d;
+    return obj && s_faucet && s_faucet->cls && R::ClassOf(obj) == s_faucet->cls;
+}
+
+bool CallAction(void* a, void* player, uint8_t action) {
+    void* cls = a ? R::ClassOf(a) : nullptr;
+    void* fn = cls ? R::FindDispatchFunctionCached(cls, L"actionOptionIndex") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"player", player);
+    f.Set<uint8_t>(L"action", action);
+    return Call(a, f);
 }
 
 }  // namespace ue_wrap::appliance

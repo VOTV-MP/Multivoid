@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace ue_wrap::appliance {
@@ -39,5 +40,16 @@ bool TryReadState(void* a, bool& on);
 // bool then calling the no-arg refresh verb (upd/updIsOn) so the mesh/FX/audio repaint from
 // the new state. MUST run on the game thread. False on null / unresolved.
 bool ApplyState(void* a, bool on);
+
+// The faucet's toggle, as its getActionOptions offers it while a player aims at the tap (faucet_C's
+// bytecode; the other action it offers, 7, takes the tap off).
+inline constexpr uint8_t kFaucetToggleAction = 5;
+
+// True iff `obj` is a faucet_C, once that class has resolved. Game thread.
+bool IsFaucet(void* obj);
+
+// The appliance's own action verb as a player's interaction dispatches it: actionOptionIndex with
+// `player` and `action`. False when the class has no such verb or the call did not run. Game thread.
+bool CallAction(void* a, void* player, uint8_t action);
 
 }  // namespace ue_wrap::appliance
