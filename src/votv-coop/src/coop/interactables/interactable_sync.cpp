@@ -199,8 +199,8 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
 }
 
 // Each channel is sent at the verbs that write its state (door_state_verbs, lightgroup_verbs,
-// toggle_verbs); a per-tick poll of each state field (Channel::PollAndBroadcast) runs beside it as
-// the shadow probe, which sends and says a change no watched verb made.
+// toggle_verbs). A write no verb makes, a save's load, reaches a joiner in the connect snapshot; the
+// dev probe (channel_shadow_probe) polls for one and says it, and sends nothing.
 
 // The receiver index: the channels register as scan-hub consumers, and the hub builds every index
 // on its own sliced cadence.

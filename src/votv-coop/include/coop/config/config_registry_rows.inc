@@ -370,6 +370,9 @@ CFG_FLAG(grime_drill, "grime_drill", "dev", false, "VOTVCOOP_GRIME_DRILL",
     "tagged [GRIME-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr,
     "Diagnostic logging for the interactable channel.")
+CFG_FLAG(channel_shadow_probe, "channel_shadow_probe", "dev", false, "VOTVCOOP_CHANNEL_SHADOW_PROBE",
+    "Diagnostic probe beside the keyed interactable lanes, which send at their verbs: polls each indexed "
+    "device every tick and says, as a SHADOW MISS, a change the lane neither sent nor applied. Sends nothing.")
 CFG_FLAG(client_model_probe, "client_model_probe", "dev", false, nullptr,
     "Diagnostic probe: client-side model/skin state.")
 CFG_FLAG(delivery_census, "delivery_census", "dev", false, nullptr,

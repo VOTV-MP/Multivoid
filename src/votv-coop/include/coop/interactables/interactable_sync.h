@@ -12,8 +12,8 @@
 // index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every
 // channel is sent at the verbs that write its state, on the authority: the host for doors and light
 // groups (coop/interactables/door_state_verbs, lightgroup_verbs), the peer that ran it for the
-// symmetric rest (coop/interactables/toggle_verbs); a poll of every indexed instance runs beside each
-// as the probe of a change no verb made, and sends it. The model: docs/devices.md.
+// symmetric rest (coop/interactables/toggle_verbs). A write no verb makes, a save's load, reaches a
+// joiner in the connect snapshot. The model: docs/devices.md.
 
 #pragma once
 

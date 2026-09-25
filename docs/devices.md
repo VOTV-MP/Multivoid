@@ -27,10 +27,11 @@ live writer of a door's open state goes through `doorOpen` or `doorClose`, and o
 clients. After the body the lane sends the state the call left; a send no peer can take (none is
 world-ready) counts as made, since each joiner's snapshot at its ready edge carries the state. A
 receiver resolves the instance by key and applies it, moving its lane's baseline so nothing
-echoes. Beside every channel a poll of each indexed instance runs as a probe that logs and sends a
-change no verb reported (a `SHADOW MISS`); a client's keeps only its baseline until its world is
-announced. The polls retire once a long session with every writer class live -- creatures, the
-keypad, a blackout, the eventers -- logs no `SHADOW MISS`.
+echoes. A write no verb makes, a save's load, reaches a joiner in the connect snapshot; a send refused
+while a peer's connection goes is sent again each tick. No channel polls: a dev probe
+(`channel_shadow_probe`) polls every indexed instance and logs a change the lane neither sent nor
+applied as a `SHADOW MISS`, and sends nothing. A door is sent again where its swing ends
+(`move__FinishedFunc`), for a swing that settles otherwise than it began.
 
 The key is the game's own for the save-persisted instances and a portable identity computed
 by both peers for the rest (`coop/element/portable_identity`): the game mints a random key per
@@ -55,7 +56,7 @@ Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a m
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
 (which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
 lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
-runs `fix()` on 1 and refuses 0; the poll beside each reports and sends a change no verb made.
+runs `fix()` on 1 and refuses 0.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which

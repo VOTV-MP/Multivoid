@@ -60,6 +60,11 @@ inline bool ProbeLog() {
     return s_enabled;
 }
 
+inline bool ShadowProbe() {
+    static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::channel_shadow_probe);
+    return s_enabled;
+}
+
 // The per-feature engine vtable.
 struct Adapter {
     const char* name;                          // "door" / "light" / "container"
@@ -106,33 +111,12 @@ public:
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
 
-    // The shadow probe beside a channel's verbs: polls every indexed instance for a state change the
-    // verbs did not send, says it (a SHADOW MISS) and broadcasts it. A send no peer can take -- none is
-    // world-ready -- counts as sent: each joiner's snapshot at its ready edge carries the state. The
-    // first sighting of a key primes the baseline silently, since initial divergence is the connect
-    // snapshot's job; ApplyResolved primes lastKnown_ to what the device reads after an apply, so an
-    // echo never shows as a delta. Game thread.
-    void PollAndBroadcast() {
-        if (echo_.load(std::memory_order_acquire)) return;  // mid-apply
-        if (!IndexCurrent()) return;  // a dead world's index: wait for the hub
-        auto* s = session_.load(std::memory_order_acquire);
-        // Solo host: nobody to send to. lastKnown_ is not advanced here; OnDisconnect clears it and
-        // the connect snapshot re-primes every key on the next join, so a change made while solo
-        // reaches the joiner through the snapshot rather than as a stale edge.
-        if (!s || !s->connected()) return;
-        // A HostAuth client never poll-broadcasts: its door is render-only, its isOpened moves only
-        // when a host state is applied, and a client poll would report the host's own commands back
-        // as its own, the feedback storm that oscillated doors. The non-authority sends its player's
-        // verbs only (coop/interactables/door_verb_intent).
-        if (mode_ == Mode::HostAuth && s->role() != coop::net::Role::Host) return;
-        // A client's load of a world is the host's save: until it announced that world ready, the poll
-        // keeps its baseline and sends nothing, as the verbs' edges do, and the host's snapshot at the
-        // announce carries the truth. The index holds one world, so its first live actor answers.
-        const bool isClient = s->role() != coop::net::Role::Host;
-        int worldTold = isClient ? -1 : 1;  // -1: not asked yet this pass
-        // The index refs are snapshotted so indexMutex_ is not held across ReadState and Send. The
-        // buffer is a member (game-thread serial) whose strings are assigned in place, so the per-tick
-        // path allocates only when a key outgrows the slot it lands in.
+    // The dev probe beside the verbs (channel_shadow_probe): polls every indexed instance and says a
+    // change the lane neither sent nor applied, a SHADOW MISS -- a writer no watched verb covers. It
+    // sends nothing and keeps a baseline of its own, so it changes nothing the lane does; the first
+    // sighting of a key primes that baseline. Game thread.
+    void ShadowProbeTick() {
+        if (!IndexCurrent()) return;
         auto& refs = pollScratch_;
         size_t count = 0;
         {
@@ -150,36 +134,19 @@ public:
             if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
             bool cur = false;
             if (!a_.ReadState(r.second.actor, cur)) continue;
-            if (worldTold < 0) worldTold = coop::net_pump::IsInAnnouncedWorld(r.second.actor) ? 1 : 0;
+            auto seen = probeLast_.find(r.first);
+            if (seen == probeLast_.end()) { probeLast_[r.first] = cur; continue; }
+            if (seen->second == cur) continue;
+            seen->second = cur;
+            bool accounted = false;
             {
                 std::lock_guard<std::mutex> lk(stateMutex_);
                 auto it = lastKnown_.find(r.first);
-                if (it == lastKnown_.end() || worldTold == 0) { lastKnown_[r.first] = cur; continue; }  // prime silently
-                if (it->second == cur) {                                               // no change
-                    // A refused change that reverted before the channel freed: the streak is over.
-                    if (!sendRefused_.empty()) sendRefused_.erase(r.first);
-                    continue;
-                }
+                accounted = it != lastKnown_.end() && it->second == cur;
             }
-            // The verbs sent every change they saw; one the poll finds first was made by a writer no
-            // watched verb covers -- the migration's measurement, said and sent. A key whose verb did
-            // report it and whose send was refused is sent again here, and is not a miss.
-            if (!sendRefused_.count(r.first))
-                UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it",
-                        a_.name, r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF");
-            coop::net::KeyedTogglePayload p{};
-            WireKeyFromString(r.first, p.key);
-            p.action = cur ? 1 : 0;
-            if (s->SendReliable(a_.kind, &p, sizeof(p)) || !s->AnyWorldReadyPeer()) {
-                { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[r.first] = cur; }
-                sendRefused_.erase(r.first);
-                UE_LOGI("%s: sent %s key='%ls'", a_.name, cur ? "ON" : "OFF", r.first.c_str());
-            } else if (sendRefused_.insert(r.first).second) {
-                // A world-ready peer is there and the send still failed (its connection is going):
-                // this poll tries again each tick, said once per streak.
-                UE_LOGW("%s: SendReliable refused key='%ls' with a world-ready peer -- retrying every poll",
-                        a_.name, r.first.c_str());
-            }
+            if (!accounted)
+                UE_LOGW("%s: SHADOW MISS key='%ls' %s -> %s with no watched verb reporting it", a_.name,
+                        r.first.c_str(), cur ? "OFF" : "ON", cur ? "ON" : "OFF");
         }
     }
 
@@ -303,8 +270,37 @@ public:
                             "%d still pending", a_.name, applied, expired, backstopped, still);
             }
         }
-        // The poll, every tick: bool reads over the current index.
-        PollAndBroadcast();
+        RetryRefused();
+        if (ShadowProbe()) ShadowProbeTick();
+    }
+
+    // A key whose send was refused with a world-ready peer present (its connection is going) is sent
+    // again each tick, from what the device reads now, until it goes or the device does. The set is
+    // empty but for a connection on its way out. Game thread.
+    void RetryRefused() {
+        if (sendRefused_.empty()) return;
+        auto* s = session_.load(std::memory_order_acquire);
+        if (!s || !s->connected()) return;
+        std::vector<std::wstring> keys(sendRefused_.begin(), sendRefused_.end());
+        for (const std::wstring& key : keys) {
+            void* actor = ResolveFast(key);
+            bool cur = false;
+            if (!actor || !a_.ReadState(actor, cur)) {
+                sendRefused_.erase(key);
+                continue;
+            }
+            bool reverted = false;
+            {
+                std::lock_guard<std::mutex> lk(stateMutex_);
+                auto it = lastKnown_.find(key);
+                reverted = it != lastKnown_.end() && it->second == cur;
+            }
+            if (reverted) {
+                sendRefused_.erase(key);  // back to what the peers have: nothing to send
+                continue;
+            }
+            SendEdge(key, cur, s);
+        }
     }
 
     void OnDisconnect() {
@@ -314,6 +310,7 @@ public:
             UE_LOGI("%s: session end -- %llu verb edge(s) ran on a device the index did not hold yet, not sent",
                     a_.name, static_cast<unsigned long long>(unindexedEdges_));
         unindexedEdges_ = 0;
+        probeLast_.clear();
         std::lock_guard<std::mutex> lk(stateMutex_);
         const size_t n = lastKnown_.size();
         lastKnown_.clear();
@@ -507,8 +504,9 @@ private:
     // Sends the key's state when it differs from what the peers last got, and primes lastKnown_ to
     // it. No world-ready peer is a vacuous success: each joiner's snapshot at its ready edge carries
     // the state (Session::AnyWorldReadyPeer). A send that fails with a world-ready peer present --
-    // every such peer's connection is going (SendBacklog's Dropped) -- leaves the baseline, and the
-    // poll sends the key again at its next tick. The authority over the key's change, game thread.
+    // every such peer's connection is going (SendBacklog's Dropped) -- leaves the baseline, and
+    // RetryRefused sends the key again at the next tick. The authority over the key's change, game
+    // thread.
     void SendEdge(const std::wstring& key, bool cur, coop::net::Session* s) {
         {
             std::lock_guard<std::mutex> lk(stateMutex_);
@@ -526,7 +524,7 @@ private:
                     cur ? "ON" : "OFF", key.c_str());
         } else if (sendRefused_.insert(key).second) {
             UE_LOGW("%s: SendReliable refused key='%ls' at the verb with a world-ready peer -- its "
-                    "connection is going; the poll sends it again", a_.name, key.c_str());
+                    "connection is going; sent again each tick", a_.name, key.c_str());
         }
     }
 
@@ -554,10 +552,11 @@ private:
 
     std::mutex stateMutex_;
     std::unordered_map<std::wstring, bool> lastKnown_;
-    std::unordered_set<std::wstring> sendRefused_;               // GT-only: keys whose refused send is already logged
+    std::unordered_set<std::wstring> sendRefused_;               // GT-only: refused sends, retried each tick
 
     std::unordered_map<std::wstring, Pending> pending_;            // GT-only
-    std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: reused poll snapshot buffer
+    std::vector<std::pair<std::wstring, Ref>> pollScratch_;       // GT-only: the dev probe's snapshot buffer
+    std::unordered_map<std::wstring, bool> probeLast_;           // GT-only: the dev probe's own baseline
     std::chrono::steady_clock::time_point lastRetry_{};           // GT-only
     size_t lastLogCount_ = SIZE_MAX;                              // GT-only: dedup the rebuilt log
     uint64_t lastLogHash_ = 0;                                   // GT-only

@@ -21,12 +21,15 @@ namespace {
 namespace D  = ue_wrap::door;
 namespace sg = ue_wrap::script_gate;
 
-// Only door_C declares either name, so no other class's body reaches these callbacks; each still
-// gates on the door class, which also skips a door the resolve has not reached yet.
-struct StateWatch { const wchar_t* name; int tag; const char* what; };
+// doorOpen and doorClose are door_C's alone; a timeline named `move` gives other classes a
+// move__FinishedFunc too, so each callback gates on the door class, which also skips a door the
+// resolve has not reached yet. The swing's end is watched after its body only: a client's copy ends
+// the swings the lane applies to it.
+struct StateWatch { const wchar_t* name; int tag; const char* what; bool refuseOnClient; };
 constexpr StateWatch kWatches[] = {
-    { L"doorOpen",  0x44534f50 /*'DSOP'*/, "doorOpen" },
-    { L"doorClose", 0x4453434c /*'DSCL'*/, "doorClose" },
+    { L"doorOpen",           0x44534f50 /*'DSOP'*/, "doorOpen",        true },
+    { L"doorClose",          0x4453434c /*'DSCL'*/, "doorClose",       true },
+    { L"move__FinishedFunc", 0x4453454e /*'DSEN'*/, "the swing's end", false },
 };
 constexpr int kWatchCount = static_cast<int>(sizeof(kWatches) / sizeof(kWatches[0]));
 
@@ -86,7 +89,8 @@ void OnStatePost(const sg::Call& call) {
 void RegisterWatches() {
     for (int i = 0; i < kWatchCount; ++i) {
         if (g_reg[i] != Reg::Pending) continue;
-        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnStatePre, &OnStatePost)) {
+        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, kWatches[i].refuseOnClient ? &OnStatePre : nullptr,
+                          &OnStatePost)) {
             g_reg[i] = Reg::Registered;
             continue;
         }
@@ -113,7 +117,7 @@ void Tick() {
     }
     if (live == kWatchCount) {
         g_settled = true;
-        UE_LOGI("[DOOR-STATE] the door state gates are live: doorOpen and doorClose");
+        UE_LOGI("[DOOR-STATE] the door state gates are live: doorOpen, doorClose and the swing's end");
     } else if (pending == 0 && sg::PendingNameCount() == 0) {
         g_settled = true;
         UE_LOGE("[DOOR-STATE] %d of %d door state gates are dead (refused, or resolved into a full table) -- the "
