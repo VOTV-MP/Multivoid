@@ -6,8 +6,6 @@
 #include "coop/element/intent_authority.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"
 #include "coop/props/active_drive.h"
 
 #include "ue_wrap/core/log.h"
@@ -55,6 +53,7 @@ bool g_watchInstalled = false;
 bool g_watchLive = false;
 
 uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
+bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 
 struct Bucket {
     float    tokens = kPressBurst;
@@ -78,14 +77,12 @@ bool TakeToken(uint8_t slot) {
 }
 
 // ---- host side -------------------------------------------------------------------------------
-void Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
+// One press, run or refused and then consumed, or left at the head of its queue: false while the host
+// has no body for the sender, the seconds between a joiner's curtain and its first pose. That is a
+// mid-join window rather than a verdict, which the door, keypad and container lanes wait out the same
+// way (principle 8): a press made in it is not lost.
+bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
     (void)p;  // verb 0 is the only face with a lane; the dispatcher refuses the rest
-    coop::RemotePlayer* puppet = coop::players::Registry::Get().Puppet(slot);
-    if (!puppet || !puppet->valid() || !puppet->GetActor()) {
-        ++g_denied;
-        UE_LOGI("[DRONE-CALL] DENY slot=%u -- no live body", static_cast<unsigned>(slot));
-        return;
-    }
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.
@@ -93,14 +90,23 @@ void Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
     const int32_t nc = D::LiveConsoles(consoles, static_cast<int32_t>(std::size(consoles)));
     const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kConsoleReachUU);
     void* console = nullptr;
-    for (int32_t i = 0; i < nc && !console; ++i)
-        if (token.Authorize(consoles[i]).outcome == coop::element::IntentOutcome::Ok)
-            console = consoles[i];
+    for (int32_t i = 0; i < nc && !console; ++i) {
+        const coop::element::IntentOutcome o = token.Authorize(consoles[i]).outcome;
+        if (o == coop::element::IntentOutcome::NoBody) {
+            if (!g_waitSaid[slot]) {
+                g_waitSaid[slot] = true;
+                UE_LOGI("[DRONE-CALL] slot %u's presses wait: the host has no body for it yet",
+                        static_cast<unsigned>(slot));
+            }
+            return false;
+        }
+        if (o == coop::element::IntentOutcome::Ok) console = consoles[i];
+    }
     if (!console) {
         ++g_denied;
         UE_LOGI("[DRONE-CALL] DENY slot=%u -- none of the %d live console(s) is within reach",
                 static_cast<unsigned>(slot), nc);
-        return;
+        return true;
     }
     // The lid is the console's own gate on its keyboard, and it is shared state the door lane
     // already carries, so the host reads its own copy rather than trusting the press.
@@ -108,18 +114,19 @@ void Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
         ++g_denied;
         UE_LOGI("[DRONE-CALL] DENY slot=%u -- the console's lid is shut here",
                 static_cast<unsigned>(slot));
-        return;
+        return true;
     }
     if (!D::TriggerFly(console)) {
         ++g_denied;
         UE_LOGW("[DRONE-CALL] slot=%u -- triggerFly did not dispatch (no drone reference or the "
                 "verb did not resolve)", static_cast<unsigned>(slot));
-        return;
+        return true;
     }
     ++g_flown;
     UE_LOGI("[DRONE-CALL] PRESSED console %p for slot=%u (#%llu) -- the drone's own body owns the "
             "outcome", console, static_cast<unsigned>(slot),
             static_cast<unsigned long long>(g_flown));
+    return true;
 }
 
 // ---- the client's gate -----------------------------------------------------------------------
@@ -174,11 +181,14 @@ void Tick(coop::net::Session& session) {
 
     if (session.role() != coop::net::Role::Host) return;
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-        if (g_pending[slot].empty()) continue;
-        if (!TakeToken(slot)) continue;
+        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::DroneFlyIntentPayload p = g_pending[slot].front();
-        g_pending[slot].pop_front();
-        Execute(session, p, slot);
+        if (Execute(session, p, slot)) {
+            g_pending[slot].pop_front();
+            g_waitSaid[slot] = false;        // a consumed press ends the wait's streak
+        } else {
+            g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
+        }
     }
 }
 
@@ -205,6 +215,7 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_pending[slot].clear();
     g_rate[slot] = Bucket{};
+    g_waitSaid[slot] = false;
 }
 
 void OnDisconnect() {
@@ -215,6 +226,7 @@ void OnDisconnect() {
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
+        g_waitSaid[slot] = false;
     }
     g_sent = g_flown = g_denied = 0;
 }

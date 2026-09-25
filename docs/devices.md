@@ -187,10 +187,13 @@ looking at -- the keyboard runs the drone's own call-or-send verb, the other fac
 drone's leave timer -- and the console holds its drone as a level reference, so every peer's
 console points at that peer's own drone. A client's press therefore reached a mirror whose flight
 tick is suppressed: nothing moved and nobody heard about it, which is why only the host could work
-the button. The client now refuses its own body at the script-body gate and sends the console's
-element id; the host re-tests reach and its own copy of the lid, then runs the same verb, so the
-flight starts on the machine that owns it and arrives on the stream that already carries it
-(`coop/interactables/drone_call_intent`). The leave-timer face has no lane and stays local.
+the button. The client now refuses its own body at the script-body gate and sends the press. The
+console carries no identity to name, so the host takes the console of its own world that the sender
+stands at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the
+machine that owns it and arrives on the stream that already carries it
+(`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
+body, from a joiner who presses at once, waits for the body rather than being refused, as the door,
+keypad and container lanes wait. The leave-timer face has no lane and stays local.
 
 ### The balance
 
@@ -352,7 +355,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
-| `DroneFlyIntent` | a client to the host | the garage console whose call button it pressed |
+| `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
 | `BalanceSync` | the host to all | the absolute balance |
 | `UpgradeLevels` | the host to all | the eighteen levels, whole |
 | `UpgradeIntent` | a client to the host | the panel row's index and whether it is a buy or a sell |
