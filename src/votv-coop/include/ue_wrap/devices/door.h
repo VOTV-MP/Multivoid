@@ -91,13 +91,13 @@ int ReadSensorOverlaps(void* door, void** out, int maxOut);
 bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 
 // Force-snap to a state, independent of proximity. A door's open and close is a timeline
-// animation that advances only while the door actor ticks, and the engine throttles ticks for
-// actors far from a player, so an open on a door whose local player is far freezes
-// mid-animation and the open state is never set. The force variants complete the state
-// without the animation: write the timeline alpha to the end and the direction, then call the
-// door's animation-finished handler, which sets the open state and snaps the mesh to the final
-// pose; measured reliable on far, frozen doors. This is how a renderer or host sets a door's
-// state regardless of where its own player is. Game thread.
+// animation that advances only while the door actor ticks, so a door this peer stops ticking
+// freezes mid-animation and its open state is never set; how far that takes is not measured (a
+// host copy 694 m from its own player swung and autoclosed in the door drill). The force variants
+// complete the state without the animation: write the timeline alpha to the end and the direction,
+// then call the door's animation-finished handler, which sets the open state and snaps the mesh to
+// the final pose. A receiver's apply falls back on them when its swing has not ended in time. Game
+// thread.
 void ForceOpen(void* door);
 void ForceClose(void* door);
 

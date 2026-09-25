@@ -41,8 +41,10 @@ constexpr int kWatchCount = static_cast<int>(sizeof(kWatches) / sizeof(kWatches[
 
 // The reach a sender's verb is judged against. A player's press and hit reach as far as the look-at
 // trace, whose length is mainPlayer.armLength: 200 by default, replaced by the held weapon's own
-// length from list_weapons, a table not read here. Twice the default is the bound: it refuses a
-// door the sender cannot be at, never a reach the game itself would allow a held weapon.
+// length from list_weapons, a table not read here. Twice the default is the reach; the authority adds
+// the door's own bounds radius and a 600 uu allowance for the puppet's pose lagging the sender
+// (coop/element/intent_authority), so the bound refuses a door the sender cannot be near, never a
+// reach the game itself would allow a held weapon.
 constexpr float kDoorReachUU = 400.0f;
 
 // A sender's verbs run from a bounded queue at a bounded rate: a melee swing is a few hits a

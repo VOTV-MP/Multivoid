@@ -345,13 +345,12 @@ void SmartApply(void* door, bool open) {
     // joiner loads `jammed` from the save and runs its own unjam timer from its own load, and a
     // jammed copy's doorOpen would play the jam shake instead of opening.
     if (open && g_jammedOff >= 0) *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_jammedOff) = false;
-    // Play the native animated swing (smooth wherever the door ticks, any distance up to its
-    // real tick range, no magic radius).
+    // Play the native animated swing (smooth wherever the door ticks, no magic radius).
     if (open) CallDoorOpen(door, true); else CallDoorClose(door, true);
-    // The swing freezes beyond tick range (far, invisible). Verify shortly: a near door reaches
-    // the target before the deadline (removed, no snap); a far frozen door is force-snapped so
-    // its state stays correct. The deadline exceeds the longest swing, so a slow but completing
-    // animation is never double-finished.
+    // A copy that does not tick freezes mid-swing. Verify shortly: a ticking door reaches the
+    // target before the deadline (removed, no snap); a frozen one is force-snapped so its state
+    // stays correct. The deadline exceeds the longest swing, so a slow but completing animation
+    // is never double-finished.
     VerifyEntry ve{ open, std::chrono::steady_clock::now() + std::chrono::milliseconds(1500), {} };
     ve.ref.Set(door);  // fresh at the apply seam
     g_verify[door] = ve;
