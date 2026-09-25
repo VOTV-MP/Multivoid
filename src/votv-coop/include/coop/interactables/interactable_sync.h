@@ -8,10 +8,11 @@
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
 // Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key
-// index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. A
-// sender polls every indexed instance each tick -- on every peer for a symmetric channel, on the
-// host for light groups -- except doors, which the host sends at their state verbs
-// (coop/interactables/door_state_verbs). The model: docs/devices.md.
+// index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every
+// channel is sent at the verbs that write its state, on the authority: the host for doors and light
+// groups (coop/interactables/door_state_verbs, lightgroup_verbs), the peer that ran it for the
+// symmetric rest (coop/interactables/toggle_verbs); a poll of every indexed instance runs beside each
+// as the probe of a change no verb made, and sends it. The model: docs/devices.md.
 
 #pragma once
 

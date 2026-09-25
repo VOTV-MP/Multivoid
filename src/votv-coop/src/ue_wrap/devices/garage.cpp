@@ -59,6 +59,9 @@ bool EnsureResolved() {
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("garage: resolved garage_C=%p Open@0x%04X acivae=%p (identity=level-export FName)",
             cls, openOff, acivaeFn);
+    if (g_movOff < 0 || !g_runTriggerFn)
+        UE_LOGW("garage: mov@%d runTrigger=%p did not both resolve -- a drill cannot wait for a garage's rest "
+                "or toggle it", g_movOff, g_runTriggerFn);
     return true;
 }
 

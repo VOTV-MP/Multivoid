@@ -24,6 +24,10 @@ bool IsSwinger(void* obj);
 // Read the lid's `opened` bool into `on`. False if the read could not be made.
 bool TryReadOpen(void* swinger, bool& on);
 
+// Read whether the lid can lock, its `isLockable`: a lockable lid ticks after it opens and closes
+// itself at rest, and refuses open() while `locked`. False if the read could not be made. Game thread.
+bool TryReadLockable(void* swinger, bool& lockable);
+
 // Open(damage) / Close(). MUST run on the game thread. `damage` is the BP's
 // Open(bool Damage) param -- false for a normal (player/receiver) open. Return
 // false on null / unresolved UFunction.

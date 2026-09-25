@@ -58,8 +58,6 @@ const Adapter g_doorAdapter = {
     },
     // The apply is a swing that needs finishing.
     &ue_wrap::door::TickSmartApply,
-    // The host sends a door at its state verbs (coop/interactables/door_state_verbs).
-    /*edgeFed*/ true,
 };
 const Adapter g_lightAdapter = {
     // Keyed on the switch, so the receiver replays use() and the switch flips visibly with its
@@ -82,9 +80,6 @@ const Adapter g_lightAdapter = {
     // (coop/interactables/lightgroup_verbs). On the host the full use() runs: replaying the client's
     // switch edge is how its press becomes an authoritative group change.
     [](void* a, bool /*on*/) -> bool { return ue_wrap::lightswitch::CallUse(a); },
-    nullptr,
-    // Each peer sends its switch at its use() (coop/interactables/toggle_verbs).
-    /*edgeFed*/ true,
 };
 // The light group (Atrigger_lightRoot_C), the state a player sees. The switch adapter syncs the
 // switch's `a`, this one the group's isActive: the game keeps them decoupled (use() toggles `a`
@@ -113,8 +108,6 @@ const Adapter g_lightGroupAdapter = {
         return ue_wrap::lightswitch::ApplyGroupState(a, on);
     },
     nullptr,  // no TickApply: runTrigger lands the state in its own body
-    // The host sends a group at its runTrigger (coop/interactables/lightgroup_verbs).
-    /*edgeFed*/ true,
 };
 const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
@@ -123,9 +116,6 @@ const Adapter g_containerAdapter = {
     &ue_wrap::prop::GetKeyString,  // a swinger is an Aprop_C
     &ue_wrap::swinger::TryReadOpen,
     [](void* a, bool on) -> bool { return on ? ue_wrap::swinger::CallOpen(a, false) : ue_wrap::swinger::CallClose(a); },
-    nullptr,
-    // Each peer sends its lid at its open or close (coop/interactables/toggle_verbs).
-    /*edgeFed*/ true,
 };
 // The garage door (Agarage_C), symmetric: no sensor and no autoclose, so a symmetric poll never
 // oscillates. Its identity is the level-export FName, not the save key: a garage that misses
@@ -140,15 +130,12 @@ const Adapter g_garageAdapter = {
     &ue_wrap::garage::GetNameKey,
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
-    nullptr,
-    // Each peer sends its garage at its runTrigger (coop/interactables/toggle_verbs).
-    /*edgeFed*/ true,
 };
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
 // ue_wrap::appliance dispatches by class to the right bool offset and refresh verb, so the peer's
-// mesh, FX and audio repaint. Key is Aactor_save_C::Key. The switches and breakers that drive
-// them just flip the bool, which the poll catches.
+// mesh, FX and audio repaint. Key is Aactor_save_C::Key. Each class's own verb writes its bool (its
+// actionOptionIndex, a server box's visual), where the peer that ran it sends it.
 const Adapter g_applianceAdapter = {
     "appliance", coop::net::ReliableKind::ApplianceState,
     &ue_wrap::appliance::EnsureResolved,
@@ -156,9 +143,6 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
-    nullptr,
-    // Each peer sends its appliance at the verb that writes its bool (coop/interactables/toggle_verbs).
-    /*edgeFed*/ true,
 };
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
@@ -172,9 +156,6 @@ const Adapter g_doorBoxAdapter = {
     &ue_wrap::door_box::GetNameKey,
     &ue_wrap::door_box::TryReadOpened,
     [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
-    nullptr,
-    // Each peer sends its box at the verb that moves `opened` (coop/interactables/toggle_verbs).
-    /*edgeFed*/ true,
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
@@ -201,10 +182,9 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
     }
 }
 
-// A polled channel's sender is a per-tick poll of each state field (Channel::PollAndBroadcast),
-// which catches every writer without watching each one; the door channel is sent at the door's own
-// state verbs (coop/interactables/door_state_verbs) and the light group channel at its runTrigger
-// (coop/interactables/lightgroup_verbs), each with the poll as its shadow probe.
+// Each channel is sent at the verbs that write its state (door_state_verbs, lightgroup_verbs,
+// toggle_verbs); a per-tick poll of each state field (Channel::PollAndBroadcast) runs beside it as
+// the shadow probe, which sends and says a change no watched verb made.
 
 // The receiver index: the channels register as scan-hub consumers, and the hub builds every index
 // on its own sliced cadence.
@@ -228,7 +208,7 @@ void Install(coop::net::Session* session) {
     g_garage.SetSession(session);
     g_appliance.SetSession(session);
     g_doorBox.SetSession(session);
-    IndexChannels();              // build the key->actor index (sender polls it; receiver resolves by it)
+    IndexChannels();              // build the key->actor index (edges and the probe name by it; receivers resolve by it)
 }
 
 void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {

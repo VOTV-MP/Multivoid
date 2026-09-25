@@ -20,7 +20,8 @@ namespace R = reflection;
 
 // One descriptor per appliance class. `applyParam` names the bool parameter of a setter that writes
 // the bool itself (serverBox's visual(active)); the others direct-write the bool then call a no-arg
-// refresh verb. The bool is the one the class's own getData saves: the state its use verb toggles.
+// refresh verb. The bool is the state the class's use verb toggles, the one its getData saves (a
+// server box's `active` is not saved).
 struct Desc {
     const wchar_t* className;
     const wchar_t* boolName;

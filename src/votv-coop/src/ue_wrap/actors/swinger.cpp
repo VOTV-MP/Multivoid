@@ -21,6 +21,7 @@ std::atomic<bool> g_resolved{false};
 
 void*   g_swingerCls = nullptr;  // prop_swinger_C UClass
 int32_t g_openedOff  = -1;       // Aprop_swinger_C::opened (Alpha 0.9.0-n: 0x03C5)
+int32_t g_lockableOff = -1;      // Aprop_swinger_C::isLockable (optional: only a drill reads it)
 void*   g_openFn     = nullptr;  // Open(bool Damage)
 void*   g_closeFn    = nullptr;  // Close()
 
@@ -60,6 +61,7 @@ bool EnsureResolved() {
 
     g_swingerCls = cls;
     g_openedOff  = openedOff;
+    g_lockableOff = R::FindPropertyOffset(cls, L"isLockable");
     g_openFn     = openFn;
     g_closeFn    = closeFn;
     g_resolved.store(true, std::memory_order_release);
@@ -74,6 +76,12 @@ bool IsSwinger(void* obj) {
     if (!cls) return false;
     void* bases[1] = { g_swingerCls };
     return R::IsDescendantOfAny(cls, bases, 1);
+}
+
+bool TryReadLockable(void* swinger, bool& lockable) {
+    if (!swinger || g_lockableOff < 0) return false;
+    lockable = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(swinger) + g_lockableOff);
+    return true;
 }
 
 bool TryReadOpen(void* swinger, bool& on) {

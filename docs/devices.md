@@ -19,20 +19,18 @@ an instance that has not streamed in yet, echo suppression, and the connect snap
 family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines each: doors, light
 switches, light groups, container lids, the garage, the appliances, the lockers.
 
-The owner polls each indexed instance's state field once a tick -- every peer on a symmetric
-channel -- which catches every writer at once (a press, an NPC's proximity, a keypad unlock, a
-script) without watching each. On a change it broadcasts the new state with the instance's key,
-the host relays a client's symmetric edge to the other clients, and a receiver resolves the
-instance by key and applies it, moving its own poll baseline so nothing echoes. Doors and light
-groups are sent at their own verbs instead: every live writer of a door's open state goes through
-`doorOpen` or `doorClose`, and of a group's `isActive` through its `runTrigger`, and the
-script-body gate watches them (`coop/interactables/door_state_verbs`,
-`coop/interactables/lightgroup_verbs`). After the body on the host the lane sends the state it left;
-a send no peer can take (none is world-ready) counts as made, since each joiner's snapshot at its
-ready edge carries the state. While that is measured, the host's poll runs beside them as a probe
-that logs and sends any change no verb reported (a `SHADOW MISS`). It retires, and the door and
-group polls with it, once a long session with every writer class live -- creatures, the keypad, a
-blackout, the eventers -- logs no `SHADOW MISS` on the host.
+Each channel is sent at the verbs that write its state, which the script-body gate watches: every
+live writer of a door's open state goes through `doorOpen` or `doorClose`, and of a light group's
+`isActive` through its `runTrigger`, both sent by the host (`coop/interactables/door_state_verbs`,
+`coop/interactables/lightgroup_verbs`); a symmetric device is sent by the peer whose verb ran
+(`coop/interactables/toggle_verbs`, below), and the host relays a client's edge to the other
+clients. After the body the lane sends the state the call left; a send no peer can take (none is
+world-ready) counts as made, since each joiner's snapshot at its ready edge carries the state. A
+receiver resolves the instance by key and applies it, moving its lane's baseline so nothing
+echoes. Beside every channel a poll of each indexed instance runs as a probe that logs and sends a
+change no verb reported (a `SHADOW MISS`); a client's keeps only its baseline until its world is
+announced. The polls retire once a long session with every writer class live -- creatures, the
+keypad, a blackout, the eventers -- logs no `SHADOW MISS`.
 
 The key is the game's own for the save-persisted instances and a portable identity computed
 by both peers for the rest (`coop/element/portable_identity`): the game mints a random key per
@@ -53,10 +51,10 @@ a switch's `a` at its `use()`, the one writer of `a`, on the peer that ran it
 (`coop/interactables/toggle_verbs`), the garage lane a garage's Open at its `runTrigger`, the one
 writer of Open past the load, and the appliance lane an appliance's bool at its `actionOptionIndex`
 (a faucet's, sink's, shower's, oven's and tape unit's toggle) or a server box's `visual` (the kerfur
-Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, an Arir's) and the drone
+Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a murder kerfur's) and the drone
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
-(which its grab, damage, padlock and resting swing all call); the poll beside each only reports a
-change no verb made.
+(which its setup, grab, damage, padlock and resting swing, and a cremator's door, call); the poll beside each reports and sends
+a change no verb made.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which

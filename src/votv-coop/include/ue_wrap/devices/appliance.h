@@ -6,7 +6,7 @@
 // All six are Aactor_save_C descendants carrying a single bool on/off toggle and a no-arg
 // refresh verb (upd/updIsOn), except serverBox, whose setter visual(bool) writes its bool.
 // None has a sensor / autoclose -> none auto-reverts -> they sync SYMMETRICALLY (like
-// lights/garage), driven by the generic Channel's state poll of each class's bool. Identity =
+// lights/garage), each sent at the class's own verb (coop/interactables/toggle_verbs). Identity =
 // the inherited Aactor_save_C::Key (save-persistent, cross-peer stable). The per-class bool name
 // and the apply verb live in ONE table, appliance.cpp's g_descs, and a name that does not resolve
 // leaves its class out: sink fires updIsOn() then upd() because its BP fires both, serverBox goes

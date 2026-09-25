@@ -3,6 +3,7 @@
 #include "coop/dev/toggle_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/element/portable_identity.h"  // a pick both peers make alike
 #include "coop/interactables/interactable_sync.h"  // each lane's key
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -34,6 +35,8 @@ using Clock = std::chrono::steady_clock;
 // A step that waits on the other peer's toggle ends here: that toggle waits for its device to take
 // one, then crosses in one reliable send at the verb.
 constexpr auto kCrossBound = std::chrono::seconds(30);
+// A kind whose devices this world holds but whose lane names none within this, is said and left.
+constexpr auto kNameBound = std::chrono::seconds(60);
 
 // One kind of device: how it is picked, read and toggled, as its own lane keys and reads it.
 struct Kind {
@@ -53,6 +56,11 @@ bool GarageAtRest(void* g) {
 bool GarageToggle(void* g, void* p) { return G::CallRunTrigger(g, p, 0); }
 bool TapToggle(void* a, void* p) { return A::CallAction(a, p, A::kTapToggleAction); }
 bool LockerToggle(void* l, void* p) { return DB::CallAction(l, p, DB::kToggleAction); }
+// A lid that cannot lock: no refused open, and no tick that closes it at rest on its own.
+bool IsSteadyLid(void* s) {
+    bool lockable = true;
+    return SW::IsSwinger(s) && SW::TryReadLockable(s, lockable) && !lockable;
+}
 bool LidToggle(void* s, void*) {
     bool open = false;
     return SW::TryReadOpen(s, open) && (open ? SW::CallClose(s) : SW::CallOpen(s, false));
@@ -64,7 +72,7 @@ constexpr Kind kKinds[] = {
     { "garage", &G::EnsureResolved, &G::IsGarage, &IS::GarageKey, &G::TryReadOpen, &GarageAtRest, &GarageToggle },
     { "tap", &A::EnsureResolved, &A::IsTap, &IS::ApplianceKey, &A::TryReadState, nullptr, &TapToggle },
     { "locker", &DB::EnsureResolved, &DB::IsLocker, &IS::DoorBoxKey, &DB::TryReadOpened, nullptr, &LockerToggle },
-    { "lid", &SW::EnsureResolved, &SW::IsSwinger, &IS::ContainerKey, &SW::TryReadOpen, nullptr, &LidToggle },
+    { "lid", &SW::EnsureResolved, &IsSteadyLid, &IS::ContainerKey, &SW::TryReadOpen, nullptr, &LidToggle },
 };
 
 enum class Phase { Unpicked, Waiting, Toggled, Done };
@@ -76,11 +84,13 @@ std::wstring g_key;
 int          g_start = -1;      // the device's state when this peer picked it
 int          g_last = -1;       // its state at the last reading
 bool         g_owed = false;    // this peer's toggle waits for its device to take one
+Clock::time_point g_owedSince{};  // since when
 bool         g_sawOwn = false;  // the client's copy has shown its own toggle
 Phase        g_phase = Phase::Unpicked;
 Clock::time_point g_since{};
 Clock::time_point g_nextTry{};  // the next pick attempt while the lane names the devices
 Clock::time_point g_nextSay{};  // the next line saying the pick still waits
+Clock::time_point g_pickSince{};  // the first pick attempt
 
 const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
@@ -106,6 +116,8 @@ bool Pick(int& seen) {
         if (!o || !R::IsLive(o) || !g_kind->Is(o)) continue;
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;  // the class default, no device
         ++seen;
+        // Only a device both peers name alike: a game key minted per process sorts anywhere.
+        if (coop::element::PortableWireKey(o).empty()) continue;
         std::wstring key = g_kind->Key(o);
         if (key.empty() || key == L"None") continue;
         if (!best || key < bestKey) {
@@ -120,11 +132,28 @@ bool Pick(int& seen) {
     return best != nullptr;
 }
 
+void Done(const char* verdict) {
+    g_phase = Phase::Done;
+    UE_LOGI("[TOGGLE-DRILL] %s DONE %s key='%ls' %s", Side(), g_kind ? g_kind->name : "?", g_key.c_str(), verdict);
+}
+
+void Owe() {
+    g_owed = true;
+    g_owedSince = Clock::now();
+}
+
 // The owed toggle, once the device takes one, and its copy read straight after. Asked again next tick
-// while it does not.
+// while it does not, up to the bound; a toggle that did not dispatch ends the run.
 void TryOwedToggle() {
-    if (g_kind->Ready && !g_kind->Ready(g_dev)) return;
+    if (g_kind->Ready && !g_kind->Ready(g_dev)) {
+        if (Clock::now() - g_owedSince <= kCrossBound) return;
+        UE_LOGW("[TOGGLE-DRILL] %s: the %s took no toggle within %lld s (never ready) -- FAIL", Side(),
+                g_kind->name, static_cast<long long>(kCrossBound.count()));
+        Done("never ready");
+        return;
+    }
     void* p = coop::players::Registry::Get().Local();
+    const int before = g_last;
     const bool ran = p && g_kind->Toggle(g_dev, p);
     bool now = false;
     if (g_kind->Read(g_dev, now)) g_last = now ? 1 : 0;
@@ -133,11 +162,8 @@ void TryOwedToggle() {
             g_key.c_str(), ran ? 1 : 0, g_last);
     g_owed = false;
     g_since = Clock::now();
-}
-
-void Done(const char* verdict) {
-    g_phase = Phase::Done;
-    UE_LOGI("[TOGGLE-DRILL] %s DONE %s key='%ls' %s", Side(), g_kind ? g_kind->name : "?", g_key.c_str(), verdict);
+    if (!ran) Done("the toggle did not dispatch -- FAIL");
+    else if (g_last == before) Done("the device took the toggle and did not move (refused) -- INCONCLUSIVE");
 }
 
 // The kind named by toggle_drill, or null (off, or a name no kind has, said once).
@@ -164,10 +190,12 @@ void Tick(coop::net::Session* session) {
     if (!session || !session->connected() || !RoleIsReady() || !g_kind->EnsureResolved()) return;
     const bool host = coop::roster::LocalIsHost();
     if (g_phase == Phase::Unpicked) {
+        if (g_pickSince == Clock::time_point{}) g_pickSince = Clock::now();
         if (Clock::now() < g_nextTry) return;
         int seen = 0;
         if (!Pick(seen)) {
-            if (seen > 0) {  // its lane has not named them yet: asked again in a second, said every ten
+            if (seen > 0 && Clock::now() - g_pickSince <= kNameBound) {
+                // Its lane has not named them yet: asked again in a second, said every ten.
                 g_nextTry = Clock::now() + std::chrono::seconds(1);
                 if (Clock::now() >= g_nextSay) {
                     g_nextSay = Clock::now() + std::chrono::seconds(10);
@@ -175,7 +203,8 @@ void Tick(coop::net::Session* session) {
                 }
                 return;
             }
-            UE_LOGW("[TOGGLE-DRILL] %s: no %s in this world -- INCONCLUSIVE", Side(), g_kind->name);
+            UE_LOGW("[TOGGLE-DRILL] %s: %s -- INCONCLUSIVE", Side(), seen > 0
+                    ? "its lane named none of them within the bound" : "none of the kind in this world");
             Done("none");
             return;
         }
@@ -188,7 +217,7 @@ void Tick(coop::net::Session* session) {
         }
         g_start = g_last = on ? 1 : 0;
         g_phase = host ? Phase::Waiting : Phase::Toggled;
-        g_owed = !host;
+        if (!host) Owe();
         g_since = Clock::now();
         UE_LOGI("[TOGGLE-DRILL] %s picked %s key='%ls', its state %d", Side(), g_kind->name, g_key.c_str(), g_start);
         return;
@@ -199,7 +228,14 @@ void Tick(coop::net::Session* session) {
         return;
     }
     bool on = false;
-    if (!g_kind->Read(g_dev, on)) return;
+    if (!g_kind->Read(g_dev, on)) {
+        if (Clock::now() - g_since > kCrossBound) {
+            UE_LOGW("[TOGGLE-DRILL] %s: %s key='%ls' has not read for %lld s -- INCONCLUSIVE", Side(), g_kind->name,
+                    g_key.c_str(), static_cast<long long>(kCrossBound.count()));
+            Done("unread");
+        }
+        return;
+    }
     const int cur = on ? 1 : 0;
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - g_since).count();
     if (cur != g_last) {
@@ -216,7 +252,7 @@ void Tick(coop::net::Session* session) {
         // goes on waiting, so a client that joins again drills again.
         if (cur != g_start) {
             UE_LOGI("[TOGGLE-DRILL] host SAW the client's toggle key='%ls' after %lld ms", g_key.c_str(), ms);
-            g_owed = true;
+            Owe();
         }
         return;  // no bound here: the host waits for however long the client's join takes
     }
@@ -245,7 +281,7 @@ void OnDisconnect() {
     g_start = g_last = -1;
     g_owed = false;
     g_sawOwn = false;
-    g_nextTry = g_nextSay = {};
+    g_nextTry = g_nextSay = g_pickSince = {};
     g_phase = Phase::Unpicked;
 }
 

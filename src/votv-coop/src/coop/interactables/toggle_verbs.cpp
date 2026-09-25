@@ -115,8 +115,8 @@ void Tick() {
 void OnDisconnect() {
     for (int i = 0; i < kRowCount; ++i) {
         if (g_edges[i])
-            UE_LOGI("[TOGGLE-VERB] session end -- %s reached its lane %llu time(s)", kRows[i].what,
-                    static_cast<unsigned long long>(g_edges[i]));
+            UE_LOGI("[TOGGLE-VERB] session end -- %s ran on a device of its row %llu time(s), the "
+                    "lane's own applies among them", kRows[i].what, static_cast<unsigned long long>(g_edges[i]));
         g_edges[i] = 0;
     }
 }
