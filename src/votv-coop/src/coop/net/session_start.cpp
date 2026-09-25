@@ -174,19 +174,12 @@ bool Session::Start(const Config& cfg, Refusal* why) {
     // occupied. The counter is not reset, so generations stay unique across cycles and a stale
     // captured token can never alias a fresh occupant.
     for (int i = 0; i < kMaxPeers; ++i) peerGenBySlot_[i].store(0, std::memory_order_relaxed);
-    // The local-stream "has published" flags and the host's one-shot samples too (no lock: the net
-    // thread is not spawned yet). A Session reused after a Stop would otherwise fan out the prior
-    // session's last pose, pelvis, hand, cursor or host sample on its first send, before the game
-    // thread publishes this session's.
-    hasLocal_ = false;
-    hasLocalProp_ = false;
-    hasLocalRagdoll_ = false;
-    hasLocalHand_ = false;
-    hasLocalDeskCursor_ = false;
-    hasLocalDeskSim_ = false;
-    hostClockDue_ = false;
-    dishPoseDirty_ = false;
-    reelPoseDirty_ = false;
+    // Everything this peer sends starts empty, whole and under the writers' locks (Start can run on
+    // the harness's timeline thread, the game thread's release edges write the same state): a Session
+    // reused after a Stop would otherwise fan out the prior session's last pose, pelvis, hand,
+    // cursor, host sample or batch on its first send, before the game thread publishes this
+    // session's.
+    ResetLocalStreams();
 
     if (!EnsureGnsInit()) return false;
 
@@ -477,8 +470,6 @@ void Session::Stop() {
     // sample until the new host's sequence climbed past the old one's.
     { std::lock_guard<std::mutex> lk(remoteMutex_);
       for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
-    // And the host's batches still waiting to go out.
-    ResetLocalBatches();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

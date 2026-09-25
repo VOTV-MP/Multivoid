@@ -8,6 +8,7 @@
 #include "coop/net/eid_pose_queue.h"       // the trash-carry and driven-prop pose lanes
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
+#include "coop/net/local_streams.h"        // what this peer sends on its streams
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
 #include "coop/net/protocol.h"
@@ -460,8 +461,9 @@ private:
     // streams too. The caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
     void ResetOriginStreams(int peerSlot);  // the relayed streams only; remoteMutex_ held
-    // Session stop: the host's batches still waiting to be sent back to empty. Session stopped.
-    void ResetLocalBatches();
+    // Everything this peer has to send, back to empty under the locks its writers take: Start's first
+    // step, since Start can run off the game thread.
+    void ResetLocalStreams();
 
     // A game-thread read or take of one received stream: nothing unless connected, the slot in
     // range. Takes remoteMutex_.
@@ -631,49 +633,19 @@ private:
     // for LanDirect.
     std::shared_ptr<SignalingClient> signaling_;
 
-    // The local pose slot (the game thread writes, the net thread reads and fans out).
+    // What this peer sends on its streams (coop/net/local_streams.h): the game thread writes, the
+    // net thread's send round copies it whole, both under localMutex_.
     std::mutex localMutex_;
-    PoseSnapshot localPose_{};
-    // When localPose_ was sampled, stamped into the header instead of "now": a game-thread hitch
-    // would otherwise pair an old position with a fresh stamp.
-    uint32_t     localPoseStateMs_ = 0;
-    bool hasLocal_ = false;
-    PropPoseSnapshot localPropPose_{};
-    bool hasLocalProp_ = false;
-    uint32_t lastLocalPropSeq_ = 0;
-    // Local ragdoll pelvis physics, localPropPose_'s held/release shape.
-    RagdollPoseSnapshot localRagdollPose_{};
-    bool hasLocalRagdoll_ = false;
-    // Local hand-item transform, the same held/release shape.
-    HandPoseSnapshot localHandPose_{};
-    bool hasLocalHand_ = false;
-    // Local coords-panel cursor, the same held/release shape.
-    DeskCursorPoseSnapshot localDeskCursor_{};
-    bool hasLocalDeskCursor_ = false;
-    // Host NPC pose batch (SetLocalNpcPoseBatch); empty = nothing to send.
+    LocalStreams local_;
+    // The host's NPC and WorldActor pose batches, under localMutex_ too; empty = nothing to send.
     std::vector<EntityPoseSnapshot> localNpcBatch_;
-    bool hasLocalNpcBatch_ = false;
-    // Host WorldActor pose batch (SetLocalWorldActorPoseBatch); empty = nothing to send.
     std::vector<WorldActorPoseSnapshot> localWorldActorBatch_;
-    bool hasLocalWorldActorBatch_ = false;
     // The host-originated trash-carry and driven-prop queues, each with its own mutex (what a client
     // receives of them is in host_), and whether a client's batch of either has been said this
     // session (net thread sets, Stop clears).
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
     EidPoseQueue<PropPoseSnapshot>       propDrivePoses_;
     std::atomic<bool> saidClientTrashCarry_{false}, saidClientPropDrive_{false};
-    // Host world clock (SendHostClock), one datagram per sample handed over.
-    TimeSyncPayload localHostClock_{};
-    bool hostClockDue_ = false;
-    // Host download-sim vector (SetHostDeskSim), fanned out on its own ~100 ms throttle.
-    DeskSimSnapshot localDeskSim_{};
-    bool hasLocalDeskSim_ = false;
-    // Host dish-pose batch (SetHostDishPose), one datagram per publish.
-    DishPoseBody localDishPose_{};
-    bool dishPoseDirty_ = false;
-    // Host reel corrector (SetHostReelPose), one datagram per publish.
-    ReelPosePayload localReelPose_{};
-    bool reelPoseDirty_ = false;
 
     // What this peer keeps of the streams it receives (coop/net/remote_streams.h): the net thread
     // stores, the game thread reads or takes, both under remoteMutex_. Each origin slot's streams,

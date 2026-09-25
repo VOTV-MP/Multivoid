@@ -4,7 +4,8 @@
 //   per-peer:    PoseSnapshot / PropPose / RagdollPose / HandPose / DeskCursorPose
 //   host-single: ClockPose / DeskSimPose / DishPose / ReelPose
 // in four surfaces:
-//   - the game-thread publishers  (Set*)         -- local slots under localMutex_
+//   - the game-thread publishers  (Set*)         -- what this peer sends under localMutex_
+//     (coop/net/local_streams.h), reset whole at Start
 //   - the game-thread readers     (TryGet*)      -- the received streams under remoteMutex_,
 //     kept by owner (coop/net/remote_streams.h)
 //   - the net-thread receive-store (StoreStreamPacket) -- HandleMessage's grouped scalar
@@ -32,60 +33,65 @@ namespace coop::net {
 
 void Session::SetLocalPose(const PoseSnapshot& pose) {
     // Stamp the SAMPLE moment here, not the send moment in the net thread. This is the time the
-    // pose was TRUE, and the receiver's freshness accounting is only as good as that.
+    // pose was TRUE, and the receiver's freshness accounting is only as good as that; a game-thread
+    // hitch would otherwise pair an old position with a fresh stamp.
     const uint32_t stateMs = NowStateTimeMs24();
     std::lock_guard<std::mutex> lk(localMutex_);
-    localPose_ = pose;
-    localPoseStateMs_ = stateMs;
-    hasLocal_ = true;
+    local_.pose.Put(true, pose);
+    local_.poseStateMs = stateMs;
 }
 
 void Session::SetLocalPropPose(bool set, const PropPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalProp_ = set;
-    if (set) localPropPose_ = pose;
+    local_.prop.Put(set, pose);
 }
 
 void Session::SetLocalRagdollPose(bool set, const RagdollPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalRagdoll_ = set;
-    if (set) localRagdollPose_ = pose;
+    local_.ragdoll.Put(set, pose);
 }
 
 void Session::SetLocalHandPose(bool set, const HandPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalHand_ = set;
-    if (set) localHandPose_ = pose;
+    local_.hand.Put(set, pose);
 }
 
 void Session::SetLocalDeskCursor(bool set, const DeskCursorPoseSnapshot& pose) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalDeskCursor_ = set;
-    if (set) localDeskCursor_ = pose;
+    local_.deskCursor.Put(set, pose);
 }
 
 void Session::SendHostClock(const TimeSyncPayload& clock) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    localHostClock_ = clock;
-    hostClockDue_ = true;  // one-shot: the net thread sends once + clears
+    local_.clock.Put(clock);
 }
 
 void Session::SetHostDeskSim(bool set, const DeskSimSnapshot& sim) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalDeskSim_ = set;
-    if (set) localDeskSim_ = sim;
+    local_.deskSim.Put(set, sim);
 }
 
 void Session::SetHostDishPose(const DishPoseBody& body) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    localDishPose_ = body;
-    dishPoseDirty_ = true;  // one-shot: the net thread sends once + clears
+    local_.dish.Put(body);
 }
 
 void Session::SetHostReelPose(const ReelPosePayload& body) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    localReelPose_ = body;
-    reelPoseDirty_ = true;  // one-shot: the net thread sends once + clears
+    local_.reel.Put(body);
+}
+
+void Session::ResetLocalStreams() {
+    {
+        std::lock_guard<std::mutex> lk(localMutex_);
+        local_ = LocalStreams{};
+        localNpcBatch_.clear();
+        localWorldActorBatch_.clear();
+    }
+    trashCarryPoses_.Reset();
+    propDrivePoses_.Reset();
+    saidClientTrashCarry_.store(false, std::memory_order_relaxed);
+    saidClientPropDrive_.store(false, std::memory_order_relaxed);
 }
 
 // --- game-thread readers ----------------------------------------------------
@@ -378,45 +384,18 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
     constexpr auto kDeskSimSendInterval = std::chrono::milliseconds(100);  // ~10 Hz
 
     if (state_.load() == ConnState::Connected && now >= nextSend) {
-        PoseSnapshot local;
-        bool have;
-        uint32_t localStateMs;
-        PropPoseSnapshot localProp;
-        bool haveProp;
-        RagdollPoseSnapshot localRagdoll;
-        bool haveRagdoll;
-        HandPoseSnapshot localHand;
-        bool haveHand;
-        DeskCursorPoseSnapshot localDeskCursor;
-        bool haveDeskCursor;
-        TimeSyncPayload localHostClock;
-        bool clockDue;
-        DeskSimSnapshot localDeskSim;
-        bool haveDeskSim;
-        DishPoseBody localDishPose;
-        bool dishPoseDue;
-        ReelPosePayload localReelPose;
-        bool reelPoseDue;
+        LocalStreams local;
         { std::lock_guard<std::mutex> lk(localMutex_);
-          local = localPose_; have = hasLocal_; localStateMs = localPoseStateMs_;
-          localProp = localPropPose_; haveProp = hasLocalProp_;
-          localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
-          localHand = localHandPose_; haveHand = hasLocalHand_;
-          localDeskCursor = localDeskCursor_; haveDeskCursor = hasLocalDeskCursor_;
-          // One-shot, like the dish and reel samples: the clock lane decides when one is due.
-          localHostClock = localHostClock_;
-          clockDue = hostClockDue_ && cfg_.role == Role::Host;
-          hostClockDue_ = false;
-          localDeskSim = localDeskSim_; haveDeskSim = hasLocalDeskSim_;
-          // Dirty one-shot -- the GT sweep owns the cadence; consume the flag.
-          localDishPose = localDishPose_;
-          dishPoseDue = dishPoseDirty_ && cfg_.role == Role::Host;
-          dishPoseDirty_ = false;
-          // Reel corrector -- same dirty one-shot shape.
-          localReelPose = localReelPose_;
-          reelPoseDue = reelPoseDirty_ && cfg_.role == Role::Host;
-          reelPoseDirty_ = false; }
-        const bool deskSimDue = haveDeskSim && cfg_.role == Role::Host && now >= nextDeskSimSend;
+          local = local_;
+          // The one-shot samples are taken here; the lanes that publish them own the cadence.
+          local_.clock.due = local_.dish.due = local_.reel.due = false; }
+        const bool isHost = cfg_.role == Role::Host;
+        const bool have = local.pose.set, haveProp = local.prop.set, haveRagdoll = local.ragdoll.set,
+                   haveHand = local.hand.set, haveDeskCursor = local.deskCursor.set;
+        const bool clockDue = local.clock.due && isHost;
+        const bool dishPoseDue = local.dish.due && isHost;
+        const bool reelPoseDue = local.reel.due && isHost;
+        const bool deskSimDue = local.deskSim.set && isHost && now >= nextDeskSimSend;
         // Serialize the live NPC pose batch ONCE (same body for every peer; only the per-peer
         // header seq differs). SerializeLocalNpcBatch (session_npc.cpp) reads localNpcBatch_ under
         // localMutex_ + writes the body after the leading PacketHeader, returning 0 when there is
@@ -465,8 +444,8 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     // stamped) for every lane without a reader; the pose lane has one
                     // (coop::movement_ledger on the host), so it stamps the SAMPLE time that came
                     // out of localMutex_ with the pose itself.
-                    WriteStateTimeMs24(pkt.header, localStateMs);
-                    pkt.pose = local;
+                    WriteStateTimeMs24(pkt.header, local.poseStateMs);
+                    pkt.pose = local.pose.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -480,7 +459,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     PropPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::PropPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.pose = localProp;
+                    pkt.pose = local.prop.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -490,7 +469,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     RagdollPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::RagdollPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.pose = localRagdoll;
+                    pkt.pose = local.ragdoll.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -500,7 +479,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     HandPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::HandPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.pose = localHand;
+                    pkt.pose = local.hand.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -510,7 +489,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     DeskCursorPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DeskCursorPose,
                                 sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.pose = localDeskCursor;
+                    pkt.pose = local.deskCursor.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -560,7 +539,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                 if (clockDue) {  // HOST world-clock snapshot -- same body to every peer
                     ClockPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::ClockPose, sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.clock = localHostClock;
+                    pkt.clock = local.clock.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -569,7 +548,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                 if (deskSimDue) {  // HOST download-sim output vector -- same body to every peer
                     DeskSimPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DeskSimPose, sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.sim = localDeskSim;
+                    pkt.sim = local.deskSim.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -578,7 +557,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                 if (dishPoseDue) {  // HOST dish-pose batch -- same body to every peer
                     DishPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::DishPose, sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.body = localDishPose;
+                    pkt.body = local.dish.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);
@@ -587,7 +566,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                 if (reelPoseDue) {  // HOST reel corrector -- same body to every peer
                     ReelPosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::ReelPose, sendSeq_.fetch_add(1), ownEpoch_);
-                    pkt.body = localReelPose;
+                    pkt.body = local.reel.value;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),
                         k_nSteamNetworkingSend_UnreliableNoDelay, nullptr);

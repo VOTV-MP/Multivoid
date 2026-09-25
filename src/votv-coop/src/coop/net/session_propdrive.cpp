@@ -92,16 +92,4 @@ void Session::StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq)
     host_.propDrive.Merge(batch, count, seq);
 }
 
-void Session::ResetLocalBatches() {
-    {
-        std::lock_guard<std::mutex> lk(localMutex_);
-        localNpcBatch_.clear();        hasLocalNpcBatch_ = false;
-        localWorldActorBatch_.clear(); hasLocalWorldActorBatch_ = false;
-    }
-    trashCarryPoses_.Reset();
-    propDrivePoses_.Reset();
-    saidClientTrashCarry_.store(false, std::memory_order_relaxed);
-    saidClientPropDrive_.store(false, std::memory_order_relaxed);
-}
-
 }  // namespace coop::net

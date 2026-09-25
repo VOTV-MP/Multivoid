@@ -20,8 +20,7 @@ namespace coop::net {
 
 void Session::SetLocalNpcPoseBatch(const std::vector<EntityPoseSnapshot>& batch) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalNpcBatch_ = !batch.empty();  // empty -> nothing to fan out (NPCs gone)
-    localNpcBatch_ = batch;              // copy reuses localNpcBatch_'s capacity (caller keeps its scratch)
+    localNpcBatch_ = batch;  // empty -> nothing to fan out (NPCs gone); the copy reuses the capacity
 }
 
 bool Session::TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out) {
@@ -34,7 +33,7 @@ int Session::SerializeLocalNpcBatch(uint8_t* buf) {
     // MTU-capped at kMaxNpcBatchEntries. The leading PacketHeader bytes are left for the caller to
     // stamp per-peer.
     std::lock_guard<std::mutex> lk(localMutex_);
-    if (!hasLocalNpcBatch_ || localNpcBatch_.empty()) return 0;
+    if (localNpcBatch_.empty()) return 0;
     size_t n = localNpcBatch_.size();
     if (n > static_cast<size_t>(kMaxNpcBatchEntries)) n = kMaxNpcBatchEntries;  // cap (TickPoseStream already caps)
     EntityPoseBatchHeader bh{};

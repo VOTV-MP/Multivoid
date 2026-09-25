@@ -31,8 +31,7 @@ namespace coop::net {
 
 void Session::SetLocalWorldActorPoseBatch(const std::vector<WorldActorPoseSnapshot>& batch) {
     std::lock_guard<std::mutex> lk(localMutex_);
-    hasLocalWorldActorBatch_ = !batch.empty();  // empty -> nothing to fan out (actors gone)
-    localWorldActorBatch_ = batch;              // copy reuses the vector's capacity (caller keeps its scratch)
+    localWorldActorBatch_ = batch;  // empty -> nothing to fan out (actors gone); the copy reuses the capacity
 }
 
 bool Session::TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out) {
@@ -45,7 +44,7 @@ int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
     // at kMaxWorldActorBatchEntries. The leading PacketHeader bytes are left for the caller to stamp
     // per-peer. Only the HOST ever populates localWorldActorBatch_, so on a client this returns 0.
     std::lock_guard<std::mutex> lk(localMutex_);
-    if (!hasLocalWorldActorBatch_ || localWorldActorBatch_.empty()) return 0;
+    if (localWorldActorBatch_.empty()) return 0;
     size_t n = localWorldActorBatch_.size();
     if (n > static_cast<size_t>(kMaxWorldActorBatchEntries)) n = kMaxWorldActorBatchEntries;  // cap (TickPoseStream already caps)
     // [WA-TRACE host-serialize] 1 Hz: what the net thread actually fans out this second. If
