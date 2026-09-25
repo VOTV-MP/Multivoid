@@ -103,11 +103,12 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeypadSyncPayload kp{};
         std::memcpy(&kp, msg.payload, sizeof(kp));
-        // The format: a known event, a digit that is one, a buffer and a password of digits.
+        // The format: a known event, a digit that is one, a buffer of digits, a password's length. The
+        // password's bytes are UTF-8, decoded strictly where the state is applied, which refuses that
+        // field alone when they are not well formed (coop/text/utf8_codec).
         bool ok = kp.event <= net::kKeypadEventMax && kp.bufLen <= sizeof(kp.buf) && kp.pwLen <= sizeof(kp.pw);
         if (ok && kp.event == static_cast<uint8_t>(net::KeypadEvent::Digit)) ok = kp.arg <= 9;
         for (uint8_t i = 0; ok && i < kp.bufLen; ++i) ok = kp.buf[i] <= 9;
-        for (uint8_t i = 0; ok && i < kp.pwLen; ++i) ok = kp.pw[i] <= 9;
         if (!ok) {
             UE_LOGW("event_feed: KeypadState malformed (event=%u arg=%u bufLen=%u) -- dropping",
                     static_cast<unsigned>(kp.event), static_cast<unsigned>(kp.arg),

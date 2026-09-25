@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 181;
+inline constexpr uint16_t kProtocolVersion = 182;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1830,8 +1830,8 @@ struct KeypadSyncPayload {
     uint8_t  event;      // 1  -- KeypadEvent
     uint8_t  arg;        // 1  -- Digit: the digit; Open: the verdict; zero otherwise
     uint8_t  isReset;    // 1  -- set-new-code mode
-    uint8_t  pwLen;      // 1  -- digits in `pw` (0..16)
-    uint8_t  pw[16];     // 16 -- the password, one digit per byte (each 0..9)
+    uint8_t  pwLen;      // 1  -- bytes in `pw` (0..16)
+    uint8_t  pw[16];     // 16 -- the password's UTF-8 bytes: a map's code can be letters
     uint8_t  _pad[2];    // 2  -- zero
 };
 static_assert(sizeof(KeypadSyncPayload) == 72, "KeypadSyncPayload must be 72 bytes");

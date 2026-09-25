@@ -6,6 +6,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"          // WireKeyFromString / StringFromWireKey / FnvKey
 #include "coop/player/players_registry.h"    // coop::players::kMaxPeers
+#include "coop/text/utf8_codec.h"            // the password's UTF-8 bytes on the wire
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -15,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -81,6 +83,23 @@ const char* EventName(uint8_t ev) {
     return "?";
 }
 
+// The password as its UTF-8 bytes: a map-placed keypad's code can be letters (the alpha bunker's
+// "lmao" and "oi"), which the typed buffer, digits only, never is. Cut at a character boundary.
+uint8_t PackText(const std::wstring& s, uint8_t* out, size_t cap) {
+    const std::string u = coop::text::ToUtf8(s);
+    size_t n = u.size() < cap ? u.size() : cap;
+    while (n > 0 && n < u.size() && (static_cast<uint8_t>(u[n]) & 0xC0) == 0x80) --n;
+    if (n < u.size()) {
+        static bool s_said = false;
+        if (!s_said) {
+            s_said = true;
+            UE_LOGW("keypad: a password of %zu UTF-8 bytes is cut to the %zu the wire carries", u.size(), n);
+        }
+    }
+    std::memcpy(out, u.data(), n);
+    return static_cast<uint8_t>(n);
+}
+
 uint8_t PackDigits(const std::wstring& s, uint8_t* out, size_t cap) {
     uint8_t n = 0;
     for (wchar_t c : s) {
@@ -99,7 +118,7 @@ std::wstring UnpackDigits(const uint8_t* in, uint8_t n, size_t cap) {
 void StateToPayload(const std::wstring& key, const PL::State& st, coop::net::KeypadSyncPayload& p) {
     coop::net::WireKeyFromString(key, p.key);
     p.bufLen  = PackDigits(st.buffer, p.buf, sizeof(p.buf));
-    p.pwLen   = PackDigits(st.password, p.pw, sizeof(p.pw));
+    p.pwLen   = PackText(st.password, p.pw, sizeof(p.pw));
     p.active  = st.active ? 1 : 0;
     p.isReset = st.isReset ? 1 : 0;
 }
@@ -167,9 +186,11 @@ void ApplyStateNow(void* lock, const coop::net::KeypadSyncPayload& p) {
     PL::State cur;
     if (!PL::ReadState(lock, cur)) return;
     const std::wstring buffer = BufferOf(p);
-    const std::wstring password = UnpackDigits(p.pw, p.pwLen, sizeof(p.pw));
+    std::wstring password;
+    const bool pwRead = coop::text::FromUtf8Strict(reinterpret_cast<const char*>(p.pw),
+                                                   p.pwLen < sizeof(p.pw) ? p.pwLen : sizeof(p.pw), &password);
     if (cur.buffer != buffer) PL::WriteBuffer(lock, buffer);
-    if (cur.password != password) PL::WritePassword(lock, password);
+    if (pwRead && cur.password != password) PL::WritePassword(lock, password);
     const bool verdictMoves = cur.active != (p.active != 0);
     PL::WriteActive(lock, p.active != 0);
     PL::WriteResetMode(lock, p.isReset != 0);
