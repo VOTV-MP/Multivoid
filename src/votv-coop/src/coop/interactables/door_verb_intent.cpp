@@ -10,6 +10,7 @@
 #include "coop/player/hand_item.h"         // what the sender's hand holds, and held last
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady: this client's world is up
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -216,6 +217,9 @@ const ParamOffsets& OffsetsOf(const sg::Call& call, int watchIndex, uint8_t verb
 sg::Verdict OnVerbPre(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
+    // Until this client's world is ready, its load runs natively: the load is the host's save, and
+    // the host's own states for what the lane owns follow at world-ready.
+    if (!coop::net_pump::HasAnnouncedWorldReady()) return sg::Verdict::Run;
     if (!call.object || !D::IsDoor(call.object)) return sg::Verdict::Run;
     int wi = -1;
     for (int i = 0; i < kWatchCount; ++i)

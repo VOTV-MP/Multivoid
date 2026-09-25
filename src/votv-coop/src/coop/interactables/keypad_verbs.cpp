@@ -8,6 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
+#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady: this client's world is up
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -327,6 +328,9 @@ sg::Verdict OnVerbPre(const sg::Call& call) {
         if (!w->anyKey) HostPre(call, w->verb);  // the host's numpad reaches its own inputNumber and open
         return sg::Verdict::Run;
     }
+    // Until this client's world is ready, its load runs natively: the load is the host's save, and
+    // the host's own states for what the lane owns follow at world-ready.
+    if (!coop::net_pump::HasAnnouncedWorldReady()) return sg::Verdict::Run;
     return w->anyKey ? ClientAnyKey(*s, call) : ClientPre(*s, call, w->verb);
 }
 

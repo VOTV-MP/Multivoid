@@ -4,6 +4,7 @@
 
 #include "coop/interactables/interactable_sync.h"  // the group lane's key, its apply and the host's edge
 #include "coop/net/session.h"
+#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady: this client's world is up
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -45,6 +46,9 @@ coop::net::Session* ConnectedAs(coop::net::Role role) {
 // CLIENT, before the body.
 sg::Verdict OnTriggerPre(const sg::Call& call) {
     if (!ConnectedAs(coop::net::Role::Client)) return sg::Verdict::Run;
+    // Until this client's world is ready, its load runs natively: the load is the host's save, and
+    // the host's own states for what the lane owns follow at world-ready.
+    if (!coop::net_pump::HasAnnouncedWorldReady()) return sg::Verdict::Run;
     if (!call.object || !LS::IsLightRoot(call.object)) return sg::Verdict::Run;
     if (coop::interactable_sync::ApplyingLightGroup(call.object)) return sg::Verdict::Run;  // the lane's own apply
     const std::wstring key = coop::interactable_sync::LightGroupKey(call.object);
