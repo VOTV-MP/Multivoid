@@ -1,60 +1,63 @@
-// coop/interactables/keypad_sync.h -- password-keypad (ApasswordLock_C) mirror sync.
+// coop/interactables/keypad_sync.h -- the password keypads' lane: the index, the wire and the
+// receiver's apply. Talks to the engine only through ue_wrap::passwordlock.
 //
-// Gameplay/network layer (principle 7): owns the wire protocol, the per-tick state poll, the
-// receiver apply, the key-to-actor index, the deferred-apply retry and the connect snapshot. Talks
-// to the engine ONLY through ue_wrap::passwordlock.
-//
-// It is its own module rather than an interactable_sync toggle Channel because a keypad is not a
-// two-state toggle: it carries a typed digit BUFFER plus three state bools, and its accept verb
-// is a SUBMIT, not a state setter. Forcing it into that Channel -- poll isAcc, replay Open(want)
-// -- fail-cycles for that reason: replaying Open re-submits the buffer, it does not restore it.
-//
-// Two things it deliberately does not drive. The door: a native accept UNLOCKS it by writing
-// door.active, never opens it, and opening an unlocked door is an ordinary E press. And
-// isAcc/isDeny, set from the component the crosshair hit to pick the prompt -- hover flags, not
-// state; both written onto a mirror render green and red. The LED is power-driven, needing none.
+// The host's copy of a keypad is the one that decides. What it does reaches every client as a
+// KeypadState record: a verb its copy ran (a digit, an open with its verdict, the guesser, the
+// set-new-code mode, a false entry), which the client replays on its own copy so the keypad's own
+// chain plays its sounds and lands the same state, or the state a chain settled on, which the
+// client writes and hands on through the keypad's setActive. The records are authored at the
+// keypad's verbs (coop/interactables/keypad_verbs), which also refuse a client's own verbs and send
+// its player's entries to the host. Not an interactable_sync toggle channel: a keypad carries a
+// typed buffer beside its verdict, and its submit is a verb, not a setter.
 
 #pragma once
 
-#include <cstdint>
+#include "coop/net/protocol.h"
 
-namespace coop::net {
-class Session;
-struct KeypadSyncPayload;
-}  // namespace coop::net
+#include <cstdint>
+#include <string>
+
+namespace coop::net { class Session; }
 
 namespace coop::keypad_sync {
 
-// Resolve the passwordLock_C class and build the key-to-actor index; store the session pointer.
-// Idempotent; retried every net-pump tick until the BP class loads. Game thread.
+// Stores the session and registers the index with the scan hub. Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
-// Receiver entry: a KeypadState packet arrived (event_feed has memcpy'd and range-checked it).
-// Resolves the keypad by Key and applies on the game thread, deferring while it is still
-// streaming in. Called from event_feed's reliable drain loop.
-//
-// A None state mirror replays inputNumber(digit) for the typed-buffer DELTA -- the native display,
-// beep and auto-submit -- then writes `active` and repaints with upd(). Accept or Deny runs the
-// keypad's OWN native Open(Active) chain through PL::CallOpen (sound, LED, buffer clear, and the
-// lock-state propagation writing pair.active and door.active), which replicates the press across
-// peers. The echo breaks by priming lastKnown to the pre-chain state.
-void OnReliable(const coop::net::KeypadSyncPayload& payload, uint8_t senderPeerSlot);
-
-// HOST-only: snapshot the current state of every indexed keypad to a freshly connected
-// client `peerSlot` (so an in-progress / already-unlocked keypad matches on join). The
-// receiver idempotently skips already-matching ones. Net-pump connect edge. Game thread.
-void QueueConnectBroadcastForSlot(int peerSlot);
-
-// Per-tick pump: the throttled deferred-apply retry, then the sender poll -- the index itself is
-// refreshed on the scan hub's own cadence, not here. A short
-// (under five digit) code's native submit edge -- `active` flips and the buffer clears without a
-// reset -- stamps Accept or Deny; everything else is a plain None state mirror. A code of five
-// digits or more needs no event at all, because the blueprint auto-submits as soon as the buffer
-// reaches that length, so replaying the digits runs the native validator on every peer already.
-// Call every net-pump tick on the game thread.
+// The throttled retry of a state that arrived before its keypad was indexed. Game thread, once
+// per pump tick.
 void Tick();
 
-// Session teardown: clear the per-session index + dedup + pending state.
+// CLIENT: a record from the host, its format already checked by the dispatcher. Game thread.
+void OnReliable(const coop::net::KeypadSyncPayload& payload);
+
+// HOST: each indexed keypad's state to a joiner at its world-ready replay. Game thread.
+void QueueConnectBroadcastForSlot(int peerSlot);
+
+// The session ended: the pending states and the counters, with one summary line.
 void OnDisconnect();
+
+// The lane's name for a keypad, or empty when the lane does not index it. Game thread.
+std::wstring KeypadKey(void* lock);
+
+// The keypad the lane indexes under `key`, or null. Game thread.
+void* ResolveKeypad(const std::wstring& key);
+
+// The verbs the lane runs on a client's copy. Applying says whether the lane is running `verb` on
+// `lock` right now; ApplyingAny whether it is running any verb on it. A verb the keypad's own body
+// calls inside one the lane runs (the five-digit submit inside a replayed digit) is not the lane's
+// apply of it. Game thread.
+enum class Verb : uint8_t { InputNumber, Open, Open2, Reset, FalseEnter, SetActive };
+bool Applying(void* lock, Verb verb);
+bool ApplyingAny(void* lock);
+
+// HOST: what `lock` is doing, to every client -- a verb it is about to run (from the verb's own
+// watch, before its body), or its settled state (after its setActive(false)). Game thread.
+void SendEvent(void* lock, coop::net::KeypadEvent event, uint8_t arg);
+void SendState(void* lock);
+
+// CLIENT: `lock`'s own chain ended at its setActive(false): a state that arrived while the chain was
+// in its wait is written now. Game thread.
+void OnClientChainEnd(void* lock);
 
 }  // namespace coop::keypad_sync

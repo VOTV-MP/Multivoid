@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 180;
+inline constexpr uint16_t kProtocolVersion = 181;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -217,9 +217,12 @@ enum class ReliableKind : uint8_t {
     // client-to-host delta and stays retired: no client authors the economy.
     BalanceSync = 23,
 
-    // Any peer, relayed by the host: one keypad's typed buffer, LED selector and short-code event,
-    // keyed by the keypad's Key. The sender polls; the receiver replays inputNumber per digit and
-    // runs the keypad's own Open chain for a stamped event. KeypadSyncPayload.
+    // Host to all: what one keypad just did, keyed by the keypad's Key -- a verb the host's copy ran
+    // (a digit, an open with its verdict, the guesser, the set-new-code mode, a false entry), which
+    // every client replays on its own copy, or the state a chain settled on at its setActive(false).
+    // A client's own keypad entries reach the host as KeypadIntent and nothing else of a client's
+    // moves a keypad. Trust: taken from the host's slot only. Late join: the connect snapshot sends
+    // each keypad's state. KeypadSyncPayload.
     KeypadState = 25,
 
     // Host to one client: the connect snapshot starts, with the prop count as the progress
@@ -810,6 +813,15 @@ enum class ReliableKind : uint8_t {
     // Never relayed. Late join: nothing to replay, since a verb the host has not run changed
     // nothing and one it ran is in the door's state. DoorVerbIntentPayload.
     DoorVerbIntent = 149,
+
+    // Client to host: my player typed a digit on this keypad, submitted, cancelled, swiped a keycard
+    // or used a pass changer on it. A client refuses those at the keypad's own verbs (inputNumber,
+    // open, reset) and asks here; the host runs the verb on its own copy, which judges a submit
+    // against its own password, and the result reaches every peer as KeypadState. Trust: the keypad
+    // must be one the host indexes and within the sender's reach, a keycard or pass changer must be
+    // what the sender holds, and a sender's intents run at a bounded rate from a bounded queue. Never
+    // relayed. Late join: nothing to replay, as for DoorVerbIntent. KeypadIntentPayload.
+    KeypadIntent = 150,
 };
 
 #pragma pack(push, 1)
@@ -1403,6 +1415,27 @@ static_assert(sizeof(DoorVerbIntentPayload) == 40, "DoorVerbIntentPayload must b
 static_assert(sizeof(DoorVerbIntentPayload) <= 256 - 20 - 8,
               "DoorVerbIntentPayload must fit one datagram");
 
+// A keypad intent (KeypadIntent): the keypad by its Key and what the client's player did to it. A
+// submit carries no verdict, since the host judges the code on its own copy; a keycard's verdict is
+// the client's reading of the card against the door, taken only while the client holds a keycard.
+namespace keypad_intent {
+constexpr uint8_t kDigit = 0;    // arg: the digit, 0..9
+constexpr uint8_t kSubmit = 1;   // the accept key, or a press off the keys
+constexpr uint8_t kCancel = 2;   // the cancel key
+constexpr uint8_t kKeycard = 3;  // arg: the keycard's verdict
+constexpr uint8_t kReset = 4;    // a pass changer's use
+constexpr uint8_t kMax = kReset;
+}  // namespace keypad_intent
+struct KeypadIntentPayload {
+    WireKey  key;        // 32 -- the keypad's Key
+    uint8_t  verb;       // 1  -- keypad_intent::k*
+    uint8_t  arg;        // 1  -- kDigit: the digit; kKeycard: the verdict; zero otherwise
+    uint8_t  _pad[2];    // 2  -- zero
+};
+static_assert(sizeof(KeypadIntentPayload) == 36, "KeypadIntentPayload must be 36 bytes");
+static_assert(sizeof(KeypadIntentPayload) <= 256 - 20 - 8,
+              "KeypadIntentPayload must fit one datagram");
+
 // A device claim or release (DeviceClaim): the claim key, the holding slot (on a host reply the
 // winner) and busy. A losing claimant sees busy = 1 with another slot while still inside.
 struct DeviceClaimPayload {
@@ -1775,25 +1808,33 @@ static_assert(sizeof(BroomStrokePayload) == 48, "BroomStrokePayload must be 48 b
 static_assert(sizeof(BroomStrokePayload) <= 256 - 20 - 8,
               "BroomStrokePayload must fit in one reliable datagram");
 
-// A keypad's input mirror (KeypadState): the typed buffer, the LED selector and a short-code
-// event. The buffer replays through inputNumber so every peer's keypad validates natively; a short
-// code's accept or cancel changes no digit, so the typing peer stamps it and the receiver runs the
-// keypad's own Open chain (an accept unlocks the door; opening is a door edge). A long code
-// validates itself at five digits and stamps None.
+// What a keypad did (KeypadState): one verb the host's copy ran, replayed on the receiver's copy,
+// or the state a chain settled on, written there. The state fields are the sender's: before the verb
+// on a verb record, whose replay lands the same state through the keypad's own chain, and the
+// settled state on a State record, which is written whole, the password with it (a set-new-code
+// chain changes it on the keypad and its pair).
 enum class KeypadEvent : uint8_t {
-    None   = 0,  // plain state mirror (digits / active)
-    Accept = 1,  // short-code accept press with correct code -> receiver runs native Open(true)
-    Deny   = 2,  // short-code wrong-accept / explicit cancel -> receiver runs native Open(false)
+    State      = 0,  // the settled state: written, then setActive(false) hands the power on
+    Digit      = 1,  // inputNumber(arg), arg 0..9
+    Open       = 2,  // open(arg != 0): the verdict, or in set-new-code mode the new password
+    Guesser    = 3,  // open2()
+    Reset      = 4,  // reset(): set-new-code mode
+    FalseEntry = 5,  // falseEnterEvent()
 };
+inline constexpr uint8_t kKeypadEventMax = static_cast<uint8_t>(KeypadEvent::FalseEntry);
 struct KeypadSyncPayload {
     WireKey  key;        // 32 -- the keypad's Key FName (string)
     uint8_t  bufLen;     // 1  -- digits in `buf` (0..16; codes are short)
     uint8_t  buf[16];    // 16 -- the typed digits, one per byte (each 0..9)
-    uint8_t  active;     // 1  -- the keypad's active (LED selector: 0 red and locked, 1 green and powered)
+    uint8_t  active;     // 1  -- the keypad's active: its verdict and the gated door's power
     uint8_t  event;      // 1  -- KeypadEvent
-    uint8_t  _pad[5];    // 5  -- reserved
+    uint8_t  arg;        // 1  -- Digit: the digit; Open: the verdict; zero otherwise
+    uint8_t  isReset;    // 1  -- set-new-code mode
+    uint8_t  pwLen;      // 1  -- digits in `pw` (0..16)
+    uint8_t  pw[16];     // 16 -- the password, one digit per byte (each 0..9)
+    uint8_t  _pad[2];    // 2  -- zero
 };
-static_assert(sizeof(KeypadSyncPayload) == 56, "KeypadSyncPayload must be 56 bytes");
+static_assert(sizeof(KeypadSyncPayload) == 72, "KeypadSyncPayload must be 72 bytes");
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
               "KeypadSyncPayload must fit in one reliable datagram");
 

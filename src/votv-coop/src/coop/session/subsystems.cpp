@@ -51,6 +51,7 @@
 #include "coop/dev/event_drill.h"  // [dev] the event lanes: a scheduler fire, a dev fire, the join snapshot
 #include "coop/dev/appliance_drill.h"  // [dev] whether a faucet's toggle crosses both ways
 #include "coop/dev/light_drill.h"  // [dev] whether a client's switch press moves the host's group, and never its own
+#include "coop/dev/keypad_drill.h"  // [dev] whether a client's typing lands on the host's verdict on both copies
 #include "coop/dev/lookat_aim_drill.h"  // hold a peer's aim on a resting prop, so the churn probe has a reading
 #include "coop/dev/fireext_drill.h"  // [dev] a wall-mounted fire extinguisher taken off and carried, watched on both peers
 #include "coop/dev/pry_drill.h"  // [dev] a stuck pryable pried off its wall, watched on both peers
@@ -137,6 +138,7 @@
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
+#include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/drone_call_intent.h"
 #include "coop/items/broom_push.h"
 #include "coop/props/trash_pile_sync.h"
@@ -210,7 +212,7 @@ void Install(coop::net::Session& session) {
     coop::player_damage::Install(&session);  // vitals damage relay (send + owner-apply)
     coop::weather_sync::Install(&session);  // weather
     coop::interactable_sync::Install(&session);  // doors + lights + container lids
-    coop::keypad_sync::Install(&session);  // password-keypad mirror (its own module)
+    coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)
     coop::time_sync::Install(&session);  // host-authoritative world clock (time-of-day / dark-world fix)
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation + moon phase
     coop::power_sync::Install(&session);  // base power-panel breakers (its own module -- 5 bools)
@@ -272,6 +274,7 @@ void Install(coop::net::Session& session) {
     coop::door_verb_intent::Install(&session);  // a client's press, hit or pry of a base door is run by the host
     coop::door_state_verbs::Install(&session);  // a door's open state moves at doorOpen/doorClose: the host sends, a client refuses its own
     coop::lightgroup_verbs::Install(&session);  // a light group's state moves at its runTrigger: the host sends, a client refuses its own
+    coop::keypad_verbs::Install(&session);  // a keypad's verbs: the host sends each, a client's own entries run on the host
     coop::broom_push::Install(&session);  // a host's broom push streams what it moves
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
     coop::garbage_sync::SetSession(&session);
@@ -443,6 +446,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::pack_trash_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and so does its pack queue
     coop::drone_call_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and its console presses
     coop::door_verb_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and its door verbs
+    coop::keypad_verbs::OnPeerLeft(static_cast<uint8_t>(slot));  // and its keypad entries
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -491,6 +495,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::door_drill::OnDisconnect();  // [dev] the door list and readings belong to one world
     coop::dev::appliance_drill::OnDisconnect();  // [dev] the faucet and its phase belong to one world
     coop::dev::light_drill::OnDisconnect();  // [dev] the switch, its group and the phase belong to one world
+    coop::dev::keypad_drill::OnDisconnect();  // [dev] the keypad and the legs belong to one world
     coop::dev::lookat_aim_drill::OnDisconnect();  // [dev] the held target, which the next world does not have
     coop::dev::fireext_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
     coop::dev::pry_drill::OnDisconnect();  // [dev] back to the first step, the watch emptied
@@ -582,6 +587,7 @@ DisconnectStats DisconnectAll() {
     coop::door_verb_intent::OnDisconnect();  // and a door's own verbs run where they are used
     coop::door_state_verbs::OnDisconnect();
     coop::lightgroup_verbs::OnDisconnect();
+    coop::keypad_verbs::OnDisconnect();
     coop::broom_push::OnDisconnect();  // forget pushes not yet handed on
     coop::trash_collect_sync::OnDisconnect();
     coop::trash_channel::OnDisconnect();  // drop the per-eid trash sync-time-context map
@@ -624,7 +630,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
       coop::prop_element_tracker::InstallReseedScanConsumer();
       coop::prop_element_tracker::DrainReseedQueue(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // keypad poll + deferred-apply retry
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // a keypad state that arrived before its keypad was indexed
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: host throttled push (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_sync::Tick(); }  // base power panel: poll breaker edges + deferred-apply retry (symmetric)
@@ -651,6 +657,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::event_drill::Tick(&session);  // [dev] the event drill's fires and count (a single bool read when off)
     coop::dev::appliance_drill::Tick(&session);  // [dev] the faucet drill's toggles (a single bool read when off)
     coop::dev::light_drill::Tick(&session);  // [dev] the light drill's presses (a single bool read when off)
+    coop::dev::keypad_drill::Tick(&session);  // [dev] the keypad drill's legs (a single bool read when off)
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
     coop::dev::pry_drill::Tick(&session);  // [dev] the pry drill (a single read when off)
     coop::dev::recycled_slot_drill::Tick();  // [dev] the recycled-slot drill (a single read when off)
@@ -740,6 +747,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:door_verb"}; coop::door_verb_intent::Tick(session); }  // HOST: run one queued door verb a tick a client
     { PP::Scope _s{PP::Bucket::Interactable}; coop::door_state_verbs::Tick(); }  // settle the door state watches
     { PP::Scope _s{PP::Bucket::Interactable}; coop::lightgroup_verbs::Tick(); }  // settle the light group watch
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::keypad_verbs::Tick(session); }  // settle the keypad watches; HOST: run queued keypad intents
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }  // host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     { PP::Scope _s{PP::Bucket::Balance};       ue_wrap::ScopedWalkTimer _w{"sync:upgrades"}; coop::upgrade_sync::Tick(session); }  // host polls the upgrade struct + broadcasts on change, and runs one queued purchase a tick a client; client retries the pending mirror
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)

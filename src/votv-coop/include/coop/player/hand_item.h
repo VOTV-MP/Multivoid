@@ -72,6 +72,11 @@ bool IsHandAxisActor(void* actor);
 // client's broom stroke -- runs on it. Game thread only.
 void* MirrorActorForSlot(uint8_t slot);
 
+// Whether `slot`'s hand holds an item of the class named `cls`, as its owner last announced. A host
+// asks it of a client's intent that only a held item can author (a keycard's swipe). Game thread
+// only.
+bool HeldClassIs(uint8_t slot, const wchar_t* cls);
+
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)
 // into out[]; returns the count (<= 1 + kMaxPeers). For per-walk hoisting.
 size_t CollectHandAxisActors(void* out[], size_t cap);

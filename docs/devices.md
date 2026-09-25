@@ -112,14 +112,21 @@ trust every sender to be this build -- and the nested container arrives empty ra
 
 ### Keypads and locks
 
-A keypad is a typed digit buffer plus three state bits, and its accept verb is unreachable from
-outside, so the lane mirrors the input: each peer polls its keypads' buffer and active flag and
-broadcasts a change, classified as a plain state mirror or, for a short code's native submit
-edge, an accept or a deny (`coop/interactables/keypad_sync`). A receiver replays the digit
-delta through the keypad's own input function (display, beep, auto-submit at five digits) and,
-on an accept or deny, runs the keypad's own open chain: the sound, the LED, the buffer clear and
-the lock propagation to its pair and its gated door. An accept unlocks a door; opening it is an
-ordinary press of the door.
+A keypad is a typed buffer and a verdict, and the verdict is also the power it hands on to its pair
+and its gated door. The host's copy decides. Every change goes through one of the keypad's own
+verbs -- a digit, an open with its verdict, the scripted guesser, the set-new-code mode, a false
+entry -- and the script-body gate watches them by name (`coop/interactables/keypad_verbs`): before
+each body on the host the verb goes to every client, which runs the same verb on its own copy, so
+the keypad's own chain plays its sounds and lands the same state; after the keypad's setActive
+the state the chain settled on goes too, its pair's with it and the password in it, and a joiner
+gets each keypad's state in its snapshot (`coop/interactables/keypad_sync`). A state that arrives
+while the client's own replayed open is still in its 0.2 s wait is written at that chain's end,
+so it never lands under the tail that reads the set-new-code mode. On a client every call of those
+verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
+the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
+keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
+copy, judging a submit against its own password. A keycard's verdict is taken only while the
+sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
@@ -304,7 +311,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
 | a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
-| a keypad's buffer and its accept | the presser | the input mirrored; the native chain replayed |
+| a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | the drone | the host | a transform stream; the client's tick suppressed |
@@ -321,7 +328,8 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `DoorState`, `LightGroupState` | the host to all | a key and a state |
 | `LightState`, `ContainerState`, `GarageDoorState`, `ApplianceState`, `LockerDoorState` | each peer, relayed | a key and a state |
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
-| `KeypadState` | each peer, relayed | the buffer, the active flag, an accept or deny event |
+| `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode |
+| `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
 | `DroneFlyIntent` | a client to the host | the garage console whose call button it pressed |

@@ -85,11 +85,17 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::KeypadState: {
-        // The password-keypad input mirror. Symmetric: any peer polls the entered digits and
-        // broadcasts on a buffer change, and the host relays a client edge. The receiver replays
-        // the digit input for the delta, which drives the keypad's own native validator (so the
-        // host accepts a client's code itself, input replication), and an accept or deny event runs
-        // the native open chain, the short-code submit mirror.
+        // HOST->CLIENTS: what a keypad did on the host's copy -- a verb every client replays, or the
+        // state a chain settled on. Only the host authors it; a client's own entries go up as
+        // KeypadIntent. coop::keypad_sync::OnReliable.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: KeypadState received on the HOST -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: KeypadState from slot %d, not the host -- dropping", msg.senderPeerSlot);
+            break;
+        }
         if (msg.payloadLen < sizeof(net::KeypadSyncPayload)) {
             UE_LOGW("event_feed: KeypadState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeypadSyncPayload));
@@ -97,11 +103,18 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeypadSyncPayload kp{};
         std::memcpy(&kp, msg.payload, sizeof(kp));
-        const uint8_t senderSlot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
-        coop::keypad_sync::OnReliable(kp, senderSlot);
+        // The format: a known event, a digit that is one, a buffer and a password of digits.
+        bool ok = kp.event <= net::kKeypadEventMax && kp.bufLen <= sizeof(kp.buf) && kp.pwLen <= sizeof(kp.pw);
+        if (ok && kp.event == static_cast<uint8_t>(net::KeypadEvent::Digit)) ok = kp.arg <= 9;
+        for (uint8_t i = 0; ok && i < kp.bufLen; ++i) ok = kp.buf[i] <= 9;
+        for (uint8_t i = 0; ok && i < kp.pwLen; ++i) ok = kp.pw[i] <= 9;
+        if (!ok) {
+            UE_LOGW("event_feed: KeypadState malformed (event=%u arg=%u bufLen=%u) -- dropping",
+                    static_cast<unsigned>(kp.event), static_cast<unsigned>(kp.arg),
+                    static_cast<unsigned>(kp.bufLen));
+            break;
+        }
+        coop::keypad_sync::OnReliable(kp);
         break;
     }
     case net::ReliableKind::PowerControlState: {

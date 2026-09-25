@@ -183,6 +183,7 @@ set(VOTVCOOP_SOURCES
     src/coop/creatures/kerfur_prop_adoption.cpp
     src/coop/creatures/kerfur_reconcile.cpp
     src/coop/interactables/keypad_sync.cpp
+    src/coop/interactables/keypad_verbs.cpp
     src/coop/world/time_sync.cpp
     src/coop/world/sky_sync.cpp
     src/coop/interactables/power_sync.cpp
@@ -432,6 +433,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/event_drill.cpp
     src/coop/dev/appliance_drill.cpp
     src/coop/dev/light_drill.cpp
+    src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
     src/coop/dev/fireext_drill.cpp
     src/coop/dev/pry_drill.cpp

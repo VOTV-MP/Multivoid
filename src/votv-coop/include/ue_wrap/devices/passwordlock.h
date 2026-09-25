@@ -1,18 +1,17 @@
-// ue_wrap/devices/passwordlock.h -- engine access for the password keypads: the reflection,
-// struct-offset and UFunction details of a keypad actor, no network or coop state (the
-// keypad sync owns those and drives the mirror through here). A keypad is a trigger-base
-// descendant that gates a door; its cross-peer identity is the inherited trigger key, which
-// the save persists. How the mirror works: every keypad verb dispatches
-// blueprint-internally, past our ProcessEvent detour, so no observer fires on them and the
-// sync polls state. The digit-input verb is callable and appends to the typed buffer
-// natively, driving the keypad's own validator, so the receiver mirrors typing by replaying
-// digits: on the host, the client's replayed digits make the host's native keypad accept
-// the code itself. The accept and deny flags are not mirrored: they are crosshair-hover
-// flags, not state, and writing both onto a mirror lit a non-native purple LED; the door
-// lock keys on the door's own active flag. The keypad's own active flag is mirrored (a
-// direct write plus the update repaint, never the set-active verb, which cascades a power
-// change into a separate light actor): the update verb picks red when neither reset nor
-// active, the cancel's open(false) clears it, and it equals the door's power.
+// ue_wrap/devices/passwordlock.h -- engine access for the password keypads (passwordLock_C), no
+// network or coop state: the keypad lane in coop/interactables drives a keypad through here. Its
+// cross-peer identity is the inherited trigger key, which the save persists. From its bytecode:
+//   - inputNumber(num): a digit appends to the typed buffer and at five digits submits, open(password
+//     == buffer); a negative num submits on the accept key, cancels (open(false)) on the cancel
+//     key and submits elsewhere, the keys being the hover flags the aiming player's look-at wrote.
+//   - open(active): after 0.2 s takes the buffer as the new password (set-new-code mode) or sets
+//     `active` to the verdict with its sound; then empties the buffer and runs setActive(false).
+//   - setActive(isPairCall): repaints, and with isPairCall false hands `active` on to the paired
+//     keypad and to the gated door's own `active`, which locks or unlocks that door.
+//   - open2(): the scripted guesser (locks, beeps, unlocks, opens the door); reset(): set-new-code
+//     mode unless protected; falseEnterEvent(): a run of beeps and a deny.
+// Every field and function resolves by name; a class whose one does not is left out whole, said
+// once, never read at a remembered offset.
 
 #pragma once
 
@@ -21,88 +20,75 @@
 
 namespace ue_wrap::passwordlock {
 
-// Resolve the keypad class, the field offsets (the key, the typed buffer) and the input,
-// reset and update UFunctions. Idempotent; true once everything resolved (false while the
-// class is not loaded, and the caller retries on a later tick). Game thread.
+// Resolve the keypad class, its fields and its verbs. Idempotent; false while the class is not
+// loaded (the caller retries on a later tick) and for good once a name failed to resolve. Game
+// thread.
 bool EnsureResolved();
 
-// True iff `obj`'s class is the keypad class or a subclass. Cheap (a bounded superclass
-// walk, no allocation). False if not yet resolved.
+// True iff `obj`'s class is the keypad class or a subclass. A bounded superclass walk, no
+// allocation. False if not resolved.
 bool IsPasswordLock(void* obj);
 
-// The keypad's trigger key as a wide string. Empty on failure (null or not resolved); None
-// if unkeyed.
+// The keypad's trigger key as a wide string. Empty on failure; "None" if unkeyed.
 std::wstring GetKeyString(void* lock);
 
-// The mirror-relevant state of one keypad: the typed buffer and the active LED and power
-// flag. The sender polls this each tick and broadcasts on change. The accept and deny flags
-// are hover flags, not state (see the header).
+// A keypad's state: the typed buffer, the verdict it last took (also the power it hands on), the
+// set-new-code mode and the password a submit is judged against.
 struct State {
-    std::wstring buffer;          // inPassword -- the digits typed so far (display)
-    bool         active = false;  // the LED selector (red when false) and the door power
+    std::wstring buffer;          // inPassword
+    bool         active = false;
+    bool         isReset = false;
+    std::wstring password;
 };
 
-// Read `lock`'s mirror state into `out`. False if the read could not be made (null or not
-// resolved); `out` is untouched on failure. Game thread.
+// Read `lock`'s state into `out`. False (and `out` untouched) on null or unresolved. Game thread.
 bool ReadState(void* lock, State& out);
 
-// The accept-chain context primitives, game thread. The accept truth: typing digits grows the
-// buffer, and at five characters the blueprint auto-submits open(password equals buffer), so
-// long codes validate natively on every peer from the digit replay alone; short codes
-// submit only on the accept press or the cancel, mirrored cross-peer as a keypad event and
-// CallOpen below. A host-side re-derivation from buffer equality accepted without the press,
-// and is gone.
+// The accept and cancel hover flags this copy's look-at last wrote: what the local player's press
+// with no digit means. Game thread.
+bool ReadHover(void* lock, bool& onAccept, bool& onCancel);
 
-// The door this keypad gates, or null (none, dead, or not resolved). Game thread.
+// Whether the typed buffer equals the password: the verdict a submit takes, as the keypad's own
+// submit computes it. False on null or unresolved. Game thread.
+bool BufferMatchesPassword(void* lock);
+
+// Whether an open's chain is in flight on this copy: `entering`, set by open until its 0.2 s tail has
+// run. Game thread.
+bool IsEntering(void* lock);
+
+// The paired keypad this one hands its state to, or null (none, dead, or unresolved). Game thread.
+void* PairOf(void* lock);
+
+// Whether this keypad or its pair is protected, the case in which reset() changes nothing. Game thread.
+bool IsProtected(void* lock);
+
+// The keypad's own verbs, dispatched as its graph calls them. Each returns false on null, an
+// unresolved function or a failed dispatch. open and open2 continue on latent delays, so their
+// state lands later. Game thread.
+bool CallInputNumber(void* lock, int32_t digit);  // 0..9
+bool CallOpen(void* lock, bool accept);
+bool CallOpen2(void* lock);
+bool CallReset(void* lock);
+bool CallFalseEnter(void* lock);
+bool CallSetActive(void* lock, bool isPairCall);
+
+// The raw writes of a state reconcile, each false on null or unresolved; the two strings are written
+// through the engine's allocator. The caller then runs setActive(false), which repaints and hands
+// the power on. Game thread.
+bool WriteActive(void* lock, bool active);
+bool WriteResetMode(void* lock, bool on);
+bool WriteBuffer(void* lock, const std::wstring& digits);
+bool WritePassword(void* lock, const std::wstring& password);
+
+// The door this keypad gates, or null (none, dead, or unresolved). Game thread.
 void* GatedDoor(void* lock);
 
-// True iff the keypad is in set-a-new-code mode: a correct entry writes the password instead
-// of opening the door, so the accept-open must be skipped for it. Game thread.
-bool IsResetMode(void* lock);
-
-// True iff the local crosshair is hovering the accept or deny button of this keypad (the
-// look-at-driven hover flags, set per frame from what the crosshair points at). Not state
-// and never mirrored; read locally as the press discriminator: an active flip observed by
-// the poll while the crosshair sits on a submit button is a deliberate press, not an ambient
-// power or apply transition. Game thread.
-bool IsPressHover(void* lock);
-
-// The receiver apply primitives, game thread. Replay one typed digit: dispatches the input
-// verb, which appends to the buffer the native way (display and beep). This is how the
-// receiver mirrors typing; not a submit. False on null, an unresolved UFunction or an
-// out-of-range digit.
-bool CallInputNumber(void* lock, int32_t digit);
-
-// Clear the typed buffer with no side effects: a direct length-zero write (the canonical
-// empty array; data and capacity retained as slack and freed by the engine on the next
-// append or reassign, so no leak). The same direct-write philosophy as WriteActive, and
-// deliberately not the blueprint's reset verb, which is the set-a-new-code mode (it sets
-// the reset flag, a blue LED): mirroring a client's cancel through it turned the host blue.
-// The caller repaints the now-empty panel via CallUpd. False on null or unresolved. Game
-// thread.
-bool ClearBuffer(void* lock);
-
-// A best-effort visual refresh after the buffer change: dispatches the keypad's own update
-// verb, so a tick or event-driven LED or material repaints from the freshly written state.
-// An update verb, not a submit; a no-op if absent.
-void CallUpd(void* lock);
-
-// Dispatch the keypad's native submit handler, open(active), exactly what the typist's
-// accept or cancel press runs internally: it sets active (the LED green or red), plays the
-// success or deny sound, clears the buffer, and propagates the lock state to the pair keypad
-// and the gated door. It unlocks or locks; it never moves the door (the door-open chain is a
-// scripted trigger entry, not the player accept). The receiver-side replication of a
-// short-code submit (long codes never need it, since the digit replay runs the auto-submit
-// on every peer). May run latent sub-chains; never assume synchronous state. False on null
-// or unresolved. Game thread.
-bool CallOpen(void* lock, bool accept);
-
-// A direct write of the keypad's active flag (the LED selector; false is red). Deliberately
-// not the set-active verb, which cascades a power change (driving a separate light actor,
-// the purple bug) and re-propagates to the pair and the door. The receiver writes this, then
-// repaints via CallUpd, and separately drives the gated door's power through the door
-// wrapper (keeping the keypad and door active flags equal, as in single player), so no
-// cascade is needed. False on null or unresolved. Game thread.
-bool WriteActive(void* lock, bool active);
+// A drill's stand-ins for a player at the keypad: a press off the digit keys (inputNumber(-1), whose
+// meaning the hover flags decide), the hover flags an aim would write, and a key of the keyboard as
+// the focused keypad's playerAnykey receives it, by the engine's key name ("NumPadOne", "Add").
+// Game thread.
+bool CallPressOffDigits(void* lock);
+bool WriteHover(void* lock, bool onAccept, bool onCancel);
+bool CallPlayerAnykey(void* lock, const wchar_t* keyName, bool pressed);
 
 }  // namespace ue_wrap::passwordlock

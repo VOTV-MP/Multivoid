@@ -17,6 +17,7 @@
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // CLIENT->HOST local roach consumption intent
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
+#include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
@@ -158,6 +159,37 @@ bool HandleIntentEvent(net::Session& session,
         }
         coop::door_verb_intent::OnDoorVerbIntent(session, p,
                                                  static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::KeypadIntent: {
+        // CLIENT->HOST: a client typed, submitted, cancelled, swiped a keycard or used a pass changer
+        // on a keypad, and the host runs the verb on its own copy. The keypad's resolve, the reach,
+        // the held item and the rate live in the module; the format lives here.
+        // coop::keypad_verbs::OnKeypadIntent.
+        if (session.role() != net::Role::Host) {
+            UE_LOGW("event_feed: KeypadIntent received on a client -- dropping");
+            break;
+        }
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: KeypadIntent from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        if (msg.payloadLen < sizeof(net::KeypadIntentPayload)) {
+            UE_LOGW("event_feed: KeypadIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::KeypadIntentPayload));
+            break;
+        }
+        net::KeypadIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        // The trust boundary: a known verb, and a digit that is one.
+        if (p.verb > net::keypad_intent::kMax ||
+            (p.verb == net::keypad_intent::kDigit && p.arg > 9)) {
+            UE_LOGW("event_feed: KeypadIntent verb=%u arg=%u out of range -- dropping",
+                    static_cast<unsigned>(p.verb), static_cast<unsigned>(p.arg));
+            break;
+        }
+        coop::keypad_verbs::OnKeypadIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::KerfurConvertRequest: {

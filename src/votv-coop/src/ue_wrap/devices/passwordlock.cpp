@@ -1,14 +1,11 @@
-// ue_wrap/devices/passwordlock.cpp -- see ue_wrap/devices/passwordlock.h. Engine access for VOTV
+// ue_wrap/devices/passwordlock.cpp -- see ue_wrap/devices/passwordlock.h. Engine access for the
 // password keypads (ApasswordLock_C).
-//
-// All field offsets are resolved from the live class via reflection
-// (FindPropertyOffset) rather than hardcoded, so they stay correct across game
-// builds (version-tagging rule). The known Alpha 0.9.0-n offsets are kept only as a
-// logged fallback if the reflected walk ever fails to find the property.
 
 #include "ue_wrap/devices/passwordlock.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -20,99 +17,125 @@ namespace {
 
 namespace R = reflection;
 
-// Resolved once at EnsureResolved, then read-only. Published via the g_resolved
-// release-store / acquire-load.
+// Resolved once at EnsureResolved, then read-only; published by the g_resolved release-store.
 std::atomic<bool> g_resolved{false};
+bool g_unusable = false;  // the class loaded and a name did not resolve: left out, said once
 
-void*   g_lockCls    = nullptr;  // passwordLock_C UClass
-int32_t g_keyOff     = -1;       // AtriggerBase_C::Key   (Alpha 0.9.0-n: 0x0260)
-int32_t g_inPwOff    = -1;       // ApasswordLock_C::inPassword (0x0380, FString)
-int32_t g_doorOff    = -1;       // ApasswordLock_C::door (Adoor_C*) (0x0338) -- the gated door
-int32_t g_isResetOff = -1;       // ApasswordLock_C::isReset    (0x0360, bool) -- set-new-code mode
-int32_t g_activeOff  = -1;       // ApasswordLock_C::active     (0x0330, bool) -- LED selector + door power
-int32_t g_isAccOff   = -1;       // ApasswordLock_C::isAcc      (0x037C, bool) -- crosshair-over-key_acc HOVER
-int32_t g_isDenyOff  = -1;       // ApasswordLock_C::isDeny     (0x037D, bool) -- crosshair-over-key_deny HOVER
-void*   g_inputNumFn = nullptr;  // ApasswordLock_C::inputNumber(int32 Num)
-void*   g_updFn      = nullptr;  // ApasswordLock_C::upd()  (best-effort refresh; may be null)
-void*   g_openFn     = nullptr;  // ApasswordLock_C::Open(bool Active) -- the native submit chain
+void*   g_lockCls    = nullptr;
+int32_t g_keyOff     = -1;  // triggerBase_C::Key
+int32_t g_inPwOff    = -1;  // inPassword (FString), the typed buffer
+int32_t g_pwOff      = -1;  // password (FString)
+int32_t g_doorOff    = -1;  // door (door_C*), the gated door
+int32_t g_isResetOff = -1;  // isReset, set-new-code mode
+int32_t g_activeOff  = -1;  // active, the verdict and the power it hands on
+int32_t g_isAccOff   = -1;  // isAcc, the look-at on the accept key
+int32_t g_isDenyOff  = -1;  // isDeny, the look-at on the cancel key
+int32_t g_enteringOff = -1; // entering, set by open until its tail has run
+int32_t g_pairOff    = -1;  // pair (passwordLock_C*), the keypad it hands its state to
+int32_t g_protectedOff = -1; // protected, the mode in which reset() changes nothing
+void*   g_inputNumFn = nullptr;
+void*   g_openFn     = nullptr;
+void*   g_open2Fn    = nullptr;
+void*   g_resetFn    = nullptr;
+void*   g_falseFn    = nullptr;
+void*   g_setActiveFn = nullptr;
+void*   g_anyKeyFn   = nullptr;  // playerAnykey, the drill's keyboard; resolved on first use
 
-// Documented Alpha 0.9.0-n fallbacks (CXXHeaderDump/passwordLock.hpp + triggerBase.hpp).
-constexpr int32_t kKeyOffFallback     = 0x0260;
-constexpr int32_t kInPwOffFallback    = 0x0380;
-constexpr int32_t kDoorOffFallback    = 0x0338;
-constexpr int32_t kIsResetOffFallback = 0x0360;
-constexpr int32_t kActiveOffFallback  = 0x0330;
-constexpr int32_t kIsAccOffFallback   = 0x037C;
-constexpr int32_t kIsDenyOffFallback  = 0x037D;
+bool ReadBool(const void* obj, int32_t off) {
+    return off >= 0 && *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(obj) + off);
+}
 
-int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
-    int32_t off = R::FindPropertyOffset(cls, name);
-    if (off < 0) {
-        UE_LOGW("passwordlock: reflected %ls offset not found -- using fallback 0x%04X", name, fallback);
-        off = fallback;
-    }
-    return off;
+void WriteBool(void* obj, int32_t off, bool v) {
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(obj) + off) = v;
 }
 
 std::wstring ReadFString(const void* obj, int32_t off) {
     if (!obj || off < 0) return std::wstring();
-    const R::FString& s = *reinterpret_cast<const R::FString*>(
-        reinterpret_cast<const char*>(obj) + off);
+    const R::FString& s = *reinterpret_cast<const R::FString*>(reinterpret_cast<const char*>(obj) + off);
     if (!s.Data || s.Num <= 1 || s.Num > 4096) return std::wstring();
-    return std::wstring(s.Data, s.Data + (s.Num - 1));  // Num counts the null terminator
+    return std::wstring(s.Data, s.Data + (s.Num - 1));  // Num counts the terminator
+}
+
+// Two FStrings equal by content; the length first, so an empty buffer is one compare.
+bool FStringEquals(const void* obj, int32_t offA, int32_t offB) {
+    const auto& a = *reinterpret_cast<const R::FString*>(reinterpret_cast<const char*>(obj) + offA);
+    const auto& b = *reinterpret_cast<const R::FString*>(reinterpret_cast<const char*>(obj) + offB);
+    const int32_t na = (a.Data && a.Num > 1) ? a.Num - 1 : 0;
+    const int32_t nb = (b.Data && b.Num > 1) ? b.Num - 1 : 0;
+    if (na != nb) return false;
+    for (int32_t i = 0; i < na; ++i)
+        if (a.Data[i] != b.Data[i]) return false;
+    return true;
+}
+
+bool CallNoParams(void* lock, void* fn) {
+    if (!lock || !fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(lock, f);
 }
 
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_unusable) return false;
 
     void* lockCls = R::FindClass(L"passwordLock_C");
-    if (!lockCls) return false;  // BP class not loaded yet -- caller retries
+    if (!lockCls) return false;  // not loaded yet: the caller retries
 
-    // Key is declared on AtriggerBase_C; FindPropertyOffset does NOT climb to super,
-    // so query the declaring class. The rest are declared on passwordLock_C.
-    int32_t keyOff = -1;
-    if (void* trigCls = R::FindClass(L"triggerBase_C")) keyOff = R::FindPropertyOffset(trigCls, L"Key");
-    if (keyOff < 0) {
-        UE_LOGW("passwordlock: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
+    // Key is declared on the trigger base and FindPropertyOffset does not climb, so it is asked
+    // of the declaring class; the rest are the keypad's own.
+    void* trigCls = R::FindClass(L"triggerBase_C");
+    const int32_t keyOff     = trigCls ? R::FindPropertyOffset(trigCls, L"Key") : -1;
+    const int32_t inPwOff    = R::FindPropertyOffset(lockCls, L"inPassword");
+    const int32_t pwOff      = R::FindPropertyOffset(lockCls, L"password");
+    const int32_t doorOff    = R::FindPropertyOffset(lockCls, L"door");
+    const int32_t isResetOff = R::FindPropertyOffset(lockCls, L"isReset");
+    const int32_t activeOff  = R::FindPropertyOffset(lockCls, L"active");
+    const int32_t isAccOff   = R::FindPropertyOffset(lockCls, L"isAcc");
+    const int32_t isDenyOff  = R::FindPropertyOffset(lockCls, L"isDeny");
+    const int32_t enteringOff = R::FindPropertyOffset(lockCls, L"entering");
+    const int32_t pairOff    = R::FindPropertyOffset(lockCls, L"pair");
+    const int32_t protectedOff = R::FindPropertyOffset(lockCls, L"protected");
+    void* inputNumFn  = R::FindFunction(lockCls, L"inputNumber");
+    void* openFn      = R::FindFunction(lockCls, L"open");
+    void* open2Fn     = R::FindFunction(lockCls, L"open2");
+    void* resetFn     = R::FindFunction(lockCls, L"reset");
+    void* falseFn     = R::FindFunction(lockCls, L"falseEnterEvent");
+    void* setActiveFn = R::FindFunction(lockCls, L"setActive");
+    if (keyOff < 0 || inPwOff < 0 || pwOff < 0 || doorOff < 0 || isResetOff < 0 || activeOff < 0 ||
+        isAccOff < 0 || isDenyOff < 0 || enteringOff < 0 || pairOff < 0 || protectedOff < 0 || !inputNumFn ||
+        !openFn || !open2Fn || !resetFn || !falseFn || !setActiveFn) {
+        g_unusable = true;
+        UE_LOGE("passwordlock: passwordLock_C is loaded but not every name resolved (Key@%d inPassword@%d "
+                "password@%d door@%d isReset@%d active@%d isAcc@%d isDeny@%d entering@%d pair@%d protected@%d "
+                "inputNumber=%p open=%p open2=%p reset=%p falseEnterEvent=%p setActive=%p) -- the keypads stay "
+                "unsynced", keyOff, inPwOff, pwOff, doorOff, isResetOff, activeOff, isAccOff, isDenyOff,
+                enteringOff, pairOff, protectedOff, inputNumFn, openFn, open2Fn, resetFn, falseFn, setActiveFn);
+        return false;
     }
-    const int32_t inPwOff    = ResolveOff(lockCls, L"inPassword", kInPwOffFallback);
-    const int32_t doorOff    = ResolveOff(lockCls, L"door",       kDoorOffFallback);
-    const int32_t isResetOff = ResolveOff(lockCls, L"isReset",    kIsResetOffFallback);
-    const int32_t activeOff  = ResolveOff(lockCls, L"active",     kActiveOffFallback);
-    const int32_t isAccOff   = ResolveOff(lockCls, L"isAcc",      kIsAccOffFallback);
-    const int32_t isDenyOff  = ResolveOff(lockCls, L"isDeny",     kIsDenyOffFallback);
 
-    void* inputNumFn = R::FindFunction(lockCls, L"inputNumber");
-    if (!inputNumFn) {
-        UE_LOGW("passwordlock: inputNumber UFunction not found -- not ready");
-        return false;  // the receiver cannot mirror typing without it -- retry
-    }
-    void* updFn   = R::FindFunction(lockCls, L"upd");    // best-effort; tolerated null
-    // The native submit chain (the BP calls it `open`; the cooked UFunction FName renders `Open`
-    // in the CXX dump -- the lookup compares insensitively, so one call answers both). Tolerated
-    // null: without it the short-code submit mirror degrades to the plain state mirror.
-    void* openFn = R::FindFunction(lockCls, L"open");
-
-    g_lockCls    = lockCls;
-    g_keyOff     = keyOff;
-    g_inPwOff    = inPwOff;
-    g_doorOff    = doorOff;
-    g_isResetOff = isResetOff;
-    g_activeOff  = activeOff;
-    g_isAccOff   = isAccOff;
-    g_isDenyOff  = isDenyOff;
-    g_inputNumFn = inputNumFn;
-    g_updFn      = updFn;
-    g_openFn     = openFn;
+    g_lockCls     = lockCls;
+    g_keyOff      = keyOff;
+    g_inPwOff     = inPwOff;
+    g_pwOff       = pwOff;
+    g_doorOff     = doorOff;
+    g_isResetOff  = isResetOff;
+    g_activeOff   = activeOff;
+    g_isAccOff    = isAccOff;
+    g_isDenyOff   = isDenyOff;
+    g_enteringOff = enteringOff;
+    g_pairOff     = pairOff;
+    g_protectedOff = protectedOff;
+    g_inputNumFn  = inputNumFn;
+    g_openFn      = openFn;
+    g_open2Fn     = open2Fn;
+    g_resetFn     = resetFn;
+    g_falseFn     = falseFn;
+    g_setActiveFn = setActiveFn;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("passwordlock: resolved passwordLock_C=%p Key@0x%04X inPassword@0x%04X "
-            "door@0x%04X isReset@0x%04X active@0x%04X isAcc@0x%04X isDeny@0x%04X "
-            "inputNumber=%p upd=%p open=%p",
-            lockCls, keyOff, inPwOff, doorOff, isResetOff, activeOff, isAccOff, isDenyOff,
-            inputNumFn, updFn, openFn);
+    UE_LOGI("passwordlock: resolved passwordLock_C=%p Key@0x%04X inPassword@0x%04X active@0x%04X "
+            "isReset@0x%04X, and its six verbs", lockCls, keyOff, inPwOff, activeOff, isResetOff);
     return true;
 }
 
@@ -126,84 +149,132 @@ bool IsPasswordLock(void* obj) {
 
 std::wstring GetKeyString(void* lock) {
     if (!lock || g_keyOff < 0) return std::wstring();
-    const R::FName& key = *reinterpret_cast<const R::FName*>(
-        reinterpret_cast<const char*>(lock) + g_keyOff);
+    const R::FName& key = *reinterpret_cast<const R::FName*>(reinterpret_cast<const char*>(lock) + g_keyOff);
     return R::ToString(key);
 }
 
 bool ReadState(void* lock, State& out) {
     if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
-    out.buffer = ReadFString(lock, g_inPwOff);
-    out.active = (g_activeOff >= 0) &&
-                 *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(lock) + g_activeOff);
+    out.buffer  = ReadFString(lock, g_inPwOff);
+    out.active  = ReadBool(lock, g_activeOff);
+    out.isReset = ReadBool(lock, g_isResetOff);
+    out.password = ReadFString(lock, g_pwOff);
     return true;
 }
 
-void* GatedDoor(void* lock) {
-    if (!lock || !g_resolved.load(std::memory_order_acquire) || g_doorOff < 0) return nullptr;
-    void* door = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(lock) + g_doorOff);
-    return (door && R::IsLive(door)) ? door : nullptr;
-}
-
-bool IsResetMode(void* lock) {
-    if (!lock || !g_resolved.load(std::memory_order_acquire) || g_isResetOff < 0) return false;
-    return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(lock) + g_isResetOff);
-}
-
-bool IsPressHover(void* lock) {
+bool ReadHover(void* lock, bool& onAccept, bool& onCancel) {
     if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
-    const char* base = reinterpret_cast<const char*>(lock);
-    const bool acc  = g_isAccOff  >= 0 && *reinterpret_cast<const bool*>(base + g_isAccOff);
-    const bool deny = g_isDenyOff >= 0 && *reinterpret_cast<const bool*>(base + g_isDenyOff);
-    return acc || deny;
+    onAccept = ReadBool(lock, g_isAccOff);
+    onCancel = ReadBool(lock, g_isDenyOff);
+    return true;
+}
+
+bool BufferMatchesPassword(void* lock) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    return FStringEquals(lock, g_inPwOff, g_pwOff);
+}
+
+bool IsEntering(void* lock) {
+    return lock && g_resolved.load(std::memory_order_acquire) && ReadBool(lock, g_enteringOff);
+}
+
+void* PairOf(void* lock) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return nullptr;
+    void* pair = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(lock) + g_pairOff);
+    return (pair && pair != lock && R::IsLive(pair)) ? pair : nullptr;
+}
+
+bool IsProtected(void* lock) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    if (ReadBool(lock, g_protectedOff)) return true;
+    void* pair = PairOf(lock);
+    return pair && ReadBool(pair, g_protectedOff);
 }
 
 bool CallInputNumber(void* lock, int32_t digit) {
     if (!lock || !g_inputNumFn || digit < 0 || digit > 9) return false;
     ParamFrame f(g_inputNumFn);
-    if (!f.valid()) return false;
-    // Param name "Num" is the live FProperty name (passwordLock.hpp:98 inputNumber(int32 Num)).
-    f.Set<int32_t>(L"Num", digit);
+    if (!f.valid() || !f.Set<int32_t>(L"num", digit)) return false;
     return Call(lock, f);
 }
 
-bool ClearBuffer(void* lock) {
-    if (!lock || !g_resolved.load(std::memory_order_acquire) || g_inPwOff < 0) return false;
-    R::FString& s = *reinterpret_cast<R::FString*>(reinterpret_cast<char*>(lock) + g_inPwOff);
-    // Empty the FString the leak-free way: Num=0 is the canonical empty TArray<TCHAR>
-    // (FString::operator* returns TEXT("") when Num==0); Data/Max are retained as slack
-    // and freed by the engine on the next append/reassign (exactly FString::Reset()).
-    // NO verb -> no setActive/powerChanged/isReset side effects; the LED is mirrored
-    // separately by WriteActive, and the caller repaints via CallUpd.
-    if (s.Num > 0) s.Num = 0;
-    return true;
-}
-
-void CallUpd(void* lock) {
-    if (!lock || !g_updFn) return;
-    ParamFrame f(g_updFn);
-    if (f.valid()) Call(lock, f);
-}
-
 bool CallOpen(void* lock, bool accept) {
-    if (!lock) return false;
-    if (!g_openFn) {
-        UE_LOGW("passwordlock: Open UFunction unresolved -- submit mirror degraded to state mirror");
-        return false;
-    }
+    if (!lock || !g_openFn) return false;
     ParamFrame f(g_openFn);
-    if (!f.valid()) return false;
-    // Param name "Active" per the cooked signature (CXXHeaderDump passwordLock.hpp:
-    // `void Open(bool Active)`). The body may defer sub-chains through latent Delays --
-    // callers must not expect synchronous state.
-    f.Set<bool>(L"Active", accept);
+    if (!f.valid() || !f.Set<bool>(L"active", accept)) return false;
+    return Call(lock, f);
+}
+
+bool CallOpen2(void* lock) { return CallNoParams(lock, g_open2Fn); }
+bool CallReset(void* lock) { return CallNoParams(lock, g_resetFn); }
+bool CallFalseEnter(void* lock) { return CallNoParams(lock, g_falseFn); }
+
+bool CallSetActive(void* lock, bool isPairCall) {
+    if (!lock || !g_setActiveFn) return false;
+    ParamFrame f(g_setActiveFn);
+    if (!f.valid() || !f.Set<bool>(L"isPairCall", isPairCall)) return false;
     return Call(lock, f);
 }
 
 bool WriteActive(void* lock, bool active) {
-    if (!lock || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return false;
-    *reinterpret_cast<bool*>(reinterpret_cast<char*>(lock) + g_activeOff) = active;
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    WriteBool(lock, g_activeOff, active);
     return true;
+}
+
+bool WriteResetMode(void* lock, bool on) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    WriteBool(lock, g_isResetOff, on);
+    return true;
+}
+
+bool WriteBuffer(void* lock, const std::wstring& digits) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    if (digits.empty()) {
+        // An empty FString is a zero count; the storage stays as slack, as FString::Reset leaves it,
+        // and the engine frees or reuses it on the next assignment.
+        R::FString& s = *reinterpret_cast<R::FString*>(reinterpret_cast<char*>(lock) + g_inPwOff);
+        if (s.Num > 0) s.Num = 0;
+        return true;
+    }
+    return field_io::WriteFStringField(lock, g_inPwOff, digits);
+}
+
+bool WritePassword(void* lock, const std::wstring& password) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    return field_io::WriteFStringField(lock, g_pwOff, password);
+}
+
+void* GatedDoor(void* lock) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return nullptr;
+    void* door = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(lock) + g_doorOff);
+    return (door && R::IsLive(door)) ? door : nullptr;
+}
+
+bool CallPressOffDigits(void* lock) {
+    if (!lock || !g_inputNumFn) return false;
+    ParamFrame f(g_inputNumFn);
+    if (!f.valid() || !f.Set<int32_t>(L"num", -1)) return false;
+    return Call(lock, f);
+}
+
+bool WriteHover(void* lock, bool onAccept, bool onCancel) {
+    if (!lock || !g_resolved.load(std::memory_order_acquire)) return false;
+    WriteBool(lock, g_isAccOff, onAccept);
+    WriteBool(lock, g_isDenyOff, onCancel);
+    return true;
+}
+
+bool CallPlayerAnykey(void* lock, const wchar_t* keyName, bool pressed) {
+    if (!lock || !keyName || !g_resolved.load(std::memory_order_acquire)) return false;
+    if (!g_anyKeyFn) g_anyKeyFn = R::FindFunction(g_lockCls, L"playerAnykey");
+    if (!g_anyKeyFn) return false;
+    ParamFrame f(g_anyKeyFn);
+    // An FKey is its name first; the details the display name needs are looked up from the name.
+    const R::FName name = fname_utils::StringToFName(keyName);
+    if (!f.valid() || !f.SetRaw(L"key", &name, static_cast<int32_t>(sizeof(name))) || !f.Set<bool>(L"pressed", pressed))
+        return false;
+    return Call(lock, f);
 }
 
 }  // namespace ue_wrap::passwordlock

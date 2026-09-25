@@ -70,11 +70,9 @@ bool CallCrowbarOpen(void* door);
 bool CallDoorOpen(void* door, bool bypass);
 bool CallDoorClose(void* door, bool bypass);
 
-// Write the door's power flag, the field the open gate reads. The keypad's accept unlocks its
-// door by setting it (the password lock's open sets the door active); the host-authoritative
-// keypad accept uses it so an unlocked door stays openable after the code, whether or not the
-// native keypad chain completed. A plain field write, no UFunction. Game thread.
-void SetActive(void* door, bool on);
+// Read the door's power flag, the field its open gate reads: a keypad's setActive writes it, as
+// do power triggers and the save. False on a null door or an unresolved field. Game thread.
+bool TryReadActive(void* door, bool& on);
 
 // The actors the door's own sensor holds now: sensorOverlaps, which the sensor's begin- and
 // end-overlap handlers fill with every Pawn and prop that enters and leaves it; the autoclose

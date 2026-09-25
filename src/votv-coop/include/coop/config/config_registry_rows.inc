@@ -455,6 +455,11 @@ CFG_FLAG(light_drill, "light_drill", "dev", false, "VOTVCOOP_LIGHT_DRILL",
     "own copy of the group must not move -- and back by the host whenever a client's press moved its "
     "group; each peer logs every change of the group. Lines tagged [LIGHT-DRILL]; the client's DONE "
     "line ends it.")
+CFG_FLAG(keypad_drill, "keypad_drill", "dev", false, "VOTVCOOP_KEYPAD_DRILL",
+    "Drill (BOTH peers): the client walks to the nearest keypad that gates a door and types the "
+    "password through the numpad, a numpad cancel after two digits and a wrong code on the keys, each "
+    "ended by its own copy landing on the host's verdict with the gated door's power; the host logs "
+    "every keypad's changes. Lines tagged [KEYPAD-DRILL]; the client's DONE line ends it.")
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")

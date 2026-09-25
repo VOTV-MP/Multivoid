@@ -299,9 +299,10 @@ bool CallDoorClose(void* door, bool bypass) {
     return Call(door, f);
 }
 
-void SetActive(void* door, bool on) {
-    if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return;
-    *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_activeOff) = on;
+bool TryReadActive(void* door, bool& on) {
+    if (!door || !g_resolved.load(std::memory_order_acquire) || g_activeOff < 0) return false;
+    on = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_activeOff);
+    return true;
 }
 
 // Snap a door fully to a state, mesh and flag, proximity-independent: set the timeline alpha

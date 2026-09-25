@@ -217,7 +217,8 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DriveSlotState:    // any-peer idempotent state; the host is canonical on conflict
     case ReliableKind::DrivePayload:      // writer-authored rows
     case ReliableKind::DishAimState:      // claim-owner-authoritative
-    case ReliableKind::KeypadState:
+    // KeypadState is not relayable: the host authors it, and a client's own keypad entries reach the
+    // host as KeypadIntent.
     case ReliableKind::WindowCleanState:  // symmetric
     case ReliableKind::WindowStroke:      // presser-authored
     case ReliableKind::GrimeState:        // symmetric

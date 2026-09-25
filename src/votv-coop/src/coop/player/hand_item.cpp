@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -642,6 +643,12 @@ void Reset() {
     g_localPlayer    = nullptr;
     g_localPlayerIdx = -1;
     g_session        = nullptr;
+}
+
+bool HeldClassIs(uint8_t slot, const wchar_t* cls) {
+    if (slot >= coop::players::kMaxPeers || !cls) return false;
+    const SlotHand& h = g_hands[slot];
+    return h.has && ::_wcsicmp(h.cls.c_str(), cls) == 0;
 }
 
 void OnSlotDisconnected(uint8_t slot) {
