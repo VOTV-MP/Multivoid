@@ -85,13 +85,6 @@ float Dist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& to) {
-    const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
-    constexpr float kRad2Deg = 57.2957795f;
-    return ue_wrap::FRotator{std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * kRad2Deg,
-                             std::atan2(dy, dx) * kRad2Deg, 0.f};
-}
-
 // ---- The watch: both peers, every extinguisher --------------------------------------------------
 
 struct Watched {
@@ -574,7 +567,7 @@ void ActStep(coop::net::Session& s, void* player) {
             Invalid("the extinguisher has neither bounds nor a readable location to aim at");
             return;
         }
-        ue_wrap::FRotator r = LookAt(E::GetCameraLocation(), centre);
+        ue_wrap::FRotator r = coop::director::LookAt(E::GetCameraLocation(), centre);
         r.Pitch += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].first);
         r.Yaw   += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].second);
         E::SetControlRotation(E::GetController(player), r);
