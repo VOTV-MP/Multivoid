@@ -301,6 +301,11 @@ CFG_FLAG(world_singleton_parity, "world_singleton_parity", "dev", false, "VOTVCO
     "Probe: once per gameplay world, the object index's loaded-class lookup and the world singleton "
     "checked against the whole-array walks they replace, one row per name and a verdict. Read-only; "
     "the walks it makes for the comparison are its own.")
+CFG_FLAG(event_drill, "event_drill", "dev", false, "VOTVCOOP_EVENT_DRILL",
+    "Drill (BOTH peers): the host fires the meteor shower before the client's world is up (the join "
+    "snapshot carries it) and then through the scheduler itself (the clock set to day 2 00:18), then "
+    "solar, arirGraff_0 and enasus by the dev fire; the client's DONE line counts the showers and the "
+    "fires it replayed. MUTATES the world (the clock, the events), so it is armed per run.")
 CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
     "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
     "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "

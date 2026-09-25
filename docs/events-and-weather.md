@@ -69,8 +69,8 @@ is left alone.
 ### Story and scheduled events
 
 The scheduler is the save's own time step: it walks the event table and runs each due row
-through the eventer, all inside Blueprints. The host cannot hook the fire, so it polls the
-save's list of passed events once a second and broadcasts each new row
+through the eventer, all inside Blueprints. The host sees each fire at the verb: a script-body
+watch on the eventer's `runEvent`, entered from the save's time step, broadcasts the row
 (`coop/world/event_fire_sync`). The client keeps its own copy of the walkable event list empty,
 a one-integer write held right before each tick of the clock's cycle, which the game rebuilds
 unconditionally at every world load, so its scheduler fires nothing as the host's clock moves it. What a client does with a
@@ -84,12 +84,13 @@ event trigger dispatches through the same host path, so a forced event broadcast
 scheduled one.
 
 The game keeps a registry of in-flight events: a reference count and the live event actors,
-maintained by the actors themselves. The host polls it once a second and, at a joiner's ready
-edge, sends one snapshot entry per in-flight event so the joiner replays it from the start with
-the in-flight override (`coop/world/event_active_sync`). Events whose only trace is a one-shot
-particle emitter (the meteor shower) are mirrored as cues: the host finds the live emitter,
-broadcasts its identity and position, and a client spawns the same emitter
-(`coop/world/event_cue_sync`).
+maintained by the actors themselves. The host sees each event begin and end at `lib_C::setEvent`
+(a script-body watch) and, at a joiner's ready edge, reads the game's own registry and sends one
+snapshot entry per in-flight event so the joiner replays it from the start with the in-flight
+override (`coop/world/event_active_sync`). Events whose only trace is a one-shot particle emitter
+(the meteor shower) are mirrored as cues: the host sees the row's `runEvent` return and broadcasts
+the emitter's identity and position, a joiner's snapshot reads the live emitters from the object
+index, and a client spawns the same emitter (`coop/world/event_cue_sync`).
 
 ### The actors an event flies in
 
@@ -139,7 +140,7 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 | rain, snow, fog, wind, lightning, red sky | the host | scheduler observed on the host, cancelled on the client; the client's births killed |
 | fireflies | each peer | peer-symmetric union |
 | ambient spawners | the host | parked or cancelled on clients; the camera-anchored ones per peer |
-| a scheduled or story event | the host | observed by poll; replayed on the client per row |
+| a scheduled or story event | the host | observed at its verb; replayed on the client per row |
 | the in-flight registry | the game, on each peer | mirrored to a joiner as a snapshot |
 | an event's actors | the host | the world-actor mirror |
 | the pyramid's brain | the host | timers cancelled on the mirror; the gather relayed |
@@ -195,4 +196,4 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | events | `coop/world/event_fire_sync`, `coop/world/event_active_sync`, `coop/world/event_cue_sync`, `coop/dev/event_trigger` |
 | event actors and the pyramid | `coop/world/world_actor_sync`, `coop/world/world_actor_mirror`, `coop/creatures/piramid_sync` |
 | the alarm, emails, the task | `coop/world/alarm_sync`, `coop/world/email_sync`, `coop/world/daily_task_sync`, `ue_wrap/world/email` |
-| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventfire.cpp`, `autotest_eventforce.cpp`, `autotest_cueforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp` |
+| tests | `harness/autotest/autotest_weather.cpp`, `autotest_fog_probe.cpp`, `autotest_eventforce.cpp`, `autotest_alarmforce.cpp`, `autotest_piramidforce.cpp`; the event drill, `coop/dev/event_drill` |

@@ -238,14 +238,6 @@ DWORD WINAPI HudTintProbeThread(LPVOID arg);
 void RunAutonomousMoveOsc();
 DWORD WINAPI MoveOscThread(LPVOID arg);
 
-// The EventFire replay smoke (harness/autotest/autotest_eventfire.cpp), host: after the join
-// settles, solar (RunEvent, replay-allowlisted), arirGraff_0 (SpecialEvent, replay-allowlisted) and
-// enasus (RunEvent, prop lane, no replay) fire through the same event_fire_sync::HostFire seam the
-// F1 menu uses; the client log proves two replays and one not replayed. Env
-// VOTVCOOP_RUN_EVENTFIRE_TEST=1 (a LAN pair).
-void RunAutonomousEventFireTest();
-DWORD WINAPI EventFireTestThread(LPVOID arg);
-
 // The event force-now smoke (harness/autotest/autotest_eventforce.cpp), host: the volume-gate
 // feature (coop/dev/event_force) on obelisk, the badge snapshot resolving (armed 0, shots 1),
 // ForceNow arming through HostFire and driving the box's own BeginOverlap with the local pawn, and
@@ -253,13 +245,6 @@ DWORD WINAPI EventFireTestThread(LPVOID arg);
 // VOTVCOOP_RUN_EVENTFORCE_TEST=1 (a LAN pair; the client observes the arm replay).
 void RunAutonomousEventForceTest();
 DWORD WINAPI EventForceTestThread(LPVOID arg);
-
-// The starRain cue driver (harness/autotest/autotest_cueforce.cpp), host: runEvent('starRain')
-// through HostFire as soon as the eventer resolves, before any client, so the orchestration can
-// launch a client mid-shower and prove the event_cue join re-send delivers exactly one replay on
-// the joiner. Env VOTVCOOP_RUN_CUEFORCE_TEST=1.
-void RunAutonomousCueForceTest();
-DWORD WINAPI CueForceTestThread(LPVOID arg);
 
 // The base radar alarm driver (harness/autotest/autotest_alarmforce.cpp), host: after a 55 s client
 // settle, DevForce runTrigger(1) then (0) on the native trigger; the alarm_sync poll must detect

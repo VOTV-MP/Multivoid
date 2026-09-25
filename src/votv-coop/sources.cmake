@@ -426,6 +426,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/food_clock_probe.cpp
     src/coop/dev/lookat_churn_probe.cpp
     src/coop/dev/door_drill.cpp
+    src/coop/dev/event_drill.cpp
     src/coop/dev/appliance_drill.cpp
     src/coop/dev/light_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
@@ -572,9 +573,7 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_islive_drill.cpp
     src/harness/autotest/autotest_fog_probe.cpp
     src/harness/autotest/autotest_hud_tint.cpp
-    src/harness/autotest/autotest_eventfire.cpp
     src/harness/autotest/autotest_eventforce.cpp
-    src/harness/autotest/autotest_cueforce.cpp
     src/harness/autotest/autotest_alarmforce.cpp
     src/harness/autotest/autotest_piramidforce.cpp
     src/harness/autotest/autotest_wisplane.cpp

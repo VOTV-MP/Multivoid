@@ -3,24 +3,18 @@
 #include "ue_wrap/world/active_events.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
-
-#include <chrono>
 
 namespace ue_wrap::active_events {
 namespace {
 
 namespace R = ue_wrap::reflection;
-using Clock = std::chrono::steady_clock;
 
-void*   g_gmCls = nullptr;
 int32_t g_offActiveEvents = -1;  // mainGamemode_C::activeEvents (int refcount)
 int32_t g_offSenders = -1;       // mainGamemode_C::activeEvents_senders (TArray<UObject*>)
-Clock::time_point g_nextResolve{};
-int  g_postClassAttempts = 0;
-bool g_resolveLatched = false;
-constexpr int kMaxPostClassAttempts = 5;
+bool g_resolveFailed = false;
 
 // UE4 TArray<UObject*> header.
 struct RawPtrArray {
@@ -34,26 +28,20 @@ bool Resolved() { return g_offActiveEvents >= 0 && g_offSenders >= 0; }
 }  // namespace
 
 bool EnsureResolved() {
-    if (g_resolveLatched) return Resolved();
-    const auto now = Clock::now();
-    if (now < g_nextResolve) return false;
-    g_nextResolve = now + std::chrono::seconds(2);
-    if (!g_gmCls) g_gmCls = R::FindClass(L"mainGamemode_C");
-    if (!g_gmCls) return false;  // world not loaded yet -- keep trying
-    if (g_offActiveEvents < 0) g_offActiveEvents = R::FindPropertyOffset(g_gmCls, L"activeEvents");
-    if (g_offSenders < 0) g_offSenders = R::FindPropertyOffset(g_gmCls, L"activeEvents_senders");
+    if (Resolved()) return true;
+    if (g_resolveFailed) return false;
+    void* cls = object_index::ClassByName(L"mainGamemode_C");
+    if (!cls) return false;  // the world has not loaded it yet
+    g_offActiveEvents = R::FindPropertyOffset(cls, L"activeEvents");
+    g_offSenders = R::FindPropertyOffset(cls, L"activeEvents_senders");
     if (Resolved()) {
-        g_resolveLatched = true;
         UE_LOGI("event_active: resolved (activeEvents=0x%X activeEvents_senders=0x%X)", g_offActiveEvents,
                 g_offSenders);
         return true;
     }
-    if (++g_postClassAttempts >= kMaxPostClassAttempts) {
-        g_resolveLatched = true;
-        UE_LOGW("event_active: resolution INCOMPLETE after %d passes on a loaded mainGamemode_C "
-                "(activeEvents=0x%X activeEvents_senders=0x%X) -- latched OFF; game version mismatch?",
-                g_postClassAttempts, g_offActiveEvents, g_offSenders);
-    }
+    g_resolveFailed = true;  // a member missing from a loaded class does not appear later
+    UE_LOGW("event_active: resolution INCOMPLETE on a loaded mainGamemode_C (activeEvents=0x%X "
+            "activeEvents_senders=0x%X) -- latched OFF; game version mismatch?", g_offActiveEvents, g_offSenders);
     return false;
 }
 

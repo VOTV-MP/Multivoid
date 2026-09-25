@@ -21,10 +21,11 @@
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/world_identity.h"   // Generation, the membership's world
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/engine/world_identity.h"   // Generation, the world the begin times belong to
 #include "ue_wrap/world/active_events.h"
-#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
@@ -40,20 +41,27 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace AE = ue_wrap::active_events;
+namespace sg = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// ---- host poll state (game thread) -----------------------------------------------------------
-struct ActiveEntry {
-    int32_t objIdx;         // sender's GUObjectArray internal index (recycled-slot-safe liveness)
-    std::string className;  // ClassOf(sender) name, narrowed (the event's implementation class)
-    long long firstSeenMs;  // steady-clock ms when the poll first saw it (elapsedSec source)
+// ---- the host's watch on setEvent (game thread) ----------------------------------------------
+constexpr int kTagEventActive = 0x45564143;  // 'EVAC'
+constexpr const wchar_t* kSetEvent = L"setEvent";  // one pointer: the gate matches a name watch by it
+bool g_watchInstalled = false;
+bool g_watchLive = false;
+void* g_setEventFn = nullptr;      // lib_C::setEvent, resolved from its class on first need
+int32_t g_offActive = -1;          // isEventActive
+int32_t g_offContext = -1;         // __WorldContext, the sender
+
+// When each event the watch saw begin began, for the snapshot's elapsed time and the END line.
+struct Began {
+    int32_t objIdx;         // the sender's slot (recycled-slot-safe liveness)
+    std::string className;  // ClassOf(sender), narrowed: the event's implementation class
+    long long ms;           // steady-clock ms at its setEvent(true)
 };
-std::unordered_map<void*, ActiveEntry> g_active;  // sender ptr -> entry
-uint32_t g_polledGen = 0;                         // the world the membership belongs to (0: none yet)
-bool g_primed = false;
-long long g_lastPollMs = 0;
-constexpr long long kPollIntervalMs = 1000;  // event phases run seconds-to-minutes; 1 Hz is generous
+std::unordered_map<void*, Began> g_began;
+uint32_t g_beganGen = 0;           // the world the begin times belong to
 
 long long NowMs() {
     using namespace std::chrono;
@@ -123,106 +131,132 @@ std::string Narrow(const std::wstring& w) {
 
 int ReadRefcount() {
     int32_t n = 0;
-    AE::ReadCount(n);
+    if (AE::EnsureResolved()) AE::ReadCount(n);
     return n;
 }
 
-void HostPollTick() {
-    if (!AE::EnsureResolved()) return;  // before Gamemode(): the latched-OFF failure mode must not keep a cache warm nothing reads
-    if (!ue_wrap::world_singleton::Gamemode()) return;
-    // A world or save reload minted a new gamemode with its world -> the old membership's pointers
-    // dangle. Drop and re-prime against the new world (already-active events log BEGIN fresh --
-    // correct: they ARE in flight in the new world).
+// lib_C::setEvent and its two parameters, from the library's class once it has loaded.
+bool ResolveSetEvent() {
+    static bool s_failed = false;  // the class loaded without the function or its parameters: said once
+    if (g_offContext >= 0) return true;
+    if (s_failed) return false;
+    void* cls = ue_wrap::object_index::ClassByName(L"lib_C");
+    if (!cls) return false;
+    g_setEventFn = R::FindFunction(cls, L"setEvent");
+    g_offActive = g_setEventFn ? R::FindParamOffset(g_setEventFn, L"isEventActive") : -1;
+    const int32_t ctx = g_setEventFn ? R::FindParamOffset(g_setEventFn, L"__WorldContext") : -1;
+    if (g_offActive < 0 || ctx < 0) {
+        UE_LOGW("event_active: lib_C::setEvent did not resolve (fn=%p isEventActive=%d __WorldContext=%d) -- "
+                "no event's begin or end is seen", g_setEventFn, g_offActive, ctx);
+        g_setEventFn = nullptr;
+        s_failed = true;
+        return false;
+    }
+    g_offContext = ctx;
+    return true;
+}
+
+// A world or save reload minted a new gamemode with its world, and the old begin times name dead
+// senders: drop them (an event still in flight in the new world has no begin the watch saw).
+void ForgetOtherWorlds() {
     const uint32_t gen = ue_wrap::world_identity::Generation();
-    if (gen != g_polledGen) {
-        g_active.clear();
-        g_polledGen = gen;
-        g_primed = false;
-    }
-    AE::Senders arr{};
-    if (!AE::ReadSenders(arr)) return;
-    if (arr.num < 0 || arr.num > 4096) return;  // sanity: ~95 registrant classes, few concurrent
+    if (gen == g_beganGen) return;
+    g_began.clear();
+    g_beganGen = gen;
+}
+
+// HOST: an event began or ended, after the game's own bookkeeping ran, so the refcount the lines
+// print is the one it left.
+void OnSetEventPost(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!ResolveSetEvent() || call.function != g_setEventFn) return;
+    void* sender = *reinterpret_cast<void* const*>(call.locals + g_offContext);
+    if (!sender || !R::IsLive(sender)) return;
+    const bool active = call.locals[g_offActive] != 0;
+    ForgetOtherWorlds();
     const long long now = NowMs();
-    if (!g_primed) {
-        g_primed = true;
-        UE_LOGI("event_active: host poll primed (n=%d active)", ReadRefcount());
+    if (active) {
+        const auto [it, fresh] = g_began.emplace(sender, Began{R::InternalIndexOf(sender), Narrow(R::ClassNameOf(sender)), now});
+        if (fresh) UE_LOGI("event_active: BEGIN class=%s n=%d", it->second.className.c_str(), ReadRefcount());
+        return;
     }
-    // BEGIN edges: senders in the array we aren't tracking yet.
-    for (int32_t i = 0; i < arr.num; ++i) {
-        void* obj = arr.data ? arr.data[i] : nullptr;
-        if (!obj || g_active.count(obj)) continue;
-        if (!R::IsLive(obj)) continue;  // freshly read from the engine array; defensive
-        ActiveEntry e;
-        e.objIdx = R::InternalIndexOf(obj);
-        e.className = Narrow(R::ClassNameOf(obj));
-        e.firstSeenMs = now;
-        UE_LOGI("event_active: BEGIN class=%s n=%d (senders=%d)",
-                e.className.c_str(), ReadRefcount(), arr.num);
-        g_active.emplace(obj, std::move(e));
+    const auto it = g_began.find(sender);
+    if (it == g_began.end()) {
+        UE_LOGI("event_active: END class=%s n=%d (began before this host watched)",
+                Narrow(R::ClassNameOf(sender)).c_str(), ReadRefcount());
+        return;
     }
-    // END edges: tracked senders gone from the array (deregistered), or dead without
-    // deregistering (destroyed actor; the game's own clamp guards the same case).
-    std::vector<void*> ended;
-    for (auto& [obj, e] : g_active) {
-        bool present = false;
-        if (arr.data)
-            for (int32_t i = 0; i < arr.num; ++i)
-                if (arr.data[i] == obj) { present = true; break; }
-        const bool live = R::IsLiveByIndex(obj, e.objIdx);
-        if (present && live) continue;
-        UE_LOGI("event_active: END class=%s n=%d elapsed=%llds%s",
-                e.className.c_str(), ReadRefcount(), (now - e.firstSeenMs) / 1000,
-                live ? "" : " (sender died unregistered)");
-        ended.push_back(obj);
-    }
-    for (void* obj : ended) g_active.erase(obj);
+    UE_LOGI("event_active: END class=%s n=%d elapsed=%llds", it->second.className.c_str(), ReadRefcount(),
+            (now - it->second.ms) / 1000);
+    g_began.erase(it);
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-}
-
-void Tick() {
-    if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    const long long now = NowMs();
-    if (now - g_lastPollMs < kPollIntervalMs) return;
-    g_lastPollMs = now;
-    HostPollTick();
+    // Called every pump tick by the install fanout, which is also the retry until the gate has
+    // resolved the watch's name.
+    if (!g_watchInstalled)
+        g_watchInstalled = sg::WatchName(kSetEvent, kTagEventActive, nullptr, &OnSetEventPost);
+    if (g_watchInstalled && !g_watchLive) {
+        sg::ResolvePendingNames();
+        if (sg::NameWatchLive(kSetEvent, kTagEventActive)) {
+            g_watchLive = true;
+            UE_LOGI("event_active: every event's begin and end is seen at lib_C::setEvent (a script-gate watch)");
+        }
+    }
 }
 
 void SendJoinSnapshotForSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (g_active.empty()) {
-        UE_LOGI("event_active: join-edge slot=%d -- 0 in flight (no EventSnapshot needed)", slot);
+    // The game's own registry is the membership: read at the edge, it holds exactly the events in
+    // flight now, the ones that began before this host watched included.
+    AE::Senders arr{};
+    if (!AE::EnsureResolved() || !AE::ReadSenders(arr) || arr.num < 0 || arr.num > 4096) {
+        UE_LOGI("event_active: join-edge slot=%d -- no event registry to read (no world yet)", slot);
         return;
     }
+    ForgetOtherWorlds();
     const long long now = NowMs();
-    for (const auto& [obj, e] : g_active) {
-        if (const char* lane = LaneFor(e.className)) {
+    std::vector<void*> sent;
+    for (int32_t i = 0; i < arr.num; ++i) {
+        void* obj = arr.data ? arr.data[i] : nullptr;
+        // The array is a property, so the collector nulls a destroyed sender's entry; one marked
+        // for death and not yet collected is skipped here.
+        if (!obj || !R::IsLive(obj)) continue;
+        bool dup = false;
+        for (void* o : sent) dup |= (o == obj);
+        if (dup) continue;  // a sender that registered twice is one event
+        sent.push_back(obj);
+        const std::string className = Narrow(R::ClassNameOf(obj));
+        if (const char* lane = LaneFor(className)) {
             UE_LOGI("event_active: join-edge slot=%d class=%s is LANE-OWNED (%s snapshots it) "
                     "-- no EventSnapshot",
-                    slot, e.className.c_str(), lane);
+                    slot, className.c_str(), lane);
             continue;
         }
-        const char* row = RowForClass(e.className);
-        const long long elapsed = (now - e.firstSeenMs) / 1000;
+        const char* row = RowForClass(className);
+        const auto b = g_began.find(obj);
+        const bool known = b != g_began.end() && R::IsLiveByIndex(obj, b->second.objIdx);
+        const long long elapsed = known ? (now - b->second.ms) / 1000 : 0;
         coop::net::EventSnapshotPayload p{};  // zero-init -> both name[]s pre-NUL-bound
-        std::strncpy(p.className, e.className.c_str(), sizeof(p.className) - 1);
+        std::strncpy(p.className, className.c_str(), sizeof(p.className) - 1);
         if (row) std::strncpy(p.rowName, row, sizeof(p.rowName) - 1);
         p.elapsedSec = static_cast<uint16_t>(elapsed < 0 ? 0 : (elapsed > 65535 ? 65535 : elapsed));
         if (s->SendReliableToSlot(slot, coop::net::ReliableKind::EventSnapshot, &p, sizeof(p))) {
-            UE_LOGI("event_active: join-edge slot=%d SNAPSHOT class=%s row=%s elapsed=%llds",
-                    slot, e.className.c_str(), row ? row : "<unmapped>", elapsed);
+            UE_LOGI("event_active: join-edge slot=%d SNAPSHOT class=%s row=%s elapsed=%s", slot,
+                    className.c_str(), row ? row : "<unmapped>",
+                    known ? (std::to_string(elapsed) + "s").c_str() : "unknown (began before this host watched)");
         } else {
             UE_LOGW("event_active: join-edge slot=%d EventSnapshot send FAILED (class=%s)",
-                    slot, e.className.c_str());
+                    slot, className.c_str());
         }
     }
+    if (sent.empty())
+        UE_LOGI("event_active: join-edge slot=%d -- 0 in flight (no EventSnapshot needed)", slot);
 }
 
 void OnReliable(const coop::net::EventSnapshotPayload& payload) {
@@ -249,9 +283,8 @@ void OnReliable(const coop::net::EventSnapshotPayload& payload) {
 }
 
 void OnDisconnect() {
-    g_active.clear();
-    g_polledGen = 0;
-    g_primed = false;
+    g_began.clear();
+    g_beganGen = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
 

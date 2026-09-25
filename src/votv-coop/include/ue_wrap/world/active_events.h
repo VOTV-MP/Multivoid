@@ -13,9 +13,9 @@
 
 namespace ue_wrap::active_events {
 
-// Resolve the two members on mainGamemode_C. Retried on a 2 s throttle while the class loads; after
-// five passes that had the class and still came up short it latches OFF with one warning, since a
-// member missing from a loaded class does not appear later. True once both are in hand.
+// Resolve the two members on mainGamemode_C, the class from the object index, which answers at once
+// whether or not it has loaded. Once the class has loaded, the members resolve on that pass or never:
+// a failed pass latches OFF with one warning. True once both are in hand.
 bool EnsureResolved();
 
 // activeEvents, the refcount. False while unresolved or without a gamemode.

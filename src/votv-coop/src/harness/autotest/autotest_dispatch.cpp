@@ -143,17 +143,9 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // with a screenshot marker per arm.
     SpawnIf("VOTVCOOP_RUN_HUD_TINT_PROBE", "HUD red-tint discriminator", &HudTintProbeThread, role);
 
-    // The EventFire replay smoke: the host fires three events through HostFire, and the client log
-    // proves the replay policy.
-    SpawnIf("VOTVCOOP_RUN_EVENTFIRE_TEST", "EventFire replay smoke", &EventFireTestThread, role);
-
     // The event force-now smoke: the host resolves the obelisk box badge, forces it, and asserts
     // shots go from 1 to 0 through the native overlap dispatch.
     SpawnIf("VOTVCOOP_RUN_EVENTFORCE_TEST", "event force-NOW smoke", &EventForceTestThread, role);
-
-    // The starRain cue driver: the host fires it before any client, so the orchestration can join
-    // a client mid-shower and prove exactly one replay.
-    SpawnIf("VOTVCOOP_RUN_CUEFORCE_TEST", "starRain cue-force driver", &CueForceTestThread, role);
 
     // The base radar alarm test: the host forces the trigger on, then off; the poll must broadcast
     // both edges and the client must log its replay applies.

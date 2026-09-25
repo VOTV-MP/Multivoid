@@ -4,12 +4,12 @@
 // The game keeps its own in-flight event registry on mainGamemode_C: `activeEvents`, an int
 // refcount, and `activeEvents_senders`, a TArray<UObject*> of the live event actors. The single
 // writer is lib_C::setEvent, which each of about ninety-five event classes calls on itself as it
-// begins and ends. That call is a lib_C CDO dispatch from blueprint internals, invisible to a
-// hook, but the poll reads the RESULT, so no hook is needed.
-//   - HOST, ~1 Hz: poll activeEvents_senders, diff membership by object identity, edge-log
-//     `event_active: BEGIN/END class=<sender class> n=<refcount>` with per-event elapsed time.
-//   - HOST, at a joiner's world-ready edge: one ReliableKind::EventSnapshot per in-flight entry,
-//     carrying {className, mapped list_events row, elapsedSec}.
+// begins and ends: a lib_C CDO dispatch from blueprint internals, which the script-body gate sees.
+//   - HOST: a watch on setEvent logs each edge as the game makes it,
+//     `event_active: BEGIN/END class=<sender class> n=<refcount>`, with the event's elapsed time.
+//   - HOST, at a joiner's world-ready edge: the game's own registry read there, one
+//     ReliableKind::EventSnapshot per in-flight entry, carrying {className, mapped list_events row,
+//     elapsedSec}; elapsed is 0 for an event that began before this host watched.
 //   - CLIENT: receive EventSnapshot and hand mapped replay-safe rows to event_fire_sync's
 //     active-override replay, where an in-flight row bypasses the InClientPassEvents dedupe --
 //     the joiner's blob already carries it as history. An unmapped class logs LOUD and skips.
@@ -23,14 +23,10 @@ struct EventSnapshotPayload;
 
 namespace coop::event_active_sync {
 
-// Cache the session. Resolution (gamemode class + the two property offsets) is lazy in Tick.
+// Cache the session and register the host's watch on setEvent (once per process). Called every pump
+// tick by the install fanout, which is also the retry until the gate resolves the watch's name.
+// Game thread.
 void Install(coop::net::Session* session);
-
-// Per net-pump tick, game thread, throttled to ~1 Hz internally. HOST and connected only:
-// the senders membership diff, which is both the BEGIN/END edge log and the join snapshot's
-// source of truth. A no-op on the client, which has no local event actors -- the registry
-// reaches a joiner per lane and per snapshot, and the refcount itself is never mirrored.
-void Tick();
 
 // HOST, game thread, at a joiner's ClientWorldReady edge (subsystems::ConnectReplayForSlot):
 // send one EventSnapshot per in-flight registry entry to this slot.
@@ -40,7 +36,7 @@ void SendJoinSnapshotForSlot(int slot);
 // mapped rows go to event_fire_sync::ReplayInFlightRow (policy + active-override live there).
 void OnReliable(const coop::net::EventSnapshotPayload& payload);
 
-// Teardown: drop the tracked membership + baseline + cached gamemode, clear the session.
+// Teardown: drop the begin times, clear the session.
 void OnDisconnect();
 
 }  // namespace coop::event_active_sync

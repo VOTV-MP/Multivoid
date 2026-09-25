@@ -1,10 +1,11 @@
 // coop/world/event_cue_sync.cpp -- see coop/world/event_cue_sync.h.
 //
 // HOST-AUTHORITATIVE: only the host detects and broadcasts (clients run a dormant scheduler --
-// time_sync pins TimeScale=0 -- so they never fire an event). The detection is a 1 Hz host-only
-// poll that diffs the live ParticleSystemComponent set against the registered cue templates,
-// because the EX_CallMath SpawnEmitterAtLocation is invisible to our ProcessEvent detour. Clients
-// replay the emitter through a reflected SpawnEmitterAtLocation.
+// time_sync pins TimeScale=0 -- so they never fire an event). The detection is the eventer's own
+// runEvent, watched through the script gate: the cue's emitter is spawned synchronously inside that
+// body (an EX_CallMath SpawnEmitterAtLocation, invisible to our ProcessEvent detour), so the watch
+// sees the fire the moment it happens, with its row name. Clients replay the emitter through a
+// reflected SpawnEmitterAtLocation.
 
 #include "coop/world/event_cue_sync.h"
 
@@ -13,18 +14,19 @@
 #include "coop/player/players_registry.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <unordered_set>
 
 namespace coop::event_cue_sync {
 namespace {
@@ -32,66 +34,51 @@ namespace {
 namespace P  = ue_wrap::profile;
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace sg = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 // ---- the cue registry: cosmetic emitter cues -----------------------------------------
-// cueId == index. APPEND-ONLY -- the id is on the wire. starRain is bytecode-verified
-// (trigger_eventer @4709: SpawnEmitterAtLocation(eff_shootingStar_rain, (0,0,6000))). Add the
-// other PSC-based cosmetic cues here (Eye Moon, Pink Beam, TriFO, Blinking Lights, Green-Fire) --
-// one line each. `fixedLocation` cues spawn at `loc` (the BP hardcodes the position); otherwise
-// the host captures the live component's location.
-//
-// CAVEAT (detection is a ~1 Hz poll-diff): a cue must LIVE longer than ~1 s to be caught.
-// starRain is safe (Meteor Shower ~2 min; a single Shooting Star several s). Before registering a
-// SHORT sub-second one-shot cue, give it a SYNCHRONOUS capture (the firefly_sync PRE/POST tick
-// window) instead of this poll -- otherwise it can spawn-and-die between polls and never broadcast.
+// cueId == index. APPEND-ONLY -- the id is on the wire. starRain is bytecode-verified: the eventer's
+// runEvent('starRain') spawns eff_shootingStar_rain at (0,0,6000) and returns (trigger_eventer @4709),
+// and no other Blueprint spawns that template. A cue is detected by its runEvent row, so a new one
+// needs its row and a location the body fixes; a cue whose position the body computes, or that spawns
+// after a delay, needs the spawned component captured inside the body instead.
 struct CueDef {
-    const char* name;             // log label
+    const char* name;             // log label, and the list_events row that fires it
+    const wchar_t* row;           // the runEvent row name
     const wchar_t* templateName;  // the UParticleSystem object the SpawnEmitter call uses
-    bool fixedLocation;           // true -> spawn at `loc`; false -> use the captured PSC pos
-    ue_wrap::FVector loc;         // used iff fixedLocation
+    ue_wrap::FVector loc;         // where the body spawns it
 };
 constexpr CueDef kCues[] = {
-    { "starRain", L"eff_shootingStar_rain", true, { 0.f, 0.f, 6000.f } },  // Meteor Shower / Shooting Star
+    { "starRain", L"starRain", L"eff_shootingStar_rain", { 0.f, 0.f, 6000.f } },  // Meteor Shower / Shooting Star
 };
 constexpr int kCueCount = static_cast<int>(sizeof(kCues) / sizeof(kCues[0]));
 
-// Resolved cue template objects (parallel to kCues; GUObjectArray entries are stable once cached).
+// Resolved on demand (a cue's particle asset loads with the eventer's class): the templates for the
+// replay and the join snapshot, the rows' names for the watch. Game thread.
 void* g_cueTemplates[kCueCount] = {};
-int   g_resolvedTemplates = 0;
+R::FName g_cueRows[kCueCount] = {};
+bool g_rowsResolved = false;
 
 // Reflected spawn path (resolved once -- cloned from firefly_sync).
 void* g_gameplayStaticsCdo = nullptr;
 void* g_spawnEmitterFn     = nullptr;
 
-// Host poll state (game-thread only).
-std::unordered_set<void*> g_lastCuePscs;  // cue-matching PSCs seen at the last poll
-long long g_lastPollMs = 0;
-// ~1 Hz host-only walk (matches turbine_sync's cadence). The shortest cue (a single Shooting
-// Star) lives several seconds and the Meteor Shower ~2 real minutes, so 1 Hz catches every cue
-// with large margin while keeping the periodic FindObjectsByClass walk cheap.
-constexpr long long kPollIntervalMs = 1000;
+std::atomic<unsigned> g_replays{0};  // emitters this peer replayed (ReplayCount)
 
-constexpr const wchar_t* kPscClass = L"ParticleSystemComponent";
+// The host's watch on runEvent, registered once per process.
+constexpr int kTagEventCue = 0x45564355;  // 'EVCU'
+constexpr const wchar_t* kRunEvent = L"runEvent";  // one pointer: the gate matches a name watch by it
+bool g_watchInstalled = false;
+bool g_watchLive = false;
+void* g_runEventFn = nullptr;     // trigger_eventer_C::runEvent, the one function of that name
+int32_t g_offEventParam = -1;
 
-long long NowMs() {
-    using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-// Resolve cue template objects opportunistically. Keeps retrying the not-yet-loaded ones (a
-// cue's particle asset only loads when its owning BP -- e.g. trigger_eventer -- is in the world).
-// Does NOT gate on ALL resolved: one cue's missing asset must not block detecting the others.
-void ResolveTemplates() {
-    if (g_resolvedTemplates == kCueCount) return;
-    int n = 0;
-    for (int i = 0; i < kCueCount; ++i) {
-        if (!g_cueTemplates[i])
-            g_cueTemplates[i] = R::FindObject(kCues[i].templateName, L"ParticleSystem");
-        if (g_cueTemplates[i]) ++n;
-    }
-    g_resolvedTemplates = n;
+void* CueTemplate(int cueId) {
+    if (!g_cueTemplates[cueId])
+        g_cueTemplates[cueId] = R::FindObject(kCues[cueId].templateName, L"ParticleSystem");
+    return g_cueTemplates[cueId];
 }
 
 bool ResolveSpawn() {
@@ -105,64 +92,58 @@ bool ResolveSpawn() {
     return g_gameplayStaticsCdo && g_spawnEmitterFn;
 }
 
-// Which cue (if any) a live PSC belongs to, by Template identity. -1 = not a cue.
-int CueIdForTemplate(void* tmpl) {
-    if (!tmpl) return -1;
-    for (int i = 0; i < kCueCount; ++i)
-        if (g_cueTemplates[i] == tmpl) return i;
-    return -1;
+// The exact runEvent and its row parameter; the eventer's class loads with the world.
+bool ResolveRunEvent() {
+    if (g_offEventParam >= 0) return true;
+    void* cls = ue_wrap::object_index::ClassByName(L"trigger_eventer_C");
+    if (!cls) return false;
+    g_runEventFn = R::FindFunction(cls, L"runEvent");
+    g_offEventParam = g_runEventFn ? R::FindParamOffset(g_runEventFn, L"event") : -1;
+    return g_offEventParam >= 0;
+}
+
+void Send(coop::net::Session& s, int slot, int cueId) {
+    const ue_wrap::FVector& loc = kCues[cueId].loc;
+    coop::net::EventCuePayload p{ static_cast<uint32_t>(cueId), loc.X, loc.Y, loc.Z };
+    if (slot < 0) s.SendReliable(coop::net::ReliableKind::EventCue, &p, sizeof(p));
+    else s.SendReliableToSlot(slot, coop::net::ReliableKind::EventCue, &p, sizeof(p));
+}
+
+// HOST: the eventer's body has run for a row; if the row spawns a cue, send it. Every host fire
+// counts, whoever called runEvent (the scheduler, the dev menu, the game's own event menu).
+void OnRunEventPost(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    if (!ResolveRunEvent() || call.function != g_runEventFn) return;
+    if (!g_rowsResolved) {
+        for (int i = 0; i < kCueCount; ++i) g_cueRows[i] = ue_wrap::fname_utils::StringToFName(kCues[i].row);
+        g_rowsResolved = true;
+    }
+    const R::FName& row = *reinterpret_cast<const R::FName*>(call.locals + g_offEventParam);
+    for (int i = 0; i < kCueCount; ++i) {
+        if (row.ComparisonIndex != g_cueRows[i].ComparisonIndex || row.Number != g_cueRows[i].Number) continue;
+        Send(*s, -1, i);
+        UE_LOGI("event_cue: host broadcast '%s' (cue %d) at (%.0f, %.0f, %.0f)", kCues[i].name, i,
+                kCues[i].loc.X, kCues[i].loc.Y, kCues[i].loc.Z);
+        return;
+    }
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // Opportunistic resolve (cheap once cached) -- the client needs the spawn path + the cue
-    // template before a packet lands; the host needs them before the poll.
-    ResolveSpawn();
-    ResolveTemplates();
-}
-
-void Tick() {
-    // HOST-ONLY, 1 Hz, connected. The only cost is the FindObjectsByClass GUObjectArray walk,
-    // capped to 1 Hz and host-only, over a cue-PSC set that is virtually always empty -- a bounded
-    // periodic walk like turbine_sync's host poll, not a per-frame scan. Game-thread check FIRST,
-    // before touching g_lastPollMs, so an off-thread call is a true no-op that mutates no poll
-    // state (the walk and the raw reads are game-thread only). TickGameplay is always game-thread
-    // in the shipping path, since net_pump::Tick asserts it, so the guard is defensive and never
-    // fires.
-    if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    const long long now = NowMs();
-    if (now - g_lastPollMs < kPollIntervalMs) return;
-    g_lastPollMs = now;
-
-    ResolveTemplates();
-    if (g_resolvedTemplates == 0) return;  // no cue asset loaded yet -> no event possible -> skip the walk
-
-    std::unordered_set<void*> current;
-    for (void* psc : R::FindObjectsByClass(kPscClass)) {
-        const int cueId = CueIdForTemplate(ue_wrap::engine::GetParticleSystemTemplate(psc));
-        if (cueId < 0) continue;          // not a registered cosmetic cue
-        current.insert(psc);
-        if (g_lastCuePscs.count(psc)) continue;  // already broadcast on a prior poll (still alive)
-
-        // NEW cue PSC -> the host just fired this event. Broadcast its spawn position.
-        ue_wrap::FVector loc = kCues[cueId].loc;
-        if (!kCues[cueId].fixedLocation) {
-            loc = ue_wrap::engine::GetComponentRelativeLocation(psc);
-            if (!std::isfinite(loc.X) || !std::isfinite(loc.Y) || !std::isfinite(loc.Z)) {
-                UE_LOGW("event_cue: '%s' PSC has non-finite location -- skipping", kCues[cueId].name);
-                continue;
-            }
+    // Called every pump tick by the install fanout, which is also the retry until the gate has
+    // resolved the watch's name.
+    if (!g_watchInstalled)
+        g_watchInstalled = sg::WatchName(kRunEvent, kTagEventCue, nullptr, &OnRunEventPost);
+    if (g_watchInstalled && !g_watchLive) {
+        sg::ResolvePendingNames();
+        if (sg::NameWatchLive(kRunEvent, kTagEventCue)) {
+            g_watchLive = true;
+            UE_LOGI("event_cue: the host's cue fires are seen at runEvent (a script-gate watch)");
         }
-        coop::net::EventCuePayload p{ static_cast<uint32_t>(cueId), loc.X, loc.Y, loc.Z };
-        s->SendReliable(coop::net::ReliableKind::EventCue, &p, sizeof(p));
-        UE_LOGI("event_cue: host broadcast '%s' (cue %d) at (%.0f, %.0f, %.0f)",
-                kCues[cueId].name, cueId, loc.X, loc.Y, loc.Z);
     }
-    g_lastCuePscs.swap(current);
 }
 
 void OnReliable(const coop::net::EventCuePayload& payload) {
@@ -173,13 +154,12 @@ void OnReliable(const coop::net::EventCuePayload& payload) {
         return;
     }
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z)) return;
-    ResolveTemplates();
     if (!ResolveSpawn()) {
         UE_LOGW("event_cue: OnReliable spawn path unresolved (cdo=%p fn=%p) -- dropping",
                 g_gameplayStaticsCdo, g_spawnEmitterFn);
         return;
     }
-    void* tmpl = g_cueTemplates[payload.cueId];
+    void* tmpl = CueTemplate(static_cast<int>(payload.cueId));
     if (!tmpl) {
         UE_LOGW("event_cue: cue %u ('%s') template not loaded on this peer -- dropping",
                 payload.cueId, kCues[payload.cueId].name);
@@ -200,43 +180,47 @@ void OnReliable(const coop::net::EventCuePayload& payload) {
     f.Set<bool>(L"bAutoDestroy", true);
     f.Set<uint8_t>(L"PoolingMethod", 0);       // EPSCPoolMethod::None
     f.Set<bool>(L"bAutoActivateSystem", true);
-    ue_wrap::Call(g_gameplayStaticsCdo, f);
+    if (!ue_wrap::Call(g_gameplayStaticsCdo, f)) {
+        UE_LOGW("event_cue: '%s' (cue %u) replay dispatch FAILED", kCues[payload.cueId].name, payload.cueId);
+        return;
+    }
+    g_replays.fetch_add(1, std::memory_order_relaxed);
     UE_LOGI("event_cue: replayed '%s' (cue %u) at (%.0f, %.0f, %.0f)",
             kCues[payload.cueId].name, payload.cueId, payload.x, payload.y, payload.z);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
-    // HOST, join edge only (rare). One bounded PSC walk -- the same cost as one Tick poll.
+    // HOST, at the joiner's world-ready. Each live cue emitter was sent when it spawned, and the
+    // send gate dropped it for this still-loading slot; the gate opens in the same handler that
+    // calls this, so every live one goes out here exactly once and every later one by its own send.
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    ResolveTemplates();
-    if (g_resolvedTemplates == 0) return;  // no cue asset loaded -> no live cue possible
-
-    for (void* psc : R::FindObjectsByClass(kPscClass)) {
-        const int cueId = CueIdForTemplate(ue_wrap::engine::GetParticleSystemTemplate(psc));
-        if (cueId < 0) continue;
-        // Only re-send cues the poll has ALREADY broadcast. A cue newer than the last poll is
-        // not in the snapshot yet; the next Tick broadcasts it to everyone INCLUDING this slot
-        // (its send gate is open now -- ConnectReplayForSlot runs post-world-ready), so sending
-        // it here too would spawn the emitter twice on the joiner.
-        if (!g_lastCuePscs.count(psc)) continue;
-        ue_wrap::FVector loc = kCues[cueId].loc;
-        if (!kCues[cueId].fixedLocation) {
-            loc = ue_wrap::engine::GetComponentRelativeLocation(psc);
-            if (!std::isfinite(loc.X) || !std::isfinite(loc.Y) || !std::isfinite(loc.Z)) continue;
+    struct Ctx { coop::net::Session* s; int slot; void* tmpls[kCueCount]; };
+    Ctx ctx{ s, peerSlot, {} };
+    bool anyLoaded = false;
+    for (int i = 0; i < kCueCount; ++i) anyLoaded |= (ctx.tmpls[i] = CueTemplate(i)) != nullptr;
+    if (!anyLoaded) return;  // no cue asset loaded -> no live cue possible
+    void* pscCls = ue_wrap::object_index::ClassByName(L"ParticleSystemComponent");
+    if (!pscCls) return;
+    ue_wrap::object_index::ForEachInstance(pscCls, [](void* c, void* psc, int32_t index) {
+        auto& ctx = *static_cast<Ctx*>(c);
+        if (!R::IsLiveByIndex(psc, index)) return;
+        void* tmpl = ue_wrap::engine::GetParticleSystemTemplate(psc);
+        for (int i = 0; i < kCueCount; ++i) {
+            if (!tmpl || tmpl != ctx.tmpls[i]) continue;
+            Send(*ctx.s, ctx.slot, i);
+            UE_LOGI("event_cue: connect-snapshot -- re-sent live '%s' (cue %d) to slot %d",
+                    kCues[i].name, i, ctx.slot);
         }
-        coop::net::EventCuePayload p{ static_cast<uint32_t>(cueId), loc.X, loc.Y, loc.Z };
-        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EventCue, &p, sizeof(p));
-        UE_LOGI("event_cue: connect-snapshot -- re-sent live '%s' (cue %d) to slot %d",
-                kCues[cueId].name, cueId, peerSlot);
-    }
+    }, &ctx);
     // The common case (no event running) stays silent -- the per-cue line above is the diagnostic.
 }
 
 void OnDisconnect() {
-    g_lastCuePscs.clear();
     g_session.store(nullptr, std::memory_order_release);
 }
+
+unsigned ReplayCount() { return g_replays.load(std::memory_order_relaxed); }
 
 }  // namespace coop::event_cue_sync

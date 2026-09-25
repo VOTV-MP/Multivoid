@@ -13,8 +13,8 @@
 
 // The eventer resolution and the reflected runEvent/runSpecialEvent dispatch live in
 // coop/world/event_fire_sync, which is the single owner: the menu's fire must be the SAME seam that
-// broadcasts EventFire to clients (a direct runEvent never reaches passEvents, so the host
-// observation poll cannot see menu fires). Only the ambient/weather verb table stays here -- those
+// broadcasts EventFire to clients (a dev fire is not entered from the scheduler's settime, so the
+// host's scheduler watch does not broadcast it). Only the ambient/weather verb table stays here -- those
 // are dev-only levers on daynightCycle/mainGamemode timers, never on the wire.
 
 namespace coop::dev::event_trigger {

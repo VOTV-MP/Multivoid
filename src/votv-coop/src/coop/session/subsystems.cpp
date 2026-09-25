@@ -48,6 +48,7 @@
 #include "coop/items/player_inventory_sync.h"  // per-player inventory (host file scaffold)
 #include "coop/dev/food_clock_probe.h"  // the food record's arrival catch-up and the two clocks behind it
 #include "coop/dev/door_drill.h"  // [dev] whether a remote player counts in a door's own sensor
+#include "coop/dev/event_drill.h"  // [dev] the event lanes: a scheduler fire, a dev fire, the join snapshot
 #include "coop/dev/appliance_drill.h"  // [dev] whether a faucet's toggle crosses both ways
 #include "coop/dev/light_drill.h"  // [dev] whether a client's switch press moves the host's group, and never its own
 #include "coop/dev/lookat_aim_drill.h"  // hold a peer's aim on a resting prop, so the churn probe has a reading
@@ -218,9 +219,9 @@ void Install(coop::net::Session& session) {
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
     coop::coingun_sync::Install(&session);  // the sell gun + host-minted coins
     coop::firefly_sync::Install(&session);  // peer-symmetric ambient firefly mirror (each peer captures+shares its own)
-    coop::event_cue_sync::Install(&session);  // host-authoritative cosmetic emitter-cue mirror: the host detects the emitter, the client replays
-    coop::event_fire_sync::Install(&session);  // HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
-    coop::event_active_sync::Install(&session);  // the host's 1 Hz activeEvents membership diff, a begin/end edge log
+    coop::event_cue_sync::Install(&session);  // cosmetic emitter cues: the host's runEvent watch sends them, the client replays
+    coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent watch (settime caller) -> EventFire; client hold + policy replay
+    coop::event_active_sync::Install(&session);  // the host's setEvent watch: begin/end edges; the join snapshot reads the game's registry
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
     coop::floppy_slot_sync::Install(&session);  // a disc-holding device's slot: host-canonical, a peer claims the outcome of its own insert or eject
@@ -521,9 +522,9 @@ DisconnectStats DisconnectAll() {
     coop::order_sync::OnDisconnect();
     coop::coingun_sync::OnDisconnect();  // dump the lane summary + drop the sold-set, the barrier queue and the cached gun
     coop::firefly_sync::OnDisconnect();
-    coop::event_cue_sync::OnDisconnect();  // clear the cosmetic-cue poll snapshot
-    coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop poll baseline/queues
-    coop::event_active_sync::OnDisconnect();  // drop tracked membership + cached gamemode
+    coop::event_cue_sync::OnDisconnect();  // drop the session the cue watch sends on
+    coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop the queued fires
+    coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
@@ -630,9 +631,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: occupant streams its pose / mirror drives the interp (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_cue"}; coop::event_cue_sync::Tick(); }  // cosmetic event cues: host ~1 Hz new-PSC poll -> EventCue broadcast (host-only, no-op on client)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_fire"}; coop::event_fire_sync::Tick(); }  // scheduled events: host 1 Hz passEvents growth poll -> EventFire / client replay drain (the hold runs at the cycle's tick)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // host 1 Hz activeEvents_senders diff -> BEGIN/END edge log (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim
@@ -650,6 +648,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::lookat_churn_probe::Tick();  // [dev] the interaction UI's rebuild rate under a held aim (a single bool read when off)
     coop::dev::lookat_aim_drill::Tick(&session);  // [dev] walk to a prop and hold the aim (a single bool read when off)
     coop::dev::door_drill::Tick(&session);  // [dev] the door drill's sensor readings and walk (a single bool read when off)
+    coop::dev::event_drill::Tick(&session);  // [dev] the event drill's fires and count (a single bool read when off)
     coop::dev::appliance_drill::Tick(&session);  // [dev] the faucet drill's toggles (a single bool read when off)
     coop::dev::light_drill::Tick(&session);  // [dev] the light drill's presses (a single bool read when off)
     coop::dev::fireext_drill::Tick(&session);  // [dev] the fire extinguisher drill (a single bool read when off)
