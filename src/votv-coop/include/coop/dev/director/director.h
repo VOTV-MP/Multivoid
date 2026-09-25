@@ -25,6 +25,10 @@
 
 namespace coop::director {
 
+// The forced aim from `from` to `to`: the yaw and pitch that point there, no roll. For a drill that
+// turns the camera until the game's interaction trace strikes what it wants.
+ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& to);
+
 // The read-model (Baritone IPlayerContext analog): the bot's view of its OWN state,
 // refreshed each tick on the game thread. A process reads this, never the engine directly.
 struct PlayerContext {

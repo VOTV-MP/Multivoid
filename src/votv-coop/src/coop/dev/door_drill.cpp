@@ -47,7 +47,7 @@ int ReadOpen(void* door, bool settled) {
     auto open = std::make_shared<int>(-1);
     GT::RunAndWait([door, open, settled](std::atomic<int>& done) {
         bool o = false;
-        if (settled ? D::TryReadOpen(door, o) : D::TryReadOpenIntent(door, o)) *open = o ? 1 : 0;
+        if (DoorLive(door) && (settled ? D::TryReadOpen(door, o) : D::TryReadOpenIntent(door, o))) *open = o ? 1 : 0;
         done.store(1);
     });
     return *open;
@@ -300,7 +300,7 @@ int WalkerListed(void* door) {
     auto listed = std::make_shared<int>(-1);
     GT::RunAndWait([door, listed](std::atomic<int>& done) {
         void* held[kReadMax];
-        const int n = D::ReadSensorOverlaps(door, held, kReadMax);
+        const int n = DoorLive(door) ? D::ReadSensorOverlaps(door, held, kReadMax) : -1;
         void* const me = coop::players::Registry::Get().Local();
         if (n >= 0) {
             *listed = 0;
@@ -465,8 +465,10 @@ DWORD WINAPI WalkerThread(LPVOID) {
     struct Box { bool ok = false; ue_wrap::FVector centre{}, half{}, origin{}, fwd{}; };
     auto box = std::make_shared<Box>();
     GT::RunAndWait([door, box](std::atomic<int>& done) {
-        box->ok = D::ReadSensorBox(door, box->centre, box->half) && E::TryGetActorLocation(door, box->origin);
-        box->fwd = E::GetActorForwardVector(door);
+        if (DoorLive(door)) {
+            box->ok = D::ReadSensorBox(door, box->centre, box->half) && E::TryGetActorLocation(door, box->origin);
+            box->fwd = E::GetActorForwardVector(door);
+        }
         done.store(1);
     });
     if (box->ok) {
@@ -535,7 +537,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         if (ReadOpenIntent(door) == 1) {
             GT::RunAndWait([door](std::atomic<int>& done) {
                 void* p = coop::players::Registry::Get().Local();
-                done.store(p && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
+                done.store(p && DoorLive(door) && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
             });
             const int shutMs = WaitForOpen(door, 0, kOpenWaitMs, /*settled*/ true);
             UE_LOGI("[DOOR-DRILL] %s PASS (%s) door=%ls was open: pressed shut, closed=%d after %d ms", Side(),
@@ -547,7 +549,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         const int openBefore = ReadOpenIntent(door);
         const int pressed = GT::RunAndWait([door](std::atomic<int>& done) {
             void* p = coop::players::Registry::Get().Local();
-            done.store(p && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
+            done.store(p && DoorLive(door) && D::CallPress(door, p, D::kUseAction) ? 1 : 2);
         });
         const int openedMs = pressed == 1 ? WaitForOpen(door, 1, kOpenWaitMs) : -1;
         r.opened = openedMs >= 0;
@@ -587,7 +589,7 @@ DWORD WINAPI WalkerThread(LPVOID) {
         // Where the sensor box is with the door open, against the closed-door reading.
         auto now = std::make_shared<Box>();
         GT::RunAndWait([door, now](std::atomic<int>& done) {
-            now->ok = D::ReadSensorBox(door, now->centre, now->half);
+            now->ok = DoorLive(door) && D::ReadSensorBox(door, now->centre, now->half);
             done.store(1);
         });
         const float mx = now->centre.X - box->centre.X, my = now->centre.Y - box->centre.Y;
@@ -617,11 +619,13 @@ DWORD WINAPI WalkerThread(LPVOID) {
     auto hitOnce = [door](float damage) {
         GT::RunAndWait([door, damage](std::atomic<int>& done) {
             void* p = coop::players::Registry::Get().Local();
-            done.store(p && D::CallHit(door, p, damage) ? 1 : 2);
+            done.store(p && DoorLive(door) && D::CallHit(door, p, damage) ? 1 : 2);
         });
     };
     auto pryOnce = [door]() {
-        GT::RunAndWait([door](std::atomic<int>& done) { done.store(D::CallCrowbarOpen(door) ? 1 : 2); });
+        GT::RunAndWait([door](std::atomic<int>& done) {
+            done.store(DoorLive(door) && D::CallCrowbarOpen(door) ? 1 : 2);
+        });
     };
     float hitDamage = kHitDamage;
     bool armed = !client;
@@ -670,6 +674,9 @@ DWORD WINAPI WalkerThread(LPVOID) {
         if (shut) AimedLegs(door, pick->door);
         else UE_LOGW("[DOOR-DRILL] client AIMED door=%ls: the door did not shut behind the walk away -- INCONCLUSIVE",
                      pick->door.c_str());
+    } else if (client) {
+        UE_LOGW("[DOOR-DRILL] client AIMED door=%ls: not run, the walker did not get back to the approach -- "
+                "INCONCLUSIVE", pick->door.c_str());
     }
     UE_LOGI("[DOOR-DRILL] %s sensor stubs reached the gate %d time(s), on any door", Side(),
             g_stubCalls.load(std::memory_order_relaxed));
@@ -718,5 +725,15 @@ void OnDisconnect() {
     g_listed = false;
     g_puppetEntries = 0;
 }
+
+namespace detail {
+
+bool DoorLive(void* door) {
+    for (const Door& d : g_doors)
+        if (d.actor == door) return R::IsLiveByIndex(d.actor, d.idx);
+    return false;
+}
+
+}  // namespace detail
 
 }  // namespace coop::dev::door_drill

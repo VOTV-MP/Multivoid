@@ -89,7 +89,8 @@ int ReadSensorOverlaps(void* door, void** out, int maxOut);
 bool ReadSensorBox(void* door, FVector& centre, FVector& halfExtent);
 
 // A part of the door by the name its graph gives the component: its `frame`, or a leaf, `door_L` or
-// `door_R`. Null on null, an unresolved name or a dead component. For a dev drill's aim. Game thread.
+// `door_R`. Null on null, an unresolved name or a dead component. For a dev drill's aim only: each call
+// walks the class's properties by name. Game thread.
 void* PartOf(void* door, const wchar_t* name);
 
 // Force-snap to a state, independent of proximity. A door's open and close is a timeline

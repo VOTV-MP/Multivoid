@@ -65,6 +65,7 @@ Reg  g_reg[kWatchCount] = {};
 bool g_settled = false;
 
 uint64_t g_sent = 0, g_ran = 0, g_denied = 0, g_worldRefused = 0;
+uint64_t g_sentPress = 0;  // of g_sent, the presses
 uint64_t g_loadNative = 0;  // a client's calls run natively as its own world's load (IsInAnnouncedWorld)
 uint64_t g_quietHits = 0;   // hits the host ran that left their door as it was
 
@@ -271,6 +272,7 @@ sg::Verdict OnVerbPre(const sg::Call& call) {
         return sg::Verdict::Cancel;
     }
     ++g_sent;
+    if (verb == V::kPress) ++g_sentPress;
     if (verb != V::kHit || g_sent <= 3 || g_sent % 20 == 0)
         UE_LOGI("[DOOR-VERB] CLIENT SENT a %s on key='%ls' (#%llu)", VerbName(verb), key.c_str(),
                 static_cast<unsigned long long>(g_sent));
@@ -358,7 +360,7 @@ void OnPeerLeft(uint8_t slot) {
     g_cutSaid[slot] = false;
 }
 
-uint64_t SentCount() { return g_sent; }
+uint64_t SentPressCount() { return g_sentPress; }
 
 void OnDisconnect() {
     if (g_sent || g_ran || g_denied || g_worldRefused || g_loadNative)
@@ -374,6 +376,7 @@ void OnDisconnect() {
         g_cutSaid[slot] = false;
     }
     g_sent = g_ran = g_denied = g_worldRefused = g_loadNative = 0;
+    g_sentPress = 0;
     g_quietHits = 0;
     g_hitRefusals = 0;
 }

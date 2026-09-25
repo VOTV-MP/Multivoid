@@ -7,8 +7,8 @@
 //   CLOSE    -- after each stay, walks fifteen metres away; the door shuts within five seconds.
 //   HIT      -- (a client with an empty hand) a pry and a hit, refused; a crowbar in hand, one hit past
 //               its swing, cut, its swings until the door opens, then a pry, run. The host hits at 50.
-//   AIMED    -- (a client, the door shut again) its own E, aimed by the game's trace at a leaf, then the
-//               frame, through its use handler: each press goes to the host.
+//   AIMED    -- (a client, the door shut again) the camera turned until the game's trace strikes a leaf,
+//               then the frame, each pressed through useSelectedAction: each press goes to the host.
 // EACH peer logs every change in each door's sensor list and open flag, and every begin and end event
 // of the walked door's sensor, with the component and the list it left. Tagged [DOOR-DRILL]; run on
 // both peers (door_drill=1); the walker's DONE line ends it.

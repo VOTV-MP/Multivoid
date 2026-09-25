@@ -66,9 +66,10 @@ bool ReadMainPlayerGrabState(void* mainPlayer, MainPlayerGrabState& out);
 // False when the function does not resolve or the call fails. Game thread.
 bool CallMainPlayerUpdateHold(void* mainPlayer);
 
-// The player's own E handler, useSelectedAction: the selected action sent to whatever its interaction
-// trace hit (hitResult's actor), the press a player makes. A dev drill's press through the player's
-// input. False when the function does not resolve or the call fails. Game thread.
+// The player's useSelectedAction, where the dispatch of E ends once its handler's own gating passes
+// (InpActEvt_use: nothing grabbed, a look-at actor that answers): the selected action sent to whatever
+// the interaction trace hit (hitResult's actor). A dev drill's press, below that gating. False when the
+// function does not resolve or the call fails. Game thread.
 bool CallMainPlayerUseSelectedAction(void* mainPlayer);
 
 // AmainPlayer_C::hitResult's actor -- the RAW interaction trace, the field the game's own tool

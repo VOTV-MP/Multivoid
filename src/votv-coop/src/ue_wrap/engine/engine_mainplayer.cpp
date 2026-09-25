@@ -282,7 +282,7 @@ bool CallMainPlayerUpdateHold(void* mainPlayer) {
 
 bool CallMainPlayerUseSelectedAction(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
-    void* fn = R::FindFunction(R::ClassOf(mainPlayer), L"useSelectedAction");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(mainPlayer), L"useSelectedAction");
     if (!fn) return false;
     ParamFrame f(fn);
     return f.valid() && Call(mainPlayer, f);

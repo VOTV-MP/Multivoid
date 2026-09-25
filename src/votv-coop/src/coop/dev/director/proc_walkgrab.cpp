@@ -41,16 +41,6 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& to) {
-    const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
-    const float kRad2Deg = 180.f / 3.14159265358979323846f;
-    ue_wrap::FRotator r{};
-    r.Yaw   = std::atan2(dy, dx) * kRad2Deg;
-    r.Pitch = std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * kRad2Deg;
-    r.Roll  = 0.f;
-    return r;
-}
-
 constexpr float kAdvanceCm      = 70.f;   // hug the path: advance only when CLOSE, so the straight line to
                                           // the next waypoint stays on the walkable navmesh segment (a wide
                                           // radius cuts corners into walls -- the door-pin bug)
@@ -351,6 +341,16 @@ private:
 };
 
 }  // namespace
+
+ue_wrap::FRotator LookAt(const ue_wrap::FVector& from, const ue_wrap::FVector& to) {
+    const float dx = to.X - from.X, dy = to.Y - from.Y, dz = to.Z - from.Z;
+    const float kRad2Deg = 180.f / 3.14159265358979323846f;
+    ue_wrap::FRotator r{};
+    r.Yaw   = std::atan2(dy, dx) * kRad2Deg;
+    r.Pitch = std::atan2(dz, std::sqrt(dx * dx + dy * dy)) * kRad2Deg;
+    r.Roll  = 0.f;
+    return r;
+}
 
 void AddWalkGrabProcesses(ControlManager& mgr, DirectorGoal& goal) {
     g_clearHandUsedEffectFallback = false;   // reset per run
