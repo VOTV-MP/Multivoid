@@ -9,6 +9,7 @@
 #include "ue_wrap/core/call.h"      // ParamFrame / Call -- the GameplayStatics spawn (SpawnMirror)
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"     // FTransform (SpawnMirror)
 
@@ -22,7 +23,6 @@ namespace {
 namespace R = reflection;
 
 std::atomic<bool> g_resolved{false};
-void*   g_cls         = nullptr;  // ATV_C UClass
 int32_t g_keyOff      = -1;       // Key      (Alpha 0.9.0-n: 0x0618, FName)
 int32_t g_playerOff   = -1;       // Player   (0x05B0, AmainPlayer_C*)
 int32_t g_isDrivenOff = -1;       // isDriven (0x05F7, bool)
@@ -39,12 +39,17 @@ int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
     return o;
 }
 
+// ATV_C as this world holds it. A Blueprint class dies with its world and its address can be
+// reused, so it is looked up where it is used, one index lookup that walks nothing, and never
+// kept; the field offsets above are its layout, the same in every world, so they are resolved once.
+void* AtvClass() { return object_index::ClassByName(L"ATV_C"); }
+
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
-    void* cls = R::FindClass(L"ATV_C");
+    void* cls = AtvClass();
     if (!cls) return false;
 
     g_keyOff      = ResolveOff(cls, L"Key",      0x0618);
@@ -54,7 +59,6 @@ bool EnsureResolved() {
     g_healthOff   = ResolveOff(cls, L"health",   0x05E4);
     g_brakeOff    = ResolveOff(cls, L"Brake",    0x05D9);
 
-    g_cls = cls;
     g_resolved.store(true, std::memory_order_release);
     UE_LOGI("atv: resolved ATV_C=%p Key@0x%04X Player@0x%04X isDriven@0x%04X fuel@0x%04X "
             "health@0x%04X Brake@0x%04X",
@@ -63,11 +67,11 @@ bool EnsureResolved() {
 }
 
 bool IsAtv(void* obj) {
-    if (!obj || !g_cls) return false;
+    if (!obj) return false;
+    void* atvCls = AtvClass();
+    if (!atvCls) return false;
     void* cls = R::ClassOf(obj);
-    if (!cls) return false;
-    void* bases[1] = { g_cls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    return cls && R::IsDescendantOfAny(cls, &atvCls, 1);
 }
 
 std::wstring GetKeyString(void* atv) {
@@ -108,18 +112,20 @@ bool GetBrake(void* atv) {
 
 bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot) {
     if (!atv || !EnsureResolved()) return false;
-    // Latch the ATTEMPT, not just the warning: an unresolved name would otherwise re-walk
-    // GUObjectArray on every warp, at up to 20 Hz, for the life of the session.
-    static void* sFn = nullptr;
-    static bool  sTried = false;
-    if (!sTried) {
-        sTried = true;
-        sFn = R::FindFunction(g_cls, L"teleportVehicle");
-        if (!sFn) UE_LOGE("atv: teleportVehicle unresolved -- the rig can never be warped; "
-                          "a mirror that drifts past the threshold will not be re-placed");
+    // The memoised lookup, on the rig's own class: a warp comes at up to 20 Hz and a hit renders no
+    // name, and the answer is held by slot and serial, so a class a world change replaced is asked
+    // again and a miss is held as a miss while its class lives.
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(atv), L"teleportVehicle");
+    if (!fn) {
+        static bool sWarned = false;
+        if (!sWarned) {
+            sWarned = true;
+            UE_LOGE("atv: teleportVehicle unresolved -- the rig can never be warped; "
+                    "a mirror that drifts past the threshold will not be re-placed");
+        }
+        return false;
     }
-    if (!sFn) return false;
-    ParamFrame f(sFn);
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<FVector>(L"NewLocation", loc);
     f.Set<FRotator>(L"NewRotation", rot);
@@ -152,11 +158,13 @@ const wchar_t* const kHitDelegateNames[] = {
 // means what it meant.
 int ResolveHitDelegates(void** out, int max) {
     if (!out || max <= 0 || !EnsureResolved()) return 0;
+    void* const cls = AtvClass();
+    if (!cls) return 0;
     int n = 0, i = -1;
     for (const wchar_t* name : kHitDelegateNames) {
         if (++i >= max) break;
         out[i] = nullptr;
-        void* fn = R::FindFunction(g_cls, name);
+        void* fn = R::FindFunction(cls, name);
         if (!fn) { UE_LOGW("atv: hit delegate '%ls' unresolved", name); continue; }
         out[i] = fn;
         ++n;
@@ -172,8 +180,8 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
         return nullptr;
     }
     // Trust boundary: the className arrives over the wire -- only spawn ATV-lineage classes.
-    void* bases[1] = { g_cls };
-    if (!R::IsDescendantOfAny(actorClass, bases, 1)) {
+    void* atvCls = AtvClass();
+    if (!atvCls || !R::IsDescendantOfAny(actorClass, &atvCls, 1)) {
         UE_LOGW("atv: SpawnMirror '%ls' is NOT an ATV subclass -- refusing", className.c_str());
         return nullptr;
     }
@@ -236,17 +244,10 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
     return spawned;  // physics LEFT ON -- a native idle ATV (grabbable). atv_sync owns lifetime/sync.
 }
 
-void DestroyMirror(void* atv) {
-    if (!atv || !g_cls || !R::IsLive(atv)) return;
-    static void* sK2 = nullptr;
-    if (!sK2) sK2 = R::FindFunction(g_cls, L"K2_DestroyActor");  // AActor method, inherited by ATV_C
-    if (!sK2) {
-        static bool sWarned = false;
-        if (!sWarned) { sWarned = true;
-            UE_LOGW("atv: K2_DestroyActor unresolved -- cannot tear down runtime-ATV mirror %p", atv); }
-        return;
-    }
-    R::CallFunction(atv, sK2, nullptr);
+bool DestroyMirror(void* atv) {
+    if (!atv || !R::IsLive(atv)) return false;
+    // K2_DestroyActor is declared on Actor, not on ATV_C, so it is resolved there.
+    return engine::DestroyActor(atv);
 }
 
 }  // namespace ue_wrap::atv

@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"      // GetController -- the local player's PlayerController for input mode
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -17,33 +18,36 @@ namespace P = ue_wrap::profile;
 
 namespace {
 
-// Cached refs for the widget and its visibility byte; Open() drives both.
-void*   g_spawnMenuCls = nullptr;  // ui_spawnmenu_C
-int32_t g_visOff       = -2;       // UWidget.Visibility byte offset (-2 unresolved, -1 none)
+// The widget's visibility byte, which Open() drives: the offset is the class's layout, the same in
+// every world.
+int32_t g_visOff = -2;  // UWidget.Visibility byte offset (-2 unresolved, -1 none)
+
+// ui_spawnmenu_C as this world holds it: a Blueprint class dies with its world and its address can
+// be reused, so it is looked up where it is used, one index lookup, and never kept.
+void* SpawnMenuClass() { return object_index::ClassByName(L"ui_spawnmenu_C"); }
 
 // The live (non-CDO) ui_spawnmenu_C widget instance. propProcessor creates ONE per world at
 // startup (`ExecuteUbergraph_propProcessor: WidgetBlueprintLibrary.Create(ui_spawnmenu_C) +
 // AddToViewport`) in EVERY gamemode -- verified live: in story it exists at Visibility=1
 // (Collapsed). nullptr only if the world hasn't created it yet.
 void* FindSpawnMenuWidget() {
-    if (!g_spawnMenuCls) g_spawnMenuCls = R::FindClass(L"ui_spawnmenu_C");
-    if (!g_spawnMenuCls) return nullptr;
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj || R::ClassOf(obj) != g_spawnMenuCls) continue;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        if (!R::IsLive(obj)) continue;
-        return obj;
-    }
-    return nullptr;
+    void* const cls = SpawnMenuClass();
+    if (!cls) return nullptr;
+    void* found = nullptr;
+    object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
+        void*& out = *static_cast<void**>(ctx);
+        if (out || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        out = obj;
+    }, &found);
+    return found;
 }
 
 // ESlateVisibility byte of `widget` (0=Visible, 1=Collapsed, 2=Hidden, ...), or -3 if the
 // offset is unresolved. Used as the before/after open diagnostic.
 int ReadVis(void* widget) {
-    if (!widget || !g_spawnMenuCls) return -3;
-    if (g_visOff == -2) g_visOff = R::FindPropertyOffset(g_spawnMenuCls, L"Visibility");
+    if (!widget) return -3;
+    if (g_visOff == -2) g_visOff = R::FindPropertyOffset(R::ClassOf(widget), L"Visibility");
     if (g_visOff < 0) return -3;
     return *reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(widget) + g_visOff);
 }
@@ -111,10 +115,10 @@ bool Open(void* localPlayer) {
         *(reinterpret_cast<uint8_t*>(widget) + g_visOff) = 0;  // fallback: raw byte (may not render)
         UE_LOGW("spawn_menu::Open: native UWidget::SetVisibility unresolved -- raw byte fallback (Slate may not render)");
     }
-    static void* sOpenedFn = nullptr;
-    if (!sOpenedFn) sOpenedFn = R::FindFunction(g_spawnMenuCls, L"opened");
-    if (sOpenedFn) {
-        ue_wrap::ParamFrame f(sOpenedFn);
+    // opened() on the widget's own class, through the memoised lookup: it holds the answer by slot
+    // and serial, so a class a world change replaced is asked again.
+    if (void* openedFn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"opened")) {
+        ue_wrap::ParamFrame f(openedFn);
         if (f.valid()) ue_wrap::Call(widget, f);
     }
 
@@ -191,15 +195,10 @@ bool Close(void* localPlayer) {
         } else if (g_visOff >= 0) {
             *(reinterpret_cast<uint8_t*>(widget) + g_visOff) = 1;  // fallback: raw byte
         }
-        // (3) Symmetric content teardown if the widget exposes one (resolve once; absence is fine).
-        static void* sClosedFn      = nullptr;
-        static bool  sClosedResolved = false;
-        if (!sClosedResolved) {
-            sClosedResolved = true;
-            sClosedFn = g_spawnMenuCls ? R::FindFunction(g_spawnMenuCls, L"closed") : nullptr;
-        }
-        if (sClosedFn) {
-            ue_wrap::ParamFrame f(sClosedFn);
+        // (3) Symmetric content teardown if the widget exposes one. Absence is fine: the memoised
+        // lookup holds a miss as a miss while the class lives.
+        if (void* closedFn = R::FindDispatchFunctionCached(R::ClassOf(widget), L"closed")) {
+            ue_wrap::ParamFrame f(closedFn);
             if (f.valid()) ue_wrap::Call(widget, f);
         }
     }
@@ -211,8 +210,7 @@ bool Close(void* localPlayer) {
 
 bool Toggle(void* localPlayer) {
     // Decide from GROUND TRUTH (the live Visibility byte), never a cached open-flag -- so a Q press
-    // does the right thing even if the game closed the menu via its own path. FindSpawnMenuWidget()
-    // also resolves g_spawnMenuCls so ReadVis can resolve its offset.
+    // does the right thing even if the game closed the menu via its own path.
     void* widget = FindSpawnMenuWidget();
     if (widget && ReadVis(widget) == 0) return Close(localPlayer);  // currently Visible -> dismiss
     return Open(localPlayer);                                       // collapsed / not-yet-created -> open

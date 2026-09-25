@@ -25,7 +25,7 @@ namespace ue_wrap::atv {
 // Resolve AATV_C + the field offsets. Idempotent; true once resolved. Game thread.
 bool EnsureResolved();
 
-// True iff `obj`'s class is ATV_C or a subclass. False if not yet resolved.
+// True iff `obj`'s class is ATV_C or a subclass. False when this world holds no ATV_C. Game thread.
 bool IsAtv(void* obj);
 
 // The ATV's save-persistent Key as a wide string ("" on failure, L"None" if unkeyed).
@@ -77,8 +77,8 @@ int ResolveHitDelegates(void** out, int max);
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot);
 
 // Tear down a SpawnMirror'd runtime-ATV mirror -- K2_DestroyActor on the actor -- when the host
-// announces it gone (AtvDestroy), or on disconnect. No-op-safe on a null or already-dead actor.
-// Game thread.
-void DestroyMirror(void* atv);
+// announces it gone (AtvDestroy), or on disconnect. False, and nothing done, on a null or
+// already-dead actor or a destroy that did not dispatch. Game thread.
+bool DestroyMirror(void* atv);
 
 }  // namespace ue_wrap::atv

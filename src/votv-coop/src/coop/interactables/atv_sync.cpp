@@ -536,10 +536,12 @@ void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderP
     auto it = g_atvs.find(synthKey);
     if (it == g_atvs.end()) return;
     void* actor = it->second.actor;
-    if (it->second.isClientSpawnedMirror) A::DestroyMirror(actor);  // K2_DestroyActor our fresh spawn
+    const bool destroyed = it->second.isClientSpawnedMirror && R::IsLiveByIndex(actor, it->second.idx) &&
+                           A::DestroyMirror(actor);  // our own fresh spawn
     if (actor) g_synthForActor.erase(actor);
     g_atvs.erase(it);
-    UE_LOGI("atv: destroyed runtime-ATV mirror synthKey='%ls'", synthKey.c_str());
+    UE_LOGI("atv: runtime-ATV mirror synthKey='%ls' %s", synthKey.c_str(),
+            destroyed ? "destroyed" : "dropped from the lane, not destroyed here");
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {

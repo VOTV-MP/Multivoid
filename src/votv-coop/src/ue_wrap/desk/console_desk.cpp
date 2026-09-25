@@ -10,6 +10,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/signal_dynamic.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstdio>
@@ -568,21 +569,14 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
 }
 
 bool DeleteSignalActor() {
-    // The object renderer is a per-world singleton; resolve lazily and call its reflected
-    // delete-signal-actor verb.
-    static void* sCls = nullptr;
-    static void* sFn = nullptr;
-    if (!sCls) sCls = R::FindClass(L"objectRenderer_C");
-    if (sCls && !sFn) sFn = R::FindFunction(sCls, L"deleteSignalActor");
-    if (!sFn) return false;
-    for (void* obj : R::FindObjectsByClass(L"objectRenderer_C")) {
-        if (!obj || !R::IsLive(obj) ||
-            R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        ue_wrap::ParamFrame f(sFn);
-        if (!f.valid()) return false;
-        return ue_wrap::Call(obj, f);
-    }
-    return false;
+    // The object renderer is the world's one, and its verb is looked up on its live class through
+    // the memoised lookup: a Blueprint class dies with its world and its address can be reused.
+    void* const renderer = ue_wrap::world_singleton::Find(L"objectRenderer_C");
+    if (!renderer) return false;
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(renderer), L"deleteSignalActor");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(renderer, f);
 }
 
 bool ReadDLSignalKey(uint64_t& out) {
