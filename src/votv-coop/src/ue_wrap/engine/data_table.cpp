@@ -26,7 +26,9 @@ struct FStringRaw {
 };
 
 // TSetElement<TTuple<FName, uint8*>> = {FName key; uint8* row; int32 HashNextId; int32 HashIndex}.
-// MEASURED correct on this build by store_table_probe (all four digests matched).
+// MEASURED correct on this build by store_table_probe (all four digests matched). The walk reads every
+// element up to Num, so it holds for a table no row was removed from, which a cooked table the game
+// only reads is; a removed row leaves a free slot the walk would read as a row.
 constexpr int32_t kElemStride = 24;
 constexpr int32_t kElemRowPtr = 8;
 

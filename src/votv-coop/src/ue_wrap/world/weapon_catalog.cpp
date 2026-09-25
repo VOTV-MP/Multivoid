@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cwchar>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
@@ -96,6 +97,7 @@ void Build() {
         sw.canSwing = *reinterpret_cast<void* const*>(ref.row + offMontage) != nullptr &&
                       *reinterpret_cast<const uint8_t*>(ref.row + offAttack) != 0;
         sw.maxDamage = damage * largest;
+        if (!std::isfinite(sw.maxDamage)) sw.maxDamage = std::numeric_limits<float>::max();
         if (sw.canSwing) {
             ++swings;
             if (swingList.size() < 600) {

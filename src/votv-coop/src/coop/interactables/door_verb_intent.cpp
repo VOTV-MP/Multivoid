@@ -80,6 +80,7 @@ Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::DoorVerbIntentPayload> g_pending[coop::net::kMaxPeers];
 bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 bool g_cutSaid[coop::net::kMaxPeers]  = {};  // a sender's hit cut to its item's swing, said once
+uint64_t g_hitRefusals = 0;                  // hits refused as no swing: said for three, then every twentieth
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -142,14 +143,16 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
         return true;
     }
     if (p.verb == V::kHit) {
-        const std::wstring item = coop::hand_item::HeldName(slot);
+        const std::wstring item = coop::hand_item::HeldItem(slot);
         ue_wrap::weapon_catalog::Swing swing;
         const bool read = ue_wrap::weapon_catalog::Lookup(item, swing);
         if (!read || !swing.canSwing) {
             ++g_denied;
-            UE_LOGI("[DOOR-VERB] DENY slot=%u hit key='%ls' -- the sender's held item '%ls' %s",
-                    static_cast<unsigned>(slot), key.c_str(), item.c_str(),
-                    read ? "does not swing" : "cannot be judged: the weapon table is unusable");
+            if (++g_hitRefusals <= 3 || g_hitRefusals % 20 == 0)
+                UE_LOGI("[DOOR-VERB] DENY slot=%u hit key='%ls' -- the sender's held item '%ls' %s (#%llu)",
+                        static_cast<unsigned>(slot), key.c_str(), item.c_str(),
+                        read ? "does not swing" : "cannot be judged: the weapon table is unusable",
+                        static_cast<unsigned long long>(g_hitRefusals));
             return true;
         }
         const float bounded = (damage >= 0.f) ? (damage < swing.maxDamage ? damage : swing.maxDamage) : 0.f;
@@ -303,6 +306,10 @@ void Tick(coop::net::Session& session) {
         }
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
+    // The weapon table is built once the world runs, not on a client's first hit: its build finds
+    // the table by walking every object. Ready() throttles a retry while the table is not loaded.
+    static bool s_weaponsReady = false;
+    if (!s_weaponsReady) s_weaponsReady = ue_wrap::weapon_catalog::Ready();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::DoorVerbIntentPayload p = g_pending[slot].front();
@@ -356,6 +363,7 @@ void OnDisconnect() {
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
     g_quietHits = 0;
+    g_hitRefusals = 0;
 }
 
 }  // namespace coop::door_verb_intent

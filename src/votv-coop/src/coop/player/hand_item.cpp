@@ -13,6 +13,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/actors/inventory.h"   // the hold slot's item name
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
@@ -52,6 +53,7 @@ struct SlotHand {
     bool has = false;
     std::wstring cls;   // BP class name, e.g. L"prop_physgun_C"
     std::wstring name;  // Aprop_C 'name' FName (drives the generic prop mesh), may be empty
+    std::wstring item;  // the hold slot's item name, which the game's item tables are keyed by
     std::wstring lastCls;  // the class held last: `cls` while it holds one, the one before once empty
     // The measured view-relative hold transform, owner-authored and wire-carried.
     float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
@@ -78,6 +80,7 @@ coop::net::Session* g_session = nullptr;
 bool         g_ownHas = false;
 std::wstring g_ownCls;
 std::wstring g_ownName;
+std::wstring g_ownItem;
 // The last-seen holding actor, pointer and captured index, since the game recycles addresses.
 // While unchanged, TickOwner skips the class and name renders, which allocate engine-side per
 // call.
@@ -202,19 +205,22 @@ std::wstring ReadItemName(void* actor) {
     return s;
 }
 
-// The payload: slot, has, a length-prefixed class, a length-prefixed name, and when held the
-// measured view-relative position and rotation.
+// The payload: slot, has, a length-prefixed class, name and item, and when held the measured
+// view-relative position and rotation.
 std::vector<uint8_t> BuildPayload(uint8_t slot, const SlotHand& h) {
     std::vector<uint8_t> out;
     const size_t cl = h.has ? (h.cls.size() > kMaxStr ? kMaxStr : h.cls.size()) : 0;
     const size_t nl = h.has ? (h.name.size() > kMaxStr ? kMaxStr : h.name.size()) : 0;
-    out.reserve(4 + cl + nl + (h.has ? 24 : 0));
+    const size_t il = h.has ? (h.item.size() > kMaxStr ? kMaxStr : h.item.size()) : 0;
+    out.reserve(5 + cl + nl + il + (h.has ? 24 : 0));
     out.push_back(slot);
     out.push_back(h.has ? 1 : 0);
     out.push_back(static_cast<uint8_t>(cl));
     for (size_t i = 0; i < cl; ++i) out.push_back(static_cast<uint8_t>(h.cls[i]));
     out.push_back(static_cast<uint8_t>(nl));
     for (size_t i = 0; i < nl; ++i) out.push_back(static_cast<uint8_t>(h.name[i]));
+    out.push_back(static_cast<uint8_t>(il));
+    for (size_t i = 0; i < il; ++i) out.push_back(static_cast<uint8_t>(h.item[i]));
     if (h.has) {
         const float rel[6] = {h.relPos[0], h.relPos[1], h.relPos[2],
                               h.relRot[0], h.relRot[1], h.relRot[2]};
@@ -383,12 +389,14 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         g_ownHeldIdx = idx;
         const std::wstring cls = R::ClassNameOf(holdingProp);
         const std::wstring name = ReadItemName(holdingProp);
-        if (!g_ownHas || cls != g_ownCls || name != g_ownName) {
+        const std::wstring item = ue_wrap::inventory::ReadHeldItemName();
+        if (!g_ownHas || cls != g_ownCls || name != g_ownName || item != g_ownItem) {
             g_ownHas = true;
             g_ownCls = cls;
             g_ownName = name;
+            g_ownItem = item;
             SlotHand& h = g_hands[self];
-            h.has = true; h.cls = cls; h.name = name; h.lastCls = cls;
+            h.has = true; h.cls = cls; h.name = name; h.item = item; h.lastCls = cls;
             // The first measure of the weld's view-relative transform, which may land a tick early;
             // the periodic re-check corrects it. Measured into scratch and reset on failure: on a
             // quick-slot switch a failed measure would otherwise ship the previous item's transform
@@ -406,8 +414,8 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
                 h.haveRel = false;
             }
             SendState(session, self, h);
-            UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' (announced, rel %s)",
-                    cls.c_str(), name.c_str(), h.haveRel ? "measured" : "fallback");
+            UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' item='%ls' (announced, rel %s)",
+                    cls.c_str(), name.c_str(), item.c_str(), h.haveRel ? "measured" : "fallback");
             // No reconcile request here: the pickup's ground-actor death is caught at the destroy
             // seam, and the stream carries the live transform.
         }
@@ -425,6 +433,7 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         g_ownHas = false;
         g_ownCls.clear();
         g_ownName.clear();
+        g_ownItem.clear();
         SlotHand& h = g_hands[self];
         const std::wstring last = h.lastCls;
         h = SlotHand{};
@@ -550,6 +559,17 @@ bool HandleHandItem(coop::net::Session& session,
     }
     std::wstring name;
     for (uint8_t i = 0; i < nameLen; ++i) name.push_back(static_cast<wchar_t>(p[off++]));
+    if (off + 1 > static_cast<size_t>(msg.payloadLen)) {
+        UE_LOGW("hand_item: no item field -- dropping");
+        return true;
+    }
+    const uint8_t itemLen = p[off++];
+    if (off + itemLen > static_cast<size_t>(msg.payloadLen)) {
+        UE_LOGW("hand_item: truncated item field -- dropping");
+        return true;
+    }
+    std::wstring item;
+    for (uint8_t i = 0; i < itemLen; ++i) item.push_back(static_cast<wchar_t>(p[off++]));
 
     // The measured view-relative hold transform, present whenever held. Insane values (non-finite,
     // out of arm's reach) keep the fallback placement.
@@ -583,7 +603,7 @@ bool HandleHandItem(coop::net::Session& session,
             return true;
         }
         SlotHand& h = g_hands[describedSlot];
-        h.has = has; h.cls = cls; h.name = name;
+        h.has = has; h.cls = cls; h.name = name; h.item = item;
         if (has) h.lastCls = cls;
         std::memcpy(h.relPos, relPos, sizeof(relPos));
         std::memcpy(h.relRot, relRot, sizeof(relRot));
@@ -607,7 +627,7 @@ bool HandleHandItem(coop::net::Session& session,
     }
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // own echo
     SlotHand& h = g_hands[describedSlot];
-    h.has = has; h.cls = cls; h.name = name;
+    h.has = has; h.cls = cls; h.name = name; h.item = item;
     if (has) h.lastCls = cls;
     std::memcpy(h.relPos, relPos, sizeof(relPos));
     std::memcpy(h.relRot, relRot, sizeof(relRot));
@@ -641,6 +661,7 @@ void Reset() {
     g_ownHas = false;
     g_ownCls.clear();
     g_ownName.clear();
+    g_ownItem.clear();
     g_ownHeldPtr = nullptr;
     g_ownHeldIdx = -1;
     // Cached engine pointers die with the session too: a stale local player would satisfy the
@@ -662,10 +683,10 @@ bool LastHeldClassIs(uint8_t slot, const wchar_t* cls) {
     return !h.lastCls.empty() && ::_wcsicmp(h.lastCls.c_str(), cls) == 0;
 }
 
-std::wstring HeldName(uint8_t slot) {
+std::wstring HeldItem(uint8_t slot) {
     if (slot >= coop::players::kMaxPeers) return {};
     const SlotHand& h = g_hands[slot];
-    return h.has ? h.name : std::wstring();
+    return h.has ? h.item : std::wstring();
 }
 
 void OnSlotDisconnected(uint8_t slot) {

@@ -177,6 +177,16 @@ void* ResolveSaveSlot() {
     return (save && R::IsLive(save)) ? save : nullptr;
 }
 
+std::wstring ReadHeldItemName() {
+    void* save = ResolveSaveSlot();
+    if (!save) return {};
+    const SR::Arr hd = SR::ReadArr(save, kOff_hold);
+    if (!hd.data || hd.num < 1) return {};
+    std::wstring name = SR::ReadFNameAt(hd.data, kEquip_propName);
+    if (name == L"None") name.clear();
+    return name;
+}
+
 bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf) {
     void* save = ResolveSaveSlot();
     if (!save) return false;

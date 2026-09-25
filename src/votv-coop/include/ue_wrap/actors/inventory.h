@@ -114,4 +114,9 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv);
 // slot or its hold slot cannot be reached, or `classLeaf` names no loaded class. Game thread.
 bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf);
 
+// The item name in the live save slot's first hold slot, the hand: the name the player's updateHold
+// keys the game's item tables by (list_props, list_weapons). Empty when the hand holds nothing or the
+// slot cannot be read. Game thread.
+std::wstring ReadHeldItemName();
+
 }  // namespace ue_wrap::inventory

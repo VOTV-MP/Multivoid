@@ -227,7 +227,7 @@ setting), the shape of MTA's join-flood protection (`coop/net/connect_history`).
 | `RagdollPose` (stream) | each peer, while ragdolled | pelvis transform and velocity |
 | `Join`, `RosterRow` | each peer; the host | identity, nickname, skin, preferences; who occupies each slot |
 | `SkinChange`, `NameplateChange`, `NickColorChange` | each peer, relayed | the three preferences |
-| `HandItem`, `ItemActivate` | each peer, relayed | the held item's class and name; the flashlight state |
+| `HandItem`, `ItemActivate` | each peer, relayed | the held item's class, its actor's name and its hold slot's item name (the key of the game's item tables); the flashlight state |
 | `PlayerDamage` | host to the hit peer | an enemy hit to apply |
 | `SleepState` | each peer to the host; the host to all | in bed or not; the tally; accelerate; end |
 | `PlayerInventoryBlob` | both | the per-player profile (items, vitals, standing spot), pre-world |

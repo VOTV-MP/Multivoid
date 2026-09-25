@@ -1,5 +1,5 @@
 // ue_wrap/world/weapon_catalog.h -- what one swing of a held item can deal, read from the game's
-// `list_weapons` UDataTable. The player's updateHold looks the held item's row up by the item's name;
+// `list_weapons` UDataTable. The player's updateHold looks the row up by the hold slot's item name;
 // its attack swings only when that row carries a montage and the attack flag, and deals the row's
 // `damage`, times the row's `matEffDmg` entry when the struck material is one of its `matEff`
 // (the player Blueprint's updateHold, the gate on its fire input, and its attack function).
@@ -23,8 +23,8 @@ struct Swing {
 // than guess. A table not yet loaded is retried at most every 3 s (its lookup walks every object).
 bool Ready();
 
-// The swing of the item named `itemName` (the Aprop_C `name` the game keys the row by). An item with
-// no row cannot swing. False when the catalog is unusable.
+// The swing of the item named `itemName` (the hold slot's item name, which the game keys the row by).
+// An item with no row cannot swing. False when the catalog is unusable.
 bool Lookup(const std::wstring& itemName, Swing& out);
 
 }  // namespace ue_wrap::weapon_catalog

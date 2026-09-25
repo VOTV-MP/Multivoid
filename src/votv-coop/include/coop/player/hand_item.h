@@ -84,9 +84,10 @@ bool HeldClassIs(uint8_t slot, const wchar_t* cls);
 // the pry ends with an empty hand. Game thread only.
 bool LastHeldClassIs(uint8_t slot, const wchar_t* cls);
 
-// The name of the item `slot`'s hand holds, as its owner last announced (the Aprop_C `name` the game
-// keys its item tables by), or empty when it holds nothing. Game thread only.
-std::wstring HeldName(uint8_t slot);
+// The item `slot`'s hand holds, as its owner last announced: the name its hold slot holds it under,
+// which the player's updateHold keys the game's item tables by (the actor's own `name` can be empty
+// for a class of its own), or empty when it holds nothing. Game thread only.
+std::wstring HeldItem(uint8_t slot);
 
 // Snapshot the current hand-axis actors (local hand + live remote mirrors)
 // into out[]; returns the count (<= 1 + kMaxPeers). For per-walk hoisting.
