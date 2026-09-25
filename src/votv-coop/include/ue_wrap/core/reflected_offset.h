@@ -29,6 +29,7 @@ int32_t MainPlayer_grabbing_component();
 int32_t MainPlayer_grabsHeavy();
 int32_t MainPlayer_grabLen();
 int32_t MainPlayer_Camera();    // the first-person UCameraComponent: the native hold point's origin
+int32_t MainPlayer_armLength(); // the look-at trace's length: 200, or the held item's own
 int32_t MainPlayer_Heavy();
 // holding_actor is the hotbar HAND ITEM pointer. updateHold is what fills it: it destroys the
 // previous item, spawns the new one from the equip data and attaches it to `weapon`; the only

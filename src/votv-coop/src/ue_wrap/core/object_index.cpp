@@ -127,6 +127,9 @@ void LearnMetaOf(void* cls) {
         ListClassName(i, g_slots[static_cast<size_t>(i)].obj);
 }
 
+// Moves whenever a class gains its first listed instance or loses its last: ClassSetVersion.
+uint64_t g_classSetVersion = 0;
+
 void Link(int32_t index, void* obj, void* cls) {
     EnsureSlot(index);
     Slot& s = g_slots[static_cast<size_t>(index)];
@@ -137,7 +140,7 @@ void Link(int32_t index, void* obj, void* cls) {
     s.next = e.head;
     if (e.head >= 0) g_slots[static_cast<size_t>(e.head)].prev = index;
     e.head = index;
-    ++e.count;
+    if (++e.count == 1) ++g_classSetVersion;
     ++g_linked;
     if (IsMeta(cls)) ListClassName(index, obj);
     LearnMetaOf(cls);
@@ -155,6 +158,7 @@ bool Unlink(int32_t index) {
     --g_linked;
     if (it != g_classes.end() && --it->second.count == 0) {
         g_classes.erase(it);
+        ++g_classSetVersion;
         return true;
     }
     return false;
@@ -353,6 +357,8 @@ size_t ForEachClass(ClassFn fn, void* ctx) {
 }
 
 void SetObserver(const Observer& o) { g_observer = o; }
+
+uint64_t ClassSetVersion() { return g_classSetVersion; }
 
 void* ClassByName(const wchar_t* name) {
     UE_ASSERT_GAME_THREAD("object_index::ClassByName");

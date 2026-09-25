@@ -17,6 +17,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <iterator>
+#include <vector>
 
 namespace coop::dev::container_opener_probe {
 namespace {
@@ -35,6 +37,34 @@ struct Kind {
     const wchar_t* field;
 };
 const Kind kKinds[] = {{L"drone_C", L"container"}, {L"prop_dronesack_C", L"container"}, {L"ATV_C", L"spawnedContainer"}};
+
+// Each kind's classes with live instances, its subclasses included (the ATV has five), found in the index's
+// class set and kept until that set changes.
+struct KindClasses {
+    void* kind = nullptr;
+    int32_t off = -1;
+    std::vector<void*> classes;
+};
+KindClasses g_kinds[std::size(kKinds)];
+uint64_t g_kindsVersion = UINT64_MAX;
+
+void RefreshKinds() {
+    const uint64_t v = ue_wrap::object_index::ClassSetVersion();
+    if (v == g_kindsVersion) return;
+    g_kindsVersion = v;
+    for (size_t i = 0; i < std::size(kKinds); ++i) {
+        g_kinds[i] = KindClasses{};
+        g_kinds[i].kind = ue_wrap::object_index::ClassByName(kKinds[i].cls);
+        if (g_kinds[i].kind) g_kinds[i].off = R::FindPropertyOffset(g_kinds[i].kind, kKinds[i].field);
+    }
+    ue_wrap::object_index::ForEachClass([](void*, void* cls, void*) {
+        for (KindClasses& k : g_kinds)
+            if (k.kind && R::IsDescendantOfAny(cls, &k.kind, 1)) {
+                k.classes.push_back(cls);
+                return;
+            }
+    }, nullptr);
+}
 
 // A client's body, once a pose has placed its puppet: the reach is measured from it.
 void* Body(int slot) {
@@ -95,12 +125,11 @@ void OnOpener(void* ctx, void* opener, int32_t index) {
 // The census pass: every opener, the reverse lookup, each client's reach.
 void CensusPass(coop::net::Session& session) {
     Pass pass{&session, -1, 0, 0};
-    for (const Kind& k : kKinds) {
-        void* const cls = ue_wrap::object_index::ClassByName(k.cls);
-        if (!cls) continue;
-        pass.off = R::FindPropertyOffset(cls, k.field);
-        if (pass.off < 0) continue;
-        ue_wrap::object_index::ForEachInstance(cls, &OnOpener, &pass);
+    RefreshKinds();
+    for (const KindClasses& k : g_kinds) {
+        if (k.off < 0) continue;
+        pass.off = k.off;
+        for (void* cls : k.classes) ue_wrap::object_index::ForEachInstance(cls, &OnOpener, &pass);
     }
     UE_LOGI("container_opener_probe: VERDICT %s (%d of %d openers found by the reverse lookup)",
             pass.pairs > 0 && pass.listed == pass.pairs ? "PASS" : "FAIL", pass.listed, pass.pairs);
@@ -115,22 +144,24 @@ struct Near {
 void* OpenerAt(void* body) {
     Near n{};
     if (!E::TryGetActorLocation(body, n.body)) return nullptr;
-    for (const Kind& k : kKinds) {
-        void* const cls = ue_wrap::object_index::ClassByName(k.cls);
-        if (!cls) continue;
-        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
-            Near& x = *static_cast<Near*>(ctx);
-            if (x.opener || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
-            if (!ue_wrap::container_openers::Opens(obj)) return;
-            FVector c{};
-            float r = 0.f;
-            if (!E::ActorReachSphere(obj, c, r)) return;
-            const float dx = c.X - x.body.X, dy = c.Y - x.body.Y, dz = c.Z - x.body.Z;
-            if (std::sqrt(dx * dx + dy * dy + dz * dz) <= kReachUU + r) x.opener = obj;
-        }, &n);
-        if (n.opener) break;
+    RefreshKinds();
+    for (const KindClasses& k : g_kinds) {
+        for (void* cls : k.classes) {
+            ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
+                Near& x = *static_cast<Near*>(ctx);
+                if (x.opener || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)))
+                    return;
+                if (!ue_wrap::container_openers::Opens(obj)) return;
+                FVector c{};
+                float r = 0.f;
+                if (!E::ActorReachSphere(obj, c, r)) return;
+                const float dx = c.X - x.body.X, dy = c.Y - x.body.Y, dz = c.Z - x.body.Z;
+                if (std::sqrt(dx * dx + dy * dy + dz * dz) <= kReachUU + r) x.opener = obj;
+            }, &n);
+            if (n.opener) return n.opener;
+        }
     }
-    return n.opener;
+    return nullptr;
 }
 
 }  // namespace

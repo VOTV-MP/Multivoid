@@ -2,6 +2,7 @@
 #include "ue_wrap/actors/container_view.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 
@@ -13,6 +14,8 @@ namespace {
 namespace R = reflection;
 
 // The fields the view reads, resolved per class object: a class a world change replaced resolves again.
+// Offsets only -- a class's layout is the same in every world; its functions go through the memoised
+// lookup, which holds them by slot and serial.
 struct Fields {
     void* gmCls = nullptr;
     int32_t propInventory = -1;    // mainGamemode_C.propInventory, the inventory screen
@@ -21,8 +24,8 @@ struct Fields {
     void* playerCls = nullptr;
     int32_t activeInterface = -1;  // mainPlayer_C.activeInterface
     void* screenCls = nullptr;
-    int32_t entered = -1;  // ui_playerInventory_C.entered, the container shown
-    void* exitFn = nullptr;
+    int32_t entered = -1;   // ui_playerInventory_C.entered, the container shown
+    int32_t switcher = -1;  // ui_playerInventory_C.WidgetSwitcher_54, the screen's tabs
 };
 Fields g;
 
@@ -57,9 +60,14 @@ void* OpenScreen() {
     if (void* const cls = R::ClassOf(screen); cls != g.screenCls) {
         g.screenCls = cls;
         g.entered = R::FindPropertyOffset(cls, L"entered");
-        g.exitFn = R::FindDispatchFunction(cls, L"exit", nullptr);
+        g.switcher = R::FindPropertyOffset(cls, L"WidgetSwitcher_54");
     }
     return screen;
+}
+
+void CallNoArgs(void* obj, void* fn) {
+    ParamFrame f(fn);
+    if (f.valid()) Call(obj, f);
 }
 
 }  // namespace
@@ -68,8 +76,18 @@ void* Viewed() {
     return PointerAt(OpenScreen(), g.entered);
 }
 
-void* OwnContainer() {
-    return PointerAt(Gamemode(), g.playerContainer);
+bool IsOwnInventory(void* container) {
+    if (!container) return false;
+    if (container == PointerAt(Gamemode(), g.playerContainer)) return true;
+    // The screen itself tells the player's own inventory apart by its class.
+    void* ownCls = object_index::ClassByName(L"prop_inventoryContainer_player_C");
+    void* const cls = R::ClassOf(container);
+    return ownCls && cls && R::IsDescendantOfAny(cls, &ownCls, 1);
+}
+
+bool CanClose() {
+    void* const screen = OpenScreen();
+    return screen && R::FindDispatchFunctionCached(R::ClassOf(screen), L"exit");
 }
 
 bool Open(void* container) {
@@ -85,9 +103,27 @@ bool Open(void* container) {
 
 bool Close() {
     void* const screen = OpenScreen();
-    if (!screen || !g.exitFn) return false;
-    ParamFrame f(g.exitFn);
-    return f.valid() && Call(screen, f);
+    if (!screen) return false;
+    void* const cls = R::ClassOf(screen);
+    void* const exitFn = R::FindDispatchFunctionCached(cls, L"exit");
+    if (!exitFn) return false;
+    ParamFrame f(exitFn);
+    if (!f.valid() || !Call(screen, f)) return false;
+    // The rest of the game's own close: the first tab again, and the selection redrawn.
+    static void* s_setIndexFn = nullptr;
+    if (!s_setIndexFn) {
+        if (void* switcherCls = R::FindClass(L"WidgetSwitcher"))
+            s_setIndexFn = R::FindFunction(switcherCls, L"SetActiveWidgetIndex");
+    }
+    if (void* const switcher = PointerAt(screen, g.switcher); switcher && s_setIndexFn) {
+        ParamFrame idx(s_setIndexFn);
+        if (idx.valid()) {
+            idx.Set<int32_t>(L"Index", 0);
+            Call(switcher, idx);
+        }
+    }
+    if (void* const upd = R::FindDispatchFunctionCached(cls, L"updSelect")) CallNoArgs(screen, upd);
+    return true;
 }
 
 }  // namespace ue_wrap::container_view

@@ -99,6 +99,7 @@ VC_DEFINE_OFFSET(MainPlayer_grabbing_component,   L"mainPlayer_C", L"grabbing_co
 VC_DEFINE_OFFSET(MainPlayer_grabsHeavy,           L"mainPlayer_C", L"grabsHeavy")
 VC_DEFINE_OFFSET(MainPlayer_grabLen,              L"mainPlayer_C", L"grabLen")
 VC_DEFINE_OFFSET(MainPlayer_Camera,               L"mainPlayer_C", L"Camera")
+VC_DEFINE_OFFSET(MainPlayer_armLength,            L"mainPlayer_C", L"armLength")
 VC_DEFINE_OFFSET(MainPlayer_Heavy,                L"mainPlayer_C", L"Heavy")
 VC_DEFINE_OFFSET(MainPlayer_holding_actor,        L"mainPlayer_C", L"holding_actor")
 VC_DEFINE_OFFSET(MainPlayer_lookAtActor,          L"mainPlayer_C", L"lookAtActor")

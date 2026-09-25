@@ -40,9 +40,9 @@ coop::net::connect_history::History g_writes{
     coop::net::connect_history::Policy{kRateMax, kRateWindowMs, kRateWindowMs},
     "container writes"};
 
-// A container the game opens through another actor stands where no player does: the drone's inventory
-// kilometres off, the ATV's under the world origin. Its author reaches it through the actor that opens
-// it -- the game's own field on the opener, never the author's claim.
+// A container the game opens through another actor stands where no player does -- the drone's and the
+// ATV's, tens to hundreds of metres from them -- and its author reaches it through the actor that opens
+// it: the game's own field on the opener, never the author's claim.
 void* OpenerInReach(const coop::element::IntentTarget& tok, void* container) {
     struct Ctx {
         const coop::element::IntentTarget* tok;

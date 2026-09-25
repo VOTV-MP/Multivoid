@@ -42,6 +42,11 @@ bool SetPhysicsHandleTarget(void* phc, const FVector& location, const FRotator& 
 // reflected call. Game thread.
 bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out);
 
+// mainPlayer_C::armLength, the length of the look-at trace the player interacts through: 200, or the
+// held item's own from its list_weapons row (a mop, a lamp, a breather reach further). False on a dead
+// pawn or an unresolved field. Game thread.
+bool ReadMainPlayerArmLength(void* mainPlayer, float& out);
+
 // The AmainPlayer_C grab-state properties, read in one dispatch: grabbingActor and holdingActor
 // cover the two carry paths (the physics handle vs the chipPile/clump carry). False on a null or
 // dead pawn; `holdingActor` stays null when MainPlayer_holding_actor() is unresolved (a later

@@ -8,7 +8,6 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
-#include "coop/props/container_write_policy.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 
@@ -26,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -41,7 +41,6 @@ namespace OI = ue_wrap::object_index;
 using ue_wrap::FVector;
 
 constexpr float kStandCm    = 150.f;  // this near the ATV, a player stands where it can open it
-constexpr float kReachUU    = coop::props::container_write_policy::kReachUU;  // the arm, as the close rule
 constexpr float kLeaveCm    = 600.f;  // where the walk back must end past the reach, or it proves nothing
 constexpr int   kCandidates = 8;
 
@@ -49,9 +48,13 @@ enum class Phase { Unpicked, WalkingTo, Opened, WalkingAway, Done };
 enum class Walk : int { ToAtv = 0, Back = 1 };
 
 // What a walker thread hands the game thread: 0 walking, 1 arrived, 2 no ATV or no arrival.
-std::atomic<int>   g_walkResult{0};
-std::atomic<void*> g_arrivedAt{nullptr};
-std::atomic<bool>  g_walkerStarted{false};
+std::atomic<int>      g_walkResult{0};
+std::atomic<void*>    g_arrivedAt{nullptr};
+std::atomic<int32_t>  g_pickedIdx{-1};   // the ATV's slot, read at the pick, while it was surely live
+std::atomic<bool>     g_walkerStarted{false};
+// A walk belongs to the session that started it: a walker still running at a disconnect finishes, and
+// its result is dropped.
+std::atomic<uint32_t> g_walkGen{0};
 
 Phase   g_phase = Phase::Unpicked;
 FVector g_start{};
@@ -78,15 +81,16 @@ float HorizDist(const FVector& a, const FVector& b) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-// How far the camera stands past the reach -- the arm's length plus the ATV's reach sphere, the close
-// rule's own measure. Negative within reach.
+// How far the camera stands past the reach -- the player's live arm length plus the ATV's reach sphere,
+// the close rule's own measure. Negative within reach.
 bool Margin(float& out) {
     FVector eye{}, c{};
-    float r = 0.f;
+    float r = 0.f, arm = 0.f;
     if (!R::IsLiveByIndex(g_atv, g_atvIdx)) return false;
-    if (!E::ReadMainPlayerCameraLocation(coop::players::Registry::Get().Local(), eye)) return false;
+    void* const player = coop::players::Registry::Get().Local();
+    if (!E::ReadMainPlayerCameraLocation(player, eye) || !E::ReadMainPlayerArmLength(player, arm)) return false;
     if (!E::ActorReachSphere(g_atv, c, r)) return false;
-    out = Dist(eye, c) - (kReachUU + r);
+    out = Dist(eye, c) - (arm + r);
     return true;
 }
 
@@ -124,6 +128,7 @@ bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& len
         goal.targetActor = c.atv;
         goal.targetPos = c.pos;
         lenOut = len;
+        g_pickedIdx.store(R::InternalIndexOf(c.atv));
     }
     if (!goal.targetActor)
         UE_LOGW("[CVIEW-DRILL] client at (%.0f,%.0f,%.0f): %zu ATV(s), none with a route that ends beside it", at.X,
@@ -136,6 +141,7 @@ int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 10
 // The walks, with the director: to the ATV, then back to where the client started.
 DWORD WINAPI WalkerThread(LPVOID arg) {
     const auto walk = static_cast<Walk>(reinterpret_cast<intptr_t>(arg));
+    const uint32_t gen = g_walkGen.load();
     auto goal = std::make_shared<DR::DirectorGoal>();
     goal->reachCm = kStandCm;
     auto len = std::make_shared<float>(0.f);
@@ -150,7 +156,7 @@ DWORD WINAPI WalkerThread(LPVOID arg) {
             done.store(PickAtv(p, at, *goal, *len) ? 1 : 2);
         });
         if (picked != 1) {
-            g_walkResult.store(2);
+            if (g_walkGen.load() == gen) g_walkResult.store(2);
             return 0;
         }
     } else {
@@ -162,6 +168,7 @@ DWORD WINAPI WalkerThread(LPVOID arg) {
     DR::AddWalkToProcesses(mgr, *goal);
     // The walk back is bounded as a long route: its length is known only to the navmesh.
     const bool arrived = mgr.Run(*goal, WalkSeconds(walk == Walk::ToAtv ? *len : 30000.f)) && goal->reached;
+    if (g_walkGen.load() != gen) return 0;
     g_arrivedAt.store(goal->targetActor);
     g_walkResult.store(arrived ? 1 : 2);
     return 0;
@@ -193,7 +200,11 @@ void ClientTick() {
             return;
         }
         g_atv = g_arrivedAt.load();
-        g_atvIdx = R::InternalIndexOf(g_atv);
+        g_atvIdx = g_pickedIdx.load();
+        if (!R::IsLiveByIndex(g_atv, g_atvIdx)) {
+            Done("the ATV is gone after the walk -- INCONCLUSIVE");
+            return;
+        }
         g_container = ue_wrap::container_openers::Opens(g_atv);
         float m = 0.f;
         if (!g_container || !Margin(m)) {
@@ -270,8 +281,10 @@ void Tick(coop::net::Session* session) {
 
 void OnDisconnect() {
     if (!IsEnabled()) return;
-    // A walker still running finishes its walk; its result is for the session that started it.
+    // A walker still running finishes its walk; its result is dropped (the generation moves on).
+    g_walkGen.fetch_add(1);
     g_walkerStarted.store(false);
+    g_pickedIdx.store(-1);
     g_walkResult.store(0);
     g_arrivedAt.store(nullptr);
     g_phase = Phase::Unpicked;

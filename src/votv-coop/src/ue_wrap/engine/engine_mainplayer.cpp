@@ -451,6 +451,14 @@ bool ReadMainPlayerCameraLocation(void* mainPlayer, FVector& out) {
     return true;
 }
 
+bool ReadMainPlayerArmLength(void* mainPlayer, float& out) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    const int32_t off = ue_wrap::reflected_offset::MainPlayer_armLength();
+    if (off < 0) return false;
+    out = *reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(mainPlayer) + off);
+    return true;
+}
+
 void* ReadMainPlayerGrabHandle(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return nullptr;
     const int32_t off = ue_wrap::reflected_offset::MainPlayer_grabHandle();
