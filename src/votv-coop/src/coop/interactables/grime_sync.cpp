@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -75,13 +76,14 @@ bool Holds(const Ref& r) { return R::IsLiveByIndex(r.actor, r.idx) && R::SlotSer
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
 
-// A per-key register of the running world: another world's is dropped the first time it is touched in
-// this one, a value that arrives before the new world's first pass included. A peer leaving does not
-// clear it. Game thread only.
+// A register of the running world: another world's is dropped the first time it is touched in this
+// one, a value that arrives before the new world's first pass included. A peer leaving does not clear
+// it. Game thread only.
+template <class V>
 struct WorldRegister {
-    std::unordered_map<std::wstring, float> map;
+    std::unordered_map<std::wstring, V> map;
     uint32_t gen = 0;
-    std::unordered_map<std::wstring, float>& Get() {
+    std::unordered_map<std::wstring, V>& Get() {
         const uint32_t now = ue_wrap::world_identity::Generation();
         if (now != gen) {
             map.clear();
@@ -91,38 +93,56 @@ struct WorldRegister {
     }
 };
 
-// The floor: per key, the lowest process this peer knows the decal at in this world -- a fall it made
-// or was sent, a destroy (zero), the value it streamed out at, or the host's snapshot as adopted. It is
-// the lane's register: a decal the index takes (a stream-back, one the join brought, one that was not
-// here when its value arrived) is lowered to it, and the host's snapshot sends it for every key its
-// index does not hold.
-WorldRegister g_floor;
+// The floor: per key, the lowest process every peer knows the key's decals at in this world -- a fall
+// that was sent, by this peer or another, a destroy (zero, sent as a wipe), or the host's snapshot as
+// adopted. It is the lane's shared register: a decal the index takes (a stream-back, one the join
+// brought, one that was not here when its value arrived) is lowered to it, every decal of the key's cell
+// alike, and the host's snapshot sends it for every key its index does not hold. A value only this peer
+// holds never enters it.
+WorldRegister<float> g_floor;
 std::unordered_map<std::wstring, float>& Floor() { return g_floor.Get(); }
 
-// Per key with no floor yet, the process its decal had when this peer's first fall on it began: what
-// every peer holds for a key nobody has moved in this world, so falls under the epsilon add up from it.
-// Kept apart from the floor, which lowers every decal of the key's cell and carries only values that
-// were sent, so a fall that has not gone out moves nothing but its own decal.
-WorldRegister g_unmoved;
+// Per decal (its exact place, see ExactKey), for a key with no floor yet: the process the decal had when
+// this peer's first fall on it began, what every peer holds for a decal nobody has moved in this world,
+// so falls under the epsilon add up from it.
+WorldRegister<float> g_unmoved;
+
+// Per decal (its exact place), the process it had when it streamed out, with its key: the stream-back
+// comes in at the level's value, and the pass that indexes it restores exactly that decal from here. The
+// host's snapshot also sends it for a key its index does not hold. Kept out of the floor, which would
+// lower the decal's cell-mates to a value only this peer holds.
+struct Parked {
+    std::wstring key;
+    float value;
+};
+WorldRegister<Parked> g_parked;
 
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
 
 // The cross-peer identity of a static grime decal: its quantised world position and type.
 // The same save gives the identical saved transform, so the identical key on both peers.
-// Fits the wire key for any in-base coordinate. Empty when the location read fails: a key is
-// never made from the origin a failed read leaves.
-std::wstring PosKey(void* grime) {
+// Fits the wire key for any in-base coordinate. `exact` is this peer's own name for the one decal,
+// the location's float bits and the type, which tells a cell's twins apart and never travels.
+// False when the location read fails: a key is never made from the origin a failed read leaves.
+bool KeysOf(void* grime, std::wstring& key, std::wstring& exact) {
     ue_wrap::FVector loc{};
-    if (!E::TryGetActorLocation(grime, loc)) return std::wstring();
+    if (!E::TryGetActorLocation(grime, loc)) return false;
     int32_t type = 0; G::ReadType(grime, type);
     auto q = [](float v) -> long { return std::lround(static_cast<double>(v) / kPosGrid); };
-    std::wstring k = L"g_";
-    k += std::to_wstring(q(loc.X)); k += L'_';
-    k += std::to_wstring(q(loc.Y)); k += L'_';
-    k += std::to_wstring(q(loc.Z)); k += L'_';
-    k += std::to_wstring(type);
-    return k;
+    key = L"g_";
+    key += std::to_wstring(q(loc.X)); key += L'_';
+    key += std::to_wstring(q(loc.Y)); key += L'_';
+    key += std::to_wstring(q(loc.Z)); key += L'_';
+    key += std::to_wstring(type);
+    auto bits = [](float v) { uint32_t b; std::memcpy(&b, &v, sizeof(b)); return std::to_wstring(b); };
+    exact = bits(loc.X) + L'_' + bits(loc.Y) + L'_' + bits(loc.Z) + L'_' + std::to_wstring(type);
+    return true;
+}
+
+std::wstring PosKey(void* grime) {
+    std::wstring key, exact;
+    return KeysOf(grime, key, exact) ? key : std::wstring();
 }
 
 // The world generation of the last completed hub pass; a stale-generation index is treated
@@ -173,12 +193,18 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
 // allocator put at a dead one's address in the same slot never inherits the dead one's key.
 struct CachedKey {
     std::wstring key;
+    std::wstring exact;  // KeysOf's own name for the one decal
     int32_t      idx;
     int32_t      serial;
 };
-std::unordered_map<void*, CachedKey> g_posKeyByActor;   // actor -> cached PosKey (GT-only)
+std::unordered_map<void*, CachedKey> g_posKeyByActor;   // actor -> cached keys (GT-only)
 std::unordered_map<void*, CachedKey> g_scanNextCache;   // pass scratch: full-pass cache rebuild
-std::vector<std::pair<std::wstring, Ref>> g_scanFound;     // pass scratch (GT-only)
+struct Found {
+    std::wstring key;
+    std::wstring exact;
+    Ref          ref;
+};
+std::vector<Found> g_scanFound;  // pass scratch (GT-only)
 bool g_scanIsFull = false;                                  // pass context
 
 void HubPassBegin(void*, bool isFull) {
@@ -197,15 +223,14 @@ void HubMatch(void*, void* obj) {
         R::SlotSerial(idx) == cit->second.serial) {
         ck = cit->second;
     } else {
-        ck.key = PosKey(obj);
-        if (ck.key.empty()) return;   // no location read, so no identity to index it under
+        if (!KeysOf(obj, ck.key, ck.exact)) return;  // no location read, so no identity to index it under
         ck.idx = idx;
         ck.serial = R::AllocateSlotSerial(idx);
     }
     if (g_scanIsFull) g_scanNextCache.insert_or_assign(obj, ck);   // full pass rebuilds the cache
     else              g_posKeyByActor.insert_or_assign(obj, ck);   // tail pass: cache the NEW actor's key
     const int32_t serial = ck.serial;
-    g_scanFound.emplace_back(std::move(ck.key), Ref{ obj, idx, serial });
+    g_scanFound.push_back(Found{std::move(ck.key), std::move(ck.exact), Ref{obj, idx, serial}});
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
@@ -216,7 +241,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
         if (isFull) g_byKey.clear();                           // full pass: rebuild from scratch
-        for (auto& f : g_scanFound) g_byKey[f.first] = f.second;
+        for (auto& f : g_scanFound) g_byKey[f.key] = f.ref;
         if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_byKey.begin(); it != g_byKey.end(); ) {
                 if (Holds(it->second)) ++it;
@@ -234,12 +259,23 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     auto& floor = Floor();
     if (!floor.empty()) {
         for (const auto& f : g_scanFound) {
-            if (!Holds(f.second)) continue;
-            const auto it = floor.find(f.first);
+            if (!Holds(f.ref)) continue;
+            const auto it = floor.find(f.key);
             if (it == floor.end()) continue;
             float cur = 0.f;
-            if (!G::ReadProcess(f.second.actor, cur) || cur <= it->second + kProcessEps) continue;
-            ApplyResolved(f.second.actor, f.first, it->second, "floor at index", /*lowerOnly=*/true);
+            if (!G::ReadProcess(f.ref.actor, cur) || cur <= it->second + kProcessEps) continue;
+            ApplyResolved(f.ref.actor, f.key, it->second, "floor at index", /*lowerOnly=*/true);
+            ++lowered;
+        }
+    }
+    // A decal that streamed back in takes the process it streamed out at, this decal alone.
+    auto& parked = g_parked.Get();
+    if (!parked.empty()) {
+        for (const auto& f : g_scanFound) {
+            const auto it = parked.find(f.exact);
+            if (it == parked.end() || !Holds(f.ref)) continue;
+            ApplyResolved(f.ref.actor, f.key, it->second.value, "its stream-out", /*lowerOnly=*/true);
+            parked.erase(it);
             ++lowered;
         }
     }
@@ -252,7 +288,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     }
     if (ProbeLog())
         for (auto& f : g_scanFound)
-            UE_LOGI("grime[probe]: key='%ls' idx=%d actor=%p", f.first.c_str(), f.second.idx, f.second.actor);
+            UE_LOGI("grime[probe]: key='%ls' idx=%d actor=%p", f.key.c_str(), f.ref.idx, f.ref.actor);
     g_scanFound.clear();
     g_scanNextCache.clear();
     return total;
@@ -280,13 +316,18 @@ float g_before = 0.f;
 // The decal's cross-peer key, from the index's cache: only for a decal the current world's index holds
 // under the slot and serial it still carries. A decal no pass has reached yet has none, and its fall is
 // not sent; the floor of the peer it reaches next is the other side of that.
-std::wstring KeyOf(void* actor, int32_t idx, int32_t serial) {
-    if (!IndexCurrent()) return std::wstring();
+const CachedKey* CachedOf(void* actor, int32_t idx, int32_t serial) {
+    if (!IndexCurrent()) return nullptr;
     const auto it = g_posKeyByActor.find(actor);
-    if (it == g_posKeyByActor.end()) return std::wstring();
+    if (it == g_posKeyByActor.end()) return nullptr;
     const CachedKey& ck = it->second;
-    if (ck.idx != idx || ck.serial == 0 || ck.serial != serial) return std::wstring();
-    return ck.key;
+    if (ck.idx != idx || ck.serial == 0 || ck.serial != serial) return nullptr;
+    return &ck;
+}
+
+std::wstring KeyOf(void* actor, int32_t idx, int32_t serial) {
+    const CachedKey* ck = CachedOf(actor, idx, serial);
+    return ck ? ck->key : std::wstring();
 }
 
 void Send(const std::wstring& key, float value) {
@@ -317,27 +358,31 @@ void OnLowerPost(const sg::Call& call) {
     if (!R::IsLiveByIndex(call.object, idx)) return;
     float cur = 0.f;
     if (!G::ReadProcess(call.object, cur) || cur >= g_before) return;  // an uncleanable decal
-    const std::wstring key = KeyOf(call.object, idx, R::SlotSerial(idx));
-    if (key.empty()) return;
-    // Measured against the floor, the lowest value this peer knows for the key, or, before the key has
-    // one, the process its decal had when this peer's first fall on it began: falls smaller than the
+    const CachedKey* ck = CachedOf(call.object, idx, R::SlotSerial(idx));
+    if (!ck) return;
+    const std::wstring key = ck->key;
+    // Measured against the floor, the lowest value every peer knows for the key, or, before the key has
+    // one, the process this decal had when this peer's first fall on it began: falls smaller than the
     // epsilon add up and go out once they pass it.
     auto& floor = Floor();
     const auto it = floor.find(key);
     auto& unmoved = g_unmoved.Get();
-    const float from = it != floor.end() ? it->second : unmoved.emplace(key, g_before).first->second;
+    const float from = it != floor.end() ? it->second : unmoved.emplace(ck->exact, g_before).first->second;
     if (cur >= from - kProcessEps) return;
+    unmoved.erase(ck->exact);
     Lower(key, cur);
-    unmoved.erase(key);
     Send(key, cur);
 }
 
-// A decal's end of play. A stream-out leaves the index and keeps its process as the floor, for its
-// stream-back; a destroy -- a clean or a repair past zero, leaves raked or expired, fuel burnt out -- ends
-// the decal on this peer, sent as a wipe to zero and kept as the floor for a joiner's snapshot.
+// A decal's end of play. A stream-out leaves the index and parks its process under its exact place,
+// for its stream-back; a destroy -- a clean or a repair past zero, leaves raked or expired, fuel burnt
+// out -- ends the decal on this peer, sent as a wipe to zero and kept as the floor for a joiner's
+// snapshot.
 void OnGrimeEnd(const DS::ActorEnd& end) {
-    const std::wstring key = KeyOf(end.actor, end.actorIndex, end.actorSerial);
-    if (key.empty()) return;
+    const CachedKey* ck = CachedOf(end.actor, end.actorIndex, end.actorSerial);
+    if (!ck) return;
+    const std::wstring key = ck->key;
+    const std::wstring exact = ck->exact;
     // The actor ended before this drain; its memory is read only while its slot still holds it under the
     // serial it ended with, which a purge in between resets.
     float at = 0.f;
@@ -350,7 +395,7 @@ void OnGrimeEnd(const DS::ActorEnd& end) {
     }
     g_posKeyByActor.erase(end.actor);
     if (end.streamedOut) {
-        if (read) Lower(key, at);
+        if (read) g_parked.Get().insert_or_assign(exact, Parked{key, at});
         return;
     }
     Lower(key, 0.f);
@@ -414,10 +459,15 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::GrimeState, &p, sizeof(p));
             ++sent;
         }
-        // And the floor of every key the index does not hold live: a decal ended here -- zero -- or
-        // streamed out, which the joiner has from its own copy of the save and must see as this world
-        // has it.
-        for (const auto& kv : floor) {
+        // And every key the index does not hold live, at the lowest of its floor and its parked decals: a
+        // decal ended here -- zero -- or streamed out, which the joiner has from its own copy of the save and
+        // must see as this world has it.
+        std::unordered_map<std::wstring, float> away(floor.begin(), floor.end());
+        for (const auto& kv : g_parked.Get()) {
+            const auto ins = away.emplace(kv.second.key, kv.second.value);
+            if (!ins.second && kv.second.value < ins.first->second) ins.first->second = kv.second.value;
+        }
+        for (const auto& kv : away) {
             const auto idx = g_byKey.find(kv.first);
             if (idx != g_byKey.end() && Holds(idx->second)) continue;
             coop::net::KeyedScalarPayload p{};
