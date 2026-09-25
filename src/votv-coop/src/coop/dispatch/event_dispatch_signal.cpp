@@ -107,7 +107,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::PhysModsState: {
-        // Value-ops (peer->host) / canonical array (host->all) / deny. Role and trust gates
+        // Slot ops (peer->host) / canonical array (host->all) / deny. Role and trust gates
         // live in physmods_sync::OnPhysMods.
         if (msg.payloadLen < sizeof(net::PhysModsStatePayload)) {
             UE_LOGW("event_feed: PhysModsState payload too short (%zu < %zu)",

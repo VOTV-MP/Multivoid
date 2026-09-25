@@ -42,9 +42,10 @@ uint8_t g_pendingCanon[PM::kSlots] = {};
 bool    g_havePendingCanon = false;
 
 // HOST: recent unplug-denies, read by the ReelEjectIntent birth author to reap
-// the ghost of a module that was dropped before its deny landed.
+// the ghost of a module that was dropped before its deny landed. Keyed on the
+// sender and the module's type, the one identity the birth carries here.
 struct DenyRec {
-    uint8_t slot = 0xFF;
+    uint8_t sender = 0xFF;  // the denied op's peer slot
     uint8_t byte = 0;
     Clock::time_point until{};
 };
@@ -180,12 +181,12 @@ void OnEditPost(const sg::Call& call) {
     for (InFlight& outer : g_inFlight) std::memcpy(outer.before, live, PM::kSlots);
 }
 
-void RecordDeny(uint8_t slot, uint8_t byte) {
+void RecordDeny(uint8_t sender, uint8_t byte) {
     const auto now = Clock::now();
     for (auto& d : g_denies) {
-        if (d.slot == 0xFF || now >= d.until) { d = {slot, byte, now + kDenyTtl}; return; }
+        if (d.sender == 0xFF || now >= d.until) { d = {sender, byte, now + kDenyTtl}; return; }
     }
-    g_denies[0] = {slot, byte, now + kDenyTtl};  // overwrite oldest-slot-0 (bounded)
+    g_denies[0] = {sender, byte, now + kDenyTtl};  // overwrite oldest-slot-0 (bounded)
 }
 
 // CLIENT deny handling: destroy the local hand ghost, else sweep untracked
@@ -279,7 +280,9 @@ void OnPhysMods(const coop::net::PhysModsStatePayload& p, uint8_t senderSlot) {
         UE_LOGW("physmods: host op=%u slot=%u byte=%u declined (desk unresolved)", p.op, p.slot, p.byte);
         return;
     }
-    if (p.slot >= PM::kSlots || !p.byte) {
+    // A client op names a desk slot and a module the game maps (lib.physModToActor), or it is dropped: the
+    // host writes nothing else into its array, its save or its updPhysMods.
+    if (p.slot >= PM::kSlots || !p.byte || !PM::ClassForByte(p.byte)) {
         UE_LOGW("physmods: host op=%u slot=%u byte=%u from slot %u -- not a desk slot and module, dropping",
                 p.op, p.slot, p.byte, senderSlot);
         return;
@@ -348,9 +351,9 @@ bool HostShouldReapModuleBirth(uint8_t senderSlot, void* moduleClass) {
     if (!byte) return false;
     const auto now = Clock::now();
     for (auto& d : g_denies) {
-        if (d.slot == senderSlot && d.byte == byte && now < d.until) {
+        if (d.sender == senderSlot && d.byte == byte && now < d.until) {
             d = DenyRec{};  // one reap per deny
-            UE_LOGW("physmods: reaped a denied module birth (slot=%u byte=%u -- the raced ghost)",
+            UE_LOGW("physmods: reaped a denied module birth (from slot %u, byte=%u -- the raced ghost)",
                     senderSlot, byte);
             return true;
         }
