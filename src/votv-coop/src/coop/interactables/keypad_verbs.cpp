@@ -77,7 +77,9 @@ struct Bucket {
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::KeypadIntentPayload> g_pending[coop::net::kMaxPeers];
-bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
+// What a sender's queue head has waited for, each said once a streak: its body, its keypad's tail.
+constexpr uint8_t kWaitBody = 1, kWaitTail = 2;
+uint8_t g_waitSaid[coop::net::kMaxPeers] = {};
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -124,6 +126,16 @@ bool CallerIs(const sg::Call& call, const wchar_t* className) {
 }
 
 // ---- the host ----------------------------------------------------------------------------------
+void SayWait(uint8_t slot, uint8_t what, const std::wstring& key) {
+    if (g_waitSaid[slot] & what) return;
+    g_waitSaid[slot] |= what;
+    if (what == kWaitBody)
+        UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits: the host has no body for it yet", static_cast<unsigned>(slot));
+    else
+        UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits for key='%ls''s open to end its 0.2 s tail",
+                static_cast<unsigned>(slot), key.c_str());
+}
+
 // False keeps the intent at its sender's queue head, to wait: for the sender's body, which the host
 // spawns on its first pose and measures the reach from, or for the keypad's open, whose tail 0.2 s
 // later wipes the buffer or, setting a new code, saves it (passwordLock's open, after its Delay), so
@@ -137,13 +149,15 @@ bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
                 static_cast<unsigned>(slot), IntentName(p.verb), key.c_str());
         return true;
     }
+    // The tail is the keypad's, not the sender's: it is waited out before the sender is measured.
+    if (PL::IsEntering(lock)) {
+        SayWait(slot, kWaitTail, key);
+        return false;
+    }
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kKeypadReachUU).Authorize(lock);
     if (subject.outcome == coop::element::IntentOutcome::NoBody) {
-        if (!g_waitSaid[slot]) {
-            g_waitSaid[slot] = true;
-            UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits: the host has no body for it yet", static_cast<unsigned>(slot));
-        }
+        SayWait(slot, kWaitBody, key);
         return false;
     }
     if (!subject) {
@@ -162,7 +176,6 @@ bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
                 static_cast<unsigned>(slot), IntentName(p.verb), key.c_str(), needs);
         return true;
     }
-    if (PL::IsEntering(lock)) return false;
     bool dispatched = false;
     bool verdict = false;
     switch (p.verb) {
@@ -392,7 +405,7 @@ void Tick(coop::net::Session& session) {
         const coop::net::KeypadIntentPayload p = g_pending[slot].front();
         if (Execute(session, p, slot)) {
             g_pending[slot].pop_front();
-            g_waitSaid[slot] = false;        // a consumed intent ends the wait's streak
+            g_waitSaid[slot] = 0;            // a consumed intent ends the wait's streak
         } else {
             g_rate[slot].tokens += 1.0f;     // a wait runs nothing, so it spends no token
         }
@@ -422,7 +435,7 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_pending[slot].clear();
     g_rate[slot] = Bucket{};
-    g_waitSaid[slot] = false;
+    g_waitSaid[slot] = 0;
 }
 
 void OnDisconnect() {
@@ -433,7 +446,7 @@ void OnDisconnect() {
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
-        g_waitSaid[slot] = false;
+        g_waitSaid[slot] = 0;
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
 }

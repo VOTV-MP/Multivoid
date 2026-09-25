@@ -131,8 +131,9 @@ the numpad's (told apart by the key, since the numpad's accept passes the copy's
 keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
 copy, judging a submit against its own password. The entries run in order, and the next one waits
 while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
-clears its buffer, so none is lost to either wait. A keycard's verdict is taken only while the
-sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
+clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's
+verdict is taken only while the sender holds a keycard. An accept unlocks a door; opening it is
+an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 

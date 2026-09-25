@@ -31,7 +31,7 @@ void Install(coop::net::Session* session);
 // Settles the watches and says once when they are live. Host: runs the queued intents in order, each
 // sender at a bounded rate. The head waits while its sender has no body to measure the reach from
 // (the first pose not yet applied) and while its keypad's open is in its 0.2 s tail, so no entry is
-// lost to either wait. Game thread, once per pump tick.
+// lost to either wait (a full queue still refuses). Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // HOST: a client's intent from the wire, its format already checked by the dispatcher. Queued, and
