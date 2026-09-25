@@ -76,14 +76,29 @@ bool Holds(const Ref& r) { return R::IsLiveByIndex(r.actor, r.idx) && R::SlotSer
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
 
+// This peer's own name for one decal: its location's float bits and its type. It tells a cell's twins
+// apart and never travels, so a value is enough, with no string.
+struct ExactKey {
+    uint32_t x = 0, y = 0, z = 0;
+    int32_t type = 0;
+    bool operator==(const ExactKey& o) const { return x == o.x && y == o.y && z == o.z && type == o.type; }
+};
+struct ExactKeyHash {
+    size_t operator()(const ExactKey& k) const {
+        uint64_t h = 1469598103934665603ull;  // FNV-1a over the four words
+        for (uint32_t w : {k.x, k.y, k.z, static_cast<uint32_t>(k.type)}) h = (h ^ w) * 1099511628211ull;
+        return static_cast<size_t>(h);
+    }
+};
+
 // A register of the running world: another world's is dropped the first time it is touched in this
 // one, a value that arrives before the new world's first pass included. A peer leaving does not clear
 // it. Game thread only.
-template <class V>
+template <class K, class V, class H = std::hash<K>>
 struct WorldRegister {
-    std::unordered_map<std::wstring, V> map;
+    std::unordered_map<K, V, H> map;
     uint32_t gen = 0;
-    std::unordered_map<std::wstring, V>& Get() {
+    std::unordered_map<K, V, H>& Get() {
         const uint32_t now = ue_wrap::world_identity::Generation();
         if (now != gen) {
             map.clear();
@@ -98,14 +113,14 @@ struct WorldRegister {
 // adopted. It is the lane's shared register: a decal the index takes (a stream-back, one the join
 // brought, one that was not here when its value arrived) is lowered to it, every decal of the key's cell
 // alike, and the host's snapshot sends it for every key its index does not hold. A value only this peer
-// holds never enters it.
-WorldRegister<float> g_floor;
+// holds enters it only while no peer is connected, a solo host's falls, which the join snapshot sends.
+WorldRegister<std::wstring, float> g_floor;
 std::unordered_map<std::wstring, float>& Floor() { return g_floor.Get(); }
 
-// Per decal (its exact place, see ExactKey), for a key with no floor yet: the process the decal had when
-// this peer's first fall on it began, what every peer holds for a decal nobody has moved in this world,
-// so falls under the epsilon add up from it.
-WorldRegister<float> g_unmoved;
+// Per decal (ExactKey), for a key with no floor yet: the process the decal had when this peer's first
+// fall on it began, what every peer holds for a decal nobody has moved in this world, so falls under the
+// epsilon add up from it.
+WorldRegister<ExactKey, float, ExactKeyHash> g_unmoved;
 
 // Per decal (its exact place), the process it had when it streamed out, with its key: the stream-back
 // comes in at the level's value, and the pass that indexes it restores exactly that decal from here. The
@@ -115,17 +130,17 @@ struct Parked {
     std::wstring key;
     float value;
 };
-WorldRegister<Parked> g_parked;
+WorldRegister<ExactKey, Parked, ExactKeyHash> g_parked;
 
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
 
 // The cross-peer identity of a static grime decal: its quantised world position and type.
 // The same save gives the identical saved transform, so the identical key on both peers.
-// Fits the wire key for any in-base coordinate. `exact` is this peer's own name for the one decal,
-// the location's float bits and the type, which tells a cell's twins apart and never travels.
-// False when the location read fails: a key is never made from the origin a failed read leaves.
-bool KeysOf(void* grime, std::wstring& key, std::wstring& exact) {
+// Fits the wire key for any in-base coordinate. `exact` is this peer's own name for the one decal
+// (ExactKey). False when the location read fails: a key is never made from the origin a failed read
+// leaves.
+bool KeysOf(void* grime, std::wstring& key, ExactKey& exact) {
     ue_wrap::FVector loc{};
     if (!E::TryGetActorLocation(grime, loc)) return false;
     int32_t type = 0; G::ReadType(grime, type);
@@ -135,13 +150,16 @@ bool KeysOf(void* grime, std::wstring& key, std::wstring& exact) {
     key += std::to_wstring(q(loc.Y)); key += L'_';
     key += std::to_wstring(q(loc.Z)); key += L'_';
     key += std::to_wstring(type);
-    auto bits = [](float v) { uint32_t b; std::memcpy(&b, &v, sizeof(b)); return std::to_wstring(b); };
-    exact = bits(loc.X) + L'_' + bits(loc.Y) + L'_' + bits(loc.Z) + L'_' + std::to_wstring(type);
+    std::memcpy(&exact.x, &loc.X, sizeof(exact.x));
+    std::memcpy(&exact.y, &loc.Y, sizeof(exact.y));
+    std::memcpy(&exact.z, &loc.Z, sizeof(exact.z));
+    exact.type = type;
     return true;
 }
 
 std::wstring PosKey(void* grime) {
-    std::wstring key, exact;
+    std::wstring key;
+    ExactKey exact;
     return KeysOf(grime, key, exact) ? key : std::wstring();
 }
 
@@ -193,7 +211,7 @@ void ApplyResolved(void* actor, const std::wstring& key, float target, const cha
 // allocator put at a dead one's address in the same slot never inherits the dead one's key.
 struct CachedKey {
     std::wstring key;
-    std::wstring exact;  // KeysOf's own name for the one decal
+    ExactKey     exact;  // KeysOf's own name for the one decal
     int32_t      idx;
     int32_t      serial;
 };
@@ -201,7 +219,7 @@ std::unordered_map<void*, CachedKey> g_posKeyByActor;   // actor -> cached keys 
 std::unordered_map<void*, CachedKey> g_scanNextCache;   // pass scratch: full-pass cache rebuild
 struct Found {
     std::wstring key;
-    std::wstring exact;
+    ExactKey     exact;
     Ref          ref;
 };
 std::vector<Found> g_scanFound;  // pass scratch (GT-only)
@@ -230,7 +248,7 @@ void HubMatch(void*, void* obj) {
     if (g_scanIsFull) g_scanNextCache.insert_or_assign(obj, ck);   // full pass rebuilds the cache
     else              g_posKeyByActor.insert_or_assign(obj, ck);   // tail pass: cache the NEW actor's key
     const int32_t serial = ck.serial;
-    g_scanFound.push_back(Found{std::move(ck.key), std::move(ck.exact), Ref{obj, idx, serial}});
+    g_scanFound.push_back(Found{std::move(ck.key), ck.exact, Ref{obj, idx, serial}});
 }
 
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
@@ -382,7 +400,7 @@ void OnGrimeEnd(const DS::ActorEnd& end) {
     const CachedKey* ck = CachedOf(end.actor, end.actorIndex, end.actorSerial);
     if (!ck) return;
     const std::wstring key = ck->key;
-    const std::wstring exact = ck->exact;
+    const ExactKey exact = ck->exact;
     // The actor ended before this drain; its memory is read only while its slot still holds it under the
     // serial it ended with, which a purge in between resets.
     float at = 0.f;
