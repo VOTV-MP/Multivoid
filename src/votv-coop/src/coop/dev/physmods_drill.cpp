@@ -160,8 +160,8 @@ Out Unplug(void* desk, void* pawn, int slot) {
 const char* Say(Out o) {
     switch (o) {
     case Out::Emptied:   return "the slot is empty";
-    case Out::StillFull: return "the press ran and the slot still holds it, FAIL";
-    case Out::NoPress:   return "no press was made, FAIL";
+    case Out::StillFull: return "the press ran and the slot still holds it";
+    case Out::NoPress:   return "no press was made";
     }
     return "?";
 }
