@@ -56,6 +56,40 @@ void*   g_cls = nullptr;          // powerControl_C UClass
 int32_t g_keyOff = -1;            // AtriggerBase_C::Key
 void*   g_moveLeversFn = nullptr; // moveLevers() -- visual-only lever animation
 
+// A TArray<AActor*> member of the panel: its data, then its count and capacity.
+struct ActorArray {
+    void** data;
+    int32_t num;
+    int32_t max;
+};
+
+// One such member, read by name from the live class once; a class without it lacks it for the process.
+struct ArrayMember {
+    const wchar_t* name;
+    int32_t off = -1;
+    bool missing = false;
+
+    bool Read(void* p, std::vector<void*>& out) {
+        out.clear();
+        if (!p || missing) return false;
+        if (off < 0) {
+            off = R::FindPropertyOffset(R::ClassOf(p), name);
+            if (off < 0) {
+                missing = true;
+                UE_LOGW("power_control: powerControl_C has no %ls -- what a blackout reaches is out of reach", name);
+                return false;
+            }
+        }
+        const auto* a = reinterpret_cast<const ActorArray*>(reinterpret_cast<const uint8_t*>(p) + off);
+        if (a->num < 0 || a->num > 4096 || (a->num > 0 && !a->data)) return false;
+        for (int32_t i = 0; i < a->num; ++i)
+            if (a->data[i] && R::IsLive(a->data[i])) out.push_back(a->data[i]);
+        return true;
+    }
+};
+ArrayMember g_lightRoots{L"lighRoots"};
+ArrayMember g_blackoutDoors{L"doorsOpen"};
+
 }  // namespace
 
 bool EnsureResolved() {
@@ -165,5 +199,9 @@ bool ApplyPress(void* p, uint8_t mask) {
     }
     return true;
 }
+
+bool ReadLightRoots(void* p, std::vector<void*>& out) { return g_lightRoots.Read(p, out); }
+
+bool ReadBlackoutDoors(void* p, std::vector<void*>& out) { return g_blackoutDoors.Read(p, out); }
 
 }  // namespace ue_wrap::power_control

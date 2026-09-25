@@ -70,9 +70,19 @@ bool CallCrowbarOpen(void* door);
 bool CallDoorOpen(void* door, bool bypass);
 bool CallDoorClose(void* door, bool bypass);
 
+// runTrigger(owner, index), the door's own trigger verb: 0 opens, 1 closes, 2 makes the door inactive
+// (`active` false: a press opens it only by hand in a blackout), 3 active again. Resolved per class by
+// slot and serial. Game thread.
+bool CallRunTrigger(void* door, void* owner, int32_t index);
+
 // Read the door's power flag, the field its open gate reads: a keypad's setActive writes it, as
 // do power triggers and the save. False on a null door or an unresolved field. Game thread.
 bool TryReadActive(void* door, bool& on);
+
+// Read the door's ignoreBlackout, level data only its save load writes: the power panel's blackout opens
+// each door it lists that does not ignore one, and a press opens an inactive door by hand while the power
+// is off only if it does not. False on a null door or an unresolved field. Game thread.
+bool TryReadIgnoresBlackout(void* door, bool& ignores);
 
 // The actors the door's own sensor holds now: sensorOverlaps, which the sensor's begin- and
 // end-overlap handlers fill with every Pawn and prop that enters and leaves it; the autoclose

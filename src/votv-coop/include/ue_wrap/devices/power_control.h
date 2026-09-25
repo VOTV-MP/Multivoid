@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include <string>
 
 namespace ue_wrap::power_control {
@@ -39,5 +40,11 @@ bool ReadPress(void* p, uint8_t& mask);
 // the PANEL only -- it does NOT re-drive the base subsystems (those are synced by their own
 // channels). MUST run on the game thread. False on null / unresolved.
 bool ApplyPress(void* p, uint8_t mask);
+
+// The panel's light groups and the doors it opens in a blackout (its lighRoots and doorsOpen): what its
+// solar() turns off and opens. The live ones, in the panel's order; false when the member does not
+// resolve (said once). Game thread.
+bool ReadLightRoots(void* p, std::vector<void*>& out);
+bool ReadBlackoutDoors(void* p, std::vector<void*>& out);
 
 }  // namespace ue_wrap::power_control

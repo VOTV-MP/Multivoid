@@ -41,6 +41,9 @@ int32_t g_dirOff       = -1;       // Adoor_C::dir
 // apply leaves a stale local jam where it is.
 int32_t g_jammedOff    = -1;
 uint8_t g_jammedMask   = 0;
+// Adoor_C::ignoreBlackout: the panel's blackout and the press's blackout clause both skip such a door.
+int32_t g_ignoreBlackoutOff  = -1;
+uint8_t g_ignoreBlackoutMask = 0;
 int32_t g_moveOff      = -1;       // Adoor_C::move (UTimelineComponent*), the swing's own timeline
 // UTimelineComponent::TheTimeline.bPlaying, the flag IsPlaying returns: its byte in the component
 // and its bit (a bitfield it shares with bLooping and bReversePlayback). Offset -1 is unresolved.
@@ -125,6 +128,10 @@ bool EnsureResolved() {
     int32_t jammedOff = -1;
     uint8_t jammedMask = 0;
     if (!R::FindBoolProperty(doorCls, L"jammed", jammedOff, jammedMask)) jammedOff = -1;
+    int32_t ignoreBlackoutOff = -1;
+    uint8_t ignoreBlackoutMask = 0;
+    if (!R::FindBoolProperty(doorCls, L"ignoreBlackout", ignoreBlackoutOff, ignoreBlackoutMask))
+        ignoreBlackoutOff = -1;
     const int32_t moveOff = R::FindPropertyOffset(doorCls, L"move");
     int32_t playingOff = -1;
     uint8_t playingMask = 0;
@@ -161,6 +168,8 @@ bool EnsureResolved() {
     g_isMovingOff  = isMovingOff;
     g_jammedOff    = jammedOff;
     g_jammedMask   = jammedMask;
+    g_ignoreBlackoutOff  = ignoreBlackoutOff;
+    g_ignoreBlackoutMask = ignoreBlackoutMask;
     g_dirOff       = dirOff;
     g_moveOff      = moveOff;
     g_playingOff   = playingOff;
@@ -298,6 +307,12 @@ bool TryReadActive(void* door, bool& on) {
     return true;
 }
 
+bool TryReadIgnoresBlackout(void* door, bool& ignores) {
+    if (!door || !g_resolved.load(std::memory_order_acquire) || g_ignoreBlackoutOff < 0) return false;
+    ignores = (*(reinterpret_cast<const uint8_t*>(door) + g_ignoreBlackoutOff) & g_ignoreBlackoutMask) != 0;
+    return true;
+}
+
 // Snap a door fully to a state, mesh and flag, proximity-independent: set the timeline alpha
 // to the end and the direction, call the update function (which lerps the mesh from the
 // alpha, the visual snap; the finished function only sets the flag and stops the timeline,
@@ -381,6 +396,14 @@ void* PartOf(void* door, const wchar_t* name) {
     if (off < 0) return nullptr;
     void* part = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(door) + off);
     return (part && R::IsLive(part)) ? part : nullptr;
+}
+
+bool CallRunTrigger(void* door, void* owner, int32_t index) {
+    void* fn = door ? R::FindDispatchFunctionCached(R::ClassOf(door), L"runTrigger") : nullptr;
+    if (!fn) return false;
+    ParamFrame f(fn);
+    if (!f.valid() || !f.Set<void*>(L"owner", owner) || !f.Set<int32_t>(L"index", index)) return false;
+    return Call(door, f);
 }
 
 }  // namespace ue_wrap::door
