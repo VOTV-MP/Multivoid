@@ -91,7 +91,6 @@
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
-#include "coop/world/spawn_authority.h"  // the client refuses the shared-world spawners
 #include "coop/props/host_spawn_watcher.h"  // HOST mirror of those ambient spawner outputs (the pinecone scare)
 #include "coop/props/prop_drop_intent.h"  // client-place -> host-auth keyed-prop DROP INTENT
 #include "coop/props/prop_spawn_authoring.h"  // a PLAYER's spawn verb vs the world's own spawns
@@ -189,10 +188,16 @@
 namespace coop::subsystems {
 
 namespace {
-// Whether the session holds the script gate: taken once in Install, which is a retry pump
-// re-entered every tick, and released by ReleaseSessionGateHold. Game thread.
+// Whether the session holds the script gate: taken by HoldSessionGate, released by
+// ReleaseSessionGateHold. Game thread.
 bool g_sessionHoldsGate = false;
 }  // namespace
+
+void HoldSessionGate() {
+    if (g_sessionHoldsGate) return;
+    ue_wrap::script_gate::Acquire("the coop session");
+    g_sessionHoldsGate = true;
+}
 
 void ReleaseSessionGateHold() {
     if (!g_sessionHoldsGate) return;
@@ -201,13 +206,6 @@ void ReleaseSessionGateHold() {
 }
 
 void Install(coop::net::Session& session) {
-    // The session is the gate's owner while it runs; no lane enables or disables it. Only a
-    // running session holds it: the env play scenario runs this Install with none, and a hold
-    // taken there would keep the gate on in solo play.
-    if (!g_sessionHoldsGate && session.running()) {
-        ue_wrap::script_gate::Acquire("the coop session");
-        g_sessionHoldsGate = true;
-    }
     coop::grab_observer::Install();
     coop::prop_lifecycle::InstallInventory(&session);
     coop::prop_lifecycle::Install(&session);
@@ -285,7 +283,6 @@ void Install(coop::net::Session& session) {
     coop::trash_collect_sync::Install(&session);  // the chipPile grab observer (the use-press PRE observer, then a PropDestroy by eid)
     coop::garbage_sync::SetSession(&session);
     coop::garbage_sync::Install();  // garbage
-    coop::spawn_authority::Install(&session);  // the spawner bodies a client refuses (host results stream through the mirrors)
     coop::dev::rng_roll_census::Install(&session);  // [dev] driver/QuitGame interceptors (no-op unless rng_roll_census=1)
     coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
     coop::dev::rollover_watch::Install(&session);  // [dev] the day rollover instrument (no-op unless rollover_watch=1)
@@ -517,7 +514,7 @@ DisconnectStats DisconnectAll() {
     coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always)
     // The session's hold on the script gate ends with the session's state, released where the old
     // switch turned the gate off, so the lanes below tear down as they always have; a session that
-    // lives on (a host whose last client left) takes it again at the next Install.
+    // lives on (a host whose last client left) takes it again on its next tick.
     ReleaseSessionGateHold();
     coop::kerfur_entity::OnDisconnect();  // clear the KerfurId table + free its reserved host ids
     coop::kerfur_command::OnDisconnect();  // drop pending menu commands + owned-follow map

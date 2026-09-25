@@ -49,6 +49,7 @@
 #include "coop/session/shutdown.h"
 #include "coop/session/subsystems.h"
 #include "coop/session/teleport_client.h"
+#include "coop/world/spawn_authority.h"
 #include "ui/server_browser.h"
 #include "coop/net/end_reason.h"  // the named reason a join that reached the world load ends on
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
@@ -220,6 +221,10 @@ bool StartCoopSession(const coop::net::Config& netCfg, coop::net::Refusal* why) 
     // transfer wait, and the SaveObjectReadyHook must be armed before BootStorySaveBlocking so it
     // fires on the join's own load. Idempotent across Stop/Start.
     coop::player_inventory_sync::Install(&g_session);
+    // The spawner refusals are keyed pre-world as well (coop/world/spawn_authority.h): a joining
+    // client's spawners tick from its world's first frame, and nothing orders that after the pawn
+    // subsystems::Install waits for. Idempotent across Stop/Start.
+    coop::spawn_authority::Install(&g_session);
     if (netCfg.role == coop::net::Role::Host) {
         // Snapshot the canonical save before coop injects state (host only; clients are
         // save-blocked); synchronous, so it completes before Start.

@@ -83,14 +83,13 @@ SG::Verdict OnRowPre(const SG::Call& call) {
     return SG::Verdict::Cancel;
 }
 
-bool g_watched = false;
+std::atomic<bool> g_watched{false};
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_watched) return;
-    g_watched = true;
+    if (g_watched.exchange(true, std::memory_order_acq_rel)) return;
     int watched = 0;
     for (int i = 0; i < kRowCount; ++i) {
         if (SG::WatchClassName(kRows[i].cls, kRows[i].fn, kTagBase + i, &OnRowPre, nullptr)) {

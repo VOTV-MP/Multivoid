@@ -62,9 +62,14 @@ struct DisconnectStats {
 };
 DisconnectStats DisconnectAll();
 
-// The session's hold on the script gate, released: by DisconnectAll, and by the play loop on its
-// first tick without a running session, which covers a session stopped with no teardown (an
-// aborted join). Idempotent. Game thread.
+// The session's hold on the script gate; the session is the gate's owner while it runs, and no lane
+// enables or disables it. Taken by net_pump::Tick on every tick of a running session, so the gate is on
+// from the session's first tick, ahead of a joining client's world load, and never without a session,
+// so solo play keeps it off. Released by DisconnectAll, and by the play loop on its first tick without
+// a running session, which covers a session stopped with no teardown (an aborted join); a session that
+// lives on past a DisconnectAll (a host whose last client left) takes it again on its next tick. Both
+// idempotent. Game thread.
+void HoldSessionGate();
 void ReleaseSessionGateHold();
 
 // Per-tick gameplay-world subsystem chain: the connect-broadcast retry drains,
