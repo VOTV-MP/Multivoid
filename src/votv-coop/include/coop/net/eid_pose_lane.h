@@ -1,4 +1,4 @@
-// coop/net/eid_pose_queue.h -- the two halves of a host-originated pose lane keyed by element id,
+// coop/net/eid_pose_lane.h -- the two halves of a host-originated pose lane keyed by element id,
 // shared by the trash clumps' carry and roll and by the driven props.
 //
 // The LOCAL side is a queue merged by id: a newer pose of an element replaces its waiting one in
@@ -106,12 +106,13 @@ public:
         }
     }
 
-    // Game thread: swap out every pose merged since the last take. `out` comes in empty and keeps
-    // its capacity, and the buffer it leaves behind keeps the one the net thread grew, so the
-    // steady state allocates on neither thread.
+    // Game thread: swap out every pose merged since the last take. The buffer handed in is kept for
+    // the next merges, cleared, so a caller's leftovers are never merged in; with both buffers kept,
+    // the steady state allocates on neither thread.
     bool Take(std::vector<Pose>& out) {
         if (remote_.empty()) return false;
         out.swap(remote_);
+        remote_.clear();
         return true;
     }
 

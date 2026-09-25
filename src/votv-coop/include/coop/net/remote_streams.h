@@ -4,7 +4,7 @@
 // cursor). Every group lives under the session's remote-state lock.
 #pragma once
 
-#include "coop/net/eid_pose_queue.h"  // EidPoseMerge
+#include "coop/net/eid_pose_lane.h"   // EidPoseMerge
 #include "coop/net/protocol.h"
 #include "coop/net/stream_slot.h"
 
@@ -13,8 +13,9 @@
 namespace coop::net {
 
 // One origin's streams, the five the host relays, kept per origin slot. Reset when the slot's
-// connection closes (on a client, slot 0 is the host link), at a session's stop, and on a client when
-// the roster names another occupancy of a relayed slot (coop/net/origin_context.h).
+// connection closes, at a session's stop, and on a client at its roster's edges for a relayed slot:
+// the occupancy that left, and another occupancy named (coop/net/origin_context.h). A client's
+// relayed slots have no connection of their own: they reset, every slot, when its host link closes.
 struct OriginStreams {
     StreamSlot<PoseSnapshot>           pose;
     StreamSlot<PropPoseSnapshot>       prop;

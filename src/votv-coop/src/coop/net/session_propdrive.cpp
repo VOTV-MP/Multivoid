@@ -5,7 +5,7 @@
 // a prop's pose only when it moved since the last one it counted as sent, so the newest pose of
 // EVERY prop has to go out on the next send -- a snapshot would drop the other props' poses
 // whenever one prop published later in the tick. The queues and their rules are
-// coop/net/eid_pose_queue.h; this file is the datagram's framing and the trust boundary.
+// coop/net/eid_pose_lane.h; this file is the datagram's framing and the trust boundary.
 
 #include "coop/net/session.h"
 
@@ -53,11 +53,7 @@ void Session::StoreRemotePropDriveBatch(const void* data, int len, uint32_t seq)
     // this lands only on clients; the ROLE gate and the FINITE check are the trust boundary, for
     // the reasons session_trashcarry.cpp states.
     if (role() == Role::Host) {
-        // Once per session: a client that keeps sending would otherwise write a line per datagram.
-        if (!saidClientPropDrive_.exchange(true, std::memory_order_relaxed)) {
-            UE_LOGW("propdrive: host received a PropDrivePose batch -- only the host originates this "
-                    "kind, so this is a client-authored batch. Dropping (said once).");
-        }
+        RefuseClientBatch(HostBatch::PropDrive, "propdrive", "PropDrivePose");
         return;
     }
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;

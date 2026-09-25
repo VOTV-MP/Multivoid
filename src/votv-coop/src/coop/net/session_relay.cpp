@@ -2,7 +2,10 @@
 
 // The "host as relay hub" subsystem. In the star topology a packet from client A reaches only the
 // host, so these two methods forward A's packets to the OTHER clients and peers can see each other.
-// MTA has the same shape: CGame relays puresync and RPC as they arrive.
+// MTA has the same shape: its server relays puresync and RPC as they arrive, but re-sends a relayed
+// puresync as a packet of its own (Server/mods/deathmatch/logic/net/CSimPlayerManager.cpp:229-249),
+// so a client judges the server's order, where this relay keeps the origin's seq and a receiver
+// judges per origin (coop/net/stream_slot.h).
 //
 // Both are Session member functions, declared in coop/net/session.h and defined here, and they are
 // called only from Session::HandleMessage, on the net thread, host role only.

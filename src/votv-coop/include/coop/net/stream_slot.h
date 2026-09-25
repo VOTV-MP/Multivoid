@@ -1,9 +1,12 @@
 // coop/net/stream_slot.h -- one received stream's newest value. GNS delivers unreliable datagrams in
 // any order, so the receiver keeps each stream's sequence itself and refuses a datagram at or behind
-// the last one stored. MTA sends its streams UNRELIABLE_SEQUENCED and leaves that drop to RakNet, per
-// connection (reference/mtasa-blue/Client/mods/deathmatch/logic/CNetAPI.cpp:338); GNS has no sequenced
-// unreliable send, so the latch lives here, and whoever owns a group of these resets it at the owner's
-// edges (coop/net/remote_streams.h). Not locked: the owner's lock guards every call.
+// the last one stored. MTA sends its sync UNRELIABLE_SEQUENCED and leaves that drop to RakNet, per
+// connection and ordering channel (reference/mtasa-blue/Client/mods/deathmatch/logic/CNetAPI.cpp:373),
+// and its server re-sends each relayed puresync as a packet of its own (Server/mods/deathmatch/logic/
+// net/CSimPlayerManager.cpp:229-249, :459), so a client judges the server's order. GNS has no
+// sequenced unreliable send, and our relay keeps the origin's sequence (coop/net/session_relay.cpp),
+// so the latch lives here, one per stream and per origin, and whoever owns a group of these resets it
+// at the owner's edges (coop/net/remote_streams.h). Not locked: the owner's lock guards every call.
 #pragma once
 
 #include <cstdint>
@@ -56,9 +59,9 @@ public:
         seen_ = stored_;
         return true;
     }
-    // Swaps the newest value out when it arrived since the last Take. `out` comes in empty, and the
-    // buffer it leaves behind is the one the next Claim overwrites, so a batch whose reader keeps its
-    // vector allocates on neither thread.
+    // Swaps the newest value out when it arrived since the last Take. The buffer handed in is the one
+    // the next Claim overwrites whole, so a reader's leftovers are never read; a batch whose reader
+    // keeps its vector allocates on neither thread.
     bool Take(T& out) {
         if (stored_ == seen_) return false;
         using std::swap;
@@ -79,7 +82,8 @@ private:
 namespace stream_slot {
 // The arithmetic selftest, run once per session start beside the other un-gated ones: the newest
 // wins across the sequence's wrap, a read tells a fresh value from a re-read, a batch reordered behind
-// one already taken is refused, a take hands its buffer back, and a reset slot takes a new sender.
+// one already taken is refused, a take hands its buffer back, and a reset slot takes a new sender;
+// the eid merge's latch and cleared buffer, and the host's stream group reset whole, the same way.
 bool RunSelftest();
 }  // namespace stream_slot
 

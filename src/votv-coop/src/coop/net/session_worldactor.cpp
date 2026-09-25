@@ -3,10 +3,11 @@
 // Modelled on session_npc.cpp for the WorldActor (non-Character event actor) pose
 // stream: the unreliable HOST->client batch (MsgType::WorldActorPose). The host serializes its live
 // batch ONCE per send (SerializeLocalWorldActorBatch) before the per-peer fan-out, and clients parse
-// + newest-wins-store each datagram (StoreRemoteWorldActorBatch) for the game thread to drain
-// (TakeRemoteWorldActorBatch). The per-peer PacketHeader stamp + SendMessageToConnection stay in
-// session.cpp's send loop. Mutex discipline identical to the NPC path: local* under localMutex_,
-// remote* under remoteMutex_. The batch header is the SAME EntityPoseBatchHeader (a generic count).
+// + newest-wins-store each datagram (StoreRemoteWorldActorBatch) for the game thread to take
+// (TakeRemoteWorldActorBatch). The per-peer PacketHeader stamp + SendMessageToConnection stay in the
+// send round (session_streams.cpp, SendStreamsTick). Mutex discipline identical to the NPC path: the
+// local batch under localMutex_, the received one (host_.worldActorBatch) under remoteMutex_. The
+// batch header is the SAME EntityPoseBatchHeader (a generic count).
 
 #include "coop/net/session.h"
 
@@ -40,7 +41,7 @@ bool Session::TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out
 
 int Session::SerializeLocalWorldActorBatch(uint8_t* buf) {
     // Serialize ONCE per send (same body for every peer; only the per-peer header seq differs). One
-    // datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*WorldActorPoseSnapshot(28), MTU-capped
+    // datagram = PacketHeader(20) + EntityPoseBatchHeader(4) + N*WorldActorPoseSnapshot(48), MTU-capped
     // at kMaxWorldActorBatchEntries. The leading PacketHeader bytes are left for the caller to stamp
     // per-peer. Only the HOST ever populates localWorldActorBatch_, so on a client this returns 0.
     std::lock_guard<std::mutex> lk(localMutex_);
@@ -71,7 +72,12 @@ void Session::StoreRemoteWorldActorBatch(const void* data, int len, uint32_t seq
     // HOST->client WorldActor pose batch. The host ORIGINATES it (never relays/receives it), so this
     // lands only on clients. Parse + store the LATEST into the WA-batch slot the game thread drains
     // (world_actor_sync::TickClientWorldActors); newest-wins via seq. Per-entry float validation
-    // happens at the game-thread apply (a NaN can't reach SetActorLocation).
+    // happens at the game-thread apply (a NaN can't reach SetActorLocation). A host refuses one from a
+    // client, the trash lane's role gate.
+    if (role() == Role::Host) {
+        RefuseClientBatch(HostBatch::WorldActor, "worldactor", "WorldActorPose");
+        return;
+    }
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));

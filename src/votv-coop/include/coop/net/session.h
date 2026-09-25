@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "coop/net/eid_pose_queue.h"       // the trash-carry and driven-prop pose lanes
+#include "coop/net/eid_pose_lane.h"        // the trash-carry and driven-prop pose lanes
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
 #include "coop/net/local_streams.h"        // what this peer sends on its streams
@@ -161,7 +161,7 @@ public:
 
     // Host: a trash clump's turn, which a publisher asks before reading its pose, and one clump's
     // pose for the next TrashCarryPose send; `ahead` for a clump a player moved. The queue's rules:
-    // coop/net/eid_pose_queue.h. Game thread.
+    // coop/net/eid_pose_lane.h. Game thread.
     PoseTurn TrashCarryPoseTurn(uint32_t eid, bool ahead) const;
     void PublishTrashCarryPose(const TrashClumpPoseSnapshot& pose, bool ahead);
 
@@ -207,10 +207,11 @@ public:
     // Client: the latest reel corrector plus isNew.
     bool TryGetHostReelPose(ReelPosePayload& out, bool* outIsNew = nullptr);
 
-    // Client: move out the latest NPC pose batch, consumed once (false when nothing new arrived).
+    // Client: swap out the latest NPC pose batch, consumed once (false when nothing new arrived);
+    // `out` keeps its capacity, and a reader that keeps it allocates nothing.
     bool TakeRemoteNpcBatch(std::vector<EntityPoseSnapshot>& out);
 
-    // Client: move out the latest WorldActor batch, consumed once.
+    // Client: swap out the latest WorldActor batch, consumed once, the same way.
     bool TakeRemoteWorldActorBatch(std::vector<WorldActorPoseSnapshot>& out);
 
     // Client: swap out the trash-clump and driven-prop poses received since the last take, newest
@@ -641,11 +642,15 @@ private:
     std::vector<EntityPoseSnapshot> localNpcBatch_;
     std::vector<WorldActorPoseSnapshot> localWorldActorBatch_;
     // The host-originated trash-carry and driven-prop queues, each with its own mutex (what a client
-    // receives of them is in host_), and whether a client's batch of either has been said this
-    // session (net thread sets, Stop clears).
+    // receives of them is in host_).
     EidPoseQueue<TrashClumpPoseSnapshot> trashCarryPoses_;
     EidPoseQueue<PropPoseSnapshot>       propDrivePoses_;
-    std::atomic<bool> saidClientTrashCarry_{false}, saidClientPropDrive_{false};
+    // The batch kinds only the host originates: a host refuses each from a client, said once per
+    // kind and per session (the net thread sets, Stop clears).
+    enum class HostBatch : uint8_t { Npc, WorldActor, TrashCarry, PropDrive, Count };
+    std::array<std::atomic<bool>, static_cast<size_t>(HostBatch::Count)> saidClientBatch_{};
+    // HOST: a client sent `kind`, which only a host originates; dropped, said once. Net thread.
+    void RefuseClientBatch(HostBatch kind, const char* tag, const char* msgName);
 
     // What this peer keeps of the streams it receives (coop/net/remote_streams.h): the net thread
     // stores, the game thread reads or takes, both under remoteMutex_. Each origin slot's streams,

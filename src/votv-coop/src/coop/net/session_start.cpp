@@ -470,6 +470,8 @@ void Session::Stop() {
     // sample until the new host's sequence climbed past the old one's.
     { std::lock_guard<std::mutex> lk(remoteMutex_);
       for (int i = 0; i < kMaxPeers; ++i) ResetPeerRemoteState(i); }
+    // And what the host said once of a client-sent host batch: the next session says it again.
+    for (auto& said : saidClientBatch_) said.store(false, std::memory_order_relaxed);
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {

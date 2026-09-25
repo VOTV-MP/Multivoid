@@ -289,7 +289,7 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     // On a client slot 0 is the host, and its own streams -- the clock, the download sim, the dish and
     // reel poses, the batches -- go with the link: their sequence is the host process's counter, so a
     // client judging a restarted host's against the last host's would drop every one until the new
-    // counter passed the old. A host never stores these.
+    // counter passed the old. A host never stores these: every store of them refuses a client's.
     if (peerSlot == 0) host_.Reset();
     // Clear the latched senderEpoch so the next connection on this slot re-latches on its first
     // packet; a reconnecting peer's fresh epoch would otherwise fail the compare.

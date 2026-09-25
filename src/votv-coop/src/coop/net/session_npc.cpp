@@ -3,9 +3,10 @@
 // Owns the unreliable HOST->client NPC pose batch (MsgType::EntityPose): the host serializes
 // its live batch ONCE per send (SerializeLocalNpcBatch) before the per-peer fan-out, and
 // clients parse and newest-wins-store each datagram (StoreRemoteNpcBatch) for the game thread
-// to drain (TakeRemoteNpcBatch). The per-peer PacketHeader stamp and SendMessageToConnection
-// stay in session.cpp's send loop, which owns the per-peer conn handle and a fresh seq. Mutex
-// discipline: local* under localMutex_, remote* under remoteMutex_.
+// to take (TakeRemoteNpcBatch). The per-peer PacketHeader stamp and SendMessageToConnection
+// stay in the send round (session_streams.cpp, SendStreamsTick), which owns the per-peer conn
+// handle and a fresh seq. Mutex discipline: the local batch under localMutex_, the received one
+// (host_.npcBatch) under remoteMutex_.
 
 #include "coop/net/session.h"
 
@@ -49,7 +50,11 @@ void Session::StoreRemoteNpcBatch(const void* data, int len, uint32_t seq) {
     // lands only on clients. Parse and store the LATEST into the npc-batch slot the game thread
     // takes (npc_mirror::TickClientNpcs); newest-wins via seq, written in place into the buffer the
     // last take handed back. Per-entry float validation happens at the game-thread apply, so a NaN
-    // cannot reach SetActorLocation.
+    // cannot reach SetActorLocation. A host refuses one from a client, the trash lane's role gate.
+    if (role() == Role::Host) {
+        RefuseClientBatch(HostBatch::Npc, "npc", "EntityPose");
+        return;
+    }
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
     EntityPoseBatchHeader bh;
     std::memcpy(&bh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(bh));

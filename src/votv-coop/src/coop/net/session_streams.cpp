@@ -90,8 +90,13 @@ void Session::ResetLocalStreams() {
     }
     trashCarryPoses_.Reset();
     propDrivePoses_.Reset();
-    saidClientTrashCarry_.store(false, std::memory_order_relaxed);
-    saidClientPropDrive_.store(false, std::memory_order_relaxed);
+}
+
+void Session::RefuseClientBatch(HostBatch kind, const char* tag, const char* msgName) {
+    // Once per session: a client that keeps sending would otherwise write a line per datagram.
+    if (saidClientBatch_[static_cast<size_t>(kind)].exchange(true, std::memory_order_relaxed)) return;
+    UE_LOGW("%s: host received a %s batch -- only the host originates this kind, so this is a "
+            "client-authored batch. Dropping (said once).", tag, msgName);
 }
 
 // --- game-thread readers ----------------------------------------------------

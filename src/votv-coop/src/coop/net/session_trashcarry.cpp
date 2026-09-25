@@ -4,7 +4,7 @@
 // The unreliable HOST->client batch (MsgType::TrashCarryPose). A trash clump the host drives or
 // simulates -- carried on a client's puppet, thrown, or rolling free -- has its pose ORIGINATED by
 // the host, so every client, the one who set it moving included, renders it moving (the relay never
-// echoes a pose to its origin). The queues and their rules are coop/net/eid_pose_queue.h; this file
+// echoes a pose to its origin). The queues and their rules are coop/net/eid_pose_lane.h; this file
 // is the datagram's framing and the trust boundary. Reuses EntityPoseBatchHeader (a count).
 
 #include "coop/net/session.h"
@@ -58,11 +58,7 @@ void Session::StoreRemoteTrashCarryBatch(const void* data, int len, uint32_t seq
     // (trash_clump_pose_stream.cpp's IsInboundStreamCtxFresh) judges staleness, not values, so
     // without it a wire NaN reaches BeginLerpToPose and then SetActorLocation.
     if (role() == Role::Host) {
-        // Once per session: a client that keeps sending would otherwise write a line per datagram.
-        if (!saidClientTrashCarry_.exchange(true, std::memory_order_relaxed)) {
-            UE_LOGW("trashcarry: host received a TrashCarryPose batch -- only the host originates this "
-                    "kind, so this is a client-authored batch. Dropping (said once).");
-        }
+        RefuseClientBatch(HostBatch::TrashCarry, "trashcarry", "TrashCarryPose");
         return;
     }
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(EntityPoseBatchHeader))) return;
