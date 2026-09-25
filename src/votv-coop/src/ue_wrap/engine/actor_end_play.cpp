@@ -32,7 +32,7 @@ std::atomic<int> g_sinkCount{0};
 std::atomic<unsigned long long> g_seen{0};
 std::atomic<unsigned long long> g_offGameThread{0};
 
-// The engine's own test, the one the signature ends on: EndPlay does its work only for an actor
+// The engine's own test, the one Install checks the body for: EndPlay does its work only for an actor
 // whose begun-play state reads HasBegunPlay.
 bool HasBegunPlay(const void* actor) {
     const uint8_t state = *(static_cast<const uint8_t*>(actor) + prof::kActor_BegunPlayByte);
@@ -90,7 +90,13 @@ bool Install() {
                 "end of play is seen", prof::kActor_EndPlay_VtblOff, reinterpret_cast<void*>(addr));
         return false;
     }
-    const bool enginePrologue = ue_wrap::MatchesAt(addr, prof::kActorEndPlayPrologue);
+    // Whose bytes the entry held: the engine's prologue, a jump (rel32, rel8 or through a pointer, the
+    // forms a detour writes), or something else.
+    const auto* entry = reinterpret_cast<const uint8_t*>(addr);
+    const char* const held = ue_wrap::MatchesAt(addr, prof::kActorEndPlayPrologue) ? "the engine's prologue"
+                             : (entry[0] == 0xE9 || entry[0] == 0xEB || (entry[0] == 0xFF && entry[1] == 0x25))
+                                 ? "another detour's jump, which now runs after ours"
+                                 : "neither the engine's prologue nor a jump";
     ue_wrap::hook::Init();  // idempotent
     // UE4SS detours the same function (its HookEndPlay, on by default), after ours or before it. After,
     // it follows the jmp it finds there: it resolved EndPlay into our relay and patched that, and the
@@ -106,8 +112,7 @@ bool Install() {
     }
     g_installed.store(true, std::memory_order_release);
     UE_LOGI("actor_end_play: AActor::EndPlay detoured (%p, exe+0x%zX; its entry held %s) -- every actor that "
-            "began play is seen ending it", reinterpret_cast<void*>(addr), static_cast<size_t>(addr - image),
-            enginePrologue ? "the engine's prologue" : "another detour's jump, which now runs after ours");
+            "began play is seen ending it", reinterpret_cast<void*>(addr), static_cast<size_t>(addr - image), held);
     return true;
 }
 

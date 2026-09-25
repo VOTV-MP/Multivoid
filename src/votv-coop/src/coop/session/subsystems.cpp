@@ -188,20 +188,22 @@
 namespace coop::subsystems {
 
 namespace {
-// Whether the session holds the script gate: taken by HoldSessionGate, released by
-// ReleaseSessionGateHold. Game thread.
+// Whether the session holds the script gate and the death seam: taken by HoldSessionGate, released
+// by ReleaseSessionGateHold. Game thread.
 bool g_sessionHoldsGate = false;
 }  // namespace
 
 void HoldSessionGate() {
     if (g_sessionHoldsGate) return;
     ue_wrap::script_gate::Acquire("the coop session");
+    coop::element::death_seam::Acquire("the coop session");
     g_sessionHoldsGate = true;
 }
 
 void ReleaseSessionGateHold() {
     if (!g_sessionHoldsGate) return;
     ue_wrap::script_gate::Release("the coop session");
+    coop::element::death_seam::Release("the coop session");
     g_sessionHoldsGate = false;
 }
 
@@ -623,13 +625,15 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // A cheap early return when nothing is pending.
     { PP::Scope _s{PP::Bucket::ItemConnect};   coop::item_activate::TickConnect(); }
     { PP::Scope _s{PP::Bucket::WeatherConnect}; coop::weather_sync::TickConnect(); }
+    // The ends of play the engine announced since the last tick, handed to the lanes that subscribed
+    // before the hub's pass can complete: a pass prunes what has died from its consumers' indexes, and a
+    // lane names an ended actor by its index (grime's position key).
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::element::death_seam::Drain(); }
     // The walk timer logs each sync's call over a millisecond, so a heavy one names itself; the
     // perf-probe bucket covers the whole block. The shared pass over the object index serves every
     // index consumer, and runs before the consumers' ticks so a completed pass's fresh index is
     // visible in the same pump tick.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:scan_hub"}; coop::element::scan_hub::Tick(); }
-    // The ends of play the engine announced since the last tick, handed to the lanes that subscribed.
-    { PP::Scope _s{PP::Bucket::Interactable}; coop::element::death_seam::Drain(); }
     // The steady prop re-seed consumer registers itself once; the budget drain carries its own
     // walk-time label.
     { PP::Scope _s{PP::Bucket::Interactable};
