@@ -512,6 +512,16 @@ void Session::Stop() {
     // close signals have flushed; its destructor closes the socket. Null on the direct transport.
     signaling_.reset();
 
+    // The inboxes die with the session as well. A peer's close erases that peer's queued messages,
+    // but a session this side stops is no peer's close, and the pump drains only a running session,
+    // so what was queued at the stop waited for the next one. A client that quit to the menu and
+    // joined again drained the old host's roster rows after the new session's ledger reset: its own
+    // old row was then replaced by the new one, and that teardown released its own player before
+    // its Join went out.
+    { std::lock_guard<std::mutex> lk(reliableInboxMutex_); reliableInbox_.clear(); }
+    { std::lock_guard<std::mutex> lk(voiceInboxMutex_);
+      for (VoiceSlotRing& r : voiceRings_) r.head = r.tail = 0; }
+
     state_.store(ConnState::Disconnected);
     linkStage_.store(static_cast<uint8_t>(LinkStage::Idle), std::memory_order_release);
     g_session.store(nullptr, std::memory_order_release);
