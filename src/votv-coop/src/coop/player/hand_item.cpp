@@ -13,6 +13,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/actors/inventory.h"   // the hold slot's item name
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -65,13 +66,16 @@ struct SlotHand {
 };
 SlotHand g_hands[coop::players::kMaxPeers];  // GT-only
 
-// The per-slot display mirror.
+// The per-slot display mirror. A spawn that failed keeps the item and the puppet it was tried for and
+// is not tried again until either changes: a begin or a finish that failed for them fails the same way
+// on the next tick, and each attempt is a spawn.
 struct Mirror {
     void*        actor = nullptr;
     int32_t      idx   = -1;  // GUObjectArray index (IsLiveByIndex validation)
     std::wstring cls;
     std::wstring name;
     int32_t      puppetIdx = -1;  // the puppet we attached to (re-attach on respawn)
+    bool         failed = false;  // the spawn of cls/name on puppetIdx failed; actor is null
 };
 Mirror g_mirrors[coop::players::kMaxPeers];  // GT-only
 
@@ -261,12 +265,21 @@ void DestroyMirror(uint8_t slot, const char* why) {
     m = Mirror{};
 }
 
+void NoteSpawnFailed(uint8_t slot, const SlotHand& want, void* puppetActor) {
+    Mirror& m = g_mirrors[slot];
+    m = Mirror{};
+    m.cls = want.cls;
+    m.name = want.name;
+    m.puppetIdx = R::InternalIndexOf(puppetActor);
+    m.failed = true;
+}
+
 void SpawnMirror(uint8_t slot, void* puppetActor) {
     const SlotHand& want = g_hands[slot];
-    void* cls = R::FindClass(want.cls.c_str());
+    // One index lookup a tick: Blueprint classes load on demand, and one this peer has not loaded, or is
+    // still loading, answers null and is asked for again next tick, warned once per class.
+    void* cls = ue_wrap::object_index::ClassByName(want.cls.c_str());
     if (!cls) {
-        // Blueprint classes load on demand; if this peer's game never loaded the item class, retry
-        // each tick, warning once per class.
         static std::wstring sWarned;
         if (sWarned != want.cls) {
             sWarned = want.cls;
@@ -286,7 +299,9 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
         actor = E::BeginDeferredSpawn(cls, loc, rot);
     }
     if (!actor) {
-        UE_LOGW("hand_item: BeginDeferredSpawn '%ls' failed", want.cls.c_str());
+        UE_LOGW("hand_item: slot %u BeginDeferredSpawn '%ls' failed -- not tried again until the item or the "
+                "puppet changes", static_cast<unsigned>(slot), want.cls.c_str());
+        NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
     // The item name is stamped before Init runs: generic prop meshes are name-driven, the game's
@@ -302,12 +317,19 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     // prop.
     coop::prop_echo_suppress::MarkMirrorSpawn(actor);
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
-        UE_LOGW("hand_item: FinishDeferredSpawn '%ls' failed", want.cls.c_str());
+        // The begun actor is not left in the world, half made: it is destroyed, silently to the peers.
+        UE_LOGW("hand_item: slot %u FinishDeferredSpawn '%ls' failed -- the begun actor is destroyed, and the "
+                "spawn is not tried again until the item or the puppet changes",
+                static_cast<unsigned>(slot), want.cls.c_str());
+        coop::prop_echo_suppress::MarkIncomingDestroy(actor);
+        E::DestroyActor(actor);
+        NoteSpawnFailed(slot, want, puppetActor);
         return;
     }
     E::SetActorSimulatePhysics(actor, false);
     E::SetActorEnableCollision(actor, false);
     Mirror& m = g_mirrors[slot];
+    m = Mirror{};
     m.actor = actor;
     m.idx = R::InternalIndexOf(actor);
     m.cls = want.cls;
@@ -498,6 +520,7 @@ void TickMirrors() {
 
         if (!want.has) {
             if (mirrorLive || m.actor) DestroyMirror(slot, "hand now empty");
+            else if (m.failed) m = Mirror{};  // the failed item left the hand; the next one is tried
             continue;
         }
         coop::RemotePlayer* pup = reg.Puppet(slot);
@@ -523,11 +546,12 @@ void TickMirrors() {
             }
         }
         const int32_t pupIdx = R::InternalIndexOf(puppetActor);
-        if (mirrorLive && m.cls == want.cls && m.name == want.name &&
-            m.puppetIdx == pupIdx) {
+        const bool sameWant = m.cls == want.cls && m.name == want.name && m.puppetIdx == pupIdx;
+        if (mirrorLive && sameWant) {
             DriveMirror(m.actor, pup, want);  // steady state: re-command the view hold
             continue;
         }
+        if (m.failed && sameWant) continue;  // this item failed to spawn on this puppet (see Mirror)
         if (mirrorLive || m.actor) DestroyMirror(slot, "state/puppet changed");
         SpawnMirror(slot, puppetActor);
         Mirror& nm = g_mirrors[slot];
