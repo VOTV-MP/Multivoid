@@ -446,6 +446,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/food_clock_probe.cpp
     src/coop/dev/lookat_churn_probe.cpp
     src/coop/dev/door_drill.cpp
+    src/coop/dev/door_drill_aim.cpp
     src/coop/dev/event_drill.cpp
     src/coop/dev/toggle_drill.cpp
     src/coop/dev/light_drill.cpp
