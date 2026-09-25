@@ -36,6 +36,10 @@ int32_t g_isMovingOff  = -1;       // Adoor_C::isMoving -- swing in progress
 // that timeline plays. Read by name; unresolved, the intent reader falls back to the settled flag.
 int32_t g_dirOff       = -1;       // Adoor_C::dir
 int32_t g_moveOff      = -1;       // Adoor_C::move (UTimelineComponent*), the swing's own timeline
+// UTimelineComponent::TheTimeline.bPlaying, the flag IsPlaying returns: its byte in the component
+// and its bit (a bitfield it shares with bLooping and bReversePlayback). Offset -1 is unresolved.
+int32_t g_playingOff   = -1;
+uint8_t g_playingMask  = 0;
 void*   g_doorOpenFn   = nullptr;  // Adoor_C::doorOpen(bool bypassCheck)
 void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
@@ -68,18 +72,13 @@ struct VerifyEntry {
 };
 std::unordered_map<void*, VerifyEntry> g_verify;
 
-// Whether the door's move timeline -- its swing, not the jam shake's -- is playing, through the
-// timeline component's own IsPlaying. False when it cannot say.
+// Whether the door's move timeline -- its swing, not the jam shake's -- is playing: the flag its
+// own IsPlaying returns, read in place, one byte and no dispatch. False when it cannot say.
 bool MoveTimelinePlaying(void* door, bool& playing) {
-    if (!door || g_moveOff < 0) return false;
-    void* move = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(door) + g_moveOff);
-    if (!move || !R::IsLive(move)) return false;
-    void* cls = R::ClassOf(move);
-    void* fn = cls ? R::FindDispatchFunctionCached(cls, L"IsPlaying") : nullptr;
-    if (!fn) return false;
-    ParamFrame f(fn);
-    if (!f.valid() || !Call(move, f)) return false;
-    playing = f.Get<bool>(L"ReturnValue");
+    if (!door || g_moveOff < 0 || g_playingOff < 0) return false;
+    const char* move = *reinterpret_cast<const char* const*>(reinterpret_cast<const char*>(door) + g_moveOff);
+    if (!move || !R::IsLive(const_cast<char*>(move))) return false;
+    playing = (*reinterpret_cast<const uint8_t*>(move + g_playingOff) & g_playingMask) != 0;
     return true;
 }
 
@@ -127,6 +126,18 @@ bool EnsureResolved() {
     if (activeOff < 0) activeOff = kActiveOffFallback;
     const int32_t dirOff = R::FindPropertyOffset(doorCls, L"dir");
     const int32_t moveOff = R::FindPropertyOffset(doorCls, L"move");
+    int32_t playingOff = -1;
+    uint8_t playingMask = 0;
+    if (void* tlCls = R::FindClass(L"TimelineComponent")) {
+        const int32_t tlOff = R::FindPropertyOffset(tlCls, L"TheTimeline");
+        void* tlStruct = tlOff >= 0 ? R::PropertyInnerStruct(tlCls, L"TheTimeline") : nullptr;
+        int32_t innerOff = -1;
+        if (tlStruct && R::FindBoolProperty(tlStruct, L"bPlaying", innerOff, playingMask))
+            playingOff = tlOff + innerOff;
+    }
+    if (playingOff < 0)
+        UE_LOGW("door: TimelineComponent.TheTimeline.bPlaying did not resolve -- a swing's intent reads as its "
+                "settled state, half a second late");
     if (dirOff < 0 || moveOff < 0)
         UE_LOGW("door: reflected dir or move offset not found (dir=%d move=%d) -- a swing's intent reads as "
                 "its settled state, half a second late", dirOff, moveOff);
@@ -152,6 +163,8 @@ bool EnsureResolved() {
     g_isMovingOff  = isMovingOff;
     g_dirOff       = dirOff;
     g_moveOff      = moveOff;
+    g_playingOff   = playingOff;
+    g_playingMask  = playingMask;
     g_sensorOff    = sensorOff;
     g_sensorOverlapsOff = sensorOverlapsOff;
     g_activeOff      = activeOff;
@@ -222,7 +235,7 @@ bool TryReadOpenIntent(void* door, bool& open) {
     // instant it begins: the door's own dir, which doorOpen and doorClose write in their own body
     // before starting that timeline, so a read straight after the verb sees it. Any other motion --
     // the jam shake sets isMoving and plays its own timeline -- leaves the door where its opened flag
-    // says. The timeline is asked only while isMoving is set, so a settled door costs no call.
+    // says. The timeline's flag is read only while isMoving is set: a byte read, and none at rest.
     const bool moving = (g_isMovingOff >= 0) &&
         *reinterpret_cast<const bool*>(base + g_isMovingOff);
     bool swinging = false;

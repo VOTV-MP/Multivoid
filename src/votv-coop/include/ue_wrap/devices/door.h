@@ -40,7 +40,7 @@ bool TryReadOpen(void* door, bool& open);
 // plays, the destination is the door's own dir, which doorOpen and doorClose write in their own
 // body, so an open or close is reported the instant the verb returns instead of half a second later
 // when the open state settles; any other motion (the jam shake) and a settled door read the open
-// state. One engine call while the door moves, none at rest. The door lane's reader at a verb, in its
+// state. A byte read while the door moves, none at rest. The door lane's reader at a verb, in its
 // apply, its snapshot and its shadow poll.
 bool TryReadOpenIntent(void* door, bool& open);
 
