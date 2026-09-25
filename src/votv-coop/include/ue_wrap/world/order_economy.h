@@ -12,7 +12,9 @@
 // delivered order box branches on the item's object and asProp fields and passes asProp to
 // the player, so a row with those fields blank mis-delivers. The one field overwritten is
 // subcategory, stamped with the pinned empty FText (the order box's own items ship the same),
-// since copying the live FText would rest on who deep-copies it and when.
+// since copying the live FText would rest on who deep-copies it and when. The queue MIRROR is the
+// one place a class does name an item: a world event builds its order outside the shop (the daily
+// delivery, a gift) with no row at all, setting only the item's class, so that is what travels.
 
 #pragma once
 
@@ -36,10 +38,24 @@ struct OrderData {
 // nothing pops the queue synchronously inside the commit.
 int32_t OrderCount();
 
-// Read one queued order's item row names into `out`. False if unresolved, out of range, the
-// order has no items, or the catalog is unusable (the row-name offset comes from
-// store_catalog, which owns the row's shape). Game thread.
-bool ReadOrder(int32_t index, OrderData& out);
+// One line item of a queued order as the queue mirror carries it: a shop item by its list_store row,
+// or an item a world event built outside the shop by its class. Exactly one of the two is set.
+struct QueuedItem {
+    std::wstring row;  // the list_store key a shop item carries in its name
+    std::wstring cls;  // an unnamed item's class, by name
+};
+
+// One queued order as the mirror carries it: every item, and its delivery time.
+struct QueuedOrder {
+    std::vector<QueuedItem> items;
+    float eta = 0.f;  // Fstruct_storeOrder.time, seconds
+};
+
+// Read the queue's order at `index`, every item by its row or, with none, by its class; an item
+// named neither way is left out and said. False if the queue is unresolved, the index is out of
+// range, or the catalog is unusable (the name and object offsets come from store_catalog, which
+// owns the row's shape). An order of no items reads true and empty. Game thread.
+bool ReadQueuedOrder(int32_t index, QueuedOrder& out);
 
 // Read the order stored at `order`, an Fstruct_storeOrder (makeAnOrder's parameter, say), into
 // `out`: its items' row names and its time. False as ReadOrder's. Game thread.
@@ -63,15 +79,26 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic);
 // still-loading world must defer. Game thread.
 bool CanCommit();
 
-// Client: append `order` (its rows and time) to the local queue through the laptop's own
-// addOrderCart, which also adds the queue's order slot widget: the host's queue as this peer
-// mirrors it. The items are built as CommitOrder builds them. False, appending nothing, when the
-// laptop or the catalog is unusable or a row is unknown. Game thread.
-bool AppendOrder(const OrderData& order);
+// A queue change as a mirror applies it: Done when the queue moved exactly as asked, Later when it
+// could not move yet (the laptop, the queue or the catalog not ready, or the verb ran and moved
+// nothing) and the caller should try again.
+enum class Applied : uint8_t { Done, Later };
+
+// Client: append `order` to the local queue through the laptop's own addOrderCart, which also adds
+// the queue's order slot widget: the host's queue as this peer mirrors it. A shop item is built as
+// CommitOrder builds it; an unnamed one in the one shape every world-event builder of the game makes
+// (its class, one of it, no price, row, category or subcategory). The mirror shows the host's queue
+// and delivers nothing, so it is built item by item: one this machine cannot build (a row its
+// catalog lacks, a class it has not loaded) is left out and said, down to an order of no items,
+// which still takes its place so the host's next pop takes the same order off. Done only when the
+// queue grew by exactly one: the call reports its dispatch, not its effect. Game thread.
+// `leftOut`, when given, receives how many items were left out. Game thread.
+Applied AppendOrder(const QueuedOrder& order, int* leftOut = nullptr);
 
 // Client: pop the local queue's first order through the laptop's own removeOrderCart, which also
-// removes its slot widget. False when the laptop is unresolved or the queue is empty. Game thread.
-bool PopOrder();
+// removes its slot widget. Done only when the queue shrank by exactly one; Later on an empty or
+// unresolved queue, the caller telling those apart. Game thread.
+Applied PopOrder();
 
 // Client: put `rowNames` back into the laptop's cart through the native addStoreCart, once per
 // row with the live table row. Used only when the host refuses a forwarded order: single
@@ -93,5 +120,10 @@ int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames);
 // button clears the cart after committing and this does not, so the items stay in the local
 // cart; one-shot use. Game thread.
 int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float etaSeconds);
+
+// Host, dev only: queue the day cycle's own daily delivery as the game does at six -- the cycle's
+// "Make Default Order", then the laptop's makeAnOrder with automatic set -- for a drill that needs a
+// world event's order, whose items carry no row. True when the queue grew by one. Game thread.
+bool MakeDailyOrder();
 
 }  // namespace ue_wrap::order_economy

@@ -241,12 +241,13 @@ delete button (`coop/world/email_sync`).
 
 ### Shop orders
 
-A client's laptop order is entirely local to its machine: the order lands in its own save and its
-own mirror drone would fly. So the client polls its order list, and on an increment forwards the
-order as an intent naming each item's shop row and nothing else; the host prices the row from its
-own store table, checks its own balance, rolls its own delivery time, commits through the game's
-own order function and charges, and the client's mirror drone is reset so it cannot fake a
-takeoff (`coop/items/order_sync`). A refused order comes back with a reason, and the refused items
+A client's laptop order is entirely local to its machine: the game's order function queues it in
+the client's own save and hands it to the client's own mirror drone. So a client's order function is
+stopped at the script-body gate and its order goes to the host as an intent naming each item's shop
+row and nothing else, read from the function's own parameter; the host prices the row from its own
+store table, checks its own balance, rolls its own delivery time, commits through the game's own
+order function and charges (`coop/items/order_sync`). An order a world event makes on a client (the
+daily delivery, a gift) is not sent: the host's copy of the event makes it. A refused order comes back with a reason, and the refused items
 are put back in the client's cart, because the game's own affordability gate runs before the cart
 is cleared while the refusal arrives after. This is the reference intent lane: the intent used to
 carry a client-chosen price, and every client shopped free.
@@ -262,6 +263,14 @@ compared, and a single disagreement invalidates the whole catalog: the host then
 orders outright rather than charge a number it cannot vouch for. Setting
 `VOTVCOOP_STORE_CATALOG_BREAK=1` makes the walk read the wrong field on purpose, so that refusal
 can be seen firing before it is trusted (`ue_wrap/world/store_catalog`).
+
+The delivery queue is the host's. Each change to it -- an order queued, the delivered one taken off --
+goes to every client as the laptop's own queue functions run, and a client's queue follows through
+the same functions (`coop/items/order_queue_sync`). A shop item travels by its row; an item a world
+event built outside the shop has no row and travels by its class, rebuilt in the one shape every such
+builder makes. A client that cannot build an item leaves it out, down to an order of no items that
+still keeps its place, so the host's next delivery takes the same order off both queues; and a change
+counts as applied only when the queue moved by exactly one.
 
 ### The coin gun
 
@@ -360,6 +369,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `UpgradeLevels` | the host to all | the eighteen levels, whole |
 | `UpgradeIntent` | a client to the host | the panel row's index and whether it is a buy or a sell |
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
+| `OrderQueue` | the host to all | a change to the delivery queue: a reset, an order queued (its items by row or by class), the first one taken off |
 | `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |
 | `FloppySlotState` | a peer to the host with a claim; the host to all with the canonical | one device's slot, or a set of them: the type, the writes, the rows and the save JSON |
 
@@ -369,8 +379,9 @@ Every channel snapshots the full state of every indexed instance to a joiner at 
 open and closed alike, because the save the joiner loaded, the host's captured at its join, holds
 neither a state the game does not save (a server box's `active`, a sink's tap) nor one changed while
 the joiner loaded; an oven's repair is in that save, and the snapshot says it again; the keypads, the power masks, the turbine, the windows, the grime and the
-drone's pose are sent the same way, and the balance is sent at connect. A pending order is
-primed by a watermark so the joiner's next order is the first it forwards.
+drone's pose are sent the same way, and the balance is sent at connect. The delivery queue goes to a
+joiner as a reset and then every queued order, and the joiner ignores the queue's changes until that
+reset arrives.
 
 Every device's floppy slot goes to a joiner at the same edge, an empty one as much as a full one:
 the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows

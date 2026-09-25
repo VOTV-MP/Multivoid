@@ -386,7 +386,10 @@ CFG_FLAG(delivery_census, "delivery_census", "dev", false, nullptr,
 CFG_FLAG(store_table_probe, "store_table_probe", "dev", false, nullptr,
     "Diagnostic census: which mechanism can read a list_store row (one-shot).")
 CFG_FLAG(order_selftest, "order_selftest", "dev", false, "VOTVCOOP_ORDER_SELFTEST",
-    "Selftest: a client places a real shop order so host-side pricing is exercised.")
+    "Selftest (BOTH peers): once a client's world is up it places a real shop order through the game's own "
+    "shop, so host-side pricing is exercised; once a client's world is ready the host makes the day cycle's "
+    "own daily order, a world event's, whose items the queue mirror carries by class. The client's DONE line "
+    "says whether that order reached its queue with every item built. Lines tagged [order_selftest].")
 CFG_FLAG(order_probe, "order_probe", "dev", false, "VOTVCOOP_ORDER_PROBE",
     "Probe (BOTH peers): logs each write of the delivery order queue (makeAnOrder with its caller, addOrderCart, removeOrderCart), the drone's sendShop, checkOrders and compileOrder, and the day cycle's hourly call that makes the daily order. Lines tagged [ORDER-PROBE].")
 CFG_FLAG(flashlight_log, "flashlight_log", "dev", false, nullptr,

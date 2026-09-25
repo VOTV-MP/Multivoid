@@ -442,7 +442,8 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
     std::vector<std::wstring> chunkNames;
     chunkNames.reserve(h.chunkItems);
     if (!coop::order_rows::Unpack(p, end, h.chunkItems, chunkNames)) {
-        UE_LOGW("order_sync: OrderRequest carries a truncated or oversized item -- drop");
+        UE_LOGW("order_sync: OrderRequest carries a truncated or oversized item, or one by class, which a "
+                "client never orders -- drop");
         return;
     }
 

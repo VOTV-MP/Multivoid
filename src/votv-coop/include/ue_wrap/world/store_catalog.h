@@ -62,5 +62,11 @@ int32_t SubcategoryOffset();
 // the CLIENT, pulling the row key out of a locally-placed order -- asks here rather than carrying
 // its own literal. -1 if unusable, and it BUILDS if needed, like SubcategoryOffset.
 int32_t NameOffset();  // same: BUILDS if needed (see SubcategoryOffset)
+// Byte offsets of the `object` class and the `size` count inside a row, resolved by name, for an item
+// no row names: a world event builds its order's items outside the shop (the daily delivery, a gift),
+// setting the class alone, and the queue mirror rebuilds one from it. -1 if unusable; BUILDS if
+// needed, like SubcategoryOffset.
+int32_t ObjectOffset();
+int32_t SizeOffset();
 
 }  // namespace ue_wrap::store_catalog

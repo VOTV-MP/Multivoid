@@ -56,7 +56,8 @@ bool HandleSignalEvent(net::Session& session,
 // sender slot; KerfurConvertRequest and KerfurCommand check the role only, mapping an out-of-range
 // slot to the 0xFF sentinel and handing it on; OrderRequest, CoinGunSell and CoinCollect check the
 // slot here and leave the role gate to the module they call; CoinGunResult and OrderRefused are
-// HOST->CLIENT answers that drop on the host; RoachConsumed defers both gates to
+// HOST->CLIENT answers that drop on the host; OrderQueue, the host's delivery queue mirrored to
+// clients, leaves both checks to order_queue_sync; RoachConsumed defers both gates to
 // roach_sync::OnConsumedIntent.
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,

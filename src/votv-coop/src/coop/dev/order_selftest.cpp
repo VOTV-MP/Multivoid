@@ -3,12 +3,15 @@
 #include "coop/dev/order_selftest.h"
 
 #include "coop/config/config.h"
+#include "coop/items/order_queue_sync.h"  // ClientCounts: what the mirror appended here
+#include "coop/net/session.h"
+#include "coop/session/join_progress.h"
+#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/world/economy.h"
 #include "ue_wrap/world/order_economy.h"
 
-#include <chrono>
 #include <string>
 #include <vector>
 
@@ -18,24 +21,15 @@ namespace {
 namespace OE = ue_wrap::order_economy;
 namespace E  = ue_wrap::economy;
 
-// Deliberately later than order_sync's own watermark prime (which happens the first tick the
-// client's saveSlot resolves). An order placed BEFORE the prime is swallowed as pre-existing local
-// save state and never forwarded -- which would look exactly like a broken forward path.
-//
-// WALL CLOCK, not a tick count. The first cut used 1800 ticks copied from drone_probe and fired
-// NEVER inside a 26-second connected window, because "a tick" is a frame here and the settle it
-// buys therefore depends on the host's framerate. Seconds are what the intent actually is.
-constexpr int kSettleMs = 9000;
-
 // See the header for why these three. `cup` is the load-bearing one: its `object` is the generic
 // prop_C and its real identity is in `asProp`, so it only delivers correctly if the host copies the
 // whole row.
 const wchar_t* const kRows[] = {L"drive", L"cup", L"burger"};
 
-bool g_fired = false;
-bool g_armed = false;
-std::chrono::steady_clock::time_point g_armedAt{};
-uint64_t g_waitLogs = 0;
+bool g_clientFired = false;
+bool g_clientDone  = false;
+bool g_hostFired   = false;
+int  g_readySeenTicks = 0;  // host: ticks since a client's world was first seen ready
 
 bool Enabled() {
     static const bool s_on =
@@ -43,34 +37,14 @@ bool Enabled() {
     return s_on;
 }
 
-}  // namespace
-
-void Tick(bool connected, bool isHost) {
-    if (!Enabled() || g_fired || isHost || !connected) return;
-    if (!g_armed) {
-        // Say ONCE that the instrument is live. A selftest that prints nothing is indistinguishable
-        // from a switched-off one, and that ambiguity has now cost two smoke runs on this feature
-        // alone -- once when the ini key landed inside a comment, once when the settle never elapsed.
-        g_armed = true;
-        g_armedAt = std::chrono::steady_clock::now();
-        UE_LOGI("[order_selftest] ARMED on this client -- will place a real shop order in %d ms",
-                kSettleMs);
-        return;
-    }
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - g_armedAt).count() < kSettleMs) return;
-
-    UE_LOGI("[order_selftest] settle elapsed -- FIRING now");
-    g_fired = true;
+// The client's shop order, placed THROUGH THE GAME'S OWN SHOP -- generateStore, then addStoreCart on
+// the slots whose stamped name matches, then makeAnOrder on the resulting cart. Deliberately NOT
+// through `store_catalog`: a drill that resolved its rows through the catalog once BUILT it before the
+// production path ever ran, which hid a defect for a whole session. An instrument that primes state
+// the real path does not prime proves only itself.
+void PlaceClientOrder() {
     int32_t before = 0;
     E::ReadPoints(&before);
-
-    // Place the order THROUGH THE GAME'S OWN SHOP -- generateStore, then addStoreCart on the slots
-    // whose stamped name matches, then makeAnOrder on the resulting cart. Deliberately NOT through
-    // `store_catalog`: the first version of this drill resolved its rows through the catalog and so
-    // BUILT it before the production path ever ran, which hid a CRITICAL defect for a whole session
-    // (`ReadOrder` never built the catalog, so on a real client every order silently failed to
-    // forward). An instrument that primes state the real path does not prime proves only itself.
     std::vector<std::wstring> rows;
     for (const wchar_t* n : kRows) rows.emplace_back(n);
     const int32_t total = OE::PlaceOrderFromShopUI(rows, /*etaSeconds*/ 150.f);
@@ -80,18 +54,63 @@ void Tick(bool connected, bool isHost) {
                 kRows[0], kRows[1], kRows[2]);
         return;
     }
-
-    // Reproduce Button_order's LOCAL debit: the button multiplies the store price by -1 and hands
-    // that to lib_C::addPoints. This is the debit the host's verdict has to correct -- on a commit
-    // by the change-polled broadcast, on a refusal by a direct send -- so a drill that skipped it
-    // would be testing the easy half only.
+    // Button_order's LOCAL debit: the store price times -1 through lib_C::addPoints. The debit the
+    // host's verdict has to correct, so a drill that skipped it would test the easy half only.
     E::AddPoints(-total);
-
-    UE_LOGI("[order_selftest] placed a real shop order (%ls, %ls, %ls) costing %d; local balance "
-            "%d -> %d. NOTE: nothing on this path touched store_catalog, so the forward that "
-            "follows starts from COLD. EXPECT the host to log either 'committed ... and charged %d' "
-            "or 'REFUSING order'",
+    UE_LOGI("[order_selftest] client placed a real shop order (%ls, %ls, %ls) costing %d; local balance "
+            "%d -> %d. EXPECT the host to log either 'committed ... and charged %d' or 'REFUSING order'",
             kRows[0], kRows[1], kRows[2], total, before, before - total, total);
+}
+
+void ClientTick() {
+    // Its world is up and its join over: the order gate is installed at session start and reads the
+    // order from makeAnOrder's own parameter, so nothing else has to settle first.
+    if (!g_clientFired) {
+        if (!coop::net_pump::HasAnnouncedWorldReady() ||
+            coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
+            return;
+        g_clientFired = true;
+        PlaceClientOrder();
+        return;
+    }
+    if (g_clientDone) return;
+    // The verdict on the host's world-event order: it reached this queue by class, every item built.
+    const coop::order_queue_sync::Counts c = coop::order_queue_sync::ClientCounts();
+    if (c.byClass == 0) return;
+    g_clientDone = true;
+    UE_LOGI("[order_selftest] client DONE: the host's world-event order reached this queue by class -- "
+            "%llu order(s) appended, %llu item(s) by class, %llu left out -- %s",
+            static_cast<unsigned long long>(c.orders), static_cast<unsigned long long>(c.byClass),
+            static_cast<unsigned long long>(c.leftOut), c.leftOut == 0 ? "PASS" : "FAIL");
+}
+
+void HostTick(coop::net::Session& s) {
+    if (g_hostFired) return;
+    bool anyReady = false;
+    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers) && !anyReady; ++slot)
+        anyReady = s.IsSlotWorldReady(slot);
+    if (!anyReady) return;
+    // The client's queue follows the host's only from the reset its world-ready snapshot carries, which
+    // the host sends as it marks the slot ready; a tick later, the order made here comes after it.
+    if (++g_readySeenTicks < 2) return;
+    g_hostFired = true;
+    const int32_t before = OE::OrderCount();
+    const bool ok = OE::MakeDailyOrder();
+    UE_LOGI("[order_selftest] host made the day cycle's own daily order (makeAnOrder, automatic): %s; the "
+            "queue %d -> %d", ok ? "queued" : "NOT queued", before, OE::OrderCount());
+}
+
+}  // namespace
+
+void Tick(coop::net::Session* s) {
+    if (!Enabled() || !s || !s->connected()) return;
+    if (s->role() == coop::net::Role::Host) HostTick(*s);
+    else ClientTick();
+}
+
+void OnDisconnect() {
+    g_clientFired = g_clientDone = g_hostFired = false;
+    g_readySeenTicks = 0;
 }
 
 }  // namespace coop::dev::order_selftest

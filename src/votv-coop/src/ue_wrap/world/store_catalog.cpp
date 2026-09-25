@@ -29,6 +29,8 @@ ue_wrap::CachedObjRef g_table;      // the UDataTable; a cooked asset, so world-
 std::unordered_map<std::wstring, Row> g_rows;
 int32_t g_subcatOff = -1;
 int32_t g_nameOff   = -1;
+int32_t g_objectOff = -1;  // optional: a row item never needs it, an unnamed one does
+int32_t g_sizeOff   = -1;
 bool    g_valid     = false;  // a build produced a usable catalog
 
 // A failed build is not one thing, and treating it as one is wrong in BOTH directions:
@@ -95,6 +97,8 @@ void Build() {
     g_rows.clear();
     g_subcatOff = -1;
     g_nameOff   = -1;
+    g_objectOff = -1;
+    g_sizeOff   = -1;
 
     void* table = ResolveTable();
     if (!table) return;  // not loaded yet -- SOFT, so Ready() retries on the throttle
@@ -109,6 +113,7 @@ void Build() {
     const int32_t offName   = R::FindPropertyOffsetByPrefix(rowStruct, L"name_");
     const int32_t offSize   = R::FindPropertyOffsetByPrefix(rowStruct, L"size_");
     const int32_t offSubcat = R::FindPropertyOffsetByPrefix(rowStruct, L"subcategory_");
+    const int32_t offObject = R::FindPropertyOffsetByPrefix(rowStruct, L"object_");
     if (offPrice < 0 || offSubcat < 0 || offName < 0) {
         UE_LOGE("store_catalog: row struct members did not resolve (price@%d subcategory@%d "
                 "name@%d) -- catalog INVALID", offPrice, offSubcat, offName);
@@ -185,12 +190,15 @@ void Build() {
 
     g_subcatOff = offSubcat;
     g_nameOff   = offName;
+    g_objectOff = offObject;
+    g_sizeOff   = offSize;
     g_valid     = true;
     g_outcome   = Outcome::Never;
     int64_t sum = 0;
     for (int32_t p : walkPrices) sum += p;
     UE_LOGI("store_catalog: %zu rows, price sum %lld, verified against the reflected price column "
-            "(subcategory@%d)", g_rows.size(), static_cast<long long>(sum), g_subcatOff);
+            "(subcategory@%d object@%d size@%d)", g_rows.size(), static_cast<long long>(sum), g_subcatOff,
+            g_objectOff, g_sizeOff);
 }
 
 }  // namespace
@@ -213,5 +221,9 @@ const Row* Find(const std::wstring& rowName) {
 int32_t SubcategoryOffset() { return Ready() ? g_subcatOff : -1; }
 
 int32_t NameOffset() { return Ready() ? g_nameOff : -1; }
+
+int32_t ObjectOffset() { return Ready() ? g_objectOff : -1; }
+
+int32_t SizeOffset() { return Ready() ? g_sizeOff : -1; }
 
 }  // namespace ue_wrap::store_catalog

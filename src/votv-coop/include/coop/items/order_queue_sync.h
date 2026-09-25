@@ -37,4 +37,13 @@ void QueueConnectBroadcastForSlot(int slot);
 // Session teardown. Game thread.
 void OnDisconnect();
 
+// The mirror's running counts on a client, for a drill: orders appended, their items that travelled by
+// class (a world event's), and items left out because this machine could not build them. Game thread.
+struct Counts {
+    uint64_t orders = 0;
+    uint64_t byClass = 0;
+    uint64_t leftOut = 0;
+};
+Counts ClientCounts();
+
 }  // namespace coop::order_queue_sync

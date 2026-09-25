@@ -6,7 +6,8 @@
 // CLIENT->HOST and gate on role()==Host plus a client sender slot (1..kMaxPeers-1) at the
 // trust boundary before handing the request to the authoritative module -- but not all of
 // them, so read the case: CoinGunResult and OrderRefused are HOST->CLIENT answers and drop
-// on the host instead; OrderRequest, CoinGunSell and CoinCollect check the sender slot here
+// on the host instead, and OrderQueue, the host's delivery queue mirrored to clients, leaves
+// both checks to order_queue_sync; OrderRequest, CoinGunSell and CoinCollect check the sender slot here
 // and leave the role gate to the module they call, which drops off the host; and RoachConsumed
 // defers both to roach_sync::OnConsumedIntent. Family contract per coop/dispatch/event_dispatch.h:
 // returns true iff msg.kind is in this family.

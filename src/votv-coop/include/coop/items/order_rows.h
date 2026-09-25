@@ -1,10 +1,14 @@
-// coop/items/order_rows.h -- a shop order's items on the wire, shared by the request (OrderRequest,
-// client to host) and the queue mirror (OrderQueue, host to clients): each item a list_store row name,
-// `uint8 nameLen` and then the name's ASCII bytes. Header-only.
+// coop/items/order_rows.h -- an order's items on the wire, shared by the request (OrderRequest, client
+// to host) and the queue mirror (OrderQueue, host to clients). Each item is `uint8 head`, then the ASCII
+// bytes of a name: the head's low seven bits are the name's length (1..kMaxOrderRowName) and its top bit
+// its kind, clear for a list_store row name, set for the class of an item no row names -- one a world
+// event builds outside the shop (the daily delivery, a gift). A request carries rows only, since the
+// host prices by row; the mirror carries both. Header-only.
 
 #pragma once
 
 #include "coop/net/protocol.h"
+#include "ue_wrap/world/order_economy.h"  // QueuedItem
 
 #include <cstdint>
 #include <cstring>
@@ -13,9 +17,13 @@
 
 namespace coop::order_rows {
 
-// list_store keys are ASCII identifiers, so they narrow and widen losslessly; a non-ASCII character
-// becomes '?', which fails the receiver's catalog lookup and refuses the order loudly rather than
-// resolving it to the wrong row.
+inline constexpr uint8_t kByClass  = 0x80;  // the head's kind bit
+inline constexpr uint8_t kLenMask  = 0x7F;
+static_assert(coop::net::kMaxOrderRowName <= kLenMask, "a name's length must fit the head's seven bits");
+
+// list_store keys and class names are ASCII identifiers, so they narrow and widen losslessly; a
+// non-ASCII character becomes '?', which fails the receiver's lookup rather than resolving to the
+// wrong row or class.
 inline std::string NarrowAscii(const std::wstring& w) {
     std::string s;
     s.reserve(w.size());
@@ -30,33 +38,74 @@ inline std::wstring WidenAscii(const uint8_t* p, int n) {
     return w;
 }
 
-// Pack rows[from..] into `buf` after the `pos` bytes already there, stopping before an item would pass
-// `cap`. Returns how many were packed and advances `pos`.
+// One item of `kind` into `buf` after the `pos` bytes already there, unless it would pass `cap`.
+inline bool PackOne(const std::wstring& name, uint8_t kind, uint8_t* buf, int& pos, int cap) {
+    std::string s = NarrowAscii(name);
+    if (s.empty()) return false;
+    if (s.size() > static_cast<size_t>(coop::net::kMaxOrderRowName))
+        s.resize(static_cast<size_t>(coop::net::kMaxOrderRowName));
+    if (pos + 1 + static_cast<int>(s.size()) > cap) return false;
+    buf[pos++] = static_cast<uint8_t>(kind | s.size());
+    std::memcpy(buf + pos, s.data(), s.size());
+    pos += static_cast<int>(s.size());
+    return true;
+}
+
+// Pack rows[from..] as row items, stopping before one would pass `cap`. Returns how many were packed
+// and advances `pos`.
 inline int Pack(const std::vector<std::wstring>& rows, size_t from, uint8_t* buf, int& pos, int cap) {
     int packed = 0;
-    for (size_t i = from; i < rows.size(); ++i) {
-        std::string name = NarrowAscii(rows[i]);
-        if (name.size() > static_cast<size_t>(coop::net::kMaxOrderRowName))
-            name.resize(static_cast<size_t>(coop::net::kMaxOrderRowName));
-        const int item = 1 + static_cast<int>(name.size());
-        if (pos + item > cap) break;
-        buf[pos++] = static_cast<uint8_t>(name.size());
-        std::memcpy(buf + pos, name.data(), name.size());
-        pos += static_cast<int>(name.size());
+    for (size_t i = from; i < rows.size() && PackOne(rows[i], 0, buf, pos, cap); ++i) ++packed;
+    return packed;
+}
+
+// Pack a queued order's items[from..], each by its row or its class, as Pack.
+inline int PackQueued(const std::vector<ue_wrap::order_economy::QueuedItem>& items, size_t from, uint8_t* buf,
+                      int& pos, int cap) {
+    int packed = 0;
+    for (size_t i = from; i < items.size(); ++i) {
+        const auto& it = items[i];
+        const bool byClass = it.row.empty();
+        if (!PackOne(byClass ? it.cls : it.row, byClass ? kByClass : 0, buf, pos, cap)) break;
         ++packed;
     }
     return packed;
 }
 
-// Unpack `count` items from [p, end) onto `out`. False on a truncated item or one whose name is empty
-// or longer than kMaxOrderRowName.
+// Read one item from [p, end): its kind and name. False on a truncated item or a length outside
+// 1..kMaxOrderRowName.
+inline bool UnpackOne(const uint8_t*& p, const uint8_t* end, bool& byClass, std::wstring& name) {
+    if (p >= end) return false;
+    const uint8_t head = *p++;
+    const int len = head & kLenMask;
+    if (len == 0 || len > coop::net::kMaxOrderRowName || p + len > end) return false;
+    byClass = (head & kByClass) != 0;
+    name = WidenAscii(p, len);
+    p += len;
+    return true;
+}
+
+// Unpack a request's `count` items onto `out`. False on a bad item, and on an item by class: a client
+// orders shop rows, and the host prices nothing else.
 inline bool Unpack(const uint8_t* p, const uint8_t* end, int count, std::vector<std::wstring>& out) {
     for (int k = 0; k < count; ++k) {
-        if (p >= end) return false;
-        const uint8_t len = *p++;
-        if (len == 0 || len > coop::net::kMaxOrderRowName || p + len > end) return false;
-        out.push_back(WidenAscii(p, len));
-        p += len;
+        bool byClass = false;
+        std::wstring name;
+        if (!UnpackOne(p, end, byClass, name) || byClass) return false;
+        out.push_back(std::move(name));
+    }
+    return true;
+}
+
+// Unpack a mirrored order's `count` items onto `out`, by row or by class. False on a bad item.
+inline bool UnpackQueued(const uint8_t* p, const uint8_t* end, int count,
+                         std::vector<ue_wrap::order_economy::QueuedItem>& out) {
+    for (int k = 0; k < count; ++k) {
+        bool byClass = false;
+        std::wstring name;
+        if (!UnpackOne(p, end, byClass, name)) return false;
+        out.push_back(byClass ? ue_wrap::order_economy::QueuedItem{{}, std::move(name)}
+                              : ue_wrap::order_economy::QueuedItem{std::move(name), {}});
     }
     return true;
 }

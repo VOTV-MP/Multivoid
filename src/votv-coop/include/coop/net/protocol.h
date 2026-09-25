@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 188;
+inline constexpr uint16_t kProtocolVersion = 189;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -834,7 +834,7 @@ enum class ReliableKind : uint8_t {
     // Host to all: the delivery order queue (saveSlot.orders), which a client mirrors and never
     // writes itself -- reset, an order appended at the end, or the first order popped, as the host's
     // own addOrderCart and removeOrderCart ran. A joiner gets a reset and every queued order at its
-    // world-ready. OrderQueueHeader, then an append's packed items as OrderRequest packs them.
+    // world-ready. OrderQueueHeader, then an append's packed items, by row or by class.
     OrderQueue = 152,
 };
 
@@ -1945,10 +1945,12 @@ struct DroneStatePayload {
 static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
 
 // A shop order (OrderRequest), client to host: this header, then chunkItems packed items, each
-//     uint8  nameLen;     // length of the row name that follows (1..kMaxOrderRowName)
-//     <nameLen bytes>     // a list_store row name (ASCII)
-// An item is a row name and nothing else: the host prices it from its own table (a client may name
-// what, never what it costs) and rolls its own delivery time. An order that does not fit one
+//     uint8  head;        // low 7 bits: the name's length (1..kMaxOrderRowName); top bit: the kind,
+//                         //   clear for a row name, set for a class (the queue mirror's; see OrderQueue)
+//     <length bytes>      // the name (ASCII)
+// A request's item is a row name and nothing else, and one by class refuses the order: the host
+// prices it from its own table (a client may name what, never what it costs) and rolls its own
+// delivery time. An order that does not fit one
 // datagram is split into messages sharing orderId; the host assembles by (sender slot, orderId)
 // and commits once all totalItems arrived.
 struct OrderRequestHeader {
@@ -1961,14 +1963,16 @@ struct OrderRequestHeader {
 static_assert(sizeof(OrderRequestHeader) == 12, "OrderRequestHeader must be 12 bytes");
 
 // The host's delivery queue as clients mirror it (OrderQueue): this header, then, for an append,
-// chunkItems packed items as OrderRequest packs them. An append that does not fit one datagram is
-// split into consecutive messages; a client assembles them in order (one lane) and appends once all
-// totalItems arrived.
+// chunkItems packed items as OrderRequest packs them, each by its row or, for an item a world event
+// built outside the shop with no row (the daily delivery, a gift), by its class. An append that does
+// not fit one datagram is split into consecutive messages; a client assembles them in order (one
+// lane) and appends once all totalItems arrived. An append of no items (totalItems 0, the order the
+// host could not read) still takes its place, so the queues keep one length.
 struct OrderQueueHeader {
     uint8_t  op;          // 1 -- 0 reset (empty the queue), 1 append, 2 pop the first order
     uint8_t  _pad[3];     // 3
     float    eta;         // 4 -- append: the order's delivery time (Fstruct_storeOrder.time); else 0
-    uint16_t totalItems;  // 2 -- append: items in the whole order (1..kMaxOrderItems); else 0
+    uint16_t totalItems;  // 2 -- append: items in the whole order (0..kMaxOrderItems); else 0
     uint16_t baseIndex;   // 2 -- append: index of this message's first item
     uint16_t chunkItems;  // 2 -- append: items carried in this message
     uint16_t _pad2;       // 2

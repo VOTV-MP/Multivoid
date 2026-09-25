@@ -5,6 +5,7 @@
 #include "coop/items/order_rows.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/props/active_drive.h"  // NowMs
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -55,35 +56,46 @@ void SendOp(net::Session* s, uint8_t op, int slot) {
         s->SendReliable(net::ReliableKind::OrderQueue, &h, sizeof(h));
 }
 
-// The queue's order at `index`, appended, in consecutive messages when it needs more than one.
+void SendChunk(net::Session* s, const uint8_t* buf, int len, int slot) {
+    if (slot >= 0)
+        s->SendReliableToSlot(slot, net::ReliableKind::OrderQueue, buf, len);
+    else
+        s->SendReliable(net::ReliableKind::OrderQueue, buf, len);
+}
+
+// The queue's order at `index`, appended, in consecutive messages when it needs more than one. Every
+// append the queue made is sent, so a client's queue keeps the host's count: an order this host cannot
+// read goes as an order of no items, which still takes its place until the host's pop removes it.
 void SendAppend(net::Session* s, int32_t index, int slot) {
-    OE::OrderData od;
-    if (!OE::ReadOrder(index, od)) {
-        UE_LOGW("order_queue: the host's order %d could not be read -- not sent, so a client's queue misses it",
-                index);
+    OE::QueuedOrder od;
+    if (!OE::ReadQueuedOrder(index, od)) {
+        UE_LOGW("order_queue: the host's order %d could not be read -- sent as an order of no items, to keep "
+                "its place", index);
+        od = OE::QueuedOrder{};
+    }
+    if (od.items.size() > static_cast<size_t>(net::kMaxOrderItems)) od.items.resize(net::kMaxOrderItems);
+    const size_t total = od.items.size();
+    uint8_t buf[net::kMaxReliablePayload];
+    net::OrderQueueHeader h{};
+    h.op = kOpAppend;
+    h.eta = od.eta;
+    h.totalItems = static_cast<uint16_t>(total);
+    if (total == 0) {
+        std::memcpy(buf, &h, sizeof(h));
+        SendChunk(s, buf, static_cast<int>(sizeof(h)), slot);
         return;
     }
-    if (od.rowNames.size() > static_cast<size_t>(net::kMaxOrderItems)) od.rowNames.resize(net::kMaxOrderItems);
-    const size_t total = od.rowNames.size();
     size_t i = 0;
     while (i < total) {
-        uint8_t buf[net::kMaxReliablePayload];
         int pos = static_cast<int>(sizeof(net::OrderQueueHeader));
         const size_t from = i;
-        const int packed = coop::order_rows::Pack(od.rowNames, i, buf, pos, net::kMaxReliablePayload);
-        if (packed <= 0) return;  // a row the caps make impossible; the client drops the partial append
+        const int packed = coop::order_rows::PackQueued(od.items, i, buf, pos, net::kMaxReliablePayload);
+        if (packed <= 0) return;  // an item the caps make impossible; the client drops the partial append
         i += static_cast<size_t>(packed);
-        net::OrderQueueHeader h{};
-        h.op = kOpAppend;
-        h.eta = od.eta;
-        h.totalItems = static_cast<uint16_t>(total);
         h.baseIndex = static_cast<uint16_t>(from);
         h.chunkItems = static_cast<uint16_t>(packed);
         std::memcpy(buf, &h, sizeof(h));
-        if (slot >= 0)
-            s->SendReliableToSlot(slot, net::ReliableKind::OrderQueue, buf, pos);
-        else
-            s->SendReliable(net::ReliableKind::OrderQueue, buf, pos);
+        SendChunk(s, buf, pos, slot);
     }
 }
 
@@ -115,7 +127,7 @@ void OnRemovedPost(const sg::Call&) {
 
 struct Change {
     uint8_t op = kOpReset;
-    OE::OrderData order;  // an append's
+    OE::QueuedOrder order;  // an append's
 };
 
 // An append arriving in consecutive messages.
@@ -123,39 +135,63 @@ struct Assembly {
     bool active = false;
     float eta = 0.f;
     uint16_t total = 0;
-    std::vector<std::wstring> rows;
+    std::vector<OE::QueuedItem> items;
 };
 Assembly g_asm;
 bool g_synced = false;         // a reset arrived this session
 std::deque<Change> g_waiting;  // changes the laptop could not take yet, oldest first
-constexpr size_t kMaxWaiting = 64;
+constexpr size_t   kMaxWaiting  = 64;
+constexpr uint64_t kRetryMs     = 1000;  // a waiting change is tried again once a second, not per tick
+uint64_t g_nextRetryMs = 0;
+bool     g_waitSaid    = false;          // the head's wait, said once a streak
+Counts   g_counts;
 
-bool Apply(const Change& c) {
+OE::Applied Apply(const Change& c) {
     switch (c.op) {
-    case kOpReset:
-        while (OE::OrderCount() > 0)
-            if (!OE::PopOrder()) return false;
-        return OE::OrderCount() == 0;
-    case kOpAppend:
-        return OE::AppendOrder(c.order);
-    case kOpPop:
-        if (OE::OrderCount() <= 0) {
+    case kOpReset: {
+        // Bounded by the count it starts from: a pop that moves nothing ends the pass as Later.
+        const int32_t n = OE::OrderCount();
+        if (n < 0) return OE::Applied::Later;
+        for (int32_t k = 0; k < n; ++k)
+            if (OE::PopOrder() != OE::Applied::Done) return OE::Applied::Later;
+        return OE::Applied::Done;
+    }
+    case kOpAppend: {
+        int left = 0;
+        const OE::Applied r = OE::AppendOrder(c.order, &left);
+        if (r == OE::Applied::Done) {
+            ++g_counts.orders;
+            for (const auto& it : c.order.items) g_counts.byClass += it.row.empty() ? 1 : 0;
+            g_counts.leftOut += static_cast<uint64_t>(left);
+        }
+        return r;
+    }
+    case kOpPop: {
+        const int32_t n = OE::OrderCount();
+        if (n < 0) return OE::Applied::Later;  // unresolved, not empty
+        if (n == 0) {
             UE_LOGW("order_queue: the host popped an order this client's queue does not hold -- nothing to pop");
-            return true;
+            return OE::Applied::Done;
         }
         return OE::PopOrder();
     }
-    return true;
+    }
+    return OE::Applied::Done;
 }
 
 void Take(Change c) {
     if (c.op == kOpReset) g_waiting.clear();  // a reset states everything before it
-    if (g_waiting.empty() && Apply(c)) return;
+    if (g_waiting.empty() && Apply(c) == OE::Applied::Done) return;
     if (g_waiting.size() >= kMaxWaiting) {
-        UE_LOGW("order_queue: %zu changes wait for the laptop -- this one is dropped; the next join snapshot "
-                "restates the queue", g_waiting.size());
+        // Dropping one change would leave this queue a different length from the host's for good, so
+        // the mirror stops instead and says so; the next reset, at this client's next join, resumes it.
+        UE_LOGW("order_queue: %zu changes wait for the laptop -- this client's queue stops following the "
+                "host's until its next join", g_waiting.size());
+        g_waiting.clear();
+        g_synced = false;
         return;
     }
+    if (g_waiting.empty()) g_nextRetryMs = coop::active_drive::NowMs() + kRetryMs;
     g_waiting.push_back(std::move(c));
 }
 
@@ -169,7 +205,23 @@ void Install(net::Session* session) {
 }
 
 void Tick() {
-    while (!g_waiting.empty() && Apply(g_waiting.front())) g_waiting.pop_front();
+    if (g_waiting.empty()) return;
+    const uint64_t now = coop::active_drive::NowMs();
+    if (now < g_nextRetryMs) return;
+    while (!g_waiting.empty() && Apply(g_waiting.front()) == OE::Applied::Done) {
+        g_waiting.pop_front();
+        if (g_waitSaid) {
+            g_waitSaid = false;
+            UE_LOGI("order_queue: the laptop took the waiting change -- %zu still wait", g_waiting.size());
+        }
+    }
+    if (g_waiting.empty()) return;
+    g_nextRetryMs = now + kRetryMs;
+    if (!g_waitSaid) {
+        g_waitSaid = true;
+        UE_LOGW("order_queue: %zu change(s) wait for the laptop, the queue or the catalog -- tried again each "
+                "second", g_waiting.size());
+    }
 }
 
 void OnReliable(const void* payload, int len, uint8_t senderSlot) {
@@ -201,6 +253,15 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
         UE_LOGW("order_queue: unknown op %u -- dropping", h.op);
         return;
     }
+    if (h.totalItems == 0 && h.baseIndex == 0 && h.chunkItems == 0) {
+        // The host could not read the order: it still takes its place, empty.
+        g_asm = Assembly{};
+        Change c{kOpAppend, {}};
+        c.order.eta = h.eta;
+        UE_LOGI("order_queue: the host's queue gained an order of no items -- appending it to keep the count");
+        Take(std::move(c));
+        return;
+    }
     if (h.totalItems == 0 || h.totalItems > net::kMaxOrderItems || h.chunkItems == 0 ||
         static_cast<int>(h.baseIndex) + static_cast<int>(h.chunkItems) > static_cast<int>(h.totalItems)) {
         UE_LOGW("order_queue: append with a bad range (base=%u count=%u total=%u) -- dropping", h.baseIndex,
@@ -213,25 +274,25 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
         g_asm.active = true;
         g_asm.eta = h.eta;
         g_asm.total = h.totalItems;
-    } else if (!g_asm.active || h.baseIndex != g_asm.rows.size() || h.totalItems != g_asm.total) {
+    } else if (!g_asm.active || h.baseIndex != g_asm.items.size() || h.totalItems != g_asm.total) {
         UE_LOGW("order_queue: append message out of order (base=%u have=%zu) -- dropping the order", h.baseIndex,
-                g_asm.rows.size());
+                g_asm.items.size());
         g_asm = Assembly{};
         return;
     }
     const uint8_t* p = static_cast<const uint8_t*>(payload) + sizeof(h);
     const uint8_t* end = static_cast<const uint8_t*>(payload) + len;
-    if (!coop::order_rows::Unpack(p, end, h.chunkItems, g_asm.rows)) {
+    if (!coop::order_rows::UnpackQueued(p, end, h.chunkItems, g_asm.items)) {
         UE_LOGW("order_queue: append carries a truncated or oversized item -- dropping the order");
         g_asm = Assembly{};
         return;
     }
-    if (g_asm.rows.size() < g_asm.total) return;
+    if (g_asm.items.size() < g_asm.total) return;
     Change c{kOpAppend, {}};
-    c.order.rowNames = std::move(g_asm.rows);
+    c.order.items = std::move(g_asm.items);
     c.order.eta = g_asm.eta;
     g_asm = Assembly{};
-    UE_LOGI("order_queue: the host's queue gained an order of %zu item(s) -- appending", c.order.rowNames.size());
+    UE_LOGI("order_queue: the host's queue gained an order of %zu item(s) -- appending", c.order.items.size());
     Take(std::move(c));
 }
 
@@ -245,11 +306,16 @@ void QueueConnectBroadcastForSlot(int slot) {
     UE_LOGI("order_queue: connect snapshot -- a reset and %d queued order(s) to slot %d", n, slot);
 }
 
+Counts ClientCounts() { return g_counts; }
+
 void OnDisconnect() {
+    g_counts = Counts{};
     g_synced = false;
     g_asm = Assembly{};
     g_waiting.clear();
     g_countAtEntry = -1;
+    g_nextRetryMs = 0;
+    g_waitSaid = false;
 }
 
 }  // namespace coop::order_queue_sync
