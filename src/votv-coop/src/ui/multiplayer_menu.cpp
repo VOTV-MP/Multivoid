@@ -25,6 +25,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -45,6 +46,7 @@ namespace {
 
 std::atomic<bool> g_installed{false};   // observer registered
 std::atomic<bool> g_retrying{false};    // a retry thread is already running
+std::atomic<bool> g_unusable{false};    // the loaded menu class lacks a member, or the table was full
 
 // Resolved once at install; the class, the function and the field offsets never move.
 void* g_tickFn = nullptr;               // ui_menu_C::Tick (observer anchor)
@@ -275,8 +277,10 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
 // thread.
 bool TryInstall() {
     if (g_installed.load(std::memory_order_acquire)) return true;
+    if (g_unusable.load(std::memory_order_acquire)) return false;
 
-    void* uiMenuCls = R::FindClass(prof::name::UiMenuClass);
+    // One index lookup, a miss included, so the retry costs nothing while the menu class loads.
+    void* uiMenuCls = ue_wrap::object_index::ClassByName(prof::name::UiMenuClass);
     if (!uiMenuCls) return false;  // menu BP not loaded yet -- caller retries
 
     g_tickFn         = R::FindFunction(uiMenuCls, prof::name::UiMenuTickFn);
@@ -295,13 +299,18 @@ bool TryInstall() {
     // The start button is the only field the inject needs (its vertical box and its slot layout
     // and button style are derived from it); the pause flag gates main versus pause. The label
     // font and colour are set deterministically in the canvas inject.
+    // A member the loaded class lacks is a fact of this game build, and a full observer table a
+    // capacity fault: either is said once and ends the retry.
     if (!g_tickFn || g_buttonStartOff < 0 || g_isPauseOff < 0) {
-        UE_LOGW("multiplayer_menu: resolve incomplete (tick=%p button_start=%d isPause=%d) -- retry",
-                g_tickFn, g_buttonStartOff, g_isPauseOff);
+        g_unusable.store(true, std::memory_order_release);
+        UE_LOGE("multiplayer_menu: the loaded ui_menu_C lacks a member (tick=%p button_start=%d isPause=%d) "
+                "-- no MULTIPLAYER button this process", g_tickFn, g_buttonStartOff, g_isPauseOff);
         return false;
     }
     if (!GT::RegisterPostObserver(g_tickFn, &OnMenuTickPost)) {
-        UE_LOGE("multiplayer_menu: RegisterPostObserver(Tick) failed -- observer table full?");
+        g_unusable.store(true, std::memory_order_release);
+        UE_LOGE("multiplayer_menu: RegisterPostObserver(Tick) failed -- observer table full? No MULTIPLAYER "
+                "button this process");
         return false;
     }
     g_installed.store(true, std::memory_order_release);
@@ -311,11 +320,11 @@ bool TryInstall() {
     return true;
 }
 
-// A bounded retry: the menu class may not be loaded the instant Init runs at boot, so the
-// install is posted to the game thread every 500 ms until it succeeds or about a minute
-// passes. One thread, self-exiting on success.
+// The menu class may not be loaded the instant Init runs at boot, and how long the game takes to
+// show its menu is not ours to bound, so the install is posted to the game thread every 500 ms
+// until it succeeds or the loaded class is found unusable. One thread, self-exiting then.
 DWORD WINAPI RetryThread(LPVOID) {
-    for (int i = 0; i < 120 && !g_installed.load(std::memory_order_acquire); ++i) {
+    while (!g_installed.load(std::memory_order_acquire) && !g_unusable.load(std::memory_order_acquire)) {
         GT::Post([] { TryInstall(); });
         ::Sleep(500);
     }
