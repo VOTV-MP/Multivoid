@@ -110,8 +110,8 @@ bool ReadType(void* grime, int32_t& out) {
 // sets the scalar to `process / 100`, while applyMaterial sets it to `process / maxProcess`.
 // Those agree only while maxProcess keeps its default of 100, and two subclasses do not --
 // grime_explosionScorch_C and grime_poo_C set it to 50 -- so dividing by the field would paint
-// those mirrors at twice the wiper's ratio, with nothing to pull them back: the poll sees no
-// further `process` delta.
+// those mirrors at twice the wiper's ratio, with nothing to pull them back: no verb lowers their
+// `process` again.
 bool Repaint(void* grime, float process) {
     auto* base = reinterpret_cast<char*>(grime);
     void* dynmat = *reinterpret_cast<void**>(base + g_dynmatOff);

@@ -362,9 +362,9 @@ CFG_FLAG(world_actor_trace, "world_actor_trace", "dev", false, nullptr,
 CFG_FLAG(grime_log, "grime_log", "dev", false, nullptr,
     "Diagnostic logging for grime/cleaning sync.")
 CFG_FLAG(grime_drill, "grime_drill", "dev", false, "VOTVCOOP_GRIME_DRILL",
-    "Drill (BOTH peers): each cleans one of the same two decals partway, then below zero, with the rain's own "
-    "clean call, and ends when its copy of the other's decal reads zero and still stands. Lines tagged "
-    "[GRIME-DRILL]; the client's DONE line ends it.")
+    "Drill (BOTH peers): each cleans one of the same two rain-proof decals partway, then below zero, in the "
+    "rain's clean call form, and ends when its copy of the other's decal reads zero and still stands. Lines "
+    "tagged [GRIME-DRILL]; the client's DONE line ends it.")
 CFG_FLAG(interactable_log, "interactable_log", "dev", false, nullptr,
     "Diagnostic logging for the interactable channel.")
 CFG_FLAG(client_model_probe, "client_model_probe", "dev", false, nullptr,

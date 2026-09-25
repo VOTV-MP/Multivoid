@@ -60,18 +60,30 @@ bool RoleIsReady(coop::net::Session& s) {
            coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
-bool IsCleanable(void* decal) {
-    static void* s_cls = nullptr;
-    static int32_t s_off = -1;
-    static uint8_t s_mask = 0;
+// A bool field of the decal, its offset resolved once per class.
+struct BoolField {
+    const wchar_t* name;
+    void* cls = nullptr;
+    int32_t off = -1;
+    uint8_t mask = 0;
+};
+bool ReadBool(BoolField& f, void* decal) {
     void* const cls = R::ClassOf(decal);
-    if (cls != s_cls) {
-        s_cls = cls;
-        s_off = -1;
-        s_mask = 0;
-        R::FindBoolProperty(cls, L"isCleanable", s_off, s_mask);
+    if (cls != f.cls) {
+        f.cls = cls;
+        f.off = -1;
+        f.mask = 0;
+        R::FindBoolProperty(cls, f.name, f.off, f.mask);
     }
-    return s_off >= 0 && s_mask != 0 && (static_cast<const uint8_t*>(decal)[s_off] & s_mask) != 0;
+    return f.off >= 0 && f.mask != 0 && (static_cast<const uint8_t*>(decal)[f.off] & f.mask) != 0;
+}
+
+// A decal the drill can use: a clean lowers it, and the rain, which cleans outdoor decals near either
+// peer's camera, leaves it alone, so every fall a peer sees is the other peer's clean.
+bool Usable(void* decal) {
+    static BoolField s_cleanable{L"isCleanable"};
+    static BoolField s_resistRain{L"resistRain"};
+    return ReadBool(s_cleanable, decal) && ReadBool(s_resistRain, decal);
 }
 
 void Done(const char* verdict) {
@@ -79,7 +91,7 @@ void Done(const char* verdict) {
     UE_LOGI("[GRIME-DRILL] %s DONE %s", Side(), verdict);
 }
 
-// The two lowest position keys among the cleanable decals (grime_C and its subclasses) above kMinProcess:
+// The two lowest position keys among the usable decals (grime_C and its subclasses) above kMinProcess:
 // the same pair on both peers, the client's joined copy having taken the host's values.
 bool Pick() {
     void* const cls = OI::ClassByName(L"grime_C");
@@ -103,7 +115,7 @@ bool Pick() {
     for (void* c : classes.list) OI::ForEachInstance(c, [](void* ctx, void* obj, int32_t index) {
         auto& out = *static_cast<std::vector<Cand>*>(ctx);
         if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__") || !IsCleanable(obj)) return;
+        if (R::NameStartsWith(R::NameOf(obj), L"Default__") || !Usable(obj)) return;
         float p = 0.f;
         if (!G::ReadProcess(obj, p) || p <= kMinProcess) return;
         std::wstring key = coop::grime_sync::DebugPosKeyForActor(obj);
@@ -121,7 +133,7 @@ bool Pick() {
     return true;
 }
 
-// The rain's own call form: no sponge, no sound.
+// The rain's call form, no sponge and no sound, through ProcessEvent.
 bool Clean(float sub) {
     void* const fn = R::FindDispatchFunctionCached(R::ClassOf(g_mine.actor), L"clean");
     if (!fn) return false;
@@ -148,7 +160,7 @@ void Tick(coop::net::Session* session) {
     case Phase::Unpicked:
         if (OI::Backlog() != 0) return;  // the index holds the world first
         if (!Pick()) {
-            Done("fewer than two cleanable decals -- INCONCLUSIVE");
+            Done("fewer than two cleanable decals that resist the rain -- INCONCLUSIVE");
             return;
         }
         g_phase = Phase::Partial;
@@ -188,6 +200,10 @@ void Tick(coop::net::Session* session) {
         return;
     }
     case Phase::Destroy: {
+        if (!R::IsLiveByIndex(g_mine.actor, g_mine.idx)) {
+            Done("its own decal is gone before the destroy -- FAIL");
+            return;
+        }
         if (!Clean(kDestroySub)) {
             Done("clean did not dispatch -- FAIL");
             return;

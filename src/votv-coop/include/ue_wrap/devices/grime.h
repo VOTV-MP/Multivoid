@@ -43,8 +43,7 @@ bool ReadType(void* grime, int32_t& out);
 // game's clean() performs. maxProcess is a per-instance constant identical across peers (same
 // save), so the wire carries only `process`. A decal with no material yet gets one through
 // applyMaterial instead. Returns false on null or unresolved. The receiver of a remote wipe
-// uses this; coop::grime_sync echo-suppresses so the resulting field change is not
-// re-broadcast.
+// uses this; it runs no lowering verb, so coop::grime_sync never hears it back as a fall.
 bool WriteProcessAndApply(void* grime, float process);
 
 }  // namespace ue_wrap::grime
