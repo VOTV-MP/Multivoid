@@ -71,6 +71,7 @@ struct Entry {
     const wchar_t* className = nullptr;  // a class-scoped name watch's class literal, else null
     std::uint64_t classKey = 0;       // that class's FName key once resolved; 0 matches any owner
     std::atomic<bool> resolved{true}; // a name watch is inert until its FName is known
+    std::atomic<bool> dead{false};    // a name watch whose name resolved into a full table
 };
 Entry g_fnTable[kSlots];
 Entry g_nameTable[kSlots];
@@ -480,7 +481,8 @@ bool WatchNameScoped(const wchar_t* className, const wchar_t* name, int tag, Pre
     for (int i = 0; i < kSlots; ++i) {
         Entry& e = g_nameTable[i];
         if (e.key.load(std::memory_order_relaxed) != 0 && e.name && e.tag == tag && e.pre == pre &&
-            e.post == post && std::wcscmp(e.name, name) == 0 && SameLiteral(e.className, className)) {
+            e.post == post && std::wcscmp(e.name, name) == 0 && SameLiteral(e.className, className) &&
+            !e.dead.load(std::memory_order_relaxed)) {
             if (!e.enabled.exchange(true, std::memory_order_release)) g_nameWatches.fetch_add(1, std::memory_order_release);
             return true;
         }
@@ -513,6 +515,20 @@ bool ScopedWatchLive(const wchar_t* className, const wchar_t* name, int tag) {
         const Entry& e = g_nameTable[i];
         if (e.key.load(std::memory_order_acquire) == 0) continue;
         if (e.name != name || e.className != className || e.tag != tag) continue;
+        if (e.enabled.load(std::memory_order_acquire) && e.resolved.load(std::memory_order_acquire))
+            return true;
+    }
+    return false;
+}
+
+// Live, or dead for good: its placeholder keeps the literals and the dead mark after a failed re-key.
+bool ScopedWatchSettled(const wchar_t* className, const wchar_t* name, int tag) {
+    if (!name) return false;
+    for (int i = 0; i < kSlots; ++i) {
+        const Entry& e = g_nameTable[i];
+        if (e.key.load(std::memory_order_acquire) == 0) continue;
+        if (e.name != name || e.className != className || e.tag != tag) continue;
+        if (e.dead.load(std::memory_order_acquire)) return true;
         if (e.enabled.load(std::memory_order_acquire) && e.resolved.load(std::memory_order_acquire))
             return true;
     }
@@ -558,6 +574,8 @@ bool WatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreF
 }
 
 bool NameWatchLive(const wchar_t* name, int tag) { return ScopedWatchLive(nullptr, name, tag); }
+
+bool NameWatchSettled(const wchar_t* name, int tag) { return ScopedWatchSettled(nullptr, name, tag); }
 
 bool ClassNameWatchLive(const wchar_t* className, const wchar_t* name, int tag) {
     return className && ScopedWatchLive(className, name, tag);
@@ -615,6 +633,11 @@ void ResolvePendingNames() {
             } else {
                 UE_LOGE("script_gate: name '%ls'%ls%ls resolved but the table is full -- the watch is dead",
                         p.name, ofClass, cls);
+                // The placeholder keeps its literals and is marked dead, so a consumer asking whether
+                // the watch has settled is told, rather than waiting for one that never comes.
+                e.name = p.name;
+                e.className = p.className;
+                e.dead.store(true, std::memory_order_release);
             }
         }
     }

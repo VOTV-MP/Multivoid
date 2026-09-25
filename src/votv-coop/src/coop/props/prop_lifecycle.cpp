@@ -1,7 +1,6 @@
-// coop/props/prop_lifecycle.cpp -- the Aprop_C spawn observers: the Init POST observer that
-// expresses a keyed prop's birth on the wire, the late-load catch for the trash and food classes,
-// the install of the destroy seam, and the class predicates. The destroy seam body lives in
-// prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
+// coop/props/prop_lifecycle.cpp -- the Aprop_C spawn seams: the Init watch that expresses a keyed
+// prop's birth on the wire, the install of the destroy seam, and the class predicates. The destroy
+// seam body lives in prop_destroy_seam.cpp and the container extract in prop_container_extract.cpp.
 
 #include "coop/props/prop_lifecycle.h"
 
@@ -26,8 +25,9 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -37,57 +37,37 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace coop::prop_lifecycle {
 namespace {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
-namespace GT = ue_wrap::game_thread;
 namespace PT = coop::prop_element_tracker;
+namespace SG = ue_wrap::script_gate;
 
-// The session pointer observers read role() and Send*() through: an atomic, since observers fire
-// from parallel-anim worker threads while the harness may SetSession(nullptr) at shutdown.
+// The session pointer the seams read role() and Send*() through: an atomic, written at a session's
+// start on the timeline thread and by the lanes' Install on the game thread, read by the seams.
 // Defined at namespace scope below, shared with prop_destroy_seam.cpp through
 // prop_lifecycle_detail.h.
 
-// Install idempotency.
-bool g_propInitScanDone = false;
-bool g_propDestroyObserverInstalled = false;
-// The late-load catch: the one-shot Init scan latches on the first keyed Init found (Aprop_C
-// loads with the world), and the garbage classes load a moment later, so their Init observers
-// are registered by RegisterExtraKeyedInitObservers; this latches once all are hooked.
-bool g_extraKeyedInitDone = false;
-std::vector<void*> g_registeredPropInitFns;
+// Install idempotency: the Init watch is asked for once (the gate refuses one only with a full table or
+// when it never installed), the known set is seeded once, the destroy seam settles once. Game thread.
+bool g_initWatchAsked = false;
+bool g_initWatchRefused = false;
+bool g_seeded = false;
+bool g_destroySeamSettled = false;
+constexpr int kTagInit = 0x50494E54;  // 'PINT'
 
 // The takeObj-in-flight bracket is defined in prop_container_extract.cpp and shared through
 // prop_lifecycle_detail.h; the Init POST body reads it, OnDisconnect clears it.
 
-// Forward declarations for observer callbacks.
-void GrabObserver_Aprop_Init_POST(void* self, void* function, void* params);
-
-// Forward declaration so the game-thread-defer wrapper can refer to the body.
-void GrabObserver_Aprop_Init_POST_Body(void* self);
-
-void GrabObserver_Aprop_Init_POST(void* self, void* /*function*/, void* /*params*/) {
-    auto* s = LoadSession();
-    if (!self || !s) return;
-    // The body calls UFunctions (K2_GetActorLocation, GetKey), which are game-thread only, and the
-    // observer can fire on a parallel-anim worker; off-thread it is posted to the game thread,
-    // where the body re-validates the actor with IsLive.
-    if (!GT::IsGameThread()) {
-        GT::Post([self] { GrabObserver_Aprop_Init_POST_Body(self); });
-        return;
-    }
-    GrabObserver_Aprop_Init_POST_Body(self);
-}
-
 void GrabObserver_Aprop_Init_POST_Body(void* self) {
     if (!self) return;
-    // The known-keyed set is maintained before the session and echo gates, so it is warm by the
-    // time a peer joins (it fills during the pre-handshake save load); the two reflection probes
-    // per Init are bursty (level load), not steady-state.
+    // The known-keyed set is marked before the session and echo gates. Its bulk comes from the seed
+    // walk, not from here: a save load runs each prop's Init from its own Blueprint (its construction
+    // script, its ubergraph, loadData), which this seam does not take -- 0 of 10,685 keyed Init bodies
+    // on a host came through ProcessEvent, 0 of 11,989 on a joining client, its boot world's included.
     if (!R::IsLive(self)) return;
     if (!ue_wrap::prop::IsKeyedInteractable(self)) return;
     // IsLive does not filter CDOs (persistent objects): a CDO whose Init fires would enter the
@@ -289,84 +269,24 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     coop::join_membership_sweep::RecordClaimIfTracking(self);
 }
 
+// The Init watch: the post of every Init body the game thread runs, of which this seam keeps those with
+// no calling Blueprint frame -- the ones ProcessEvent dispatched (an engine event, a timer, a delegate,
+// a reflected call of ours such as a mirror's skin), the set the per-class ProcessEvent observers saw.
+// A Blueprint's own call (its construction script, loadData, a super call) runs where the key may not
+// be final yet, and a deferred spawn's is expressed at FinishSpawningActor (host_spawn_watcher).
+// Keyed on the name, the watch holds for every class of the lineage, one that loads late or comes back
+// as a new object with a world included. The gate fires on the game thread, where the body's engine
+// reads belong, and while anything holds it: a dev probe can hold it before any session has set the
+// pointer.
+void OnInitPost(const SG::Call& call) {
+    if (call.callerFunction || !call.object || !LoadSession()) return;
+    GrabObserver_Aprop_Init_POST_Body(call.object);
+}
+
 // The destroy seam (prop_destroy_seam.cpp): a UFunction::Func patch on Actor.K2_DestroyActor,
 // which fires for every dispatch route including the EX_CallMath destroys a ProcessEvent
 // observer never sees (the R-pickup destroy, the pile and clump morphs). Post-native:
 // K2_DestroyActor only marks PendingKill, so reads on the actor are still valid.
-
-// The late-load catch for the keyed litter classes (actorChipPile_C, prop_garbageClump_C,
-// trashBitsPile_C), which load lazily on first encounter, after the one-shot Init scan has
-// latched, so a fresh clump would never broadcast and trash-ball carry would not sync. Each class
-// is resolved by name and its own Init hooked, with a per-class latch and an overall latch, so
-// the work stops once all are hooked: at most one FindClass and FindFunction per class per call,
-// never a per-tick array rescan. FindFunction returns the Init the class owns, matching the
-// scan's owning-class filter; a class that only inherits Init is covered by its base. Game thread.
-bool RegisterExtraKeyedInitObservers() {
-    if (g_extraKeyedInitDone) return true;
-    struct Extra { const wchar_t* cls; bool* done; };
-    static bool sTrash = false, sClump = false, sChip = false, sFood = false;
-    static int  sAttempts = 0;
-    constexpr int kMaxAttempts = 120;  // ~2 min at the ~1 Hz throttled call rate
-    const Extra extras[] = {
-        { L"trashBitsPile_C",     &sTrash },
-        { L"prop_garbageClump_C", &sClump },
-        { L"actorChipPile_C",     &sChip  },
-        // prop_food_C owns an Init override and loads late, so every food leaf with no Init of its
-        // own (the pinecone scare among them) dispatched an unhooked Init and reached the client
-        // only via the snapshot, 30 s late and at rest.
-        { L"prop_food_C",         &sFood  },
-    };
-    constexpr int kExtraCount = static_cast<int>(std::size(extras));
-    const std::wstring kInitName(P::name::PropInitFn);
-    int done = 0;
-    for (const auto& e : extras) {
-        if (*e.done) { ++done; continue; }
-        void* cls = R::FindClass(e.cls);
-        if (!cls) continue;  // BP class not loaded yet -- retry next Install() tick
-        void* initFn = R::FindFunction(cls, kInitName.c_str());
-        if (!initFn) {
-            // Loaded but without an Init of its own: it dispatches a base Init that is already
-            // covered.
-            *e.done = true; ++done;
-            UE_LOGI("grab_hook[extra]: %ls owns no Init UFunction (inherits base) -- nothing to hook", e.cls);
-            continue;
-        }
-        bool already = false;
-        for (void* fn : g_registeredPropInitFns) if (fn == initFn) { already = true; break; }
-        if (already) { *e.done = true; ++done; continue; }
-        if (GT::RegisterPostObserver(initFn, GrabObserver_Aprop_Init_POST)) {
-            g_registeredPropInitFns.push_back(initFn);
-            *e.done = true; ++done;
-            UE_LOGI("grab_hook[extra]: registered POST observer for %ls::Init @ %p "
-                    "(late-load catch -- trash-ball sync)", e.cls, initFn);
-        } else {
-            // The observer table will not shrink, so retrying is futile; a loud, unexpected WARN.
-            UE_LOGW("grab_hook[extra]: RegisterPostObserver failed for %ls::Init (observer table full) -- skipping", e.cls);
-            *e.done = true; ++done;
-        }
-    }
-    if (done == kExtraCount) {
-        g_extraKeyedInitDone = true;
-        UE_LOGI("grab_hook[extra]: all %d late-load keyed classes resolved/handled (trash-ball + "
-                "food/pinecone Init catch) -- O(1) hereafter", kExtraCount);
-        return true;
-    }
-    // The retry is capped so Install() reaches its O(1) steady state even if a class never loads
-    // this session (an area with no chipPiles); the classes normally resolve within seconds, and
-    // the ~2 min budget covers a lazy load.
-    if (++sAttempts >= kMaxAttempts) {
-        g_extraKeyedInitDone = true;
-        UE_LOGW("grab_hook[extra]: gave up after %d attempts -- unresolved: %s%s%s%s; Init catch "
-                "latched to keep Install() O(1) (re-arms next session)",
-                sAttempts,
-                sTrash ? "" : "trashBitsPile_C ",
-                sClump ? "" : "prop_garbageClump_C ",
-                sChip  ? "" : "actorChipPile_C ",
-                sFood  ? "" : "prop_food_C ");
-        return true;
-    }
-    return false;
-}
 
 }  // namespace
 
@@ -438,85 +358,56 @@ bool IsPerPlayerPropClass(const std::wstring& cls) {
 void Install(coop::net::Session* session) {
     g_session_ptr.store(session, std::memory_order_release);
     PT::SetSession(session);  // mirror; see SetSession comment above.
-    // A composite latch: this runs at 125 Hz, and until every inner flag resolves each tick called
-    // FindClass, a full GUObjectArray walk with a wstring per entry.
+    // A composite latch over the three settlements below, each a few ticks at most: this runs on every
+    // pump tick of the world.
     static std::atomic<bool> g_allInstalled{false};
     if (g_allInstalled.load(std::memory_order_acquire)) return;
-    if (!g_propInitScanDone) {
-        // Gate: wait for the prop_C base class to load.
-        void* propBase = R::FindClass(P::name::PropClass);
-        if (propBase) {
-            // The one-shot GUObjectArray scan for Init UFunctions in the prop_C lineage.
-            const std::wstring kInitName(P::name::PropInitFn);
-            const int32_t n = R::NumObjects();
-            int registered = 0;
-            for (int32_t i = 0; i < n; ++i) {
-                void* obj = R::ObjectAt(i);
-                if (!obj) continue;
-                if (R::ClassNameOf(obj) != L"Function") continue;
-                if (R::ToString(R::NameOf(obj)) != kInitName) continue;
-                void* owningCls = R::OuterOf(obj);
-                // The Aprop_C lineage and the prop-shaped litter bases (chipPile, clump,
-                // trashBitsPile), the same Init protocol on all.
-                if (!ue_wrap::prop::IsClassKeyedInteractable(owningCls)) continue;
-                bool already = false;
-                for (void* fn : g_registeredPropInitFns) {
-                    if (fn == obj) { already = true; break; }
-                }
-                if (already) continue;
-                if (GT::RegisterPostObserver(obj, GrabObserver_Aprop_Init_POST)) {
-                    const std::wstring owner = R::ToString(R::NameOf(owningCls));
-                    UE_LOGI("grab_hook: registered POST observer for %ls::Init @ %p (subclass-aware)",
-                            owner.c_str(), obj);
-                    g_registeredPropInitFns.push_back(obj);
-                    ++registered;
-                } else {
-                    const std::wstring owner = R::ToString(R::NameOf(owningCls));
-                    UE_LOGW("grab_hook: failed to register Init observer for %ls (observer table full)",
-                            owner.c_str());
-                }
+    if (!g_initWatchAsked) {
+        g_initWatchAsked = true;
+        g_initWatchRefused = !SG::WatchName(P::name::PropInitFn, kTagInit, nullptr, &OnInitPost);
+        if (g_initWatchRefused)
+            UE_LOGE("grab_hook: the script gate refused the Init watch -- a keyed prop born through a "
+                    "ProcessEvent-dispatched Init is not expressed");
+    }
+    if (!g_seeded) {
+        // The seed walk waits for the watch to settle: live, a birth racing the walk while a session holds
+        // the gate is caught by one or the other (a duplicate insert is a no-op); dead or refused, the
+        // walk goes on without it. And for prop_C, the base of the Aprop_C lineage, to be loaded.
+        const bool watchSettled = g_initWatchRefused || SG::NameWatchSettled(P::name::PropInitFn, kTagInit);
+        if (watchSettled && ue_wrap::object_index::ClassByName(P::name::PropClass)) {
+            g_seeded = true;
+            if (!g_initWatchRefused && SG::NameWatchLive(P::name::PropInitFn, kTagInit)) {
+                UE_LOGI("grab_hook: the Init watch is live -- seeding the known keyed props");
+            } else {
+                UE_LOGE("grab_hook: the Init watch is DEAD (%s) -- seeding the known keyed props without it",
+                        g_initWatchRefused ? "refused at registration" : "its name resolved into a full table");
             }
-            UE_LOGI("grab_hook: subclass-aware Init scan: %d new registrations (total %zu Init UFunctions hooked across prop_C lineage)",
-                    registered, g_registeredPropInitFns.size());
-            if (!g_registeredPropInitFns.empty()) {
-                g_propInitScanDone = true;
-                // Seed the known set with every live keyed interactable, after the observers are
-                // registered so a spawn racing the seed is caught by the Init POST (a duplicate
-                // insert is a no-op); latched internally.
-                PT::SeedKnownKeyedProps();
-            }
+            PT::SeedKnownKeyedProps();
         }
     }
-    // The late-load catch, gated on the first scan (never at the menu) and throttled to ~1 Hz: each
-    // unresolved class costs one FindClass, a full name walk, and prop_garbageClump_C may not load
-    // until the first chipPile pickup, minutes in.
-    if (g_propInitScanDone && !g_extraKeyedInitDone) {
-        static int sExtraThrottle = 0;
-        if ((sExtraThrottle++ % 125) == 0) RegisterExtraKeyedInitObservers();
-    }
-    if (!g_propDestroyObserverInstalled) {
+    if (!g_destroySeamSettled) {
         // The destroy seam is a UFunction::Func patch, not a ProcessEvent observer: the R-pickup
         // destroy and the pile and clump morph destroys are EX_CallMath-dispatched, invisible to a
         // PE observer, and Func funnels every route. The callback receives the dying actor as the
-        // context.
-        if (void* actorCls = R::FindClass(P::name::ActorClassName)) {
-            if (void* fn = R::FindFunction(actorCls, P::name::DestroyActorFn)) {
-                if (ue_wrap::ufunction_hook::InstallPostHook(fn, &OnK2DestroyFunc)) {
-                    UE_LOGI("grab_hook: Func-patched %ls.%ls @ %p (destroy seam -- catches "
-                            "EX_CallMath destroys the old PE observer missed)",
-                            P::name::ActorClassName, P::name::DestroyActorFn, fn);
-                    g_propDestroyObserverInstalled = true;
-                }
-            } else {
+        // context. Settled on the first attempt: Actor is native, in the index from boot with its
+        // functions, and a patch that failed is not mended by trying it again.
+        if (void* actorCls = ue_wrap::object_index::ClassByName(P::name::ActorClassName)) {
+            g_destroySeamSettled = true;
+            void* fn = R::FindFunction(actorCls, P::name::DestroyActorFn);
+            if (!fn) {
                 UE_LOGW("grab_hook: %ls.%ls UFunction not found -- destroy broadcast disabled",
                         P::name::ActorClassName, P::name::DestroyActorFn);
-                g_propDestroyObserverInstalled = true;  // stop retry
+            } else if (ue_wrap::ufunction_hook::InstallPostHook(fn, &OnK2DestroyFunc)) {
+                UE_LOGI("grab_hook: Func-patched %ls.%ls @ %p (destroy seam -- catches "
+                        "EX_CallMath destroys the old PE observer missed)",
+                        P::name::ActorClassName, P::name::DestroyActorFn, fn);
+            } else {
+                UE_LOGE("grab_hook: the Func patch on %ls.%ls failed -- destroy broadcast disabled",
+                        P::name::ActorClassName, P::name::DestroyActorFn);
             }
         }
     }
-    // g_extraKeyedInitDone is part of the latch, so Install keeps re-entering until the late-load
-    // observers are hooked; then it is an O(1) no-op.
-    if (g_propInitScanDone && g_extraKeyedInitDone && g_propDestroyObserverInstalled) {
+    if (g_seeded && g_destroySeamSettled) {
         g_allInstalled.store(true, std::memory_order_release);
         UE_LOGI("prop_lifecycle: Install() complete -- subsequent calls are O(1) no-ops");
     }

@@ -233,7 +233,7 @@ const FunctionCheck kFunctions[] = {
     {P::name::PlayerControllerClassName, P::name::SetViewTargetWithBlendFn,  Severity::Important, "dev freecam"},
     {P::name::PlayerCameraManagerClass, P::name::GetCameraLocationFn,        Severity::Important, "autotest hand placement"},
     {P::name::PlayerCameraManagerClass, P::name::GetCameraRotationFn,        Severity::Important, "autotest camera tilt"},
-    {P::name::PropClass,                P::name::PropInitFn,                 Severity::Important, "Aprop_C::Init POST observer (spawn detector)"},
+    {P::name::PropClass,                P::name::PropInitFn,                 Severity::Important, "Aprop_C::Init, the body the Init watch expresses a birth after"},
     {P::name::PropClass,                P::name::PropSetKeyFn,               Severity::Critical,  "wire-Key apply before Init -- prop identity (without this, every receiver-spawned prop has wrong key + tracking lost)"},
     {P::name::PropClass,                P::name::PropThrownFn,               Severity::Important, "prop throw sound + particle effects on receiver"},
     {P::name::PropInventoryClass,       P::name::PropInventoryTakeObjFn,     Severity::Important, "storage extract observer"},

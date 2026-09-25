@@ -51,7 +51,7 @@ const Watched kWatched[] = {
     {P::name::DaynightCycleClass, P::name::DaynightCycle_timerRainFn},  // weather's scheduler interceptors
     {P::name::DirectionalWindClass, L"changeWindOrigin"},
     {L"ticker_fireflySpawner_C", L"ReceiveTick"},  // firefly's observer pair
-    {P::name::PropClass, P::name::PropInitFn},     // prop_lifecycle's Init observers
+    {P::name::PropClass, P::name::PropInitFn},     // the lineage prop_lifecycle's Init watch sees
     {L"trashBitsPile_C", P::name::PropInitFn},
     {L"prop_garbageContainer_C", nullptr},
     {L"comp_wallAttachable_C", nullptr},

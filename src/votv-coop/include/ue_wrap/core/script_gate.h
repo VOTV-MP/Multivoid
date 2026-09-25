@@ -78,6 +78,11 @@ void ResolvePendingNames();
 // literal that was registered. Any thread.
 bool NameWatchLive(const wchar_t* name, int tag);
 
+// Has that name watch SETTLED: live, or dead for good because its name resolved into a full table
+// (logged by the gate)? A consumer that waits on a watch before going on asks this, so a dead watch
+// cannot hold it back for ever; NameWatchLive tells the two apart. The same literal. Any thread.
+bool NameWatchSettled(const wchar_t* name, int tag);
+
 // Watch the body of function `name` that class `className` owns: a name watch whose entry also
 // carries the owning class's name, compared only after the function's name has matched, so other
 // classes' bodies of that name are passed over with no callback. The owner is the function's outer,

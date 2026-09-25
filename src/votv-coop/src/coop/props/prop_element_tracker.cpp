@@ -48,20 +48,20 @@ inline coop::net::Session* LoadSession() {
 }
 
 // ---- the processed-Init dedupe set ----
-// Steady-state size is the live keyed-interactable count (~2,000 on load); the cap is a backstop,
-// and on overflow inserts stop but the set is not cleared (clearing would double-broadcast every
-// tracked actor's next super-call). The Init POST and destroy PRE observers run on parallel-anim
-// workers, so the set is mutexed; no engine call under the lock.
+// It holds the actors this peer has expressed a birth for, or must not express one for, added at
+// those seams and removed by the destroy seam; the cap is a backstop, and on overflow inserts stop but
+// the set is not cleared (clearing would let every tracked actor's next express re-broadcast it).
+// Mutexed; no engine call under the lock.
 std::mutex g_processedInitMutex;
 std::unordered_set<void*> g_processedInitActors;
 constexpr size_t kProcessedInitCap = 16384;
 std::atomic<bool> g_processedInitOverflowLogged{false};
 
 // ---- the known-keyed set ----
-// The live keyed interactables: seeded once at Install by one GUObjectArray walk, then maintained
-// by the Init POST (insert) and the destroy PRE (evict). Engine state, not session state: not
-// cleared at disconnect, since actors outlive sessions (MTA's per-type managers keep the same
-// live list). The set itself lives at namespace scope (prop_element_tracker_detail.h) so the
+// The live keyed interactables: filled by the census walks (the seed at Install, the re-seeds) and by
+// every express of a birth (insert), emptied by the destroy seam (evict). Engine state, not session
+// state: not cleared at disconnect, since actors outlive sessions (MTA's per-type managers keep the
+// same live list). The set itself lives at namespace scope (prop_element_tracker_detail.h) so the
 // census shares it.
 std::atomic<bool> g_knownKeyedPropsOverflowLogged{false};
 

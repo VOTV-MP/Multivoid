@@ -1,11 +1,12 @@
 // coop/props/prop_lifecycle.h -- Aprop_C spawn/destroy/extract wire observers.
 //
 // The host-authoritative prop sync layer, three seams:
-//   - Aprop_C::Init POST (subclass-aware GUObjectArray scan): the host broadcasts PropSpawn
-//     for every BP-spawned prop derivative; the client suppresses intermediate-variant local
-//     spawns (mushroom7_C) and waits for the mature variant on the wire.
-//   - AActor::K2_DestroyActor PRE: bidirectional broadcast (food consumption, container
-//     break). Echo-suppressed through the remote_prop incoming-destroy set.
+//   - Aprop_C::Init POST (a script-gate name watch on Init, keeping the bodies ProcessEvent
+//     dispatched): the host broadcasts PropSpawn for a keyed prop born there. A Blueprint-internal
+//     birth (a deferred spawn's construction script) is expressed at FinishSpawningActor by
+//     coop/props/host_spawn_watcher instead.
+//   - AActor::K2_DestroyActor, a post-native Func patch: bidirectional broadcast (food consumption,
+//     container break). Echo-suppressed through the remote_prop incoming-destroy set.
 //   - propInventory_C::takeObj PRE/POST: brackets a container extract so the nested Init POST
 //     defers its broadcast (Key is a NewGuid until loadData runs) and takeObj POST broadcasts
 //     with the restored saved UUID.
@@ -34,10 +35,10 @@ namespace coop::prop_lifecycle {
 // + Install* is reached, leaving the queue undrained until Install runs).
 void SetSession(coop::net::Session* session);
 
-// Install Aprop_C::Init POST + AActor::K2_DestroyActor PRE observers.
-// First call does a one-shot GUObjectArray scan to find every Init
-// UFunction in the prop_C lineage. Idempotent; retried each NetPumpTick
-// until the prop_C base class is loaded.
+// Register the Init watch, seed the known keyed props once it is live and prop_C is loaded, and
+// patch AActor::K2_DestroyActor for the destroy seam. The watch is keyed on the name, so it holds
+// for every class of the lineage, a late-loading or re-created one included, with no walk to find
+// them. Idempotent; each part settles within a few pump ticks of the world, then O(1).
 void Install(coop::net::Session* session);
 
 // Install propInventory_C::takeObj PRE/POST observers. Separate because
