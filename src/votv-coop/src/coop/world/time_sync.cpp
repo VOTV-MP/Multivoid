@@ -72,11 +72,12 @@ bool IsWellFormed(const coop::net::TimeSyncPayload& p) {
 
 // CLIENT: game mode 5's master sets the cycle's `day` to 0, waits a second and loops, on every peer. Its
 // begin-play runs one pass of that loop inline beside six flows of its own (the needs restore, the
-// ambience, four spawners), and every wait resumes its ubergraph at the loop's entry, whenever the master
-// was spawned. The host's reset reaches a client in its samples, so a client refuses that resume: the loop
-// ends after the begin-play's pass, which the hold takes back, and the other flows run on. The entry is a
-// byte offset in the cooked Blueprint, as the wall-attachable's and the door's entry constants are: a
-// recook moves it, and the install line says the one it refuses.
+// ambience, four spawners), and the loop's wait resumes its ubergraph at the loop's entry, whenever the
+// master was spawned; the other flows' waits resume at entries of their own. The host's reset reaches a
+// client in its samples, so a client refuses that one resume: the loop ends after the begin-play's pass,
+// which the hold takes back, and the other flows run on. The entry is a byte offset in the cooked
+// Blueprint, as the wall-attachable's and the door's entry constants are: a recook moves it, and the
+// install line says the one it refuses.
 constexpr int     kTagModeReset = 0x54534d52;  // 'TSMR'
 constexpr int32_t kModeResetResume = 68;       // the Delay's resume in ExecuteUbergraph_halloweenMaster
 void*   g_modeResetFn = nullptr;               // the ubergraph the entry parameter's offset was read from
@@ -148,10 +149,10 @@ void NameLocalWrite(float t, float d, int32_t dayZ, const coop::net::TimeSyncPay
 // CLIENT: between samples, the parked cycle presents the last applied one. A write on this machine
 // since the last tick -- the cheat menu's day buttons, the one pass of game mode 5's reset a master's
 // begin-play runs -- is overwritten, and named, before the tick reads it, so no tick the pre-observer
-// precedes rolls this machine's `day`; the cycle's call from the gamemode's begin-play runs the tick body once per world
-// without it, on the loaded `day`, which is below maxTime. A new world's cycle takes the sample at its
-// park, unnamed: its clock is the save's. Every correction latches the 6 am order, as a sample's does:
-// a new world's slot, parked before its first sample, can carry it open.
+// precedes rolls this machine's `day`; the cycle's call from the gamemode's begin-play runs the tick
+// body once per world without it, on the loaded `day`, which is below maxTime. A new world's cycle
+// takes the sample at its park, unnamed: its clock is the save's. Every correction latches the 6 am
+// order, as a sample's does: a new world's slot, parked before its first sample, can carry it open.
 void HoldClock(void* cycle, float t, float d, bool parked) {
     if (!g_haveHeld) return;
     const bool clock = (t != g_held.totalTime || d != g_held.day);
