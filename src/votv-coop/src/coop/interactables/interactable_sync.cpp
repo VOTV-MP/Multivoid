@@ -144,6 +144,18 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
 };
+// The kitchen oven's repair (kitchen_C's `fixed`), symmetric and one way: fix() sets it and nothing
+// sets it back, so the peer that repaired sends it and a receiver runs fix() on 1 and refuses 0 (the
+// channel reads the device after an apply, so a refusal is said and is no delta). Keyed as the
+// appliance family keys the oven, by Aactor_save_C::Key.
+const Adapter g_ovenAdapter = {
+    "oven", coop::net::ReliableKind::OvenRepairState,
+    &ue_wrap::appliance::EnsureResolved,
+    &ue_wrap::appliance::IsOven,
+    &ue_wrap::appliance::GetKeyString,
+    &ue_wrap::appliance::TryReadOvenFixed,
+    [](void* a, bool on) -> bool { return on && ue_wrap::appliance::CallOvenFix(a); },
+};
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
 // Identity is the level-export FName (neither class has a save Key; placed-actor names are
@@ -165,12 +177,14 @@ Channel g_container{g_containerAdapter};
 Channel g_garage{g_garageAdapter};  // no auto-revert: symmetric
 Channel g_appliance{g_applianceAdapter};  // no auto-revert: symmetric
 Channel g_doorBox{g_doorBoxAdapter};  // no auto-revert: symmetric
+Channel g_oven{g_ovenAdapter};  // one way: whoever repairs it
 // Keypads (ApasswordLock_C) are not a toggle (a typed buffer and three state bools, with an
 // accept verb this engine cannot reach) and live in coop::keypad_sync; KeypadState routes there
 // from event_feed, not through ChannelForKind.
 
 // Every channel, once: each list below walks this one, in this order.
-Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox};
+Channel* const kChannels[] = {&g_door, &g_light, &g_lightGroup, &g_container, &g_garage, &g_appliance, &g_doorBox,
+                              &g_oven};
 
 Channel* ChannelForKind(coop::net::ReliableKind k) {
     for (Channel* ch : kChannels)
@@ -223,6 +237,8 @@ void OnDoorBoxVerb(void* box) { g_doorBox.OnLocalEdge(box); }
 
 void OnContainerVerb(void* swinger) { g_container.OnLocalEdge(swinger); }
 
+void OnOvenVerb(void* oven) { g_oven.OnLocalEdge(oven); }
+
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 
 bool ApplyingDoor(void* door) { return door && door == g_applyingDoor; }
@@ -231,6 +247,7 @@ std::wstring ApplianceKey(void* a) { return g_appliance.KeyForActor(a); }
 std::wstring GarageKey(void* g) { return g_garage.KeyForActor(g); }
 std::wstring DoorBoxKey(void* box) { return g_doorBox.KeyForActor(box); }
 std::wstring ContainerKey(void* swinger) { return g_container.KeyForActor(swinger); }
+std::wstring OvenKey(void* oven) { return g_oven.KeyForActor(oven); }
 
 std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
 

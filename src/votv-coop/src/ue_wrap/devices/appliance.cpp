@@ -6,6 +6,7 @@
 #include "ue_wrap/devices/appliance.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -60,6 +61,9 @@ constexpr int kNumDescs = sizeof(g_descs) / sizeof(g_descs[0]);
 
 void* g_bases[kNumDescs] = {};         // resolved class pointers, for the IsAppliance fast filter
 int   g_nBases = 0;
+
+// The oven's `fixed`, on the class of the oven it is read from.
+R::InstanceOffset g_ovenFixed{L"fixed"};
 
 // Find the descriptor whose class matches `obj` -- exact-class pointer compare first (the
 // common case: an appliance instance IS its class), then a hierarchy walk for any subclass.
@@ -187,6 +191,32 @@ bool IsTap(void* obj) {
         if (d.cls == cls && (std::wcscmp(d.className, L"faucet_C") == 0 || std::wcscmp(d.className, L"sink_C") == 0))
             return true;
     return false;
+}
+
+bool IsOven(void* obj) {
+    void* cls = obj ? R::ClassOf(obj) : nullptr;
+    if (!cls) return false;
+    for (const Desc& d : g_descs)
+        if (d.cls == cls && std::wcscmp(d.className, L"kitchen_C") == 0) return true;
+    return false;
+}
+
+bool TryReadOvenFixed(void* oven, bool& fixed) {
+    if (!IsOven(oven)) return false;
+    const int32_t off = g_ovenFixed.Of(oven);
+    if (off < 0) return false;
+    fixed = *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(oven) + off);
+    return true;
+}
+
+bool CallOvenFix(void* oven) { return IsOven(oven) && component_calls::CallParamlessNamed(oven, L"fix"); }
+
+bool WriteOvenFixedForDrill(void* oven, bool fixed) {
+    if (!IsOven(oven)) return false;
+    const int32_t off = g_ovenFixed.Of(oven);
+    if (off < 0) return false;
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(oven) + off) = fixed;
+    return component_calls::CallParamlessNamed(oven, L"upd");
 }
 
 bool CallAction(void* a, void* player, uint8_t action) {

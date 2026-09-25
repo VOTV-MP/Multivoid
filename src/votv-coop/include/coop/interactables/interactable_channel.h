@@ -237,9 +237,10 @@ public:
             items.reserve(byKey_.size());
             for (auto& kv : byKey_) items.emplace_back(kv.first, kv.second);
         }
-        // The host's current state for every indexed instance, OFF included: the joiner loads its
-        // own save, so a switch the host turned off would otherwise stay on there. A symmetric
-        // receiver skips instances already matching, so an agreeing OFF costs one small packet.
+        // The host's current state for every indexed instance, OFF included: the save the joiner
+        // loaded, the host's captured at its join, holds neither a state the game does not save nor
+        // one changed while the joiner loaded. A symmetric receiver skips instances already
+        // matching, so an agreeing OFF costs one small packet.
         int sent = 0;
         for (auto& d : items) {
             if (!R::IsLiveByIndex(d.second.actor, d.second.idx)) continue;

@@ -40,6 +40,7 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ContainerState:
     case net::ReliableKind::GarageDoorState:
     case net::ReliableKind::ApplianceState:
+    case net::ReliableKind::OvenRepairState:    // the oven's repair, one way
     case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
     case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape
         // DoorState and LightGroupState are the host-authored kinds in this otherwise symmetric
@@ -57,7 +58,7 @@ bool HandleStateEvent(net::Session& session,
             return true;  // claimed by this family, deliberately not applied
         }
         // A peer toggled a keyed interactable (a light switch, a container lid, a garage, an
-        // appliance, a locker), or the host moved a door or a light group. On a symmetric kind any
+        // appliance, a locker) or repaired an oven, or the host moved a door or a light group. On a symmetric kind any
         // peer can send, and the host relays a client-originated edge to the other clients before
         // this drain runs. interactable_sync
         // routes by kind to the right channel, resolves the instance by key and applies

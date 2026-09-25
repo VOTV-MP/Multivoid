@@ -17,7 +17,7 @@ Every open-or-closed, on-or-off device rides one replication engine
 a key-to-actor index that heals itself, per-key dedup, a deferred apply with a throttled retry for
 an instance that has not streamed in yet, echo suppression, and the connect snapshot. A device
 family is an adapter over its engine wrapper (`ue_wrap/devices/`), a few lines each: doors, light
-switches, light groups, container lids, the garage, the appliances, the lockers.
+switches, light groups, container lids, the garage, the appliances, the lockers, the oven's repair.
 
 Each channel is sent at the verbs that write its state, which the script-body gate watches: every
 live writer of a door's open state goes through `doorOpen` or `doorClose`, and of a light group's
@@ -53,8 +53,9 @@ writer of Open past the load, and the appliance lane an appliance's bool at its 
 (a faucet's, sink's, shower's, oven's and tape unit's toggle) or a server box's `visual` (the kerfur
 Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a murder kerfur's) and the drone
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
-(which its setup, grab, damage, padlock and resting swing, and a cremator's door, call); the poll beside each reports and sends
-a change no verb made.
+(which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
+lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
+runs `fix()` on 1 and refuses 0; the poll beside each reports and sends a change no verb made.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
@@ -69,8 +70,8 @@ graph, where a press cannot be told from a hit or a trigger, and a hit moves bot
 ever reaches `doorOpen`. The host's door then closes by its own
 autoclose, at the first of its five-second checks that finds its sensor list empty, and a client's
 puppet counts in that list exactly when the client's own player counts in the client's own copy of
-it. A device with no auto-revert (the garage, an appliance, a locker, a lid) is symmetric: any
-peer's edge is the state.
+it. A device with no auto-revert (the garage, an appliance, an oven's repair, a locker, a lid) is
+symmetric: any peer's edge is the state.
 
 ### What is inside a container
 
@@ -328,7 +329,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | State | Owner | Shape |
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
-| a light switch, a lid, the garage, an appliance, a locker, the power panel | any peer | symmetric state edges, relayed |
+| a light switch, a lid, the garage, an appliance, an oven's repair, a locker, the power panel | any peer | symmetric state edges, relayed |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
@@ -361,8 +362,9 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 ## Late join
 
 Every channel snapshots the full state of every indexed instance to a joiner at its ready edge,
-open and closed alike, because the joiner loaded its own save and a switch the host turned off
-must be pushed too; the keypads, the power masks, the turbine, the windows, the grime and the
+open and closed alike, because the save the joiner loaded, the host's captured at its join, holds
+neither a state the game does not save (a server box's `active`, a sink's tap) nor one changed while
+the joiner loaded; an oven's repair is in that save, and the snapshot says it again; the keypads, the power masks, the turbine, the windows, the grime and the
 drone's pose are sent the same way, and the balance is sent at connect. A pending order is
 primed by a watermark so the joiner's next order is the first it forwards.
 

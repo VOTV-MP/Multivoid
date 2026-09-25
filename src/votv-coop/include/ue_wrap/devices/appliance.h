@@ -54,4 +54,21 @@ bool IsTap(void* obj);
 // `player` and `action`. False when the class has no such verb or the call did not run. Game thread.
 bool CallAction(void* a, void* player, uint8_t action);
 
+// The kitchen oven's repair. Its `fixed` goes false to true once, in fix(): fix() sets it, repaints
+// the oven and closes the repair widget where one is open; the widget's last step calls it, and
+// loadData calls it for a saved repair. Nothing sets it back (kitchen_C's and UI_oven_C's bytecode).
+// True iff `obj` is a kitchen_C, once its class has resolved. Game thread.
+bool IsOven(void* obj);
+
+// Read the oven's `fixed` into `fixed`. False if the read could not be made. Game thread.
+bool TryReadOvenFixed(void* oven, bool& fixed);
+
+// Run the oven's own fix(). False when the class has no such verb or the call did not run. Game
+// thread.
+bool CallOvenFix(void* oven);
+
+// A drill's fixture, never the game's path: write the oven's `fixed` and repaint it (upd), so a drill
+// can start from a broken oven where the save had repaired it. Game thread.
+bool WriteOvenFixedForDrill(void* oven, bool fixed);
+
 }  // namespace ue_wrap::appliance

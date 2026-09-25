@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 184;
+inline constexpr uint16_t kProtocolVersion = 185;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -823,6 +823,13 @@ enum class ReliableKind : uint8_t {
     // what the sender holds, and a sender's intents run at a bounded rate from a bounded queue. Never
     // relayed. Late join: nothing to replay, as for DoorVerbIntent. KeypadIntentPayload.
     KeypadIntent = 150,
+
+    // Any peer, relayed by the host: the kitchen oven's repair, keyed as ApplianceState keys the
+    // oven. Its `fixed` goes false to true once, in its fix() (the repair widget's last step; loadData
+    // calls it for a saved repair), and nothing sets it back, so a receiver runs fix() on 1 and
+    // refuses 0. Late join: the transferred save carries `fixed`, and the connect snapshot says it
+    // again. KeyedTogglePayload.
+    OvenRepairState = 151,
 };
 
 #pragma pack(push, 1)

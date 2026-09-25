@@ -205,6 +205,7 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::ContainerState:
     case ReliableKind::GarageDoorState:   // symmetric
     case ReliableKind::ApplianceState:    // symmetric
+    case ReliableKind::OvenRepairState:   // symmetric, one way
     case ReliableKind::LockerDoorState:   // symmetric
     case ReliableKind::PowerControlState: // symmetric
     case ReliableKind::AtvState:          // occupant- or grabber-authoritative

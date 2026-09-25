@@ -1,5 +1,5 @@
 // coop/interactables/interactable_sync.h -- keyed interactable open/close/on-off state sync. ONE
-// replication engine drives seven features through a shared Channel, with no per-feature copy:
+// replication engine drives eight features through a shared Channel, with no per-feature copy:
 //   - DoorState (9):         base doors     (Adoor_C, open intent, host-authoritative)
 //   - LightState (10):       light switches (Alightswitch_C::use, replayed on receipt)
 //   - ContainerState (11):   container lids (Aprop_swinger_C::Open / Close)
@@ -7,6 +7,7 @@
 //   - ApplianceState (35):   the save-actor appliance family
 //   - LockerDoorState (50):  lockers and the drone-console box (level-export name)
 //   - LightGroupState (129): light groups   (runTrigger on the root, host-authoritative)
+//   - OvenRepairState (151): the kitchen oven's repair (its fix(), one way)
 // Gameplay/network layer (principle 7): the wire protocol, the senders, the receiver apply, the key
 // index, the deferred-apply retry and the connect snapshot; the engine only through ue_wrap. Every
 // channel is sent at the verbs that write its state, on the authority: the host for doors and light
@@ -56,11 +57,12 @@ bool ApplyingDoor(void* door);
 // Game thread.
 std::wstring ApplianceKey(void* a);
 
-// The garage, door-box and container lanes' names for their devices, the same way: the index key, or
-// empty when the lane does not index the device. Game thread.
+// The garage, door-box, container and oven lanes' names for their devices, the same way: the index
+// key, or empty when the lane does not index the device. Game thread.
 std::wstring GarageKey(void* g);
 std::wstring DoorBoxKey(void* box);
 std::wstring ContainerKey(void* swinger);
+std::wstring OvenKey(void* oven);
 
 // The light switch lane's key for `sw`, or "" when the lane does not index it in the current world.
 // Game thread.
@@ -95,6 +97,10 @@ void OnDoorBoxVerb(void* box);
 // Any peer: a lid's open or close just ran on `swinger` (coop/interactables/toggle_verbs); the
 // container lane sends the `opened` it left when that changed. Game thread.
 void OnContainerVerb(void* swinger);
+
+// Any peer: an oven's fix() just ran on `oven` (coop/interactables/toggle_verbs); the oven lane
+// sends the `fixed` it left when that changed. Game thread.
+void OnOvenVerb(void* oven);
 
 // Whether the light group lane's own apply is running on `root` now: a client's copy of a group
 // refuses every runTrigger but that one. Game thread.

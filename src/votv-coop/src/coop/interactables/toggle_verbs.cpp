@@ -48,6 +48,8 @@ constexpr Row kRows[] = {
       &coop::interactable_sync::OnContainerVerb },
     { L"close", 0x5357434C /*'SWCL'*/, "a lid's close", &ue_wrap::swinger::IsSwinger,
       &coop::interactable_sync::OnContainerVerb },
+    { L"fix", 0x4F564658 /*'OVFX'*/, "an oven's repair", &ue_wrap::appliance::IsOven,
+      &coop::interactable_sync::OnOvenVerb },
 };
 constexpr int kRowCount = static_cast<int>(sizeof(kRows) / sizeof(kRows[0]));
 

@@ -478,7 +478,9 @@ CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", fal
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
     "the host whenever it crossed; each peer logs every change of its state. Lines tagged "
-    "[TOGGLE-DRILL]; the client's DONE line ends it.")
+    "[TOGGLE-DRILL]; the client's DONE line ends it. One way: oven (the client repairs the oven, the "
+    "host reads it) and oven_host (the host repairs it once a client's world is ready); the host puts "
+    "back an oven its save had repaired before any client connects, and the reader's DONE line ends it.")
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")
