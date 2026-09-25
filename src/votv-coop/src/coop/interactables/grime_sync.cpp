@@ -87,6 +87,14 @@ struct ExactKeyHash {
     size_t operator()(const ExactKey& k) const {
         uint64_t h = 1469598103934665603ull;  // FNV-1a over the four words
         for (uint32_t w : {k.x, k.y, k.z, static_cast<uint32_t>(k.type)}) h = (h ^ w) * 1099511628211ull;
+        // A word-wise multiply leaves the low bits a function of the words' low bits alone, and a round
+        // coordinate's float has them all zero; the table picks its bucket from the low bits. murmur3's
+        // 64-bit finalizer spreads every bit into them.
+        h ^= h >> 33;
+        h *= 0xff51afd7ed558ccdull;
+        h ^= h >> 33;
+        h *= 0xc4ceb9fe1a85ec53ull;
+        h ^= h >> 33;
         return static_cast<size_t>(h);
     }
 };
