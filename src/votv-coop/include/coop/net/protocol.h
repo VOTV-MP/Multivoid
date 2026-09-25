@@ -2478,9 +2478,6 @@ struct GrabRefusedPayload {
 };
 static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 bytes");
 
-// A throw intent (ThrowIntent). mode kRelease: the native drop; the clump leaves the puppet's
-// physics handle with the velocity the hold gave it. mode kHardThrow: the native camera-directed throw; the client
-
 // A drone-call intent (DroneFlyIntent): the press itself, with which of the console's two faces it
 // was. Which face is the sender's reading of its own cursor, the only machine that has one, and the
 // console carries no identity to name (see the kind's comment), so the host resolves the console

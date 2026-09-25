@@ -147,11 +147,13 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
         UE_LOGW("drone: OnReliable non-finite pose -- dropping");
         return;
     }
+    // The host's word on Active is kept even before the mirror resolves: a parked drone sends nothing
+    // after its connect snapshot, so a word dropped here would never come again.
+    g_m.hostActive = payload.active ? 1 : 0;
     void* drone = D::Find();
     if (!drone) return;  // not streamed in yet -- the next packet applies once it resolves
     if (!g_m.suppressed) { D::SuppressTick(drone); g_m.suppressed = true; }
     SetTarget(g_m, payload, /*snap*/ payload.adopt != 0);
-    g_m.hostActive = payload.active ? 1 : 0;
     // FX mirror: the suppressed tick kills the rotor-dust particle and the delivery alarm cue, so
     // replay them off the synced state the host packs in FillPayload -- the dust as a per-packet
     // replay of the blueprint's own tick update (see ApplyDustMirror below), the "items ready"

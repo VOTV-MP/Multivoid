@@ -98,6 +98,12 @@ class IntentTarget {
     // farther end's, and `actor` stays null. Same pads, same fail-closed body read, one anchor
     // sample per call.
     IntentSubject AuthorizeSegment(const ue_wrap::FVector& start, const ue_wrap::FVector& end) const;
+    // Whether the sender has a body here to measure from, the question Authorize answers NoBody to:
+    // a puppet that has taken a pose and whose place reads. For a lane that has to ask it BEFORE
+    // identity, since its identity remedies (a ghost-heal destroy) must not be reachable by a
+    // sender with no body, and that waits out a joiner's seconds before its first pose rather than
+    // refusing in them.
+    bool HasBody() const;
 
   private:
     coop::net::Session* session_ = nullptr;

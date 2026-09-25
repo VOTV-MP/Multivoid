@@ -192,8 +192,8 @@ console carries no identity to name, so the host takes the console of its own wo
 stands at, re-tests its own copy of the lid, then runs the same verb, so the flight starts on the
 machine that owns it and arrives on the stream that already carries it
 (`coop/interactables/drone_call_intent`). A press that reaches the host before it holds the sender's
-body, from a joiner who presses at once, waits for the body rather than being refused, as the door,
-keypad and container lanes wait. The leave-timer face has no lane and stays local.
+body, from a joiner who presses at once, waits for the body rather than being refused, as the
+door-verb, keypad and container lanes wait. The leave-timer face has no lane and stays local.
 
 ### The balance
 

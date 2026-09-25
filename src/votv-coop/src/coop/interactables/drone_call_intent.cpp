@@ -79,37 +79,35 @@ bool TakeToken(uint8_t slot) {
 // ---- host side -------------------------------------------------------------------------------
 // One press, run or refused and then consumed, or left at the head of its queue: false while the host
 // has no body for the sender, the seconds between a joiner's curtain and its first pose. That is a
-// mid-join window rather than a verdict, which the door, keypad and container lanes wait out the same
-// way (principle 8): a press made in it is not lost.
+// mid-join window rather than a verdict, which the door-verb, keypad and container lanes wait out the
+// same way (principle 8): a press made in it is not lost.
 bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, uint8_t slot) {
     (void)p;  // verb 0 is the only face with a lane; the dispatcher refuses the rest
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.
+    const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kConsoleReachUU);
+    if (!token.HasBody()) {
+        if (!g_waitSaid[slot]) {
+            g_waitSaid[slot] = true;
+            UE_LOGI("[DRONE-CALL] slot %u's presses wait: the host has no body for it yet",
+                    static_cast<unsigned>(slot));
+        }
+        return false;
+    }
     void* consoles[4];
     const int32_t nc = D::LiveConsoles(consoles, static_cast<int32_t>(std::size(consoles)));
-    const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kConsoleReachUU);
     void* console = nullptr;
-    for (int32_t i = 0; i < nc && !console; ++i) {
-        const coop::element::IntentOutcome o = token.Authorize(consoles[i]).outcome;
-        if (o == coop::element::IntentOutcome::NoBody) {
-            if (!g_waitSaid[slot]) {
-                g_waitSaid[slot] = true;
-                UE_LOGI("[DRONE-CALL] slot %u's presses wait: the host has no body for it yet",
-                        static_cast<unsigned>(slot));
-            }
-            return false;
-        }
-        if (o == coop::element::IntentOutcome::Ok) console = consoles[i];
-    }
+    for (int32_t i = 0; i < nc && !console; ++i)
+        if (token.Authorize(consoles[i]).outcome == coop::element::IntentOutcome::Ok) console = consoles[i];
     if (!console) {
         ++g_denied;
         UE_LOGI("[DRONE-CALL] DENY slot=%u -- none of the %d live console(s) is within reach",
                 static_cast<unsigned>(slot), nc);
         return true;
     }
-    // The lid is the console's own gate on its keyboard, and it is shared state the door lane
-    // already carries, so the host reads its own copy rather than trusting the press.
+    // The lid is the console's own gate on its keyboard, and it is shared state the box lane
+    // (door_box) already carries, so the host reads its own copy rather than trusting the press.
     if (!D::IsLidOpen(console)) {
         ++g_denied;
         UE_LOGI("[DRONE-CALL] DENY slot=%u -- the console's lid is shut here",
@@ -151,7 +149,11 @@ sg::Verdict OnActionPre(const sg::Call& call) {
 
     coop::net::DroneFlyIntentPayload p{};
     p.verb = 0;  // the keyboard; the leave-timer face still runs locally and has no lane
-    s->SendReliable(coop::net::ReliableKind::DroneFlyIntent, &p, sizeof(p));
+    if (!s->SendReliable(coop::net::ReliableKind::DroneFlyIntent, &p, sizeof(p))) {
+        UE_LOGW("[DRONE-CALL] a keyboard press was not sent (the session refused it); the drone stays as "
+                "the host has it");
+        return sg::Verdict::Cancel;
+    }
     ++g_sent;
     if (g_sent <= 3 || g_sent % 20 == 0)
         UE_LOGI("[DRONE-CALL] CLIENT SENT a keyboard press (#%llu)",

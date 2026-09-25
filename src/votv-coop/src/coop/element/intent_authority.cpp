@@ -197,6 +197,15 @@ IntentSubject IntentTarget::Authorize(void* actor) const {
     return s;
 }
 
+bool IntentTarget::HasBody() const {
+    if (slot_ == 0) return false;  // as in Authorize
+    UE_ASSERT_GAME_THREAD("intent_authority::HasBody");
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot_);
+    void* puppet = (rp && rp->valid() && rp->HasPose()) ? rp->GetActor() : nullptr;  // as in Authorize
+    ue_wrap::FVector body{};
+    return puppet && E::TryGetActorLocation(puppet, body);
+}
+
 IntentSubject IntentTarget::AuthorizeSegment(const ue_wrap::FVector& start,
                                              const ue_wrap::FVector& end) const {
     IntentSubject s;

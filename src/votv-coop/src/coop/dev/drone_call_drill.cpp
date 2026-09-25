@@ -53,6 +53,8 @@ constexpr float    kSettleCm        = 10.f;   // two reads this close apart: the
 constexpr int      kMaxPresses      = 2;      // the first can only put a sack aboard; the second flies
 constexpr uint64_t kReadEveryMs     = 250;    // the drone and the sack are read at 4 Hz
 // Failure bounds only: each leg ends on the state it waits for, and these say it never came.
+constexpr uint64_t kParkBoundMs     = 240000;  // a delivery in flight at the load lands within minutes
+constexpr uint64_t kSettleBoundMs   = 30000;
 constexpr uint64_t kLidBoundMs      = 10000;
 constexpr uint64_t kOutcomeBoundMs  = 30000;
 
@@ -66,6 +68,7 @@ bool     g_aimLid = false;       // the part the Aim and Press legs are on: the 
 int      g_presses = 0;          // keyboard presses that went to the host
 bool     g_sackAtPress = false;  // a sack lay in this world when the last press went
 bool     g_saidInFlight = false;
+uint64_t g_armMs = 0;            // when the legs first could start: the park wait's bound runs from here
 int      g_session = 1;          // this process's sessions, counted by their ends: a rehost's is the 2nd
 uint64_t g_nextReadMs = 0;
 ue_wrap::CachedObjRef g_console;
@@ -156,12 +159,15 @@ void ClientTick(void* player) {
             return;
         // A press is measured against a parked drone: one still flying a delivery moves on its own. The
         // mirror's own Active field is the load's, so the host's word is asked.
+        if (g_armMs == 0) g_armMs = now;
         const int hostActive = coop::drone_sync::HostActive();
         if (hostActive != 0) {
             if (hostActive == 1 && !g_saidInFlight) {
                 g_saidInFlight = true;
                 UE_LOGI("[DRONE-CALL-DRILL] client: the host's drone is in flight; the legs wait for it to park");
             }
+            if (now - g_armMs > kParkBoundMs)
+                Abandon(hostActive < 0 ? "the host never said where its drone is" : "the host's drone did not park");
             return;
         }
         g_haveLast = false;
@@ -184,7 +190,10 @@ void ClientTick(void* player) {
         const bool still = g_haveLast && Dist(pos, g_droneLast) < kSettleCm;
         g_droneLast = pos;
         g_haveLast = true;
-        if (!still) return;
+        if (!still) {
+            if (now - g_stepMs > kSettleBoundMs) Abandon("this copy's drone did not come to rest");
+            return;
+        }
         g_droneRest = pos;
         void* consoles[2] = {};
         if (D::LiveConsoles(consoles, 2) <= 0) { Abandon("this world holds no drone console"); return; }
@@ -242,6 +251,9 @@ void ClientTick(void* player) {
             Go(Step::LidWait);
             return;
         }
+        // A flight measured after the press must be the press's: a drone that took off on its own since
+        // the legs began (its leave timer, a delivery) leaves nothing to measure.
+        if (coop::drone_sync::HostActive() != 0) { Abandon("the host's drone took off before the press"); return; }
         const uint64_t sent0 = coop::drone_call_intent::SentCount();
         g_sackAtPress = SackInWorld();
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return; }
@@ -383,6 +395,11 @@ void Tick(coop::net::Session* s) {
 
 void OnDisconnect() {
     ++g_session;
+    if (g_walk) {  // the worker still holds it: the director's run ends at its next tick
+        g_walk->goal.failed = true;
+        g_walk->goal.failReason = "session ended";
+    }
+    g_armMs = 0;
     g_step = Step::Arm;
     g_stepTicks = 0;
     g_aimPose = 0;
