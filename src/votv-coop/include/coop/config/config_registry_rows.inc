@@ -264,10 +264,12 @@ CFG_INT(bulk_queue_cap_ms, "bulk_queue_cap_ms", "dev", 2000, 0, 600000,
     "spending the host's uplink. The 4 MiB buffer it replaces as the binding limit measured 5.6 s "
     "of queue on one policed joiner and 126 s on a slot losing a three-way race for one uplink, so "
     "2000 is 63x under the worst of that. 0 stages that before-picture on this same binary.")
-CFG_FLAG(window_log, "window_log", "dev", false, nullptr,
-    "Diagnostic logging for window sync.")
-CFG_FLAG(window_synth, "window_synth", "dev", false, nullptr,
-    "Test driver: synthesize window interactions.")
+CFG_FLAG(window_log, "window_log", "dev", false, "VOTVCOOP_WINDOW_LOG",
+    "Diagnostic logging for window sync: each wipe sent, each value applied, and every window an index "
+    "pass finds, one line each.")
+CFG_FLAG(window_synth, "window_synth", "dev", false, "VOTVCOOP_WINDOW_SYNTH",
+    "Test driver: once the joiner's world is ready, the host wipes the first indexed window through its "
+    "own cleanSponge, so the client applies the fall.")
 CFG_FLAG(window_stroke_log, "window_stroke_log", "dev", false, nullptr,
     "Diagnostic logging for the bay-window dab sync (every dab sent and received).")
 CFG_FLAG(weather_observer_log, "weather_observer_log", "dev", false, nullptr,

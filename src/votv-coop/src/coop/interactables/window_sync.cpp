@@ -1,15 +1,14 @@
 // coop/interactables/window_sync.cpp -- see coop/interactables/window_sync.h. Base-window dirt
 // scalar sync.
 //
-// A trimmed sibling of interactable_sync's Channel: the same proven Key->actor index
-// (IsLiveByIndex self-heal), throttled rebuild, silent first-sight prime, deferred-apply retry,
-// and echo-suppress-via-priming. The differences that make it its own module rather than another
-// toggle Adapter (RULE 2): the state is a continuous FLOAT (clean), not a bool, and the apply rule
-// is MIN-WINS (monotone cooperative clean), not a toggle -- so it needs none of the door Channel's
-// HostAuth machinery (hold register, settling bridge, autonomy suppression), and forcing it into
-// the bool Channel would mean templatizing that battle-tested door code. clean is
-// monotone-decreasing and inert (nothing re-raises it locally), so a SYMMETRIC min-wins poll
-// converges with no oscillation.
+// A window's dirt is one scalar, `clean`, lowered only by its cleanSponge (clean -= strength*0.01,
+// floored at 0, then setClean repaints) and set wholesale by loadData from the save. Each peer sends
+// a fall at the verb that made it: a PRE/POST watch on baseWindow_C's cleanSponge reads the value on
+// both sides of the body. A receiver applies MIN-WINS (monotone cooperative clean), so a live wipe
+// never raises a window another peer cleaned further; the apply writes the field and repaints through
+// setClean, never the verb, so it is never heard back. The host's connect snapshot is an adopt: the
+// joiner takes the host's world unchanged. The Key->actor index rides the shared scan hub, and a
+// value for a window this peer has not indexed yet waits in a pending entry until a pass finds it.
 
 #include "coop/interactables/window_sync.h"
 
@@ -20,8 +19,10 @@
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 
 #include "ue_wrap/devices/base_window.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/engine/world_identity.h"     // gen-stamped index (dead-world guard)
 #include "coop/element/object_scan_hub.h"      // the shared sliced scan pass
 
@@ -41,6 +42,7 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace BW = ue_wrap::base_window;
+namespace sg = ue_wrap::script_gate;
 
 using coop::net::WireKeyFromString;
 using coop::net::StringFromWireKey;
@@ -50,7 +52,7 @@ constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
 constexpr auto kPendingTTL = std::chrono::seconds(25);
 // `clean` changes in discrete wipe steps (cleanSponge: clean -= strength*0.01); this epsilon
 // is smaller than the smallest real step, so it only filters float-equality noise -- never a
-// genuine wipe. Used both to detect a decrease (broadcast) and to skip an idempotent apply.
+// genuine wipe. Used both to detect a decrease (send) and to skip an idempotent apply.
 constexpr float kCleanEps = 0.0005f;
 
 bool ProbeLog() {
@@ -59,14 +61,10 @@ bool ProbeLog() {
 }
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-std::atomic<bool> g_echo{false};  // belt-and-suspenders: suppress the poll mid-apply (GT-serial anyway)
 
 struct Ref { void* actor; int32_t idx; };
 std::mutex g_indexMutex;
 std::unordered_map<std::wstring, Ref> g_byKey;
-
-std::mutex g_stateMutex;
-std::unordered_map<std::wstring, float> g_lastKnown;  // key -> last broadcast/applied clean (change-detect + echo-suppress)
 
 struct Pending { float clean; bool adopt; uint8_t fromSlot; std::chrono::steady_clock::time_point deadline; };
 std::unordered_map<std::wstring, Pending> g_pending;  // GT-only: deferred applies (window not streamed in yet)
@@ -74,7 +72,6 @@ std::unordered_map<std::wstring, Pending> g_pending;  // GT-only: deferred appli
 std::chrono::steady_clock::time_point g_lastRetry{};
 size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
-std::vector<std::pair<std::wstring, Ref>> g_pollScratch;  // GT-only: reused per-tick poll snapshot (capacity retained across clear() -> no realloc in steady state; the few short keys are SSO)
 
 // World generation of the last completed hub pass; a stale-gen index is treated as EMPTY on every
 // read path (dead-world guard).
@@ -156,89 +153,64 @@ void ApplyResolved(void* actor, const std::wstring& key, float wireClean, bool a
     if (!BW::ReadClean(actor, cur)) return;
     const float target = adopt ? wireClean : std::min(cur, wireClean);
     if (std::fabs(target - cur) < kCleanEps) {
-        std::lock_guard<std::mutex> lk(g_stateMutex);
-        g_lastKnown[key] = target;  // converge the poll baseline; no write needed
         if (ProbeLog())
             UE_LOGI("window: apply key='%ls' already %.3f -- idempotent skip", key.c_str(), target);
         return;
     }
-    g_echo.store(true, std::memory_order_release);
     const bool ok = BW::WriteCleanAndApply(actor, target);
-    g_echo.store(false, std::memory_order_release);
-    { std::lock_guard<std::mutex> lk(g_stateMutex); g_lastKnown[key] = target; }
-    UE_LOGI("window: applied clean=%.3f (wire=%.3f adopt=%d) ok=%d key='%ls' (from slot %u)",
-            target, wireClean, adopt ? 1 : 0, ok ? 1 : 0, key.c_str(), fromSlot);
+    if (ProbeLog() || !ok)
+        UE_LOGI("window: applied %s clean=%.3f (wire=%.3f) ok=%d key='%ls' (from slot %u)",
+                adopt ? "an adopt" : "a live wipe", target, wireClean, ok ? 1 : 0, key.c_str(), fromSlot);
 }
 
-// SENDER: poll every indexed window for a clean DECREASE (a wipe) and broadcast it. The first
-// sighting of a key primes the baseline SILENTLY (initial divergence is the connect-snapshot's
-// job). A wire update only ever makes a window cleaner, so we never broadcast an increase
-// (a save reload that re-dirties just resyncs the baseline silently). Game thread.
-void PollAndBroadcast() {
-    if (g_echo.load(std::memory_order_acquire)) return;
+// ---- the sender: the wipe verb ---------------------------------------------------------------
+constexpr int kTagWindowWipe = 0x57495045;  // 'WIPE'
+bool g_wipeWatched = false;
+
+// The window a cleanSponge body runs on and its clean before the body. A body never nests on one
+// window.
+void* g_wiping = nullptr;
+float g_before = 0.f;
+
+sg::Verdict OnWipePre(const sg::Call& call) {
+    g_wiping = nullptr;
+    if (call.object && BW::ReadClean(call.object, g_before)) g_wiping = call.object;
+    return sg::Verdict::Run;
+}
+
+// After the body: the clean it left, sent when it fell. A session with nobody connected has no one
+// to send to; the joiner's snapshot is the connect half.
+void OnWipePost(const sg::Call& call) {
+    if (!g_wiping || call.object != g_wiping) return;
+    g_wiping = nullptr;
     auto* s = g_session.load(std::memory_order_acquire);
-    // Gate on connected(): solo host has nobody to send to. We deliberately do NOT advance the
-    // baseline here -- OnDisconnect clears the map when all peers leave, and the connect-snapshot
-    // re-primes on the next join, so no stale baseline survives to cause a spurious reconnect edge.
     if (!s || !s->connected()) return;
-    auto& refs = g_pollScratch;
-    refs.clear();
-    {
-        std::lock_guard<std::mutex> lk(g_indexMutex);
-        if (g_byKey.empty()) return;
-        refs.reserve(g_byKey.size());
-        for (auto& kv : g_byKey) refs.emplace_back(kv.first, kv.second);
-    }
-    for (auto& r : refs) {
-        if (!R::IsLiveByIndex(r.second.actor, r.second.idx)) continue;
-        float cur = 0.f;
-        if (!BW::ReadClean(r.second.actor, cur)) continue;
-        float base = 0.f;
-        bool firstSight = false;
-        {
-            std::lock_guard<std::mutex> lk(g_stateMutex);
-            auto it = g_lastKnown.find(r.first);
-            if (it == g_lastKnown.end()) { g_lastKnown[r.first] = cur; firstSight = true; }
-            else base = it->second;
-        }
-        if (firstSight) continue;  // prime silently
-        if (cur < base - kCleanEps) {
-            coop::net::KeyedScalarPayload p{};
-            WireKeyFromString(r.first, p.key);
-            p.value = cur;
-            p.adopt = 0;  // live wipe -> receivers apply MIN
-            if (s->SendReliable(coop::net::ReliableKind::WindowCleanState, &p, sizeof(p))) {
-                std::lock_guard<std::mutex> lk(g_stateMutex);
-                g_lastKnown[r.first] = cur;
-                UE_LOGI("window: sent clean=%.3f key='%ls'", cur, r.first.c_str());
-            } else {
-                UE_LOGW("window: SendReliable failed key='%ls'", r.first.c_str());
-            }
-        } else if (cur > base + kCleanEps) {
-            // Got dirtier (save reload / reset) -- resync the baseline silently; we never
-            // propagate a re-dirty (min-wins receivers would ignore it anyway).
-            std::lock_guard<std::mutex> lk(g_stateMutex);
-            g_lastKnown[r.first] = cur;
-        }
-    }
+    float cur = 0.f;
+    if (!BW::ReadClean(call.object, cur) || cur >= g_before - kCleanEps) return;
+    const std::wstring key = BW::GetKeyString(call.object);
+    if (key.empty() || key == L"None") return;
+    coop::net::KeyedScalarPayload p{};
+    WireKeyFromString(key, p.key);
+    p.value = cur;
+    p.adopt = 0;  // a live wipe: receivers apply the minimum
+    if (!s->SendReliable(coop::net::ReliableKind::WindowCleanState, &p, sizeof(p)))
+        UE_LOGW("window: SendReliable failed key='%ls'", key.c_str());
+    else if (ProbeLog())
+        UE_LOGI("window: sent clean=%.3f key='%ls'", cur, key.c_str());
 }
 
-// DEV-ONLY synthetic wipe (ini `window_synth=1`). One-shot, host-only: about 5 s after connect,
-// decrement the first indexed window's `clean` through the SAME path a real soapy-sponge wipe
-// drives (WriteCleanAndApply -> field write + setClean repaint), so the PollAndBroadcast below
-// detects the decrease and broadcasts it. It exercises the live-wipe chain (host detect ->
-// WindowCleanState -> client apply) without a hand at the keyboard, which narrows a
-// real-gesture-only failure to the clean-field detection. NOT shipped behavior -- gated off by
-// default; remove the ini key for play.
+// DEV-ONLY synthetic wipe (`window_synth=1`). One-shot, host-only, armed when the joiner's world is
+// ready: it runs cleanSponge on the first indexed window through the verb itself, as a sponge would,
+// so the watch above sends the fall and the client applies it -- the live-wipe chain end to end
+// without a hand at the keyboard. NOT shipped behavior -- gated off by default.
 void MaybeSyntheticWipe() {
     static const bool s_on = ::coop::config::ResolveFlag(::coop::config_registry::rows::window_synth);
     if (!s_on) return;
     static bool s_done = false;
-    static int  s_ticks = 0;
     if (s_done) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (++s_ticks < 300) return;  // ~5s settle after connect (60 Hz tick)
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host || !s->IsSlotWorldReady(1)) return;
+    if (!sg::ClassNameWatchLive(L"baseWindow_C", L"cleanSponge", kTagWindowWipe)) return;  // the send rides it
     void* actor = nullptr;
     int32_t idx = -1;
     std::wstring key;
@@ -250,16 +222,17 @@ void MaybeSyntheticWipe() {
         actor = kv.second.actor;
         idx = kv.second.idx;
     }
-    if (!actor || !R::IsLiveByIndex(actor, idx)) return;  // the 4 sibling sites' shape
-    float cur = 0.f;
-    if (!BW::ReadClean(actor, cur)) return;
-    float target = cur - 0.4f;
-    if (target < 0.f) target = 0.f;
-    BW::WriteCleanAndApply(actor, target);  // field write + setClean (the real wipe path)
+    if (!actor || !R::IsLiveByIndex(actor, idx)) return;
+    float before = 0.f;
+    if (!BW::ReadClean(actor, before)) return;
     s_done = true;
-    UE_LOGW("window[SYNTH]: dev synthetic wipe -- key='%ls' clean %.3f -> %.3f "
-            "(PollAndBroadcast should now send + the client should apply)",
-            key.c_str(), cur, target);
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"cleanSponge");
+    ue_wrap::ParamFrame f(fn);
+    const bool ok = fn && f.valid() && f.Set<float>(L"clean", 40.f) && ue_wrap::Call(actor, f);  // 0.4 off
+    float after = before;
+    BW::ReadClean(actor, after);
+    UE_LOGW("window[SYNTH]: dev synthetic wipe through cleanSponge -- key='%ls' clean %.3f -> %.3f ok=%d",
+            key.c_str(), before, after, ok ? 1 : 0);
 }
 
 }  // namespace
@@ -267,6 +240,8 @@ void MaybeSyntheticWipe() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     RegisterWithScanHub();  // the hub builds the index on its own cadence
+    if (!g_wipeWatched)
+        g_wipeWatched = sg::WatchClassName(L"baseWindow_C", L"cleanSponge", kTagWindowWipe, &OnWipePre, &OnWipePost);
 }
 
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot) {
@@ -321,7 +296,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.value = clean;
         p.adopt = 1;  // connect-snapshot -> the joiner adopts the host's world unchanged
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WindowCleanState, &p, sizeof(p));
-        { std::lock_guard<std::mutex> lk(g_stateMutex); g_lastKnown[d.first] = clean; }
         ++sent;
     }
     UE_LOGI("window: connect-snapshot -- sent %d window clean(s) to slot %d (of %zu indexed)",
@@ -332,40 +306,34 @@ void Tick() {
     if (!BW::EnsureResolved()) return;
     RegisterWithScanHub();  // safety net for any order where Tick precedes Install
     if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
-    MaybeSyntheticWipe();  // dev-only, ini-gated one-shot (no-op unless window_synth=1)
+    MaybeSyntheticWipe();  // dev-only, flag-gated one-shot (no-op unless window_synth=1)
     const auto now = std::chrono::steady_clock::now();
-    if (now - g_lastRetry >= kRetryRebuildThrottle) {
-        g_lastRetry = now;
-        // RECEIVER: retry deferred applies for windows that have now streamed in (the hub
-        // refreshed the index on its own cadence; this throttle now paces only the retries).
-        if (!g_pending.empty()) {
-            int applied = 0, expired = 0, still = 0;
-            for (auto it = g_pending.begin(); it != g_pending.end();) {
-                if (void* actor = ResolveFast(it->first)) {
-                    ApplyResolved(actor, it->first, it->second.clean, it->second.adopt, it->second.fromSlot);
-                    it = g_pending.erase(it);
-                    ++applied;
-                } else if (now >= it->second.deadline) {
-                    if (ProbeLog())
-                        UE_LOGI("window: deferred '%ls' expired (not present on this peer)", it->first.c_str());
-                    it = g_pending.erase(it);
-                    ++expired;
-                } else { ++it; ++still; }
-            }
-            if (applied || expired)
-                UE_LOGI("window: retry tick -- applied %d deferred, dropped %d expired, %d still pending",
-                        applied, expired, still);
-        }
+    if (now - g_lastRetry < kRetryRebuildThrottle) return;
+    g_lastRetry = now;
+    // RECEIVER: retry deferred applies for windows that have now streamed in (the hub refreshed the
+    // index on its own cadence; this throttle paces only the retries).
+    if (g_pending.empty()) return;
+    int applied = 0, expired = 0, still = 0;
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        if (void* actor = ResolveFast(it->first)) {
+            ApplyResolved(actor, it->first, it->second.clean, it->second.adopt, it->second.fromSlot);
+            it = g_pending.erase(it);
+            ++applied;
+        } else if (now >= it->second.deadline) {
+            if (ProbeLog())
+                UE_LOGI("window: deferred '%ls' expired (not present on this peer)", it->first.c_str());
+            it = g_pending.erase(it);
+            ++expired;
+        } else { ++it; ++still; }
     }
-    PollAndBroadcast();
+    if (applied || expired)
+        UE_LOGI("window: retry tick -- applied %d deferred, dropped %d expired, %d still pending",
+                applied, expired, still);
 }
 
 void OnDisconnect() {
     g_pending.clear();
-    std::lock_guard<std::mutex> lk(g_stateMutex);
-    const size_t n = g_lastKnown.size();
-    g_lastKnown.clear();
-    if (n > 0) UE_LOGI("window: OnDisconnect cleared %zu last-known", n);
+    g_wiping = nullptr;
 }
 
 }  // namespace coop::window_sync

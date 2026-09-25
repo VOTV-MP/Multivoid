@@ -1,12 +1,12 @@
 // coop/interactables/window_sync.h -- the base window's dirt scalar (AbaseWindow_C::clean, the
 // base's "main huge window"), on ReliableKind::WindowCleanState. Gameplay/network layer (principle
-// 7): the wire protocol, the per-tick poll, the apply, the per-window Key->actor index, the
-// deferred retry and the connect snapshot; the engine is reached only through ue_wrap::base_window.
+// 7): the wire protocol, the wipe watch, the apply, the per-window Key->actor index, the deferred
+// retry and the connect snapshot; the engine is reached only through ue_wrap::base_window.
 //
-// The model is symmetric and monotone, MTA's min register. While connected, each peer polls its
-// indexed windows' `clean` once per tick -- not a UFunction observer, since cleanSponge is
-// blueprint-internal and never reaches our ProcessEvent detour, as with doors and the keypad -- and
-// broadcasts on a DECREASE, keyed by the window's Aactor_save_C::Key. A receiver resolves the
+// The model is symmetric and monotone, MTA's min register. While connected, each peer sends a
+// window's `clean` when its cleanSponge lowers it -- a script-gate PRE/POST watch on the body, which
+// sees the Blueprint-internal call that the ProcessEvent detour cannot -- keyed by the window's
+// Aactor_save_C::Key. A receiver resolves the
 // window by Key, deferring and retrying if it has not streamed in yet, and applies MIN(local,
 // wire): a live edge can only make a window CLEANER, so two peers wiping at once converge without
 // oscillation, and nothing re-raises `clean` the way a door re-closes, so no host authority is
@@ -25,8 +25,8 @@ struct KeyedScalarPayload;
 
 namespace coop::window_sync {
 
-// Resolve the baseWindow_C class + build the Key->actor index. Idempotent; retried every
-// net-pump tick until the BP class is loaded. Stores the session pointer. Game thread.
+// Register with the scan hub (the Key->actor index) and put the wipe watch on cleanSponge.
+// Idempotent; called every net-pump tick. Stores the session pointer. Game thread.
 void Install(coop::net::Session* session);
 
 // Receiver entry: a WindowCleanState packet arrived, its payload already copied and range-checked
@@ -40,11 +40,11 @@ void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeer
 // net-pump connect edge. Game thread.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Per-tick: poll for live `clean` decreases (broadcast wipes) + retry deferred applies
-// (throttled). Call every net-pump tick on the game thread.
+// Per-tick: retry deferred applies (throttled), and the dev synthetic wipe when armed. Call every
+// net-pump tick on the game thread.
 void Tick();
 
-// Session teardown: clear the per-session poll baseline + pending applies.
+// Session teardown: clear the pending applies.
 void OnDisconnect();
 
 }  // namespace coop::window_sync
