@@ -53,8 +53,11 @@ constexpr size_t   kMaxPending    = 8;
 constexpr uint64_t kRefusalSayMs  = 10000;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-bool g_watchInstalled[kWatchCount] = {};
-bool g_announcedLive = false;
+// Each watch registers once: a refusal (a full gate table) is final, and said once. The set settles
+// once every watch is live, or once no name is left to resolve and the rest are dead for good.
+enum class Reg : uint8_t { Pending, Registered, Refused };
+Reg  g_reg[kWatchCount] = {};
+bool g_settled = false;
 
 uint64_t g_sent = 0, g_ran = 0, g_denied = 0, g_worldRefused = 0;
 
@@ -210,9 +213,16 @@ sg::Verdict OnVerbPre(const sg::Call& call) {
 }
 
 void RegisterWatches() {
-    for (int i = 0; i < kWatchCount; ++i)
-        if (!g_watchInstalled[i])
-            g_watchInstalled[i] = sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnVerbPre, nullptr);
+    for (int i = 0; i < kWatchCount; ++i) {
+        if (g_reg[i] != Reg::Pending) continue;
+        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnVerbPre, nullptr)) {
+            g_reg[i] = Reg::Registered;
+            continue;
+        }
+        g_reg[i] = Reg::Refused;
+        UE_LOGE("[DOOR-VERB] the script-body gate refused the watch on '%ls' -- for the rest of this process "
+                "that door verb runs only where it is used", kWatches[i].name);
+    }
 }
 
 }  // namespace
@@ -224,13 +234,19 @@ void Install(coop::net::Session* session) {
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
-    if (!g_announcedLive) {
-        bool live = true;
-        for (int i = 0; i < kWatchCount && live; ++i)
-            live = g_watchInstalled[i] && sg::NameWatchLive(kWatches[i].name, kWatches[i].tag);
-        if (live) {
-            g_announcedLive = true;
+    if (!g_settled) {
+        int live = 0, pending = 0;
+        for (int i = 0; i < kWatchCount; ++i) {
+            if (g_reg[i] == Reg::Pending) ++pending;
+            else if (g_reg[i] == Reg::Registered && sg::NameWatchLive(kWatches[i].name, kWatches[i].tag)) ++live;
+        }
+        if (live == kWatchCount) {
+            g_settled = true;
             UE_LOGI("[DOOR-VERB] the door verb gates are live: press, hit and pry");
+        } else if (pending == 0 && sg::PendingNameCount() == 0) {
+            g_settled = true;
+            UE_LOGE("[DOOR-VERB] %d of %d door verb gates are dead (refused, or resolved into a full table) -- "
+                    "those verbs run only where they are used", kWatchCount - live, kWatchCount);
         }
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;

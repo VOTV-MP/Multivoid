@@ -30,8 +30,11 @@ constexpr StateWatch kWatches[] = {
 constexpr int kWatchCount = static_cast<int>(sizeof(kWatches) / sizeof(kWatches[0]));
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-bool g_watchInstalled[kWatchCount] = {};
-bool g_announcedLive = false;
+// Each watch registers once: a refusal (a full gate table) is final, and said once. The set settles
+// once every watch is live, or once no name is left to resolve and the rest are dead for good.
+enum class Reg : uint8_t { Pending, Registered, Refused };
+Reg  g_reg[kWatchCount] = {};
+bool g_settled = false;
 
 uint64_t g_refused = 0, g_edges = 0;
 // A key's first refusal is said; the rest are counted. The set holds each door this client's own
@@ -72,9 +75,16 @@ void OnStatePost(const sg::Call& call) {
 }
 
 void RegisterWatches() {
-    for (int i = 0; i < kWatchCount; ++i)
-        if (!g_watchInstalled[i])
-            g_watchInstalled[i] = sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnStatePre, &OnStatePost);
+    for (int i = 0; i < kWatchCount; ++i) {
+        if (g_reg[i] != Reg::Pending) continue;
+        if (sg::WatchName(kWatches[i].name, kWatches[i].tag, &OnStatePre, &OnStatePost)) {
+            g_reg[i] = Reg::Registered;
+            continue;
+        }
+        g_reg[i] = Reg::Refused;
+        UE_LOGE("[DOOR-STATE] the script-body gate refused the watch on '%ls' -- for the rest of this process "
+                "the door lane cannot see that verb", kWatches[i].name);
+    }
 }
 
 }  // namespace
@@ -86,11 +96,20 @@ void Install(coop::net::Session* session) {
 
 void Tick() {
     sg::ResolvePendingNames();
-    if (g_announcedLive) return;
-    for (int i = 0; i < kWatchCount; ++i)
-        if (!g_watchInstalled[i] || !sg::NameWatchLive(kWatches[i].name, kWatches[i].tag)) return;
-    g_announcedLive = true;
-    UE_LOGI("[DOOR-STATE] the door state gates are live: doorOpen and doorClose");
+    if (g_settled) return;
+    int live = 0, pending = 0;
+    for (int i = 0; i < kWatchCount; ++i) {
+        if (g_reg[i] == Reg::Pending) ++pending;
+        else if (g_reg[i] == Reg::Registered && sg::NameWatchLive(kWatches[i].name, kWatches[i].tag)) ++live;
+    }
+    if (live == kWatchCount) {
+        g_settled = true;
+        UE_LOGI("[DOOR-STATE] the door state gates are live: doorOpen and doorClose");
+    } else if (pending == 0 && sg::PendingNameCount() == 0) {
+        g_settled = true;
+        UE_LOGE("[DOOR-STATE] %d of %d door state gates are dead (refused, or resolved into a full table) -- the "
+                "door lane cannot see those verbs", kWatchCount - live, kWatchCount);
+    }
 }
 
 void OnDisconnect() {

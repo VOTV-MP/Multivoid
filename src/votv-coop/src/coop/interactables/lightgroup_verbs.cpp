@@ -26,8 +26,11 @@ constexpr const wchar_t* kVerb = L"runTrigger";
 constexpr int kTag = 0x4C475254;  // 'LGRT'
 
 std::atomic<coop::net::Session*> g_session{nullptr};
-bool g_watchInstalled = false;
-bool g_announcedLive = false;
+// The watch registers once: a refusal (a full gate table) is final, and said once. It settles once
+// live, or once no name is left to resolve and it is dead for good.
+enum class Reg : uint8_t { Pending, Registered, Refused };
+Reg  g_reg = Reg::Pending;
+bool g_settled = false;
 
 uint64_t g_refused = 0, g_edges = 0;
 // A group's first refusal is said; the rest are counted. The set holds each group this client's own
@@ -65,14 +68,27 @@ void OnTriggerPost(const sg::Call& call) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (!g_watchInstalled) g_watchInstalled = sg::WatchName(kVerb, kTag, &OnTriggerPre, &OnTriggerPost);
+    if (g_reg != Reg::Pending) return;
+    if (sg::WatchName(kVerb, kTag, &OnTriggerPre, &OnTriggerPost)) {
+        g_reg = Reg::Registered;
+        return;
+    }
+    g_reg = Reg::Refused;
+    UE_LOGE("[LIGHT-GROUP] the script-body gate refused the watch on runTrigger -- for the rest of this process "
+            "the group lane cannot see it");
 }
 
 void Tick() {
     sg::ResolvePendingNames();
-    if (g_announcedLive || !g_watchInstalled || !sg::NameWatchLive(kVerb, kTag)) return;
-    g_announcedLive = true;
-    UE_LOGI("[LIGHT-GROUP] the light group gate is live: runTrigger");
+    if (g_settled || g_reg == Reg::Pending) return;
+    if (g_reg == Reg::Registered && sg::NameWatchLive(kVerb, kTag)) {
+        g_settled = true;
+        UE_LOGI("[LIGHT-GROUP] the light group gate is live: runTrigger");
+    } else if (sg::PendingNameCount() == 0) {
+        g_settled = true;
+        UE_LOGE("[LIGHT-GROUP] the light group gate is dead (refused, or resolved into a full table) -- the group "
+                "lane cannot see runTrigger");
+    }
 }
 
 void OnDisconnect() {
