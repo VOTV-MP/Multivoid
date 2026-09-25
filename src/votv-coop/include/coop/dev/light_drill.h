@@ -6,7 +6,8 @@
 //   CLIENT -- once its join is over, picks the same switch, presses it, and reads its own copy of
 //             the group straight after: the press must have flipped the switch and left the group.
 //   HOST   -- once its group shows the client's press, presses the switch itself.
-//   CLIENT -- once its group has shown the host's change and then the host's press, says DONE.
+//   CLIENT -- once the group lane has applied the host's change and then the host's press to its
+//             copy (counted at the group's own runTrigger, so two in one tick are both seen), DONE.
 // Each peer logs every change of that group's state. Lines are tagged [LIGHT-DRILL]. Run on both
 // peers of a pair (light_drill=1); the client's DONE line ends it.
 

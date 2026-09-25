@@ -11,6 +11,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/lightswitch.h"
 
 #include <chrono>
@@ -22,12 +23,13 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace LS = ue_wrap::lightswitch;
+namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
 // A step that waits on the other peer's change ends here: one that has not crossed by then did not.
 constexpr auto kCrossBound = std::chrono::seconds(20);
 
-enum class Phase { Unpicked, Waiting, Pressed, SawHost, Done };
+enum class Phase { Unpicked, Waiting, Pressed, Done };
 
 void*        g_switch = nullptr;
 int32_t      g_switchIdx = -1;
@@ -38,6 +40,25 @@ int          g_last = -1;    // its state at the last reading
 Phase        g_phase = Phase::Unpicked;
 Clock::time_point g_since{};
 Clock::time_point g_nextTry{};  // the next pick attempt while the lane indexes the switches
+
+// The states the group lane applied to the drill's group on this client, in order: its own runTrigger
+// after the body, under the lane's apply mark. A sample a tick can miss both when the host's change
+// and its press back land in one tick; the applies cannot.
+constexpr int kTagApply = 0x4C445254;  // 'LDRT'
+bool    g_applyWatched = false;
+int32_t g_indexOff = -2;
+int     g_applied[2] = {-1, -1};
+int     g_appliedCount = 0;
+
+void OnRunTriggerPost(const sg::Call& call) {
+    if (!call.object || call.object != g_group || !coop::interactable_sync::ApplyingLightGroup(call.object)) return;
+    if (!call.function || !call.locals) return;
+    if (g_indexOff == -2) g_indexOff = R::FindParamOffset(call.function, L"index");
+    if (g_indexOff < 0) return;
+    const int32_t index = *reinterpret_cast<const int32_t*>(call.locals + g_indexOff);
+    const int state = index == 1 ? 1 : index == 2 ? 0 : -1;
+    if (state >= 0 && g_appliedCount < 2) g_applied[g_appliedCount++] = state;
+}
 
 const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
@@ -104,6 +125,7 @@ void Tick(coop::net::Session* session) {
     if (!IsEnabled() || g_phase == Phase::Done) return;
     if (!session || !session->connected() || !RoleIsReady()) return;
     if (!LS::EnsureResolved() || !LS::EnsureSwitchResolved()) return;
+    if (!g_applyWatched) g_applyWatched = sg::WatchName(L"runTrigger", kTagApply, nullptr, &OnRunTriggerPost);
     const bool host = coop::roster::LocalIsHost();
     if (g_phase == Phase::Unpicked) {
         if (Clock::now() < g_nextTry) return;
@@ -162,22 +184,20 @@ void Tick(coop::net::Session* session) {
         }
         return;  // no bound here: the host waits for however long the client's join takes
     }
-    if (!host && (g_phase == Phase::Pressed || g_phase == Phase::SawHost)) {
-        if (g_phase == Phase::Pressed && cur != g_start) {
-            g_phase = Phase::SawHost;
-            g_since = Clock::now();
-            UE_LOGI("[LIGHT-DRILL] client SAW the host's group change after %lld ms", ms);
-            return;
-        }
-        if (g_phase == Phase::SawHost && cur == g_start) {
-            Done("crossed=1 both ways");
+    if (!host && g_phase == Phase::Pressed) {
+        // The host's change arrives as the lane's apply of the other state, then its press back as the
+        // apply of the start state.
+        if (g_appliedCount >= 2) {
+            UE_LOGI("[LIGHT-DRILL] client: the lane applied %d then %d to the group, %lld ms after the press",
+                    g_applied[0], g_applied[1], ms);
+            const bool both = g_applied[0] == 1 - g_start && g_applied[1] == g_start;
+            Done(both ? "crossed=1 both ways" : "applied in the wrong order -- FAIL");
             return;
         }
         if (Clock::now() - g_since > kCrossBound) {
-            UE_LOGW("[LIGHT-DRILL] client: %s within %lld s -- FAIL", g_phase == Phase::Pressed
-                    ? "the host's group change never arrived" : "the host's own press never crossed",
+            UE_LOGW("[LIGHT-DRILL] client: %d of the host's 2 changes arrived within %lld s -- FAIL", g_appliedCount,
                     static_cast<long long>(kCrossBound.count()));
-            Done(g_phase == Phase::Pressed ? "crossed=0" : "crossed=1 one way");
+            Done(g_appliedCount == 0 ? "crossed=0" : "crossed=1 one way");
         }
     }
 }
@@ -190,6 +210,8 @@ void OnDisconnect() {
     g_key.clear();
     g_start = g_last = -1;
     g_nextTry = {};
+    g_applied[0] = g_applied[1] = -1;
+    g_appliedCount = 0;
     g_phase = Phase::Unpicked;
 }
 
