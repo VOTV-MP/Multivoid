@@ -4,12 +4,12 @@
 
 #include "ue_wrap/devices/window_canvas.h"
 
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
@@ -51,7 +51,6 @@ void*   g_setScalarFn   = nullptr;  // MaterialInstanceDynamic::SetScalarParamet
 void*   g_getScalarFn   = nullptr;  // MaterialInstanceDynamic::K2_GetScalarParameterValue
 void*   g_matLibCdo     = nullptr;  // Default__KismetMaterialLibrary
 void*   g_createMidFn   = nullptr;  // KismetMaterialLibrary::CreateDynamicMaterialInstance
-ue_wrap::CachedObjRef g_gamemode;   // mainGamemode_C
 int32_t g_offPanels     = -1;       // mainGamemode_C::analogPanels
 void*   g_panelsCls     = nullptr;  // class the isPlayingSignal offset below was resolved on
 int32_t g_playingByte   = -1;
@@ -251,9 +250,8 @@ bool ReadHeldBrush(void* mainPlayer, float& size, float& opac, float& col) {
 }
 
 bool IsSignalPlaying() {
-    if (!g_gamemode.Alive()) g_gamemode.Set(R::FindObjectByClass(L"mainGamemode_C"));
-    void* gm = g_gamemode.Raw();
-    if (!gm || !g_gamemode.Alive()) return false;
+    void* gm = world_singleton::Gamemode();
+    if (!gm) return false;
     if (g_offPanels < 0) g_offPanels = R::FindPropertyOffset(R::ClassOf(gm), L"analogPanels");
     if (g_offPanels < 0) return false;
     void* panels = ReadField<void*>(gm, g_offPanels);

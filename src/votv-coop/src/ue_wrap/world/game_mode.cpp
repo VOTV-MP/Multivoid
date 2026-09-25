@@ -3,14 +3,13 @@
 #include "ue_wrap/world/game_mode.h"
 
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
 
 namespace ue_wrap::game_mode {
 namespace {
 
-namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 
 // Declaration order, so the index is the ordinal. Tutorial and custom are front-door menu modes
@@ -47,9 +46,8 @@ int ReadFrom(void* gameInstance) {
 }
 
 int ReadLocal() {
-    // Resolved fresh: the mode is wanted at boot seams, and a null GameInstance is the answer
-    // "not booted yet" rather than a miss worth caching.
-    return ReadFrom(R::FindObjectByClass(P::name::GameInstanceClass));
+    // A null GameInstance is the answer "not booted yet"; the singleton finds it the moment it is.
+    return ReadFrom(world_singleton::GameInstance());
 }
 
 int WriteTo(void* gameInstance, int mode) {

@@ -18,6 +18,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/serverbox.h"
+#include "ue_wrap/engine/world_identity.h"   // Generation, the baseline's anchor
 
 #include <atomic>
 #include <chrono>
@@ -72,7 +73,7 @@ bool ReadState(coop::net::ServerStatePayload& p) {
 }
 
 // ---- host poll baseline ---------------------------------------------------------------------------
-uint32_t g_polledGmGeneration = 0;
+uint32_t g_polledWorldGen = 0;
 bool  g_primed = false;
 uint64_t g_lastMask = 0;
 int32_t  g_lastBroken = 0;
@@ -168,11 +169,12 @@ void Tick() {
     // HOST: poll -> broadcast on change.
     coop::net::ServerStatePayload p{};
     if (!ReadState(p)) return;
-    // World/save reload minted a new gamemode -> baseline meaningless; re-prime silently (a prime must
-    // never masquerade as an edge; the join-edge + the next real transition deliver state).
-    const uint32_t gen = SB::GamemodeGeneration();
-    if (gen != g_polledGmGeneration || !g_primed) {
-        g_polledGmGeneration = gen; g_primed = true; UpdateBaseline(p);
+    // A world or save reload minted a new gamemode with its world -> baseline meaningless; re-prime
+    // silently (a prime must never masquerade as an edge; the join-edge + the next real transition
+    // deliver state).
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_polledWorldGen || !g_primed) {
+        g_polledWorldGen = gen; g_primed = true; UpdateBaseline(p);
         return;
     }
     if (!StateChanged(p)) return;
@@ -226,7 +228,7 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
 }
 
 void OnDisconnect() {
-    g_polledGmGeneration = 0; g_primed = false;
+    g_polledWorldGen = 0; g_primed = false;
     g_lastMask = 0; g_lastBroken = 0; g_lastPollMs = 0;
     // Restore the neutralized breaker: KillLocalBreaker disabled the actor tick, and resetting only
     // the latch left servers permanently unbreakable in the SAME process after the session (solo

@@ -20,12 +20,15 @@
 
 namespace ue_wrap::object_index {
 
-// Register the listeners. Idempotent; false until reflection has resolved. The seed runs on the
-// first Drain, so events recorded between the two are folded in rather than lost.
+// Register the listeners, and the drain as the game-thread dispatcher's prologue: before every batch
+// of posted tasks, from the first after boot, the index applies the engine's notifications up to its
+// per-drain budget, so after a level load it trails for a few batches. Idempotent; false until
+// reflection has resolved. The seed
+// runs on the first Drain, so events recorded between the two are folded in rather than lost.
 bool Install();
 
 // Apply the queued events, seeding first; budgeted, so a level load's backlog spreads over ticks.
-// Returns the number of events applied. Game thread.
+// Returns the number of events applied. Game thread; the dispatcher's prologue is its caller.
 size_t Drain();
 
 bool IsSeeded();
@@ -40,6 +43,12 @@ size_t ForEachInstance(void* cls, InstanceFn fn, void* ctx);
 
 // Every class with at least one such instance, with one of them. Same contract.
 size_t ForEachClass(ClassFn fn, void* ctx);
+
+// The loaded class whose short name is `name`, compared without case as the engine compares names:
+// a class object the index holds, found in one lookup whether or not the class has an instance.
+// Null when no such class is loaded. Where two packages load classes of one name, the first still
+// standing. Game thread.
+void* ClassByName(const wchar_t* name);
 
 // The one observer of the class set and of births (the scan hub): a class's first instance
 // appeared, its last one went, an instance was born (after the class callback, when both fire).

@@ -12,12 +12,6 @@
 
 namespace ue_wrap::economy {
 
-// The live AmainGamemode_C, held by slot and serial between calls. Null while it is unresolvable
-// (booting, or at the menu). It is exposed because the gamemode owns verbs other wrappers need to
-// dispatch -- the upgrade apply hook is the first -- not so callers can read fields off it.
-// Game thread.
-void* GamemodePtr();
-
 // Every EARNING and SPEND in the game goes through lib_C::addPoints(int32 Add, UObject
 // __WorldContext). It adds to saveSlot.points, sets the player interface's points text, and
 // adds to save_main.stats -- total_points for a gain, points_spent for a spend. mainGamemode's

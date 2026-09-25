@@ -235,7 +235,6 @@ void OnDisconnect() {
     g_prevBig = g_prevSmall = TC::kSlotEmpty;
     g_nextSlotPoll = g_nextCorrector = 0;
     g_recentInsert[0] = g_recentInsert[1] = 0;
-    TC::ResetCache();
     UE_LOGI("[reel] tape_caddy_sync reset (disconnect)");
 }
 

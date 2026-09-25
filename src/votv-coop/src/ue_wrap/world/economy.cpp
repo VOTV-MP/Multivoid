@@ -3,9 +3,9 @@
 #include "ue_wrap/world/economy.h"
 
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 namespace ue_wrap::economy {
 namespace {
@@ -14,12 +14,6 @@ namespace R = ue_wrap::reflection;
 
 // Cached gamemode pointer (singleton-per-session); revalidated via IsLive, re-walked
 // via FindObjectByClass on a level transition. NOT a per-frame full-array scan (cached).
-ue_wrap::CachedObjRef g_gm;
-void* ResolveGamemode() {
-    if (g_gm.Alive()) return g_gm.Raw();
-    g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
-    return g_gm.Raw();
-}
 
 // Cached property offsets. Constant per BP class (mainGamemode_C / saveSlot_C never
 // change at runtime; a level transition re-walks the gamemode pointer but resolves the
@@ -32,7 +26,7 @@ int32_t g_offPoints = -1;
 // Resolve the live saveSlot + the Points field offset (offsets cached after first
 // resolve). Returns the saveSlot ptr (or null) and fills *outOff with the Points offset.
 void* ResolveSaveSlotAndPoints(int32_t* outOff) {
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return nullptr;
     if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
     if (g_offSave < 0) return nullptr;
@@ -46,10 +40,9 @@ void* ResolveSaveSlotAndPoints(int32_t* outOff) {
 
 }  // namespace
 
-void* GamemodePtr() { return ResolveGamemode(); }
 
 void* SaveSlotPtr() {  // the shared gamemode->saveSlot resolve, ptr only
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return nullptr;
     if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(gm), L"saveSlot");
     if (g_offSave < 0) return nullptr;
@@ -75,7 +68,7 @@ bool WritePoints(int32_t value) {
 }
 
 bool AddPoints(int32_t amount) {
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     void* fn = R::FindFunction(R::ClassOf(gm), L"AddPoints");
     if (!fn) {

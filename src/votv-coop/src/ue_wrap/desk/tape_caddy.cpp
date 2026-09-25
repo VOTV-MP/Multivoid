@@ -7,6 +7,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstdint>
@@ -28,11 +29,6 @@ int32_t g_offReelBig   = -1;
 int32_t g_offReelSmall = -1;
 void*   g_updFn        = nullptr;
 bool    g_resolved     = false;
-
-// The single placed unit (ptr + InternalIndexOf; IsLiveByIndex fast path; the
-// GUObjectArray walk runs only on a cache miss -- dish.cpp SingletonCache shape).
-void*   g_unit    = nullptr;
-int32_t g_unitIdx = -1;
 
 }  // namespace
 
@@ -67,16 +63,7 @@ bool EnsureResolved() {
 
 void* Instance() {
     if (!g_resolved) return nullptr;
-    if (g_unit && R::IsLiveByIndex(g_unit, g_unitIdx)) return g_unit;
-    g_unit = nullptr; g_unitIdx = -1;
-    for (void* obj : R::FindObjectsByClass(L"wallunit_tapes_C")) {
-        if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-            g_unit = obj;
-            g_unitIdx = R::InternalIndexOf(obj);
-            return obj;
-        }
-    }
-    return nullptr;
+    return world_singleton::Find(L"wallunit_tapes_C");   // the single placed unit
 }
 
 bool ReadReels(float& big, float& small) {
@@ -108,11 +95,6 @@ bool IsReelClass(void* cls) {
     if (cls == g_reelBaseCls) return true;
     void* base[1] = { g_reelBaseCls };
     return R::IsDescendantOfAny(cls, base, 1);
-}
-
-void ResetCache() {
-    g_unit = nullptr;
-    g_unitIdx = -1;
 }
 
 }  // namespace ue_wrap::tape_caddy

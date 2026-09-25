@@ -5,6 +5,7 @@
 #include "ue_wrap/engine/engine.h"      // SpawnActor, FVector
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
 #include <cstring>
@@ -46,8 +47,8 @@ int GiveFromClassRaw(void* cls, void* gm, void* getDataFn, void* addFn, void* de
 
 bool GiveFromClass(const std::wstring& className) {
     void* cls   = R::FindClass(className.c_str());
-    void* gm    = R::FindObjectByClass(L"mainGamemode_C");
-    void* gmCls = R::FindClass(L"mainGamemode_C");
+    void* gm    = world_singleton::Gamemode();
+    void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     void* addFn     = gmCls ? R::FindFunction(gmCls, L"AddEquipment") : nullptr;
     void* getDataFn = cls   ? R::FindFunction(cls,   L"getData")      : nullptr;
     if (!cls || !gm || !addFn || !getDataFn) {

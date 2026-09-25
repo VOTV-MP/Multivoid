@@ -68,6 +68,11 @@ bool IsGameThread();
 // false-positive at boot. The predicate ue_wrap/core/hot_path_guard.h fires on.
 bool IsDefinitelyOffGameThread();
 
+// The one function the dispatcher runs before each drain's tasks, refusal window or not, under the
+// tasks' own fault firewall: the object index's budgeted drain, so every task from the first after
+// boot reads an index fed by the engine's notifications. Null clears it. Any thread; set at boot.
+void SetPumpPrologue(void (*fn)());
+
 // The number of tasks the dispatcher has run (diagnostics and the self-test).
 unsigned long long TasksRun();
 

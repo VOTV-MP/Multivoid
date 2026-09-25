@@ -11,9 +11,9 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/ftext_utils.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/world/store_catalog.h"
 
 #include <cstring>
@@ -44,12 +44,6 @@ constexpr int32_t kReadItemCap = 256;
 constexpr size_t  kCommitItemCap = 64;
 
 // ---- cached resolution (mirrors ue_wrap/world/economy.cpp) --------------------------------------
-ue_wrap::CachedObjRef g_gm;
-void* ResolveGamemode() {
-    if (g_gm.Alive()) return g_gm.Raw();
-    g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
-    return g_gm.Raw();
-}
 
 // mainGamemode_C field offsets (constant per class; resolved once).
 int32_t g_offSaveSlot   = -1;
@@ -97,7 +91,7 @@ void* ReadPtr(void* obj, int32_t off) {
 
 // Resolve the live saveSlot + the orders TArray offset (cached). Returns the saveSlot ptr or null.
 void* ResolveSaveSlot(int32_t* outOrdersOff) {
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm)) return nullptr;
     void* save = ReadPtr(gm, g_offSaveSlot);
     if (!save) return nullptr;
@@ -167,7 +161,7 @@ bool ReadOrder(int32_t index, OrderData& out) {
 }
 
 bool CanCommit() {
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm)) return false;
     if (g_offDrone < 0 || g_offRadiotower < 0 || g_offLaptop < 0) return false;
     void* drone = ReadPtr(gm, g_offDrone);
@@ -183,7 +177,7 @@ bool CanCommit() {
 bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
     namespace SC = ue_wrap::store_catalog;
 
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return false;
     void* laptop = ReadPtr(gm, g_offLaptop);
     if (!laptop) { UE_LOGW("order_economy: CommitOrder -- laptop null"); return false; }
@@ -263,7 +257,7 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
 }
 
 bool QuietLocalDrone() {
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm) || g_offDrone < 0) return false;
     void* drone = ReadPtr(gm, g_offDrone);
     if (!drone) return false;
@@ -282,7 +276,7 @@ int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {
                 "be rebuilt (the balance correction still applies)");
         return 0;
     }
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return 0;
     void* laptop = ReadPtr(gm, g_offLaptop);
     if (!laptop) return 0;
@@ -328,7 +322,7 @@ int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float et
     // EVERY bail below logs. A silent `return 0` here is indistinguishable from "the shop was
     // empty", which is exactly the ambiguity that has already cost this feature three smoke runs.
     if (rowNames.empty()) return 0;
-    void* gm = ResolveGamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) {
         UE_LOGW("order_economy: PlaceOrderFromShopUI -- gamemode/laptop offset unresolved");
         return 0;

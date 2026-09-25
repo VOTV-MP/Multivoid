@@ -18,6 +18,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <cstdint>
@@ -55,7 +56,6 @@ void* g_setViewTargetFn = nullptr;
 void* g_camMgrClass = nullptr;
 void* g_getCamLocFn = nullptr;
 void* g_getCamRotFn = nullptr;
-ue_wrap::CachedObjRef g_camMgr;  // cached instance; FindObjectByClass walks the array
 
 bool ResolveCamMgrFns() {
     if (!g_camMgrClass) g_camMgrClass = R::FindClass(P::name::PlayerCameraManagerClass);
@@ -66,13 +66,9 @@ bool ResolveCamMgrFns() {
     return g_getCamLocFn && g_getCamRotFn;
 }
 
-// Cached camera manager; only walk the GUObjectArray when the cache is empty or
-// the previous instance was destroyed (level change). Safe for per-frame callers.
-void* CamMgr() {
-    if (g_camMgr.Raw() && !g_camMgr.Alive()) g_camMgr.Reset();
-    if (!g_camMgr.Raw()) g_camMgr.Set(R::FindObjectByClass(P::name::PlayerCameraManagerClass));
-    return g_camMgr.Raw();
-}
+// The local player's camera manager (a puppet has no controller, so none of its own). Safe for
+// per-frame callers.
+void* CamMgr() { return world_singleton::Find(P::name::PlayerCameraManagerClass); }
 
 }  // namespace
 

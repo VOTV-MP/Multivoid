@@ -22,7 +22,9 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/world_identity.h"   // Generation, the membership's world
 #include "ue_wrap/world/active_events.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
@@ -48,8 +50,7 @@ struct ActiveEntry {
     long long firstSeenMs;  // steady-clock ms when the poll first saw it (elapsedSec source)
 };
 std::unordered_map<void*, ActiveEntry> g_active;  // sender ptr -> entry
-void* g_polledGm = nullptr;                       // the instance the membership belongs to
-int32_t g_polledGmIdx = -1;
+uint32_t g_polledGen = 0;                         // the world the membership belongs to (0: none yet)
 bool g_primed = false;
 long long g_lastPollMs = 0;
 constexpr long long kPollIntervalMs = 1000;  // event phases run seconds-to-minutes; 1 Hz is generous
@@ -128,16 +129,14 @@ int ReadRefcount() {
 
 void HostPollTick() {
     if (!AE::EnsureResolved()) return;  // before Gamemode(): the latched-OFF failure mode must not keep a cache warm nothing reads
-    int32_t gmIdx = -1;
-    void* gm = AE::Gamemode(&gmIdx);
-    if (!gm) return;
-    // World/save reload minted a new gamemode -> the old membership's pointers dangle. Drop and
-    // re-prime against the new instance (already-active events log BEGIN fresh -- correct: they
-    // ARE in flight in the new world).
-    if (gm != g_polledGm || !R::IsLiveByIndex(g_polledGm, g_polledGmIdx)) {
+    if (!ue_wrap::world_singleton::Gamemode()) return;
+    // A world or save reload minted a new gamemode with its world -> the old membership's pointers
+    // dangle. Drop and re-prime against the new world (already-active events log BEGIN fresh --
+    // correct: they ARE in flight in the new world).
+    const uint32_t gen = ue_wrap::world_identity::Generation();
+    if (gen != g_polledGen) {
         g_active.clear();
-        g_polledGm = gm;
-        g_polledGmIdx = gmIdx;
+        g_polledGen = gen;
         g_primed = false;
     }
     AE::Senders arr{};
@@ -251,8 +250,7 @@ void OnReliable(const coop::net::EventSnapshotPayload& payload) {
 
 void OnDisconnect() {
     g_active.clear();
-    g_polledGm = nullptr;
-    g_polledGmIdx = -1;
+    g_polledGen = 0;
     g_primed = false;
     g_session.store(nullptr, std::memory_order_release);
 }

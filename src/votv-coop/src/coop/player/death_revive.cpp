@@ -13,6 +13,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/engine.h"
@@ -206,8 +207,8 @@ void ReconcileRunEndLatches() {
     // [1] the HUD latch.
     if (g_verbs.offPlayerInterface >= 0 && g_verbs.offDamageIndicator >= 0 &&
         g_verbs.offDmgFull >= 0 && g_verbs.setVisibility) {
-        void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-        if (gm && R::IsLive(gm)) {
+        void* gm = ue_wrap::world_singleton::Gamemode();
+        if (gm) {
             void* ui = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) +
                                                  g_verbs.offPlayerInterface);
             if (ui && R::IsLive(ui)) {
@@ -254,8 +255,8 @@ float ClearDamageIndicator(float* outBefore = nullptr) {
         g_verbs.offDmgUp < 0 || g_verbs.offDmgDown < 0 ||
         g_verbs.offDmgLeft < 0 || g_verbs.offDmgRight < 0)
         return -1.f;
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) return -1.f;
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) return -1.f;
     void* ui = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(gm) +
                                                g_verbs.offPlayerInterface);
     if (!ui || !R::IsLive(ui)) return -1.f;

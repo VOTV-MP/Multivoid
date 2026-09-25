@@ -131,6 +131,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/garbage_bag.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_mode.cpp
+    src/ue_wrap/world/world_singleton.cpp
     src/ue_wrap/world/game_rules.cpp
     src/ue_wrap/world/upgrades.cpp
     src/ue_wrap/world/game_rules_pane.cpp
@@ -414,6 +415,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/hand_drop_selftest.cpp
     src/coop/dev/run_and_wait_selftest.cpp
+    src/coop/dev/world_singleton_parity.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp
@@ -549,7 +551,6 @@ set(VOTVCOOP_SOURCES
     src/harness/autotest/autotest_weather.cpp
     src/harness/autotest/autotest_seeddrill.cpp
     src/harness/autotest/autotest_scanparity.cpp
-    src/harness/autotest/autotest_worldctx.cpp
     src/harness/autotest/autotest_worldrules.cpp
     src/harness/autotest/autotest_menuspawn.cpp
     src/harness/autotest/autotest_config.cpp

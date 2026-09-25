@@ -75,11 +75,6 @@ bool ApplyBreak(void* box, bool broken);
 bool ReadAggregates(Aggregates& out);
 bool WriteAggregates(const Aggregates& in);
 
-// Bumps whenever a DIFFERENT gamemode object is resolved -- a world load or a save reload mints
-// one. A poll's baseline is anchored to a generation: a baseline carried across a bump describes
-// a gamemode that no longer exists, and the next reading off the new one would read as an edge.
-uint32_t GamemodeGeneration();
-
 // ---- server upgrades, read-only, for instruments -----------------------------------------------
 
 // The box's upgrade level, serverBox_C.upgrades, which initialServerUpgradeSpawn_C rolls at a new

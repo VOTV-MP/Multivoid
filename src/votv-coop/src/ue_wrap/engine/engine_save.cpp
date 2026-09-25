@@ -14,6 +14,7 @@
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/game_mode.h"
 #include "ue_wrap/world/game_rules.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
 #include <cstring>
@@ -331,7 +332,7 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
     if (g_storyGsCdo && !g_loadGameFn) {
         if (void* cls = R::ClassOf(g_storyGsCdo)) g_loadGameFn = R::FindFunction(cls, P::name::LoadGameFromSlotFn);
     }
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    void* gi = world_singleton::GameInstance();
     if (!g_storyGsCdo || !g_loadGameFn || !gi) {
         UE_LOGW("engine: LoadStorySave -- not up yet (cdo=%p fn=%p gi=%p); retry", g_storyGsCdo, g_loadGameFn, gi);
         return false;
@@ -430,7 +431,7 @@ bool StartFreshGame(int gameMode) {
     // first, so a fresh boot after any prior load never reuses the old save object.
     ValidateCachedSaveForCampaign(kFreshSlotName, w.curWorld);
     if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    void* gi = world_singleton::GameInstance();
     if (!g_storyGsCdo || !gi) {
         UE_LOGW("engine: StartFreshGame -- not up yet (cdo=%p gi=%p); retry", g_storyGsCdo, gi);
         return false;
@@ -502,8 +503,8 @@ bool StartFreshGame(int gameMode) {
 // bypass for the duration it reaches the menu and tears the world down without our layer
 // hanging the teardown. Game thread only.
 bool ReturnToMainMenu() {
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) {
+    void* gm = world_singleton::Gamemode();
+    if (!gm) {
         UE_LOGW("engine: ReturnToMainMenu -- no live mainGamemode_C");
         return false;
     }

@@ -9,6 +9,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
@@ -38,13 +39,6 @@ constexpr int32_t kTimeScaleOffFallback = 0x02B4;
 constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
 constexpr int32_t kTimeZOffFallback     = 0x02D0;
 
-// Cached singleton (GT-only). CachedObjRef subsumes the hand-rolled
-// {ptr, g_cycleCacheIdx} pair (RULE 2; islive-zeroav D1) -- IsLiveByIndex (serial
-                                 // slot-compare) rejects a RECYCLED slot that plain
-                                 // IsLive accepts; raw float writes through a recycled
-                                 // pointer corrupt the foreign occupant, which is
-                                 // reachable from the quit-to-menu teardown)
-ue_wrap::CachedObjRef g_cycleCache;
 void* g_tickFn = nullptr;         // daynightCycle_C::ReceiveTick
 int32_t g_cycleGmOff = -1;        // AdaynightCycle_C::gamemode
 
@@ -94,19 +88,8 @@ bool EnsureResolved() {
 }
 
 void* Cycle() {
-    if (g_cycleCache.Alive())
-        return g_cycleCache.Raw();  // steady-state: a slot compare
-    // The cycle is a singleton that, once found, stays live -- so a re-scan only happens at startup
-    // (before it streams in) or if its UObject is briefly marked unreachable mid-session. THROTTLE
-    // the GUObjectArray scan to once/sec so a transient miss can never become a per-call walk (the
-    // standing per-frame-FindObjectByClass ban). Game-thread-only -> the static is unguarded.
-    static std::chrono::steady_clock::time_point s_lastScan{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now - s_lastScan < std::chrono::seconds(1)) return nullptr;
-    s_lastScan = now;
     if (!EnsureResolved()) return nullptr;
-    g_cycleCache.Set(R::FindObjectByClass(L"daynightCycle_C"));
-    return g_cycleCache.Raw();  // fresh from the walk (null on miss)
+    return world_singleton::Find(L"daynightCycle_C");
 }
 
 void* TickFunction() { return g_resolved.load(std::memory_order_acquire) ? g_tickFn : nullptr; }
@@ -193,42 +176,17 @@ struct LatchedMember {
 };
 
 // The saveSlot substrate (gamemode -> saveSlot). The running world's gamemode, for the callers with no
-// cycle in hand (the host's clock sample, the dev instruments), is cached + liveness-revalidated (the
-// email.cpp shape); the walk only re-runs after a loss, never per call.
+// cycle in hand (the host's clock sample, the dev instruments), is the world singleton's.
 LatchedMember g_gmSaveSlot{L"mainGamemode_C", L"saveSlot", "the save slot's clock fields are out of reach"};
 LatchedMember g_slotDailyDelivery{L"saveSlot_C", L"dailyDelivery", "the 6 am order latch cannot be set"};
 LatchedMember g_slotSavedTime{L"saveSlot_C", L"savedtime", "the day number can be neither read nor written"};
-// Held world-stamped: a dying world's gamemode keeps its slot until the purge, tens of seconds
-// after the world changed, and its saveSlot is not the running world's.
-CachedObjRef g_gm;
-
 // The running world's live saveSlot, for a caller with no cycle in hand, or null.
 void* LiveSaveSlot() {
-    if (!g_gm.Alive()) {
-        // Throttle the miss-path GUObjectArray walk: the callers read every tick -- the host's
-        // clock sample, the dev day instruments -- so a world transition would otherwise re-scan on
-        // every call. A world change lifts the throttle: it is there for a gamemode that is missing,
-        // not one a new world brought.
-        static std::chrono::steady_clock::time_point s_lastScan{};
-        static uint32_t s_scanGen = 0;
-        const auto now = std::chrono::steady_clock::now();
-        const uint32_t gen = world_identity::Generation();
-        if (gen == s_scanGen && now - s_lastScan < std::chrono::seconds(2)) return nullptr;
-        s_lastScan = now;
-        s_scanGen = gen;
-        g_gm.Reset();
-        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-            if (obj && R::IsLive(obj)) {
-                g_gm.Set(obj);
-                if (g_gm.Alive()) break;
-                g_gm.Reset();
-            }
-        }
-        if (!g_gm.Alive()) return nullptr;
-    }
-    const int32_t off = g_gmSaveSlot.Of(g_gm.Raw());
+    void* gm = world_singleton::Gamemode();   // world-stamped: never a dying world's
+    if (!gm) return nullptr;
+    const int32_t off = g_gmSaveSlot.Of(gm);
     if (off < 0) return nullptr;
-    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm.Raw()) + off);
+    void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + off);
     return (slot && R::IsLive(slot)) ? slot : nullptr;
 }
 }  // namespace

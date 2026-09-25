@@ -51,7 +51,4 @@ bool CallUpd();
 // True if `cls` is Aprop_reel_C or a subclass (the eject-birth whitelist).
 bool IsReelClass(void* cls);
 
-// Session teardown: drop the cached singleton (the next call re-resolves).
-void ResetCache();
-
 }  // namespace ue_wrap::tape_caddy

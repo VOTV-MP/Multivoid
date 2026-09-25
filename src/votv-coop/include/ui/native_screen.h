@@ -219,9 +219,8 @@ bool CursorInWidgetSpace(long& outX, long& outY);
 bool CursorOverWidget(void* w);
 
 // The same test with the cursor already resolved, for a sweep over several widgets: the
-// conversion is the expensive half (GetWorldContext reaches FindObjectByClass, an uncached
-// GUObjectArray walk, plus a dispatch and an allocation), and N calls of CursorOverWidget pay N
-// walks for one cursor. Resolve once with CursorInWidgetSpace, then this per widget. The
+// conversion is the expensive half (a reflected dispatch and an allocation), and N calls of
+// CursorOverWidget pay N conversions for one cursor. Resolve once with CursorInWidgetSpace, then this per widget. The
 // coordinates must come from that conversion; raw desktop pixels are a second space that agrees
 // only at scale 1.
 bool WidgetContains(void* w, long hx, long hy);

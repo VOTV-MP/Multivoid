@@ -7,7 +7,8 @@
 #include "coop/props/prop_element_tracker.h"     // CollectTrackedPileTransforms / CollectTrackedKerfurTransforms
 #include "ue_wrap/core/hot_path_guard.h"        // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"            // FindObjectByClass, FindClass, IsDescendantOfAny, NameEquals, ClassNameOf
+#include "ue_wrap/core/reflection.h"            // FindClass, IsDescendantOfAny, NameEquals, ClassNameOf
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"                 // ue_wrap::FVector
 
@@ -84,7 +85,7 @@ int BuildHostMap(IdMap& outMap) {
     //    the same way). Its Fstruct_save arrays are what loadObjects replays; reading THEM (not a fresh
     //    GetAllActorsWithInterface re-gather) is the assumption-free fix -- the array index IS the cross-peer
     //    ordinal. The 2b smoke FALSIFIED the live-gather order; the bind tripwire caught it at k=0.
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
+    void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) { UE_LOGW("save_identity_map: cannot build -- gamemode not found"); return 0; }
     void* saveSlot = *reinterpret_cast<void* const*>(
         reinterpret_cast<const uint8_t*>(gm) + P::off::AmainGamemode_saveSlot);

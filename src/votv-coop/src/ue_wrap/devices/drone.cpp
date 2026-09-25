@@ -10,11 +10,12 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 
@@ -30,8 +31,6 @@ int32_t g_activeOff = -1;       // Adrone_C::Active (Alpha 0.9.0-n: 0x0370, bool
 
 constexpr int32_t kActiveOffFallback = 0x0370;
 
-void*   g_cache    = nullptr;  // cached singleton drone actor (GT-only)
-int32_t g_cacheIdx = -1;       // its GUObjectArray slot -- IsLiveByIndex is safe vs a freed pointer
                                // (the project rule; IsLive(ptr) derefs the maybe-freed object itself)
 
 // ---- FX mirroring -- resolved lazily (separate from the pose path) ----
@@ -151,7 +150,7 @@ void ActivateComponent(void* comp) {
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
-    void* cls = R::FindClass(L"drone_C");
+    void* cls = object_index::ClassByName(L"drone_C");   // one lookup, loaded or not
     if (!cls) return false;  // not loaded yet -- caller retries
 
     int32_t activeOff = R::FindPropertyOffset(cls, L"Active");
@@ -168,19 +167,8 @@ bool EnsureResolved() {
 }
 
 void* Find() {
-    if (g_cache && R::IsLiveByIndex(g_cache, g_cacheIdx)) return g_cache;  // steady-state: index check
     if (!EnsureResolved()) return nullptr;
-    // The delivery drone is a singleton; once found it stays live. THROTTLE the scan to once/sec
-    // so a transient miss can never become a per-frame FindObjectByClass walk (the standing ban).
-    // Game-thread-only -> the static is unguarded.
-    static std::chrono::steady_clock::time_point s_lastScan{};
-    const auto now = std::chrono::steady_clock::now();
-    if (g_cache == nullptr || now - s_lastScan >= std::chrono::seconds(1)) {
-        s_lastScan = now;
-        g_cache = R::FindObjectByClass(L"drone_C");
-        g_cacheIdx = g_cache ? R::InternalIndexOf(g_cache) : -1;
-    }
-    return (g_cache && R::IsLiveByIndex(g_cache, g_cacheIdx)) ? g_cache : nullptr;
+    return world_singleton::Find(L"drone_C");   // the delivery drone, one of it
 }
 
 bool IsActive(void* drone) {

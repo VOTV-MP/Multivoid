@@ -56,6 +56,9 @@ void SetCoopCallCensus(bool on);
 // Every dispatch CallFunction has issued, armed or not -- the reflected-call rate, read as a
 // delta over a window rather than against uptime.
 unsigned long long CoopCallCountTotal();
+// Every whole-array walk the finders (FindObject, FindClass on a miss, FindFunction, FindObjectByClass,
+// FindObjectsByClass, FindClassDefaultObject, CountObjectsByClass) have made, read as a rate.
+unsigned long long ArrayWalkCountTotal();
 // Slot i's target UFunction and its cumulative count; false past the last populated slot.
 bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount);
 
@@ -70,11 +73,10 @@ int32_t NumObjects();
 void* ObjectAt(int32_t index);
 
 // True if `obj` is still a live UObject: its GUObjectArray slot points back to it and it is not
-// PendingKill or Unreachable. O(1). It reads obj->InternalIndex from the object's own memory
-// first, so it is safe only on a pointer that is still mapped; a pointer the GC has already
-// purged faults inside this call. For any raw UObject* cached past the current game-thread
-// slice, use IsLiveByIndex with an index captured by InternalIndexOf while the object was known
-// live.
+// PendingKill or Unreachable. O(1). It reads obj->InternalIndex from the object's own memory, so
+// it is safe only on a pointer still mapped: one the GC has purged faults here. For a raw UObject*
+// cached past the current game-thread slice, use IsLiveByIndex with an index InternalIndexOf
+// captured while the object was known live.
 bool IsLive(void* obj);
 
 // The purge-safe liveness check. `internalIdx` must have been captured while `obj` was known
@@ -191,15 +193,10 @@ void* FindDispatchFunctionCached(void* cls, const wchar_t* funcName);
 
 // First object whose class name is `className` in object-array order, skipping nulls and
 // the class default object (names starting with "Default__"). There is NO liveness test and
-// no world filter. After a menu-to-game cycle the departed world's instance sits at a lower
-// index and wins, so a caller resolving a world-scoped actor this way can silently address
-// the world it just left -- it once handed a joiner a save serialised from a gamemode whose
-// world no longer existed, a structurally complete file describing nothing. A site reached
-// only while a single world is live is fine; a site that can run across a world change
-// should compare world_identity::WorldOf against CurrentWorld, a null stamp not being a
-// rejection. Most of the world-scoped classes resolved this way -- the gamemode, the player,
-// the day-night cycle, the fog, the menu widget, the black screen -- have never been checked
-// against that question. The GameInstance is immortal by design.
+// no world filter: after a menu-to-game cycle the departed world's instance sits at a lower
+// index and wins -- it once handed a joiner a save serialised from a gamemode whose world no
+// longer existed. One-of-a-kind objects come from ue_wrap/world/world_singleton instead; a site
+// that can run across a world change compares world_identity::WorldOf against CurrentWorld.
 void* FindObjectByClass(const wchar_t* className);
 
 // The Class Default Object of a class given by name. Static BlueprintCallable UFunctions are

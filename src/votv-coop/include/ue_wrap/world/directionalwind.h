@@ -52,7 +52,4 @@ bool ReadTarget(FVector& out);
 // Game thread.
 bool WriteTarget(const FVector& in);
 
-// Disconnect hook: drop the cached actor pointer (re-resolved next Read/Write).
-void OnDisconnect();
-
 }  // namespace ue_wrap::directionalwind

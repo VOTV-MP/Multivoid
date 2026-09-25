@@ -95,8 +95,6 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // The save-button test, client only: drives the escape press so the pause menu's disabled
     // Save button is observable.
     SpawnIf("VOTVCOOP_RUN_SAVEBTN_TEST", "save-button test", &SaveBtnDisableTestThread, role);
-    // The world-context test, both peers: forces a stale world context and verifies the recovery.
-    SpawnIf("VOTVCOOP_RUN_WORLDCTX_TEST", "world-context test", &WorldCtxTestThread, role);
     // The prop-reap test, both peers: forces a synthetic dead local prop Element and verifies the
     // reaper evicts it.
     SpawnIf("VOTVCOOP_RUN_PROPREAP_TEST", "prop-reap test", &PropReapTestThread, role);

@@ -7,10 +7,10 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -43,8 +43,6 @@ std::atomic<bool> g_echoSuppress{false};
 // HOST poll state (game-thread only). The organic spawnRedSky caller is an
 // EX_LocalVirtualFunction, invisible to ProcessEvent, so edge detection is FIELD-LEVEL the way
 // weather_fog's is: gamemode.redSky liveness plus its `isred` bool, on a throttle.
-ue_wrap::CachedObjRef g_gamemodeRef;         // world-stamped live gamemode cache
-long long g_lastGmResolveMs = 0;             // FindObjectByClass walk throttle (5 s)
 long long g_lastPollMs      = 0;             // edge-poll throttle (500 ms)
 int       g_lastPolledState = -1;            // -1 = never sampled (no edge on first read)
 int32_t   g_isredOff        = -1;            // redSkyEvent_C `isred` offset (lazy)
@@ -52,22 +50,6 @@ int32_t   g_isredOff        = -1;            // redSkyEvent_C `isred` offset (la
 long long NowMsSteady() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-// The live gamemode actor, cached + world-stamped; a FindObjectByClass walk
-// at most once per 5 s when the cache is dead (the weather_fog super-fog
-// cadence -- never a per-poll walk).
-void* ResolveGamemodeActor() {
-    if (void* gm = g_gamemodeRef.Get()) return gm;
-    const long long now = NowMsSteady();
-    if (now - g_lastGmResolveMs < 5000) return nullptr;
-    g_lastGmResolveMs = now;
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (gm && R::IsLive(gm)) {
-        g_gamemodeRef.Set(gm);
-        return gm;
-    }
-    return nullptr;
 }
 
 // Read the CURRENT red-sky truth from a live gamemode: actor live && isred.
@@ -158,7 +140,7 @@ bool TryResolve() {
 
 bool LocalRedSkyActive() {
     if (!GT::IsGameThread()) return false;
-    void* gm = ResolveGamemodeActor();
+    void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return false;
     return ReadRedSkyActive(gm);
 }
@@ -174,7 +156,7 @@ void HostPollEdge() {
     const long long now = NowMsSteady();
     if (now - g_lastPollMs < 500) return;
     g_lastPollMs = now;
-    void* gm = ResolveGamemodeActor();
+    void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return;
     const int state = ReadRedSkyActive(gm) ? 1 : 0;
     if (g_lastPolledState == -1) {
@@ -206,8 +188,8 @@ bool DebugForce(bool red) {
         UE_LOGW("weather: red-sky DebugForce spawnRedSky UFunction not yet resolved");
         return false;
     }
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) {
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) {
         UE_LOGW("weather: red-sky DebugForce no live mainGamemode_C");
         return false;
     }
@@ -274,8 +256,8 @@ void Apply(const coop::net::RedSkyPayload& payload) {
         UE_LOGW("weather: red-sky Apply spawnRedSky UFunction not yet resolved -- dropping");
         return;
     }
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
-    if (!gm || !R::IsLive(gm)) {
+    void* gm = ue_wrap::world_singleton::Gamemode();
+    if (!gm) {
         UE_LOGW("weather: red-sky Apply no live mainGamemode_C -- dropping");
         return;
     }

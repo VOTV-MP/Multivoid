@@ -13,6 +13,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <chrono>
@@ -93,20 +94,10 @@ void ResolvePass() {
     }
 }
 
-// ---- live gamemode + master (cached, revalidated by internal index) ----
-void*   g_gm = nullptr;
-int32_t g_gmIdx = -1;
-
-void* Gamemode() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        g_gm = R::FindObjectByClass(L"mainGamemode_C");
-        g_gmIdx = g_gm ? R::InternalIndexOf(g_gm) : -1;
-    }
-    return g_gm;
-}
+// ---- the live master, read off the world's gamemode ----
 
 void* Master() {
-    void* gm = Gamemode();
+    void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm || g_offMaster < 0) return nullptr;
     void* m = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(gm) + g_offMaster);
     if (!m || !R::IsLive(m)) return nullptr;
@@ -490,7 +481,6 @@ void QueueConnectBroadcastForSlot(int slot) {
 }
 
 void OnDisconnect() {
-    g_gm = nullptr; g_gmIdx = -1;
     g_polledMaster = nullptr;
     g_lastSent.clear();
     g_lastSendMs = 0; g_lastPollMs = 0;

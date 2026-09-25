@@ -521,10 +521,10 @@ bool CursorInWidgetSpace(long& outX, long& outY) {
     POINT c{};
     if (!::GetCursorPos(&c)) return false;
     // One conversion per menu tick per pointer position: every hand-built hit target on a screen
-    // asks in the same tick (the list's hover, the master tabs, a click), and each conversion
-    // reaches GetWorldContext's object-array walk. The mapping cannot change within one tick at
-    // one position; outside a menu tick nothing is kept, since a resize or a UI-scale change
-    // between ticks moves it.
+    // asks in the same tick (the list's hover, the master tabs, a click), and each conversion is a
+    // reflected dispatch with an allocation. The mapping cannot change within one tick at one
+    // position; outside a menu tick nothing is kept, since a resize or a UI-scale change between
+    // ticks moves it.
     static uint64_t sSeq = 0;     // 0 never matches: the first tick is 1
     static POINT sAt{};
     static bool sOk = false;

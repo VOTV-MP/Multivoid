@@ -59,7 +59,6 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/game_thread.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -407,11 +406,8 @@ void RunPlayLoop(bool bootedIntoGameplay) {
             // parameter.
             const bool inGameplayWorld = InGameplayWorld();
             if (running) {
-                coop::net_pump::Tick(g_session);   // drains the object index first
+                coop::net_pump::Tick(g_session);
             } else {
-                // No session: the object index still follows the engine, so a later session starts
-                // from a current one rather than a backlog.
-                ue_wrap::object_index::Drain();
                 // A session stopped on a path with no teardown (an aborted join) still holds the
                 // script gate; its hold ends here, on the first tick without a running session.
                 coop::subsystems::ReleaseSessionGateHold();

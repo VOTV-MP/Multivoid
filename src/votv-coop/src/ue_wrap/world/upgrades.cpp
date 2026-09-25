@@ -7,6 +7,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/economy.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cmath>
 #include <string>
@@ -185,7 +186,7 @@ int32_t MaxLevel(int panelIndex) {
 }
 
 bool ApplyUpgradedHook() {
-    void* gm = ue_wrap::economy::GamemodePtr();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(gm), L"upgraded");
     if (!fn) return false;

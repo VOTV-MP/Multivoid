@@ -584,7 +584,6 @@ void OnDisconnect() {
     g_lidPending.clear();
     g_nextLidSweep = 0;
     g_announced = false;
-    L::ResetCache();
     FS::ResetCache();
     ue_wrap::floppy_disc::ResetCache();  // the disc's class and offsets are world-scoped too
     PPC::ResetCache();

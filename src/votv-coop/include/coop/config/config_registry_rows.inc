@@ -297,6 +297,10 @@ CFG_FLAG(run_and_wait_selftest, "run_and_wait_selftest", "dev", false, "VOTVCOOP
     "Autonomous selftest: the one game-thread wait driven through its five endings -- an answer, no "
     "answer, a fault, a C++ throw and a call on the game thread itself -- once per process. Its faults "
     "are provoked on purpose and logged as ERRORs its verdict names, so arm it for one run.")
+CFG_FLAG(world_singleton_parity, "world_singleton_parity", "dev", false, "VOTVCOOP_WORLD_SINGLETON_PARITY",
+    "Probe: once per gameplay world, the object index's loaded-class lookup and the world singleton "
+    "checked against the whole-array walks they replace, one row per name and a verdict. Read-only; "
+    "the walks it makes for the comparison are its own.")
 CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
     "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
     "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "

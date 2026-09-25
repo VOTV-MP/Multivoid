@@ -20,6 +20,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/world/daynightcycle.h"
 
 #include <atomic>
@@ -39,8 +40,6 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 // Resolution: game thread, lazy, a 2 s retry throttle.
 void* g_gmCls = nullptr;
-void* g_gm = nullptr;                 // live mainGamemode_C instance
-int32_t g_gmIdx = -1;
 int32_t g_offSaveSlot = -1;           // mainGamemode.saveSlot (UsaveSlot_C*)
 int32_t g_offEventer = -1;            // mainGamemode.eventer  (Atrigger_eventer_C*)
 void* g_saveSlotCls = nullptr;
@@ -231,24 +230,6 @@ void ResolvePass() {
     }
 }
 
-// The live gamemode instance, cached and revalidated by internal index (a freed pointer must
-// not be read).
-void* Gamemode() {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        g_gm = nullptr;
-        g_gmIdx = -1;
-        if (!g_gmCls) return nullptr;
-        for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-            if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-                g_gm = obj;
-                g_gmIdx = R::InternalIndexOf(obj);
-                break;
-            }
-        }
-    }
-    return g_gm;
-}
-
 void* SaveSlotOf(void* gm) {
     if (!gm || g_offSaveSlot < 0) return nullptr;
     void* ss = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offSaveSlot);
@@ -279,7 +260,7 @@ std::string NarrowName(const R::FName& n) {
 // an event the authority never executed, and a failed replay must not permanently consume
 // the row.
 bool NativeFire(FireKind kind, const std::wstring& eventName, const std::wstring& specialName) {
-    void* eventer = EventerOf(Gamemode());
+    void* eventer = EventerOf(ue_wrap::world_singleton::Gamemode());
     if (!eventer) {
         UE_LOGW("event_fire: no live trigger_eventer -- native fire dropped ('%ls')", eventName.c_str());
         return false;
@@ -325,7 +306,7 @@ void Broadcast(FireKind kind, const std::string& name) {
 // True iff the client's own passEvents already contains the row (the transferred save
 // carried this fire; its world effects are already in the loaded state).
 bool InClientPassEvents(const std::string& name) {
-    RawArray* pass = ArrayAt(SaveSlotOf(Gamemode()), g_offPassEvents);
+    RawArray* pass = ArrayAt(SaveSlotOf(ue_wrap::world_singleton::Gamemode()), g_offPassEvents);
     if (!pass || !pass->Data || pass->Num <= 0 || pass->Num > 100000) return false;
     std::wstring w(name.begin(), name.end());
     const R::FName want = ue_wrap::fname_utils::StringToFName(w);
@@ -338,7 +319,7 @@ bool InClientPassEvents(const std::string& name) {
 
 // The client replay executor, game thread. False if the eventer is not up yet (re-queue).
 bool TryReplay(const PendingFire& pf) {
-    if (!EventerOf(Gamemode())) return false;
+    if (!EventerOf(ue_wrap::world_singleton::Gamemode())) return false;
     // Dedupe applies to one-shot scheduled rows only (the game's own passEvents semantics);
     // specials (graffiti, pranks the menu re-fires) are repeatable by design.
     if (pf.kind == FireKind::RunEvent) {
@@ -370,7 +351,7 @@ bool TryReplay(const PendingFire& pf) {
 
 // The host's passEvents poll, game thread, throttled by the caller.
 void HostPollTick() {
-    void* ss = SaveSlotOf(Gamemode());
+    void* ss = SaveSlotOf(ue_wrap::world_singleton::Gamemode());
     if (!ss || g_offPassEvents < 0) return;
     const int32_t ssIdx = R::InternalIndexOf(ss);
     RawArray* pass = ArrayAt(ss, g_offPassEvents);

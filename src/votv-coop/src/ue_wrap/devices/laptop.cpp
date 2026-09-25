@@ -7,6 +7,7 @@
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstring>
@@ -49,9 +50,6 @@ void*   g_fnWidgetGenFloppyBuffer = nullptr;  // ui_laptop.genFloppyBuffer
 void*   g_fnWidgetRemoveFromParent = nullptr; // UWidget::RemoveFromParent (declaring class!)
 bool    g_resolved = false;
 uint64_t g_nextResolveTryMs = 0;
-
-void* g_inst = nullptr;
-int32_t g_instIdx = -1;
 
 bool CallWidgetUpdFloppy(void* inst) {
     if (!g_fnWidgetUpdFloppy || g_offWidget < 0) return false;
@@ -129,16 +127,7 @@ bool EnsureResolved() {
 
 void* Instance() {
     if (!g_resolved) return nullptr;
-    if (g_inst && R::IsLiveByIndex(g_inst, g_instIdx)) return g_inst;
-    g_inst = nullptr; g_instIdx = -1;
-    for (void* obj : R::FindObjectsByClass(L"laptop_C")) {
-        if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-            g_inst = obj;
-            g_instIdx = R::InternalIndexOf(obj);
-            return obj;
-        }
-    }
-    return nullptr;
+    return world_singleton::Find(L"laptop_C");
 }
 
 bool ReadPower(PowerState& out) {
@@ -270,11 +259,6 @@ bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv) {
     }
     outFnv = h;
     return true;
-}
-
-void ResetCache() {
-    g_inst = nullptr;
-    g_instIdx = -1;
 }
 
 }  // namespace ue_wrap::laptop

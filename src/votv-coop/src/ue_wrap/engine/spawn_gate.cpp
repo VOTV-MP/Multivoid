@@ -3,10 +3,10 @@
 
 #include "ue_wrap/engine/spawn_gate.h"
 
-#include <chrono>
 #include <cstdint>
 
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 namespace R = ue_wrap::reflection;
@@ -15,39 +15,10 @@ namespace P = ue_wrap::profile;
 namespace ue_wrap::spawn_gate {
 namespace {
 
-// Cached GameInstance + its GUObjectArray index (the bug2 pattern from
-// engine.cpp::EnsureWorldContext: validate the CACHED pointer by INDEX, never
-// deref it first: a purged or recycled slot no longer points back at the object,
-// and reading the index off the object itself is the use-after-free). The
-// GameInstance persists for the process lifetime once created, so after the
-// first resolve the steady path is a single IsLiveByIndex.
-void* g_gameInstance = nullptr;
-int32_t g_gameInstanceIdx = -1;
-
-// Full-array FindObjectByClass is too hot to run per failed resolve (the gate
-// is consulted on every non-empty pump drain attempt) -- throttle re-resolves
-// to one per 2 s, same policy as the trash_collect gamemode-class resolve.
-std::chrono::steady_clock::time_point g_nextResolve{};
-
-void* EnsureGameInstance() {
-    if (g_gameInstance && !R::IsLiveByIndex(g_gameInstance, g_gameInstanceIdx)) {
-        g_gameInstance = nullptr;
-        g_gameInstanceIdx = -1;
-    }
-    if (!g_gameInstance) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now < g_nextResolve) return nullptr;
-        g_nextResolve = now + std::chrono::seconds(2);
-        g_gameInstance = R::FindObjectByClass(P::name::GameInstanceClass);
-        g_gameInstanceIdx = g_gameInstance ? R::InternalIndexOf(g_gameInstance) : -1;
-    }
-    return g_gameInstance;
-}
-
 }  // namespace
 
 bool WorldRefusesSpawns() {
-    void* gi = EnsureGameInstance();
+    void* gi = world_singleton::GameInstance();
     if (!gi) return false;  // pre-GameInstance boot: nothing to gate on
     // Virtual UObject::GetWorld -- the exact resolution UEngine::
     // GetWorldFromContextObject performs for every K2 spawn (GameInstance ->

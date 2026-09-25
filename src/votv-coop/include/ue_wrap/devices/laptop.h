@@ -67,6 +67,5 @@ bool WriteQuadAndRebuild(const BufferQuad& in);
 // over each row widget's 'data' string. False when the widget is unreachable.
 bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv);
 
-void ResetCache();  // level reload: drop the cached instance
 
 }  // namespace ue_wrap::laptop

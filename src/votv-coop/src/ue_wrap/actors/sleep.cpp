@@ -6,6 +6,7 @@
 #include "ue_wrap/engine/engine.h"  // GetWorldContext
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <chrono>
@@ -17,8 +18,6 @@ namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
 void* g_gmCls = nullptr;
-void* g_gm = nullptr;
-int32_t g_gmIdx = -1;
 
 int32_t g_offIsSleep = -1;     // mainGamemode.isSleep
 int32_t g_offDreamProb = -1;   // mainGamemode.dreamProbability (-1 = the SP sentinel)
@@ -86,7 +85,7 @@ void ResolvePass() {
 }
 
 void* SaveSlot() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offSaveSlot < 0) return nullptr;
     void* ss = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offSaveSlot);
     return (ss && R::IsLive(ss)) ? ss : nullptr;
@@ -99,35 +98,21 @@ bool EnsureResolved() {
     return g_coreResolved;
 }
 
-void* Gamemode() {
-    if (g_gm && R::IsLiveByIndex(g_gm, g_gmIdx)) return g_gm;
-    g_gm = nullptr;
-    if (!g_gmCls) return nullptr;
-    for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_gm = obj;
-            g_gmIdx = R::InternalIndexOf(obj);
-            break;
-        }
-    }
-    return g_gm;
-}
-
 bool IsSleeping() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offIsSleep < 0) return false;
     return *(reinterpret_cast<uint8_t*>(gm) + g_offIsSleep) != 0;
 }
 
 bool SetDreamProbability(float v) {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offDreamProb < 0) return false;
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(gm) + g_offDreamProb) = v;
     return true;
 }
 
 bool CallWakeup() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !g_wakeupFn) return false;
     ue_wrap::ParamFrame f(g_wakeupFn);
     if (!f.valid()) return false;
@@ -172,7 +157,7 @@ bool WriteSleepNeed(float v) {
 
 namespace {
 void* GmActorField(int32_t off) {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || off < 0) return nullptr;
     void* a = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + off);
     return (a && R::IsLive(a)) ? a : nullptr;
@@ -210,7 +195,7 @@ void* FindBed() {
 }
 
 bool CallSleep(void* bed) {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !g_sleepFn || !bed) return false;
     ue_wrap::ParamFrame f(g_sleepFn);
     if (!f.valid()) return false;

@@ -4,10 +4,10 @@
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/save_record.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <chrono>
@@ -45,42 +45,6 @@ struct Offsets {
 Offsets g_off;
 void*   g_matInstClass = nullptr;
 void*   g_refreshFn    = nullptr;
-
-// The gamemode. Resolved HERE rather than borrowed from another module: the one shared accessor
-// this used to call resolves its class inside a pass that a coop session drives, so off a session
-// it answered null forever and every read here failed -- the bar's icons have nothing to do with
-// sleeping, and a wrapper that borrows a neighbour's cache inherits the neighbour's driver.
-//
-// NOT cached the way the game instance below is, and the difference is the whole point: the game
-// instance outlives every world, so its miss happens once per process, while the gamemode dies at
-// each teardown and a miss repeats. An unthrottled miss is a full object-array walk per reader
-// tick -- the pattern the perf rule forbids -- so the miss is throttled exactly as Resolve()
-// throttles its own, and a negative answer stands until the next window.
-ue_wrap::CachedObjRef g_gamemode;
-
-void* Gamemode() {
-    if (g_gamemode.Alive()) return g_gamemode.Get();
-    static std::chrono::steady_clock::time_point s_lastTry{};
-    const auto now = std::chrono::steady_clock::now();
-    if (s_lastTry != std::chrono::steady_clock::time_point{} &&
-        now - s_lastTry < std::chrono::seconds(1))
-        return nullptr;
-    s_lastTry = now;
-    g_gamemode.Set(R::FindObjectByClass(P::name::GamemodeClass));
-    return g_gamemode.Get();
-}
-
-// The game instance, cached. Resolving it means a GUObjectArray walk, and `Read` is called from a
-// per-tick reader and from a script-gate callback -- so walking per call is precisely the
-// per-frame full-array scan the hot-path rule forbids. Measured before this cache: 1.0-2.5 ms per
-// tick, 44 times in one run, every one of them after the edge had already fired.
-ue_wrap::CachedObjRef g_gameInstance;
-
-void* GameInstance() {
-    if (g_gameInstance.Alive()) return g_gameInstance.Get();
-    g_gameInstance.Set(R::FindObjectByClass(kGameInst));
-    return g_gameInstance.Get();
-}
 
 bool Resolve() {
     if (g_off.ok) return true;
@@ -153,7 +117,7 @@ SR::Arr ArrayAt(const void* base, int32_t off) {
 
 bool Read(State& out) {
     if (!Resolve()) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
 
     State s;
@@ -175,7 +139,7 @@ bool Read(State& out) {
     }
     // texs_GAMEINST lives on the GAME INSTANCE, which outlives the world: that is why a second
     // world load in one process finds the icons already built and never shows this defect.
-    if (void* gi = GameInstance()) s.iconTextures = ArrayAt(gi, g_off.texsGameInst).num;
+    if (void* gi = world_singleton::GameInstance()) s.iconTextures = ArrayAt(gi, g_off.texsGameInst).num;
     s.carried = INV::LivePersonalStoreCount();
 
     out = s;

@@ -8,6 +8,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile_names.h"
 #include "ue_wrap/engine/world_identity.h"
 
@@ -57,22 +58,6 @@ bool EnsureServersResolved() {
     if (g_offServers < 0) return false;
     UE_LOGI("serverbox: server list resolved (servers=0x%X)", g_offServers);
     return true;
-}
-
-// The live gamemode, held through the slot-validated cache (a recycled slot, a dead world and a
-// reused serial all read as not-alive), and the generation a caller anchors a baseline to.
-CachedObjRef g_gm;
-uint32_t     g_gmGeneration = 0;
-
-void* Gamemode() {
-    if (g_gm.Alive()) return g_gm.Raw();
-    void* found = R::FindObjectByClass(P::name::GamemodeClass);
-    // A re-resolve that lands on the same object is the cache being re-primed, not a new world:
-    // only a different one is a generation the baselines above us must not carry across.
-    const bool changed = (found != g_gm.Raw());
-    g_gm.Set(found);
-    if (found && changed) ++g_gmGeneration;
-    return g_gm.Raw();
 }
 
 // ---- break state: the gamemode's three totals, the box's flag, and its re-skin ----------------
@@ -128,7 +113,7 @@ bool EnsureResolved() {
 
 size_t ReadServers(std::vector<void*>& out) {
     if (!EnsureServersResolved()) return 0;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return 0;
     const auto* arr = reinterpret_cast<const TArrayView*>(
         reinterpret_cast<const uint8_t*>(gm) + g_offServers);
@@ -210,7 +195,7 @@ bool ApplyBreak(void* box, bool broken) {
 
 bool ReadAggregates(Aggregates& out) {
     if (!g_breakResolved) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     const auto* base = reinterpret_cast<const uint8_t*>(gm);
     out.brokenServers      = *reinterpret_cast<const int32_t*>(base + g_offBroken);
@@ -221,18 +206,13 @@ bool ReadAggregates(Aggregates& out) {
 
 bool WriteAggregates(const Aggregates& in) {
     if (!g_breakResolved) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     auto* base = reinterpret_cast<uint8_t*>(gm);
     *reinterpret_cast<int32_t*>(base + g_offBroken)   = in.brokenServers;
     *reinterpret_cast<float*>  (base + g_offEffCalc)  = in.efficiencyCalc;
     *reinterpret_cast<float*>  (base + g_offEffDownl) = in.efficiencyDownload;
     return true;
-}
-
-uint32_t GamemodeGeneration() {
-    Gamemode();  // a stale cache is revalidated here, so the generation a caller reads is current
-    return g_gmGeneration;
 }
 
 namespace {

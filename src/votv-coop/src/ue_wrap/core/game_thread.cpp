@@ -182,6 +182,20 @@ void ClearObserverSlot(ObserverSlot table[], std::atomic<int>& activeCounter,
 std::mutex g_queueMutex;
 std::deque<Task> g_queue;
 
+// Run before each drain's tasks (SetPumpPrologue).
+std::atomic<void (*)()> g_pumpPrologue{nullptr};
+
+void RunPumpPrologue() {
+    void (*fn)() = g_pumpPrologue.load(std::memory_order_acquire);
+    if (!fn) return;
+    D::LastTaskFault() = {};
+    if (D::RunTaskSEH(Task(fn)) != 0) {
+        const D::TaskFaultInfo& f = D::LastTaskFault();
+        UE_LOGE("game_thread: the pump prologue FAULT code=0x%08lX ip=%p [%s] access=%p; the tasks still run",
+                f.code, f.faultingIP, D::FormatModuleRva(f.faultingIP), f.accessAddr);
+    }
+}
+
 // The spawn-refusal deferral episode. Tasks assume a world that spawns, but an outermost dispatch
 // can still run where every spawn silently returns null (see spawn_gate.h): an actor's
 // construction the engine runs outside any script body, or the world's teardown. The drain is
@@ -307,6 +321,8 @@ void FireObserversMatched(bool post, void* self, void* function, void* params) {
 }
 
 bool DrainPostedTasksAtTopLevel() {
+    // First, whatever follows: the tasks and the spawn gate below both read the object index.
+    RunPumpPrologue();
     if (ue_wrap::spawn_gate::WorldRefusesSpawns()) {
         // Inside an actor's construction, or the world is tearing down: a task run here gets null
         // from every spawn. Defer; the queue drains at the first outermost dispatch past the window.
@@ -345,6 +361,8 @@ void ClearAllInterceptors() {
 }  // namespace detail
 
 // The public API owned by this file.
+
+void SetPumpPrologue(void (*fn)()) { g_pumpPrologue.store(fn, std::memory_order_release); }
 
 void Post(Task task) {
     if (!task) return;

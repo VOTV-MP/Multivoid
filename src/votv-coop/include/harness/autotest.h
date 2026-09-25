@@ -118,13 +118,6 @@ DWORD WINAPI SaveBlockTestThread(LPVOID arg);
 void RunAutonomousSaveBtnDisableTest();
 DWORD WINAPI SaveBtnDisableTestThread(LPVOID arg);
 
-// The world-context staleness self-test (harness/autotest/autotest_worldctx.cpp), both peers:
-// forces the cached world context stale and checks that engine::EnsureWorldContext recovers (the
-// host once failed to spawn the client puppet on a stale context). Env
-// VOTVCOOP_RUN_WORLDCTX_TEST=1.
-void RunAutonomousWorldCtxTest();
-DWORD WINAPI WorldCtxTestThread(LPVOID arg);
-
 // The dead-element reaper self-test (harness/autotest/autotest_tracker_selftest.cpp), both peers: a
 // synthetic dead local Prop element must be evicted by ReapDeadLocalPropElements (a level
 // transition flags ~2,000 props PendingKill without K2_DestroyActor, and their shadows leaked

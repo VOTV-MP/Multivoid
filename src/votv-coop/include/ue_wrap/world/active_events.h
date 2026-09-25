@@ -18,10 +18,6 @@ namespace ue_wrap::active_events {
 // member missing from a loaded class does not appear later. True once both are in hand.
 bool EnsureResolved();
 
-// The live gamemode the reads come from, cached and revalidated by its slot; its object index in
-// `indexOut` when given. A lost cache is looked for again at most once a second. Null before a world.
-void* Gamemode(int32_t* indexOut = nullptr);
-
 // activeEvents, the refcount. False while unresolved or without a gamemode.
 bool ReadCount(int32_t& out);
 

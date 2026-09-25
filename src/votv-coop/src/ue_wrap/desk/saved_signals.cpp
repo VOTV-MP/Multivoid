@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstring>
@@ -19,8 +20,6 @@ namespace {
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
 void* g_gamemodeCls = nullptr;
-void* g_gamemode = nullptr;
-int32_t g_gamemodeIdx = -1;
 int32_t g_offSavedSignals = -1;  // mainGamemode_C::savedSignals_0, resolved by name
 void* g_saveSignalFn = nullptr;
 void* g_deleteSignalFn = nullptr;
@@ -46,22 +45,8 @@ void ResolvePass() {
     }
 }
 
-void* Gamemode() {
-    if (g_gamemode && R::IsLiveByIndex(g_gamemode, g_gamemodeIdx)) return g_gamemode;
-    g_gamemode = nullptr;
-    if (!g_gamemodeCls) return nullptr;
-    for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_gamemode = obj;
-            g_gamemodeIdx = R::InternalIndexOf(obj);
-            break;
-        }
-    }
-    return g_gamemode;
-}
-
 TArrayView* Rows() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offSavedSignals < 0) return nullptr;
     return reinterpret_cast<TArrayView*>(reinterpret_cast<uint8_t*>(gm) + g_offSavedSignals);
 }
@@ -99,7 +84,7 @@ bool ReadRowKey(int32_t index, RowKey& out) {
 }
 
 bool ApplySaveSignal(const SD::Row& row) {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !g_saveSignalFn) return false;
     ue_wrap::ParamFrame f(g_saveSignalFn);
     if (!f.valid()) return false;
@@ -121,7 +106,7 @@ bool ApplySaveSignal(const SD::Row& row) {
 bool DeleteSignal(int32_t index) {
     TArrayView* a = Rows();
     if (!a || index < 0 || index >= a->num) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !g_deleteSignalFn) return false;
     ue_wrap::ParamFrame f(g_deleteSignalFn);
     if (!f.valid()) return false;

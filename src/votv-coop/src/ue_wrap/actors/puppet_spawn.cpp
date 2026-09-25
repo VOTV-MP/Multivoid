@@ -10,6 +10,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/reflected_offset.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/ufunction_hook.h"
@@ -98,16 +99,12 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
     // The gamemode's mainPlayer reference is captured before the spawn: the orphan's BeginPlay
     // writes gamemode.mainPlayer = self, and the captured pointer is restored after, so the
     // gamemode's save, sleep and damage paths keep operating on the real local player.
-    void* gamemode = R::FindObjectByClass(P::name::GamemodeClass);
-    // Live-guarded: FindObjectByClass scans by class name without a liveness check, and a level
-    // reload could surface a PendingKill gamemode.
+    void* gamemode = world_singleton::Gamemode();   // live, never one marked for death
     void* gmMainPlayerBefore = nullptr;
-    if (gamemode && R::IsLive(gamemode)) {
+    if (gamemode) {
         gmMainPlayerBefore = ReadPtr(gamemode, P::off::mainGamemode_mainPlayer);
     } else {
-        UE_LOGW("puppet[MainPlayer]: no live gamemode (ptr=%p IsLive=%d) -- cannot capture mainPlayer pointer for restore",
-                gamemode, gamemode ? (int)R::IsLive(gamemode) : 0);
-        gamemode = nullptr;  // unify the post-spawn check
+        UE_LOGW("puppet[MainPlayer]: no live gamemode -- cannot capture mainPlayer pointer for restore");
     }
     // inertPawn zeros AutoPossessPlayer, AutoPossessAI and AutoReceiveInput and sets bBlockInput in
     // the deferred-spawn window before BeginPlay, so no second PlayerController auto-possesses and

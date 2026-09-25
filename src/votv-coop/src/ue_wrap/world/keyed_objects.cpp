@@ -3,26 +3,17 @@
 #include "ue_wrap/world/keyed_objects.h"
 
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/world/world_singleton.h"
 
 namespace ue_wrap::keyed_objects {
 namespace {
 
 namespace R = ue_wrap::reflection;
-namespace P = ue_wrap::profile;
 
-ue_wrap::CachedObjRef g_gm;
 void* g_fn = nullptr;
-
-void* Gamemode() {
-    if (g_gm.Alive()) return g_gm.Raw();
-    g_gm.Set(R::FindObjectByClass(P::name::GamemodeClass));
-    return g_gm.Raw();
-}
 
 }  // namespace
 
@@ -30,7 +21,7 @@ namespace {
 
 // Resolve the gamemode and its verb; null when the map cannot be consulted at all.
 void* ResolveVerb(void*& outGm) {
-    outGm = Gamemode();
+    outGm = world_singleton::Gamemode();
     if (!outGm) return nullptr;
     if (!g_fn) {
         g_fn = R::FindFunction(R::ClassOf(outGm), L"getObjectFromKey");
@@ -71,7 +62,6 @@ void* Resolve(const wchar_t* key) {
 }
 
 void ResetCache() {
-    g_gm.Reset();
     g_fn = nullptr;
 }
 

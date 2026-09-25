@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstring>
@@ -29,25 +30,9 @@ void* g_addSignalFn = nullptr;          // ui_laptop_C::addSignal(data)
 void* g_removeSignalFn = nullptr;       // ui_laptop_C::removeSignal(index)
 void* g_genSignalListFn = nullptr;      // ui_laptop_C::genSignalList() (zero-arg rebuild)
 
-void* g_gamemode = nullptr;
-int32_t g_gamemodeIdx = -1;
 
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_coreResolved = false;
-
-void* Gamemode() {
-    if (g_gamemode && R::IsLiveByIndex(g_gamemode, g_gamemodeIdx)) return g_gamemode;
-    g_gamemode = nullptr;
-    if (!g_gamemodeCls) return nullptr;
-    for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_gamemode = obj;
-            g_gamemodeIdx = R::InternalIndexOf(obj);
-            break;
-        }
-    }
-    return g_gamemode;
-}
 
 void ResolvePass() {
     const auto now = std::chrono::steady_clock::now();
@@ -71,8 +56,8 @@ void ResolvePass() {
     // The store offset resolves off the LIVE saveSlot object's class (avoids a
     // FindClass on the save-slot class name; ClassOf is authoritative).
     if (g_offSlotSignals < 0 && g_offGmSaveSlot >= 0) {
-        void* gm = Gamemode();
-        if (gm) {
+        void* gm = world_singleton::Gamemode();
+        if (gm && g_offGmSaveSlot >= 0) {
             void* slotObj = *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
             if (slotObj && R::IsLive(slotObj))
@@ -91,7 +76,7 @@ void ResolvePass() {
 }
 
 TArrayView* Rows() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offGmSaveSlot < 0 || g_offSlotSignals < 0) return nullptr;
     void* slotObj = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(gm) + g_offGmSaveSlot);
@@ -122,7 +107,7 @@ void LogWidgetGate(const char* why) {
 }
 
 void* Widget() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offGmLaptop < 0 || g_offWidgetLaptop < 0) return nullptr;
     void* w = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(gm) + g_offGmLaptop);

@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 
@@ -20,10 +21,6 @@ Clock::time_point g_nextResolve{};
 int  g_postClassAttempts = 0;
 bool g_resolveLatched = false;
 constexpr int kMaxPostClassAttempts = 5;
-
-void*   g_gm = nullptr;
-int32_t g_gmIdx = -1;
-Clock::time_point g_nextGmScan{};
 
 // UE4 TArray<UObject*> header.
 struct RawPtrArray {
@@ -60,30 +57,9 @@ bool EnsureResolved() {
     return false;
 }
 
-void* Gamemode(int32_t* indexOut) {
-    if (!g_gm || !R::IsLiveByIndex(g_gm, g_gmIdx)) {
-        g_gm = nullptr;
-        g_gmIdx = -1;
-        // The miss walks the object array, so a lost cache is looked for at most once a second.
-        const auto now = Clock::now();
-        if (g_gmCls && now >= g_nextGmScan) {
-            g_nextGmScan = now + std::chrono::seconds(1);
-            for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-                if (obj && R::IsLive(obj) && !R::NameStartsWith(R::NameOf(obj), L"Default__")) {
-                    g_gm = obj;
-                    g_gmIdx = R::InternalIndexOf(obj);
-                    break;
-                }
-            }
-        }
-    }
-    if (indexOut) *indexOut = g_gmIdx;
-    return g_gm;
-}
-
 bool ReadCount(int32_t& out) {
     if (!Resolved()) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     out = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(gm) + g_offActiveEvents);
     return true;
@@ -91,7 +67,7 @@ bool ReadCount(int32_t& out) {
 
 bool ReadSenders(Senders& out) {
     if (!Resolved()) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm) return false;
     const auto* arr = reinterpret_cast<const RawPtrArray*>(reinterpret_cast<const uint8_t*>(gm) + g_offSenders);
     out.data = arr->Data;

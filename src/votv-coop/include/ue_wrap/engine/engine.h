@@ -54,11 +54,6 @@ void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotat
 
 bool  FinishDeferredSpawn(void* actor, const FVector& location, const FRotator& rotation);
 
-// Self-test of the world-context staleness guard: corrupts the cached GUObjectArray index, runs
-// EnsureWorldContext and checks it re-resolved a live context. Behind an autotest env flag. Game
-// thread.
-bool DebugCheckWorldContextRecovery();
-
 // AActor::K2_GetActorLocation, the one location read: false when the location could not be
 // obtained, a read that faulted inside the engine and was absorbed included
 // (reflection::CallFunction reports it). `out` is then the world origin, an ordinary position, so
@@ -160,6 +155,7 @@ void LogClassProperties(const wchar_t* className);
 float GetActorCharacterHalfHeight(void* mainPlayerPawn);
 
 // A long-lived WorldContextObject for the deferred-spawn pair: the GameInstance, else the World.
+// One lookup when cached; the objects are the world singleton's. Game thread.
 void* GetWorldContext();
 
 // FRotator to FQuat, UE4.27's own formula (ZYX, left-handed): the body of FRotator::Quaternion() in

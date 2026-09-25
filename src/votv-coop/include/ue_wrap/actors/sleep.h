@@ -24,10 +24,6 @@ namespace ue_wrap::sleep {
 // the saveSlot sleep-need offset (throttled lazy retry). Game thread.
 bool EnsureResolved();
 
-// The live mainGamemode singleton (cached + liveness-checked). Null until
-// the world is up.
-void* Gamemode();
-
 // mainGamemode.isSleep -- THE world sleep flag (false if unresolved).
 bool IsSleeping();
 

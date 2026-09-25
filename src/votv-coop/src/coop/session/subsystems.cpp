@@ -76,6 +76,7 @@
 #include "coop/dev/drive_selftest.h"  // [dev] rack-lane e2e circles
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
 #include "coop/dev/run_and_wait_selftest.h"  // [dev] the one game-thread wait's five endings, provoked
+#include "coop/dev/world_singleton_parity.h"  // [dev] the index's lookups against the walks, once per world
 #include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
@@ -652,6 +653,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::hookdrag_selftest::Tick();  // [dev] the hook drag and its 4 Hz position log (single bool read when off)
     coop::dev::hand_drop_selftest::Tick();  // [dev] hand pickup+drop episodes (single bool read when off)
     coop::dev::run_and_wait_selftest::Tick();  // [dev] the wait's endings, once (single latched read when off)
+    coop::dev::world_singleton_parity::Tick();  // [dev] lookup parity, once per world (single latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();  // the client spawner park driver (a client-session gate; cheap when idle)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)

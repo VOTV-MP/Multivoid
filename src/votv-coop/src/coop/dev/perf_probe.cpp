@@ -326,6 +326,10 @@ void Sample() {
     // cover and not how often one was used.
     {
         const unsigned long long calls = R::CoopCallCountTotal();
+        const unsigned long long walks = R::ArrayWalkCountTotal();
+        static unsigned long long sLastWalks = 0;
+        const unsigned long long dWalks = walks - sLastWalks;
+        sLastWalks = walks;
         const ue_wrap::FrameStats fs = ue_wrap::GetFrameStats();
         const unsigned long long dCalls = calls - g_lastCalls;
         const unsigned long long dPf    = fs.frames - g_lastPfFrames;
@@ -339,10 +343,10 @@ void Sample() {
         // to subtract.
         unsigned long long banded = 0;
         for (int i = 0; i < 5; ++i) banded += fs.bucket[i];
-        UE_LOGW("[perf] reflected calls=%.0f/s (%.1f/frame) | ParamFrame=%.0f/s alloc=%.0f/s "
-                "(%.1f KB/s) | sizes 0-16:%llu 17-32:%llu 33-64:%llu 65-128:%llu 129-256:%llu "
+        UE_LOGW("[perf] reflected calls=%.0f/s (%.1f/frame) | array walks=%.1f/s | ParamFrame=%.0f/s "
+                "alloc=%.0f/s (%.1f KB/s) | sizes 0-16:%llu 17-32:%llu 33-64:%llu 65-128:%llu 129-256:%llu "
                 "over-256:%llu max=%d (cumulative %llu allocs of %llu frames)",
-                dCalls / elapsed, dFr > 0 ? static_cast<double>(dCalls) / dFr : 0.0,
+                dCalls / elapsed, dFr > 0 ? static_cast<double>(dCalls) / dFr : 0.0, dWalks / elapsed,
                 dPf / elapsed, allocPerSec, (dBytes / elapsed) / 1024.0,
                 fs.bucket[0], fs.bucket[1], fs.bucket[2], fs.bucket[3], fs.bucket[4],
                 fs.allocs - banded, fs.maxSize, fs.allocs, fs.frames);

@@ -10,6 +10,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
@@ -46,17 +47,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // scheduler run normally. Atomic, since the interceptor reads it in the dispatch detour.
 std::atomic<bool> g_causeRainEchoSuppress{false};
 
-// The cycle cache for the entry points that cannot take the cycle as a parameter, revalidated
-// by index like weather_sync's canonical cache; cleared in OnDisconnect. Game thread only.
-void* g_cycleCache = nullptr;
-int32_t g_cycleIdx = -1;
-
-void* ResolveCycle() {
-    if (g_cycleCache && R::IsLiveByIndex(g_cycleCache, g_cycleIdx)) return g_cycleCache;
-    g_cycleCache = R::FindObjectByClass(P::name::DaynightCycleClass);
-    g_cycleIdx = g_cycleCache ? R::InternalIndexOf(g_cycleCache) : -1;
-    return g_cycleCache;
-}
+// The cycle, for the entry points that cannot take it as a parameter. Game thread only.
+void* ResolveCycle() { return ue_wrap::world_singleton::Find(P::name::DaynightCycleClass); }
 
 // The echo-suppress interceptor for causeRain: cancels the blueprint body only while the flag
 // is set; a pass-through otherwise.
@@ -356,8 +348,6 @@ void* Cycle() {
 void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
     g_causeRainEchoSuppress.store(false, std::memory_order_release);
-    g_cycleCache = nullptr;
-    g_cycleIdx = -1;
 }
 
 }  // namespace coop::weather_rain

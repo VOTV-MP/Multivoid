@@ -6,6 +6,7 @@
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstring>
@@ -30,8 +31,6 @@ constexpr int32_t kEmailStride    = 0x50;
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
 void* g_gamemodeCls = nullptr;
-void* g_gamemode = nullptr;
-int32_t g_gamemodeIdx = -1;
 int32_t g_offSaveSlot = -1;   // mainGamemode_C::saveSlot
 int32_t g_offEmails = -1;     // saveSlot_C::emails
 int32_t g_offLaptop = -1;     // mainGamemode_C::laptop (Uui_laptop_C*)
@@ -67,22 +66,8 @@ void ResolvePass() {
     }
 }
 
-void* Gamemode() {
-    if (g_gamemode && R::IsLiveByIndex(g_gamemode, g_gamemodeIdx)) return g_gamemode;
-    g_gamemode = nullptr;
-    if (!g_gamemodeCls) return nullptr;
-    for (void* obj : R::FindObjectsByClass(L"mainGamemode_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_gamemode = obj;
-            g_gamemodeIdx = R::InternalIndexOf(obj);
-            break;
-        }
-    }
-    return g_gamemode;
-}
-
 TArrayView* Emails() {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offSaveSlot < 0 || g_offEmails < 0) return nullptr;
     void* slot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offSaveSlot);
     if (!slot || !R::IsLive(slot)) return nullptr;
@@ -131,7 +116,7 @@ bool ReadRowKey(int32_t index, RowKey& out) {
 bool DelEmail(int32_t index) {
     TArrayView* a = Emails();
     if (!a || index < 0 || index >= a->num) return false;
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || g_offLaptop < 0 || !g_delEmailFn) return false;
     void* laptop = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offLaptop);
     if (!laptop || !R::IsLive(laptop)) return false;
@@ -142,7 +127,7 @@ bool DelEmail(int32_t index) {
 }
 
 bool AddEmail(const Row& row) {
-    void* gm = Gamemode();
+    void* gm = world_singleton::Gamemode();
     if (!gm || !g_addEmailFn) return false;
     ue_wrap::ParamFrame f(g_addEmailFn);
     if (!f.valid()) return false;

@@ -7,6 +7,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/sleep.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
 #include <cstdio>
@@ -169,7 +170,7 @@ void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     if (!SLP::EnsureResolved()) return;
-    void* gm = SLP::Gamemode();
+    void* gm = ue_wrap::world_singleton::Gamemode();
     if (!gm) return;
 
     // Fresh gamemode (boot / level reload): re-prime the edge state + re-apply

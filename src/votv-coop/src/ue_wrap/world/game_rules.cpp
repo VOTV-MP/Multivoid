@@ -4,7 +4,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/world/game_mode.h"  // the mode byte: a GI member, not one of the rules
 
 #include <cstdint>
@@ -14,7 +14,6 @@
 namespace ue_wrap::game_rules {
 namespace {
 
-namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
 
 // The member name with its blueprint tail cut: "fallDamage_8_AEEA..." -> "fallDamage". The cut is
@@ -132,9 +131,10 @@ bool ReadLocal(Snapshot& out) {
     out.fields.clear();
     out.saved.clear();
 
-    // Re-resolve the GameInstance FRESH every snapshot (game thread): never cache
-    // a pointer a mid-flight teardown / rehost could free. Null until it boots.
-    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    // The GameInstance through the world singleton, whose hold is revalidated by slot and serial,
+    // never by reading the object: a teardown or rehost that freed it reads as gone. Null until it
+    // boots.
+    void* gi = world_singleton::GameInstance();
     if (!gi) return false;
     void* giClass = R::ClassOf(gi);
     if (!giClass) return false;

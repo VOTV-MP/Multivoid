@@ -9,6 +9,9 @@
 #include "ue_wrap/core/uobject_listeners.h"
 
 #include <chrono>
+#include <cwctype>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -46,6 +49,34 @@ uint64_t g_applied = 0, g_births = 0, g_deaths = 0, g_stale = 0, g_relinked = 0,
 uint64_t g_recycled = 0, g_refusedGone = 0, g_refusedRecycled = 0;
 std::chrono::steady_clock::time_point g_summarySince{};
 
+// The loaded classes by name. A class object is an instance of a meta-class (Class,
+// BlueprintGeneratedClass, WidgetBlueprintGeneratedClass and the like), and a meta-class is whatever
+// the class of an indexed object's class is, so the metas are learned from the objects themselves,
+// never by name. Each class object is listed under its short name, lower-cased (the engine compares
+// names without case), when it links and dropped when it unlinks: a class loaded with no instance is
+// found as surely as one with many, and a class never loaded answers null in one lookup, where
+// reflection::FindClass walks the whole array on every miss.
+struct NameHash {
+    using is_transparent = void;
+    size_t operator()(std::wstring_view s) const noexcept {
+        size_t h = 1469598103934665603ull;
+        for (wchar_t c : s) { h ^= static_cast<size_t>(::towlower(c)); h *= 1099511628211ull; }
+        return h;
+    }
+};
+struct NameEq {
+    using is_transparent = void;
+    bool operator()(std::wstring_view a, std::wstring_view b) const noexcept {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (::towlower(a[i]) != ::towlower(b[i])) return false;
+        return true;
+    }
+};
+std::vector<void*>                                                    g_metas;             // few; game thread
+std::unordered_map<std::wstring, std::vector<int32_t>, NameHash, NameEq> g_classSlotsByName; // name -> class-object slots
+std::unordered_map<int32_t, std::wstring>                             g_classNameBySlot;   // the key each listed slot is under
+
 // Events applied per Drain, so a level load's backlog (a few hundred thousand) spreads over a few
 // ticks instead of landing whole on one frame.
 constexpr size_t kMaxAppliedPerDrain = 16384;
@@ -54,6 +85,45 @@ void EnsureSlot(int32_t index) {
     if (index < static_cast<int32_t>(g_slots.size())) return;
     const int32_t n = R::NumObjects();
     g_slots.resize(static_cast<size_t>(index < n ? n : index + 1));
+}
+
+bool IsMeta(void* cls) {
+    for (void* m : g_metas)
+        if (m == cls) return true;
+    return false;
+}
+
+void ListClassName(int32_t index, void* classObj) {
+    if (g_classNameBySlot.count(index)) return;   // listed already
+    std::wstring key = R::ToString(R::NameOf(classObj));
+    if (key.empty()) return;
+    g_classSlotsByName[key].push_back(index);
+    g_classNameBySlot.emplace(index, std::move(key));
+}
+
+void UnlistClassName(int32_t index) {
+    const auto k = g_classNameBySlot.find(index);
+    if (k == g_classNameBySlot.end()) return;
+    const auto it = g_classSlotsByName.find(k->second);
+    if (it != g_classSlotsByName.end()) {
+        auto& v = it->second;
+        for (size_t i = 0; i < v.size(); ++i)
+            if (v[i] == index) { v[i] = v.back(); v.pop_back(); break; }
+        if (v.empty()) g_classSlotsByName.erase(it);
+    }
+    g_classNameBySlot.erase(k);
+}
+
+// The meta-class of `cls`, the class of an object just linked. A meta first seen here lists the
+// class objects linked under it before it was known.
+void LearnMetaOf(void* cls) {
+    void* meta = R::ClassOf(cls);
+    if (!meta || IsMeta(meta)) return;
+    g_metas.push_back(meta);
+    const auto it = g_classes.find(meta);
+    if (it == g_classes.end()) return;
+    for (int32_t i = it->second.head; i >= 0; i = g_slots[static_cast<size_t>(i)].next)
+        ListClassName(i, g_slots[static_cast<size_t>(i)].obj);
 }
 
 void Link(int32_t index, void* obj, void* cls) {
@@ -68,11 +138,14 @@ void Link(int32_t index, void* obj, void* cls) {
     e.head = index;
     ++e.count;
     ++g_linked;
+    if (IsMeta(cls)) ListClassName(index, obj);
+    LearnMetaOf(cls);
 }
 
 // Unlink; true when the class lost its last instance (the entry is erased).
 bool Unlink(int32_t index) {
     Slot& s = g_slots[static_cast<size_t>(index)];
+    if (IsMeta(s.cls)) UnlistClassName(index);
     auto it = g_classes.find(s.cls);
     if (s.prev >= 0) g_slots[static_cast<size_t>(s.prev)].next = s.next;
     else if (it != g_classes.end()) it->second.head = s.next;
@@ -168,10 +241,12 @@ void Seed() {
     }
     g_seeded = true;
     g_summarySince = std::chrono::steady_clock::now();
-    UE_LOGI("object_index: seeded %zu objects in %zu classes from %d slots in %lld us",
+    UE_LOGI("object_index: seeded %zu objects in %zu classes from %d slots in %lld us; %zu loaded classes "
+            "under %zu names by %zu meta-classes",
             g_linked, g_classes.size(), n,
             static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - t0).count()));
+                std::chrono::steady_clock::now() - t0).count()),
+            g_classNameBySlot.size(), g_classSlotsByName.size(), g_metas.size());
 }
 
 void SummaryIfDue() {
@@ -194,10 +269,18 @@ void SummaryIfDue() {
 
 }  // namespace
 
+namespace {
+void DrainBeforeTasks() { Drain(); }
+}  // namespace
+
 bool Install() {
     if (g_installed) return true;
     if (!uobject_listeners::Install()) return false;
     g_installed = true;
+    // The index's one driver: the dispatcher drains it before every batch of posted tasks, the boot's
+    // included. A drain only the play loop made left every boot task an unseeded index, and the boot's
+    // save load, which asks it for the game instance, retried for two minutes and gave up.
+    game_thread::SetPumpPrologue(&DrainBeforeTasks);
     return true;
 }
 
@@ -263,6 +346,17 @@ size_t ForEachClass(ClassFn fn, void* ctx) {
 }
 
 void SetObserver(const Observer& o) { g_observer = o; }
+
+void* ClassByName(const wchar_t* name) {
+    if (!name || !*name) return nullptr;
+    const auto it = g_classSlotsByName.find(std::wstring_view(name));
+    if (it == g_classSlotsByName.end()) return nullptr;
+    for (int32_t i : it->second) {
+        const Slot& s = g_slots[static_cast<size_t>(i)];
+        if (TenantOf(i, s.obj, s.cls) == Tenant::Named) return s.obj;
+    }
+    return nullptr;
+}
 
 Parity DebugCompareWithWalk() {
     UE_ASSERT_GAME_THREAD("object_index::DebugCompareWithWalk");

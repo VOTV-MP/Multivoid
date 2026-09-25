@@ -20,6 +20,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
 
@@ -89,15 +90,7 @@ coop::net::WeatherStatePayload g_pendingApplyPayload{};
 // and plain IsLive passed the recycled slot, so a weather apply dispatched the cycle's UFunctions
 // on a foreign object and the engine fataled on exit to menu. The serial check rejects the
 // recycled slot and the pointer re-resolves. Game thread only.
-void* g_cycleCache = nullptr;
-int32_t g_cycleIdx = -1;
-
-void* ResolveCycle() {
-    if (g_cycleCache && R::IsLiveByIndex(g_cycleCache, g_cycleIdx)) return g_cycleCache;
-    g_cycleCache = R::FindObjectByClass(P::name::DaynightCycleClass);
-    g_cycleIdx = g_cycleCache ? R::InternalIndexOf(g_cycleCache) : -1;
-    return g_cycleCache;
-}
+void* ResolveCycle() { return ue_wrap::world_singleton::Find(P::name::DaynightCycleClass); }
 
 bool ReadCycleState(void* cycle, coop::net::WeatherStatePayload& out) {
     if (!cycle || !R::IsLive(cycle)) return false;
@@ -544,9 +537,6 @@ void OnDisconnect() {
     g_pendingApply = false;
     g_pendingApplyPayload = {};
     g_lastSentSig.store(kNoSendYet, std::memory_order_release);
-    // The cycle cache may dangle after a session ending mid-transition; the next resolve re-walks.
-    g_cycleCache = nullptr;
-    g_cycleIdx = -1;
 
     // The lightning module unregisters its host observer: it is bound to a long-lived engine
     // UFunction and scoped to one session's role, and a reconnect as a client would fire it on the
@@ -557,7 +547,6 @@ void OnDisconnect() {
     coop::weather_redsky::OnDisconnect();
     coop::weather_fog::OnDisconnect();
     coop::weather_event_births::OnDisconnect();
-    ue_wrap::directionalwind::OnDisconnect();  // drop the cached wind-actor ptr
     // The wind gate drops, so a disconnected client's own gust rolls resume instead of freezing at
     // the last synced target.
     g_windIsClient.store(false, std::memory_order_release);

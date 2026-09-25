@@ -4,7 +4,7 @@
 
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/world/daynightcycle.h"
 
 #include <algorithm>
@@ -131,8 +131,8 @@ bool IsUnlocked(const Row& row, const LockInputs& in) {
 
 bool ReadLockInputs(LockInputs& out) {
     out = LockInputs{};
-    void* gamemode = R::FindObjectByClass(ue_wrap::profile::name::GamemodeClass);
-    if (!gamemode || !R::IsLive(gamemode)) return false;
+    void* gamemode = world_singleton::Gamemode();
+    if (!gamemode) return false;
     void* profile = ObjectField(gamemode, L"save_main");
     if (!profile || !R::IsLive(profile)) return false;
     out.maxDay = IntField(profile, L"maxDays", 0);

@@ -4,6 +4,7 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
@@ -30,45 +31,9 @@ struct ExecuteConsoleCommandParams {
 #pragma pack(pop)
 static_assert(sizeof(ExecuteConsoleCommandParams) == 0x20, "param frame layout");
 
-// Resolved once: the CDO and the UFunction never move, and the GameInstance persists for the
-// process lifetime, so caching its pointer is safe across level loads.
+// Resolved once: the CDO and the UFunction never move.
 void* g_kslCdo = nullptr;
 void* g_execFn = nullptr;
-void* g_worldContext = nullptr;
-int32_t g_worldContextIdx = -1;  // GUObjectArray index of g_worldContext (for the safe staleness check)
-
-void* ResolveWorldContext() {
-    // The GameInstance persists across level loads and is a valid world context.
-    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) return gi;
-    // Fall back to any live World, before the GameInstance is up.
-    return R::FindObjectByClass(P::name::WorldClass);
-}
-
-// Return a valid world context, dropping and re-resolving a stale one. Centralised so every
-// spawn and exec site shares the staleness guard. The resolver prefers the persistent
-// GameInstance but falls back to a World, which dies on a level reload: a fallback World
-// cached before the GameInstance was up and then killed by the host's save-load transition
-// was once reused, and the deferred spawn returned null forever (the host never spawned the
-// connecting client's puppet). Validated by index, never by dereferencing the cached pointer,
-// since a freed World must not be read; after the drop the re-resolve prefers the
-// GameInstance, which never dies, so the failure cannot recur.
-void* EnsureWorldContext() {
-    if (g_worldContext && !R::IsLiveByIndex(g_worldContext, g_worldContextIdx)) {
-        UE_LOGW("engine: g_worldContext STALE (dead/recreated world, idx=%d) -- re-resolving "
-                "[bug2 guard: prevents BeginDeferredActorSpawnFromClass null]", g_worldContextIdx);
-        g_worldContext = nullptr;
-        g_worldContextIdx = -1;
-    }
-    if (!g_worldContext) {
-        g_worldContext = ResolveWorldContext();
-        g_worldContextIdx = g_worldContext ? R::InternalIndexOf(g_worldContext) : -1;
-        if (g_worldContext) {
-            UE_LOGI("engine: world context resolved -> %p (class=%ls, idx=%d)",
-                    g_worldContext, R::ClassNameOf(g_worldContext).c_str(), g_worldContextIdx);
-        }
-    }
-    return g_worldContext;
-}
 
 bool Resolve() {
     if (!g_kslCdo) g_kslCdo = R::FindClassDefaultObject(P::name::KismetSystemLibraryClass);
@@ -79,7 +44,7 @@ bool Resolve() {
     }
     // The world context can become available later than the CDO; the centralised helper
     // re-resolves until found and drops a destroyed one.
-    return g_kslCdo && g_execFn && EnsureWorldContext();
+    return g_kslCdo && g_execFn && GetWorldContext();
 }
 
 }  // namespace
@@ -88,7 +53,7 @@ bool ExecuteConsoleCommand(const wchar_t* command) {
     if (!command) return false;
     if (!Resolve()) {
         UE_LOGE("engine: ExecuteConsoleCommand unresolved (cdo=%p fn=%p world=%p)",
-                g_kslCdo, g_execFn, g_worldContext);
+                g_kslCdo, g_execFn, GetWorldContext());
         return false;
     }
 
@@ -102,7 +67,7 @@ bool ExecuteConsoleCommand(const wchar_t* command) {
     cmd.Max = cmd.Num;
 
     ExecuteConsoleCommandParams params{};
-    params.WorldContextObject = g_worldContext;
+    params.WorldContextObject = GetWorldContext();
     params.Command = cmd;
     params.SpecificPlayer = nullptr;
 
@@ -139,19 +104,21 @@ bool ResolvePauseFns() {
 
 bool IsGamePaused() {
     // False on any resolution miss; the pause guard then idles (never a false unpause).
-    if (!ResolvePauseFns() || !EnsureWorldContext()) return false;
+    void* const ctx = GetWorldContext();
+    if (!ResolvePauseFns() || !ctx) return false;
     ParamFrame f(g_isPausedFn);
     if (!f.valid()) return false;
-    f.Set<void*>(L"WorldContextObject", g_worldContext);
+    f.Set<void*>(L"WorldContextObject", ctx);
     if (!Call(g_pauseGsCdo, f)) return false;
     return f.Get<bool>(L"ReturnValue");
 }
 
 bool SetGamePaused(bool paused) {
-    if (!ResolvePauseFns() || !EnsureWorldContext()) return false;
+    void* const ctx = GetWorldContext();
+    if (!ResolvePauseFns() || !ctx) return false;
     ParamFrame f(g_setPausedFn);
     if (!f.valid()) return false;
-    f.Set<void*>(L"WorldContextObject", g_worldContext);
+    f.Set<void*>(L"WorldContextObject", ctx);
     f.Set<bool>(L"bPaused", paused);
     if (!Call(g_pauseGsCdo, f)) return false;
     return f.Get<bool>(L"ReturnValue");
@@ -216,13 +183,11 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
                 g_gsCdo, g_beginSpawnFn, g_finishSpawnFn);
         return nullptr;
     }
-    EnsureWorldContext();  // drop and re-resolve a stale world context
-
     const FTransform xform = MakeTransform(location);
 
     // Step one: the deferred spawn returns an uninitialised actor.
     ParamFrame begin(g_beginSpawnFn);
-    begin.Set<void*>(L"WorldContextObject", g_worldContext);
+    begin.Set<void*>(L"WorldContextObject", GetWorldContext());
     begin.Set<void*>(L"ActorClass", actorClass);
     begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
     begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
@@ -270,29 +235,6 @@ void* SpawnActor(void* actorClass, const FVector& location, bool inertPawn) {
     return finished ? finished : actor;
 }
 
-bool DebugCheckWorldContextRecovery() {
-    EnsureWorldContext();  // baseline: ensure a valid context is cached first
-    if (!g_worldContext) {
-        UE_LOGW("worldctx_test: no world context resolved -- cannot self-test the guard");
-        return false;
-    }
-    void* before = g_worldContext;
-    const int32_t goodIdx = g_worldContextIdx;
-    // Simulate a freed and recreated World after a level reload: the cached index no longer
-    // matches the context's slot. An adjacent in-range index makes the by-index check fail
-    // through a slot mismatch, the same trigger the real stale World hits, without any
-    // out-of-range read.
-    g_worldContextIdx = goodIdx ^ 1;
-    void* recovered = EnsureWorldContext();  // must DROP (IsLiveByIndex false) + re-resolve
-    const bool ok = recovered != nullptr && R::IsLiveByIndex(recovered, g_worldContextIdx);
-    UE_LOGI("worldctx_test: forced-stale guard check -- before=%p (idx=%d) corrupted->%d -> "
-            "recovered=%p (class=%ls, idx=%d) live=%d -> %s",
-            before, goodIdx, goodIdx ^ 1, recovered,
-            recovered ? R::ClassNameOf(recovered).c_str() : L"<null>",
-            g_worldContextIdx, ok ? 1 : 0, ok ? "PASS" : "FAIL");
-    return ok;
-}
-
 namespace {
 // Build a transform with rotation from an FRotator (degrees to quaternion). UE4 uses Pitch=Y,
 // Yaw=Z, Roll=X for the rotator-to-quaternion order.
@@ -319,10 +261,9 @@ void* BeginDeferredSpawn(void* actorClass, const FVector& location, const FRotat
                 g_gsCdo, g_beginSpawnFn);
         return nullptr;
     }
-    EnsureWorldContext();  // drop and re-resolve a stale world context
     const FTransform xform = MakeTransform(location, rotation);
     ParamFrame begin(g_beginSpawnFn);
-    begin.Set<void*>(L"WorldContextObject", g_worldContext);
+    begin.Set<void*>(L"WorldContextObject", GetWorldContext());
     begin.Set<void*>(L"ActorClass", actorClass);
     begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
     begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
@@ -674,8 +615,11 @@ void LogClassProperties(const wchar_t* className) {
 }
 
 void* GetWorldContext() {
-    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) return gi;
-    return R::FindObjectByClass(P::name::WorldClass);
+    // The GameInstance outlives every level; before it is up, the world. Both are held by the world
+    // singleton, revalidated by slot, serial and world, so a World a level reload freed is never
+    // handed out -- a stale one once made every deferred spawn return null.
+    if (void* gi = world_singleton::GameInstance()) return gi;
+    return world_singleton::Find(P::name::WorldClass);
 }
 
 // SpawnSoundAttenuation and PlaySoundAtLocation live in ue_wrap/engine/engine_audio.cpp; the
