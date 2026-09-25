@@ -167,6 +167,8 @@ bool EnsureResolved() {
 }
 
 bool IsDoorBox(void* obj) { return DescOf(obj) != nullptr; }
+bool IsLocker(void* obj) { return obj && g_locker.cls && DescOf(obj) == &g_locker; }
+bool IsDroneConsole(void* obj) { return obj && g_console.cls && DescOf(obj) == &g_console; }
 
 std::wstring GetNameKey(void* actor) {
     if (!actor) return std::wstring();

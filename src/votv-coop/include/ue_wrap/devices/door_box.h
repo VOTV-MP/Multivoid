@@ -35,6 +35,12 @@ std::wstring GetNameKey(void* actor);
 // Read `actor`'s opened bool into `out`. False if unresolved / wrong class.
 bool TryReadOpened(void* actor, bool& out);
 
+// Which family `obj` is: a locker (locker_C or a subclass) or the drone-call console. Each moves its
+// `opened` in its own verb: a locker in open(bool), which its toggle calls; the console in the toggle
+// of its actionOptionIndex. Game thread.
+bool IsLocker(void* obj);
+bool IsDroneConsole(void* obj);
+
 // Apply `want` natively: locker -> the BP verb Open(want); console -> write
 // opened + setButtonsCollision() + Timeline Play/Reverse. Registers the actor
 // in the verify queue (force-snap if the swing froze out of tick range).

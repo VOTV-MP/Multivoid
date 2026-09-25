@@ -80,6 +80,11 @@ void OnGarageVerb(void* garage);
 // Game thread.
 void OnApplianceVerb(void* appliance);
 
+// Any peer: a locker's open or the drone console's action just ran on `box`
+// (coop/interactables/toggle_verbs); the box lane sends the `opened` it left when that changed.
+// Game thread.
+void OnDoorBoxVerb(void* box);
+
 // Whether the light group lane's own apply is running on `root` now: a client's copy of a group
 // refuses every runTrigger but that one. Game thread.
 bool ApplyingLightGroup(void* root);

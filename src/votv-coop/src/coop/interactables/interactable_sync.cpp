@@ -169,6 +169,9 @@ const Adapter g_doorBoxAdapter = {
     &ue_wrap::door_box::GetNameKey,
     &ue_wrap::door_box::TryReadOpened,
     [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
+    nullptr,
+    // Each peer sends its box at the verb that moves `opened` (coop/interactables/toggle_verbs).
+    /*edgeFed*/ true,
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};
@@ -248,6 +251,8 @@ void OnLightSwitchVerb(void* sw) { g_light.OnLocalEdge(sw); }
 void OnGarageVerb(void* garage) { g_garage.OnLocalEdge(garage); }
 
 void OnApplianceVerb(void* appliance) { g_appliance.OnLocalEdge(appliance); }
+
+void OnDoorBoxVerb(void* box) { g_doorBox.OnLocalEdge(box); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 
