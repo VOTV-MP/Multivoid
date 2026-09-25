@@ -84,6 +84,8 @@
 #include "coop/dev/hand_drop_selftest.h"  // [dev] a prop through a hand and back out, driven
 #include "coop/dev/run_and_wait_selftest.h"  // [dev] the one game-thread wait's five endings, provoked
 #include "coop/dev/end_play_probe.h"  // [dev] every end of play against the K2_DestroyActor seam
+#include "coop/dev/death_seam_census.h"  // [dev] every element end the death seam announces
+#include "coop/element/death_seam.h"  // an element's end of play, handed to the lanes that subscribed
 #include "coop/dev/hookdrag_selftest.h"  // [dev] a prop dragged by a hook, driven
 #include "coop/dev/floppy_selftest.h"  // [dev] the disc-into-server media transfer, driven
 #include "coop/dev/roster_token_selftest.h"  // [dev] successor-ban drill (moderation token vs a recycled slot)
@@ -628,6 +630,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // index consumer, and runs before the consumers' ticks so a completed pass's fresh index is
     // visible in the same pump tick.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:scan_hub"}; coop::element::scan_hub::Tick(); }
+    // The ends of play the engine announced since the last tick, handed to the lanes that subscribed.
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::element::death_seam::Drain(); }
     // The steady prop re-seed consumer registers itself once; the budget drain carries its own
     // walk-time label.
     { PP::Scope _s{PP::Bucket::Interactable};
@@ -675,6 +679,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::hand_drop_selftest::Tick();  // [dev] hand pickup+drop episodes (single bool read when off)
     coop::dev::run_and_wait_selftest::Tick();  // [dev] the wait's endings, once (single latched read when off)
     coop::dev::end_play_probe::Tick();  // [dev] the end-of-play seam against the K2 seam (single latched read when off)
+    coop::dev::death_seam_census::Tick();  // [dev] every element end the death seam announces (latched read when off)
     coop::dev::vitals_keepalive::Tick();  // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();  // the client spawner park driver (a client-session gate; cheap when idle)
     coop::player_damage::Tick();  // impact-entry PRE cancels lazy install (non-local bodies)

@@ -299,6 +299,7 @@ set(VOTVCOOP_SOURCES
     src/coop/element/element.cpp
     src/coop/element/object_scan_hub.cpp
     src/coop/element/element_deleter.cpp
+    src/coop/element/death_seam.cpp
     src/coop/element/registry.cpp
     src/coop/element/intent_authority.cpp
     src/coop/element/world_actor.cpp
@@ -427,6 +428,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/container_opener_probe.cpp
     src/coop/dev/container_view_drill.cpp
     src/coop/dev/end_play_probe.cpp
+    src/coop/dev/death_seam_census.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp
