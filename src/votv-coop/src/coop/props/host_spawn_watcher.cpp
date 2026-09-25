@@ -250,8 +250,8 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_observerRegistered) return;
 
-    // Throttle a retry to about once a second of the pump while GameplayStatics does not resolve:
-    // a class miss walks the whole array.
+    // Throttle a retry to about once a second of the pump while GameplayStatics, or an ambient-prop
+    // class the lane mirrors, does not resolve: a class miss walks the whole array.
     static int s_retry = 0;
     if (s_retry > 0) { --s_retry; return; }
 

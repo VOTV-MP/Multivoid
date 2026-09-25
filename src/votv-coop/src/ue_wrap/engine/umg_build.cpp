@@ -73,10 +73,9 @@ FnCache g_setContent {L"ContentWidget",  L"SetContent",           nullptr, false
 
 }  // namespace
 
-// The content setter, the one owner, latched: the function lookup has no result cache and
-// walks the whole object array, and callers sit inside the row build, once per row, so an
-// unlatched resolve is dozens of full array walks in a single frame (measured at tens of
-// milliseconds against a single-digit frame budget).
+// The content setter, the one owner, latched: callers sit inside the row build, once per row, and
+// the lookup renders the name of each function its class declares until the match, which the latch
+// pays once.
 bool SetContent(void* contentWidget, void* child) {
     void* fn = Resolve(g_setContent);
     if (!contentWidget || !child || !fn) return false;

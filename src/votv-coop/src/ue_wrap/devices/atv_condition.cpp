@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/object_index.h"
 
 #include <cstring>
 
@@ -58,9 +59,11 @@ int8_t ClampI8(T v) {
 bool Resolve() {
     if (g_resolved) return true;
     if (g_tried) return false;
+    // A class not yet loaded is asked for again, at one lookup; a loaded one that lacks a member below
+    // will not grow it, so that answer is kept.
+    void* cls = ue_wrap::object_index::ClassByName(L"ATV_C");
+    if (!cls) return false;
     g_tried = true;
-    void* cls = R::FindClass(L"ATV_C");
-    if (!cls) { UE_LOGW("atv_condition: ATV_C not resident at resolve"); return false; }
     g_offTires      = R::FindPropertyOffset(cls, L"tires");
     g_offDur        = R::FindPropertyOffset(cls, L"tiresDurability");
     g_offDirtArr    = R::FindPropertyOffset(cls, L"tiresDirt");

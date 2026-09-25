@@ -5,9 +5,9 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"      // GetController -- the local player's PlayerController for input mode
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <cstdint>
 
@@ -22,25 +22,12 @@ namespace {
 // every world.
 int32_t g_visOff = -2;  // UWidget.Visibility byte offset (-2 unresolved, -1 none)
 
-// ui_spawnmenu_C as this world holds it: a Blueprint class dies with its world and its address can
-// be reused, so it is looked up where it is used, one index lookup, and never kept.
-void* SpawnMenuClass() { return object_index::ClassByName(L"ui_spawnmenu_C"); }
-
 // The live (non-CDO) ui_spawnmenu_C widget instance. propProcessor creates ONE per world at
 // startup (`ExecuteUbergraph_propProcessor: WidgetBlueprintLibrary.Create(ui_spawnmenu_C) +
 // AddToViewport`) in EVERY gamemode -- verified live: in story it exists at Visibility=1
 // (Collapsed). nullptr only if the world hasn't created it yet.
 void* FindSpawnMenuWidget() {
-    void* const cls = SpawnMenuClass();
-    if (!cls) return nullptr;
-    void* found = nullptr;
-    object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
-        void*& out = *static_cast<void**>(ctx);
-        if (out || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-        out = obj;
-    }, &found);
-    return found;
+    return world_singleton::Find(L"ui_spawnmenu_C");
 }
 
 // ESlateVisibility byte of `widget` (0=Visible, 1=Collapsed, 2=Hidden, ...), or -3 if the
@@ -65,10 +52,7 @@ bool Open(void* localPlayer) {
     // reflection offset is cached; a miss just skips the guard.
     {
         static int32_t sActiveIfaceOff = -2;
-        if (sActiveIfaceOff == -2) {
-            void* cls = R::FindClass(P::name::MainPlayerClass);
-            sActiveIfaceOff = cls ? R::FindPropertyOffset(cls, L"activeInterface") : -1;
-        }
+        if (sActiveIfaceOff == -2) sActiveIfaceOff = R::FindPropertyOffset(R::ClassOf(localPlayer), L"activeInterface");
         if (sActiveIfaceOff >= 0) {
             void* iface = *reinterpret_cast<void* const*>(
                 reinterpret_cast<const uint8_t*>(localPlayer) + sActiveIfaceOff);

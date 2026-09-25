@@ -386,8 +386,8 @@ void Install(coop::net::Session* session) {
     // the one-time registration happens once.
     if (!g_installed && A::EnsureResolved()) {
         RegisterWithScanHub();  // the hub builds the index on its own cadence
-        // The condition layout is warmed here, with ATV_C resident, so its one-shot resolve (four
-        // uncached function walks) lands at session setup rather than in the first apply frame.
+        // The condition layout is warmed here, with ATV_C resident, so its one-shot resolve (thirteen
+        // offsets and four function lookups) lands at session setup rather than in the first apply frame.
         ue_wrap::atv_condition::Resolve();
         coop::atv_hit_guard::InstallHitGuard();      // the seven ComponentHit interceptors -- Tick refuses to run without them
         SubscribeDepartures();  // a departed author must not hold an ATV hostage

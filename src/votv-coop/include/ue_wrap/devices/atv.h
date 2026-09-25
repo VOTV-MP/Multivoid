@@ -25,7 +25,9 @@ namespace ue_wrap::atv {
 // Resolve AATV_C + the field offsets. Idempotent; true once resolved. Game thread.
 bool EnsureResolved();
 
-// True iff `obj`'s class is ATV_C or a subclass. False when this world holds no ATV_C. Game thread.
+// True iff `obj`'s class is ATV_C or a subclass. False while ATV_C is not loaded, or still loading.
+// ATV_C loads with the main menu and stays one object for the process (measured across a rejoin),
+// so the object scan hub's one judgement per class holds. Game thread.
 bool IsAtv(void* obj);
 
 // The ATV's save-persistent Key as a wide string ("" on failure, L"None" if unkeyed).

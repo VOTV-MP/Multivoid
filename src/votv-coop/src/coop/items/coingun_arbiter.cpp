@@ -41,7 +41,7 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace I = coop::coingun_sync::internal;
 
-// Resolved by InstallArbiter, driven from the sale lane's own 1 Hz-throttled Install.
+// Resolved by InstallArbiter, driven from the sale lane's own throttled Install (one tick in 125).
 void* g_libCdo       = nullptr;   // Default__lib_C -- sellObject's context
 void* g_sellObjectFn = nullptr;
 void* g_sellFn       = nullptr;   // prop_coingun_C::sell
@@ -351,8 +351,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
 namespace internal {
 
 void InstallArbiter() {
-    // Called from the sale lane's Install inside its 1 Hz throttle; every resolve is a linear walk
-    // with a name render per entry.
+    // Called from the sale lane's Install inside its throttle, one tick in 125: a class or object that
+    // is absent is a whole-array walk per try.
     if (!g_libCdo)        g_libCdo        = R::FindClassDefaultObject(L"lib_C");
     if (!g_sellObjectFn && g_libCdo)
         g_sellObjectFn = R::FindFunction(R::ClassOf(g_libCdo), L"sellObject");

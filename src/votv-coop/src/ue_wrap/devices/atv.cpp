@@ -39,9 +39,10 @@ int32_t ResolveOff(void* cls, const wchar_t* name, int32_t fallback) {
     return o;
 }
 
-// ATV_C as this world holds it. A Blueprint class dies with its world and its address can be
-// reused, so it is looked up where it is used, one index lookup that walks nothing, and never
-// kept; the field offsets above are its layout, the same in every world, so they are resolved once.
+// ATV_C as the object index holds it, looked up where it is used -- one lookup that walks nothing --
+// and never kept: a Blueprint class can come back as a new object after a world change (127 did in
+// a same-process rejoin, ATV_C not among them), and one still loading answers null here. The field
+// offsets above are its layout, the same in every world, so they are resolved once.
 void* AtvClass() { return object_index::ClassByName(L"ATV_C"); }
 
 }  // namespace
@@ -246,6 +247,17 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
 
 bool DestroyMirror(void* atv) {
     if (!atv || !R::IsLive(atv)) return false;
+    // A driver this peer's controller holds in it is handed back first, through the ATV's own dismount,
+    // which re-possesses and shows the player as a driver's own leaving does: the rig possesses the ATV
+    // while driven, so destroying it seated would leave the player hidden and unpossessed. MTA's vehicle
+    // tears its occupants off before it goes (reference/mtasa-blue/Client/mods/deathmatch/logic/
+    // CClientVehicle.cpp:285-318).
+    if (engine::GetController(atv)) {
+        if (void* const fn = R::FindDispatchFunctionCached(R::ClassOf(atv), L"dismount")) {
+            ParamFrame f(fn);
+            if (f.valid()) Call(atv, f);
+        }
+    }
     // K2_DestroyActor is declared on Actor, not on ATV_C, so it is resolved there.
     return engine::DestroyActor(atv);
 }

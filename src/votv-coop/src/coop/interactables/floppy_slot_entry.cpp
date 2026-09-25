@@ -50,11 +50,11 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool> g_installed{false};
 std::atomic<bool> g_spawnSeam{false};
 
-// The install runs off a 125 Hz pump, and the resolvers behind it walk the whole object array on a
-// hit as well as a miss with no cache of their own -- so an unresolved name is not a slow start, it
-// is tens of millions of iterations a second on the game thread for the rest of the session. The
-// pointer is therefore resolved once and kept, the retry is throttled, and a resolve that never
-// lands gives up loudly instead of quietly costing the frame.
+// The install runs off the pump, about 60 times a second, and a class that is absent costs a
+// whole-array walk per try (FindClass caches only a hit), so an unresolved name is not a slow start
+// but a walk a tick on the game thread for the rest of the session. The pointer is therefore
+// resolved once and kept, the retry is throttled, and a resolve that never lands gives up loudly
+// instead of quietly costing the frame.
 constexpr uint64_t kResolveRetryMs  = 1000;
 constexpr int      kMaxResolveTries = 30;
 void*    g_deferredFn    = nullptr;
@@ -262,7 +262,7 @@ void Install(coop::net::Session* session) {
     }
     if (registered != named) {
         // Once. RegisterInterceptor refuses only a full table, which does not clear on its own, so
-        // repeating this on a 125 Hz pump would flush the log to disk at that rate.
+        // repeating this on a pump that runs about 60 times a second would flush the log at that rate.
         if (!g_registerWarned) {
             g_registerWarned = true;
             UE_LOGE("floppy_slot_entry: %zu of %zu overlap entries took an interceptor (table "

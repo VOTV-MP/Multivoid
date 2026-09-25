@@ -20,6 +20,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/core/object_index.h"
 
 namespace coop::prop_fresh_spawn {
 
@@ -37,8 +38,19 @@ void* g_finishSpawnFn    = nullptr;
 void* g_propSetKeyFn     = nullptr;
 bool  g_spawnResolved    = false;
 
+// setKey on the prop base. The class may not be loaded at the first call (the engine loads blueprint
+// classes on demand), so a miss is asked again on the next call, at one lookup.
+void ResolveSetKey() {
+    if (g_propSetKeyFn) return;
+    if (void* propCls = ue_wrap::object_index::ClassByName(P::name::PropClass))
+        g_propSetKeyFn = R::FindFunction(propCls, P::name::PropSetKeyFn);
+}
+
 bool ResolveSpawnFns() {
-    if (g_spawnResolved && g_gsCdo.Alive()) return true;
+    if (g_spawnResolved && g_gsCdo.Alive()) {
+        ResolveSetKey();
+        return true;
+    }
     g_gsCdo.Set(R::FindClassDefaultObject(P::name::GameplayStaticsClass));
     if (!g_gsCdo.Raw()) return false;
     void* cls = R::ClassOf(g_gsCdo.Raw());
@@ -50,11 +62,7 @@ bool ResolveSpawnFns() {
                 g_beginSpawnFn, g_finishSpawnFn);
         return false;
     }
-    // setKey on the prop base. The class may not be loaded at the first call (the engine loads
-    // blueprint classes on demand); a miss is retried on the next call.
-    if (void* propCls = R::FindClass(P::name::PropClass)) {
-        g_propSetKeyFn = R::FindFunction(propCls, P::name::PropSetKeyFn);
-    }
+    ResolveSetKey();
     g_spawnResolved = true;
     return true;
 }

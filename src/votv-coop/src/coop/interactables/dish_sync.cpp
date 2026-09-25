@@ -535,8 +535,9 @@ void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
     if (!p.armed) {
         // Disarm: the native un-arm parity (the reset and the display-actor delete).
         CD::ResetDownloadMachine();
-        CD::DeleteSignalActor();
-        UE_LOGI("dish_sync: DISARM applied (machine reset + signal actor deleted)");
+        const bool deleted = CD::DeleteSignalActor();
+        UE_LOGI("dish_sync: DISARM applied (machine reset%s)",
+                deleted ? " + signal actor deleted" : "; no signal actor to delete");
         return;
     }
     // The arm. First, pre-clear all mirrored moving state: the host arm proves its dishes

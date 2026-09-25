@@ -53,7 +53,8 @@ bool IsCoinActor(void* actor);
 bool InVerb(const ue_wrap::script_gate::Active& av, const wchar_t* name);
 
 // Abaocoin_C's UClass once resolved, else nullptr. Resolution is the SALE lane's Install (it runs
-// first and already retries at ~1 Hz); the collect lane reads it and stays inert until it appears.
+// first and already retries, one tick in 125); the collect lane reads it and stays inert until it
+// appears.
 void* CoinClass();
 
 // Is `coin` one of OUR OWN coins, captured inside our gun bracket and still held at the barrier?
@@ -73,8 +74,8 @@ bool IsCapturedCoin(void* coin);
 // Install/Tick/OnDisconnect rather than from subsystems.cpp, for the same reason the collect lane
 // is: one public surface, one concept.
 
-// Resolve the host half's reflection. Called INSIDE the sale lane's ~1 Hz Install throttle, because
-// every resolve is a linear GUObjectArray walk with a name render per entry. Idempotent.
+// Resolve the host half's reflection. Called INSIDE the sale lane's Install throttle, one tick in 125,
+// because a class or object that is absent costs a whole-array walk per try. Idempotent.
 void InstallArbiter();
 
 // True once sellObject resolved, i.e. the host half can actually price a sale.
@@ -85,7 +86,7 @@ bool ArbiterResolved();
 void OnDisconnectArbiter();
 
 // Drop consumed artifacts whose prop has died -- what gives the consumption guard a real lifetime.
-// Called from the sale lane's Tick at ~1 Hz. Cheap when idle; the set is normally empty.
+// Called from the sale lane's Tick, one tick in 125. Cheap when idle; the set is normally empty.
 void SweepSoldSet();
 
 // ---- the COLLECT lane's own lifecycle (coingun_collect.cpp) ------------------------------------

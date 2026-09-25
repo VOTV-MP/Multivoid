@@ -422,7 +422,7 @@ bool internal::CollectInstalled() { return g_installed.load(std::memory_order_ac
 void internal::InstallCollect() {
     if (g_installed.load(std::memory_order_acquire)) return;
 
-    // The sale lane's Install owns class resolution and retries at about 1 Hz; inert until it lands
+    // The sale lane's Install owns class resolution and retries every 125 ticks; inert until it lands
     // rather than a second GUObjectArray walk on the same tick.
     void* coinClass = internal::CoinClass();
     if (!coinClass) return;

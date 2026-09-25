@@ -177,10 +177,10 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
     // barrier destroys its coins only if a sale went out. The context gate is not optional:
     // a name watch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
     // tool, so without it every knife swing would open and release an empty group. Read-only on the
-    // gun class, never resolved here: FindClass is an uncached full walk with a name render per
-    // object, the gun's class is not resident in the ordinary world, and resolving here once cost a
-    // full walk on every left click. Install retries the resolve inside its 1 Hz throttle. The
-    // cost: for at most a second after the class becomes resident a shot opens no group, its coins
+    // gun class, never resolved here: the gun's class is not resident in the ordinary world, and
+    // FindClass walks the whole array on a miss, which resolving here once cost on every left click.
+    // Install retries the resolve inside its throttle, one tick in 125, about every 2 s. The cost:
+    // for up to that long after the class becomes resident a shot opens no group, its coins
     // land in the defensive group the birth seam opens and are released, the safe direction; and
     // both this gate and IsInCoinGunVerb must read rather than resolve, or they could disagree
     // inside one shot.
@@ -357,11 +357,13 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     // The resolve happens outside the lock (a list read, and idempotent), and the result is read
     // into a local under it, since the pointer is plain storage.
     void* getMatFn = nullptr;
+    bool getMatFailed = false;
     {
         std::lock_guard<std::mutex> lk(g_birthMu);
         getMatFn = g_getMaterialFn;
+        getMatFailed = g_getMaterialResolveFailed;
     }
-    if (!getMatFn) {
+    if (!getMatFn && !getMatFailed) {
         void* primCls = PrimitiveComponentClass();
         void* resolved = primCls ? R::FindFunction(primCls, L"GetMaterial") : nullptr;
         std::lock_guard<std::mutex> lk(g_birthMu);
@@ -454,7 +456,7 @@ void Tick() {
         }
     }
     // The host half: consumed artifacts whose prop has died are erased, the consumption guard's
-    // lifetime. About 1 Hz at the pump rate; the map normally holds none or one entry.
+    // lifetime. One tick in 125, about every 2 s; the map normally holds none or one entry.
     {
         static uint32_t sSweepN = 0;
         if ((sSweepN++ % 125u) == 0u) internal::SweepSoldSet();
@@ -571,7 +573,7 @@ void Install(coop::net::Session* session) {
 
     if (!g_coinClass)     g_coinClass     = R::FindClass(kCoinClassName);
     if (!g_gunClass)      g_gunClass      = R::FindClass(kGunClassName);
-    internal::InstallArbiter();   // the HOST half's own resolves, inside this same 1 Hz throttle
+    internal::InstallArbiter();   // the HOST half's own resolves, inside this same throttle
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");
     // The gun verb resolves its name on the game thread, so the pending resolves are driven every

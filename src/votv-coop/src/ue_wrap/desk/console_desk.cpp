@@ -569,8 +569,8 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
 }
 
 bool DeleteSignalActor() {
-    // The object renderer is the world's one, and its verb is looked up on its live class through
-    // the memoised lookup: a Blueprint class dies with its world and its address can be reused.
+    // The object renderer is the running world's one, and its verb is looked up on its live class
+    // through the memoised lookup, which holds its answer by slot and serial.
     void* const renderer = ue_wrap::world_singleton::Find(L"objectRenderer_C");
     if (!renderer) return false;
     void* const fn = R::FindDispatchFunctionCached(R::ClassOf(renderer), L"deleteSignalActor");

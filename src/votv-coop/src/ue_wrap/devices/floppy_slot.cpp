@@ -246,9 +246,8 @@ size_t SlotOverlapEntries(DeviceKind kind, void* out[], size_t cap) {
         if (found != named) {
             // Named and not found is a fact about THIS build, not about the device: the delegate's
             // name carries the component's name and the K2Node index the asset assigned it, so a
-            // renamed hitbox silently unbinds the entry. The resolver walks the whole object array
-            // per name with no cache, so a name that will never resolve has to stop being asked --
-            // once said, once given up on.
+            // renamed hitbox silently unbinds the entry. A name that will never resolve is said once and
+            // given up on, not asked for again on every tick.
             if (++d->overlapTries >= kMaxOverlapTries) {
                 d->overlapGaveUp = true;
                 UE_LOGE("floppy_slot: %ls resolved %zu of %zu overlap entries in %d tries -- GIVING "

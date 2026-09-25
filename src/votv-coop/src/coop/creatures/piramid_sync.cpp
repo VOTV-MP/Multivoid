@@ -18,6 +18,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/object_index.h"
 
 #include <atomic>
 #include <chrono>
@@ -210,15 +211,10 @@ bool AnyPyramidElementExists() {
 void TryArmHooks() {
     if (g_armed || g_armFailedLatched) return;
     if (!AnyPyramidElementExists()) return;  // class not needed yet -- no GUObjectArray walk
-    void* cls = R::FindClass(kPyramidClassName);
-    if (!cls) {
-        // An element with this type name exists, so the class must be loaded; a miss here is name
-        // drift, which retrying can never heal.
-        g_armFailedLatched = true;
-        UE_LOGE("piramid-brain: FindClass(%ls) FAILED with a piramid element live -- lane "
-                "DISABLED for process (pose mirror still rides world_actor_sync)", kPyramidClassName);
-        return;
-    }
+    // A class not yet in the index, or still being loaded, is asked for again next time, at the cost of
+    // one lookup; only a loaded class that lacks a member below disables the lane.
+    void* cls = ue_wrap::object_index::ClassByName(kPyramidClassName);
+    if (!cls) return;
     g_fnSeeWisps = R::FindFunction(cls, L"seeWisps");
     g_fnCheckIfReached = R::FindFunction(cls, L"checkIfReached");
     g_fnRandLoc = R::FindFunction(cls, L"randLoc");

@@ -151,8 +151,9 @@ const FName& NameOf(void* uobject);   // NamePrivate
 void*        ClassOf(void* uobject);  // ClassPrivate
 void*        OuterOf(void* uobject);  // OuterPrivate
 
-// Lookups over GUObjectArray: linear walks, for one-time setup. All match on the object's
-// NamePrivate (the leaf name, not a path).
+// Lookups by name. FindObject and the by-class finders walk GUObjectArray, and FindClass does on a
+// miss (a hit is cached); FindFunction reads the class's own function list. All match on the
+// object's NamePrivate (the leaf name, not a path).
 
 // First object whose name is `name`; with a non-null `className`, its class name must match
 // too.

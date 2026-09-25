@@ -406,10 +406,7 @@ void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
             if (it != g_classCache.end()) ref = it->second.cls;
         }
         void* live = ref.Get();
-        if (live && NameEquals(NameOf(live), className)) {
-            // A class still being loaded is not handed out yet, and its entry is kept for when it is.
-            return (SlotFlags(InternalIndexOf(live)) & slot_flags::NotYetReadable) ? nullptr : live;
-        }
+        if (live && NameEquals(NameOf(live), className)) return live;
     }
     std::lock_guard<std::mutex> lk(g_classCacheMu);
     auto it = g_classCache.find(hashOut);
@@ -465,7 +462,9 @@ void* FindClass(const wchar_t* className) {
     // is the siblings' semantics exactly. A miss is deliberately not cached: a class can load
     // later.
     uint64_t hash = 0;
-    if (void* cached = BeginClassWalk(className, hash)) return cached;
+    // A class still being loaded is not handed out yet, nor walked for: its entry holds for when it is.
+    if (void* cached = BeginClassWalk(className, hash))
+        return (SlotFlags(InternalIndexOf(cached)) & slot_flags::NotYetReadable) ? nullptr : cached;
     walk_census::NoteArrayWalk(_ReturnAddress());
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
