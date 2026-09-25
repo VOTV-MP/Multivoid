@@ -153,6 +153,9 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
+    nullptr,
+    // Each peer sends its appliance at the verb that writes its bool (coop/interactables/toggle_verbs).
+    /*edgeFed*/ true,
 };
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
@@ -243,6 +246,8 @@ void OnLightGroupVerb(void* root) { g_lightGroup.OnLocalEdge(root); }
 void OnLightSwitchVerb(void* sw) { g_light.OnLocalEdge(sw); }
 
 void OnGarageVerb(void* garage) { g_garage.OnLocalEdge(garage); }
+
+void OnApplianceVerb(void* appliance) { g_appliance.OnLocalEdge(appliance); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

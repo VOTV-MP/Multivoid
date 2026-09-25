@@ -75,6 +75,11 @@ void OnLightSwitchVerb(void* sw);
 // lane sends the Open it left when that changed. Game thread.
 void OnGarageVerb(void* garage);
 
+// Any peer: an appliance's action or its server box's visual just ran on `appliance`
+// (coop/interactables/toggle_verbs); the appliance lane sends the bool it left when that changed.
+// Game thread.
+void OnApplianceVerb(void* appliance);
+
 // Whether the light group lane's own apply is running on `root` now: a client's copy of a group
 // refuses every runTrigger but that one. Game thread.
 bool ApplyingLightGroup(void* root);

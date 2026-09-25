@@ -8,6 +8,9 @@
 //     `a` negated, its mesh.
 //   - a garage's runTrigger(owner, index): the one writer of its Open past its load -- Open negated
 //     and its swing, unless the garage is still moving.
+//   - an appliance's actionOptionIndex: a faucet's, sink's, shower's, oven's (fixed, at its switch)
+//     and tape unit's toggle of its bool, then its repaint.
+//   - a server box's visual(bool): the one writer of its `active`, called by a kerfur Omega.
 // The group a switch triggers is the light group lane's (coop/interactables/lightgroup_verbs).
 
 #pragma once
