@@ -129,7 +129,7 @@ const Adapter g_containerAdapter = {
 // the gamemode's sublevel-gated keying pass keeps the class default "garageDoor", which every
 // garage instance shares, and the host was seen losing its garage identity through a
 // menu-to-save reload while the FName came through the same reload byte-identical on both
-// peers. The wall button toggles Open, which the poll catches.
+// peers. Its Open moves only in its runTrigger (the wall button's call), past its load.
 const Adapter g_garageAdapter = {
     "garage", coop::net::ReliableKind::GarageDoorState,
     &ue_wrap::garage::EnsureResolved,
@@ -137,6 +137,9 @@ const Adapter g_garageAdapter = {
     &ue_wrap::garage::GetNameKey,
     &ue_wrap::garage::TryReadOpen,
     [](void* a, bool on) -> bool { return ue_wrap::garage::ApplyOpen(a, on); },
+    nullptr,
+    // Each peer sends its garage at its runTrigger (coop/interactables/toggle_verbs).
+    /*edgeFed*/ true,
 };
 // The appliance family (six Aactor_save_C descendants: faucet, sink, shower, kitchen oven,
 // serverBox, wall-unit tapes), symmetric single-bool toggles with no auto-revert. One adapter:
@@ -238,6 +241,8 @@ std::wstring LightGroupKey(void* root) { return g_lightGroup.KeyForActor(root); 
 void OnLightGroupVerb(void* root) { g_lightGroup.OnLocalEdge(root); }
 
 void OnLightSwitchVerb(void* sw) { g_light.OnLocalEdge(sw); }
+
+void OnGarageVerb(void* garage) { g_garage.OnLocalEdge(garage); }
 
 bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 

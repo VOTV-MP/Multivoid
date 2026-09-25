@@ -8,6 +8,7 @@
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/devices/garage.h"
 #include "ue_wrap/devices/lightswitch.h"
 
 #include <atomic>
@@ -30,6 +31,8 @@ struct Row {
 constexpr Row kRows[] = {
     { L"use", 0x4C535755 /*'LSWU'*/, "a light switch's use", &ue_wrap::lightswitch::IsLightSwitch,
       &coop::interactable_sync::OnLightSwitchVerb },
+    { L"runTrigger", 0x47525254 /*'GRRT'*/, "a garage's runTrigger", &ue_wrap::garage::IsGarage,
+      &coop::interactable_sync::OnGarageVerb },
 };
 constexpr int kRowCount = static_cast<int>(sizeof(kRows) / sizeof(kRows[0]));
 

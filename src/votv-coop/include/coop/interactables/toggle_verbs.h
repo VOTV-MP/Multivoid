@@ -6,6 +6,8 @@
 // load is the host's save). The rows:
 //   - a light switch's use(): the one writer of its `a` -- a runTrigger 0 on its group, its click,
 //     `a` negated, its mesh.
+//   - a garage's runTrigger(owner, index): the one writer of its Open past its load -- Open negated
+//     and its swing, unless the garage is still moving.
 // The group a switch triggers is the light group lane's (coop/interactables/lightgroup_verbs).
 
 #pragma once

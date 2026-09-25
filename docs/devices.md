@@ -50,7 +50,8 @@ the group lane's own apply is running it, so a switch pressed there, an eventer'
 machine's own breaker cannot move the group; the switch still flips, and its bit reaches the host
 on the switch lane, whose replay of the press is what moves the host's group. The switch lane sends
 a switch's `a` at its `use()`, the one writer of `a`, on the peer that ran it
-(`coop/interactables/toggle_verbs`); the poll beside it only reports a change no `use()` made.
+(`coop/interactables/toggle_verbs`), and the garage lane a garage's Open at its `runTrigger`, the
+one writer of Open past the load; the poll beside each only reports a change no verb made.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
