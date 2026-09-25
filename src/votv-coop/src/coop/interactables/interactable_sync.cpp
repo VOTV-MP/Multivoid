@@ -143,6 +143,8 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadState,
     [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
+    nullptr,
+    &ue_wrap::appliance::ResolvedClassCount,
 };
 // The kitchen oven's repair (kitchen_C's `fixed`), symmetric and one way: fix() sets it and nothing
 // sets it back, so the peer that repaired sends it and a receiver runs fix() on 1 and refuses 0 (the
@@ -155,6 +157,8 @@ const Adapter g_ovenAdapter = {
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadOvenFixed,
     [](void* a, bool on) -> bool { return on && ue_wrap::appliance::CallOvenFix(a); },
+    nullptr,
+    &ue_wrap::appliance::ResolvedClassCount,
 };
 // The hinged-door boxes: the lockers (locker_C and its two subclasses) and the drone-console box.
 // Symmetric: nothing auto-reverts `opened` but the player toggle and the locker's own open().
@@ -168,6 +172,8 @@ const Adapter g_doorBoxAdapter = {
     &ue_wrap::door_box::GetNameKey,
     &ue_wrap::door_box::TryReadOpened,
     [](void* a, bool on) -> bool { return ue_wrap::door_box::ApplyOpened(a, on); },
+    nullptr,
+    &ue_wrap::door_box::ResolvedFamilyCount,
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert: host-authoritative
 Channel g_light{g_lightAdapter};

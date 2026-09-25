@@ -42,6 +42,7 @@ struct Row {
     bool   activeThisPass = false;   // EnsureResolved() succeeded at pass start
     bool   wasActive      = false;   // the previous pass's verdict, for the resolve edge
     bool   skippedByMutate = false;  // VOTVCOOP_HUB_SKIP drill control
+    uint64_t resolvedCount = 0;      // the consumer's ResolvedCount at the last verdicts
 };
 
 // A birth the index reported whose class matched at least one consumer at the time.
@@ -188,8 +189,16 @@ bool StartPass() {
     for (size_t ci = 0; ci < g_rows.size(); ++ci) {
         Row& r = g_rows[ci];
         r.activeThisPass = !r.skippedByMutate && r.c.EnsureResolved();
-        // A row whose classes just resolved took its verdicts while they were null: re-take them.
+        // A row whose classes just resolved took its verdicts while they were null: re-take them, and
+        // again each time a row that resolves its classes one at a time resolves another.
         if (r.activeThisPass && !r.wasActive) g_reclassify |= RowBit(ci);
+        if (r.activeThisPass && r.c.ResolvedCount) {
+            const uint64_t n = r.c.ResolvedCount();
+            if (n != r.resolvedCount) {
+                r.resolvedCount = n;
+                g_reclassify |= RowBit(ci);
+            }
+        }
         r.wasActive = r.activeThisPass;
         if (r.activeThisPass) activeMask |= RowBit(ci);
     }

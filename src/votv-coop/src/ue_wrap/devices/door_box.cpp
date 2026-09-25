@@ -149,6 +149,8 @@ bool EnsureResolved() {
     return g_locker.cls || g_console.cls;
 }
 
+uint64_t ResolvedFamilyCount() { return (g_locker.cls ? 1u : 0u) + (g_console.cls ? 1u : 0u); }
+
 bool IsDoorBox(void* obj) { return DescOf(obj) != nullptr; }
 bool IsLocker(void* obj) { return obj && g_locker.cls && DescOf(obj) == &g_locker; }
 bool IsDroneConsole(void* obj) { return obj && g_console.cls && DescOf(obj) == &g_console; }

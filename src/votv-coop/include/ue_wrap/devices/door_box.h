@@ -26,6 +26,10 @@ namespace ue_wrap::door_box {
 // retried until at least one class is loaded. Game thread.
 bool EnsureResolved();
 
+// How many of the two families have resolved: the scan hub takes the lane's verdicts again each
+// time it moves. Game thread.
+uint64_t ResolvedFamilyCount();
+
 // True iff `obj` is a locker_C/droneConsole_C descendant.
 bool IsDoorBox(void* obj);
 

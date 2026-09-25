@@ -127,6 +127,8 @@ bool EnsureResolved() {
     return g_nBases > 0;
 }
 
+uint64_t ResolvedClassCount() { return static_cast<uint64_t>(g_nBases); }
+
 bool IsAppliance(void* obj) {
     if (!obj || g_nBases == 0) return false;
     void* cls = R::ClassOf(obj);

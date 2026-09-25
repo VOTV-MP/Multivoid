@@ -70,6 +70,7 @@ struct Adapter {
     bool (*ReadState)(void* actor, bool& on);  // current open/on state
     bool (*ApplyState)(void* actor, bool on);  // drive to target (channel echo-suppresses)
     void (*TickApply)();                       // per-tick completion of an async apply (doors); null = none
+    uint64_t (*ResolvedCount)();               // classes resolved one at a time; null = together (scan_hub)
 };
 
 // The engine.
@@ -99,7 +100,7 @@ public:
         coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
             a_.name, this, a_.EnsureResolved, a_.IsInstance,
             &Channel::HubPassBeginThunk, &Channel::HubMatchThunk, &Channel::HubPassCompleteThunk,
-            /*settleScans*/ 15});
+            /*settleScans*/ 15, a_.ResolvedCount});
     }
 
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
@@ -184,17 +185,14 @@ public:
 
     // The receiver, from event_feed (payload already copied and range-checked). Applies
     // synchronously: the reliable drain runs on the game thread inside net_pump::Tick, which the
-    // engine reads and UFunction calls below require. An instance not streamed in yet is deferred
-    // to pending_ and retried on the throttled tick.
+    // engine reads and UFunction calls below require. An instance not streamed in yet, or of a
+    // family whose classes have not resolved yet, is deferred to pending_ and retried on the
+    // throttled tick once they have.
     void OnReliable(const coop::net::KeyedTogglePayload& p, unsigned senderSlot) {
         std::wstring key = StringFromWireKey(p.key);
         if (key.empty()) { UE_LOGW("%s: OnReliable empty key -- dropping", a_.name); return; }
         const bool want = (p.action != 0);
-        if (!a_.EnsureResolved()) {
-            UE_LOGW("%s: apply -- class not resolved, dropping key='%ls'", a_.name, key.c_str());
-            return;
-        }
-        void* actor = ResolveFast(key);
+        void* actor = a_.EnsureResolved() ? ResolveFast(key) : nullptr;
         if (actor) { ApplyResolved(actor, key, want, senderSlot); return; }
         // Not streamed in yet: deferred, retried on the throttled tick.
         pending_[key] = Pending{ want, std::chrono::steady_clock::now() + kPendingTTL, passes_ };

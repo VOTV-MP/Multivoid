@@ -25,6 +25,10 @@ namespace ue_wrap::appliance {
 // thread.
 bool EnsureResolved();
 
+// How many of the six classes have resolved: the scan hub takes the family's verdicts again each
+// time it moves. Game thread.
+uint64_t ResolvedClassCount();
+
 // True iff `obj`'s class is (a descendant of) any of the six appliance classes. Cheap
 // (pointer compares + one hierarchy walk over the resolved set); false until resolved.
 bool IsAppliance(void* obj);

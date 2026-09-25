@@ -229,7 +229,21 @@ bool IsEnabled() { return KindOf() != nullptr; }
 void Tick(coop::net::Session* session) {
     if (g_phase == Phase::Done || !IsEnabled()) return;
     g_kind = KindOf();
-    if (!session || !g_kind->EnsureResolved()) return;
+    if (!session) return;
+    if (!g_kind->EnsureResolved()) {
+        // A kind whose classes never load in this world measures nothing: said once the peer is ready
+        // and the naming bound has passed.
+        if (session->connected() && RoleIsReady()) {
+            if (g_pickSince == Clock::time_point{}) {
+                g_pickSince = Clock::now();
+            } else if (Clock::now() - g_pickSince > kNameBound) {
+                UE_LOGW("[TOGGLE-DRILL] %s: no class of the %s kind loaded here -- INCONCLUSIVE", Side(),
+                        g_kind->name);
+                Done("none");
+            }
+        }
+        return;
+    }
     if (g_kind->oneWay && !g_fixtured && session->role() == coop::net::Role::Host) {
         if (!session->connected()) {
             TryFixture();

@@ -36,6 +36,11 @@ struct Consumer {
                                                // site, so the consumer never forces full passes
                                                // and rides tails + the backstop -- the reseed
                                                // consumer, which builds no hub index)
+    // For a consumer that resolves its classes one at a time (the appliances, the lockers and the
+    // console): how many it holds. A class resolved after the first took its verdict while unresolved,
+    // so the hub takes the consumer's verdicts again each time this moves. Null: they resolve
+    // together, at the consumer's first resolve.
+    uint64_t (*ResolvedCount)() = nullptr;
 };
 
 // WORLD-STAMPED passes: a pass records world_identity::Generation() at its start and aborts on a
