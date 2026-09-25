@@ -76,6 +76,7 @@ struct Bucket {
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::DoorVerbIntentPayload> g_pending[coop::net::kMaxPeers];
+bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -97,23 +98,34 @@ const char* VerbName(uint8_t verb) {
 }
 
 // ---- host side -------------------------------------------------------------------------------
-void Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, uint8_t slot) {
+// False keeps the verb at its sender's queue head: the host has no body for the sender yet (its first
+// pose has not arrived), so its reach cannot be measured, and the verb waits for the body rather than
+// being lost. Everything else is run or refused, and consumed.
+bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, uint8_t slot) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     void* door = key.empty() ? nullptr : coop::interactable_sync::ResolveDoor(key);
     if (!door) {
         ++g_denied;
         UE_LOGI("[DOOR-VERB] DENY slot=%u %s key='%ls' -- this door lane indexes no door by that key",
                 static_cast<unsigned>(slot), VerbName(p.verb), key.c_str());
-        return;
+        return true;
     }
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kDoorReachUU).Authorize(door);
+    if (subject.outcome == coop::element::IntentOutcome::NoBody) {
+        if (!g_waitSaid[slot]) {
+            g_waitSaid[slot] = true;
+            UE_LOGI("[DOOR-VERB] slot %u's door verbs wait: the host has no body for it yet", static_cast<unsigned>(slot));
+        }
+        return false;
+    }
+    g_waitSaid[slot] = false;
     if (!subject) {
         ++g_denied;
         UE_LOGI("[DOOR-VERB] DENY slot=%u %s key='%ls' -- %s (%.0f uu of %.0f)",
                 static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(),
                 coop::element::OutcomeName(subject.outcome), subject.distUU, subject.reachUU);
-        return;
+        return true;
     }
     // The body Authorize just measured: the sender's puppet, passed as the presser and the hitter.
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
@@ -135,10 +147,11 @@ void Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     // A hit that changed nothing is said for its first three and every twentieth, as the client's own
     // hit line is: melee is up to four swings a second a client.
     const bool changed = readBefore && readAfter && before != after;
-    if (p.verb == V::kHit && dispatched && !changed && ++g_quietHits > 3 && g_quietHits % 20 != 0) return;
+    if (p.verb == V::kHit && dispatched && !changed && ++g_quietHits > 3 && g_quietHits % 20 != 0) return true;
     UE_LOGI("[DOOR-VERB] host ran slot %u's %s on key='%ls': dispatched=%d damage=%.1f, open %s -> %s",
             static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(), dispatched ? 1 : 0, p.damage,
             readBefore ? (before ? "1" : "0") : "(unread)", readAfter ? (after ? "1" : "0") : "(unread)");
+    return true;
 }
 
 // ---- the client's gate -----------------------------------------------------------------------
@@ -260,8 +273,8 @@ void Tick(coop::net::Session& session) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::DoorVerbIntentPayload p = g_pending[slot].front();
-        g_pending[slot].pop_front();
-        Execute(session, p, slot);
+        if (Execute(session, p, slot)) g_pending[slot].pop_front();
+        else g_rate[slot].tokens += 1.0f;   // a wait runs nothing, so it spends no token
     }
 }
 
@@ -288,6 +301,7 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_pending[slot].clear();
     g_rate[slot] = Bucket{};
+    g_waitSaid[slot] = false;
 }
 
 void OnDisconnect() {
@@ -299,6 +313,7 @@ void OnDisconnect() {
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
+        g_waitSaid[slot] = false;
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
     g_quietHits = 0;

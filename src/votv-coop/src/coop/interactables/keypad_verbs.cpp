@@ -76,6 +76,7 @@ struct Bucket {
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::KeypadIntentPayload> g_pending[coop::net::kMaxPeers];
+bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -122,23 +123,34 @@ bool CallerIs(const sg::Call& call, const wchar_t* className) {
 }
 
 // ---- the host ----------------------------------------------------------------------------------
-void Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uint8_t slot) {
+// False keeps the intent at its sender's queue head: the host has no body for the sender yet (its first
+// pose has not arrived), so its reach cannot be measured, and the input waits for the body rather than
+// being lost. Everything else is run or refused, and consumed.
+bool Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uint8_t slot) {
     const std::wstring key = coop::net::StringFromWireKey(p.key);
     void* lock = KS::ResolveKeypad(key);
     if (!lock) {
         ++g_denied;
         UE_LOGI("[KEYPAD-VERB] DENY slot=%u %s key='%ls' -- the keypad lane indexes no keypad by that key",
                 static_cast<unsigned>(slot), IntentName(p.verb), key.c_str());
-        return;
+        return true;
     }
     const coop::element::IntentSubject subject =
         coop::element::IntentTarget::ForClientIntent(s, slot, kKeypadReachUU).Authorize(lock);
+    if (subject.outcome == coop::element::IntentOutcome::NoBody) {
+        if (!g_waitSaid[slot]) {
+            g_waitSaid[slot] = true;
+            UE_LOGI("[KEYPAD-VERB] slot %u's keypad input waits: the host has no body for it yet", static_cast<unsigned>(slot));
+        }
+        return false;
+    }
+    g_waitSaid[slot] = false;
     if (!subject) {
         ++g_denied;
         UE_LOGI("[KEYPAD-VERB] DENY slot=%u %s key='%ls' -- %s (%.0f uu of %.0f)", static_cast<unsigned>(slot),
                 IntentName(p.verb), key.c_str(), coop::element::OutcomeName(subject.outcome), subject.distUU,
                 subject.reachUU);
-        return;
+        return true;
     }
     // A keycard's swipe and a pass changer's use are the held item's verbs.
     const wchar_t* needs = p.verb == KI::kKeycard ? L"prop_keycard_C"
@@ -147,7 +159,7 @@ void Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
         ++g_denied;
         UE_LOGI("[KEYPAD-VERB] DENY slot=%u %s key='%ls' -- the sender does not hold a %ls",
                 static_cast<unsigned>(slot), IntentName(p.verb), key.c_str(), needs);
-        return;
+        return true;
     }
     bool dispatched = false;
     bool verdict = false;
@@ -164,6 +176,7 @@ void Execute(coop::net::Session& s, const coop::net::KeypadIntentPayload& p, uin
         UE_LOGI("[KEYPAD-VERB] host ran slot %u's %s on key='%ls': dispatched=%d%s", static_cast<unsigned>(slot),
                 IntentName(p.verb), key.c_str(), dispatched ? 1 : 0,
                 (p.verb == KI::kSubmit || p.verb == KI::kKeycard) ? (verdict ? ", verdict accept" : ", verdict deny") : "");
+    return true;
 }
 
 void HostPre(const sg::Call& call, KS::Verb verb) {
@@ -361,8 +374,8 @@ void Tick(coop::net::Session& session) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const coop::net::KeypadIntentPayload p = g_pending[slot].front();
-        g_pending[slot].pop_front();
-        Execute(session, p, slot);
+        if (Execute(session, p, slot)) g_pending[slot].pop_front();
+        else g_rate[slot].tokens += 1.0f;   // a wait runs nothing, so it spends no token
     }
 }
 
@@ -389,6 +402,7 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_pending[slot].clear();
     g_rate[slot] = Bucket{};
+    g_waitSaid[slot] = false;
 }
 
 void OnDisconnect() {
@@ -399,6 +413,7 @@ void OnDisconnect() {
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
+        g_waitSaid[slot] = false;
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
 }

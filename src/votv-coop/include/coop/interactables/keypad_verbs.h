@@ -27,8 +27,9 @@ namespace coop::keypad_verbs {
 // Registers the name watches. The per-tick retry pump (subsystems::Install). Game thread.
 void Install(coop::net::Session* session);
 
-// Settles the watches and says once when they are live. Host: runs the queued intents, each sender
-// at a bounded rate. Game thread, once per pump tick.
+// Settles the watches and says once when they are live. Host: runs the queued intents in order, each
+// sender at a bounded rate; a sender whose first pose has not arrived has no body to measure its reach
+// from, and its intents wait for it, so no digit of a code is lost. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // HOST: a client's intent from the wire, its format already checked by the dispatcher. Queued, and

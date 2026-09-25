@@ -28,7 +28,8 @@ namespace coop::door_verb_intent {
 void Install(coop::net::Session* session);
 
 // Both roles: settles the watches and says once when all three are live. Host: runs the queued
-// verbs, each sender at a bounded rate. Game thread, once per pump tick.
+// verbs in order, each sender at a bounded rate; a sender whose first pose has not arrived has no
+// body to measure its reach from, and its verbs wait for it. Game thread, once per pump tick.
 void Tick(coop::net::Session& session);
 
 // Host: a client's verb from the wire, its format already checked by the dispatcher. Queued, and

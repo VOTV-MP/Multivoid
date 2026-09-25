@@ -52,7 +52,9 @@ on the switch lane, whose replay of the press is what moves the host's group. A 
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
-the blackout clause, a swing already moving, the pry. The cut is at those entry verbs rather than
+the blackout clause, a swing already moving, the pry. A verb that reaches the host before the
+sender's body does (a client's first pose spawns it) waits for the body, since the host measures
+the sender's reach from it. The cut is at those entry verbs rather than
 at `doorOpen`/`doorClose`: every in-door caller reaches those two through the door's own event
 graph, where a press cannot be told from a hit or a trigger, and a hit moves both leaves before it
 ever reaches `doorOpen`. The host's door then closes by its own
@@ -125,8 +127,9 @@ so it never lands under the tail that reads the set-new-code mode. On a client e
 verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
 the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
 keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
-copy, judging a submit against its own password. A keycard's verdict is taken only while the
-sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
+copy, judging a submit against its own password; entries typed before the host has the sender's
+body wait for it, in order, so no digit of a code is lost. A keycard's verdict is taken only while
+the sender holds a keycard. An accept unlocks a door; opening it is an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
