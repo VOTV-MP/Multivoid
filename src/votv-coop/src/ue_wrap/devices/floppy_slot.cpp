@@ -3,6 +3,7 @@
 #include "ue_wrap/devices/floppy_slot.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -58,7 +59,6 @@ struct Desc {
     int32_t offNametype   = -1;
     int32_t offWidget     = -1;
     int32_t offMesh       = -1;
-    void*   fnUpdFloppy   = nullptr;
 
     bool     resolved  = false;
     uint64_t nextTryMs = 0;
@@ -135,13 +135,11 @@ bool MeshForType(void* worldContext, int32_t type, void*& out) {
 // ejectFloppy do it.
 bool Refresh(const Desc& d, void* device, int32_t type) {
     bool done = true;
-    if (d.refreshWidget && d.fnUpdFloppy && d.offWidget >= 0) {
+    if (d.refreshWidget && d.offWidget >= 0) {
+        // updFloppy is looked up on the widget's own class, which is loaded by construction.
         void* widget = *reinterpret_cast<void* const*>(
             reinterpret_cast<const uint8_t*>(device) + d.offWidget);
-        if (widget) {
-            ParamFrame f(d.fnUpdFloppy);
-            if (f.valid()) Call(widget, f);
-        }
+        if (widget) component_calls::CallParamlessNamed(widget, L"updFloppy");
     }
     if (d.refreshMesh && d.offMesh >= 0) {
         void* comp = *reinterpret_cast<void* const*>(
@@ -196,11 +194,7 @@ bool EnsureResolved(DeviceKind kind) {
     d->offObjectData = R::FindPropertyOffset(cls, L"floppyObjectData");
     if (d->hasZip)      d->offZip      = R::FindPropertyOffset(cls, L"zip");
     if (d->hasNametype) d->offNametype = R::FindPropertyOffset(cls, L"floppyNametype");
-    if (d->refreshWidget) {
-        d->offWidget = R::FindPropertyOffset(cls, L"Widget");
-        void* widgetCls = R::FindClass(L"ui_laptop_C");
-        d->fnUpdFloppy = widgetCls ? R::FindFunction(widgetCls, L"updFloppy") : nullptr;
-    }
+    if (d->refreshWidget) d->offWidget = R::FindPropertyOffset(cls, L"Widget");
     if (d->refreshMesh) d->offMesh = R::FindPropertyOffset(cls, L"floppyMesh");
 
     const bool ok = d->offType >= 0 && d->offReadWrites >= 0 && d->offData >= 0 &&
@@ -350,10 +344,9 @@ void ResetCache() {
         d.nextTryMs = 0;
         d.offType = d.offReadWrites = d.offData = d.offObjectData = -1;
         d.offZip = d.offNametype = d.offWidget = d.offMesh = -1;
-        d.fnUpdFloppy = nullptr;
         // The overlap entries go with the rest: a resolved UFunction of a world's Blueprint class
-        // is cached on the same terms as this file's offsets and its widget verb, and a caller
-        // holding one past a level change would be holding it on a guess.
+        // is cached on the same terms as this file's offsets, and a caller holding one past a
+        // level change would be holding it on a guess.
         for (auto& fn : d.fnOverlap) fn = nullptr;
         d.overlapCount = 0;
         d.overlapResolved = false;

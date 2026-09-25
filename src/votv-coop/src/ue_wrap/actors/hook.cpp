@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"    // StringToFName: the Kinds' names, and the component lookup's
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
@@ -220,9 +221,11 @@ bool EnsureResolved() {
     if (!g_fnSetLength)   g_fnSetLength   = R::FindFunction(cls, L"setLength");
     if (!g_fnAttachA)     g_fnAttachA     = R::FindFunction(cls, L"attach_a");
 
-    if (void* mp = R::FindClass(L"mainPlayer_C")) {
-        if (g_offActiveHk < 0) g_offActiveHk = R::FindPropertyOffset(mp, L"activeHook");
-    }
+    // The player class holds activeHook. It loads with the menu, so its absence is a wait, not a
+    // member miss, and a pass without it does not count toward the latch below.
+    void* const mp = ue_wrap::object_index::ClassByName(L"mainPlayer_C");
+    if (!mp) return false;
+    if (g_offActiveHk < 0) g_offActiveHk = R::FindPropertyOffset(mp, L"activeHook");
     if (void* sc = R::FindClass(L"SceneComponent")) {
         if (!g_fnSetCompWorldLocRot)
             g_fnSetCompWorldLocRot = R::FindFunction(sc, L"K2_SetWorldLocationAndRotation");
