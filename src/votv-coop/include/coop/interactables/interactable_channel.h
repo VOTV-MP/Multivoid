@@ -156,7 +156,8 @@ public:
         }
     }
 
-    // The receiver, from event_feed (payload already copied and range-checked). Applies
+    // The receiver, from the reliable dispatch through interactable_sync::OnReliable (payload already
+    // copied and range-checked, coop/dispatch/event_dispatch_state). Applies
     // synchronously: the reliable drain runs on the game thread inside net_pump::Tick, which the
     // engine reads and UFunction calls below require. An instance not streamed in yet, or of a
     // family whose classes have not resolved yet, is deferred to pending_ and retried on the
@@ -363,12 +364,6 @@ public:
         if (!R::IsLive(obj)) return;
         std::wstring key = KeyOf(obj);
         if (key.empty()) return;
-        if (ProbeLog()) {
-            const std::wstring game = a_.GetKey(obj);
-            if (game != key)
-                UE_LOGI("%s[ident]: '%ls' -> %ls (%ls)", a_.name, game.c_str(), key.c_str(),
-                        coop::element::PortableIdentity(obj).c_str());
-        }
         scanFound_.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
     }
 
@@ -416,10 +411,11 @@ public:
         // times in a single join, and six channels together put about 20,000 of these in one run.
         if (censusChanged && ProbeLog()) {
             // The identity probe: for each indexed instance, every candidate for a cross-peer
-            // identity alongside the key: the UObject name (baked into the level package for a
-            // placed actor, counter-suffixed for a spawned one), the Outer, the class, the object
-            // flags (RF_WasLoaded, 0x00080000, separates loaded from runtime-made) and the world
-            // location. One run per peer answers by diff.
+            // identity alongside the key: the game's own Key and the portable identity the key came
+            // from, the UObject name (baked into the level package for a placed actor,
+            // counter-suffixed for a spawned one), the Outer, the class, the object flags
+            // (RF_WasLoaded, 0x00080000, separates loaded from runtime-made) and the world location.
+            // One run per peer answers by diff.
             std::vector<std::pair<std::wstring, Ref>> snap;
             { std::lock_guard<std::mutex> lk(indexMutex_); snap.assign(byKey_.begin(), byKey_.end()); }
             for (auto& kv : snap) {
@@ -447,10 +443,13 @@ public:
                         parentKey = ue_wrap::prop::GetActorSaveKeyString(parent);
                     if (parentKey.empty()) parentKey = L"<empty>";
                 }
-                UE_LOGI("%s[probe]: key='%ls' idx=%d actor=%p name='%ls' outer='%ls' class='%ls' "
-                        "flags=0x%08X loc=%.1f,%.1f,%.1f comp='%ls' parent='%ls' pclass='%ls' "
+                const std::wstring game = a_.GetKey(obj);
+                const std::wstring ident = coop::element::PortableIdentity(obj);
+                UE_LOGI("%s[probe]: key='%ls' game='%ls' ident='%ls' idx=%d actor=%p name='%ls' outer='%ls' "
+                        "class='%ls' flags=0x%08X loc=%.1f,%.1f,%.1f comp='%ls' parent='%ls' pclass='%ls' "
                         "pflags=0x%08X pkey='%ls'%s",
-                        a_.name, kv.first.c_str(), kv.second.idx, obj,
+                        a_.name, kv.first.c_str(), game.c_str(), ident.empty() ? L"<none>" : ident.c_str(),
+                        kv.second.idx, obj,
                         R::ToString(R::NameOf(obj)).c_str(),
                         outer ? R::ToString(R::NameOf(outer)).c_str() : L"<none>",
                         R::ClassNameOf(obj).c_str(), objFlags,
