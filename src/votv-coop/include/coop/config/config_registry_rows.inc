@@ -298,9 +298,9 @@ CFG_FLAG(run_and_wait_selftest, "run_and_wait_selftest", "dev", false, "VOTVCOOP
     "answer, a fault, a C++ throw and a call on the game thread itself -- once per process. Its faults "
     "are provoked on purpose and logged as ERRORs its verdict names, so arm it for one run.")
 CFG_FLAG(world_singleton_parity, "world_singleton_parity", "dev", false, "VOTVCOOP_WORLD_SINGLETON_PARITY",
-    "Probe: once per gameplay world, the object index's loaded-class lookup and the world singleton "
-    "checked against the whole-array walks they replace, one row per name and a verdict. Read-only; "
-    "the walks it makes for the comparison are its own.")
+    "Probe: once per world, the menu's included, the object index's loaded-class lookup and the world "
+    "singleton checked against the whole-array walks they replace, one row per name and a verdict. "
+    "Read-only; the walks it makes for the comparison are its own.")
 CFG_FLAG(end_play_probe, "end_play_probe", "dev", false, "VOTVCOOP_END_PLAY_PROBE",
     "Probe: every actor's end of play counted by reason, and each destroyed one matched to the "
     "K2_DestroyActor call it ran inside; the ends with no such call, and the calls with no end, named "
