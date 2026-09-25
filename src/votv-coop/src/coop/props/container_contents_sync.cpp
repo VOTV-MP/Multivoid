@@ -20,6 +20,7 @@
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/component_calls.h"  // CallParamless
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 
@@ -84,10 +85,6 @@ std::map<uint32_t, uint64_t> g_appliedHash;
 // both failures in turn.
 std::map<uint32_t, uint64_t> g_baseHash;
 
-// name to UClass memo: FindClass walks the whole GUObjectArray, and per record per broadcast that
-// is the per-frame full scan.
-std::map<std::wstring, void*> g_classMemo;
-
 // Containers whose broadcast the transport refused; retried by the sweep.
 std::set<uint32_t> g_retry;
 
@@ -115,7 +112,6 @@ int32_t g_offInvPlayer = -2;  // propInventory_C.Player  -- the world-vs-PERSONA
 int32_t g_offInvOwner  = -2;  // propInventory_C.Owner   -- the Aprop_container_C
 int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
 int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
-void* g_containerCls = nullptr;
 
 // The two re-derive verbs, resolved once from the class that declares each, never the instance's
 // class (see ResolveRederiveFns).
@@ -185,36 +181,25 @@ uint8_t* GObjStackSlot(void* inv) {
     return const_cast<uint8_t*>(stack.data) + static_cast<size_t>(idx) * SR::kMxStride;
 }
 
-void* ContainerClass() {
-    if (!g_containerCls) g_containerCls = R::FindClass(L"prop_container_C");
-    return g_containerCls;
-}
+// The container base and the inventory component's class, looked up per use, one index lookup each: a
+// class not loaded yet, or still loading, answers null and is asked for again. Game thread, as every
+// caller is.
+void* ContainerClass() { return ue_wrap::object_index::ClassByName(L"prop_container_C"); }
+void* InventoryClass() { return ue_wrap::object_index::ClassByName(L"propInventory_C"); }
 
-// A class by name, memoised (a null result too: one walk per name, ever).
-void* ClassByName(const std::wstring& name) {
-    if (name.empty()) return nullptr;
-    auto it = g_classMemo.find(name);
-    if (it != g_classMemo.end()) return it->second;
-    void* cls = R::FindClass(name.c_str());
-    g_classMemo.emplace(name, cls);   // a null result is memoized too -- one walk per name, ever
-    return cls;
-}
-
+// A record whose class is a container: a class not loaded yet is not one now, and is asked for again at
+// the next record.
 bool RecordIsNestedContainer(const SR::SaveRecord& r) {
-    void* base = ContainerClass();
+    if (r.className.empty()) return false;
+    void* const base = ContainerClass();
     if (!base) return false;
-    void* cls = ClassByName(r.className);
+    void* const cls = ue_wrap::object_index::ClassByName(r.className.c_str());
     return cls && ue_wrap::prop::WalksToBase(cls, base);
 }
 
 // Is this a propInventory_C component, and is that a container actor: the verb filter matches on
 // the verb name alone, so any class with an addObject would arrive, and the apply side must not
 // read a cached component offset off an eid that resolved to something else.
-void* InventoryClass() {
-    static void* cls = nullptr;
-    if (!cls) cls = R::FindClass(L"propInventory_C");
-    return cls;
-}
 bool IsInventoryComponent(void* obj) {
     void* base = InventoryClass();
     return base && obj && ue_wrap::prop::WalksToBase(R::ClassOf(obj), base);
