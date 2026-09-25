@@ -71,8 +71,10 @@ bool TryReadOvenFixed(void* oven, bool& fixed);
 // thread.
 bool CallOvenFix(void* oven);
 
-// A drill's fixture, never the game's path: write the oven's `fixed` and repaint it (upd), so a drill
-// can start from a broken oven where the save had repaired it. Game thread.
-bool WriteOvenFixedForDrill(void* oven, bool fixed);
+// Write the oven's `fixed` and repaint it (upd): fix()'s own work without its screen. The apply of a
+// repair another peer made -- fix() would also drop this peer's repair screen, if one is open, without
+// the screen's quit(), leaving its player's input in the screen; the player finishes or quits it --
+// and a drill's fixture. Game thread.
+bool WriteOvenFixed(void* oven, bool fixed);
 
 }  // namespace ue_wrap::appliance

@@ -215,7 +215,7 @@ bool TryReadOvenFixed(void* oven, bool& fixed) {
 
 bool CallOvenFix(void* oven) { return IsOven(oven) && component_calls::CallParamlessNamed(oven, L"fix"); }
 
-bool WriteOvenFixedForDrill(void* oven, bool fixed) {
+bool WriteOvenFixed(void* oven, bool fixed) {
     if (!IsOven(oven)) return false;
     const int32_t off = g_ovenFixed.Of(oven);
     if (off < 0) return false;

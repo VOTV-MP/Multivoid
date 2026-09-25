@@ -147,16 +147,17 @@ const Adapter g_applianceAdapter = {
     &ue_wrap::appliance::ResolvedClassCount,
 };
 // The kitchen oven's repair (kitchen_C's `fixed`), symmetric and one way: fix() sets it and nothing
-// sets it back, so the peer that repaired sends it and a receiver runs fix() on 1 and refuses 0 (the
-// channel reads the device after an apply, so a refusal is said and is no delta). Keyed as the
-// appliance family keys the oven, by Aactor_save_C::Key.
+// sets it back, so the peer that repaired sends it; a receiver writes it and repaints on 1, fix()'s
+// work without its screen (appliance::WriteOvenFixed), and refuses 0 (the channel reads the device
+// after an apply, so a refusal is said and is no delta). Keyed as the appliance family keys the
+// oven, by Aactor_save_C::Key.
 const Adapter g_ovenAdapter = {
     "oven", coop::net::ReliableKind::OvenRepairState,
     &ue_wrap::appliance::EnsureResolved,
     &ue_wrap::appliance::IsOven,
     &ue_wrap::appliance::GetKeyString,
     &ue_wrap::appliance::TryReadOvenFixed,
-    [](void* a, bool on) -> bool { return on && ue_wrap::appliance::CallOvenFix(a); },
+    [](void* a, bool on) -> bool { return on && ue_wrap::appliance::WriteOvenFixed(a, true); },
     nullptr,
     &ue_wrap::appliance::ResolvedClassCount,
 };

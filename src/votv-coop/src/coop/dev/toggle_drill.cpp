@@ -72,7 +72,7 @@ bool LidToggle(void* s, void*) {
     return SW::TryReadOpen(s, open) && (open ? SW::CallClose(s) : SW::CallOpen(s, false));
 }
 bool OvenRepair(void* o, void*) { return A::CallOvenFix(o); }
-bool OvenBreak(void* o) { return A::WriteOvenFixedForDrill(o, false); }
+bool OvenBreak(void* o) { return A::WriteOvenFixed(o, false); }
 
 // Each device is keyed by its lane, whose name for it both peers share once both index it.
 namespace IS = coop::interactable_sync;

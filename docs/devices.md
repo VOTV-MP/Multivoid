@@ -56,7 +56,7 @@ Omega's call), the box lane a locker's `opened` at its `open` (its toggle's, a m
 console's at its `actionOptionIndex`, and the container lane a lid's `opened` at its `open` or `close`
 (which its setup, grab, damage, padlock and resting swing, and a cremator's door, call), and the oven
 lane an oven's `fixed` at its `fix()`, the repair widget's last step, which goes one way: a receiver
-runs `fix()` on 1 and refuses 0.
+writes it and repaints on 1, `fix()`'s work without its screen, and refuses 0.
 A client's own press, hit or pry of a door never runs on its copy either: the
 script-body gate refuses the door's entry verb there and sends it to the host
 (`coop/interactables/door_verb_intent`), which

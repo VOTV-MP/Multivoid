@@ -826,9 +826,9 @@ enum class ReliableKind : uint8_t {
 
     // Any peer, relayed by the host: the kitchen oven's repair, keyed as ApplianceState keys the
     // oven. Its `fixed` goes false to true once, in its fix() (the repair widget's last step; loadData
-    // calls it for a saved repair), and nothing sets it back, so a receiver runs fix() on 1 and
-    // refuses 0. Late join: the transferred save carries `fixed`, and the connect snapshot says it
-    // again. KeyedTogglePayload.
+    // calls it for a saved repair), and nothing sets it back, so a receiver writes it and repaints on
+    // 1 and refuses 0. Late join: the transferred save carries `fixed`, and the connect snapshot says
+    // it again. KeyedTogglePayload.
     OvenRepairState = 151,
 };
 
