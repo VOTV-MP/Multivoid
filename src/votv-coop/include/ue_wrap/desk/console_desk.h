@@ -170,9 +170,10 @@ bool ReadDLSignalKey(uint64_t& out);
 
 // The reflected renderer's deleteSignalActor, the display-actor half of the native un-arm
 // chain; the machine reset alone leaves the rendered signal object alive. The answer is what
-// happened: the renderer, its verb or its field did not resolve or the call failed; there was no
-// signal actor, which the verb's own IsValid test would have left alone; or one was deleted.
-enum class SignalActorDelete : uint8_t { Unresolved, NoneToDelete, Deleted };
+// happened: the renderer or its verb did not resolve, or the call failed; the verb ran with no signal
+// actor to delete, which its own IsValid test leaves alone; it deleted one; or it ran and the field
+// that says which did not resolve.
+enum class SignalActorDelete : uint8_t { Unresolved, NoneToDelete, Deleted, RanUnread };
 SignalActorDelete DeleteSignalActor();
 
 // The host-authoritative download-simulation output vector (desk_sim_sync). The download rate

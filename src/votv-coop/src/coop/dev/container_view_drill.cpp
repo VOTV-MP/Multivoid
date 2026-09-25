@@ -59,7 +59,6 @@ struct WalkOutcome {
 };
 std::mutex g_walkMu;
 WalkOutcome g_walk;  // guarded by g_walkMu
-std::atomic<bool> g_walkerStarted{false};
 
 void Publish(uint32_t gen, int result, void* arrivedAt, int32_t pickedIdx) {
     std::lock_guard<std::mutex> lk(g_walkMu);
@@ -201,13 +200,19 @@ void StartWalk(Walk walk) {
         gen = g_walk.gen;
     }
     const uintptr_t packed = (static_cast<uintptr_t>(gen) << 1) | static_cast<uintptr_t>(walk);
-    if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, reinterpret_cast<LPVOID>(packed), 0, nullptr))
-        ::CloseHandle(h);
+    HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, reinterpret_cast<LPVOID>(packed), 0, nullptr);
+    if (!h) {
+        // No walker, no walk: the outcome says so at once, rather than the drill waiting on a result
+        // nothing will publish.
+        UE_LOGW("[CVIEW-DRILL] client: the walker thread did not start (error %lu)", ::GetLastError());
+        Publish(gen, 2, nullptr, -1);
+        return;
+    }
+    ::CloseHandle(h);
 }
 
 void ClientTick() {
     if (g_phase == Phase::Unpicked) {
-        if (g_walkerStarted.exchange(true)) return;
         if (!E::TryGetActorLocation(coop::players::Registry::Get().Local(), g_start)) {
             Done("the player's place is unreadable -- INCONCLUSIVE");
             return;
@@ -312,7 +317,6 @@ void OnDisconnect() {
         g_walk.arrivedAt = nullptr;
         g_walk.pickedIdx = -1;
     }
-    g_walkerStarted.store(false);
     g_phase = Phase::Unpicked;
     g_atv = nullptr;
     g_atvIdx = -1;

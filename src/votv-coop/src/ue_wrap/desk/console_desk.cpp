@@ -575,14 +575,18 @@ SignalActorDelete DeleteSignalActor() {
     if (!renderer) return SignalActorDelete::Unresolved;
     void* const cls = R::ClassOf(renderer);
     void* const fn = R::FindDispatchFunctionCached(cls, L"deleteSignalActor");
+    if (!fn) return SignalActorDelete::Unresolved;
+    // The verb destroys signalObjectActor only if it is valid, and clears the field; it runs whether or
+    // not the field resolves here, which only informs the answer: the field read before the call says
+    // whether there was one.
     const int32_t off = R::FindPropertyOffset(cls, L"signalObjectActor");
-    if (!fn || off < 0) return SignalActorDelete::Unresolved;
-    // The verb destroys signalObjectActor only if it is valid, so the field is read first and the
-    // answer says what the verb did.
-    void* const actor = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(renderer) + off);
-    if (!actor || !R::IsLive(actor)) return SignalActorDelete::NoneToDelete;
+    void* const actor =
+        off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(renderer) + off) : nullptr;
+    const bool had = off >= 0 && actor && R::IsLive(actor);
     ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(renderer, f) ? SignalActorDelete::Deleted : SignalActorDelete::Unresolved;
+    if (!f.valid() || !ue_wrap::Call(renderer, f)) return SignalActorDelete::Unresolved;
+    if (off < 0) return SignalActorDelete::RanUnread;
+    return had ? SignalActorDelete::Deleted : SignalActorDelete::NoneToDelete;
 }
 
 bool ReadDLSignalKey(uint64_t& out) {

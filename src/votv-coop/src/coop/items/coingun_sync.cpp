@@ -59,10 +59,11 @@ inline coop::net::Session* LoadSession() { return g_session.load(std::memory_ord
 std::atomic<bool> g_installed{false};
 std::atomic<bool> g_verbRegistered{false};
 
-// Resolved once at Install.
+// Resolved once at Install. The two classes are kept for the process: both are imports of the props
+// table, loaded with the boot menu, and a measured same-process rejoin kept each one's class object.
 void* g_finishSpawnFn = nullptr;
 void* g_coinClass     = nullptr;
-void* g_gunClass      = nullptr;   // prop_coingun_C, the context gate; shared with the arbiter
+void* g_gunClass      = nullptr;   // prop_coingun_C, the context gate
 int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere, the simulating component (not the root)
 void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
 
@@ -178,11 +179,10 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
     // barrier destroys its coins only if a sale went out. The context gate is not optional:
     // a name watch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
     // tool, so without it every knife swing would open and release an empty group. Read-only on the
-    // gun class, never resolved here: Install resolves it, one tick in 125, about every 2 s, and does
-    // not finish until it has. The cost: for up to that long after the class becomes resident a shot
-    // opens no group, its coins land in the defensive group the birth seam opens and are released,
-    // the safe direction; and both this gate and IsInCoinGunVerb must read rather than resolve, or
-    // they could disagree inside one shot.
+    // gun class, never resolved here: Install resolves it on the tick it becomes resident, and does not
+    // finish until it has. Until then no group opens and no birth seam is installed yet, so a shot's
+    // coins stay and nothing is sold, the safe direction; and both this gate and IsInCoinGunVerb must
+    // read rather than resolve, or they could disagree inside one shot.
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
     if (!b.object || !g_gunClass) return sg::Verdict::Run;
@@ -564,15 +564,15 @@ void Install(coop::net::Session* session) {
     // and sellObject, the collect lane the coin's overlap delegate, so either can resolve first,
     // and gating on one latch alone would strand the other.
     if (g_installed.load(std::memory_order_acquire) && internal::CollectInstalled()) return;
-    // This runs at the pump rate, and the arbiter's resolves below walk the whole array on a miss; in
-    // a world where the gun is not resident (the coin class loads with it) that would be several walks
-    // per tick, so the retry is bound to one tick in 125, about every 2 s. The coin and gun classes
-    // are one index lookup each, and one still loading answers null and is asked for again.
+    // The coin and gun classes are one index lookup each, every tick until found: one still loading
+    // answers null and is asked for again. The resolves below them are bound to one tick in 125, about
+    // every 2 s: the arbiter's lib_C default object and GameplayStatics are found by walking the whole
+    // array, which a miss would pay on every tick at the pump rate.
+    if (!g_coinClass) g_coinClass = ue_wrap::object_index::ClassByName(kCoinClassName);
+    if (!g_gunClass)  g_gunClass  = ue_wrap::object_index::ClassByName(kGunClassName);
     static uint32_t sResolveN = 0;
     if ((sResolveN++ % 125u) != 0u) return;
 
-    if (!g_coinClass)     g_coinClass     = ue_wrap::object_index::ClassByName(kCoinClassName);
-    if (!g_gunClass)      g_gunClass      = ue_wrap::object_index::ClassByName(kGunClassName);
     internal::InstallArbiter();   // the HOST half's own resolves, inside this same throttle
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");

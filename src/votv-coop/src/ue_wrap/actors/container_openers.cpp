@@ -17,7 +17,8 @@ namespace R = ue_wrap::reflection;
 // One kind of opener: its class and the field naming the container it opens, which its subclasses
 // inherit at the same offset -- the ATV has five (ATV_Child_C, car1_Child_C, car1_Child1_C,
 // car1_conduire_C, car1_witch_C), each opening its container through the ATV's own verb. The kind's
-// class is looked up on every call (one index lookup) and the field's offset kept per class object.
+// class is looked up once per call (one index lookup, by RefreshClasses) and the field's offset kept per
+// class object.
 struct Opener {
     const wchar_t* cls;
     const wchar_t* field;
@@ -96,7 +97,7 @@ void ForEach(void* container, OpenerFn fn, void* ctx) {
     if (!container || !fn) return;
     RefreshClasses();
     for (Opener& o : g_openers) {
-        void* const cls = object_index::ClassByName(o.cls);
+        void* const cls = o.builtFrom;  // RefreshClasses looked it up this call
         if (!cls) continue;  // not loaded in this world: nothing of it can open anything
         const int32_t off = OffsetOn(o, cls);
         if (off < 0) continue;

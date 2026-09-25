@@ -542,6 +542,10 @@ void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
         case CD::SignalActorDelete::NoneToDelete:
             UE_LOGI("dish_sync: DISARM applied (machine reset; no signal actor to delete)");
             break;
+        case CD::SignalActorDelete::RanUnread:
+            UE_LOGI("dish_sync: DISARM applied (machine reset + deleteSignalActor ran; its field was not "
+                    "read, so whether it deleted one is unknown)");
+            break;
         case CD::SignalActorDelete::Unresolved:
             UE_LOGW("dish_sync: DISARM reset the machine, but the renderer's deleteSignalActor did not "
                     "resolve or run -- a rendered signal object may stay");
