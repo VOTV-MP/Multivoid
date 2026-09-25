@@ -79,9 +79,18 @@ void Tick() {
     // Named before the close, while the screen still holds it.
     const std::wstring cls = live ? R::ClassNameOf(container) : std::wstring(L"(destroyed)");
     const auto eid = live ? coop::element::Registry::Get().EidForActor(container) : 0;
-    if (CV::Close())
+    if (CV::Close()) {
         UE_LOGI("container_view_close: the view into %ls eid=%u closed -- neither it nor an actor that opens "
                 "it is within the arm's %.0f uu", cls.c_str(), static_cast<unsigned>(eid), arm);
+        return;
+    }
+    // Asked again next tick, and said once: a close that resolves but does not run is a fault to see.
+    static bool s_closeFailed = false;
+    if (!s_closeFailed) {
+        s_closeFailed = true;
+        UE_LOGW("container_view_close: the inventory screen's close did not run for the view into %ls eid=%u "
+                "-- it is tried again each tick", cls.c_str(), static_cast<unsigned>(eid));
+    }
 }
 
 }  // namespace coop::props::container_view_close

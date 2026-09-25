@@ -212,7 +212,8 @@ void TryArmHooks() {
     if (g_armed || g_armFailedLatched) return;
     if (!AnyPyramidElementExists()) return;  // class not needed yet -- no GUObjectArray walk
     // A class not yet in the index, or still being loaded, is asked for again next time, at the cost of
-    // one lookup; only a loaded class that lacks a member below disables the lane.
+    // one lookup; only a loaded class that lacks a member below, or a hook table with no room, disables
+    // the lane.
     void* cls = ue_wrap::object_index::ClassByName(kPyramidClassName);
     if (!cls) return;
     g_fnSeeWisps = R::FindFunction(cls, L"seeWisps");

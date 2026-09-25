@@ -250,13 +250,15 @@ bool DestroyMirror(void* atv) {
     // A driver this peer's controller holds in it is handed back first, through the ATV's own dismount,
     // which re-possesses and shows the player as a driver's own leaving does: the rig possesses the ATV
     // while driven, so destroying it seated would leave the player hidden and unpossessed. MTA's vehicle
-    // tears its occupants off before it goes (reference/mtasa-blue/Client/mods/deathmatch/logic/
-    // CClientVehicle.cpp:285-318).
+    // removes its driver and passengers before its game vehicle goes
+    // (reference/mtasa-blue/Client/mods/deathmatch/logic/CClientVehicle.cpp:3075-3094). A dismount that
+    // cannot run is said: the destroy still goes ahead, and the player is left as the seat held them.
     if (engine::GetController(atv)) {
-        if (void* const fn = R::FindDispatchFunctionCached(R::ClassOf(atv), L"dismount")) {
-            ParamFrame f(fn);
-            if (f.valid()) Call(atv, f);
-        }
+        void* const fn = R::FindDispatchFunctionCached(R::ClassOf(atv), L"dismount");
+        ParamFrame f(fn);
+        if (!fn || !f.valid() || !Call(atv, f))
+            UE_LOGW("atv: DestroyMirror could not run the ATV's own dismount -- the local driver stays "
+                    "unpossessed and hidden after the ATV goes");
     }
     // K2_DestroyActor is declared on Actor, not on ATV_C, so it is resolved there.
     return engine::DestroyActor(atv);

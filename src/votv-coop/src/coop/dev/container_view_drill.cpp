@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace coop::dev::container_view_drill {
@@ -47,14 +48,31 @@ constexpr int   kCandidates = 8;
 enum class Phase { Unpicked, WalkingTo, Opened, WalkingAway, Done };
 enum class Walk : int { ToAtv = 0, Back = 1 };
 
-// What a walker thread hands the game thread: 0 walking, 1 arrived, 2 no ATV or no arrival.
-std::atomic<int>      g_walkResult{0};
-std::atomic<void*>    g_arrivedAt{nullptr};
-std::atomic<int32_t>  g_pickedIdx{-1};   // the ATV's slot, read at the pick, while it was surely live
-std::atomic<bool>     g_walkerStarted{false};
-// A walk belongs to the session that started it: a walker still running at a disconnect finishes, and
-// its result is dropped.
-std::atomic<uint32_t> g_walkGen{0};
+// What a walker thread hands the game thread, under one lock with the session generation the walk was
+// started in: a walker still running at a disconnect finishes, and publishes nothing into the next
+// session, since the check and the stores are one step.
+struct WalkOutcome {
+    uint32_t gen = 0;
+    int result = 0;              // 0 walking, 1 arrived, 2 no ATV or no arrival
+    void* arrivedAt = nullptr;
+    int32_t pickedIdx = -1;      // the ATV's slot, read at the pick, while it was surely live
+};
+std::mutex g_walkMu;
+WalkOutcome g_walk;  // guarded by g_walkMu
+std::atomic<bool> g_walkerStarted{false};
+
+void Publish(uint32_t gen, int result, void* arrivedAt, int32_t pickedIdx) {
+    std::lock_guard<std::mutex> lk(g_walkMu);
+    if (g_walk.gen != gen) return;
+    g_walk.result = result;
+    g_walk.arrivedAt = arrivedAt;
+    g_walk.pickedIdx = pickedIdx;
+}
+
+WalkOutcome ReadWalk() {
+    std::lock_guard<std::mutex> lk(g_walkMu);
+    return g_walk;
+}
 
 Phase   g_phase = Phase::Unpicked;
 FVector g_start{};
@@ -101,7 +119,7 @@ void Done(const char* verdict) {
 }
 
 // The ATV this peer's navmesh reaches by the shortest walk, as the keypad drill picks its keypad.
-bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& lenOut) {
+bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& lenOut, int32_t& idxOut) {
     void* const cls = OI::ClassByName(L"ATV_C");
     if (!cls) return false;
     struct Cand { void* atv; FVector pos; float dist; };
@@ -128,7 +146,7 @@ bool PickAtv(void* player, const FVector& at, DR::DirectorGoal& goal, float& len
         goal.targetActor = c.atv;
         goal.targetPos = c.pos;
         lenOut = len;
-        g_pickedIdx.store(R::InternalIndexOf(c.atv));
+        idxOut = R::InternalIndexOf(c.atv);
     }
     if (!goal.targetActor)
         UE_LOGW("[CVIEW-DRILL] client at (%.0f,%.0f,%.0f): %zu ATV(s), none with a route that ends beside it", at.X,
@@ -140,23 +158,26 @@ int WalkSeconds(float routeCm) { return std::clamp(static_cast<int>(routeCm / 10
 
 // The walks, with the director: to the ATV, then back to where the client started.
 DWORD WINAPI WalkerThread(LPVOID arg) {
-    const auto walk = static_cast<Walk>(reinterpret_cast<intptr_t>(arg));
-    const uint32_t gen = g_walkGen.load();
+    // The walk and the generation it belongs to, packed by StartWalk.
+    const uintptr_t packed = reinterpret_cast<uintptr_t>(arg);
+    const auto walk = static_cast<Walk>(packed & 1u);
+    const uint32_t gen = static_cast<uint32_t>(packed >> 1);
     auto goal = std::make_shared<DR::DirectorGoal>();
     goal->reachCm = kStandCm;
     auto len = std::make_shared<float>(0.f);
+    auto idx = std::make_shared<int32_t>(-1);
     if (walk == Walk::ToAtv) {
-        const int picked = GT::RunAndWait([goal, len](std::atomic<int>& done) {
+        const int picked = GT::RunAndWait([goal, len, idx](std::atomic<int>& done) {
             void* p = coop::players::Registry::Get().Local();
             FVector at{};
             if (!p || !R::IsLive(p) || !E::GetController(p) || !E::TryGetActorLocation(p, at)) {
                 done.store(2);
                 return;
             }
-            done.store(PickAtv(p, at, *goal, *len) ? 1 : 2);
+            done.store(PickAtv(p, at, *goal, *len, *idx) ? 1 : 2);
         });
         if (picked != 1) {
-            if (g_walkGen.load() == gen) g_walkResult.store(2);
+            Publish(gen, 2, nullptr, -1);
             return 0;
         }
     } else {
@@ -168,16 +189,19 @@ DWORD WINAPI WalkerThread(LPVOID arg) {
     DR::AddWalkToProcesses(mgr, *goal);
     // The walk back is bounded as a long route: its length is known only to the navmesh.
     const bool arrived = mgr.Run(*goal, WalkSeconds(walk == Walk::ToAtv ? *len : 30000.f)) && goal->reached;
-    if (g_walkGen.load() != gen) return 0;
-    g_arrivedAt.store(goal->targetActor);
-    g_walkResult.store(arrived ? 1 : 2);
+    Publish(gen, arrived ? 1 : 2, goal->targetActor, *idx);
     return 0;
 }
 
 void StartWalk(Walk walk) {
-    g_walkResult.store(0);
-    if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, reinterpret_cast<LPVOID>(static_cast<intptr_t>(walk)),
-                                  0, nullptr))
+    uint32_t gen = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_walkMu);
+        g_walk.result = 0;
+        gen = g_walk.gen;
+    }
+    const uintptr_t packed = (static_cast<uintptr_t>(gen) << 1) | static_cast<uintptr_t>(walk);
+    if (HANDLE h = ::CreateThread(nullptr, 0, &WalkerThread, reinterpret_cast<LPVOID>(packed), 0, nullptr))
         ::CloseHandle(h);
 }
 
@@ -193,14 +217,14 @@ void ClientTick() {
         return;
     }
     if (g_phase == Phase::WalkingTo) {
-        const int result = g_walkResult.load();
-        if (result == 0) return;
-        if (result == 2) {
+        const WalkOutcome w = ReadWalk();
+        if (w.result == 0) return;
+        if (w.result == 2) {
             Done("no ATV reached -- INCONCLUSIVE");
             return;
         }
-        g_atv = g_arrivedAt.load();
-        g_atvIdx = g_pickedIdx.load();
+        g_atv = w.arrivedAt;
+        g_atvIdx = w.pickedIdx;
         if (!R::IsLiveByIndex(g_atv, g_atvIdx)) {
             Done("the ATV is gone after the walk -- INCONCLUSIVE");
             return;
@@ -240,8 +264,7 @@ void ClientTick() {
         if (haveMargin && m > 0.f) ++g_openBeyond;
         else ++g_openWithin;
         g_lastMargin = haveMargin ? m : g_lastMargin;
-        const int result = g_walkResult.load();
-        if (result == 0) return;
+        if (ReadWalk().result == 0) return;
         if (haveMargin && m <= kLeaveCm) {
             Done("the walk back ended within the reach's neighbourhood, the view open -- INCONCLUSIVE");
             return;
@@ -282,11 +305,14 @@ void Tick(coop::net::Session* session) {
 void OnDisconnect() {
     if (!IsEnabled()) return;
     // A walker still running finishes its walk; its result is dropped (the generation moves on).
-    g_walkGen.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lk(g_walkMu);
+        ++g_walk.gen;
+        g_walk.result = 0;
+        g_walk.arrivedAt = nullptr;
+        g_walk.pickedIdx = -1;
+    }
     g_walkerStarted.store(false);
-    g_pickedIdx.store(-1);
-    g_walkResult.store(0);
-    g_arrivedAt.store(nullptr);
     g_phase = Phase::Unpicked;
     g_atv = nullptr;
     g_atvIdx = -1;

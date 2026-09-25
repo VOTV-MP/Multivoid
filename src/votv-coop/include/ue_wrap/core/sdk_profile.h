@@ -69,11 +69,11 @@ inline constexpr const char* kSigSaveGameToSlot =
 // the actor's vtable for a destroy, a stream-out and a world teardown, and 17 of the 18 C++ overrides
 // reach it through Super (AChaosSolverActor's does not); it holds the one call of Actor's ReceiveEndPlay
 // thunk, whose FName global has no other reader. Found as the engine finds it, in Actor's vtable: UE4SS
-// detours the same function, and 2 of 76 measured boots found its prologue already gone, both with
-// UE4SS's 6-byte jump on the script loop, which it detours in the same pass. The offset is UE4SS's 4.27
-// layout ([AActor] entry 27 after 2 + 4 + 71 inherited slots) and the exe's: 36 slots below EndPlay, in
-// all 110 vtables that hold it, sits AActor::ProcessEvent (slot 68), the only neighbor that calls
-// UObject::ProcessEvent. image+0x28C5A50 on 0.9.0n.
+// detours the same function, and in 2 of 90 boots measured before the change the prologue did not match,
+// both with UE4SS's 6-byte jump on the script loop, which it detours in the same pass. The offset is
+// UE4SS's 4.27 layout ([AActor] entry 27 after 2 + 4 + 71 inherited slots) and the exe's: 36 slots below
+// EndPlay, in all 110 vtables that hold it, sits AActor::ProcessEvent (slot 68), the only neighbor that
+// calls UObject::ProcessEvent. image+0x28C5A50 on 0.9.0n.
 inline constexpr size_t kActor_EndPlay_VtblOff = 0x340;
 // What the slot must lead to, read past the prologue and the stack cookie (bytes 0 to 29), where a
 // detour writes its jump: the engine's own begun-play test, the top two bits of the byte at +0x5C
