@@ -7,6 +7,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
+#include "coop/player/hand_item.h"         // what the sender's hand holds, and held last
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
 
@@ -14,6 +15,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/door.h"
+#include "ue_wrap/world/weapon_catalog.h"    // what one swing of the held item can deal
 
 #include <atomic>
 #include <chrono>
@@ -77,6 +79,7 @@ struct Bucket {
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<coop::net::DoorVerbIntentPayload> g_pending[coop::net::kMaxPeers];
 bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
+bool g_cutSaid[coop::net::kMaxPeers]  = {};  // a sender's hit cut to its item's swing, said once
 
 bool TakeToken(uint8_t slot) {
     Bucket& b = g_rate[slot];
@@ -126,6 +129,37 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
                 coop::element::OutcomeName(subject.outcome), subject.distUU, subject.reachUU);
         return true;
     }
+    // A pry is a crowbar's: the prying crowbar destroys the held one as it goes into the door, so a pry
+    // ends with the hand empty, and the sender's hand must have held a crowbar last. A hit is a swing:
+    // the player's attack swings only an item whose list_weapons row carries a montage and the attack
+    // flag, and deals at most that row's damage times its largest material multiplier, so a hit with
+    // anything else is refused and a larger damage is cut to that.
+    float damage = p.damage;
+    if (p.verb == V::kPry && !coop::hand_item::LastHeldClassIs(slot, L"prop_crowbar_C")) {
+        ++g_denied;
+        UE_LOGI("[DOOR-VERB] DENY slot=%u pry key='%ls' -- the sender's hand did not hold a crowbar last",
+                static_cast<unsigned>(slot), key.c_str());
+        return true;
+    }
+    if (p.verb == V::kHit) {
+        const std::wstring item = coop::hand_item::HeldName(slot);
+        ue_wrap::weapon_catalog::Swing swing;
+        const bool read = ue_wrap::weapon_catalog::Lookup(item, swing);
+        if (!read || !swing.canSwing) {
+            ++g_denied;
+            UE_LOGI("[DOOR-VERB] DENY slot=%u hit key='%ls' -- the sender's held item '%ls' %s",
+                    static_cast<unsigned>(slot), key.c_str(), item.c_str(),
+                    read ? "does not swing" : "cannot be judged: the weapon table is unusable");
+            return true;
+        }
+        const float bounded = (damage >= 0.f) ? (damage < swing.maxDamage ? damage : swing.maxDamage) : 0.f;
+        if (bounded != damage && !g_cutSaid[slot]) {
+            g_cutSaid[slot] = true;
+            UE_LOGW("[DOOR-VERB] slot %u's hit of %.1f with '%ls' is cut to %.1f, the most its swing deals "
+                    "(said once a session)", static_cast<unsigned>(slot), damage, item.c_str(), bounded);
+        }
+        damage = bounded;
+    }
     // The body Authorize just measured: the sender's puppet, passed as the presser and the hitter.
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
     void* body = (rp && rp->valid()) ? rp->GetActor() : nullptr;
@@ -135,7 +169,7 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     bool dispatched = false;
     switch (p.verb) {
     case V::kPress: dispatched = D::CallPress(door, body, p.action); break;
-    case V::kHit:   dispatched = D::CallHit(door, body, p.damage); break;
+    case V::kHit:   dispatched = D::CallHit(door, body, damage); break;
     case V::kPry:   dispatched = D::CallCrowbarOpen(door); break;
     default: break;  // the dispatcher refuses any other verb
     }
@@ -148,7 +182,7 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
     const bool changed = readBefore && readAfter && before != after;
     if (p.verb == V::kHit && dispatched && !changed && ++g_quietHits > 3 && g_quietHits % 20 != 0) return true;
     UE_LOGI("[DOOR-VERB] host ran slot %u's %s on key='%ls': dispatched=%d damage=%.1f, open %s -> %s",
-            static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(), dispatched ? 1 : 0, p.damage,
+            static_cast<unsigned>(slot), VerbName(p.verb), key.c_str(), dispatched ? 1 : 0, damage,
             readBefore ? (before ? "1" : "0") : "(unread)", readAfter ? (after ? "1" : "0") : "(unread)");
     return true;
 }
@@ -305,6 +339,7 @@ void OnPeerLeft(uint8_t slot) {
     g_pending[slot].clear();
     g_rate[slot] = Bucket{};
     g_waitSaid[slot] = false;
+    g_cutSaid[slot] = false;
 }
 
 void OnDisconnect() {
@@ -317,6 +352,7 @@ void OnDisconnect() {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
         g_waitSaid[slot] = false;
+        g_cutSaid[slot] = false;
     }
     g_sent = g_ran = g_denied = g_worldRefused = 0;
     g_quietHits = 0;

@@ -54,7 +54,9 @@ script-body gate refuses the door's entry verb there and sends it to the host
 runs the same verb on its own copy, so the door's own body decides it once -- its power gate with
 the blackout clause, a swing already moving, the pry. A verb that reaches the host before the
 sender's body has taken its first pose waits for it, since the host measures the sender's reach
-from that body. The cut is at those entry verbs rather than
+from that body. A pry is run only for a sender whose hand held a crowbar last (the prying crowbar
+takes the held one as it goes in), and a hit only with an item whose swing the weapon table allows,
+its damage cut to the most that swing deals. The cut is at those entry verbs rather than
 at `doorOpen`/`doorClose`: every in-door caller reaches those two through the door's own event
 graph, where a press cannot be told from a hit or a trigger, and a hit moves both leaves before it
 ever reaches `doorOpen`. The host's door then closes by its own
