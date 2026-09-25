@@ -116,9 +116,9 @@ thread_local void*    tls_bracketCtx = nullptr;       // the Context whose brack
 thread_local E::ElementId tls_bracketEntryEid = E::kInvalidId; // A's eid captured at entry (for re-entry check)
 
 // The deterministic successor, captured in-bracket and consumed once by kerfur_convert at the
-// paired destroy edge. Thread-local: the verb and both seams run synchronously on the game
-// thread. Cleared at each outermost verb entry and at the request entry (ClearCapturedForm),
-// plus a freshness backstop, so a capture never outlives its bracket.
+// verb's return. Thread-local: the verb and both seams run synchronously on the game thread.
+// Cleared at each outermost verb entry, plus a freshness backstop, so a capture never outlives its
+// bracket.
 // Two seconds of play in session ticks, however long a script body runs before the consumer looks.
 constexpr uint64_t kCaptureFreshTicks = 120;
 thread_local void*   tls_capturedForm    = nullptr;   // B's actor pointer (nullptr = slot empty)
@@ -161,8 +161,8 @@ bool IsKerfurNpcClass(void* cls) {
     void* nb = g_npcClass.load(std::memory_order_relaxed);
     return nb && R::IsDescendantOfAny(cls, &nb, 1);
 }
-// Record the freshly finished successor in the one-shot slot, from both the bracket and the
-// request-scope branch, only when it has a live index. Overwrites any prior slot.
+// Record the freshly finished successor in the one-shot slot, only when it has a live index.
+// Overwrites any prior slot.
 void StoreCapturedForm(void* b, int32_t idx, void* cls) {
     tls_capturedForm    = b;
     tls_capturedFormIdx = idx;
@@ -436,8 +436,15 @@ bool IsCapturedForm(void* actor) {
     // A non-consuming peek: is `actor` the successor in the capture slot? The keyed-express
     // suppressor in prop_lifecycle reads it to decide that this prop is the conversion's
     // successor, whose express KerfurConvert owns, and skips the generic spawn. It must not
-    // consume: the deferred converge still needs the slot.
+    // consume: the converge at the verb's return still needs the slot.
     if (!actor || actor != tls_capturedForm) return false;
+    if (coop::net_pump::TickSerial() > tls_capturedLastTick) return false;
+    return R::IsLiveByIndex(tls_capturedForm, tls_capturedFormIdx);
+}
+
+bool HasCapturedForm(bool wantNpc) {
+    // The same tests as the consume, without clearing the slot.
+    if (!tls_capturedForm || tls_capturedIsNpc != wantNpc) return false;
     if (coop::net_pump::TickSerial() > tls_capturedLastTick) return false;
     return R::IsLiveByIndex(tls_capturedForm, tls_capturedFormIdx);
 }

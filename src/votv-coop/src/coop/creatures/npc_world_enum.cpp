@@ -111,10 +111,6 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         // that eid, since the eid-keyed sweep finds nothing.
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(eid);
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
-        // The deterministic turn-on ghost adopt: carry the eid this kerfur converted from (the
-        // initiator peer parked a ghost tagged with it); 0 means no eid ghost adopt.
-        const coop::element::ElementId fromEid = coop::kerfur_entity::GetConvertFromEidForEid(eid);
-        p.convertFromEid = (fromEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(fromEid);
         if (!s->SendEntitySpawn(p)) {
             UE_LOGW("npc-sync[%s]: SendEntitySpawn failed for newly-registered eid=%u",
                     logTag, p.elementId);

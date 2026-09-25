@@ -147,7 +147,7 @@ Never spawn from an observer directly; post it. `[V]`
 | a cosmetic emitter spawn | `EX_CallMath` | no | the verb that spawns it: the cue lane watches `runEvent` return for the row whose body spawns the emitter (a script-gate watch), and a joiner's snapshot reads the live particle components from the object index `[V]` |
 | the save write | native C++ | not to the detour | the native detour that blocks a client's world save `[V]` |
 | the pause (menu and console paths) | `EX_CallMath`, and the console bypasses the statics entirely | no, on two paths | enforce the state every tick `[V]` |
-| the kerfur's conversion verbs | `EX_LocalVirtualFunction` self-calls, with `EX_CallMath` spawns inside | the verb no; its inner spawns yes, to the native seam | the script-body gate brackets the verb, the native seam captures the successor `[RD]` |
+| the kerfur's conversion verbs | `EX_LocalVirtualFunction` self-calls, with `EX_CallMath` spawns inside | the verb no; its inner spawns yes, to the native seam; the verb yes to the script-body gate | the script-body gate refuses the verb on a client, which asks the host, and brackets it on the host, whose return converges on the successor the native seam captured `[RD]` |
 | the scheduler's event fire | a cross-object virtual call | not to the detour or the native seam; yes to the script-body gate | a watch on `runEvent` whose caller is `saveSlot_C::settime` `[V]` |
 | every screen and panel verb | `EX_LocalVirtualFunction` | no | poll the state field `[V]` |
 | the desk keyboard's key router | widget input | yes, on the occupant's machine only | the desk input lane `[V]` |

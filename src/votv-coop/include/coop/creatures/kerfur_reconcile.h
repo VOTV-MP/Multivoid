@@ -30,8 +30,8 @@ namespace coop::kerfur_reconcile {
 //
 // THE RETIRE MECHANISM lives here; its SEQUENCING belongs to the one join-window order owner,
 // coop::element::quiescence_drain::RunReconcile, which drains it as a step just as it calls
-// save_identity_bind. It is not driven from kerfur_convert::PollKerfurConversions, which would be a
-// third parallel order owner on the same axis. The order owner's steady-state tick fires
+// save_identity_bind, and nothing else drives it: a second driver would be a parallel order owner on
+// the same axis. The order owner's steady-state tick fires
 // independently of any bracket -- every tick, gated only on quiescence and HasPendingWork, which
 // ORs in HasPendingRetire -- so the case where no pile bracket is armed is still covered.
 

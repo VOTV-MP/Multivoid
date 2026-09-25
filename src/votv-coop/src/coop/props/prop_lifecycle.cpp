@@ -10,7 +10,6 @@
 #include "coop/element/prop.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp, the conversion successor's converge
 #include "coop/creatures/kerfur_entity.h"   // IsKerfurPropClass
 #include "coop/creatures/kerfur_form_assembler.h"  // IsCapturedForm, the conversion-successor peek
 #include "coop/props/prop_echo_suppress.h"
@@ -162,19 +161,11 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
     // KerfurConvert is the sole conversion wire signal, never a generic PropSpawn), and this body
     // is the express funnel for both the Init POST observer and ExpressSpawnedProp. The
     // deterministic test is whether the form assembler captured this prop in its bracket (a
-    // non-consuming peek), which covers both the destroy-first and the spawn-first orderings; a
-    // proximity test against a dead NPC raced the verb's order. An ordinary kerfur prop spawn keeps
-    // the generic expression.
+    // non-consuming peek, so the capture stays in place for the verb's return, which converges it).
+    // An ordinary kerfur prop spawn keeps the generic expression.
     const bool kerfurConvSuccessor =
         coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(self)) &&
         coop::kerfur_form_assembler::IsCapturedForm(self);
-    if (kerfurConvSuccessor) {
-        // Converge synchronously if the source NPC already died; otherwise a no-op, and the
-        // death-watch poll converges later through the same captured form. Gating it on the capture
-        // removes the false positive of a hand-placed kerfur near a dead one. No early return:
-        // MarkPropElement follows.
-        coop::kerfur_convert::TryAdoptFreshKerfurProp(self);
-    }
 
     coop::net::PropSpawnPayload p{};
     p.className.len = 0;

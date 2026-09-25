@@ -50,7 +50,7 @@ constexpr int kPollIntervalMs = 200;     // 5 Hz scan WHILE pending; zero cost o
 constexpr int kAdoptTimeoutMs = 60000;   // last-resort backstop (HasLoadTailQuiesced is the primary gate)
 // A save-loaded kerfur prop is static -- its twin is sub-meter from the host pose. A nearest same-class
 // candidate farther than this is almost certainly a DIFFERENT kerfur (or the twin is genuinely absent),
-// so we keep waiting / fresh-spawn rather than bind the wrong one. Matches ClaimConversionGhosts' radius.
+// so we keep waiting / fresh-spawn rather than bind the wrong one.
 constexpr float kMaxBindDist2 = 500.f * 500.f;
 
 using coop::element::PropMirrors;   // canonical accessor (coop/element/mirror_managers.h)

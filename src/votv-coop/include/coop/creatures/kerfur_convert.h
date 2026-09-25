@@ -1,89 +1,46 @@
-// coop/creatures/kerfur_convert.h -- host-authoritative kerfur conversion, NPC to prop and
-// back; without it a client's toggle left a second kerfur lying on the host. The game's
-// verbs: turn off runs dropKerfurProp, which spawns the prop (and a floppy if carried) at the
-// NPC's transform, or at (0,0,20000) in the flesh room, and destroys the NPC, refused for a
-// sentient kerfur or one flagged kill; turn on runs spawnKerfuro, which spawns the NPC upright
-// 50 cm above the prop's spawn point, keeping only its yaw, and destroys the prop on success. Every
-// spawn and destroy inside them is blueprint-internal, dispatched past ProcessEvent, so no
-// interceptor sees a conversion. The host detects its own conversions event-driven at the
-// chokepoints (the fresh prop's expression edge for turn off, the prop's destroy edge for turn
-// on) and converges them onto the wire; a client's conversion is detected by a 5 Hz
-// death-watch poll (a kerfur mirror whose actor died while its element is still present),
-// which sends a request for the host to run the real verb and claims the local ghost the
-// invisible spawn made; the poll is also the solo host's backstop. The host executor lives in
-// kerfur_convert_host.h, the client apply and the ghost custody in kerfur_convert_client.h.
-// Gameplay module: engine access through ue_wrap, game thread only.
+// coop/creatures/kerfur_convert.h -- host-authoritative kerfur conversion, NPC to prop and back,
+// decided at its verb. The game's verbs: turn off runs dropKerfurProp, which spawns the prop (and a
+// floppy if carried) at the NPC's transform, or at (0,0,20000) in the flesh room, and destroys the
+// NPC, refused for a sentient kerfur; turn on runs spawnKerfuro, which spawns the NPC upright 50 cm
+// above the prop's spawn point, keeping only its yaw, and destroys the prop. Both are Blueprint calls
+// ProcessEvent never sees, and the script-body gate sees on every route. So a client's gate refuses
+// the verb and asks the host, and no form of its own is ever made; the host's verb, its own or a
+// request's, converges at its return on the successor its bracket captured (kerfur_form_assembler) --
+// MTA's shape for an entity a client asks to change: a request, then the server's confirmation
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3018, Packet_Vehicle_InOut). The host
+// executor lives in kerfur_convert_host.h, the client apply in kerfur_convert_client.h. Gameplay
+// module: engine access through ue_wrap, game thread only.
 
 #pragma once
 
 #include "coop/element/element.h"  // ElementId (TryCaptureKerfurPropDestroy dyingEid)
-#include "ue_wrap/core/types.h"    // FVector, FRotator (the last live pose)
 
 #include <cstdint>
 
 namespace coop::net {
 class Session;
-struct KerfurConvertPayload;
-struct KerfurConvertBroadcastPayload;
 }  // namespace coop::net
 
 namespace coop::kerfur_convert {
 
-// Idempotent install, retried from the pump tick until the kerfur classes load: resolves the
-// menu dispatcher (for the command relay) and its name parameter, the two verbs and the kill
-// flag offset for the host execution path, and the prop and floppy classes for the converge
-// walk; registers the one interceptor. Refuses to install if a verb grew parameters.
+// Idempotent install, retried from the pump tick until the kerfur classes load: resolves the menu
+// dispatcher (for the command relay) and its name parameter, the two verbs and the kill flag offset
+// for the host's request path; registers the relay's interceptor and this lane's gate watches on the
+// two verbs. Refuses to install if a verb grew parameters.
 void Install(coop::net::Session* session);
 
-// The host executor half (the request handler, the converge, the request-verb bracket) lives
-// in kerfur_convert_host.h.
+// The host executor half lives in kerfur_convert_host.h, the client half in kerfur_convert_client.h.
 
-// The client half (the wire apply and the conversion-ghost custody) lives in
-// kerfur_convert_client.h.
-
-// Drive the death-watch poll: the client's conversion detector (the request plus the ghost
-// claim) and the solo host's backstop, since a host prop's element is drained synchronously
-// with its death and the poll's premise never holds there. A cheap no-op between the 5 Hz
-// passes. Game thread, the pump tick.
-void Tick();
-
-// Host: first refusal on the generic expression of a kerfur prop-form actor. The turn-off
-// verb's fresh prop spawns invisibly and the generic pipeline would claim and broadcast it as
-// a keyed prop within a tick, leaving the client with its NPC mirror and a prop mirror, the
-// duplicate; so every generic express lane offers a kerfur prop here first. If the actor is
-// untracked and a dead, unhandled kerfur NPC watch sits within 500 cm, this is the conversion
-// product: converge it now (mint the eid silently, release the dead NPC element, rebind the
-// form, broadcast the convert, floppies) and return true, and the caller must not express.
-// Otherwise false (a tracked prop is an established identity; a hand-placed or bought one is an
-// ordinary spawn; a prop whose location or rotation cannot be read is declined, as is a
-// flesh-room drop far from its kerfur) and the generic keyed-prop path is correct. The kerfur
-// is one entity and the convert is its sole conversion wire signal. Host, game thread.
-bool TryAdoptFreshKerfurProp(void* actor);
-
-// Both roles: first refusal on the generic destroy of a kerfur prop-form actor, the destroy
-// twin of TryAdoptFreshKerfurProp. The turn-on verb spawns the NPC and then destroys the
-// prop, so when the prop's destroy seam fires inside the verb the conversion-product NPC
-// already exists, zero ticks old, a synchronous premise no periodic enroll lane can beat. If
-// the form assembler captured that NPC in the verb's bracket, this death is conversion churn the
-// kerfur layer owns and the caller must not broadcast a destroy: the client suppresses the
-// keyed-destroy relay (it would kill the host's authoritative prop before the turn-on request
-// lands, and the kerfur would vanish on every peer), the poll's request and ghost machinery
-// staying its driver; the host converges inline (register the NPC silently, rebind the form,
-// one convert broadcast), since its prop element is drained synchronously with the death and
-// the poll's premise never holds. No captured NPC: false, and a genuine destroy keeps the
-// generic relay; the host also declines an NPC whose location or rotation cannot be read.
-// `dyingEid` is the seam's element id before the unmark; invalid means the host declines (no
-// wire identity to converge). Game thread, the destroy seam.
+// The host's answer at the generic destroy of a kerfur prop-form actor. The turn-on verb spawns the
+// NPC and then destroys the prop, so the prop's destroy seam fires inside the verb with the successor
+// already captured: that death is the conversion's, whose return converges it into one KerfurConvert,
+// and the caller must not broadcast a destroy (true). A kerfur prop that dies outside a conversion
+// verb, or inside one that captured no successor, is a plain death: its kerfur record goes with it and
+// the generic relay proceeds (false). A client never runs a conversion verb, so on a client this is
+// always false. Game thread, the destroy seam.
 bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid);
 
-// The last location, and the last rotation, the death-watch read for kerfur form `eid` while `actor`
-// was its live form, each on its own; false when it never read that half for that generation. Game
-// thread.
-bool LastLiveLocation(uint32_t eid, void* actor, ue_wrap::FVector& loc);
-bool LastLiveRotation(uint32_t eid, void* actor, ue_wrap::FRotator& rot);
-
-// Clear per-session state (the poll watch and its throttle) and fan the disconnect to the
-// client and host halves (parked ghosts; the request bracket).
+// Clear the open verbs and fan the disconnect to the host half.
 void OnDisconnect();
 
 }  // namespace coop::kerfur_convert

@@ -26,7 +26,6 @@
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
-#include "coop/dev/kerfur_toggle.h"
 #include "coop/session/teleport_client.h"
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
@@ -519,11 +518,6 @@ void Start() {
     // The VOTVCOOP_SPAWN_TRIGGER file watcher, the autonomous NPC-spawn path (host install and
     // broadcast, client mirror); hands-on spawning is the F1 menu. A no-op without the env.
     coop::dev::spawn_npc::Init();
-
-    // Test only (VOTVCOOP_KERFUR_TOGGLE_TRIGGER): a programmatic kerfur turn-off and turn-on, so
-    // the client's conversion-adopt path has autonomous coverage (the radial verb is a local
-    // virtual call and needs a player at the menu).
-    coop::dev::kerfur_toggle::Init();
 
     // Test only (VOTVCOOP_TEST_SAVE_ENUM=1): the native save browser (VOTV's loadSlots) verified at
     // the menu.

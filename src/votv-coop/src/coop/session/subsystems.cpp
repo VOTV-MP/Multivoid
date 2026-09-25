@@ -299,7 +299,7 @@ void Install(coop::net::Session& session) {
     coop::prop_spawn_authoring::Install(session.role() == coop::net::Role::Client);  // CLIENT: the script-gate bracket that tells a PLAYER's spawn (menu / toolgun) from the world's own -- read by the seam below
     coop::prop_drop_intent::Install(&session);  // CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
     coop::kerfur_entity::SetSession(&session);  // the stable-KerfurId authority table: the session for the host id-allocation role gate and the broadcasts
-    coop::kerfur_convert::Install(&session);  // host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
+    coop::kerfur_convert::Install(&session);  // host-authoritative kerfur on/off conversion (a client's verb refused -> request; the host's verb converges at its return)
     coop::kerfur_command::Install(&session);  // host-authoritative kerfur menu command relay + ownership-aware Follow
     coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
     coop::kerfur_form_assembler::Install(&session);  // script-body gate consumer: watch the two conversion verbs
@@ -514,7 +514,7 @@ DisconnectStats DisconnectAll() {
     coop::prop_drop_intent::Reset();  // clear the client park set + pending places
     coop::prop_spawn_authoring::Reset();  // drop the menu bracket + the resolved spawn verbs
     coop::host_spawn_watcher::OnDisconnect();  // drop the ambient-prop death-watch list
-    coop::kerfur_convert::OnDisconnect();  // drop pending host-menu converges
+    coop::kerfur_convert::OnDisconnect();  // clear the open conversion verbs
     coop::kerfur_form_assembler::OnDisconnect();  // dump the containment SUMMARY (always)
     // The session's hold on the script gate ends with the session's state, released where the old
     // switch turned the gate off, so the lanes below tear down as they always have; a session that
@@ -733,7 +733,6 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_push::Tick(); }  // HOST: stream the props and clumps a broom stroke pushed (AFTER the drain above, which names the trash that same stroke dispensed)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // CLIENT: author a PropDropIntent for a detected place whose Key is parked (cheap no-op when empty / on host)
-    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_convert::Tick(); }  // drain deferred kerfur conversion requests/converges (cheap no-op when empty)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_form_assembler::Tick(); }  // GT FName-resolve the 2 verbs + bind the containment seams (latches once; no-op after)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)

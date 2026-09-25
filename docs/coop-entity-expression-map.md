@@ -40,7 +40,7 @@ are peer-gated. `[V]`
 | characters | a deferred spawn | the spawn interceptor; the object scan; the native seam for graph spawns | a host id |
 | the wisp swarm | `EX_CallMath` spawns from the swarm trigger's graph | the native seam, gated by the calling class | a host id |
 | event actors | a deferred spawn, or a graph spawn | a second interceptor with a disjoint allowlist; the native seam | a host id |
-| the kerfur | conversion verbs inside the Blueprint | a death-watch poll; the script-body gate's capture | one host kerfur id across both forms |
+| the kerfur | conversion verbs inside the Blueprint | the script-body gate on the verbs: refused on a client, converged at the return on the host | one host kerfur id across both forms |
 | a deployed hook or rope | the fire input, inside the Blueprint | the thrower polls its own `activeHook` field | `(owner slot, sequence)` while the thrower holds it, a host-minted save key once anchored |
 
 ## Keyed props
@@ -184,23 +184,22 @@ those under the wrong id. `[V]`
 The game gives the kerfur no stable identity and it has two forms of two classes. One host-only
 kerfur id spans both; the rendered form is an ordinary character or prop mirror at its own
 element id, rebound in place on a conversion with one transition broadcast. The conversion verbs
-dispatch locally, so a conversion is detected by a death-watch poll, a mirror whose actor died
-while its wire element is present, and the successor actor is captured deterministically at its
-spawn through the script-body gate's window. A client relays its own conversion as a request, the
-host performs it, and the client claims and adopts its conversion ghost, parked, never destroyed
-and respawned. A captured conversion prop is tracked but its generic spawn broadcast is
-suppressed, so exactly one lane expresses it. The eye camera both forms carry is a child actor,
+are Blueprint self-calls the script-body gate sees on every route: a client's gate refuses the
+verb and asks the host, so a client never converts a kerfur and never holds a form of its own
+making; the host's verb, its own or a request's, converges at its return on the successor captured
+at its spawn through the gate's window. A captured conversion prop is tracked but its generic spawn
+broadcast is suppressed, so exactly one lane expresses it; the conversion's disc is an ordinary
+keyed prop, expressed where every fresh prop is. The eye camera both forms carry is a child actor,
 which the game itself excludes from its world-object universe; the identity layer excludes child
 actors at every surface for the same reason. `[V]`
 
-The id is RELEASED when the kerfur dies for good rather than converts, at the three seams that can
+The id is RELEASED when the kerfur dies for good rather than converts, at the seams that can
 decide that: the conversion converge, on each branch where the verb destroyed the old form and no
-successor appeared; the kerfur first refusal at the prop destroy chokepoint, but only when no
-conversion bracket is open, since a capture that missed inside one is still a conversion and the
-converge behind it rebinds the record; and the character destroy PRE, for a destroy that is visible
-to it. A conversion reaches none of them. The release went unwired for a long time, and while it
-was, a dead kerfur kept its record and its element id kept answering "kerfur" once the registry
-recycled that id. `[V]`
+successor appeared; the prop destroy chokepoint, for a kerfur prop that dies outside a conversion
+verb; the character destroy PRE, for a destroy that is visible to it; and the pose walk's retire,
+for one that is not. A conversion reaches none of them. The release went unwired for a long time,
+and while it was, a dead kerfur kept its record and its element id kept answering "kerfur" once the
+registry recycled that id. `[V]`
 
 ## Deployables: the hook and the rope
 
@@ -269,7 +268,7 @@ Every place two seams can express one actor, and what deduplicates it:
 | a client grabbing or sweeping shared trash and the host's authoring | the client suppresses the native grab and sends an intent, and refuses its broom stroke whole and sends what the stroke read of its holder; the host performs both, so a client authors shared trash by neither `[V]` |
 | the character interceptor and the event-actor interceptor on one call | disjoint allowlists; the substrate supports several interceptors `[V]` |
 | a nested deferred spawn stealing a pending id in the post observer | correlation on the parameter pointer `[V]` |
-| a client's conversion ghost grabbed | the ghost is claimed and parked at once `[V]` |
+| a client's own conversion of a kerfur, and the host's | none of a client's exists: its gate refuses the verb and asks, so the host's is the one conversion `[RD]` |
 | the kerfur's eye camera and the whole prop identity universe | child actors are excluded at six surfaces `[V]` |
 | a joiner's save-loaded anchored hook and the host's replay of the same hook | the host mints the save key, and the joiner skips a key the game already resolves `[V]` |
 | a level-placed hook variant, which attaches itself on every peer | it is not in the lane's class table, and the owner's own field can never name it `[V]` |

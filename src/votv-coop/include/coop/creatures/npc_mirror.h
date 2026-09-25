@@ -37,8 +37,7 @@ void SetClientRefs(const ClientRefs& refs);
 // host-spawned transient is fresh-spawned here; a save-persisted NPC (the kerfur, which the
 // joining client also loaded from the transferred save) is handed to npc_adoption for a
 // deferred class-match adoption of its local twin, whose save key is random per peer, so only
-// class plus untracked-local is portable. A spawn tagged with a converting eid adopts the
-// client's own parked conversion ghost; a retire tag arms the teardown of a stale off-prop
+// class plus untracked-local is portable. A retire tag arms the teardown of a stale off-prop
 // mirror. A no-op on the host.
 void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
 
@@ -51,19 +50,6 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
                          float locX, float locY, float locZ,
                          float rotPitch, float rotYaw, float rotRoll,
                          float scaleX = 1.f, float scaleY = 1.f, float scaleZ = 1.f);  // the spawn scale, sanitised by the caller; the adopt paths bind existing actors
-
-// Bind an already-spawned local actor as the host mirror for `elementId`: the client's own
-// conversion result on a kerfur turn-on, which its game spawned through the EX_CallMath path
-// ProcessEvent cannot see and the poll parked. Binding that real actor avoids a second kerfur
-// beside it and a destroy-respawn pop, and it is fully initialised, so it is camera-safe.
-// Returns false on a duplicate-eid collision without destroying the actor, which the ghost
-// cleanup owns. Game thread; requires SetClientRefs to have run.
-bool AdoptExistingNpcAsMirror(void* actor, uint32_t elementId, const std::wstring& classW);
-
-// A targeted destroy of one local NPC actor: the conversion ghost cleanup uses it on a ghost
-// the host never confirmed, before it can be grabbed into a client-eid dupe. A no-op if the
-// destroy UFunction is unresolved or the actor is not live. Game thread.
-void DestroyLocalNpcActor(void* actor);
 
 // The client-side receiver for a host EntityDestroy: takes the mirror out of the manager,
 // destroys its actor and drops it; the destructor unregisters from the Registry.

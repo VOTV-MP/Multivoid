@@ -181,9 +181,8 @@ void NpcDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     // race).
     coop::element::RetireMirror(eid);
     // A kerfur reaching this seam died for good: a conversion destroys its old form from inside
-    // the blueprint, where the PRE cannot see it, and the converge releases that form itself. The
-    // kerfur's own PE-invisible death edge belongs to the conversion poll, so this is the belt for
-    // a VISIBLE destroy, not the lane's main path.
+    // the blueprint, where the PRE cannot see it, and the converge at the verb's return releases
+    // that form itself. A no-op for any other NPC.
     coop::kerfur_entity::ReleaseKerfurForEid(eid);
     UE_LOGI("npc-sync[host destroy PRE]: actor=%p Npc eid=%u released (deferred)", self, eid);
     // Broadcast EntityDestroy so the client mirrors tear their copy down.
@@ -425,6 +424,8 @@ void SyncDestroyedNpcByEid(coop::element::ElementId eid, void* actorKey) {
         if (it != g_actorToNpcId.end() && it->second == eid) g_actorToNpcId.erase(it);
     }
     coop::element::RetireMirror(eid);  // Take + deferred ~Npc/FreeId; no-op if already drained
+    // A kerfur dead outside a conversion, as at the destroy PRE; a no-op for any other NPC.
+    coop::kerfur_entity::ReleaseKerfurForEid(eid);
     UE_LOGI("npc-sync[pose dead-retire]: Npc eid=%u actor=%p released (PE-invisible destroy)",
             static_cast<uint32_t>(eid), actorKey);
     auto* s = LoadSession();
@@ -482,7 +483,7 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid) {
     coop::element::ElementDeleter::Get().Enqueue(std::move(drained));
     // A silent release is safe only if a KerfurConvert carrying this eid as oldEid follows; without
     // one the client's mirror orphans invisibly. Each caller binds the new form right after it, and a
-    // converge that cannot bind retires the NPC through kerfur_convert_host::RetireNpcFormAsDeath.
+    // converge that cannot bind retires the NPC as a plain death (SyncDestroyedNpcByEid) instead.
     UE_LOGI("npc-sync[silent release]: Npc eid=%u released (no EntityDestroy broadcast -- MUST be paired "
             "with a KerfurConvert or the client mirror orphans)", static_cast<uint32_t>(eid));
 }

@@ -149,16 +149,10 @@ void TickPoseStream() {
             // A BOUND actor that is no longer live died through a path the
             // K2_DestroyActor PRE cannot see (the wisp's EX_VirtualFunction self-destroy at
             // dawn/proximity). Without this the Element leaks and the client mirror ghosts
-            // forever. Eid-keyed retire + EntityDestroy broadcast; deferred teardown.
-            //
-            // EXCEPT kerfur-family: their PE-invisible death edge is OWNED by
-            // kerfur_convert's 5 Hz conversion poll, which must see the mirror Element and
-            // its dead actor to tell a radial-menu CONVERSION (converge: release the old
-            // form, silent-enroll the new one) from a plain death. A per-tick retire here
-            // would race ahead of the 200 ms poll and erase that evidence. The poll's
-            // converge releases the Element either way, so kerfurs do not leak from the skip.
-            if (el->GetTypeName().find("kerfurOmega") == std::string::npos)
-                coop::npc_sync::SyncDestroyedNpcByEid(el->GetId(), actor);
+            // forever. Eid-keyed retire + EntityDestroy broadcast; deferred teardown. A kerfur
+            // converted by its verb never reaches here: the converge at the verb's return released
+            // its element in the same tick.
+            coop::npc_sync::SyncDestroyedNpcByEid(el->GetId(), actor);
             continue;
         }
         if (!connected) continue;  // no peers: lifecycle-only pass, no batch to build

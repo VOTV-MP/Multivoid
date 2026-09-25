@@ -6,7 +6,7 @@
 
 #include "prop_lifecycle_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the destroy-edge first refusal
+#include "coop/creatures/kerfur_convert.h"  // TryCaptureKerfurPropDestroy, the conversion's hold on a kerfur prop death
 #include "coop/dev/spawn_match_probe.h"      // NoteDestroy (the fuzzy-adoption watch)
 #include "coop/element/prop.h"
 #include "coop/net/protocol.h"
@@ -111,13 +111,12 @@ void DestroySeamBody(void* self) {
                 newSegment ? "the reconcile window" : "world-load episode");
         return;
     }
-    // The kerfur first refusal at the destroy chokepoint, the destroy-edge twin of the express-side
-    // adoption: the turn-on verb destroys its prop after spawning the NPC, so this seam fires
-    // mid-conversion, and the kerfur layer must get first refusal before the generic relay (on a
-    // client the relay killed the host's authoritative prop before the request landed; on the
-    // host the generic broadcast and drain left its own turn-on with no converge). Consulted after
-    // the echo and episode gates, since wire teardowns and load churn are not conversions; the
-    // capture owns the wire when it returns true. A cheap class-pointer gate inside.
+    // The kerfur conversion's hold at the destroy chokepoint: the turn-on verb destroys its prop
+    // after spawning the NPC, so this seam fires inside the verb, and a death whose successor the
+    // verb's bracket captured is the conversion's, which KerfurConvert carries from the verb's
+    // return instead of the generic relay. Consulted after the echo and episode gates, since wire
+    // teardowns and load churn are not conversions; the kerfur layer owns the wire when it returns
+    // true. A cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
     coop::net::WireKey wk{};
     wk.len = 0;

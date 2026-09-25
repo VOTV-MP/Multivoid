@@ -511,7 +511,6 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/set_clock.cpp
     src/coop/dev/spawn_menu_unlock.cpp
     src/coop/dev/spawn_npc.cpp
-    src/coop/dev/kerfur_toggle.cpp
     src/coop/session/teleport_client.cpp
     src/coop/dev/menu_proceed.cpp
     src/coop/dev/object_overlay.cpp

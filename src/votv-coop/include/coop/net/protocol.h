@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 187;
+inline constexpr uint16_t kProtocolVersion = 188;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -370,8 +370,8 @@ enum class ReliableKind : uint8_t {
     // Any peer, relayed: mic muted and voice disabled, display only. VoiceStatePayload.
     VoiceState = 62,
 
-    // Client to host: turn this kerfur on or off. The client cancels its own menu dispatch; the
-    // host runs the real verb and the result rides KerfurConvert. KerfurConvertPayload.
+    // Client to host: turn this kerfur on or off. The client's gate refused the verb; the host runs
+    // the real verb and a conversion rides KerfurConvert. KerfurConvertPayload.
     KerfurConvertRequest = 63,
 
     // Any peer, relayed: a wall-attach component committed its stick at this pose, and the receiver
@@ -419,8 +419,8 @@ enum class ReliableKind : uint8_t {
     AtvDestroy = 73,
 
     // Host to all: a kerfur changed form. Carries the kerfur id, the old and new element ids, the
-    // new form's class and pose, or a rejection. The initiator adopts its parked conversion ghost;
-    // others spawn a fresh mirror. KerfurConvertBroadcastPayload.
+    // new form's class and pose; every client destroys its old-form mirror and materialises the new
+    // form. KerfurConvertBroadcastPayload.
     KerfurConvert = 74,
 
     // Host to all: a cosmetic emitter cue (a starfall) at this position; clients spawn the emitter.
@@ -1196,9 +1196,10 @@ struct PropStickStatePayload {
 };
 static_assert(sizeof(PropStickStatePayload) == 88, "PropStickStatePayload must be 88 bytes");
 
-// A kerfur conversion request (KerfurConvertRequest): the element id of the form the client's menu
-// targeted (a character when toProp is 1, a prop when 0). The host resolves it, validates the actor
-// and runs the Blueprint verb; the outcome rides KerfurConvert.
+// A kerfur conversion request (KerfurConvertRequest): the element id of the form whose verb the
+// client's gate refused (a character when toProp is 1, a prop when 0). The host resolves it,
+// validates the actor and runs the Blueprint verb; a conversion rides KerfurConvert, and a refusal
+// sends nothing, since the client converted nothing.
 struct KerfurConvertPayload {
     uint32_t elementId;  // the dying form's host-range mirror eid; the host resolves the actor and the kerfur id
     uint8_t  toProp;     // 1 = NPC -> prop (turn_off); 0 = prop -> NPC (turn on)
@@ -1207,17 +1208,16 @@ struct KerfurConvertPayload {
 static_assert(sizeof(KerfurConvertPayload) == 8, "KerfurConvertPayload must be 8 bytes");
 
 // A kerfur form transition (KerfurConvert), host to all: the stable kerfur id, the old form's eid
-// the client destroys, the new form's eid, class and pose, or rejected = 1 when the host refused.
+// the client destroys, the new form's eid, class and pose.
 struct KerfurConvertBroadcastPayload {
     uint32_t      kerfurId;      // 4  -- the stable host-allocated KerfurId (spans both forms; for logs/correlation)
     uint32_t      oldEid;        // 4  -- the OLD-form wire eid the client destroys (its current mirror)
     uint32_t      newEid;        // 4  -- the new-form's host-range wire eid (the Npc/Prop mirror id to install)
     uint8_t       toForm;        // 1  -- 0 = NPC (prop->NPC turn on), 1 = prop (NPC->prop turn_off)
-    uint8_t       rejected;      // 1  -- 1 = host refused (sentient/kill); 0 = success
-    uint8_t       _pad[2];       // 2
+    uint8_t       _pad[3];       // 3
     float         locX, locY, locZ;            // 12 -- new-form actor world location
     float         rotPitch, rotYaw, rotRoll;   // 12 -- new-form actor rotation
-    WireClassName newClassName;  // 64 -- the new-form class (e.g. "prop_kerfurOmega_C"); empty on reject
+    WireClassName newClassName;  // 64 -- the new-form class (e.g. "prop_kerfurOmega_C")
 };
 static_assert(sizeof(KerfurConvertBroadcastPayload) == 104, "KerfurConvertBroadcastPayload must be 104 bytes");
 static_assert(sizeof(KerfurConvertBroadcastPayload) <= 256 - 20 - 8,
@@ -2081,7 +2081,7 @@ static_assert(sizeof(AuthProofPayload) == 100, "AuthProofPayload must be 100 byt
 
 // A character birth (EntitySpawn): the class, the host-allocated element id ([1, 32768); 0 is
 // invalid), the transform and scale, whether the host's copy came from the save (the client then
-// adopts its own twin by class instead of spawning), and the two kerfur reconcile eids.
+// adopts its own twin by class instead of spawning), and the kerfur reconcile eid.
 struct EntitySpawnPayload {
     WireClassName className;       // 64 -- "npc_zombie_C", "kerfurOmega_mannequin_C", etc.
     uint32_t      elementId;       // 4 -- host-allocated, [1, 32768); 0 = invalid
@@ -2093,10 +2093,8 @@ struct EntitySpawnPayload {
     float         scaleX, scaleY, scaleZ;      // 12 -- actor scale at spawn; receivers sanitize via SanitizeWireScaleAxis
     uint32_t      retireOffEid;    // 4 -- for a kerfur the host turned on in the join window: the host eid of the off-prop it
                                    //      replaced; the joiner retires that mirror by eid. 0 = not a window turn-on.
-    uint32_t      convertFromEid;  // 4 -- for a mid-session kerfur turn-on: the eid of the form it converted from; the
-                                   //      initiating client adopts its parked ghost by that eid. 0 = not a conversion.
 };
-static_assert(sizeof(EntitySpawnPayload) == 116, "EntitySpawnPayload must be 116 bytes");
+static_assert(sizeof(EntitySpawnPayload) == 112, "EntitySpawnPayload must be 112 bytes");
 static_assert(sizeof(EntitySpawnPayload) <= 256 - 20 - 8,
               "EntitySpawnPayload must fit in one reliable datagram");
 

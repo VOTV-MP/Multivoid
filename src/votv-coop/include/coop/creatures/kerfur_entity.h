@@ -81,12 +81,6 @@ coop::element::ElementId GetKerfurIdForEid(coop::element::ElementId currentEid);
 // thread.
 coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentEid);
 
-// Host only: the host eid the kerfur currently at `currentEid` most recently converted from
-// (the form bind's old eid). The mid-session turn-on NPC spawn builder carries it, so the
-// initiating client adopts its parked conversion ghost by exact eid instead of a position
-// match. Invalid for a never-converted kerfur, and the builder sends nothing. Game thread.
-coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid);
-
 // The client held-pose eid map. A kerfur prop on a client is a host-owned mirror at a
 // host-range eid, not in the prop tracker's local map, so the local element lookup returns
 // invalid for it; but a client carrying a kerfur prop must stream that mirror's host-range
@@ -128,21 +122,12 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
                                        float locX, float locY, float locZ,
                                        float rotPitch, float rotYaw, float rotRoll);
 
-// Host only: the verb was refused (a sentient or kill-flagged kerfur; the old-form actor is
-// still live and no new form spawned). Broadcast a rejected conversion carrying the old form
-// and transform, so a client that optimistically converted its own mirror locally can
-// restore it. The host table is unchanged. Game thread.
-void BroadcastConvertRejected(coop::element::ElementId oldEid, Form oldForm,
-                              float locX, float locY, float locZ,
-                              float rotPitch, float rotYaw, float rotRoll,
-                              const std::wstring& className);
-
 // The same drop, addressed by the dying form's wire eid, for the death seams that hold one and
 // not the kerfur id. A no-op unless the eid is still a tracked kerfur's CURRENT form, which is
 // what keeps a conversion safe: the form bind moves the record to the successor's eid, so a late
 // call naming the old one finds nothing to drop. The callers are the conversion converge, on the
-// branches where no successor appeared, the kerfur first refusal when no verb bracket is open,
-// and the NPC destroy PRE for a visible destroy.
+// branches where no successor appeared, the kerfur prop destroy seam outside a conversion verb,
+// the NPC destroy PRE for a visible destroy, and the pose walk's retire for an invisible one.
 void ReleaseKerfurForEid(coop::element::ElementId currentEid);
 
 // Clear all per-session state (the host table and the client maps). The net disconnect. Game

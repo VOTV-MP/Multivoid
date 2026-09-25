@@ -97,13 +97,12 @@ Blueprint, and the game gives the kerfur no stable identity: its key is
 re-minted at random on every peer at every load. So the mod keeps one host-only kerfur id per
 logical robot across both forms (`coop/creatures/kerfur_entity`). The rendered form is an
 ordinary character or prop mirror at its own element id, and on a conversion the kerfur id is
-rebound in place and the host broadcasts the one transition signal. A conversion is detected by a
-death-watch poll, a mirror whose actor died while its wire element is still present
-(`coop/creatures/kerfur_convert`), and the successor actor is captured deterministically at its
-spawn through the script-body gate's window, so the converge no longer guesses by proximity
-(`coop/creatures/kerfur_form_assembler`). A client's own turn-on or turn-off is left to run,
-the client relays the request, the host runs the real verb, and the client claims
-and adopts its own conversion ghost, parked and frozen, instead of destroying and respawning it.
+rebound in place and the host broadcasts the one transition signal. Both verbs are Blueprint
+self-calls the script-body gate sees on every route (`coop/creatures/kerfur_convert`): a client's
+gate refuses its own turn-on or turn-off and asks the host, which runs the real verb, so a client
+never converts a kerfur itself; the host's verb converges at its return on the successor actor
+captured deterministically at its spawn through the gate's window
+(`coop/creatures/kerfur_form_assembler`), and every client takes the new form from the broadcast.
 
 The radial menu (follow, idle, patrol, fix the servers, get the reports, fix the transformers) is
 relayed host-authoritatively (`coop/creatures/kerfur_command`): the host cancels the local
@@ -170,4 +169,4 @@ wisp in flight is transient and owes nothing.
 | the killer wisp | `coop/creatures/wisp_attack_sync`, `coop/creatures/wisp_grab_hold`, `coop/creatures/wisp_tear_mirror`, `coop/player/ragdoll_gate` |
 | roaches | `coop/creatures/roach_sync` |
 | the kerfur | `coop/creatures/kerfur_entity`, `coop/creatures/kerfur_convert` with its host and client halves, `coop/creatures/kerfur_form_assembler`, `coop/creatures/kerfur_command`, `coop/creatures/kerfur_menu_input`, `coop/creatures/kerfur_prop_adoption`, `coop/creatures/kerfur_reconcile` |
-| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_toggle` (the turn-on and turn-off drill) |
+| tests | `harness/autotest/autotest_kwisp_probe.cpp`, `harness/autotest/autotest_wisplane.cpp`, `coop/dev/kerfur_convert_drill` (a client turns a kerfur off and on beside a disc of its own) |

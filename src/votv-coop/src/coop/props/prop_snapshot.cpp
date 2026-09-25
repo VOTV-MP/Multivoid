@@ -8,7 +8,6 @@
 #include "coop/config/config.h"  // ReadEnv, the dedupe-bypass drill
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/creatures/kerfur_convert.h"  // TryAdoptFreshKerfurProp, the builder's kerfur first refusal
 #include "coop/creatures/kerfur_entity.h"  // IsKerfurActor; a kerfur's only signal is KerfurConvert
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -285,15 +284,6 @@ bool BuildPropSpawnPayload_(void* obj, coop::element::ElementId eid, int32_t int
     // (mushroom7_C) and a per-player prop never cross the wire.
     if (coop::prop_lifecycle::IsWireSuppressedPropClass(cls)) return false;
     if (coop::prop_lifecycle::IsPerPlayerPropClass(cls)) return false;
-    // The kerfur first refusal, the twin of the one in prop_lifecycle's express: an untracked
-    // kerfur prop reaching this builder is adopted by KerfurConvert, which broadcasts instead.
-    // Every actor the drain offers is registry-fed and tracked, so it exits at TryAdopt's
-    // untracked-only guard; the gate covers any future lane that feeds an untracked kerfur prop
-    // here.
-    if (coop::kerfur_entity::IsKerfurPropClass(R::ClassOf(obj)) &&
-        coop::kerfur_convert::TryAdoptFreshKerfurProp(obj)) {
-        return false;  // converged: KerfurConvert broadcast, no generic payload
-    }
     p.className.len = 0;
     for (size_t j = 0; j < cls.size() && j < 63; ++j) {
         p.className.data[p.className.len++] = static_cast<char>(cls[j]);
@@ -615,16 +605,15 @@ void ExpressIncrementalKerfurOffProp(void* actor) {
             return;
         }
     }
-    // The join-edge deliver-missing owner. A kerfur off-prop created by a host turn-off during a
-    // client's join window has no other channel: it post-dates the snapshot, the generic express
-    // skips kerfurs, and the death-watch never fired a KerfurConvert (its NPC was not yet a watched
-    // element; the host registers world NPCs once at join, and the turn-off can race that scan). A
-    // converted off-prop is marked known before it can surface as re-seed-new, so what arrives here
-    // is un-converted and never double-delivered. Dupe-safe in every ordering: the client applies
-    // it through kerfur_prop_adoption::Arm, which no-ops an already-bound eid, and the wire eid is
-    // the host's Prop element eid, so a later KerfurConvert for the same actor dedupes by it. Join
-    // edge only: in steady state the death-watch is reliable and KerfurConvert stays primary; this
-    // owner must not become a steady-state channel without a periodic reconcile behind it.
+    // The deliver-missing owner. A kerfur off-prop no KerfurConvert carried has no other channel:
+    // the generic express skips kerfurs, and a conversion's successor has its spawn held back by its
+    // capture. The verb's return converges every conversion, of an enrolled kerfur or not, and
+    // registers the new prop as known, so what arrives here is a successor its converge could not
+    // bind (a prop with no key), un-converted and never double-delivered. Dupe-safe in every
+    // ordering: the client applies it through kerfur_prop_adoption::Arm, which no-ops an
+    // already-bound eid, and the wire eid is the host's Prop element eid, so a later KerfurConvert
+    // for the same actor dedupes by it. KerfurConvert stays primary; this owner must not become a
+    // steady-state channel without a periodic reconcile behind it.
     BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"kerfur-off ");
 }
 

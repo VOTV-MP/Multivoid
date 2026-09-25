@@ -48,11 +48,6 @@ struct KerfurRecord {
     // mirror bound at that eid. Invalid for a kerfur that was never turned on in the window --
     // nothing to retire there.
     coop::element::ElementId originOffEid = coop::element::kInvalidId;
-    // The host eid this kerfur most recently converted FROM (the form bind's old eid). The
-    // mid-session turn-on NPC spawn carries it as convertFromEid, so the initiating client adopts
-    // the conversion ghost it parked under that eid by exact eid instead of spawning a second
-    // kerfur beside it. Invalid until the first conversion.
-    coop::element::ElementId lastConvertFromEid = coop::element::kInvalidId;
 };
 
 std::mutex g_mutex;  // guards every table below
@@ -153,16 +148,6 @@ coop::element::ElementId GetOriginOffEidForEid(coop::element::ElementId currentE
     auto rit = g_byKerfurId.find(eit->second);
     if (rit == g_byKerfurId.end()) return coop::element::kInvalidId;
     return rit->second.originOffEid;
-}
-
-coop::element::ElementId GetConvertFromEidForEid(coop::element::ElementId currentEid) {
-    if (currentEid == coop::element::kInvalidId) return coop::element::kInvalidId;
-    std::lock_guard<std::mutex> lk(g_mutex);
-    auto eit = g_eidToKerfurId.find(currentEid);
-    if (eit == g_eidToKerfurId.end()) return coop::element::kInvalidId;
-    auto rit = g_byKerfurId.find(eit->second);
-    if (rit == g_byKerfurId.end()) return coop::element::kInvalidId;
-    return rit->second.lastConvertFromEid;
 }
 
 // ---- The client held-pose map ------------------------------------------------------------
@@ -298,10 +283,6 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
             if (coop::join_window_baseline::TryGetKerfurXformAnySlot(oldEid, sv))
                 rec.originOffEid = oldEid;
         }
-        // Record the form we converted FROM. A mid-session turn-on's NPC spawn carries this as
-        // convertFromEid, so the initiating client adopts the ghost it parked under this eid by
-        // exact eid instead of spawning a second kerfur beside it.
-        rec.lastConvertFromEid = oldEid;
     }
 
     // Broadcast the SOLE conversion-transition packet (host fan-out to all peers).
@@ -310,7 +291,6 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
     p.oldEid   = static_cast<uint32_t>(oldEid);
     p.newEid   = static_cast<uint32_t>(newEid);
     p.toForm   = (newForm == Form::Prop) ? 1u : 0u;
-    p.rejected = 0;
     p.locX = locX; p.locY = locY; p.locZ = locZ;
     p.rotPitch = rotPitch; p.rotYaw = rotYaw; p.rotRoll = rotRoll;
     p.newClassName.len = 0;
@@ -324,36 +304,6 @@ coop::element::ElementId BindFormActor(coop::element::ElementId oldEid, void* ne
             k, newForm == Form::Npc ? "->NPC(turn-on)" : "->prop(turn_off)",
             oldEid, newEid, newActor, className.c_str());
     return k;
-}
-
-void BroadcastConvertRejected(coop::element::ElementId oldEid, Form oldForm,
-                              float locX, float locY, float locZ,
-                              float rotPitch, float rotYaw, float rotRoll,
-                              const std::wstring& className) {
-    auto* s = LoadSession();
-    if (!s || s->role() != coop::net::Role::Host) return;
-    coop::element::ElementId k;
-    {
-        std::lock_guard<std::mutex> lk(g_mutex);
-        auto eit = g_eidToKerfurId.find(oldEid);
-        k = (eit == g_eidToKerfurId.end()) ? coop::element::kInvalidId : eit->second;
-    }
-    coop::net::KerfurConvertBroadcastPayload p{};
-    p.kerfurId = static_cast<uint32_t>(k);
-    p.oldEid   = static_cast<uint32_t>(oldEid);
-    p.newEid   = static_cast<uint32_t>(oldEid);  // unchanged -- the kerfur stays at oldEid in its old form
-    p.toForm   = (oldForm == Form::Prop) ? 1u : 0u;  // the form to RESTORE on an optimistic client
-    p.rejected = 1;
-    p.locX = locX; p.locY = locY; p.locZ = locZ;
-    p.rotPitch = rotPitch; p.rotYaw = rotYaw; p.rotRoll = rotRoll;
-    p.newClassName.len = 0;
-    for (size_t i = 0; i < className.size() && i < 63; ++i)
-        p.newClassName.data[p.newClassName.len++] = static_cast<char>(className[i]);
-    if (!s->SendReliable(coop::net::ReliableKind::KerfurConvert, &p, sizeof(p))) {
-        UE_LOGW("kerfur_entity: SendReliable(KerfurConvert rejected) failed oldEid=%u", oldEid);
-    }
-    UE_LOGI("kerfur_entity: BroadcastConvertRejected K=%u oldEid=%u form=%s (host refused -- clients restore their mirror)",
-            k, oldEid, oldForm == Form::Npc ? "NPC" : "prop");
 }
 
 }  // namespace coop::kerfur_entity

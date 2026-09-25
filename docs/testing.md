@@ -34,7 +34,7 @@ The other subcommands stage one scenario each:
 | Area | Subcommands |
 |---|---|
 | joins and the world | `joinchurn`, `reloadchurn`, `menutravel`, `wirewindow`, `fogprobe`, `deadmaster`, `gracefulexit`, `authdrill` |
-| players, entities and props | `npctest`, `kerfurtoggle`, `death`, `ragdollshot`, `ragdollspawn`, `puppetshot`, `walkgrab`, `clumpvis`, `spawnmenutest`, `navprobe` |
+| players, entities and props | `npctest`, `death`, `ragdollshot`, `ragdollspawn`, `puppetshot`, `walkgrab`, `clumpvis`, `spawnmenutest`, `navprobe` |
 | devices and races | `lightgroup`, `ctakeprobe`, `ctakerace` |
 | screens and captures | `browser`, `nativeui`, `menushot`, `scoreshot`, `hudtint`, `chathistory`, `chatseed` |
 | variants of the smoke | `smoke_phystele`, `smoke_i18n` |
