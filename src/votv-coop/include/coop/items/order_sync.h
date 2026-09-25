@@ -1,7 +1,7 @@
 // coop/items/order_sync.h -- delivery-drone ECONOMY: the client-to-host shop-order forward.
 //
 // Gameplay and network layer (principle 7): it owns the OrderRequest wire, chunked serialize and
-// assemble, the client's poll-and-forward policy and the host's re-commit, and reaches the
+// assemble, the client's forward at the order gate and the host's re-commit, and reaches the
 // engine only through ue_wrap::order_economy.
 //
 // MODEL: the economy is host-authoritative. VOTV has no engine replication, so a CLIENT's laptop

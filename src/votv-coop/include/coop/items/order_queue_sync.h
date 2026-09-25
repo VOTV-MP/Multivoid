@@ -38,10 +38,12 @@ void QueueConnectBroadcastForSlot(int slot);
 void OnDisconnect();
 
 // The mirror's running counts on a client, for a drill: orders appended, their items that travelled by
-// class (a world event's), and items left out because this machine could not build them. Game thread.
+// class (a world event's) and how many of those carried an asProp, and items left out because this
+// machine could not build them. Game thread.
 struct Counts {
     uint64_t orders = 0;
     uint64_t byClass = 0;
+    uint64_t withAsProp = 0;
     uint64_t leftOut = 0;
 };
 Counts ClientCounts();

@@ -2,8 +2,10 @@
 // to host) and the queue mirror (OrderQueue, host to clients). Each item is `uint8 head`, then the ASCII
 // bytes of a name: the head's low seven bits are the name's length (1..kMaxOrderRowName) and its top bit
 // its kind, clear for a list_store row name, set for the class of an item no row names -- one a world
-// event builds outside the shop (the daily delivery, a gift). A request carries rows only, since the
-// host prices by row; the mirror carries both. Header-only.
+// event builds outside the shop (the daily delivery, a gift). A by-class item goes on with `uint8
+// asPropLen` (0..kMaxOrderRowName, 0 for None) and that many bytes: the list_props name the generic
+// prop_C carries its identity in. A request carries rows only, since the host prices by row; the mirror
+// carries both. Header-only.
 
 #pragma once
 
@@ -59,14 +61,27 @@ inline int Pack(const std::vector<std::wstring>& rows, size_t from, uint8_t* buf
     return packed;
 }
 
-// Pack a queued order's items[from..], each by its row or its class, as Pack.
+// Pack a queued order's items[from..], each by its row or by its class and asProp, as Pack.
 inline int PackQueued(const std::vector<ue_wrap::order_economy::QueuedItem>& items, size_t from, uint8_t* buf,
                       int& pos, int cap) {
     int packed = 0;
     for (size_t i = from; i < items.size(); ++i) {
         const auto& it = items[i];
-        const bool byClass = it.row.empty();
-        if (!PackOne(byClass ? it.cls : it.row, byClass ? kByClass : 0, buf, pos, cap)) break;
+        const int start = pos;
+        if (!it.row.empty()) {
+            if (!PackOne(it.row, 0, buf, pos, cap)) break;
+        } else {
+            std::string ap = NarrowAscii(it.asProp);
+            if (ap.size() > static_cast<size_t>(coop::net::kMaxOrderRowName))
+                ap.resize(static_cast<size_t>(coop::net::kMaxOrderRowName));
+            if (!PackOne(it.cls, kByClass, buf, pos, cap) || pos + 1 + static_cast<int>(ap.size()) > cap) {
+                pos = start;  // a class without the room for its asProp does not go half
+                break;
+            }
+            buf[pos++] = static_cast<uint8_t>(ap.size());
+            std::memcpy(buf + pos, ap.data(), ap.size());
+            pos += static_cast<int>(ap.size());
+        }
         ++packed;
     }
     return packed;
@@ -97,15 +112,22 @@ inline bool Unpack(const uint8_t* p, const uint8_t* end, int count, std::vector<
     return true;
 }
 
-// Unpack a mirrored order's `count` items onto `out`, by row or by class. False on a bad item.
+// Unpack a mirrored order's `count` items onto `out`, by row or by class and asProp. False on a bad item.
 inline bool UnpackQueued(const uint8_t* p, const uint8_t* end, int count,
                          std::vector<ue_wrap::order_economy::QueuedItem>& out) {
     for (int k = 0; k < count; ++k) {
         bool byClass = false;
         std::wstring name;
         if (!UnpackOne(p, end, byClass, name)) return false;
-        out.push_back(byClass ? ue_wrap::order_economy::QueuedItem{{}, std::move(name)}
-                              : ue_wrap::order_economy::QueuedItem{std::move(name), {}});
+        if (!byClass) {
+            out.push_back(ue_wrap::order_economy::QueuedItem{std::move(name), {}, {}});
+            continue;
+        }
+        if (p >= end) return false;
+        const int apLen = *p++;
+        if (apLen > coop::net::kMaxOrderRowName || p + apLen > end) return false;
+        out.push_back(ue_wrap::order_economy::QueuedItem{{}, std::move(name), WidenAscii(p, apLen)});
+        p += apLen;
     }
     return true;
 }

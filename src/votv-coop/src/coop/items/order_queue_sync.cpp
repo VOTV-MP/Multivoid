@@ -161,7 +161,10 @@ OE::Applied Apply(const Change& c) {
         const OE::Applied r = OE::AppendOrder(c.order, &left);
         if (r == OE::Applied::Done) {
             ++g_counts.orders;
-            for (const auto& it : c.order.items) g_counts.byClass += it.row.empty() ? 1 : 0;
+            for (const auto& it : c.order.items) {
+                g_counts.byClass += it.row.empty() ? 1 : 0;
+                g_counts.withAsProp += (it.row.empty() && !it.asProp.empty()) ? 1 : 0;
+            }
             g_counts.leftOut += static_cast<uint64_t>(left);
         }
         return r;

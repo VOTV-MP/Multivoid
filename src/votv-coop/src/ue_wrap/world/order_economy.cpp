@@ -1,7 +1,8 @@
 // ue_wrap/world/order_economy.cpp -- see ue_wrap/world/order_economy.h.
 //
-// Reads the local laptop order queue (saveSlot.orders) for the client forward, and re-commits an
-// order on the host via the native Uui_laptop_C::makeAnOrder (the proven commit+deliver+drain path).
+// Reads the local laptop order queue (saveSlot.orders) for the host's queue mirror and a client's
+// forward, re-commits an order on the host via the native Uui_laptop_C::makeAnOrder (the proven
+// commit+deliver+drain path), and applies the host's queue changes on a client.
 // All offsets are reflected by NAME (cooked offsets shift across recooks) + cached; struct-internal
 // field offsets are the SDK-dump constants (struct_store.hpp / the Fstruct_storeOrder layout), which
 // are stable for this version. Game-thread only (UObject access + a ProcessEvent dispatch).
@@ -132,11 +133,12 @@ int32_t OrderCount() {
 bool ReadQueuedOrder(int32_t index, QueuedOrder& out) {
     out = QueuedOrder{};
     namespace SC = ue_wrap::store_catalog;
-    // Ready() BUILDS the catalog, which owns the item's shape; the offsets alone would read -1 on a
-    // process that never built it.
-    if (!SC::Ready()) return false;
-    const int32_t nameOff = SC::NameOffset();
-    const int32_t objectOff = SC::ObjectOffset();
+    // The reflected layout, which the price gate does not withhold: this reads the save's own order.
+    SC::Layout lay;
+    if (!SC::ReadLayout(lay)) return false;
+    const int32_t nameOff = lay.name;
+    const int32_t objectOff = lay.object;
+    const int32_t asPropOff = lay.asProp;
     if (nameOff < 0) return false;
     int32_t off = -1;
     void* save = ResolveSaveSlot(&off);
@@ -162,7 +164,14 @@ bool ReadQueuedOrder(int32_t index, QueuedOrder& out) {
         }
         void* cls = objectOff >= 0 ? *reinterpret_cast<void* const*>(item + objectOff) : nullptr;
         if (cls && R::IsLive(cls)) {
-            out.items.push_back(QueuedItem{{}, R::ToString(R::NameOf(cls))});
+            std::wstring asProp;
+            if (asPropOff >= 0) {
+                R::FName ap;
+                std::memcpy(&ap, item + asPropOff, sizeof(ap));
+                asProp = R::ToString(ap);
+                if (asProp == L"None") asProp.clear();
+            }
+            out.items.push_back(QueuedItem{{}, R::ToString(R::NameOf(cls)), std::move(asProp)});
             continue;
         }
         UE_LOGW("order_economy: queued order %d's item %d carries neither a row nor a class -- left out", index, i);
@@ -172,7 +181,9 @@ bool ReadQueuedOrder(int32_t index, QueuedOrder& out) {
 
 bool ReadOrderAt(const void* order, OrderData& out) {
     out.rowNames.clear();
-    if (!order || !ue_wrap::store_catalog::Ready()) return false;  // Ready() builds it; see ReadOrder
+    // Ready() BUILDS the catalog; NameOffset() alone only reads what a previous build cached, and nothing
+    // else on a client's forward path builds it.
+    if (!order || !ue_wrap::store_catalog::Ready()) return false;
     const int32_t nameOff = ue_wrap::store_catalog::NameOffset();
     return nameOff >= 0 && ReadItems(order, nameOff, out);
 }
@@ -266,19 +277,26 @@ bool BuildOrder(const OrderData& order, float etaSeconds, std::vector<uint8_t>& 
 }
 
 // Build a mirror's `order`: each shop item as BuildOrder builds it; each unnamed item in the one shape
-// every world-event builder of the game makes (its class, one of it, the rest zero: no row, price,
-// category, asProp or achievement, and the pinned empty FText for subcategory). An item this machine
+// every world-event builder of the game makes (its class, its asProp, one of it, the rest zero: no row,
+// price, category or achievement, and the pinned empty FText for subcategory). An item this machine
 // cannot build is left out and counted in `left`, down to an order of no items. False only while the
-// catalog or the empty FText is not ready.
+// layout, the empty FText, an asProp's name or (for a row) a catalog not built yet is not ready; a
+// catalog the price gate refused leaves its rows out instead, since nothing will ever find one.
 bool BuildQueuedOrder(const QueuedOrder& order, std::vector<uint8_t>& itemsBuf, uint8_t (&orderStruct)[kOrderStride],
                       int& left) {
     namespace SC = ue_wrap::store_catalog;
     left = 0;
-    if (!SC::Ready()) return false;
-    const int32_t subcatOff = SC::SubcategoryOffset();
-    const int32_t nameOff   = SC::NameOffset();
-    const int32_t objectOff = SC::ObjectOffset();
-    const int32_t sizeOff   = SC::SizeOffset();
+    itemsBuf.clear();
+    std::memset(orderStruct, 0, kOrderStride);
+    *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = order.eta;
+    if (order.items.empty()) return true;  // an order of no items needs no catalog
+    SC::Layout lay;
+    if (!SC::ReadLayout(lay)) return false;
+    const int32_t subcatOff = lay.subcategory;
+    const int32_t nameOff   = lay.name;
+    const int32_t objectOff = lay.object;
+    const int32_t asPropOff = lay.asProp;
+    const int32_t sizeOff   = lay.size;
     if (subcatOff < 0 || nameOff < 0) return false;
     uint8_t emptyText[ue_wrap::ftext_utils::kFTextSize];
     if (!ue_wrap::ftext_utils::EmptyFText(emptyText)) return false;
@@ -289,13 +307,24 @@ bool BuildQueuedOrder(const QueuedOrder& order, std::vector<uint8_t>& itemsBuf, 
         const QueuedItem& it = order.items[i];
         uint8_t* base = itemsBuf.data() + n * static_cast<size_t>(kItemStride);
         if (!it.row.empty()) {
+            if (!SC::Ready()) {
+                if (SC::Refused()) { ++left; continue; }
+                return false;  // not built yet: the order waits rather than lose the row
+            }
             const SC::Row* row = SC::Find(it.row);
             if (!row || !row->data) { ++left; continue; }
             std::memcpy(base, row->data, static_cast<size_t>(kItemStride));
             *reinterpret_cast<R::FName*>(base + nameOff) = row->key;
         } else {
             void* cls = (objectOff >= 0 && !it.cls.empty()) ? object_index::ClassByName(it.cls.c_str()) : nullptr;
-            if (!cls) { ++left; continue; }
+            if (!cls || (!it.asProp.empty() && asPropOff < 0)) { ++left; continue; }
+            if (!it.asProp.empty()) {
+                // The name through Kismet, which answers None while it is not up: then the whole order
+                // waits rather than build the generic prop_C this item's asProp names.
+                const R::FName ap = fname_utils::StringToFName(it.asProp);
+                if (ap.ComparisonIndex == 0 && ap.Number == 0) return false;
+                *reinterpret_cast<R::FName*>(base + asPropOff) = ap;
+            }
             *reinterpret_cast<void**>(base + objectOff) = cls;
             if (sizeOff >= 0) *reinterpret_cast<int32_t*>(base + sizeOff) = 1;
         }
@@ -304,12 +333,25 @@ bool BuildQueuedOrder(const QueuedOrder& order, std::vector<uint8_t>& itemsBuf, 
     }
     left += static_cast<int>(order.items.size() - cap);
     itemsBuf.resize(n * static_cast<size_t>(kItemStride));
-    std::memset(orderStruct, 0, kOrderStride);
     *reinterpret_cast<void**>(orderStruct + kOrderItemsOff + 0)   = n ? itemsBuf.data() : nullptr;
     *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 8) = static_cast<int32_t>(n);
     *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 12) = static_cast<int32_t>(n);
-    *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = order.eta;
     return true;
+}
+
+// The chain the laptop's queue verbs reach the queue through -- the widget's own laptop actor, its
+// gamemode, the save slot -- set, before a verb is dispatched: an unset link skips the verb's Add or
+// Remove while the rest of its body runs, and addOrderCart's slot widget would stack once per retry.
+bool QueueChainSet(void* widget) {
+    static int32_t sWidgetLaptopOff = -1, sActorGamemodeOff = -1;
+    if (sWidgetLaptopOff < 0) sWidgetLaptopOff = R::FindPropertyOffset(R::ClassOf(widget), L"laptop");
+    if (sWidgetLaptopOff < 0) return false;
+    void* actor = ReadPtr(widget, sWidgetLaptopOff);
+    if (!actor) return false;
+    if (sActorGamemodeOff < 0) sActorGamemodeOff = R::FindPropertyOffset(R::ClassOf(actor), L"gamemode");
+    if (sActorGamemodeOff < 0) return false;
+    void* gm = ReadPtr(actor, sActorGamemodeOff);
+    return gm && ResolveGmOffsets(gm) && ReadPtr(gm, g_offSaveSlot) != nullptr;
 }
 
 }  // namespace
@@ -344,7 +386,7 @@ Applied AppendOrder(const QueuedOrder& order, int* leftOut) {
     void* laptop = Laptop();
     void* fn = laptop ? R::FindDispatchFunctionCached(R::ClassOf(laptop), L"addOrderCart") : nullptr;
     const int32_t before = OrderCount();
-    if (!fn || before < 0) return Applied::Later;
+    if (!fn || before < 0 || !QueueChainSet(laptop)) return Applied::Later;
     std::vector<uint8_t> itemsBuf;
     uint8_t orderStruct[kOrderStride];
     int left = 0;
@@ -364,6 +406,7 @@ Applied AppendOrder(const QueuedOrder& order, int* leftOut) {
 }
 
 bool MakeDailyOrder() {
+    if (!CanCommit()) return false;  // makeAnOrder's sendShop reads the drone and the tower
     void* cycle = ue_wrap::daynightcycle::Cycle();
     void* laptop = Laptop();
     void* makeFn = cycle ? R::FindDispatchFunctionCached(R::ClassOf(cycle), L"Make Default Order") : nullptr;
@@ -387,7 +430,7 @@ Applied PopOrder() {
     if (before <= 0) return Applied::Later;  // removeOrderCart pops index 0 with no bound check
     void* laptop = Laptop();
     void* fn = laptop ? R::FindDispatchFunctionCached(R::ClassOf(laptop), L"removeOrderCart") : nullptr;
-    if (!fn) return Applied::Later;
+    if (!fn || !QueueChainSet(laptop)) return Applied::Later;
     ue_wrap::ParamFrame f(fn);
     if (!f.valid() || !ue_wrap::Call(laptop, f)) return Applied::Later;
     // As AppendOrder: the effect, not the dispatch. The verb takes the order off through the widget's

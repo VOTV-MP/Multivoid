@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 189;
+inline constexpr uint16_t kProtocolVersion = 190;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1948,7 +1948,8 @@ static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 byt
 //     uint8  head;        // low 7 bits: the name's length (1..kMaxOrderRowName); top bit: the kind,
 //                         //   clear for a row name, set for a class (the queue mirror's; see OrderQueue)
 //     <length bytes>      // the name (ASCII)
-// A request's item is a row name and nothing else, and one by class refuses the order: the host
+//     a class item only:  uint8 asPropLen (0..kMaxOrderRowName, 0 for None), then the asProp name
+// A request's item is a row name and nothing else, and one by class drops the request: the host
 // prices it from its own table (a client may name what, never what it costs) and rolls its own
 // delivery time. An order that does not fit one
 // datagram is split into messages sharing orderId; the host assembles by (sender slot, orderId)
@@ -1964,7 +1965,7 @@ static_assert(sizeof(OrderRequestHeader) == 12, "OrderRequestHeader must be 12 b
 
 // The host's delivery queue as clients mirror it (OrderQueue): this header, then, for an append,
 // chunkItems packed items as OrderRequest packs them, each by its row or, for an item a world event
-// built outside the shop with no row (the daily delivery, a gift), by its class. An append that does
+// built outside the shop with no row (the daily delivery, a gift), by its class and asProp. An append that does
 // not fit one datagram is split into consecutive messages; a client assembles them in order (one
 // lane) and appends once all totalItems arrived. An append of no items (totalItems 0, the order the
 // host could not read) still takes its place, so the queues keep one length.

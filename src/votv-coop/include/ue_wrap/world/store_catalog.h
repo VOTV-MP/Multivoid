@@ -58,15 +58,23 @@ const Row* Find(const std::wstring& rowName);
 int32_t SubcategoryOffset();
 
 // Byte offset of the `name` FName inside a row, resolved by name. This module owns the row's SHAPE,
-// so the one other place that reads a field out of an Fstruct_store -- order_economy::ReadOrder on
-// the CLIENT, pulling the row key out of a locally-placed order -- asks here rather than carrying
+// so the one other place that reads a field out of an Fstruct_store -- order_economy::ReadOrderAt on
+// the CLIENT, pulling the row keys out of the order a player placed -- asks here rather than carrying
 // its own literal. -1 if unusable, and it BUILDS if needed, like SubcategoryOffset.
 int32_t NameOffset();  // same: BUILDS if needed (see SubcategoryOffset)
-// Byte offsets of the `object` class and the `size` count inside a row, resolved by name, for an item
-// no row names: a world event builds its order's items outside the shop (the daily delivery, a gift),
-// setting the class alone, and the queue mirror rebuilds one from it. -1 if unusable; BUILDS if
-// needed, like SubcategoryOffset.
-int32_t ObjectOffset();
-int32_t SizeOffset();
+
+// The row struct's fields as reflection names them, for a reader that prices nothing -- the queue
+// mirror, which reads an order the save holds and rebuilds one for display. It holds as soon as the
+// row struct resolved, whatever the price gate then said: the gate judges the RowMap walk, and these
+// offsets are the reflected ones, not the walk's. -1 for a field this build does not have.
+struct Layout {
+    int32_t name = -1, subcategory = -1, object = -1, asProp = -1, size = -1;
+};
+// False until a build resolved the row struct; BUILDS if needed, under the same throttle as Ready().
+bool ReadLayout(Layout& out);
+
+// Whether the price gate refused the catalog for good (a layout verdict about the walk): no row will
+// ever be found in this process, where a false Ready() alone may only mean "not built yet".
+bool Refused();
 
 }  // namespace ue_wrap::store_catalog

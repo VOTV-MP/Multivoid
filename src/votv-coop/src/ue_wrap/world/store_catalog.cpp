@@ -29,8 +29,8 @@ ue_wrap::CachedObjRef g_table;      // the UDataTable; a cooked asset, so world-
 std::unordered_map<std::wstring, Row> g_rows;
 int32_t g_subcatOff = -1;
 int32_t g_nameOff   = -1;
-int32_t g_objectOff = -1;  // optional: a row item never needs it, an unnamed one does
-int32_t g_sizeOff   = -1;
+Layout  g_layout;             // the reflected offsets, kept through a refused price gate
+bool    g_layoutOk  = false;
 bool    g_valid     = false;  // a build produced a usable catalog
 
 // A failed build is not one thing, and treating it as one is wrong in BOTH directions:
@@ -97,8 +97,6 @@ void Build() {
     g_rows.clear();
     g_subcatOff = -1;
     g_nameOff   = -1;
-    g_objectOff = -1;
-    g_sizeOff   = -1;
 
     void* table = ResolveTable();
     if (!table) return;  // not loaded yet -- SOFT, so Ready() retries on the throttle
@@ -114,12 +112,16 @@ void Build() {
     const int32_t offSize   = R::FindPropertyOffsetByPrefix(rowStruct, L"size_");
     const int32_t offSubcat = R::FindPropertyOffsetByPrefix(rowStruct, L"subcategory_");
     const int32_t offObject = R::FindPropertyOffsetByPrefix(rowStruct, L"object_");
+    const int32_t offAsProp = R::FindPropertyOffsetByPrefix(rowStruct, L"asProp_");
     if (offPrice < 0 || offSubcat < 0 || offName < 0) {
         UE_LOGE("store_catalog: row struct members did not resolve (price@%d subcategory@%d "
                 "name@%d) -- catalog INVALID", offPrice, offSubcat, offName);
         g_outcome = Outcome::Hard;  // the struct is not what we think it is; retrying won't help
         return;
     }
+    // The reflected layout stands from here, whatever the price gate below decides about the walk.
+    g_layout = Layout{offName, offSubcat, offObject, offAsProp, offSize};
+    g_layoutOk = true;
 
     // The drill deliberately reads `size` where `price` belongs. Both are int32 members of the same
     // struct, so this is a REALISTIC wrong-offset, not a nonsense one -- exactly the failure the gate
@@ -190,15 +192,13 @@ void Build() {
 
     g_subcatOff = offSubcat;
     g_nameOff   = offName;
-    g_objectOff = offObject;
-    g_sizeOff   = offSize;
     g_valid     = true;
     g_outcome   = Outcome::Never;
     int64_t sum = 0;
     for (int32_t p : walkPrices) sum += p;
     UE_LOGI("store_catalog: %zu rows, price sum %lld, verified against the reflected price column "
-            "(subcategory@%d object@%d size@%d)", g_rows.size(), static_cast<long long>(sum), g_subcatOff,
-            g_objectOff, g_sizeOff);
+            "(subcategory@%d object@%d asProp@%d size@%d)", g_rows.size(), static_cast<long long>(sum),
+            g_subcatOff, g_layout.object, g_layout.asProp, g_layout.size);
 }
 
 }  // namespace
@@ -222,8 +222,16 @@ int32_t SubcategoryOffset() { return Ready() ? g_subcatOff : -1; }
 
 int32_t NameOffset() { return Ready() ? g_nameOff : -1; }
 
-int32_t ObjectOffset() { return Ready() ? g_objectOff : -1; }
+bool ReadLayout(Layout& out) {
+    Ready();  // builds under its throttle; a refused gate keeps the layout its build resolved
+    if (!g_layoutOk) return false;
+    out = g_layout;
+    return true;
+}
 
-int32_t SizeOffset() { return Ready() ? g_sizeOff : -1; }
+bool Refused() {
+    Ready();
+    return g_outcome == Outcome::Hard;
+}
 
 }  // namespace ue_wrap::store_catalog

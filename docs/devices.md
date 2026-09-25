@@ -242,9 +242,10 @@ delete button (`coop/world/email_sync`).
 ### Shop orders
 
 A client's laptop order is entirely local to its machine: the game's order function queues it in
-the client's own save and hands it to the client's own mirror drone. So a client's order function is
-stopped at the script-body gate and its order goes to the host as an intent naming each item's shop
-row and nothing else, read from the function's own parameter; the host prices the row from its own
+the client's own save and hands it to the client's own mirror drone. So on a client the order function's
+queueing (`addOrderCart`) and its send to the drone (`sendShop`) are refused at the script-body gate, and
+the order goes to the host as an intent naming each item's shop row and nothing else, read from the
+function's own parameter at its entry; the host prices the row from its own
 store table, checks its own balance, rolls its own delivery time, commits through the game's own
 order function and charges (`coop/items/order_sync`). An order a world event makes on a client (the
 daily delivery, a gift) is not sent: the host's copy of the event makes it. A refused order comes back with a reason, and the refused items
@@ -267,8 +268,9 @@ can be seen firing before it is trusted (`ue_wrap/world/store_catalog`).
 The delivery queue is the host's. Each change to it -- an order queued, the delivered one taken off --
 goes to every client as the laptop's own queue functions run, and a client's queue follows through
 the same functions (`coop/items/order_queue_sync`). A shop item travels by its row; an item a world
-event built outside the shop has no row and travels by its class, rebuilt in the one shape every such
-builder makes. A client that cannot build an item leaves it out, down to an order of no items that
+event built outside the shop has no row and travels by its class, and by the list_props name a generic
+prop carries in its asProp (the daily delivery's reel case), rebuilt in the one shape every such builder
+makes. A client that cannot build an item leaves it out, down to an order of no items that
 still keeps its place, so the host's next delivery takes the same order off both queues; and a change
 counts as applied only when the queue moved by exactly one.
 

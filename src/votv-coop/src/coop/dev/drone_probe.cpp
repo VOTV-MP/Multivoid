@@ -377,10 +377,9 @@ void Tick(bool connected, bool isHost) {
     if (DriveEnabled() && connected && !g_driveFired) {
         // Settle after connected + drone-present (we only reach here with a live drone) so the
         // world is loaded and the link stable, then fire ONCE. HOST flies a delivery; CLIENT
-        // commits a shop order. The state/orders/cargo/radar edges above capture the result. The
-        // wait is deliberately LONGER than coop::order_sync's connect-time watermark prime (~5 s,
-        // when the client's saveSlot first resolves), so the auto-placed order lands AFTER the
-        // prime and order_sync forwards it instead of swallowing it as pre-existing.
+        // commits a shop order. The state/orders/cargo/radar edges above capture the result. (The
+        // client leg adds to its own queue directly, which the host's queue mirror does not know: a
+        // probe of the drone's own path, not of the order lanes.)
         if (++g_settleTicks >= 1800) {
             g_driveFired = true;  // latch BEFORE the call: blocks any re-fire; each precondition bail
                                   // below logs its own reason (re-arm needs a restart -- fine, one-shot)

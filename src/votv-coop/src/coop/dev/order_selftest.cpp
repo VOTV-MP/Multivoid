@@ -74,14 +74,16 @@ void ClientTick() {
         return;
     }
     if (g_clientDone) return;
-    // The verdict on the host's world-event order: it reached this queue by class, every item built.
+    // The verdict on a world event's order -- the host's daily one, or one its save already queued and the
+    // join snapshot carried: it reached this queue by class, every item built.
     const coop::order_queue_sync::Counts c = coop::order_queue_sync::ClientCounts();
     if (c.byClass == 0) return;
     g_clientDone = true;
-    UE_LOGI("[order_selftest] client DONE: the host's world-event order reached this queue by class -- "
-            "%llu order(s) appended, %llu item(s) by class, %llu left out -- %s",
+    UE_LOGI("[order_selftest] client DONE: a world event's order reached this queue by class -- "
+            "%llu order(s) appended, %llu item(s) by class (%llu with an asProp), %llu left out -- %s",
             static_cast<unsigned long long>(c.orders), static_cast<unsigned long long>(c.byClass),
-            static_cast<unsigned long long>(c.leftOut), c.leftOut == 0 ? "PASS" : "FAIL");
+            static_cast<unsigned long long>(c.withAsProp), static_cast<unsigned long long>(c.leftOut),
+            c.leftOut == 0 ? "PASS" : "FAIL");
 }
 
 void HostTick(coop::net::Session& s) {
@@ -96,8 +98,13 @@ void HostTick(coop::net::Session& s) {
     g_hostFired = true;
     const int32_t before = OE::OrderCount();
     const bool ok = OE::MakeDailyOrder();
-    UE_LOGI("[order_selftest] host made the day cycle's own daily order (makeAnOrder, automatic): %s; the "
-            "queue %d -> %d", ok ? "queued" : "NOT queued", before, OE::OrderCount());
+    if (!ok) {
+        UE_LOGW("[order_selftest] ABORT: the host's daily order was not queued (the drone, the tower or the "
+                "laptop is not there, or the queue did not grow) -- the queue stays %d", OE::OrderCount());
+        return;
+    }
+    UE_LOGI("[order_selftest] host made the day cycle's own daily order (makeAnOrder, automatic); the queue "
+            "%d -> %d", before, OE::OrderCount());
 }
 
 }  // namespace

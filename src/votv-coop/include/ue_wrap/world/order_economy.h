@@ -39,10 +39,13 @@ struct OrderData {
 int32_t OrderCount();
 
 // One line item of a queued order as the queue mirror carries it: a shop item by its list_store row,
-// or an item a world event built outside the shop by its class. Exactly one of the two is set.
+// or an item a world event built outside the shop by its class, with the list_props name its asProp
+// holds when the class is the generic prop_C (the daily delivery's reel case). Exactly one of `row` and
+// `cls` is set.
 struct QueuedItem {
-    std::wstring row;  // the list_store key a shop item carries in its name
-    std::wstring cls;  // an unnamed item's class, by name
+    std::wstring row;     // the list_store key a shop item carries in its name
+    std::wstring cls;     // an unnamed item's class, by name
+    std::wstring asProp;  // an unnamed item's asProp, empty for None
 };
 
 // One queued order as the mirror carries it: every item, and its delivery time.
@@ -53,12 +56,13 @@ struct QueuedOrder {
 
 // Read the queue's order at `index`, every item by its row or, with none, by its class; an item
 // named neither way is left out and said. False if the queue is unresolved, the index is out of
-// range, or the catalog is unusable (the name and object offsets come from store_catalog, which
-// owns the row's shape). An order of no items reads true and empty. Game thread.
+// range, or the row struct's layout has not resolved (store_catalog::ReadLayout, which owns the row's
+// shape and does not wait on the price gate). An order of no items reads true and empty. Game thread.
 bool ReadQueuedOrder(int32_t index, QueuedOrder& out);
 
 // Read the order stored at `order`, an Fstruct_storeOrder (makeAnOrder's parameter, say), into
-// `out`: its items' row names and its time. False as ReadOrder's. Game thread.
+// `out`: its items' row names and its time. False when the catalog is unusable, the order holds no
+// items, or none of them carries a row name. Game thread.
 bool ReadOrderAt(const void* order, OrderData& out);
 
 // Host: commit `order` as a real delivery through the native makeAnOrder. Every item is looked
@@ -87,7 +91,7 @@ enum class Applied : uint8_t { Done, Later };
 // Client: append `order` to the local queue through the laptop's own addOrderCart, which also adds
 // the queue's order slot widget: the host's queue as this peer mirrors it. A shop item is built as
 // CommitOrder builds it; an unnamed one in the one shape every world-event builder of the game makes
-// (its class, one of it, no price, row, category or subcategory). The mirror shows the host's queue
+// (its class, its asProp, one of it, no price, row, category or subcategory). The mirror shows the host's queue
 // and delivers nothing, so it is built item by item: one this machine cannot build (a row its
 // catalog lacks, a class it has not loaded) is left out and said, down to an order of no items,
 // which still takes its place so the host's next pop takes the same order off. Done only when the
@@ -123,7 +127,8 @@ int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float et
 
 // Host, dev only: queue the day cycle's own daily delivery as the game does at six -- the cycle's
 // "Make Default Order", then the laptop's makeAnOrder with automatic set -- for a drill that needs a
-// world event's order, whose items carry no row. True when the queue grew by one. Game thread.
+// world event's order, whose items carry no row. False, queueing nothing, when CanCommit is not met;
+// true when the queue grew by one. Game thread.
 bool MakeDailyOrder();
 
 }  // namespace ue_wrap::order_economy
