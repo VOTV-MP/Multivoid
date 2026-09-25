@@ -30,6 +30,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/hook.cpp
     src/ue_wrap/core/hook_drill.cpp
     src/ue_wrap/core/game_thread.cpp
+    src/ue_wrap/core/game_thread_wait.cpp
     src/ue_wrap/core/pe_detour.cpp
     src/ue_wrap/core/pe_diag.cpp
     src/ue_wrap/engine/spawn_gate.cpp
@@ -412,6 +413,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
     src/coop/dev/hand_drop_selftest.cpp
+    src/coop/dev/run_and_wait_selftest.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp
     src/coop/dev/hookdrag_selftest.cpp

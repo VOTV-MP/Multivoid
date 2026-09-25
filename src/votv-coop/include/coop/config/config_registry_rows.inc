@@ -293,6 +293,10 @@ CFG_FLAG(hand_drop_selftest, "hand_drop_selftest", "dev", false, "VOTVCOOP_HAND_
     "each. The verdict is the watching peer's census of the keyed props around the holder before "
     "and after: a prop that does not come back is the release the other peer never received. It "
     "MUTATES the world, so it is armed per run from the environment.")
+CFG_FLAG(run_and_wait_selftest, "run_and_wait_selftest", "dev", false, "VOTVCOOP_RUN_AND_WAIT_SELFTEST",
+    "Autonomous selftest: the one game-thread wait driven through its five endings -- an answer, no "
+    "answer, a fault, a C++ throw and a call on the game thread itself -- once per process. Its faults "
+    "are provoked on purpose and logged as ERRORs its verdict names, so arm it for one run.")
 CFG_FLAG(floppy_selftest, "floppy_selftest", "dev", false, "VOTVCOOP_FLOPPY_SELFTEST",
     "Autonomous selftest: the disc-into-server media transfer -- a client insert the host tries to "
     "eject, the mirror of that, and a client insert the same client ejects. It MUTATES the world "
