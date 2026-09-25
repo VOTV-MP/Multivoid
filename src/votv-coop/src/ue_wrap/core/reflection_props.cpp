@@ -125,6 +125,14 @@ int32_t FindParamOffset(void* function, const wchar_t* paramName) {
     return -1;
 }
 
+int32_t FindParamSize(void* function, const wchar_t* paramName) {
+    if (!function || !paramName) return -1;
+    for (const ParamInfo& p : FunctionParams(function)) {
+        if (::_wcsicmp(p.name.c_str(), paramName) == 0) return p.size;  // as FindParamOffset
+    }
+    return -1;
+}
+
 namespace {
 
 // The FField* of an instance property by (case-insensitive) name -- the same

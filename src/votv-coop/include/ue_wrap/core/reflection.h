@@ -273,6 +273,11 @@ int32_t FunctionFrameSize(void* function);
 // Byte offset of parameter `paramName` in the frame, or -1.
 int32_t FindParamOffset(void* function, const wchar_t* paramName);
 
+// Size in bytes of parameter `paramName` (ElementSize * ArrayDim), or -1. The name matches
+// case-insensitively, as FindParamOffset's does: an FName renders in whichever casing was
+// registered first in the process.
+int32_t FindParamSize(void* function, const wchar_t* paramName);
+
 // Byte offset of an instance property named `propName` on `owningClass` (a UClass*, live, as for
 // FindFunction). Walks the class's own ChildProperties chain, then climbs the SuperStruct chain on
 // a miss. -1 if not found. Cache the result; the walk is linear.

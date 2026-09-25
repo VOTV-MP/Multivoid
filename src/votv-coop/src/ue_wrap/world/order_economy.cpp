@@ -287,9 +287,7 @@ int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {
     // The native takes the struct BY VALUE, and its declared size is the STRUCT size (0x4D), not the
     // TArray element STRIDE (0x50). Ask the UFunction rather than assuming which of the two it is --
     // writing 0x50 bytes into a 0x4D parameter slot would scribble on whatever follows it.
-    int32_t paramSize = -1;
-    for (const auto& prm : R::FunctionParams(fn))
-        if (prm.name == L"struct_store") { paramSize = prm.size; break; }
+    const int32_t paramSize = R::FindParamSize(fn, L"struct_store");
     if (paramSize <= 0 || paramSize > kItemStride) {
         UE_LOGW("order_economy: RestoreCartItems -- addStoreCart param size %d is not plausible "
                 "(stride %d) -- skipping", paramSize, kItemStride);
@@ -363,9 +361,7 @@ int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float et
     // slot's Fstruct_store.name (the table itself stores "None" on all 473 rows).
     { ue_wrap::ParamFrame f(genFn); if (f.valid()) ue_wrap::Call(laptop, f); }
 
-    int32_t addParamSize = -1;
-    for (const auto& prm : R::FunctionParams(addFn))
-        if (prm.name == L"struct_store") { addParamSize = prm.size; break; }
+    const int32_t addParamSize = R::FindParamSize(addFn, L"struct_store");
     if (addParamSize <= 0 || addParamSize > kItemStride) {
         UE_LOGW("order_economy: PlaceOrderFromShopUI -- addStoreCart param size %d implausible",
                 addParamSize);
