@@ -1,18 +1,17 @@
-// coop/dev/keypad_drill.h -- the keypad lane's drill: a client's typing reaches the host, the host
+// coop/dev/keypad_drill.h -- the keypad lane's drill: a client's input reaches the host, the host
 // judges it, and the client's copy lands on the host's verdict.
 //   CLIENT -- once its join is over, walks with the director to the keypad its navmesh reaches first
-//             among those the lane names that gate a door, and runs three legs there, each typed in
-//             one tick and ended by its own copy's state: ACCEPT the password through the numpad
-//             (its digits and "+"; a five-digit one submits itself): active 1, the buffer empty and
-//             the gated door's active 1; CANCEL two numpad digits, once they show, with its "-":
-//             active 0, the buffer empty; DENY a wrong code on the keys and the accept key: active
-//             0, the buffer empty, the door's active 0. A keypad already unlocked starts with DENY.
-//             Straight after typing, its own copy must read as before: the input runs on the host.
+//             among those the lane names that gate a door, and runs four legs there, each started in
+//             one tick and ended by its own copy's state. PRESS the gated door while the keypad is
+//             unlocked, first when it starts so (a joiner's door, no keypad touched): its open flips.
+//             ACCEPT the password through the numpad (a five-digit one submits itself): active 1, the
+//             buffer empty, the door's active 1. CANCEL two numpad digits, once they show, with its
+//             "-": active 0. DENY a wrong code on the keys and the accept key: active 0, the door's 0.
+//             Straight after each start, its own copy reads as before: the input runs on the host.
 //   HOST   -- logs every change of every keypad that gates a door, with its door's active.
-// Each peer censuses the named keypads that gate a door, each door's active beside its keypad's: the
-// host at its start, the client at its start and its end. A leg that has not landed in 10 s fails.
-// Lines are tagged [KEYPAD-DRILL]. Run on both peers of a pair (keypad_drill=1); the client's DONE
-// line ends it.
+// Each censuses the named keypads that gate a door (a pair's two share one), the door's active beside
+// the keypad's: the host at its start, the client at its start and its end. A leg not landed in 10 s
+// fails. Lines are tagged [KEYPAD-DRILL]; run on both peers (keypad_drill=1); the client's DONE ends it.
 
 #pragma once
 

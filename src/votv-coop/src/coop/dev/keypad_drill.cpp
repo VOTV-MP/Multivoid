@@ -43,7 +43,7 @@ constexpr auto  kLegBound   = std::chrono::seconds(10);
 constexpr float kStandCm    = 150.f;   // this near the keypad, a player stands where it can use it
 constexpr int   kCandidates = 14;      // the nearest keypads by straight distance; each costs a route
 
-enum class Leg { Accept, Cancel, Deny };
+enum class Leg { Press, Accept, Cancel, Deny };
 enum class Phase { Unpicked, Walking, Typing, Landing, Done };
 
 // What the walker thread hands the game thread: the keypad it stood at, or that it could not.
@@ -62,6 +62,7 @@ std::vector<Leg> g_legs;
 size_t       g_leg = 0;
 bool         g_cancelSawDigits = false;
 bool         g_sawEcho = false;   // this leg's typing has shown on this copy: the host's digits came back
+int          g_doorBefore = -1;   // the press leg: the gated door's open on this copy before the press
 Clock::time_point g_since{};
 int          g_failures = 0;
 
@@ -73,6 +74,7 @@ const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
 const char* LegName(Leg leg) {
     switch (leg) {
+    case Leg::Press:  return "PRESS";
     case Leg::Accept: return "ACCEPT";
     case Leg::Cancel: return "CANCEL";
     case Leg::Deny:   return "DENY";
@@ -190,9 +192,17 @@ int DoorOf(void* lock) {
     return door && ue_wrap::door::TryReadActive(door, on) ? (on ? 1 : 0) : -1;
 }
 
-// Every named keypad that gates a door, the door's active beside the keypad's: the keypad's setActive
-// hands its verdict on to the door, so a door that reads otherwise opens as its keypad does not say.
-// Sorted by key, seven to a line, so the host's census and the client's compare entry by entry.
+// The drilled keypad's gated door's open on this copy, the swing's destination while it moves; -1
+// when unreadable.
+int DoorOpen() {
+    void* door = PL::GatedDoor(g_lock);
+    bool open = false;
+    return door && ue_wrap::door::TryReadOpenIntent(door, open) ? (open ? 1 : 0) : -1;
+}
+
+// Every named keypad that gates a door (the two keypads of a pair share one), the door's active beside
+// the keypad's: the keypad's setActive hands its verdict on to the door, so a door that reads otherwise
+// opens as its keypad does not say. Sorted by key, seven to a line, so the peers compare entry by entry.
 void Census(const char* when) {
     struct Row { std::wstring key; bool keypad; int door; };
     std::vector<Row> rows;
@@ -255,11 +265,31 @@ std::wstring WrongCode() {
     return w;
 }
 
+// The press leg: the gated door's own E-press entry, as the player at the keypad would reach it. The
+// press runs on the host, so this copy's door must read as before straight after.
+void StartPress() {
+    void* door = PL::GatedDoor(g_lock);
+    void* player = coop::players::Registry::Get().Local();
+    g_doorBefore = DoorOpen();
+    const bool pressed = door && player && ue_wrap::door::CallPress(door, player, ue_wrap::door::kUseAction);
+    const int after = DoorOpen();
+    const bool left = g_doorBefore >= 0 && after == g_doorBefore;
+    UE_LOGI("[KEYPAD-DRILL] client PRESS on keypad='%ls''s door: dispatched=%d, own copy open %d -> %d (%s)",
+            g_key.c_str(), pressed ? 1 : 0, g_doorBefore, after, left ? "left, as it should" : "MOVED LOCALLY or unread");
+    if (!pressed || !left) ++g_failures;
+    g_phase = Phase::Landing;
+    g_since = Clock::now();
+}
+
 // Types the leg in one tick and reads this copy straight after: the keys went to the host, so it
 // must read as before. ACCEPT goes through the numpad, DENY through the keys and the accept key,
 // CANCEL through the numpad's digits and, once they show, its cancel key.
 void StartLeg(const PL::State& before) {
     const Leg leg = g_legs[g_leg];
+    if (leg == Leg::Press) {
+        StartPress();
+        return;
+    }
     const bool longCode = g_password.size() >= 5;
     switch (leg) {
     case Leg::Accept:
@@ -273,6 +303,8 @@ void StartLeg(const PL::State& before) {
     case Leg::Cancel:
         TypeDigits(g_password.substr(0, 2), true);
         g_cancelSawDigits = false;
+        break;
+    case Leg::Press:
         break;
     }
     g_sawEcho = false;
@@ -316,7 +348,20 @@ void ClientStep(const PL::State& cur, long long ms) {
     if (!cur.buffer.empty()) g_sawEcho = true;
     const bool late = Clock::now() - g_since > kLegBound;
     bool ended = false;
-    if (leg == Leg::Cancel && !g_cancelSawDigits) {
+    if (leg == Leg::Press) {
+        // The host ran the press; the door lane brings its door's open back to this copy.
+        const int open = DoorOpen();
+        if (open >= 0 && open != g_doorBefore) {
+            UE_LOGI("[KEYPAD-DRILL] client PRESS landed after %lld ms: the door's open %d -> %d on this copy", ms,
+                    g_doorBefore, open);
+            ended = true;
+        } else if (late) {
+            UE_LOGW("[KEYPAD-DRILL] client PRESS: the door's open still reads %d after %lld s -- FAIL", open,
+                    static_cast<long long>(kLegBound.count()));
+            ++g_failures;
+            ended = true;
+        }
+    } else if (leg == Leg::Cancel && !g_cancelSawDigits) {
         // The cancel leg presses its key only once its two digits show on this copy.
         if (cur.buffer == g_password.substr(0, 2)) {
             g_cancelSawDigits = true;
@@ -425,8 +470,9 @@ void Tick(coop::net::Session* session) {
             Done("unusable keypad");
             return;
         }
-        g_legs = g_last.active ? std::vector<Leg>{Leg::Deny, Leg::Accept, Leg::Cancel}
-                               : std::vector<Leg>{Leg::Accept, Leg::Cancel, Leg::Deny};
+        // The press comes while the keypad is unlocked: first on one found so, as a joiner meets it.
+        g_legs = g_last.active ? std::vector<Leg>{Leg::Press, Leg::Deny, Leg::Accept, Leg::Cancel}
+                               : std::vector<Leg>{Leg::Accept, Leg::Press, Leg::Cancel, Leg::Deny};
         g_leg = 0;
         g_phase = Phase::Typing;
         return;
@@ -460,6 +506,7 @@ void OnDisconnect() {
     g_leg = 0;
     g_cancelSawDigits = false;
     g_sawEcho = false;
+    g_doorBefore = -1;
     g_failures = 0;
     g_watched.clear();
     // A walker still running finishes its walk; its result is for the session that started it.
