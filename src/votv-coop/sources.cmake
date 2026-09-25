@@ -141,6 +141,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_mode.cpp
     src/ue_wrap/world/world_singleton.cpp
+    src/ue_wrap/world/world_instances.cpp
     src/ue_wrap/world/game_rules.cpp
     src/ue_wrap/world/upgrades.cpp
     src/ue_wrap/world/game_rules_pane.cpp

@@ -27,9 +27,11 @@ namespace D  = ue_wrap::drone_console;
 namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
-// The prop verb the console's buttons arrive on; the callback gates on the console's class, since
-// every prop in the game declares this one.
-const wchar_t* const kActionVerb = L"actionOptionIndex";
+// The verb the console's buttons arrive on, watched on the console's own class by name, so the watch
+// matches whichever class the running world loads under that name (poll arc 2.7: a level class is
+// never kept by pointer across worlds).
+const wchar_t* const kConsoleClass = L"droneConsole_C";
+const wchar_t* const kActionVerb   = L"actionOptionIndex";
 constexpr int kTagDroneCall = 0x44524f4e;  // 'DRON'
 
 // The action the console's own switch routes to its faces. Its other cases, 10 and 11, are the
@@ -51,11 +53,6 @@ constexpr uint64_t kRefusalSayMs   = 10000;
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchInstalled = false;
 bool g_watchLive = false;
-// The console's class, produced by Install under its throttle and only COMPARED in the callback:
-// actionOptionIndex is the E-press verb of every interactable in the game, and a FindClass miss is
-// not memoised, so resolving it here would cost a full object-array walk per press in any world
-// that holds no console.
-void* g_consoleCls = nullptr;
 
 uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
 
@@ -128,9 +125,7 @@ void Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
 // ---- the client's gate -----------------------------------------------------------------------
 sg::Verdict OnActionPre(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
-    if (!call.object || !g_consoleCls || R::ClassOf(call.object) != g_consoleCls)
-        return sg::Verdict::Run;
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client || !call.object) return sg::Verdict::Run;
 
     static void*   sFn = nullptr;
     static int32_t sActionOff = -1;
@@ -162,21 +157,16 @@ sg::Verdict OnActionPre(const sg::Call& call) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_watchInstalled)
-        g_watchInstalled = sg::WatchName(kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
-    // Install is the per-tick retry pump, so the resolve of a class the world may not hold is bound
-    // to about 1 Hz -- the coin gun's shape, for the coin gun's reason.
-    if (g_consoleCls) return;
-    static uint32_t sResolveN = 0;
-    if ((sResolveN++ % 125u) == 0u) g_consoleCls = D::ClassPtr();
+        g_watchInstalled = sg::WatchClassName(kConsoleClass, kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
 }
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
     if (!g_watchInstalled) {
-        g_watchInstalled = sg::WatchName(kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
+        g_watchInstalled = sg::WatchClassName(kConsoleClass, kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
         return;
     }
-    if (!g_watchLive && sg::NameWatchLive(kActionVerb, kTagDroneCall)) {
+    if (!g_watchLive && sg::ClassNameWatchLive(kConsoleClass, kActionVerb, kTagDroneCall)) {
         g_watchLive = true;
         UE_LOGI("[DRONE-CALL] the console action gate is live");
     }
