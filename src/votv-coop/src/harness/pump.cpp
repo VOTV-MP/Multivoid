@@ -4,6 +4,7 @@
 
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/class_lifetime_probe.h"
+#include "coop/dev/init_seam_probe.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/dev/function_lookup_parity.h"
@@ -87,6 +88,8 @@ void TickFrameTail() {
     coop::dev::function_lookup_parity::Tick();
     // [dev] Whether a class and its functions outlive the world that loaded them; a latched read when off.
     coop::dev::class_lifetime_probe::Tick();
+    // [dev] Every keyed Init body the script gate sees; a latched read when off.
+    coop::dev::init_seam_probe::Tick();
     TickShutdownHooks();
 }
 

@@ -638,3 +638,7 @@ CFG_FLAG(class_lifetime_probe, "class_lifetime_probe", "dev", false, "VOTVCOOP_C
     "native class judged against the identity it had when last seen (the same object, the same address "
     "holding a new one, a new address, or gone), with the functions its watched rows name judged the "
     "same way. Read-only but for the slot serials it assigns.")
+CFG_FLAG(init_seam_probe, "init_seam_probe", "dev", false, "VOTVCOOP_INIT_SEAM_PROBE",
+    "Probe: a script-gate watch on every Init body of a keyed prop, counted by the body's owning "
+    "class, its caller, whether it runs inside another Init of the same object and whether the key "
+    "is still unset; logged every 30 s and at each world change. Holds the gate; read-only.")
