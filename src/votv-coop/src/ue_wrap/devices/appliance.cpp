@@ -8,6 +8,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <cstdint>
@@ -84,12 +85,13 @@ Desc* DescFor(void* obj) {
 }  // namespace
 
 bool EnsureResolved() {
-    // Each leaf class as it streams in (cheap hash lookups, skipped once cached): its bool, its verbs
-    // and its Key, which is declared on the Aactor_save_C base and which the property lookup climbs to.
+    // Each leaf class as it streams in: a class held or left out costs a flag test, and one not loaded
+    // yet one object-index lookup, which costs nothing on a miss. Then its bool, its verbs and its
+    // Key, which is declared on the Aactor_save_C base and which the property lookup climbs to.
     bool newlyResolved = false;
     for (auto& d : g_descs) {
         if (d.cls || d.unusable) continue;
-        void* cls = R::FindClass(d.className);
+        void* cls = ue_wrap::object_index::ClassByName(d.className);
         if (!cls) continue;
         const int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
         const int32_t off = R::FindPropertyOffset(cls, d.boolName);

@@ -4,9 +4,9 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <vector>
@@ -20,9 +20,10 @@ namespace R = reflection;
 // (the console may stream in later than the lockers or vice versa).
 struct ClassDesc {
     void*   cls = nullptr;
+    void*   failedCls = nullptr;  // a class whose `opened` did not resolve: said once, not asked again
     int32_t offOpened = -1;
-    int32_t offAlpha = -1;      // the timeline track float (GUID-mangled name -> dump offset)
-    int32_t offDirection = -1;  // TEnumAsByte<ETimelineDirection> right after alpha
+    int32_t offAlpha = -1;      // the swing timeline's value, a_a_<guid>, by its prefix
+    int32_t offDirection = -1;  // its TEnumAsByte<ETimelineDirection>, a__Direction_<guid>
     void*   updateFn = nullptr;     // a__UpdateFunc (rotates the axis from alpha)
     void*   finishedFn = nullptr;   // a__FinishedFunc (locker: close-slam + collision restore)
     void*   verbFn = nullptr;       // the family's own apply verb, resolved WITH the class
@@ -34,21 +35,7 @@ ClassDesc g_locker;   // Alocker_C (+ subclasses locker_personal_C / locker_deat
 ClassDesc g_console;  // AdroneConsole_C; verb = setButtonsCollision()
 void* g_timelinePlayFn = nullptr;       // UTimelineComponent::Play
 void* g_timelineReverseFn = nullptr;    // UTimelineComponent::Reverse
-int   g_timelineTries = 0;              // bounded: the component class is engine-side and always up
-constexpr int kMaxTimelineTries = 5;
-std::atomic<bool> g_anyResolved{false};
-
-// Alpha 0.9.0-n fallbacks (CXXHeaderDump locker.hpp / droneConsole.hpp; the
-// alpha/direction property NAMES are GUID-mangled per cook, so the dump offsets
-// are the primary source for those two).
-constexpr int32_t kLockerOpened    = 0x0270;
-constexpr int32_t kLockerAlpha     = 0x0260;
-constexpr int32_t kLockerDirection = 0x0264;
-constexpr int32_t kLockerTimeline  = 0x0268;
-constexpr int32_t kConsoleOpened    = 0x0298;
-constexpr int32_t kConsoleAlpha     = 0x0288;
-constexpr int32_t kConsoleDirection = 0x028C;
-constexpr int32_t kConsoleTimeline  = 0x0290;
+bool  g_timelineFailed = false;         // the engine class held no Play or Reverse: said once
 
 // Force-snap verify queue: the 0.5 s swing Timeline only advances while the actor TICKS, so far
 // from the local player it freezes and the door leaf sticks mid-swing (door.cpp drives the same
@@ -64,27 +51,41 @@ std::vector<Verify> g_verify;  // GT-only
 
 // Everything a family needs is resolved on the ONE tick its class first appears, verb included:
 // a verb resolved later, under a latch that another family already closed, is a verb never
-// resolved at all -- whichever class streams in second used to lose its own.
-bool ResolveClass(ClassDesc& d, const wchar_t* clsName, const wchar_t* verbName,
-                  int32_t fbOpened, int32_t fbAlpha, int32_t fbDir, int32_t fbTimeline) {
+// resolved at all -- whichever class streams in second used to lose its own. Every offset is read
+// by name, the swing timeline's GUID-suffixed ones by their prefix; a family whose `opened` does not
+// resolve stays out, said once, and one whose swing does not runs without the snap.
+bool ResolveClass(ClassDesc& d, const wchar_t* clsName, const wchar_t* verbName) {
     if (d.cls) return true;
-    void* cls = R::FindClass(clsName);
-    if (!cls) return false;
+    void* cls = ue_wrap::object_index::ClassByName(clsName);
+    if (!cls || cls == d.failedCls) return false;
+    const int32_t opened = R::FindPropertyOffset(cls, L"opened");
+    if (opened < 0) {
+        d.failedCls = cls;
+        UE_LOGE("door_box: %ls.opened did not resolve by name -- that family stays out of the sync", clsName);
+        return false;
+    }
     d.cls = cls;
+    d.offOpened = opened;
+    d.offAlpha = R::FindPropertyOffsetByPrefix(cls, L"a_a_");
+    d.offDirection = R::FindPropertyOffsetByPrefix(cls, L"a__Direction_");
+    d.offTimeline = R::FindPropertyOffset(cls, L"a");
     d.verbFn = R::FindFunction(cls, verbName);
-    if (!d.verbFn)
-        UE_LOGW("door_box: %ls::%ls unresolved -- that family's apply degrades to snap-only",
-                clsName, verbName);
-    d.offOpened = R::FindPropertyOffset(cls, L"opened");
-    if (d.offOpened < 0) d.offOpened = fbOpened;
-    d.offAlpha = fbAlpha;          // GUID-mangled name -- dump offset is authoritative
-    d.offDirection = fbDir;
-    d.offTimeline = fbTimeline;
     d.updateFn = R::FindFunction(cls, L"a__UpdateFunc");
     d.finishedFn = R::FindFunction(cls, L"a__FinishedFunc");
     d.offTrigger = R::FindPropertyOffset(cls, L"triggerOnOpen");  // locker only; -1 on the console
+    if (!d.verbFn)
+        UE_LOGW("door_box: %ls::%ls unresolved -- that family's apply degrades to snap-only",
+                clsName, verbName);
+    if (d.offAlpha < 0 || d.offDirection < 0 || d.offTimeline < 0)
+        UE_LOGW("door_box: %ls's swing timeline did not resolve (value %d, direction %d, component %d) -- no "
+                "snap for that family", clsName, d.offAlpha, d.offDirection, d.offTimeline);
+    UE_LOGI("door_box: resolved %ls=%p opened@0x%04X swing@%d/%d/%d verb=%p upd=%p fin=%p", clsName, cls,
+            opened, d.offAlpha, d.offDirection, d.offTimeline, d.verbFn, d.updateFn, d.finishedFn);
     return true;
 }
+
+// Whether the swing of `d`'s class can be read and snapped.
+bool SwingReadable(const ClassDesc& d) { return d.offAlpha >= 0 && d.offDirection >= 0; }
 
 inline bool ReadBool(const void* obj, int32_t off) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(obj) + off);
@@ -111,6 +112,7 @@ const ClassDesc* DescOf(void* obj) {
 // the mesh -- and a__FinishedFunc, which on a locker close plays the slam and restores the door
 // collision, so it is required.
 void ForceSnap(void* actor, const ClassDesc& d, bool want) {
+    if (!SwingReadable(d)) return;
     *reinterpret_cast<float*>(reinterpret_cast<char*>(actor) + d.offAlpha) = want ? 1.0f : 0.0f;
     *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(actor) + d.offDirection) =
         want ? 0u : 1u;  // ETimelineDirection: 0=Forward, 1=Backward
@@ -118,19 +120,20 @@ void ForceSnap(void* actor, const ClassDesc& d, bool want) {
     if (d.finishedFn) { ParamFrame f(d.finishedFn); if (f.valid()) Call(actor, f); }
 }
 
-// The timeline verbs belong to no family, so they get their own bounded retry rather than a ride
-// on whichever class latched first. Bounded because a miss is a whole object-array walk and this
-// runs per pump tick.
+// The timeline verbs belong to no family, so they are resolved on their own rather than with
+// whichever class latched first. The engine's class is always loaded; a verb it does not hold is
+// said once and not asked for again.
 void ResolveTimelineVerbs() {
-    if (g_timelinePlayFn || g_timelineTries >= kMaxTimelineTries) return;
-    ++g_timelineTries;
-    if (void* tc = R::FindClass(L"TimelineComponent")) {
-        g_timelinePlayFn    = R::FindFunction(tc, L"Play");
-        g_timelineReverseFn = R::FindFunction(tc, L"Reverse");
+    if (g_timelinePlayFn || g_timelineFailed) return;
+    void* tc = ue_wrap::object_index::ClassByName(L"TimelineComponent");
+    if (!tc) return;
+    g_timelinePlayFn    = R::FindFunction(tc, L"Play");
+    g_timelineReverseFn = R::FindFunction(tc, L"Reverse");
+    if (!g_timelinePlayFn || !g_timelineReverseFn) {
+        g_timelinePlayFn = g_timelineReverseFn = nullptr;
+        g_timelineFailed = true;
+        UE_LOGW("door_box: UTimelineComponent Play/Reverse unresolved -- swings snap instead of animating");
     }
-    if (!g_timelinePlayFn && g_timelineTries >= kMaxTimelineTries)
-        UE_LOGW("door_box: UTimelineComponent Play/Reverse unresolved in %d tries -- swings snap "
-                "instead of animating", kMaxTimelineTries);
 }
 
 }  // namespace
@@ -138,32 +141,12 @@ void ResolveTimelineVerbs() {
 bool EnsureResolved() {
     // Both families are tried until each has its class: whichever streams in second resolves its
     // own verb on its own edge, which a latch shared with the first would have denied it forever.
-    // A class already held costs one pointer test; a MISS costs a whole object-array walk, and this
-    // runs per pump tick. So the first few hundred calls try every time -- an apply that arrives
-    // before the resolve is DROPPED by the channel, and both classes load at world enter, which is
-    // when the joiner's door states arrive -- and after that a map that simply has no drone console
-    // falls back to one attempt in 125 rather than walking the array forever.
-    static uint32_t sTry = 0;
-    if (!g_locker.cls || !g_console.cls || !g_timelinePlayFn) {
-        const uint32_t t = sTry++;
-        if (t < 300 || (t % 125) == 0) {
-            ResolveClass(g_locker, L"locker_C", L"Open", kLockerOpened, kLockerAlpha,
-                         kLockerDirection, kLockerTimeline);
-            ResolveClass(g_console, L"droneConsole_C", L"setButtonsCollision",
-                         kConsoleOpened, kConsoleAlpha, kConsoleDirection, kConsoleTimeline);
-            ResolveTimelineVerbs();
-        }
-    }
-    if (g_anyResolved.load(std::memory_order_acquire)) return true;
-    if (!g_locker.cls && !g_console.cls) return false;
-
-    g_anyResolved.store(true, std::memory_order_release);
-    UE_LOGI("door_box: resolved locker=%p (opened@0x%04X open=%p upd=%p fin=%p) "
-            "console=%p (opened@0x%04X buttons=%p) timeline Play=%p Reverse=%p",
-            g_locker.cls, g_locker.offOpened, g_locker.verbFn, g_locker.updateFn,
-            g_locker.finishedFn, g_console.cls, g_console.offOpened,
-            g_console.verbFn, g_timelinePlayFn, g_timelineReverseFn);
-    return true;
+    // A class held costs one pointer test, and one not loaded one object-index lookup, which costs
+    // nothing on a miss.
+    ResolveClass(g_locker, L"locker_C", L"Open");
+    ResolveClass(g_console, L"droneConsole_C", L"setButtonsCollision");
+    ResolveTimelineVerbs();
+    return g_locker.cls || g_console.cls;
 }
 
 bool IsDoorBox(void* obj) { return DescOf(obj) != nullptr; }
@@ -227,7 +210,7 @@ bool ApplyOpened(void* actor, bool want) {
             ParamFrame f(g_console.verbFn);
             if (f.valid()) Call(actor, f);
         }
-        void* tl = *reinterpret_cast<void* const*>(
+        void* tl = d->offTimeline < 0 ? nullptr : *reinterpret_cast<void* const*>(
             reinterpret_cast<const char*>(actor) + d->offTimeline);
         void* fn = want ? g_timelinePlayFn : g_timelineReverseFn;
         if (tl && R::IsLive(tl) && fn) {
@@ -235,9 +218,10 @@ bool ApplyOpened(void* actor, bool want) {
             if (f.valid()) Call(tl, f);
         }
     }
-    // Verify + force-snap for the far-frozen-timeline case.
-    g_verify.push_back(Verify{ actor, R::InternalIndexOf(actor), want, isLocker,
-                               std::chrono::steady_clock::now() + std::chrono::milliseconds(1500) });
+    // Verify + force-snap for the far-frozen-timeline case, where the swing can be read.
+    if (SwingReadable(*d))
+        g_verify.push_back(Verify{ actor, R::InternalIndexOf(actor), want, isLocker,
+                                   std::chrono::steady_clock::now() + std::chrono::milliseconds(1500) });
     return true;
 }
 

@@ -1,13 +1,15 @@
 // ue_wrap/devices/door.cpp -- see ue_wrap/devices/door.h; engine access for the base doors.
-// All field offsets are resolved from the live class by reflection rather than hardcoded, so
-// they stay correct across game builds; the known offsets are kept only as a logged fallback
-// if the reflected walk ever fails to find a property.
+// Every field offset is resolved from the live class by name, the timeline's GUID-suffixed ones by
+// their prefix, so they stay correct across game builds; a field the door lane needs that does not
+// resolve leaves the lane off, said once, since a guessed offset would read whatever a newer build
+// keeps there.
 
 #include "ue_wrap/devices/door.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine_component.h"
 
@@ -49,22 +51,21 @@ void*   g_doorCloseFn  = nullptr;  // Adoor_C::doorClose(bool bypassCheck)
 void*   g_moveFinishFn = nullptr;  // Adoor_C::move__FinishedFunc() -- sets isOpened + stops the timeline
 void*   g_moveUpdateFn = nullptr;  // Adoor_C::move__UpdateFunc()  -- lerps the door MESH from move_a (the visual)
 // The move timeline's output value and direction, which only the force-snap writes: the timeline's
-// finish copies the direction into dir and derives isOpened from it. Their reflected names carry a
-// per-asset GUID suffix, so they are this build's fixed offsets, from the header dump. The
-// direction is the timeline's own and updates on its next tick, so no reader uses it.
-constexpr int32_t kMoveAlphaOff = 0x0340;  // float  move_a_<guid>        (0=closed .. 1=open)
-constexpr int32_t kMoveDirOff   = 0x0344;  // uint8  move__Direction_<guid> (0=Forward/open, 1=Backward/close)
-int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*); no fallback
-int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>); no fallback
+// finish copies the direction into dir and derives isOpened from it. Their names carry a per-asset
+// GUID suffix (move_a_<guid>, move__Direction_<guid>), so they resolve by prefix; unresolved, the
+// force-snap moves nothing. The direction is the timeline's own and updates on its next tick, so no
+// reader uses it.
+int32_t g_moveAlphaOff = -1;       // float, 0 closed .. 1 open
+int32_t g_moveDirOff   = -1;       // uint8, 0 forward (open), 1 backward (close)
+int32_t g_sensorOff    = -1;       // Adoor_C::sensor (UBoxComponent*)
+int32_t g_sensorOverlapsOff = -1;  // Adoor_C::sensorOverlaps (TArray<AActor*>)
 // The door's power flag, which a press gates on first. The gamemode's power trigger, the keypad's
 // set-active and the save write it.
 int32_t g_activeOff      = -1;     // Adoor_C::Active (power)
 
-// The documented fallbacks from the header dump.
-constexpr int32_t kKeyOffFallback         = 0x0260;
-constexpr int32_t kIsOpenedOffFallback    = 0x0350;
-constexpr int32_t kIsMovingOffFallback    = 0x0351;
-constexpr int32_t kActiveOffFallback      = 0x0352;
+// A door class whose required fields or verbs did not resolve: asked again only when another class
+// object comes, said once for it.
+void* g_failedCls = nullptr;
 
 // The smart-apply verify list: a door we just tried to animate; if it has not reached the
 // target by the deadline (the swing froze, beyond tick range) it is force-snapped. Game
@@ -99,32 +100,27 @@ void* EntryVerb(void* door, const wchar_t* name) {
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
 
-    void* doorCls = R::FindClass(L"door_C");
-    if (!doorCls) return false;  // BP class not loaded yet -- caller retries
+    // One object-index lookup a call until the class loads, which costs nothing while it has not.
+    void* doorCls = ue_wrap::object_index::ClassByName(L"door_C");
+    if (!doorCls || doorCls == g_failedCls) return false;
 
     // The key is declared on the trigger base, which the property lookup climbs to; the opened flag
-    // is declared on the door.
-    int32_t keyOff = R::FindPropertyOffset(doorCls, L"Key");
-    if (keyOff < 0) {
-        UE_LOGW("door: reflected Key offset not found -- using fallback 0x%04X", kKeyOffFallback);
-        keyOff = kKeyOffFallback;
+    // is declared on the door. The lane needs the four, and runs without the rest.
+    const int32_t keyOff = R::FindPropertyOffset(doorCls, L"Key");
+    const int32_t isOpenedOff = R::FindPropertyOffset(doorCls, L"isOpened");
+    const int32_t isMovingOff = R::FindPropertyOffset(doorCls, L"isMoving");
+    const int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
+    void* openFn  = R::FindFunction(doorCls, L"doorOpen");
+    void* closeFn = R::FindFunction(doorCls, L"doorClose");
+    if (keyOff < 0 || isOpenedOff < 0 || isMovingOff < 0 || activeOff < 0 || !openFn || !closeFn) {
+        g_failedCls = doorCls;
+        UE_LOGE("door: door_C did not resolve by name (Key@%d isOpened@%d isMoving@%d Active@%d doorOpen=%p "
+                "doorClose=%p) -- the door lane stays off for this class", keyOff, isOpenedOff, isMovingOff,
+                activeOff, openFn, closeFn);
+        return false;
     }
-    int32_t isOpenedOff = R::FindPropertyOffset(doorCls, L"isOpened");
-    if (isOpenedOff < 0) {
-        UE_LOGW("door: reflected isOpened offset not found -- using fallback 0x%04X", kIsOpenedOffFallback);
-        isOpenedOff = kIsOpenedOffFallback;
-    }
-    int32_t isMovingOff = R::FindPropertyOffset(doorCls, L"isMoving");
-    if (isMovingOff < 0) {
-        UE_LOGW("door: reflected isMoving offset not found -- using fallback 0x%04X", kIsMovingOffFallback);
-        isMovingOff = kIsMovingOffFallback;
-    }
-    // The sensor and its contents: read by name or not at all, since a guessed offset would hand a
-    // reader a pointer from the wrong field.
     const int32_t sensorOff = R::FindPropertyOffset(doorCls, L"sensor");
     const int32_t sensorOverlapsOff = R::FindPropertyOffset(doorCls, L"sensorOverlaps");
-    int32_t activeOff = R::FindPropertyOffset(doorCls, L"Active");
-    if (activeOff < 0) activeOff = kActiveOffFallback;
     const int32_t dirOff = R::FindPropertyOffset(doorCls, L"dir");
     int32_t jammedOff = -1;
     uint8_t jammedMask = 0;
@@ -145,14 +141,12 @@ bool EnsureResolved() {
     if (dirOff < 0 || moveOff < 0)
         UE_LOGW("door: reflected dir or move offset not found (dir=%d move=%d) -- a swing's intent reads as "
                 "its settled state, half a second late", dirOff, moveOff);
+    const int32_t moveAlphaOff = R::FindPropertyOffsetByPrefix(doorCls, L"move_a_");
+    const int32_t moveDirOff = R::FindPropertyOffsetByPrefix(doorCls, L"move__Direction_");
+    if (moveAlphaOff < 0 || moveDirOff < 0)
+        UE_LOGW("door: the move timeline's value or direction did not resolve (%d, %d) -- a force-snap moves "
+                "nothing", moveAlphaOff, moveDirOff);
 
-    void* openFn  = R::FindFunction(doorCls, L"doorOpen");
-    void* closeFn = R::FindFunction(doorCls, L"doorClose");
-    if (!openFn || !closeFn) {
-        UE_LOGW("door: UFunction resolve incomplete (doorOpen=%p doorClose=%p) -- not ready",
-                openFn, closeFn);
-        return false;
-    }
     void* moveFinishFn = R::FindFunction(doorCls, L"move__FinishedFunc");  // for ForceOpen/ForceClose
     void* moveUpdateFn = R::FindFunction(doorCls, L"move__UpdateFunc");    // drives the mesh from move_a
     if (!moveFinishFn || !moveUpdateFn)
@@ -173,6 +167,8 @@ bool EnsureResolved() {
     g_playingMask  = playingMask;
     g_sensorOff    = sensorOff;
     g_sensorOverlapsOff = sensorOverlapsOff;
+    g_moveAlphaOff = moveAlphaOff;
+    g_moveDirOff   = moveDirOff;
     g_activeOff      = activeOff;
     g_doorOpenFn   = openFn;
     g_doorCloseFn  = closeFn;
@@ -315,8 +311,9 @@ static void ForceTo(void* door, bool open) {
     if (g_isOpenedOff >= 0 &&
         *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(door) + g_isOpenedOff) == open)
         return;
-    *reinterpret_cast<float*>(reinterpret_cast<char*>(door) + kMoveAlphaOff) = open ? 1.0f : 0.0f;
-    *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + kMoveDirOff)  = open ? 0 : 1;  // Forward/Backward
+    if (g_moveAlphaOff < 0 || g_moveDirOff < 0) return;
+    *reinterpret_cast<float*>(reinterpret_cast<char*>(door) + g_moveAlphaOff) = open ? 1.0f : 0.0f;
+    *reinterpret_cast<uint8_t*>(reinterpret_cast<char*>(door) + g_moveDirOff)  = open ? 0 : 1;  // Forward/Backward
     if (g_moveUpdateFn) { ParamFrame u(g_moveUpdateFn); if (u.valid()) Call(door, u); }  // move the MESH
     if (g_moveFinishFn) { ParamFrame f(g_moveFinishFn); if (f.valid()) Call(door, f); }  // set isOpened + stop
 }

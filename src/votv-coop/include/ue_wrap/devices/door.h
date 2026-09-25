@@ -1,12 +1,12 @@
-// ue_wrap/devices/door.h -- engine access for the base doors (door_C and the pryable door).
-// Engine-wrapper layer: the reflection, struct-offset and UFunction details of a door actor;
-// no network or coop state, which the interactable sync owns and drives through here. A door
-// is a trigger-base descendant: its open state is the inherited isOpened bool, its
-// cross-peer-stable identity the inherited Key name (assigned by the gamemode's key pass and
-// save-persistent), and its canonical state verbs doorOpen and doorClose, each taking a bypass
-// flag. A player reaches those through the door's entry verbs: the press, the hit and, on the
-// pryable door, the crowbar's pry. The pryable door inherits the rest unchanged, so resolving
-// against door_C covers both classes.
+// ue_wrap/devices/door.h -- engine access for the base doors (door_C and its two subclasses, the
+// pryable and the scaled door). Engine-wrapper layer: the reflection, struct-offset and UFunction
+// details of a door actor; no network or coop state, which the interactable sync owns and drives
+// through here. A door is a trigger-base descendant: its open state is its own isOpened bool, its
+// cross-peer-stable identity the Key name it inherits from the trigger base (assigned by the
+// gamemode's key pass and save-persistent), and its canonical state verbs doorOpen and doorClose,
+// each taking a bypass flag. A player reaches those through the door's entry verbs: the press, the
+// hit and, on the pryable door, the crowbar's pry. Both subclasses inherit the rest unchanged, so
+// resolving against door_C covers all three.
 
 #pragma once
 
@@ -17,13 +17,13 @@
 
 namespace ue_wrap::door {
 
-// Resolve the door class, the inherited key and open-state offsets and the open, close and
-// settime UFunctions. Idempotent; true once everything resolved (false while the blueprint
-// class is not loaded yet; the caller retries on a later tick). Game thread.
+// Resolve the door class, its key and open-state offsets and its open and close UFunctions.
+// Idempotent; true once they resolved; false while the class is not loaded, and for a class whose
+// required fields or verbs did not resolve by name (said once). Game thread.
 bool EnsureResolved();
 
-// True if `obj`'s class is door_C or a subclass (the pryable door). Cheap, a bounded super
-// walk with no allocation. False if not yet resolved.
+// True if `obj`'s class is door_C or a subclass (the pryable or the scaled door). Cheap, a bounded
+// super walk with no allocation. False if not yet resolved.
 bool IsDoor(void* obj);
 
 // Read the door's inherited key name as a wide string. Empty on failure (null, or not
