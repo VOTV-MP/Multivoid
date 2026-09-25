@@ -436,6 +436,11 @@ CFG_FLAG(appliance_drill, "appliance_drill", "dev", false, "VOTVCOOP_APPLIANCE_D
     "Drill (BOTH peers): the faucet with the lowest save key, toggled by the client through the tap's "
     "own action and toggled back by the host once it crossed; each peer logs every change of its "
     "state. Lines tagged [APPL-DRILL]; the client's DONE line ends it.")
+CFG_FLAG(light_drill, "light_drill", "dev", false, "VOTVCOOP_LIGHT_DRILL",
+    "Drill (BOTH peers): the light switch with the lowest save key whose group's breaker is on, pressed "
+    "by the client through the switch's own use() -- its own copy of the group must not move -- and by "
+    "the host once the client's press moved its group; each peer logs every change of the group. Lines "
+    "tagged [LIGHT-DRILL]; the client's DONE line ends it.")
 CFG_STRING(door_drill_door, "door_drill_door", "dev", "", "VOTVCOOP_DOOR_DRILL_DOOR", false,
     "With door_drill: the object name of the one door the walker walks to (e.g. "
     "door_GEN_VARIABLE_door_C_CAT_45); empty walks the nearest one its navmesh reaches.")

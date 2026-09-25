@@ -51,6 +51,14 @@ void OnDoorStateVerb(void* door);
 // every doorOpen and doorClose but that one. Game thread.
 bool ApplyingDoor(void* door);
 
+// The appliance lane's key for `a`, or "" when the lane does not index it in the current world.
+// Game thread.
+std::wstring ApplianceKey(void* a);
+
+// The light switch lane's key for `sw`, or "" when the lane does not index it in the current world.
+// Game thread.
+std::wstring LightSwitchKey(void* sw);
+
 // The light group lane's key for `root`, or "" when the lane does not index it in the current world.
 // Game thread.
 std::wstring LightGroupKey(void* root);

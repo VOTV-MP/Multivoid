@@ -237,6 +237,10 @@ bool ApplyingLightGroup(void* root) { return root && root == g_applyingGroup; }
 
 bool ApplyingDoor(void* door) { return door && door == g_applyingDoor; }
 
+std::wstring ApplianceKey(void* a) { return g_appliance.KeyForActor(a); }
+
+std::wstring LightSwitchKey(void* sw) { return g_light.KeyForActor(sw); }
+
 void QueueConnectBroadcastForSlot(int peerSlot) {
     g_door.QueueConnectBroadcastForSlot(peerSlot);
     g_light.QueueConnectBroadcastForSlot(peerSlot);

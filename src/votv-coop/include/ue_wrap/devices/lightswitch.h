@@ -64,6 +64,10 @@ std::wstring GetSwitchKeyString(void* sw);  // the switch's AtriggerBase_C::Key
 bool TryReadSwitchA(void* sw, bool& on);    // the switch's flip state (bool A)
 bool CallUse(void* sw);                     // use() -- flips the switch visual + the lights
 
+// The group a switch fires: its `objects[0]` (the inherited triggerBase_C::objects, which use() reads
+// and casts to the trigger interface), when that is a light root. Game thread. Null otherwise.
+void* SwitchRoot(void* sw);
+
 // --- The GROUP as a synced entity -----------------------------------------------------
 // The switch lane above syncs `A`, which use() sets from its OWN toggle -- presentation.
 // The GROUP's live state is trigger_lightRoot_C::isActive, and until now nothing on either

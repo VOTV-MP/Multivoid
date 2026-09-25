@@ -3,6 +3,7 @@
 #include "coop/dev/appliance_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/interactables/interactable_sync.h"  // the appliance lane's key
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster.h"
@@ -38,6 +39,8 @@ int          g_last = -1;    // its state at the last reading
 bool         g_sawOwn = false;  // the client's copy has shown its own toggle
 Phase        g_phase = Phase::Unpicked;
 Clock::time_point g_since{};
+Clock::time_point g_nextTry{};  // the next pick attempt while the lane indexes the faucets
+Clock::time_point g_nextSay{};  // the next line saying the pick still waits
 
 const char* Side() { return coop::roster::LocalIsHost() ? "host" : "client"; }
 
@@ -49,18 +52,24 @@ bool RoleIsReady() {
            coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle;
 }
 
-// The faucet both peers pick without telling each other: the one with the lowest save key. One walk
-// of the object array per world, for the drill only.
-bool PickFaucet() {
+// The faucet both peers pick without telling each other: the one with the lowest key in the
+// appliance lane, the name both peers give it (a faucet the save does not key is named by its portable
+// identity). Sets `faucets` to how many faucets this world holds, keyed or not yet. One walk of the
+// object array a try, for the drill only.
+bool PickFaucet(int& faucets, void*& firstFaucet) {
     void* best = nullptr;
     int32_t bestIdx = -1;
     std::wstring bestKey;
+    faucets = 0;
+    firstFaucet = nullptr;
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* o = R::ObjectAt(i);
         if (!o || !R::IsLive(o) || !A::IsFaucet(o)) continue;
-        std::wstring key = A::GetKeyString(o);
-        if (key.empty() || key == L"None") continue;
+        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;  // the class default, no faucet
+        if (++faucets == 1) firstFaucet = o;
+        std::wstring key = coop::interactable_sync::ApplianceKey(o);
+        if (key.empty()) continue;
         if (!best || key < bestKey) {
             best = o;
             bestIdx = R::InternalIndexOf(o);
@@ -95,8 +104,21 @@ void Tick(coop::net::Session* session) {
     if (!session || !session->connected() || !RoleIsReady() || !A::EnsureResolved()) return;
     const bool host = coop::roster::LocalIsHost();
     if (g_phase == Phase::Unpicked) {
-        if (!PickFaucet()) {
-            UE_LOGW("[APPL-DRILL] %s: no keyed faucet_C in this world -- INCONCLUSIVE", Side());
+        if (Clock::now() < g_nextTry) return;
+        int faucets = 0;
+        void* first = nullptr;
+        if (!PickFaucet(faucets, first)) {
+            if (faucets > 0) {  // the lane has not indexed them yet: asked again in a second, said every ten
+                g_nextTry = Clock::now() + std::chrono::seconds(1);
+                if (Clock::now() >= g_nextSay) {
+                    g_nextSay = Clock::now() + std::chrono::seconds(10);
+                    UE_LOGI("[APPL-DRILL] %s: %d faucet(s), none named by the appliance lane yet; the first is %ls, "
+                            "save key '%ls'", Side(), faucets, first ? R::ToString(R::NameOf(first)).c_str() : L"?",
+                            first ? A::GetKeyString(first).c_str() : L"");
+                }
+                return;
+            }
+            UE_LOGW("[APPL-DRILL] %s: no faucet_C in this world -- INCONCLUSIVE", Side());
             Done("no faucet");
             return;
         }
@@ -165,6 +187,7 @@ void OnDisconnect() {
     g_key.clear();
     g_start = g_last = -1;
     g_sawOwn = false;
+    g_nextTry = g_nextSay = {};
     g_phase = Phase::Unpicked;
 }
 

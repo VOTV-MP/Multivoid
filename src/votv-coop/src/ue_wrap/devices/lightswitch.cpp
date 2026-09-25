@@ -5,6 +5,7 @@
 #include "ue_wrap/devices/lightswitch.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -34,6 +35,7 @@ void*   g_swCls   = nullptr;  // lightswitch_C UClass
 int32_t g_swKeyOff = -1;      // AtriggerBase_C::Key (shared base offset, 0x0260)
 int32_t g_swAOff  = -1;       // Alightswitch_C::A (the flip bool, 0x02A0)
 void*   g_useFn   = nullptr;  // use()
+int32_t g_objectsOff = -1;    // triggerBase_C::objects (TArray<UObject*>): objects[0] is the switch's group
 constexpr int32_t kSwitchAOffFallback = 0x02A0;
 
 }  // namespace
@@ -119,6 +121,7 @@ bool EnsureSwitchResolved() {
     }
     void* useFn = R::FindFunction(cls, L"use");
     if (!useFn) { UE_LOGW("lightswitch: switch use() UFunction not found -- not ready"); return false; }
+    if (void* trigCls = R::FindClass(L"triggerBase_C")) g_objectsOff = R::FindPropertyOffset(trigCls, L"objects");
     g_swCls = cls; g_swKeyOff = keyOff; g_swAOff = aOff; g_useFn = useFn;
     g_swResolved.store(true, std::memory_order_release);
     UE_LOGI("lightswitch: resolved switch lightswitch_C=%p Key@0x%04X A@0x%04X use=%p",
@@ -155,6 +158,14 @@ bool CallUse(void* sw) {
 }
 
 // --- The GROUP as a synced entity -----------------------------------------
+
+void* SwitchRoot(void* sw) {
+    if (!sw || g_objectsOff < 0 || !EnsureResolved()) return nullptr;
+    const auto* arr = reinterpret_cast<const field_io::TArrayView*>(reinterpret_cast<const char*>(sw) + g_objectsOff);
+    if (!arr->data || arr->num <= 0) return nullptr;
+    void* first = *reinterpret_cast<void* const*>(arr->data);
+    return (first && R::IsLive(first) && IsLightRoot(first)) ? first : nullptr;
+}
 
 bool CallRunTrigger(void* root, int32_t index) {
     if (!root || !g_runTriggerFn) return false;
