@@ -8,7 +8,7 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
 #include "coop/player/hand_item.h"
-#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady: this client's world is up
+#include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -65,6 +65,7 @@ Reg  g_reg[kWatchCount] = {};
 bool g_settled = false;
 
 uint64_t g_sent = 0, g_ran = 0, g_denied = 0, g_worldRefused = 0;
+uint64_t g_loadNative = 0;  // a client's calls run natively as its own world's load (IsInAnnouncedWorld)
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -328,9 +329,13 @@ sg::Verdict OnVerbPre(const sg::Call& call) {
         if (!w->anyKey) HostPre(call, w->verb);  // the host's numpad reaches its own inputNumber and open
         return sg::Verdict::Run;
     }
-    // Until this client's world is ready, its load runs natively: the load is the host's save, and
-    // the host's own states for what the lane owns follow at world-ready.
-    if (!coop::net_pump::HasAnnouncedWorldReady()) return sg::Verdict::Run;
+    // A call on an object of a world this client has not announced ready is that world's load, the
+    // host's save: it runs natively, and the host's own states for what the lane owns follow the
+    // announce.
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) {
+        ++g_loadNative;
+        return sg::Verdict::Run;
+    }
     return w->anyKey ? ClientAnyKey(*s, call) : ClientPre(*s, call, w->verb);
 }
 
@@ -444,16 +449,18 @@ void OnPeerLeft(uint8_t slot) {
 }
 
 void OnDisconnect() {
-    if (g_sent || g_ran || g_denied || g_worldRefused)
-        UE_LOGI("[KEYPAD-VERB] session end -- sent=%llu ran=%llu denied=%llu world verbs refused=%llu",
+    if (g_sent || g_ran || g_denied || g_worldRefused || g_loadNative)
+        UE_LOGI("[KEYPAD-VERB] session end -- sent=%llu ran=%llu denied=%llu world verbs refused=%llu "
+                "own load run natively=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_ran),
-                static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_worldRefused));
+                static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_worldRefused),
+                static_cast<unsigned long long>(g_loadNative));
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
         g_waitSaid[slot] = 0;
     }
-    g_sent = g_ran = g_denied = g_worldRefused = 0;
+    g_sent = g_ran = g_denied = g_worldRefused = g_loadNative = 0;
 }
 
 }  // namespace coop::keypad_verbs

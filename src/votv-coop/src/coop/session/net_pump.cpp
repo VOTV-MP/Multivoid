@@ -250,6 +250,11 @@ static std::atomic<bool> g_reAnnounceWorldReady{false};
 // re-announces. Reset on disconnect.
 static void* g_announcedWorld = nullptr;
 
+// The same world, held as a weak identity (its slot and serial), for IsInAnnouncedWorld: a later world
+// is a new object even where the allocator hands it the old one's address. Game thread; stamped from
+// the local pawn at each announce, reset on disconnect.
+static ue_wrap::CachedObjRef g_announcedWorldRef;
+
 // The save-transfer kerfur-ghost reconcile lives in npc_adoption (it owns the timing); net_pump
 // only notifies it at the announce (OnClientWorldReady) so it resets its per-world state.
 
@@ -429,6 +434,7 @@ void Tick(coop::net::Session& session) {
                 // FindObjectByClass answers "a world object exists" (the incoming world, while the
                 // player chain still reads null), not "the world the player is in".
                 g_announcedWorld = ue_wrap::world_identity::CurrentWorld();
+                g_announcedWorldRef.Set(ue_wrap::world_identity::WorldOf(localNow));  // fresh this tick
                 // A fresh connect replay is about to arrive: reset the deferred-adoption per-world
                 // state so the new world re-adopts its save NPCs and re-sweeps orphans.
                 coop::npc_adoption::OnClientWorldReady();
@@ -453,6 +459,7 @@ void Tick(coop::net::Session& session) {
         g_worldReadyAnnounced.store(false, std::memory_order_relaxed);   // re-announce next connection
         g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
         g_announcedWorld = nullptr;                                      // fresh connection re-stamps
+        g_announcedWorldRef.Reset();
     }
 
     if (g_wasConnected && !isConnected) {
@@ -688,6 +695,18 @@ void Tick(coop::net::Session& session) {
 
 bool HasAnnouncedWorldReady() {
     return g_worldReadyAnnounced.load(std::memory_order_relaxed);
+}
+
+bool IsInAnnouncedWorld(void* obj) {
+    if (!obj || !g_worldReadyAnnounced.load(std::memory_order_relaxed) ||
+        g_reAnnounceWorldReady.load(std::memory_order_relaxed))
+        return false;
+    // A world the reader cannot name (a recook renamed a field it resolves, so the object's world or
+    // the stamp reads null) is no licence for the client to act on its own: the connection's announce
+    // stands for it, as it did before this test was per world.
+    void* const world = ue_wrap::world_identity::WorldOf(obj);
+    if (!world || !g_announcedWorldRef.Raw()) return true;
+    return g_announcedWorldRef.Is(world);
 }
 
 }  // namespace coop::net_pump

@@ -10,7 +10,7 @@
 #include "coop/player/hand_item.h"         // what the sender's hand holds, and held last
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
-#include "coop/session/net_pump.h"  // HasAnnouncedWorldReady: this client's world is up
+#include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -65,6 +65,7 @@ Reg  g_reg[kWatchCount] = {};
 bool g_settled = false;
 
 uint64_t g_sent = 0, g_ran = 0, g_denied = 0, g_worldRefused = 0;
+uint64_t g_loadNative = 0;  // a client's calls run natively as its own world's load (IsInAnnouncedWorld)
 uint64_t g_quietHits = 0;   // hits the host ran that left their door as it was
 
 uint64_t NowMs() {
@@ -217,10 +218,14 @@ const ParamOffsets& OffsetsOf(const sg::Call& call, int watchIndex, uint8_t verb
 sg::Verdict OnVerbPre(const sg::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return sg::Verdict::Run;
-    // Until this client's world is ready, its load runs natively: the load is the host's save, and
-    // the host's own states for what the lane owns follow at world-ready.
-    if (!coop::net_pump::HasAnnouncedWorldReady()) return sg::Verdict::Run;
     if (!call.object || !D::IsDoor(call.object)) return sg::Verdict::Run;
+    // A call on an object of a world this client has not announced ready is that world's load, the
+    // host's save: it runs natively, and the host's own states for what the lane owns follow the
+    // announce.
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) {
+        ++g_loadNative;
+        return sg::Verdict::Run;
+    }
     int wi = -1;
     for (int i = 0; i < kWatchCount; ++i)
         if (kWatches[i].tag == call.tag) { wi = i; break; }
@@ -310,8 +315,8 @@ void Tick(coop::net::Session& session) {
         }
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
-    // The weapon table is built once the world runs, not on a client's first hit: its build finds
-    // the table by walking every object. Ready() throttles a retry while the table is not loaded.
+    // The weapon table is built once the host's session runs, not on a client's first hit: its build
+    // finds the table by walking every object. Ready() throttles a retry while the table is not loaded.
     static bool s_weaponsReady = false;
     if (!s_weaponsReady) s_weaponsReady = ue_wrap::weapon_catalog::Ready();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
@@ -354,18 +359,19 @@ void OnPeerLeft(uint8_t slot) {
 }
 
 void OnDisconnect() {
-    if (g_sent || g_ran || g_denied || g_worldRefused)
-        UE_LOGI("[DOOR-VERB] session end -- sent=%llu ran=%llu denied=%llu world-damage refused=%llu",
+    if (g_sent || g_ran || g_denied || g_worldRefused || g_loadNative)
+        UE_LOGI("[DOOR-VERB] session end -- sent=%llu ran=%llu denied=%llu world-damage refused=%llu "
+                "own load run natively=%llu",
                 static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_ran),
-                static_cast<unsigned long long>(g_denied),
-                static_cast<unsigned long long>(g_worldRefused));
+                static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_worldRefused),
+                static_cast<unsigned long long>(g_loadNative));
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_pending[slot].clear();
         g_rate[slot] = Bucket{};
         g_waitSaid[slot] = false;
         g_cutSaid[slot] = false;
     }
-    g_sent = g_ran = g_denied = g_worldRefused = 0;
+    g_sent = g_ran = g_denied = g_worldRefused = g_loadNative = 0;
     g_quietHits = 0;
     g_hitRefusals = 0;
 }

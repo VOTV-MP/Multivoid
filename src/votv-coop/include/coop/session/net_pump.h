@@ -70,4 +70,13 @@ void FleeAfterNativeMenuTravel(coop::net::Session& session);
 // back as a duplicate, so peer-symmetric lanes stay mute until the announce.
 bool HasAnnouncedWorldReady();
 
+// Whether `obj` belongs to the world THIS client announced world-ready in: false before the announce,
+// while a world change waits for its re-announce, and for an object of any other world, so a later
+// world's own load is told apart at the object itself, whatever the tick order (a level load runs
+// its actors' first calls before the next tick). False on the host, which never announces. A world
+// the reader cannot name, the object's or the announce's, counts as the announced one. The lanes that
+// refuse a client's own calls of the verbs they carry ask it: a client's load of a world is the
+// host's save and runs natively. Game thread.
+bool IsInAnnouncedWorld(void* obj);
+
 }  // namespace coop::net_pump

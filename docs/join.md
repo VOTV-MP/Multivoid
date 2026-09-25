@@ -176,10 +176,13 @@ match; see the limits.
 
 ### A world change mid-session
 
-Cave and level travel replace the engine world. The client's registry re-seeds, and when the
-current world differs from the one it announced against, the client re-announces after a fresh
-probe session settles the new world's load tail; the host runs the connect replay again. The
-replay is idempotent, and the join-once placement is not repeated.
+A level travel replaces the engine world (a cave is not one: the caves are the gameplay map's own,
+kept by its `caveMaster`). The client's registry re-seeds, and when the current world differs from
+the one it announced against, the client re-announces after a fresh probe session settles the new
+world's load tail; the host runs the connect replay again. The replay is idempotent, and the
+join-once placement is not repeated. The lanes that refuse a client's own calls of a device's verbs
+(doors, light groups, keypads) run a call natively while its object is in a world the client has
+not announced ready: that world's load is the host's save (`coop::net_pump::IsInAnnouncedWorld`).
 
 ### Leaving and rejoining
 
