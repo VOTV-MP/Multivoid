@@ -65,16 +65,22 @@ inline constexpr const char* kSigSaveGameToSlot =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 48 8B DA 33 F6 "
     "48 8D 54 24 30 48 89 74 24 30 48 89 74 24 38 41 8B F8";
 
-// AActor::EndPlay(EEndPlayReason): where the engine ends an actor's play. RouteEndPlay calls it for
-// a destroy, a stream-out and a world teardown, and 17 of the 18 C++ overrides reach it through Super
-// (AChaosSolverActor's does not); it holds the one call of Actor's ReceiveEndPlay thunk, whose FName
-// global has no other reader. The
-// pattern ends on the engine's own begun-play test, the top two bits of the byte at +0x5C against
-// 0x80, which the detour repeats. Unique from 9 bytes, the /GS displacement masked; 46 shipped.
-// image+0x28C5A50 on 0.9.0n. The match is the function address.
-inline constexpr const char* kSigActorEndPlay =
-    "4C 8B DC 55 56 48 81 EC 28 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 10 01 00 00 "
-    "48 8B F1 8B EA 0F B6 49 5C 0F B6 C1 24 C0 3C 80";
+// AActor::EndPlay(EEndPlayReason): where the engine ends an actor's play. RouteEndPlay calls it through
+// the actor's vtable for a destroy, a stream-out and a world teardown, and 17 of the 18 C++ overrides
+// reach it through Super (AChaosSolverActor's does not); it holds the one call of Actor's ReceiveEndPlay
+// thunk, whose FName global has no other reader. Found as the engine finds it, in Actor's vtable: UE4SS
+// detours the same function, and 2 of 76 measured boots found its prologue already gone, both with
+// UE4SS's 6-byte jump on the script loop, which it detours in the same pass. The offset is UE4SS's 4.27
+// layout ([AActor] entry 27 after 2 + 4 + 71 inherited slots) and the exe's: 36 slots below EndPlay, in
+// all 110 vtables that hold it, sits AActor::ProcessEvent (slot 68), the only neighbor that calls
+// UObject::ProcessEvent. image+0x28C5A50 on 0.9.0n.
+inline constexpr size_t kActor_EndPlay_VtblOff = 0x340;
+// What the slot must lead to, read past the prologue and the stack cookie (bytes 0 to 29), where a
+// detour writes its jump: the engine's own begun-play test, the top two bits of the byte at +0x5C
+// against 0x80, which the detour repeats. The prologue itself says whose bytes the entry held.
+inline constexpr size_t      kActorEndPlayBodyOff  = 30;
+inline constexpr const char* kActorEndPlayBody     = "48 8B F1 8B EA 0F B6 49 5C 0F B6 C1 24 C0 3C 80";
+inline constexpr const char* kActorEndPlayPrologue = "4C 8B DC 55 56 48 81 EC 28 01 00 00";
 inline constexpr size_t  kActor_BegunPlayByte = 0x5C;  // EActorBeginPlayState in its top two bits
 inline constexpr uint8_t kActor_BegunPlayMask = 0xC0;
 inline constexpr uint8_t kActor_HasBegunPlay  = 0x80;  // HasBegunPlay (2) in those bits

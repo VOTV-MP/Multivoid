@@ -73,6 +73,15 @@ uintptr_t FindPatternIn(uintptr_t base, size_t size, const char* pattern) {
     return 0;
 }
 
+bool MatchesAt(uintptr_t addr, const char* pattern) {
+    const std::vector<PatByte> pat = ParsePattern(pattern);
+    if (!addr || pat.empty()) return false;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(addr);
+    for (size_t j = 0; j < pat.size(); ++j)
+        if (!pat[j].wild && bytes[j] != pat[j].value) return false;
+    return true;
+}
+
 uintptr_t FindPattern(const char* pattern) {
     uintptr_t base = 0;
     size_t size = 0;

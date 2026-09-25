@@ -20,6 +20,10 @@ uintptr_t FindPattern(const char* pattern);
 // Same, but scans an explicit [base, base+size) range.
 uintptr_t FindPatternIn(uintptr_t base, size_t size, const char* pattern);
 
+// True when the bytes at `addr` match `pattern` where they stand, with no scan: the check of a function
+// found some other way. The caller knows the pattern's span is readable.
+bool MatchesAt(uintptr_t addr, const char* pattern);
+
 // [base, size) of the main executable image, from its PE headers.
 void MainModuleRange(uintptr_t& base, size_t& size);
 

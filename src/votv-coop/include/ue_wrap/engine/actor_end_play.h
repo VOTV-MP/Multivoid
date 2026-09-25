@@ -35,8 +35,9 @@ enum class Reason : uint8_t {
 // transition calls it for every actor of the world. A fault in a sink is absorbed and said.
 using Sink = void (*)(void* actor, Reason reason);
 
-// Resolve AActor::EndPlay by its signature and detour it. Idempotent; false (logged) when the
-// signature does not match this build or the detour does not install. Boot, after the health checks.
+// Resolve AActor::EndPlay from Actor's vtable, check its body, and detour it. Idempotent; false
+// (logged) when Default__Actor is not found, the slot does not lead to EndPlay's body on this build,
+// or the detour does not install. Boot, after the health checks.
 bool Install();
 bool IsInstalled();
 
