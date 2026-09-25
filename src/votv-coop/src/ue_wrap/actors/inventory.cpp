@@ -192,11 +192,20 @@ bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf) {
     if (!save) return false;
     const SR::Arr hd = SR::ReadArr(save, kOff_hold);
     if (!hd.data || hd.num < 1) return false;
-    void* cls = classLeaf ? R::FindClass(classLeaf) : nullptr;
-    if (classLeaf && !cls) return false;
+    if (classLeaf && !R::FindClass(classLeaf)) return false;
     auto* slot = const_cast<uint8_t*>(hd.data);
+    // The record as the game's own pickup leaves it, as far as the hand reads it: the class updateHold
+    // spawns, and the name the spawned actor's loadData takes, its first names entry, which
+    // propToDynamic also made the slot's own name from; an emptied hand's has neither. The rest of the
+    // record stays, and its old buffers are orphaned, as every rewrite of one is.
+    SR::SaveRecord rec;
+    SR::ReadSaveRecord(slot + kEquip_data, rec);
+    rec.className = classLeaf ? classLeaf : L"";
+    if (classLeaf) rec.names.assign(1, std::vector<std::wstring>{name});
+    else rec.names.clear();
+    std::memset(slot + kEquip_data, 0, SR::kSaveStride);
+    SR::WriteSaveRecord(slot + kEquip_data, rec);
     SR::WriteFNameField(slot + kEquip_propName, name);
-    std::memcpy(slot + kEquip_data, &cls, sizeof(void*));  // the embedded Fstruct_save's class, its first member
     return true;
 }
 

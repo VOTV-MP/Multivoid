@@ -109,9 +109,10 @@ int32_t LivePersonalStoreCount();
 bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv);
 
 // Writes the live save slot's first hold slot, the hand, for a dev drill that takes an item into the
-// hand: the item's name (list_props' row) and its record's class, which is what the player's
-// updateHold spawns as the hand item ("None" and a null class empty the hand). False when the save
-// slot or its hold slot cannot be reached, or `classLeaf` names no loaded class. Game thread.
+// hand: the item's name (list_props' row), and in its record the class the player's updateHold
+// spawns as the hand item and the name that item takes as it loads ("None" and a null class empty
+// the hand). False when the save slot or its hold slot cannot be reached, or `classLeaf` names no
+// loaded class. Game thread.
 bool WriteHeldItem(const std::wstring& name, const wchar_t* classLeaf);
 
 // The item name in the live save slot's first hold slot, the hand: the name the player's updateHold
