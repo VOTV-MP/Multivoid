@@ -37,6 +37,7 @@ inline constexpr uint16_t kHostPlayerNo = 1;
 struct Row {
     uint16_t    playerNo = 0;
     uint32_t    bornGeneration = 0;  // host-side occupancy token; 0 on a client
+    uint8_t     originContext = 0;   // the host's number for this occupancy, which its relay stamps
     std::wstring nick;               // sanitized display name; empty = not yet known
     std::string guid;                // per-player inventory identity (host-side)
     std::string skin;                // body-skin name; empty = the native body
@@ -88,7 +89,7 @@ int OccupiedCount();
 // subscriber runs, so no subscriber observes both people at once. The same playerNo again is a
 // no-op, since the repair pulse re-asserts rows constantly. bornGeneration is 0 on a client.
 // Game thread.
-void InstallRow(int slot, uint16_t playerNo, uint32_t bornGeneration);
+void InstallRow(int slot, uint16_t playerNo, uint32_t bornGeneration, uint8_t originContext);
 
 // Empty `slot`, firing the transition if it was occupied. Game thread.
 void ClearRow(int slot);

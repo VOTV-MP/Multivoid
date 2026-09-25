@@ -14,6 +14,7 @@
 
 #include "coop/player/movement_ledger.h"
 #include "coop/net/session.h"
+#include "ue_wrap/core/log.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
@@ -182,6 +183,28 @@ bool Session::TryGetHostDishPose(DishPoseBody& out, bool* outIsNew) {
     return true;
 }
 
+// A client's roster edge for a relayed slot: the occupancy that left has its late packets refused and
+// its streams cleared, so no stored pose can bring its puppet back; the live one's streams start over
+// when they belong to another. The host resets a slot on its own connection edges. Only a running
+// session judges, asked under the lock Stop's reset takes: the ledger's own teardown empties every row
+// after Stop has cleared every slot, and a context latched then would outlive the session, refusing
+// that slot's packets in the next one until its first roster row. Game thread.
+void Session::OnRosterOrigin(int peerSlot, bool left, uint8_t leftCtx, bool live, uint8_t liveCtx) {
+    if (cfg_.role != Role::Client || peerSlot <= 0 || peerSlot >= kMaxPeers) return;
+    std::lock_guard<std::mutex> lk(remoteMutex_);
+    if (!running_.load(std::memory_order_acquire)) return;
+    if (left && originContext_.Retire(peerSlot, leftCtx)) {
+        ResetOriginStreams(peerSlot);
+        UE_LOGI("net: slot %d's occupancy %u left -- its relayed streams cleared, its late packets refused",
+                peerSlot, static_cast<unsigned>(leftCtx));
+    }
+    if (live && originContext_.Conform(peerSlot, liveCtx)) {
+        ResetOriginStreams(peerSlot);
+        UE_LOGI("net: slot %d's roster names occupancy %u -- its relayed streams start over", peerSlot,
+                static_cast<unsigned>(liveCtx));
+    }
+}
+
 // --- net-thread receive-store: the nine scalar stream cases -----------------
 // Called from HandleMessage's grouped case labels AFTER the header parse, the
 // epoch latch, and the routeSlot derivation -- exactly the point the inline
@@ -190,22 +213,49 @@ bool Session::TryGetHostDishPose(DishPoseBody& out, bool* outIsNew) {
 
 void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
                                 const void* data, int len, uint32_t seq) {
+    // A relayed packet names its origin's occupancy, and is stored only when that is the one the slot's
+    // roster names (coop/net/origin_context.h). Each relayed store below asks under its own hold of
+    // remoteMutex_, so a roster edge on the game thread cannot retire the slot between the answer and
+    // the store and let a departed occupant's packet re-arm its puppet. Only a client is relayed to;
+    // slot 0 is the host's own.
+    std::uint8_t ctx = 0;
+    if (cfg_.role == Role::Client && routeSlot != 0) {
+        PacketHeader h;
+        std::memcpy(&h, data, sizeof(h));
+        ctx = h.originContext;
+    }
+    const auto occupancyAccepted = [&](MsgType kind) {  // under remoteMutex_
+        if (originContext_.Accepts(routeSlot, ctx)) return true;
+        if (kind == MsgType::PoseSnapshot)
+            streamRefusals_.Refused(routeSlot, StreamRefusals::Why::OtherOccupancy, seq,
+                                    lastRemoteSeq_[routeSlot]);
+        return false;
+    };
     switch (type) {
     case MsgType::PoseSnapshot: {
         if (len < static_cast<int>(sizeof(PosePacket))) return;
         PosePacket pkt;
         std::memcpy(&pkt, data, sizeof(pkt));
-        if (!ValidatePose(pkt.pose)) return;
+        if (!ValidatePose(pkt.pose)) {
+            std::lock_guard<std::mutex> lk(remoteMutex_);
+            streamRefusals_.Refused(routeSlot, StreamRefusals::Why::FailedValidation, seq,
+                                    lastRemoteSeq_[routeSlot]);
+            return;
+        }
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (!occupancyAccepted(type)) break;
             if (hasRemote_[routeSlot] &&
                 static_cast<int32_t>(seq - lastRemoteSeq_[routeSlot]) <= 0) {
-                break;  // stale/duplicate for this origin slot; still relayed? no -- a stale packet need not propagate
+                streamRefusals_.Refused(routeSlot, StreamRefusals::Why::StaleSequence, seq,
+                                        lastRemoteSeq_[routeSlot]);
+                break;  // stale or a duplicate for this origin: not stored, and not relayed
             }
             remotePoses_[routeSlot] = pkt.pose;
             lastRemoteSeq_[routeSlot] = seq;
             hasRemote_[routeSlot] = true;
             ++remoteStamp_[routeSlot];
+            streamRefusals_.Accepted(routeSlot);
         }
         // Bill this peer for the distance it just CLAIMED to have covered. After the freshness
         // check above and outside remoteMutex_, both deliberately: a reordered datagram would
@@ -242,6 +292,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (pkt.pose.key.len > 31) return;
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (!occupancyAccepted(type)) break;
             if (hasRemoteProp_[routeSlot] &&
                 static_cast<int32_t>(seq - lastRemotePropSeq_[routeSlot]) <= 0) {
                 break;
@@ -284,6 +335,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
             std::fabs(pkt.pose.roll)  > 180.f) return;
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (!occupancyAccepted(type)) break;
             if (hasRemoteRagdoll_[routeSlot] &&
                 static_cast<int32_t>(seq - lastRemoteRagdollSeq_[routeSlot]) <= 0) {
                 break;
@@ -313,6 +365,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         }
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (!occupancyAccepted(type)) break;
             if (hasRemoteHand_[routeSlot] &&
                 static_cast<int32_t>(seq - lastRemoteHandSeq_[routeSlot]) <= 0) {
                 break;
@@ -337,6 +390,7 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
         if (!std::isfinite(pkt.pose.viewX) || !std::isfinite(pkt.pose.viewY)) return;
         {
             std::lock_guard<std::mutex> lk(remoteMutex_);
+            if (!occupancyAccepted(type)) break;
             if (hasRemoteDeskCursor_[routeSlot] &&
                 static_cast<int32_t>(seq - lastRemoteDeskCursorSeq_[routeSlot]) <= 0) {
                 break;

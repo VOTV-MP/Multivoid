@@ -180,11 +180,15 @@ void TearDownCoopStateForSessionEnd(coop::net::Session& session) {
 // connection edge never could; every DisconnectSlot body is safe there (the host-authoritative ones
 // self-gate).
 void OnSlotReplaced_TearDownWorld(int slot, const coop::roster_ledger::Row& outgoing,
-                                  const coop::roster_ledger::Row& /*incoming*/) {
-    if (!outgoing.occupied()) return;
+                                  const coop::roster_ledger::Row& incoming) {
     if (slot <= 0) return;  // slot 0 is the host; its departure ends the session, not a slot
     auto* s = g_tickSession;
     if (!s) return;         // no session context (nothing to tear down against)
+    // The slot's relayed streams follow its occupancy: the departed one's late packets are refused,
+    // so no stored pose can respawn its puppet, and a live one starts them over.
+    s->OnRosterOrigin(slot, outgoing.occupied(), outgoing.originContext, incoming.occupied(),
+                      incoming.originContext);
+    if (!outgoing.occupied()) return;
     if (coop::puppet_drive::DestroySlot(slot))
         UE_LOGI("net: peer slot %d (#%u) left -- puppet destroyed", slot,
                 static_cast<unsigned>(outgoing.playerNo));

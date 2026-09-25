@@ -9,10 +9,12 @@
 #include "coop/net/end_reason.h"           // the code a close carries to the peer
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
+#include "coop/net/origin_context.h"       // which occupancy a relayed stream packet belongs to
 #include "coop/net/protocol.h"
 #include "coop/net/send_admission.h"       // the send buffer's headroom rule
 #include "coop/net/send_backlog.h"         // the reliable-send delivery guarantee
 #include "coop/net/send_rate_control.h"    // what each peer's link measures out at
+#include "coop/net/stream_refusals.h"      // refused pose packets, said once per streak
 #include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
 
 #include <array>
@@ -357,6 +359,9 @@ public:
         if (peerSlot < 0 || peerSlot >= kMaxPeers) return 0;
         return peerGenBySlot_[peerSlot].load(std::memory_order_acquire);
     }
+    // The host's number for a slot's occupancy (its roster row); a CLIENT's roster edge steers relays.
+    uint8_t originContextForSlot(int peerSlot) const { return originContext_.Stamp(peerSlot); }
+    void OnRosterOrigin(int peerSlot, bool left, uint8_t leftCtx, bool live, uint8_t liveCtx);
 
     // --- Moderation (host-only admin actions) ---
 
@@ -457,6 +462,7 @@ private:
     // Per-peer reset, at the slot's disconnect and at session stop; slot 0's covers the host's single
     // streams too. The caller holds remoteMutex_.
     void ResetPeerRemoteState(int peerSlot);
+    void ResetOriginStreams(int peerSlot);  // the relayed streams only; remoteMutex_ held
 
     // Host relay of an unreliable datagram from `originSlot` to every other client: the header's
     // senderEpoch rewritten to the host's (the receiver's epoch latch is per connection) and
@@ -651,6 +657,8 @@ private:
     // Per-peer remote pose slots: the net thread writes under remoteMutex_, the game thread reads
     // through TryGetRemotePose.
     std::mutex remoteMutex_;
+    OriginContext originContext_;    // a client's relayed-stream latches, under remoteMutex_
+    StreamRefusals streamRefusals_;
     std::array<PoseSnapshot, kMaxPeers> remotePoses_{};
     std::array<bool, kMaxPeers> hasRemote_{};
     std::array<uint32_t, kMaxPeers> lastRemoteSeq_{};

@@ -250,6 +250,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
     peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
+    originContext_.Admit(slot);  // the occupancy's number, stamped into what the host relays of it
     // GEN: mint -- the admitted peer takes the slot (the generation store is the line above).
     peerConns_[slot].store(hConn);
     // The peer is now entitled to everything a connected peer gets.
@@ -282,29 +283,9 @@ int Session::FindPeerSlotForConn(uint32_t hConn) {
 void Session::ResetPeerRemoteState(int peerSlot) {
     // remoteMutex_ held by the caller.
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
-    hasRemote_[peerSlot] = false;
-    lastRemoteSeq_[peerSlot] = 0;
-    remoteStamp_[peerSlot] = 0;
-    lastReadStamp_[peerSlot] = 0;
-    hasRemoteProp_[peerSlot] = false;
-    lastRemotePropSeq_[peerSlot] = 0;
-    remotePropStamp_[peerSlot] = 0;
-    lastReadPropStamp_[peerSlot] = 0;
-    // The ragdoll slot too, so a reconnecting peer inherits no stale stream.
-    hasRemoteRagdoll_[peerSlot] = false;
-    lastRemoteRagdollSeq_[peerSlot] = 0;
-    remoteRagdollStamp_[peerSlot] = 0;
-    lastReadRagdollStamp_[peerSlot] = 0;
-    // The hand-item slot, the same reason.
-    hasRemoteHand_[peerSlot] = false;
-    lastRemoteHandSeq_[peerSlot] = 0;
-    remoteHandStamp_[peerSlot] = 0;
-    lastReadHandStamp_[peerSlot] = 0;
-    // The desk cursor slot, the same reason.
-    hasRemoteDeskCursor_[peerSlot] = false;
-    lastRemoteDeskCursorSeq_[peerSlot] = 0;
-    remoteDeskCursorStamp_[peerSlot] = 0;
-    lastReadDeskCursorStamp_[peerSlot] = 0;
+    ResetOriginStreams(peerSlot);
+    // The slot's occupancy is forgotten with its connection: the next latches from its first packet.
+    originContext_.Clear(peerSlot);
     // On a client slot 0 is the host, and its single streams -- the clock, the download sim, the dish
     // and reel poses -- are its remote state too. Their sequence is the host process's own counter, so
     // a client judging a restarted host's samples against the last host's would drop every one until
@@ -330,6 +311,37 @@ void Session::ResetPeerRemoteState(int peerSlot) {
     // Clear the latched senderEpoch so the next connection on this slot re-latches on its first
     // packet; a reconnecting peer's fresh epoch would otherwise fail the compare.
     expectedEpoch_[peerSlot] = 0;
+}
+
+// The streams the relay carries of one origin -- pose, prop, ragdoll, hand, desk cursor -- and their
+// refusal streak, and nothing of the connection: a new occupancy of the slot starts these over while
+// the host connection it rides stays latched. remoteMutex_ held by the caller.
+void Session::ResetOriginStreams(int peerSlot) {
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return;
+    streamRefusals_.Clear(peerSlot);
+    hasRemote_[peerSlot] = false;
+    lastRemoteSeq_[peerSlot] = 0;
+    remoteStamp_[peerSlot] = 0;
+    lastReadStamp_[peerSlot] = 0;
+    hasRemoteProp_[peerSlot] = false;
+    lastRemotePropSeq_[peerSlot] = 0;
+    remotePropStamp_[peerSlot] = 0;
+    lastReadPropStamp_[peerSlot] = 0;
+    // The ragdoll slot too, so a reconnecting peer inherits no stale stream.
+    hasRemoteRagdoll_[peerSlot] = false;
+    lastRemoteRagdollSeq_[peerSlot] = 0;
+    remoteRagdollStamp_[peerSlot] = 0;
+    lastReadRagdollStamp_[peerSlot] = 0;
+    // The hand-item slot, the same reason.
+    hasRemoteHand_[peerSlot] = false;
+    lastRemoteHandSeq_[peerSlot] = 0;
+    remoteHandStamp_[peerSlot] = 0;
+    lastReadHandStamp_[peerSlot] = 0;
+    // The desk cursor slot, the same reason.
+    hasRemoteDeskCursor_[peerSlot] = false;
+    lastRemoteDeskCursorSeq_[peerSlot] = 0;
+    remoteDeskCursorStamp_[peerSlot] = 0;
+    lastReadDeskCursorStamp_[peerSlot] = 0;
 }
 
 int Session::connectedPeerCount() const {

@@ -38,12 +38,12 @@
 namespace coop::player_handshake {
 namespace {
 
-// The minimum payload: slot, playerNo, eid, link kind, ping and an empty nick length. The
-// connection facts widened the fixed prefix rather than the tail: the tail's offset arithmetic
-// lives inside the declared block, which is skipped for exactly the host row and the
-// receiver's own row, the two rows this lane exists to populate.
-constexpr size_t kRosterRowMinLen = 1 + 2 + 4 + 1 + 2 + 1;
-constexpr size_t kRosterRowPrefixLen = 1 + 2 + 4 + 1 + 2;  // where the nick field starts
+// The minimum payload: slot, playerNo, eid, link kind, ping, the occupancy's context and an empty
+// nick length. The connection facts and the context widened the fixed prefix rather than the tail:
+// the tail's offset arithmetic lives inside the declared block, which is skipped for exactly the
+// host row and the receiver's own row, the two rows this lane exists to populate.
+constexpr size_t kRosterRowMinLen = 1 + 2 + 4 + 1 + 2 + 1 + 1;
+constexpr size_t kRosterRowPrefixLen = 1 + 2 + 4 + 1 + 2 + 1;  // where the nick field starts
 
 // The drop-empty-rows dev flag; latched, since a fault injection switchable mid-session would
 // make a failure unattributable.
@@ -54,11 +54,12 @@ bool DropEmptyRowsForTest() {
 }
 
 // A RosterRow payload describing peer `slot`, parsed field by field like the Join: slot u8,
-// playerNo u16, eid u32, link kind u8, ping i16, a length-prefixed UTF-8 nick, a
-// length-prefixed skin, the prefs flags, and the colour field.
+// playerNo u16, eid u32, link kind u8, ping i16, the occupancy's context u8 (the number the host's
+// relay stamps; coop/net/origin_context), a length-prefixed UTF-8 nick, a length-prefixed skin, the
+// prefs flags, and the colour field.
 std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint32_t eid,
                                            coop::net::LinkKind linkKind, int16_t pingMs,
-                                           const std::wstring& nick,
+                                           uint8_t originContext, const std::wstring& nick,
                                            const std::string& skin,
                                            uint8_t prefsFlags) {
     std::vector<uint8_t> out;
@@ -68,6 +69,7 @@ std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint
     std::memcpy(out.data() + 3, &eid, 4);
     out[7] = static_cast<uint8_t>(linkKind);
     std::memcpy(out.data() + 8, &pingMs, 2);
+    out[10] = originContext;
     // Capped on a character boundary: a raw resize would ship an ill-formed tail the receiver's
     // strict decoder refuses whole, and the host's own row would arrive as a placeholder.
     const std::string nickStr = coop::text::CapUtf8Bytes(
@@ -89,7 +91,7 @@ std::vector<uint8_t> BuildRowForSlot(int slot) {
     const coop::roster_ledger::Row& row = coop::roster_ledger::Get(slot);
     if (!row.occupied())
         return BuildRosterRowPayload(static_cast<uint8_t>(slot), 0, 0,
-                                     coop::net::LinkKind::Unknown, -1, L"", "", 0);
+                                     coop::net::LinkKind::Unknown, -1, 0, L"", "", 0);
 
     // The eid is the peer's mirror Player Element on the host. A row about slot 0 carries the 0
     // sentinel: the host's own eid reaches a client through AssignPeerSlot, and two authors for
@@ -101,7 +103,7 @@ std::vector<uint8_t> BuildRowForSlot(int slot) {
         if (el && el->IsMirror()) eid = el->GetId();
     }
     return BuildRosterRowPayload(static_cast<uint8_t>(slot), row.playerNo, eid,
-                                 row.linkKind, row.pingMs,
+                                 row.linkKind, row.pingMs, row.originContext,
                                  row.nick, row.skin, PrefsFlagsForSlot(slot));
 }
 
@@ -249,6 +251,7 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
     const coop::net::LinkKind linkKind = coop::net::LinkKindFromWire(payload[7]);
     int16_t pingMs = -1;
     std::memcpy(&pingMs, payload + 8, 2);
+    const uint8_t originContext = payload[10];
     const uint8_t* nickStart = payload + kRosterRowPrefixLen;
     const size_t nickRemaining = payloadLen - kRosterRowPrefixLen;
 
@@ -285,7 +288,7 @@ bool ApplyRosterRow(net::Session& session, const uint8_t* payload, size_t payloa
         coop::roster_ledger::ClearRow(describedSlot);
         return true;
     }
-    coop::roster_ledger::InstallRow(describedSlot, playerNo, /*bornGeneration=*/0);
+    coop::roster_ledger::InstallRow(describedSlot, playerNo, /*bornGeneration=*/0, originContext);
 
     // The connection facts, always applied: host-measured for every player, itself included, so a
     // client's board answers how a player is connected identically to every other board rather

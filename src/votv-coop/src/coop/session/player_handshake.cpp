@@ -303,8 +303,9 @@ bool HandleJoinMessage(net::Session& session,
     // player number is a role constant, so no wire field and no dependence on the roster pulse. On
     // the host the sender's row was born by the reconcile.
     if (session.role() == net::Role::Client && senderSlot == 0) {
+        // The host's own packets are never relayed, so its occupancy carries no context.
         coop::roster_ledger::InstallRow(0, coop::roster_ledger::kHostPlayerNo,
-                                        /*bornGeneration=*/0);
+                                        /*bornGeneration=*/0, /*originContext=*/0);
     }
     uint32_t senderElementId = 0;
     std::memcpy(&senderElementId, msg.payload, 4);

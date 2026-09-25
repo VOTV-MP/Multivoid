@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 182;
+inline constexpr uint16_t kProtocolVersion = 183;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -837,7 +837,10 @@ struct PacketHeader {
     uint32_t magic;        // kMagic
     uint16_t version;      // kProtocolVersion
     uint8_t  type;         // MsgType
-    uint8_t  _pad;         // reserved
+    // On a packet the host relays, the host's number for the origin slot's current occupancy; 0 on
+    // anything a peer sends itself. A receiver stores a relayed packet only for the occupancy the
+    // slot's roster names (coop/net/origin_context).
+    uint8_t  originContext;
     uint32_t seq;          // per-sender sequence number
     uint32_t senderEpoch;  // the sender's per-process epoch (non-zero; 0 = not yet latched at the receiver)
     uint8_t  senderSlot;   // the logical origin slot (the host rewrites it on relay)
@@ -845,8 +848,9 @@ struct PacketHeader {
     // the moment it was sent: stamping at send would let a game-thread hitch put an old position
     // under a new stamp. 24 bits, wrapping every 16 777 216 ms; read with ReadStateTimeMs24 and
     // wrap-safe arithmetic, and re-anchor after any gap long enough to make a wrap ambiguous.
-    // 0 means not stamped. The header cannot grow: BlobChunkPayload and VoiceFramePacket are both
-    // exactly the maximum datagram. The relay scrubs the field, since only the host reads it.
+    // 0 means not stamped. The header cannot grow: a BlobChunkPayload with this header and the
+    // reliable framing is exactly the maximum datagram (228 + 20 + 8 = kMaxPacketBytes). The relay
+    // scrubs the field, since only the host reads it.
     uint8_t  stateTimeMs24[3];
 };
 static_assert(sizeof(PacketHeader) == 20, "PacketHeader must be 20 bytes");
@@ -2899,7 +2903,7 @@ inline void WriteHeader(PacketHeader& h, MsgType type, uint32_t seq,
     h.magic = kMagic;
     h.version = kProtocolVersion;
     h.type = static_cast<uint8_t>(type);
-    h._pad = 0;
+    h.originContext = 0;
     h.seq = seq;
     h.senderEpoch = senderEpoch;
     h.senderSlot = senderSlot;

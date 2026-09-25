@@ -1,5 +1,5 @@
 // coop/net/session_relay.cpp -- host-relay topology fan-out.
-//
+
 // The "host as relay hub" subsystem. In the star topology a packet from client A reaches only the
 // host, so these two methods forward A's packets to the OTHER clients and peers can see each other.
 // MTA has the same shape: CGame relays puresync and RPC as they arrive.
@@ -11,8 +11,9 @@
 // HOST's own epoch, because from the receiving client's point of view the packet rides ITS host
 // connection, whose epoch it latched, so the relayed copy must carry the host epoch to pass that
 // connection-keyed latch. senderSlot is set to the true ORIGIN connection slot, so the receiver
-// routes the payload to the right peer's puppet. seq and body are preserved, so per-origin-slot seq
-// monotonicity still holds on the receiver.
+// routes the payload to the right peer's puppet, and originContext to the host's number for that
+// slot's current occupancy, so a receiver can tell a rejoined occupant's packets, numbered from zero
+// again, from the last occupant's late ones (coop/net/origin_context). seq and body are preserved.
 
 #include "coop/net/session.h"
 
@@ -42,6 +43,7 @@ void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, in
     auto* h = reinterpret_cast<PacketHeader*>(buf);
     h->senderEpoch = ownEpoch_;
     h->senderSlot = static_cast<uint8_t>(originSlot);
+    h->originContext = originContext_.Stamp(originSlot);
     coop::net::WriteStateTimeMs24(*h, 0);  // the origin's state time is not the relayer's -- scrub (no client-side reader)
     for (int i = 1; i < kMaxPeers; ++i) {
         if (i == originSlot) continue;
@@ -99,6 +101,7 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         auto* h = reinterpret_cast<PacketHeader*>(wire);
         h->senderEpoch = ownEpoch_;
         h->senderSlot = static_cast<uint8_t>(originSlot);
+        h->originContext = originContext_.Stamp(originSlot);
         coop::net::WriteStateTimeMs24(*h, 0);  // the origin's state time is not the relayer's -- scrub (no client-side reader)
         if (backlog_.SendOrQueue(i, laneIdx, hConn, wire, len, admission_) == SendOutcome::Streamed)
             rateControl_.NoteReliableQueued(i, len);

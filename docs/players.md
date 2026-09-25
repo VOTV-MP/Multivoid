@@ -40,7 +40,14 @@ rate-follows the streamed yaw. Footsteps (`coop/player/puppet_footsteps`): the p
 is off, so the mod reproduces the game's stride accumulator and dispatches the game's own step
 function, which does the ground trace, the per-material cue and the world reactions.
 
-A pose is always stored and always relayed. Nothing at the receive boundary validates motion,
+A relayed packet names its sender's occupancy of the slot: the host numbers each occupancy and
+stamps the number into everything it relays, and a client refuses an older occupancy's packets and
+starts a slot's streams over on a newer one (`coop/net/origin_context`, MTA's sync time context).
+So a player who rejoins from a new game process, numbering packets from zero again, is seen at
+once, and the late packets of one who left cannot bring their puppet back. A run of sixty refused
+pose packets is logged with its reason, and its end (`coop/net/stream_refusals`).
+
+A current pose is always stored and always relayed. Nothing at the receive boundary validates motion,
 because the game itself teleports the player from ten measured sites, every one in the client's
 own process where the host cannot see the trigger; a validator that refused a discontinuity would
 refuse a legitimate game event. A discontinuity costs trust in the movement ledger
@@ -190,8 +197,9 @@ on the props lane.
 ### Roster and moderation
 
 Slots are recycled, so who is in a slot is a token, never a boolean (`coop/player/roster_ledger`).
-A row carries a session-unique player number, zero when the slot is empty, and everything true of
-the person while they are there: nickname, skin, colour, and how they are connected, which the
+A row carries a session-unique player number, zero when the slot is empty, the host's number for
+the occupancy that its relay stamps, and everything true of the person while they are there:
+nickname, skin, colour, and how they are connected, which the
 host measures from the connection and publishes so every board shows the same value. A departure
 is a row transition, which is how a lost disconnect and a fast replacement heal the same way.
 

@@ -363,7 +363,7 @@ and it is the reason the relay's own silence stays.
 | `AuthHello`, `AuthChallenge`, `AuthProof` | both | the admission exchange, before any slot exists |
 | `AssignPeerSlot` | host to client | the slot and the host's element id; means admitted |
 | `Join` | each peer | element id, nickname, skin, preferences, game target |
-| `RosterRow` | host to all | who occupies a slot; zero means empty; re-sent as state |
+| `RosterRow` | host to all | who occupies a slot, zero meaning empty, and the host's number for that occupancy; re-sent as state |
 | `SaveTransferRequest`, `SaveTransferBegin`, `SaveTransferChunk` | client, then host | the request; total bytes, sidecar bytes, checksum, game mode; the chunks |
 | `PlayerInventoryBlob` | both | the per-player profile, pre-world |
 | `ClientWorldReady` | client to host | once per world, at quiescence |

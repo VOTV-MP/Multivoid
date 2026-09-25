@@ -101,7 +101,7 @@ int OccupiedCount() {
     return n;
 }
 
-void InstallRow(int slot, uint16_t playerNo, uint32_t bornGeneration) {
+void InstallRow(int slot, uint16_t playerNo, uint32_t bornGeneration, uint8_t originContext) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::InstallRow)");
     if (!ValidSlot(slot) || playerNo == 0) return;
     if (g_rows[slot].playerNo == playerNo) {
@@ -109,11 +109,13 @@ void InstallRow(int slot, uint16_t playerNo, uint32_t bornGeneration) {
         // Refresh the generation -- it is the only field that can legitimately
         // change without the person changing -- but fire no transition.
         g_rows[slot].bornGeneration = bornGeneration;
+        g_rows[slot].originContext = originContext;
         return;
     }
     Row incoming;
     incoming.playerNo = playerNo;
     incoming.bornGeneration = bornGeneration;
+    incoming.originContext = originContext;
     Transition(slot, incoming);
 }
 
@@ -305,7 +307,7 @@ void ReconcileFromSession(coop::net::Session& session) {
         // reaches Connected+lane-config must create no row at all, otherwise the
         // birth pairs with a teardown and resurrects a false "left the game".
         if (liveGen != 0 && !g_rows[slot].occupied() && session.IsSlotReady(slot))
-            InstallRow(slot, MintPlayerNo(), liveGen);
+            InstallRow(slot, MintPlayerNo(), liveGen, session.originContextForSlot(slot));
     }
 }
 
