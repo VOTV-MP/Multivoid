@@ -46,9 +46,10 @@ void* FindDispatchFunction(void* cls, const wchar_t* funcName, void** outDeclari
 
 namespace {
 
-// The resolve costs one object-array walk per hop, so a path that asks per call caches it. Keyed
-// on the UClass and the name text -- not the literal's address, which would give two callers
-// passing the same words two entries and one caller passing a built string a new entry per call.
+// The resolve reads each hop's function list, rendering every name it compares, so a path that asks
+// per call caches it. Keyed on the UClass and the name text -- not the literal's address, which would
+// give two callers passing the same words two entries and one caller passing a built string a new
+// entry per call.
 //
 // A cached answer holds the class and the function as slot-validated references (slot and serial),
 // never as bare pointers: a package unloaded between worlds takes its UClass and its UFunctions with

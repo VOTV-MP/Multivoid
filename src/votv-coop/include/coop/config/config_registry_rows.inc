@@ -301,6 +301,10 @@ CFG_FLAG(world_singleton_parity, "world_singleton_parity", "dev", false, "VOTVCO
     "Probe: once per world, the menu's included, the object index's loaded-class lookup and the world "
     "singleton checked against the whole-array walks they replace, one row per name and a verdict. "
     "Read-only; the walks it makes for the comparison are its own.")
+CFG_FLAG(function_lookup_parity, "function_lookup_parity", "dev", false, "VOTVCOOP_FUNCTION_LOOKUP_PARITY",
+    "Probe: once per world, every function a class owns, found by one walk of the object array, "
+    "looked up by its class and name through reflection::FindFunction's own-list read; mismatches "
+    "named, and a verdict. Read-only; the pass renders every function's name, a visible hitch.")
 CFG_FLAG(end_play_probe, "end_play_probe", "dev", false, "VOTVCOOP_END_PLAY_PROBE",
     "Probe: every actor's end of play counted by reason, and each destroyed one matched to the "
     "K2_DestroyActor call it ran inside; the ends with no such call, and the calls with no end, named "

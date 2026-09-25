@@ -237,8 +237,8 @@ uint64_t g_nextPropTryMs = 0;
 
 // Class -> "declares a getData of its own below Aprop_C", and the resolved verbs. A UClass is
 // immortal once loaded, so these are keyed by the pointer and only ResetCodecCache drops them.
-// The verbs are cached because FindFunction walks the WHOLE object array: uncached, every capture
-// and every apply paid that walk, at join-drain rates.
+// The verbs are cached because a lookup reads the class's function list, rendering each name it
+// passes: uncached, every capture and every apply paid that, at join-drain rates.
 struct ClassVerbs { void* getData = nullptr; void* loadData = nullptr; bool overrides = false;
                     bool conventionChecked = false; };
 std::unordered_map<void*, ClassVerbs> g_verbs;

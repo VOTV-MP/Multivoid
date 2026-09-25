@@ -325,7 +325,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     coop::kerfur_convert_client::SetSession(session);  // mirrors the store above
     if (g_installed.load(std::memory_order_acquire)) return;
-    // FindClass and FindFunction walk GUObjectArray, so one attempt per 125 pump ticks; the
+    // FindClass walks GUObjectArray on a miss, so one attempt per 125 pump ticks; the
     // all-resolved latch is the only early-out, and partial retries are idempotent. No give-up cap:
     // the kerfur classes load lazily (a kerfur can be bought mid-session), so the module keeps
     // watching.

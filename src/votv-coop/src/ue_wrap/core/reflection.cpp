@@ -487,14 +487,13 @@ void* FindFunction(void* owningClass, const wchar_t* funcName) {
     if (!owningClass || !funcName) return nullptr;
     uint64_t fnHash = 0;
     void* fnCls = BeginClassWalk(L"Function", fnHash);
-    walk_census::NoteArrayWalk(_ReturnAddress());
-    const int32_t n = NumObjects();
-    for (int32_t i = 0; i < n; ++i) {
-        void* obj = ObjectAt(i);
-        if (!obj) continue;
-        if (OuterOf(obj) != owningClass) continue;
-        if (!ObjClassMatches(obj, L"Function", fnHash, fnCls)) continue;
-        if (NameEquals(NameOf(obj), funcName)) return obj;
+    // The class's own functions are its Children list: tens of entries, where the object array holds a
+    // quarter of a million. Bounded, so a link that loops cannot hold the caller.
+    constexpr int32_t kMaxChildren = 65536;
+    void* f = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(owningClass) + O::UStruct_Children);
+    for (int32_t hops = 0; f && hops < kMaxChildren; ++hops) {
+        if (ObjClassMatches(f, L"Function", fnHash, fnCls) && NameEquals(NameOf(f), funcName)) return f;
+        f = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(f) + O::UField_Next);
     }
     return nullptr;
 }

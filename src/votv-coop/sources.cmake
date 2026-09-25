@@ -419,6 +419,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/hand_drop_selftest.cpp
     src/coop/dev/run_and_wait_selftest.cpp
     src/coop/dev/world_singleton_parity.cpp
+    src/coop/dev/function_lookup_parity.cpp
     src/coop/dev/end_play_probe.cpp
   src/coop/dev/floppy_selftest.cpp
     src/coop/dev/floppy_selftest_world.cpp

@@ -5,6 +5,7 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
+#include "coop/dev/function_lookup_parity.h"
 #include "coop/dev/world_singleton_parity.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/nameplate.h"
@@ -78,9 +79,10 @@ void TickFrameTail() {
     coop::nameplate::Update();
     coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
     coop::chat_feed::Tick();
-    // [dev] Once per world, the menu's included, where a lookup that outlived the world it came from
-    // would show; a latched read when off.
+    // [dev] The lookup parity probes, once per world, the menu's included, where a lookup that outlived
+    // the world it came from would show; each a latched read when off.
     coop::dev::world_singleton_parity::Tick();
+    coop::dev::function_lookup_parity::Tick();
     TickShutdownHooks();
 }
 

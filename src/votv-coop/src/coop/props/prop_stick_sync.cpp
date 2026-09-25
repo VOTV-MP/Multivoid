@@ -421,7 +421,7 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_stickInstalled.load(std::memory_order_acquire) && g_unstickInstalled.load(std::memory_order_acquire))
         return;
-    // FindClass/FindFunction walk GUObjectArray -- throttle like the sibling
+    // FindClass walks GUObjectArray on a miss -- throttle like the sibling
     // installs. No give-up cap: cameras/whiteboards can be acquired mid-game.
     static uint32_t sResolveN = 0;
     if ((sResolveN++ % 125) != 0) return;

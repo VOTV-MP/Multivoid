@@ -31,9 +31,9 @@ void*   ChildAt(void* panel, int32_t index);
 int32_t IndexOfChild(void* panel, void* child);
 
 // UContentWidget::SetContent, a SizeBox's, Button's or Border's single child. Latched, which is
-// why it is here rather than open-coded: FindFunction walks the whole GUObjectArray, and seven
-// unlatched copies, two of them per row, cost a full walk per row. False, logged once, if the
-// class or function does not resolve.
+// why it is here rather than open-coded: FindFunction has no result cache, and seven unlatched
+// copies, two of them per row, looked it up again per row. False, logged once, if the class or
+// function does not resolve.
 bool    SetContent(void* contentWidget, void* child);
 
 // The widget switcher.

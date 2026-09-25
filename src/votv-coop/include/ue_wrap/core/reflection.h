@@ -162,9 +162,10 @@ void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
 // FindClass(L"mainPlayer_C").
 void* FindClass(const wchar_t* className);
 
-// A UFunction named `funcName` owned (Outer) by `owningClass`. Walks the class's Outer-children
-// only; does not climb to super classes. This answers WHICH CLASS DECLARES IT, the right question
-// for a declaration census and for a hook that must not reach a sibling class.
+// A UFunction named `funcName` declared by `owningClass`, read from the class's own function list
+// (UStruct::Children), never the object array; it does not climb to super classes. This answers WHICH
+// CLASS DECLARES IT, the right question for a declaration census and for a hook that must not reach a
+// sibling class.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
 
 // The UFunction an instance of `cls` would DISPATCH for `funcName`: the declaration on `cls` if it

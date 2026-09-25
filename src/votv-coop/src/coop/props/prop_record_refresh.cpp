@@ -76,8 +76,8 @@ void RefreshLook(void* box, bool opened) {
     void* cls = R::ClassOf(box);
     if (!cls) return;
     if (g_nameOff < 0) g_nameOff = R::FindPropertyOffset(cls, L"name");
-    // The memoised lookup: FindFunction has no cache, so a box whose init never resolved would walk
-    // the object array again on every record that lands on it.
+    // The memoised lookup: a box whose init never resolved would be looked up again, hop by hop, on
+    // every record that lands on it.
     if (!g_initFn)     g_initFn  = R::FindDispatchFunctionCached(cls, L"init");
     if (g_nameOff < 0 || !g_initFn) {
         static bool s_warned = false;

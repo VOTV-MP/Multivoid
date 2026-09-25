@@ -195,8 +195,8 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     if (!box) return false;
     out.box = box;
     void* ovl = nullptr;
-    // Latched once, including on failure: FindFunction has no result cache and walks the whole
-    // GUObjectArray, and this runs per row inside Sync. A UFunction either exists at process start
+    // Latched once, including on failure: FindFunction has no result cache and renders the name of
+    // each function it passes, and this runs per row inside Sync. A UFunction either exists at process start
     // or never does, so a permanent negative latch is correct.
     static void* const sGetContent = [] {
         void* cw = R::FindClass(P::name::ContentWidgetClass);
