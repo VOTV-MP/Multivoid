@@ -6,6 +6,8 @@
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
+#include "ue_wrap/engine/hit_result.h"
 
 #include <chrono>
 #include <cstring>
@@ -16,7 +18,9 @@ namespace {
 namespace R = ue_wrap::reflection;
 using Clock = std::chrono::steady_clock;
 
-// class-level (persist across level reloads)
+// class-level (persist across level reloads): analogDScreenTest_C is a hard import of
+// mainGamemode_C, which the class-lifetime census found to be the same object in every world
+// (poll arc section 2.7), and lib_C and prop_physModule_C are the desk's own imports
 void*   g_deskCls = nullptr;
 int32_t g_offPhysMods = -1;      // TArray<byte>, resolved live by property name
 void*   g_updPhysModsFn = nullptr;
@@ -31,6 +35,8 @@ Clock::time_point g_nextTry{};
 constexpr int kProbeMax = 64;
 void* g_classForByte[kProbeMax] = {};
 bool  g_probed[kProbeMax] = {};
+
+R::InstanceOffset g_slotsOff{L"physModSlots"};  // TArray<UPrimitiveComponent*>
 
 // UE TArray layout: data ptr @0, Num @8, Max @12.
 uint8_t* ArrayData(void* desk, int32_t& num) {
@@ -115,6 +121,55 @@ bool IsModuleClass(void* cls) {
     if (cls == g_moduleBaseCls) return true;
     void* base[1] = { g_moduleBaseCls };
     return R::IsDescendantOfAny(cls, base, 1);
+}
+
+void* SlotComponent(void* desk, int slot) {
+    const int32_t off = desk ? g_slotsOff.Of(desk) : -1;
+    if (off < 0) return nullptr;
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(desk) + off;
+    void* const* data = *reinterpret_cast<void* const* const*>(base);
+    const int32_t num = *reinterpret_cast<const int32_t*>(base + 8);
+    return (data && slot >= 0 && slot < num) ? data[slot] : nullptr;
+}
+
+bool CallPlugInModule(void* desk, void* module, int slot, void* player) {
+    void* fn = desk ? R::FindDispatchFunctionCached(R::ClassOf(desk), L"plugInModule") : nullptr;
+    void* comp = SlotComponent(desk, slot);
+    if (!fn || !comp || !module) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"holdActor", module) && f.Set<void*>(L"slot", comp) &&
+           f.Set<void*>(L"player", player) && ue_wrap::Call(desk, f);
+}
+
+bool CallPressSlot(void* desk, void* player, int slot) {
+    void* cls = desk ? R::ClassOf(desk) : nullptr;
+    void* lookFn = cls ? R::FindDispatchFunctionCached(cls, L"lookAt") : nullptr;
+    void* pressFn = cls ? R::FindDispatchFunctionCached(cls, L"actionOptionIndex") : nullptr;
+    void* comp = SlotComponent(desk, slot);
+    if (!lookFn || !pressFn || !comp || !player) {
+        UE_LOGW("phys_mods: press on slot %d not made (lookAt=%d actionOptionIndex=%d slot component=%d player=%d)",
+                slot, lookFn ? 1 : 0, pressFn ? 1 : 0, comp ? 1 : 0, player ? 1 : 0);
+        return false;
+    }
+    const ue_wrap::FVector at = ue_wrap::engine::GetComponentLocation(comp);
+    // The look first: it sets lookingAtPanel from the hit, and a press with a panel under the
+    // player's eye goes to that panel instead of the slot.
+    ue_wrap::ParamFrame look(lookFn);
+    if (!look.valid() || !look.Set<void*>(L"player", player) ||
+        !ue_wrap::hit_result::Write(look, L"hit", desk, comp, at) || !ue_wrap::Call(desk, look)) {
+        UE_LOGW("phys_mods: press on slot %d not made: the desk's lookAt with a hit on the slot did not run", slot);
+        return false;
+    }
+    struct { void* data; int32_t num; int32_t max; } text{};
+    if (look.GetRaw(L"text", &text, sizeof(text)) && text.data) R::EngineFree(text.data);  // the engine wrote it
+    ue_wrap::ParamFrame press(pressFn);
+    if (!press.valid() || !press.Set<void*>(L"player", player) ||
+        !ue_wrap::hit_result::Write(press, L"hit", desk, comp, at) ||
+        !press.Set<void*>(L"lookAtComponent", comp) || !ue_wrap::Call(desk, press)) {
+        UE_LOGW("phys_mods: press on slot %d not made: actionOptionIndex with a hit on the slot did not run", slot);
+        return false;
+    }
+    return true;
 }
 
 void* ClassForByte(uint8_t byte) {

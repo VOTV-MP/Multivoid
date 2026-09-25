@@ -58,6 +58,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/engine/engine_audio.cpp
     src/ue_wrap/engine/engine_bones.cpp
     src/ue_wrap/engine/engine_component.cpp
+    src/ue_wrap/engine/hit_result.cpp
     src/ue_wrap/engine/engine_mainplayer.cpp
     src/ue_wrap/engine/scs_rig.cpp
     src/ue_wrap/engine/engine_playerragdoll.cpp

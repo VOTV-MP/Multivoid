@@ -3,13 +3,14 @@
 // the mirror through here.
 //
 // physMods is a TArray<TEnumAsByte<enum_physicalModules>> on
-// AanalogDScreenTest_C, fixed at 12 slots with 0 meaning empty, and behaves as a
-// SET: plugInModule's native dup-check denies a byte the array already Contains.
-// Three writers -- plugInModule (write into a free slot, then K2_DestroyActor on
-// the module prop), the playerHitWith unplug path (the module is reborn INTO THE
-// HAND through lib.physModToActor and the slot goes to 0), and setData on save
-// load, which calls updPhysMods. gatherData only READS it, marshalling the array
-// into the save. updPhysMods() is the
+// AanalogDScreenTest_C, fixed at 12 slots with 0 meaning empty. It is not a set:
+// plugInModule refuses a type off its isModuleAllowed list and an occupied slot,
+// never a type the desk already holds, so two modules of one type can sit on it.
+// Three writers -- plugInModule (write into an empty slot, then K2_DestroyActor on
+// the module prop), the unplug in actionOptionIndex, the E press (the module is
+// reborn INTO THE HAND through lib.physModToActor and the slot goes to 0), and
+// setData on save load, which calls updPhysMods. gatherData only READS it,
+// marshalling the array into the save. updPhysMods() is the
 // parameterless consumer re-runner and measures as a PURE function of the array
 // -- per-slot socket visuals plus Contains-gated speed, lamp and shield effects,
 // with no player references, spawns or audio -- so a mirror may call it.
@@ -43,6 +44,21 @@ bool CallUpdPhysMods();
 
 // Is `cls` Aprop_physModule_C or a descendant (the per-byte module classes)?
 bool IsModuleClass(void* cls);
+
+// The desk's slot component for array index `slot` (physModSlots holds the slots' primitive
+// components in array order), or null. Game thread.
+void* SlotComponent(void* desk, int slot);
+
+// The desk's plugInModule(holdActor = module, slot = SlotComponent(slot), player): what a module
+// carried onto the slot runs. True when the call dispatched; the array says whether the desk took
+// it. Game thread.
+bool CallPlugInModule(void* desk, void* module, int slot, void* player);
+
+// A player's E on slot `slot`, as the game runs it: the desk's lookAt with a hit on the slot, which
+// leaves no panel for the press to go to, then actionOptionIndex with the same hit. On a filled slot
+// that is the unplug: the module goes to `player`'s hand and the slot to 0. True when both
+// dispatched. Game thread.
+bool CallPressSlot(void* desk, void* player, int slot);
 
 // lib.physModToActor(byte) -> the module class for `byte` (null on fail /
 // unresolved / byte unmapped). Reflected static-library call on the lib CDO.
